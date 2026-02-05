@@ -75,6 +75,7 @@
     body.guides-off .CodeMirror pre.CodeMirror-line-like{ background-image:none }
 
     #output{ background:#0c0c0c; color:#dcdcdc; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Courier New",monospace; padding:12px; height:100%; overflow:auto; white-space:pre-wrap }
+    .sys-msg{ color:#ff9933; }
     .shell-input-bar{ display:flex; gap:8px; border-top:1px solid #2b2b2b; padding:8px; background:#111 }
     .shell-input-bar input{ flex:1; padding:8px 10px; background:#1a1a1a; color:#fff; border:1px solid #2b2b2b; border-radius:8px; outline:none; font-size:14px; }
 
@@ -127,6 +128,18 @@
 
     input[type=file]{ display:none }
 
+    /* Custom completion widget styles */
+    .eagle-completions{ position:absolute; z-index:9999; background:#252526; border:1px solid#454545; border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.5); max-height:320px; overflow-y:auto; font-family:Consolas,Monaco,monospace; font-size:13px; }
+    .eagle-completions.hidden{ display:none; }
+    .completion-item{ padding:4px 12px; cursor:pointer; display:flex; align-items:center; gap:8px; color:#cccccc; }
+    .completion-item:hover, .completion-item.selected{ background:#094771; }
+    .completion-icon{ width:16px; height:16px; flex-shrink:0; font-size:11px; font-weight:bold; text-align:center; line-height:16px; border-radius:3px; }
+    .icon-func{ background:#b180d7; color:#fff; }
+    .icon-class{ background:#ee9d28; color:#fff; }
+    .icon-var{ background:#4fc1ff; color:#000; }
+    .icon-kw{ background:#569cd6; color:#fff; }
+    .icon-attr{ background:#9cdcfe; color:#000; }
+
     /* Sidebar collapse styles */
     body.right-collapsed #rightColumn { display: none !important; }
     body.right-collapsed #hsplitter { display: none !important; }
@@ -157,6 +170,7 @@
       </div>
 
       <button class="btn secondary" id="guidesBtn" title="Show/Hide indent guides">Guides: On</button>
+      <button class="btn secondary" id="autocompleteBtn" title="Toggle autocomplete">Autocomplete: On</button>
       <button class="btn secondary" id="toggleSidebarBtn" title="Toggle right sidebar">Hide Sidebar ◀</button>
       <button class="btn admin" id="adminBtn" title="Enter Admin Mode">Admin</button>
     </div>
@@ -165,7 +179,7 @@
   <div class="outer" id="outer">
     <!-- Left: Editor -->
     <section class="panel" id="editorPanel" style="grid-column:1 / 2; grid-row:1 / 2;">
-      <header><h3>Editor</h3><div><small style="opacity:.8">Syntax highlighting • Tabs for indent • Tab width = 4</small></div></header>
+      <header><h3>Editor</h3></header>
       <div class="content"><textarea id="editor"></textarea></div>
     </section>
 
@@ -315,6 +329,9 @@
         let dirty = true;
         cm.on('change', () => { dirty = true; });
         window.__isDirty = () => dirty;
+        
+        // Custom autocomplete system
+        window.eagleEditor = cm;
         return {
           getValue: () => cm.getValue(),
           setValue: (v) => { cm.setValue(v); dirty = true; }
@@ -346,6 +363,285 @@
       }
     }
     const editor = initEditor();
+
+    // Eagle IDE Custom Completion Engine
+    (function() {
+      if (!window.eagleEditor) return;
+      
+      const cmInst = window.eagleEditor;
+      let suggestionBox = null;
+      let activeSuggIdx = 0;
+      let suggestionList = [];
+      let completionActive = true;
+      
+      // Python stdlib + common identifiers
+      const pyBuiltins = ['print','input','len','range','str','int','float','list','dict','set','tuple','type','isinstance','hasattr','getattr','setattr','abs','all','any','max','min','sum','sorted','reversed','enumerate','zip','map','filter','open','round','pow','divmod','chr','ord','bin','hex','oct','bool','bytes','bytearray','complex','frozenset','slice','super','property','staticmethod','classmethod','vars','dir','help','id','hash','iter','next','callable','compile','eval','exec','format','globals','locals','memoryview','object','repr','ascii','breakpoint'];
+      const pyKeyTerms = ['def','class','if','elif','else','for','while','return','yield','import','from','as','try','except','finally','raise','with','assert','pass','break','continue','global','nonlocal','lambda','and','or','not','in','is','None','True','False','self'];
+      
+      // Token extraction engine
+      function extractCodeTokens(sourceCode) {
+        const tokenMap = { funcs: new Set(), classes: new Set(), vars: new Set() };
+        const codeLines = sourceCode.split('\n');
+        
+        codeLines.forEach(ln => {
+          // Function definitions
+          const funcMatch = ln.match(/^\s*def\s+([a-zA-Z_]\w*)/);
+          if (funcMatch) tokenMap.funcs.add(funcMatch[1]);
+          
+          // Class definitions
+          const classMatch = ln.match(/^\s*class\s+([a-zA-Z_]\w*)/);
+          if (classMatch) tokenMap.classes.add(classMatch[1]);
+          
+          // Variable assignments
+          const varMatches = ln.matchAll(/([a-zA-Z_]\w*)\s*=/g);
+          for (const vm of varMatches) {
+            if (vm[1] && !pyKeyTerms.includes(vm[1])) tokenMap.vars.add(vm[1]);
+          }
+        });
+        
+        return tokenMap;
+      }
+      
+      // Build suggestion list based on context
+      function buildSuggestions(partialToken, cursorPos) {
+        const fullCode = cmInst.getValue();
+        const preCursor = fullCode.substring(0, cursorPos.index);
+        const tokens = extractCodeTokens(fullCode);
+        const results = [];
+        
+        // Check for attribute access
+        const attrPattern = /([a-zA-Z_]\w*)\.([a-zA-Z_]*)$/;
+        const attrMatch = preCursor.match(attrPattern);
+        
+        if (attrMatch) {
+          const objName = attrMatch[1];
+          const partial = attrMatch[2];
+          
+          // Common string/list/dict methods
+          const strMethods = ['upper','lower','strip','split','join','replace','find','index','count','startswith','endswith','capitalize','title','swapcase','isalpha','isdigit','isspace','isupper','islower'];
+          const listMethods = ['append','extend','insert','remove','pop','clear','index','count','sort','reverse','copy'];
+          const dictMethods = ['keys','values','items','get','pop','update','clear','copy','setdefault'];
+          
+          const allMethods = [...new Set([...strMethods, ...listMethods, ...dictMethods])];
+          allMethods.forEach(m => {
+            if (m.startsWith(partial)) {
+              results.push({ text: m, category: 'attr', icon: 'A' });
+            }
+          });
+        } else {
+          // Regular completions
+          const lowerPartial = partialToken.toLowerCase();
+          
+          // User functions
+          tokens.funcs.forEach(f => {
+            if (f.toLowerCase().startsWith(lowerPartial)) {
+              results.push({ text: f, category: 'func', icon: 'ƒ' });
+            }
+          });
+          
+          // User classes
+          tokens.classes.forEach(c => {
+            if (c.toLowerCase().startsWith(lowerPartial)) {
+              results.push({ text: c, category: 'class', icon: 'C' });
+            }
+          });
+          
+          // Variables
+          tokens.vars.forEach(v => {
+            if (v.toLowerCase().startsWith(lowerPartial) && !results.find(r => r.text === v)) {
+              results.push({ text: v, category: 'var', icon: 'V' });
+            }
+          });
+          
+          // Keywords
+          pyKeyTerms.forEach(k => {
+            if (k.toLowerCase().startsWith(lowerPartial)) {
+              results.push({ text: k, category: 'kw', icon: 'K' });
+            }
+          });
+          
+          // Builtins
+          pyBuiltins.forEach(b => {
+            if (b.toLowerCase().startsWith(lowerPartial)) {
+              results.push({ text: b, category: 'func', icon: 'ƒ' });
+            }
+          });
+        }
+        
+        // Sort: exact matches first, then alphabetical
+        return results.sort((a, b) => {
+          const aExact = a.text === partialToken ? 0 : 1;
+          const bExact = b.text === partialToken ? 0 : 1;
+          if (aExact !== bExact) return aExact - bExact;
+          return a.text.localeCompare(b.text);
+        });
+      }
+      
+      // Create suggestion widget
+      function createSuggestionWidget() {
+        const widget = document.createElement('div');
+        widget.className = 'eagle-completions hidden';
+        document.body.appendChild(widget);
+        return widget;
+      }
+      
+      // Position and show suggestions
+      function displaySuggestions(suggestions, coords) {
+        if (!suggestionBox) suggestionBox = createSuggestionWidget();
+        if (suggestions.length === 0) {
+          suggestionBox.classList.add('hidden');
+          return;
+        }
+        
+        suggestionList = suggestions;
+        activeSuggIdx = 0;
+        suggestionBox.innerHTML = '';
+        
+        suggestions.forEach((sugg, idx) => {
+          const itemEl = document.createElement('div');
+          itemEl.className = 'completion-item' + (idx === 0 ? ' selected' : '');
+          
+          const iconEl = document.createElement('span');
+          iconEl.className = `completion-icon icon-${sugg.category}`;
+          iconEl.textContent = sugg.icon;
+          
+          const txtEl = document.createElement('span');
+          txtEl.textContent = sugg.text;
+          
+          itemEl.appendChild(iconEl);
+          itemEl.appendChild(txtEl);
+          itemEl.dataset.index = idx;
+          
+          itemEl.addEventListener('click', () => applySuggestion(sugg));
+          itemEl.addEventListener('mouseenter', () => {
+            document.querySelectorAll('.completion-item').forEach(el => el.classList.remove('selected'));
+            itemEl.classList.add('selected');
+            activeSuggIdx = idx;
+          });
+          
+          suggestionBox.appendChild(itemEl);
+        });
+        
+        suggestionBox.style.left = coords.left + 'px';
+        suggestionBox.style.top = coords.bottom + 'px';
+        suggestionBox.classList.remove('hidden');
+      }
+      
+      // Apply selected suggestion
+      function applySuggestion(sugg) {
+        const cursor = cmInst.getCursor();
+        const lineContent = cmInst.getLine(cursor.line);
+        const beforeCursor = lineContent.substring(0, cursor.ch);
+        
+        // Find token start
+        const tokenMatch = beforeCursor.match(/[a-zA-Z_]\w*$/);
+        const attrMatch = beforeCursor.match(/[a-zA-Z_]\w*\.[a-zA-Z_]*$/);
+        
+        let replaceFrom;
+        if (attrMatch) {
+          const parts = attrMatch[0].split('.');
+          replaceFrom = cursor.ch - parts[parts.length - 1].length;
+        } else if (tokenMatch) {
+          replaceFrom = cursor.ch - tokenMatch[0].length;
+        } else {
+          replaceFrom = cursor.ch;
+        }
+        
+        cmInst.replaceRange(sugg.text, 
+          { line: cursor.line, ch: replaceFrom },
+          { line: cursor.line, ch: cursor.ch }
+        );
+        
+        hideSuggestions();
+        cmInst.focus();
+      }
+      
+      // Hide suggestions
+      function hideSuggestions() {
+        if (suggestionBox) suggestionBox.classList.add('hidden');
+        suggestionList = [];
+        activeSuggIdx = 0;
+      }
+      
+      // Trigger completion check
+      function checkCompletion() {
+        if (!completionActive) return;
+        
+        const cursor = cmInst.getCursor();
+        const lineContent = cmInst.getLine(cursor.line);
+        const beforeCursor = lineContent.substring(0, cursor.ch);
+        
+        // Match partial identifier or attribute access
+        const tokenMatch = beforeCursor.match(/([a-zA-Z_]\w*\.)?([a-zA-Z_]\w*)$/);
+        if (!tokenMatch || tokenMatch[0].length === 0) {
+          hideSuggestions();
+          return;
+        }
+        
+        const partialToken = tokenMatch[2] || '';
+        if (partialToken.length < 1 && !tokenMatch[1]) {
+          hideSuggestions();
+          return;
+        }
+        
+        const cursorPos = cmInst.indexFromPos(cursor);
+        const suggestions = buildSuggestions(partialToken, { index: cursorPos });
+        
+        if (suggestions.length > 0) {
+          const coords = cmInst.cursorCoords(cursor, 'page');
+          displaySuggestions(suggestions, coords);
+        } else {
+          hideSuggestions();
+        }
+      }
+      
+      // Keyboard navigation
+      cmInst.on('keydown', (cm, ev) => {
+        if (!completionActive || suggestionList.length === 0) return;
+        
+        if (ev.key === 'ArrowDown') {
+          ev.preventDefault();
+          activeSuggIdx = (activeSuggIdx + 1) % suggestionList.length;
+          document.querySelectorAll('.completion-item').forEach((el, i) => {
+            el.classList.toggle('selected', i === activeSuggIdx);
+          });
+          document.querySelectorAll('.completion-item')[activeSuggIdx]?.scrollIntoView({ block: 'nearest' });
+        } else if (ev.key === 'ArrowUp') {
+          ev.preventDefault();
+          activeSuggIdx = (activeSuggIdx - 1 + suggestionList.length) % suggestionList.length;
+          document.querySelectorAll('.completion-item').forEach((el, i) => {
+            el.classList.toggle('selected', i === activeSuggIdx);
+          });
+          document.querySelectorAll('.completion-item')[activeSuggIdx]?.scrollIntoView({ block: 'nearest' });
+        } else if (ev.key === 'Enter') {
+          if (suggestionList.length > 0) {
+            ev.preventDefault();
+            applySuggestion(suggestionList[activeSuggIdx]);
+          }
+        } else if (ev.key === 'Escape') {
+          ev.preventDefault();
+          hideSuggestions();
+        }
+      });
+      
+      // Trigger on input
+      cmInst.on('inputRead', () => {
+        setTimeout(checkCompletion, 50);
+      });
+      
+      // Hide on click outside
+      document.addEventListener('click', (ev) => {
+        if (suggestionBox && !suggestionBox.contains(ev.target)) {
+          hideSuggestions();
+        }
+      });
+      
+      // Toggle button handler
+      window.toggleEagleCompletion = function(enabled) {
+        completionActive = enabled;
+        if (!enabled) hideSuggestions();
+      };
+    })();
 
     // Warn before closing/reloading
     window.addEventListener('beforeunload', (e) => {
@@ -418,7 +714,18 @@ for i in range(3):
 
     const outputEl = document.getElementById('output');
     const stdinEl = document.getElementById('stdin');
-    const appendOut = s => { outputEl.textContent += s; outputEl.scrollTop = outputEl.scrollHeight; };
+    const appendOut = s => { 
+      const isSysMsg = /^\[(Process|Run|Stopped|Connected|Socket|Sending)\s/.test(s) || s.includes('Process killed');
+      if (isSysMsg) {
+        const msgSpan = document.createElement('span');
+        msgSpan.className = 'sys-msg';
+        msgSpan.textContent = s;
+        outputEl.appendChild(msgSpan);
+      } else {
+        outputEl.appendChild(document.createTextNode(s));
+      }
+      outputEl.scrollTop = outputEl.scrollHeight; 
+    };
 
     const socket = io({ transports: ["polling"], upgrade: false, timeout: 20000 });
     socket.on('connected', (m) => {
@@ -860,6 +1167,21 @@ for i in range(3):
       try { const saved = localStorage.getItem(key); if (saved !== null) on = saved === '1'; } catch {}
       function apply(){ document.body.classList.toggle('guides-off', !on); btn.textContent = `Guides: ${on ? 'On' : 'Off'}`; try { localStorage.setItem(key, on ? '1' : '0'); } catch {} }
       apply(); btn.addEventListener('click', () => { on = !on; apply(); });
+    })();
+
+    // Autocomplete toggle
+    (function(){
+      const key = 'ide-autocomplete';
+      const btn = document.getElementById('autocompleteBtn');
+      let on = true;
+      try { const saved = localStorage.getItem(key); if (saved !== null) on = saved === '1'; } catch {}
+      function apply(){ 
+        btn.textContent = `Autocomplete: ${on ? 'On' : 'Off'}`;
+        if (window.toggleEagleCompletion) window.toggleEagleCompletion(on);
+        try { localStorage.setItem(key, on ? '1' : '0'); } catch {} 
+      }
+      apply(); 
+      btn.addEventListener('click', () => { on = !on; apply(); });
     })();
 
     // Sidebar collapse/expand toggle
