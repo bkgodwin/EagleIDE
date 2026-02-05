@@ -365,13 +365,27 @@ class Runner:
         runner_py = sbox / "runner.py"
         runner_py.write_text(code, encoding="utf-8")
 
-        # Escape literal {} in format string
-        cmd_code = "exec(open(r'{}','r',encoding='utf-8').read(), {{}})".format(
-            str(runner_py).replace("\\", "\\\\")
-        )
+        # Create wrapper script that intercepts input() to send INPUT_TOKEN
+        wrapper_code = f'''import sys
+import builtins
+
+_original_input = builtins.input
+
+def _ide_input(prompt=""):
+    if prompt:
+        sys.stdout.write(str(prompt))
+    sys.stdout.write("{INPUT_TOKEN}")
+    sys.stdout.flush()
+    return _original_input()
+
+builtins.input = _ide_input
+
+# Execute user code
+exec(open(r"{str(runner_py).replace(chr(92), chr(92)+chr(92))}", "r", encoding="utf-8").read(), {{}})
+'''
 
         self.proc = subprocess.Popen(
-            [sys.executable, "-u", "-c", cmd_code],
+            [sys.executable, "-u", "-c", wrapper_code],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
