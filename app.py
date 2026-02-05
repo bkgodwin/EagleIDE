@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, sys, json, time, uuid, csv, random, threading, subprocess, queue
+import os, sys, json, time, uuid, csv, random, threading, subprocess
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -28,7 +28,7 @@ os.makedirs(SANDBOX_DIR, exist_ok=True)
 try:
     from config import DEFAULT_CONFIG, DEFAULT_ADMIN_PASSWORD
 except Exception:
-    DEFAULT_ADMIN_PASSWORD = "password"
+    DEFAULT_ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "password")
     DEFAULT_CONFIG = {
         "notes_html": "<h2>Welcome</h2><p>Edit me in Admin.</p>",
         "lesson_url": "https://publish.obsidian.md/mrgodwinsclassroom/Coding/Coding+1/2.+Python+Basics/1.+What+Is+Python",
@@ -68,8 +68,9 @@ def _load_config() -> Dict[str, Any]:
         if PERSIST_FILE.exists():
             try:
                 return json.loads(PERSIST_FILE.read_text(encoding="utf-8"))
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Warning: Failed to load config from {PERSIST_FILE}: {e}")
+                print("Creating default config...")
         _save_config(DEFAULT_CONFIG)
         return DEFAULT_CONFIG.copy()
 
@@ -86,6 +87,7 @@ def _update_config(partial: Dict[str, Any]) -> Dict[str, Any]:
     return cfg
 
 CONFIG = _load_config()
+print(f"Configuration loaded successfully with {len(CONFIG)} settings")
 
 def _require_admin(req) -> bool:
     token = req.headers.get("X-Admin-Token", "").strip()
@@ -179,7 +181,10 @@ def _read_challenges() -> list[dict]:
 @app.post("/api/challenge/random")
 def challenge_random():
     data = request.get_json(silent=True) or {}
-    target = int(data.get("difficulty", 1))
+    try:
+        target = int(data.get("difficulty", 1))
+    except (ValueError, TypeError):
+        target = 1
     all_rows = _read_challenges()
     if not all_rows:
         return jsonify(ok=False, error="No challenges.csv found or it is empty")
