@@ -189,7 +189,7 @@
 
         <!-- Tabs -->
         <section class="panel" id="rightStackPanel" style="grid-row:3 / 4; grid-column:1;">
-          <header><h3>Notes, Lesson & AI</h3></header>
+          <header><h3>Notes, Wiki & AI</h3></header>
 
           <div class="notes-toolbar">
             <button class="btn secondary" id="notesEditBtn">Edit Notes</button>
@@ -197,12 +197,12 @@
           </div>
 
           <div class="lesson-toolbar">
-            <input class="btn secondary" style="padding:8px; background:#1a1a1a; border:1px solid #333; width:40%;" id="lessonUrlInput" placeholder="Lesson URL"/>
+            <input class="btn secondary" style="padding:8px; background:#1a1a1a; border:1px solid #333; width:40%;" id="lessonUrlInput" placeholder="Wiki URL"/>
             <label class="btn secondary" style="gap:8px;">
-              <input type="checkbox" id="lessonUseLocal" style="accent-color:#c62828"> Use local lesson content
+              <input type="checkbox" id="lessonUseLocal" style="accent-color:#c62828"> Use local wiki content
             </label>
-            <button class="btn secondary" id="lessonEditBtn">Edit Lesson Content</button>
-            <button class="btn run" id="lessonSaveBtn">Save Lesson</button>
+            <button class="btn secondary" id="lessonEditBtn">Edit Wiki Content</button>
+            <button class="btn run" id="lessonSaveBtn">Save Wiki</button>
           </div>
 
           <div class="ai-toolbar">
@@ -217,7 +217,7 @@
 
           <div class="tabs">
             <button class="tab-btn active" data-tab="notesTab" id="notesTabBtn">Notes</button>
-            <button class="tab-btn" data-tab="lessonTab" id="lessonTabBtn">Lesson</button>
+            <button class="tab-btn" data-tab="lessonTab" id="lessonTabBtn">Wiki</button>
             <button class="tab-btn" data-tab="aiTab" id="aiTabBtn" style="display:none;">AI Explain</button>
             <button class="tab-btn" data-tab="aiChallengeTab" id="aiChallengeTabBtn" style="display:none;">Challenge</button>
             <button class="tab-btn" data-tab="assistantTab" id="assistantTabBtn" style="display:none;">AI Assistant</button>
@@ -227,6 +227,7 @@
             <!-- Notes -->
             <div class="tab-pane active" id="notesTab">
               <div id="notesView" contenteditable="false"></div>
+              <textarea id="notesEdit" style="display:none; width:100%; height:100%; padding:12px; background:#1a1a1a; color:#fff; border:none; font-family:monospace;"></textarea>
             </div>
 
             <!-- Lesson -->
@@ -432,11 +433,22 @@ for i in range(3):
       if (!s) return;
       if (s.includes(INPUT_TOKEN)) {
         s = s.split(INPUT_TOKEN).join('');
-        try { stdinEl.focus(); } catch {}
+        appendOut(s);
+        // Immediately focus the input field
+        setTimeout(() => {
+          try { 
+            stdinEl.focus(); 
+            stdinEl.select(); // Select any existing text
+          } catch {}
+        }, 50); // Small delay to ensure rendering
       } else if (/[?:] ?$/.test(s) && !s.includes('\n')) {
-        try { stdinEl.focus(); } catch {}
+        appendOut(s);
+        setTimeout(() => {
+          try { stdinEl.focus(); } catch {}
+        }, 50);
+      } else {
+        appendOut(s);
       }
-      appendOut(s);
     });
     socket.on('finished', () => appendOut('[Process finished]\n'));
 
@@ -542,11 +554,28 @@ for i in range(3):
     }
 
     // Notes/Lesson controls (admin)
-    document.getElementById('notesEditBtn').addEventListener('click', () => setEditable(true));
+    document.getElementById('notesEditBtn').addEventListener('click', () => {
+      const notesView = document.getElementById('notesView');
+      const notesEdit = document.getElementById('notesEdit');
+      // Get current content as text (for Markdown editing)
+      notesEdit.value = notesView.textContent || '';
+      notesView.style.display = 'none';
+      notesEdit.style.display = 'block';
+      notesEdit.focus();
+    });
     document.getElementById('notesSaveBtn').addEventListener('click', async () => {
       if (!ADMIN_TOKEN) return alert('Enter Admin Mode first.');
-      const notes_html = document.getElementById('notesView').innerHTML;
-      await saveConfig({notes_html}); setEditable(false);
+      const notesEdit = document.getElementById('notesEdit');
+      const notesView = document.getElementById('notesView');
+      
+      const markdown = notesEdit.value;
+      const html = DOMPurify.sanitize(marked.parse(markdown));
+      
+      await saveConfig({notes_html: html}); 
+      
+      notesView.innerHTML = html;
+      notesEdit.style.display = 'none';
+      notesView.style.display = 'block';
     });
     document.getElementById('lessonEditBtn').addEventListener('click', () => setEditable(true));
     document.getElementById('lessonSaveBtn').addEventListener('click', async () => {
@@ -889,18 +918,23 @@ for i in range(3):
     }
 
     function ensureAssistantSystemMessage(){
-      // Build a strict coding-only system message; default to Python; brief answers; Markdown output.
       const base = (currentConfig?.ai_assistant_preprompt || '').trim();
       const policy =
         `${base ? base + '\n\n' : ''}` +
-        `ROLE: You are a strict CODING-ONLY assistant for students.\n` +
-        `SCOPE: Programming questions only (default to Python). If asked anything non-coding, reply exactly: "I can only help with coding questions."\n` +
-        `STYLE: Keep answers brief and focused. Use Markdown. Always format code with fenced blocks and a language label; default to \`\`\`python.\n` +
-        `SAFETY: Do not give non-coding advice.`;
+        `ROLE: You are a strict CODING TUTOR for students learning to code.\n` +
+        `SCOPE: Programming questions only (default to Python). If asked anything non-coding, reply: "I can only help with coding questions."\n` +
+        `ASSISTANCE POLICY:\n` +
+        `- You may explain concepts, syntax, and debugging techniques\n` +
+        `- You may point out errors and guide students to fix them\n` +
+        `- You MUST NOT write complete solutions to coding problems/assignments\n` +
+        `- If asked to "write code for" or "solve this problem", respond: "I can help you understand how to solve this, but I can't write the solution for you. What part are you stuck on?"\n` +
+        `- Instead of giving answers, ask guiding questions\n` +
+        `STYLE: Keep answers brief and focused. Use Markdown. Format code snippets with fenced blocks (default to \`\`\`python).\n` +
+        `SAFETY: Do not give non-coding advice. Do not do students' assignments.`;
       if (!assistantMsgs.length || assistantMsgs[0].role !== 'system'){
         assistantMsgs.unshift({ role:'system', content: policy });
       } else {
-        assistantMsgs[0].content = policy; // keep in sync with admin edits
+        assistantMsgs[0].content = policy;
       }
     }
 
