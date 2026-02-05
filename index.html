@@ -60,7 +60,7 @@
     .panel{ background:var(--bg-dark); border:1px solid #333; border-radius:14px; overflow:hidden; display:flex; flex-direction:column; min-height:0; }
     .panel header{ background:#121212; color:var(--columbia-blue); padding:8px 12px; border-bottom:1px solid #2b2b2b; display:flex; align-items:center; justify-content:space-between }
     .panel header h3{ margin:0; font-size:14px; color:var(--columbia-blue) }
-    .panel .content{ flex:1; min-height:0; overflow:hidden; }
+    .panel .content{ flex:1; min-height:0; overflow:auto; }
     #rightStackPanel .content{ overflow:auto; }
 
     .CodeMirror{ height:100%; background:var(--bg-dark); color:var(--text-light); font-size: var(--cm-font-size); line-height:1.4 }
@@ -127,6 +127,11 @@
 
     input[type=file]{ display:none }
 
+    /* Sidebar collapse styles */
+    body.right-collapsed #rightColumn { display: none !important; }
+    body.right-collapsed #hsplitter { display: none !important; }
+    body.right-collapsed .outer { grid-template-columns: 1fr !important; }
+
     @media (max-width:1000px){
       .outer{ grid-template-columns: 1fr; grid-template-rows: auto auto auto; }
       .hsplitter{ display:none }
@@ -152,6 +157,7 @@
       </div>
 
       <button class="btn secondary" id="guidesBtn" title="Show/Hide indent guides">Guides: On</button>
+      <button class="btn secondary" id="toggleSidebarBtn" title="Toggle right sidebar">Hide Sidebar ◀</button>
       <button class="btn admin" id="adminBtn" title="Enter Admin Mode">Admin</button>
     </div>
   </header>
@@ -385,7 +391,7 @@ for i in range(3):
           btn.textContent = 'Copy';
           btn.addEventListener('click', async () => {
             try{
-              await navigator.clipboard.writeText(code.innerText);
+              await navigator.clipboard.writeText(code.textContent);
               const old = btn.textContent; btn.textContent = 'Copied!';
               setTimeout(()=> btn.textContent = old, 1200);
             }catch(e){
@@ -435,6 +441,11 @@ for i in range(3):
     socket.on('finished', () => appendOut('[Process finished]\n'));
 
     document.getElementById('runBtn').addEventListener('click', () => {
+      // Auto-expand sidebar to show output
+      const collapsed = document.body.classList.contains('right-collapsed');
+      if (collapsed) {
+        document.getElementById('toggleSidebarBtn').click();
+      }
       outputEl.textContent = '';
       appendOut('[Sending code]\n');
       socket.emit('run_code', { code: editor.getValue() });
@@ -819,6 +830,21 @@ for i in range(3):
       try { const saved = localStorage.getItem(key); if (saved !== null) on = saved === '1'; } catch {}
       function apply(){ document.body.classList.toggle('guides-off', !on); btn.textContent = `Guides: ${on ? 'On' : 'Off'}`; try { localStorage.setItem(key, on ? '1' : '0'); } catch {} }
       apply(); btn.addEventListener('click', () => { on = !on; apply(); });
+    })();
+
+    // Sidebar collapse/expand toggle
+    (function(){
+      const key = 'ide-sidebar-collapsed';
+      const btn = document.getElementById('toggleSidebarBtn');
+      let collapsed = false;
+      try { const saved = localStorage.getItem(key); if (saved !== null) collapsed = saved === '1'; } catch {}
+      function apply(){ 
+        document.body.classList.toggle('right-collapsed', collapsed); 
+        btn.textContent = collapsed ? 'Show Sidebar ▶' : 'Hide Sidebar ◀';
+        try { localStorage.setItem(key, collapsed ? '1' : '0'); } catch {} 
+      }
+      apply(); 
+      btn.addEventListener('click', () => { collapsed = !collapsed; apply(); });
     })();
 
     // --- AI Assistant chat (15s cooldown) ---
