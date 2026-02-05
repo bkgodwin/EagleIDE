@@ -71,8 +71,9 @@ def _load_config() -> Dict[str, Any]:
             except Exception as e:
                 print(f"Warning: Failed to load config from {PERSIST_FILE}: {e}")
                 print("Creating default config...")
-        _save_config(DEFAULT_CONFIG)
-        return DEFAULT_CONFIG.copy()
+    # Call _save_config OUTSIDE the lock context
+    _save_config(DEFAULT_CONFIG)
+    return DEFAULT_CONFIG.copy()
 
 def _save_config(new_cfg: Dict[str, Any]) -> None:
     with _cfg_lock:
@@ -507,3 +508,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8000"))
     print("Server initialized for threading.")
     socketio.run(app, host=host, port=port, debug=False, allow_unsafe_werkzeug=True)
+
