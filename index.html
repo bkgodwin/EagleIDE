@@ -190,7 +190,7 @@
   <div class="outer" id="outer">
     <!-- Left: Editor -->
     <section class="panel" id="editorPanel" style="grid-column:1 / 2; grid-row:1 / 2;">
-      <header><h3>Editor</h3></header>
+      <header aria-label="Code editor with Python syntax highlighting"><h3>Editor</h3></header>
       <div class="content"><textarea id="editor"></textarea></div>
     </section>
 
@@ -613,10 +613,11 @@
       cmInst.on('keydown', (cm, ev) => {
         if (!completionActive || suggestionList.length === 0) return;
         
+        const items = document.querySelectorAll('.completion-item');
+        
         if (ev.key === 'ArrowDown') {
           ev.preventDefault();
           activeSuggIdx = (activeSuggIdx + 1) % suggestionList.length;
-          const items = document.querySelectorAll('.completion-item');
           items.forEach((el, i) => {
             el.classList.toggle('selected', i === activeSuggIdx);
           });
@@ -624,7 +625,6 @@
         } else if (ev.key === 'ArrowUp') {
           ev.preventDefault();
           activeSuggIdx = (activeSuggIdx - 1 + suggestionList.length) % suggestionList.length;
-          const items = document.querySelectorAll('.completion-item');
           items.forEach((el, i) => {
             el.classList.toggle('selected', i === activeSuggIdx);
           });
@@ -728,10 +728,11 @@ for i in range(3):
     let currentConfig = null;
     let mySid = null;
 
+    const SYSTEM_MESSAGE_PATTERN = /^\[.*?\]/;
     const outputEl = document.getElementById('output');
     const stdinEl = document.getElementById('stdin');
     const appendOut = s => { 
-      const isSysMsg = /^\[.*?\]/.test(s);
+      const isSysMsg = SYSTEM_MESSAGE_PATTERN.test(s);
       if (isSysMsg) {
         const msgSpan = document.createElement('span');
         msgSpan.className = 'sys-msg';
