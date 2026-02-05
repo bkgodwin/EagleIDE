@@ -378,9 +378,7 @@ def _ide_input(prompt=""):
     sys.stdout.write("{INPUT_TOKEN}\\n")
     sys.stdout.flush()
     line = sys.stdin.readline()
-    if line.endswith("\\n"):
-        line = line[:-1]
-    return line
+    return line.rstrip("\\n")
 
 builtins.input = _ide_input
 
