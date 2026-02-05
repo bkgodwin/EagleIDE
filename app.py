@@ -366,6 +366,9 @@ class Runner:
         runner_py.write_text(code, encoding="utf-8")
 
         # Create wrapper script that intercepts input() to send INPUT_TOKEN
+        # Escape backslashes in the path for Windows compatibility
+        runner_py_escaped = str(runner_py).replace("\\", "\\\\")
+        
         wrapper_code = f'''import sys
 import builtins
 
@@ -381,7 +384,7 @@ def _ide_input(prompt=""):
 builtins.input = _ide_input
 
 # Execute user code
-exec(open(r"{str(runner_py).replace(chr(92), chr(92)+chr(92))}", "r", encoding="utf-8").read(), {{}})
+exec(open(r"{runner_py_escaped}", "r", encoding="utf-8").read(), {{}})
 '''
 
         self.proc = subprocess.Popen(
