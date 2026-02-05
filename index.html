@@ -129,7 +129,18 @@
     input[type=file]{ display:none }
 
     /* Custom completion widget styles */
-    .eagle-completions{ position:absolute; z-index:9999; background:#252526; border:1px solid #454545; border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.5); max-height:320px; overflow-y:auto; font-family:Consolas,Monaco,monospace; font-size:13px; }
+    .eagle-completions{ 
+      position:absolute; 
+      z-index:9999; 
+      background:#252526; 
+      border:1px solid #454545; 
+      border-radius:6px; 
+      box-shadow:0 4px 12px rgba(0,0,0,0.5); 
+      max-height:320px; 
+      overflow-y:auto; 
+      font-family:Consolas,Monaco,monospace; 
+      font-size:13px; 
+    }
     .eagle-completions.hidden{ display:none; }
     .completion-item{ padding:4px 12px; cursor:pointer; display:flex; align-items:center; gap:8px; color:#cccccc; }
     .completion-item:hover, .completion-item.selected{ background:#094771; }
@@ -498,6 +509,7 @@
         activeSuggIdx = 0;
         suggestionBox.innerHTML = '';
         
+        const allItems = [];
         suggestions.forEach((sugg, idx) => {
           const itemEl = document.createElement('div');
           itemEl.className = 'completion-item' + (idx === 0 ? ' selected' : '');
@@ -515,11 +527,12 @@
           
           itemEl.addEventListener('click', () => applySuggestion(sugg));
           itemEl.addEventListener('mouseenter', () => {
-            document.querySelectorAll('.completion-item').forEach(el => el.classList.remove('selected'));
+            allItems.forEach(el => el.classList.remove('selected'));
             itemEl.classList.add('selected');
             activeSuggIdx = idx;
           });
           
+          allItems.push(itemEl);
           suggestionBox.appendChild(itemEl);
         });
         
