@@ -129,7 +129,7 @@
     input[type=file]{ display:none }
 
     /* Custom completion widget styles */
-    .eagle-completions{ position:absolute; z-index:9999; background:#252526; border:1px solid#454545; border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.5); max-height:320px; overflow-y:auto; font-family:Consolas,Monaco,monospace; font-size:13px; }
+    .eagle-completions{ position:absolute; z-index:9999; background:#252526; border:1px solid #454545; border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.5); max-height:320px; overflow-y:auto; font-family:Consolas,Monaco,monospace; font-size:13px; }
     .eagle-completions.hidden{ display:none; }
     .completion-item{ padding:4px 12px; cursor:pointer; display:flex; align-items:center; gap:8px; color:#cccccc; }
     .completion-item:hover, .completion-item.selected{ background:#094771; }
@@ -369,6 +369,7 @@
       if (!window.eagleEditor) return;
       
       const cmInst = window.eagleEditor;
+      const COMPLETION_DEBOUNCE_MS = 50;
       let suggestionBox = null;
       let activeSuggIdx = 0;
       let suggestionList = [];
@@ -573,13 +574,13 @@
         
         // Match partial identifier or attribute access
         const tokenMatch = beforeCursor.match(/([a-zA-Z_]\w*\.)?([a-zA-Z_]\w*)$/);
-        if (!tokenMatch || tokenMatch[0].length === 0) {
+        if (!tokenMatch || !tokenMatch[0]) {
           hideSuggestions();
           return;
         }
         
         const partialToken = tokenMatch[2] || '';
-        if (partialToken.length < 1 && !tokenMatch[1]) {
+        if (!partialToken && !tokenMatch[1]) {
           hideSuggestions();
           return;
         }
@@ -602,17 +603,19 @@
         if (ev.key === 'ArrowDown') {
           ev.preventDefault();
           activeSuggIdx = (activeSuggIdx + 1) % suggestionList.length;
-          document.querySelectorAll('.completion-item').forEach((el, i) => {
+          const items = document.querySelectorAll('.completion-item');
+          items.forEach((el, i) => {
             el.classList.toggle('selected', i === activeSuggIdx);
           });
-          document.querySelectorAll('.completion-item')[activeSuggIdx]?.scrollIntoView({ block: 'nearest' });
+          items[activeSuggIdx]?.scrollIntoView({ block: 'nearest' });
         } else if (ev.key === 'ArrowUp') {
           ev.preventDefault();
           activeSuggIdx = (activeSuggIdx - 1 + suggestionList.length) % suggestionList.length;
-          document.querySelectorAll('.completion-item').forEach((el, i) => {
+          const items = document.querySelectorAll('.completion-item');
+          items.forEach((el, i) => {
             el.classList.toggle('selected', i === activeSuggIdx);
           });
-          document.querySelectorAll('.completion-item')[activeSuggIdx]?.scrollIntoView({ block: 'nearest' });
+          items[activeSuggIdx]?.scrollIntoView({ block: 'nearest' });
         } else if (ev.key === 'Enter') {
           if (suggestionList.length > 0) {
             ev.preventDefault();
@@ -626,7 +629,7 @@
       
       // Trigger on input
       cmInst.on('inputRead', () => {
-        setTimeout(checkCompletion, 50);
+        setTimeout(checkCompletion, COMPLETION_DEBOUNCE_MS);
       });
       
       // Hide on click outside
@@ -715,7 +718,7 @@ for i in range(3):
     const outputEl = document.getElementById('output');
     const stdinEl = document.getElementById('stdin');
     const appendOut = s => { 
-      const isSysMsg = /^\[(Process|Run|Stopped|Connected|Socket|Sending)\s/.test(s) || s.includes('Process killed');
+      const isSysMsg = /^\[.*?\]/.test(s);
       if (isSysMsg) {
         const msgSpan = document.createElement('span');
         msgSpan.className = 'sys-msg';
