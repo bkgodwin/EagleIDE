@@ -372,14 +372,13 @@ class Runner:
         wrapper_code = f'''import sys
 import builtins
 
-_original_input = builtins.input
-
 def _ide_input(prompt=""):
     if prompt:
         sys.stdout.write(str(prompt))
-    sys.stdout.write("{INPUT_TOKEN}")
+    sys.stdout.write("{INPUT_TOKEN}\\n")
     sys.stdout.flush()
-    return _original_input()
+    line = sys.stdin.readline()
+    return line.rstrip("\\n")
 
 builtins.input = _ide_input
 
