@@ -557,8 +557,8 @@ for i in range(3):
     document.getElementById('notesEditBtn').addEventListener('click', () => {
       const notesView = document.getElementById('notesView');
       const notesEdit = document.getElementById('notesEdit');
-      // Get current content as text (for Markdown editing)
-      notesEdit.value = notesView.textContent || '';
+      // Get current Markdown from config or fallback to text content
+      notesEdit.value = currentConfig?.notes_markdown || notesView.textContent || '';
       notesView.style.display = 'none';
       notesEdit.style.display = 'block';
       notesEdit.focus();
@@ -571,7 +571,8 @@ for i in range(3):
       const markdown = notesEdit.value;
       const html = DOMPurify.sanitize(marked.parse(markdown));
       
-      await saveConfig({notes_html: html}); 
+      // Save both Markdown source and rendered HTML
+      await saveConfig({notes_markdown: markdown, notes_html: html}); 
       
       notesView.innerHTML = html;
       notesEdit.style.display = 'none';
