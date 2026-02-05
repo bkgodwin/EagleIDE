@@ -1,0 +1,105 @@
+difficulty,points,text
+1,10,Print "Hello, World!" to the screen.
+1,10,Ask the user for their name and greet them.
+1,10,Display the sum of two numbers entered by the user.
+1,10,Use a loop to print the numbers 1 through 10.
+1,10,Check if a number entered by the user is even or odd.
+1,10,Ask for a user's age and print what year they were born.
+1,10,Print your favorite quote three times.
+1,10,Calculate the area of a rectangle from width and height.
+1,10,Ask the user for two numbers and display which is larger.
+1,10,Display the first 12 multiples of 5.
+1,10,Create a program that prints a simple text-based triangle.
+1,10,Ask the user for a temperature in Celsius and convert to Fahrenheit.
+1,10,Print every letter of your name on a new line.
+1,10,Display the square of every number from 1 to 10.
+1,10,Ask for a number and print its absolute value.
+1,10,Display the remainder when dividing two numbers.
+1,10,Print a message in all uppercase letters.
+1,10,Ask the user to input a word and print its length.
+1,10,Show the result of 5 + 3 * 2 using correct order of operations.
+1,10,Ask for a user's name and print it reversed.
+
+2,20,Create a simple calculator that adds, subtracts, multiplies, and divides.
+2,20,Write a program that determines if a year is a leap year.
+2,20,Ask for a password and check if it matches a preset string.
+2,20,Use a loop to calculate the factorial of a number.
+2,20,Print all even numbers between 1 and 100.
+2,20,Ask the user for a grade and print the corresponding letter grade.
+2,20,Ask for three numbers and print the average.
+2,20,Check if a number is positive, negative, or zero.
+2,20,Display all numbers divisible by 3 between 1 and 50.
+2,20,Ask the user for their favorite color and print a compliment using it.
+2,20,Print the multiplication table for a number entered by the user.
+2,20,Ask for a username and password; print “Access Granted” only if both match.
+2,20,Use a loop to print the Fibonacci sequence up to 100.
+2,20,Ask the user for a sentence and count how many words it has.
+2,20,Display the smallest of three numbers entered by the user.
+2,20,Check whether a given character is a vowel or consonant.
+2,20,Print the numbers 10 down to 1 in reverse order.
+2,20,Ask for a number and print whether it is prime.
+2,20,Ask for a month number (1-12) and print its name.
+2,20,Ask for a string and print it in title case.
+
+3,30,Write a function that returns the maximum of three numbers.
+3,30,Create a list of names and print them in alphabetical order.
+3,30,Write a program that counts how many vowels are in a string.
+3,30,Use a for loop to find all prime numbers from 1 to 100.
+3,30,Simulate rolling two dice and display their sum.
+3,30,Ask for 5 numbers, store them in a list, and print the average.
+3,30,Write a function that determines if a word is a palindrome.
+3,30,Generate 10 random numbers and display the largest.
+3,30,Read a string and remove all spaces.
+3,30,Print a simple histogram using “*” symbols for given numbers.
+3,30,Write a program that replaces all vowels in a string with “*”.
+3,30,Create a list of 10 random integers and print only the even ones.
+3,30,Make a list of your favorite foods and print them as a numbered menu.
+3,30,Write a function that returns the factorial of a number.
+3,30,Simulate flipping a coin 100 times and count heads vs tails.
+3,30,Ask the user for a sentence and print each word on a separate line.
+3,30,Count how many times the letter “e” appears in a text.
+3,30,Write a program that joins a list of words into one string separated by commas.
+3,30,Write a program that shuffles the letters of a word randomly.
+3,30,Ask the user to enter 5 numbers and print the second largest.
+
+4,40,Read a text file and count how many lines it contains.
+4,40,Write a function that reverses a string without using slicing.
+4,40,Create a dictionary that maps student names to grades and print averages.
+4,40,Build a simple text-based menu system with multiple options.
+4,40,Simulate a basic ATM system with deposits, withdrawals, and balance checking.
+4,40,Read a list of words from a file and print those longer than 5 letters.
+4,40,Ask the user to input 10 numbers and save them to a file.
+4,40,Create a quiz that asks 5 questions and grades the user.
+4,40,Write a program that checks if a string is a valid email address format.
+4,40,Read a CSV file of names and print them sorted alphabetically.
+4,40,Build a simple shopping cart program that totals the cost of selected items.
+4,40,Simulate a dice game where two players compete for the highest roll.
+4,40,Write a function that converts a list into a dictionary of indices.
+4,40,Ask for a string and print a frequency count of each letter.
+4,40,Create a password generator using random letters and digits.
+4,40,Simulate a basic login system that limits attempts to 3.
+4,40,Generate 10 random integers and save them to a file.
+4,40,Read two lists and print all elements that appear in both.
+4,40,Create a program that compresses repeated characters (e.g., aaabb → a3b2).
+4,40,Write a program that simulates rolling two dice until doubles are rolled.
+
+5,50,Write a program that reads a list of numbers from a file and sorts them.
+5,50,Create a text-based guessing game with random numbers.
+5,50,Build a small contact book that saves entries to a CSV file.
+5,50,Implement a word frequency counter that ignores case and punctuation.
+5,50,Develop a simple to-do list manager that saves and loads from a file.
+5,50,Write a hangman-style word guessing game.
+5,50,Simulate a rock-paper-scissors tournament between two players.
+5,50,Create a basic text-based adventure game with multiple paths.
+5,50,Write a program that encrypts and decrypts text using a simple cipher.
+5,50,Implement a program that checks for duplicate entries in a CSV file.
+5,50,Create a basic expense tracker that totals daily costs from user input.
+5,50,Write a program that simulates bank account transactions over time.
+5,50,Build a quiz game that reads questions and answers from a file.
+5,50,Create a student grade tracker that averages multiple subjects per student.
+5,50,Write a file merger that combines several text files into one.
+5,50,Build a task timer that measures how long it takes to finish activities.
+5,50,Create a flashcard quiz system using JSON for storage.
+5,50,Write a sorting visualizer using ASCII bars.
+5,50,Simulate a simple chatbot that responds to greetings and farewells.
+5,50,Build a random password manager that saves credentials locally.
