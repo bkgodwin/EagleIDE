@@ -979,11 +979,37 @@ for i in range(3):
     }
 
     // Shell toggle button - moved before Socket.IO to ensure it always works
-    document.getElementById('toggleShellBtn').addEventListener('click', () => {
+    (function() {
       const btn = document.getElementById('toggleShellBtn');
-      const isHidden = document.body.classList.toggle('shell-hidden');
-      btn.textContent = isHidden ? 'Show Shell ▲' : 'Hide Shell ▼';
-    });
+      const SHELL_TOGGLE_KEY = 'eagleide-shell-hidden';
+      
+      // Restore saved toggle state on page load
+      try {
+        const savedState = localStorage.getItem(SHELL_TOGGLE_KEY);
+        if (savedState === '1') {
+          document.body.classList.add('shell-hidden');
+          btn.textContent = 'Show Shell ▲';
+        }
+      } catch (e) {
+        console.warn('Failed to restore shell toggle state:', e);
+      }
+      
+      // Handle toggle button clicks
+      btn.addEventListener('click', () => {
+        const isHidden = document.body.classList.toggle('shell-hidden');
+        btn.textContent = isHidden ? 'Show Shell ▲' : 'Hide Shell ▼';
+        
+        // Save state to localStorage
+        try {
+          localStorage.setItem(SHELL_TOGGLE_KEY, isHidden ? '1' : '0');
+        } catch (e) {
+          console.warn('Failed to save shell toggle state:', e);
+        }
+        
+        // Force layout recalculation to ensure proper rendering
+        document.body.offsetHeight;
+      });
+    })();
 
     // Initialize Socket.IO only if available
     let socket = null;
@@ -1001,16 +1027,19 @@ for i in range(3):
           let s = msg.data || '';
           if (!s) return;
           if (s.includes(INPUT_TOKEN)) {
-            // Remove INPUT_TOKEN but don't append anything - user input will appear on same line
-            s = s.split(INPUT_TOKEN).join('');
-            if (s) appendOut(s); // Only append if there's content besides the token
-            // Immediately focus the input field
-            setTimeout(() => {
-              try { 
-                stdinEl.focus(); 
-                stdinEl.select(); // Select any existing text
-              } catch {}
-            }, 50); // Small delay to ensure rendering
+            // Split on INPUT_TOKEN to handle prompt text properly
+            const parts = s.split(INPUT_TOKEN);
+            // Append the prompt part (before token)
+            if (parts[0]) appendOut(parts[0]);
+            // Append any text after token (usually empty)
+            if (parts[1]) appendOut(parts[1]);
+            // Focus input field immediately - no setTimeout delay
+            try { 
+              stdinEl.focus(); 
+              stdinEl.select(); // Select any existing text
+            } catch (e) {
+              console.warn('Failed to focus stdin:', e);
+            }
           } else if (/[?:] ?$/.test(s) && !s.includes('\n')) {
             appendOut(s);
             setTimeout(() => {
