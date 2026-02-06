@@ -1005,9 +1005,6 @@ for i in range(3):
         } catch (e) {
           console.warn('Failed to save shell toggle state:', e);
         }
-        
-        // Force reflow to ensure CSS changes are applied immediately
-        document.body.offsetHeight;
       });
     })();
 
@@ -1027,12 +1024,9 @@ for i in range(3):
           let s = msg.data || '';
           if (!s) return;
           if (s.includes(INPUT_TOKEN)) {
-            // Split on INPUT_TOKEN to handle prompt text properly
-            const parts = s.split(INPUT_TOKEN);
-            // Append all parts (handles multiple tokens if they occur)
-            for (let i = 0; i < parts.length; i++) {
-              if (parts[i]) appendOut(parts[i]);
-            }
+            // Remove INPUT_TOKEN(s) and display the prompt text
+            s = s.split(INPUT_TOKEN).join('');
+            if (s) appendOut(s);
             // Focus input field immediately - no setTimeout delay
             try { 
               stdinEl.focus(); 
