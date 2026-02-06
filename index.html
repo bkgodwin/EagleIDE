@@ -1006,7 +1006,7 @@ for i in range(3):
           console.warn('Failed to save shell toggle state:', e);
         }
         
-        // Force layout recalculation to ensure proper rendering
+        // Force reflow to ensure CSS changes are applied immediately
         document.body.offsetHeight;
       });
     })();
@@ -1029,10 +1029,10 @@ for i in range(3):
           if (s.includes(INPUT_TOKEN)) {
             // Split on INPUT_TOKEN to handle prompt text properly
             const parts = s.split(INPUT_TOKEN);
-            // Append the prompt part (before token)
-            if (parts[0]) appendOut(parts[0]);
-            // Append any text after token (usually empty)
-            if (parts[1]) appendOut(parts[1]);
+            // Append all parts (handles multiple tokens if they occur)
+            for (let i = 0; i < parts.length; i++) {
+              if (parts[i]) appendOut(parts[i]);
+            }
             // Focus input field immediately - no setTimeout delay
             try { 
               stdinEl.focus(); 
