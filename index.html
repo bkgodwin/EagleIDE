@@ -218,6 +218,7 @@
     body.shell-hidden #shellPanel { display: none !important; }
     body.shell-hidden .vsplitter { display: none !important; }
     body.shell-hidden .rightstack { grid-template-rows: 1fr !important; }
+    body.shell-hidden #rightStackPanel { grid-row: 1 / 2 !important; }
 
     /* Error highlighting in shell */
     .shell-error { color: #ff5555; }
@@ -1086,7 +1087,7 @@ for i in range(3):
         socket.emit('send_input', { data: v }); 
       }
       // Append user input inline (on same line as prompt), then add newline after
-      appendOut(v, true); // Mark as user input, no leading newline
+      appendOut(v, false); // Display as plain text, not highlighted
       appendOut("\n"); // Add newline after user input
       stdinEl.value=''; 
     }
