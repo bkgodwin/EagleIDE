@@ -384,7 +384,9 @@ def _ide_input(prompt=""):
         sys.stdout.flush()
     sys.stdout.write("{INPUT_TOKEN}")
     sys.stdout.flush()
+    # Read without echoing - frontend already displays user input
     line = sys.stdin.readline()
+    # Don't write the input back to stdout to avoid double display
     return line.rstrip("\\n")
 
 builtins.input = _ide_input
