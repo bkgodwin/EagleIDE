@@ -978,38 +978,56 @@ for i in range(3):
       document.getElementById('clearErrorsBtn').style.display = 'none';
     }
 
-    const socket = io({ transports: ["polling"], upgrade: false, timeout: 20000 });
-    socket.on('connected', (m) => {
-      mySid = m?.sid || null;
-      window.mySid = mySid;
-      appendOut('[Connected]\n');
+    // Shell toggle button - moved before Socket.IO to ensure it always works
+    document.getElementById('toggleShellBtn').addEventListener('click', () => {
+      const btn = document.getElementById('toggleShellBtn');
+      const isHidden = document.body.classList.toggle('shell-hidden');
+      btn.textContent = isHidden ? 'Show Shell ▲' : 'Hide Shell ▼';
     });
-    socket.on('connect_error', err => appendOut('[Socket error] ' + (err?.message || err) + '\n'));
-    socket.on('run_ack', () => appendOut('[Run acknowledged]\n'));
-    socket.on('output', msg => {
-      let s = msg.data || '';
-      if (!s) return;
-      if (s.includes(INPUT_TOKEN)) {
-        // Remove INPUT_TOKEN but don't append anything - user input will appear on same line
-        s = s.split(INPUT_TOKEN).join('');
-        if (s) appendOut(s); // Only append if there's content besides the token
-        // Immediately focus the input field
-        setTimeout(() => {
-          try { 
-            stdinEl.focus(); 
-            stdinEl.select(); // Select any existing text
-          } catch {}
-        }, 50); // Small delay to ensure rendering
-      } else if (/[?:] ?$/.test(s) && !s.includes('\n')) {
-        appendOut(s);
-        setTimeout(() => {
-          try { stdinEl.focus(); } catch {}
-        }, 50);
-      } else {
-        appendOut(s);
+
+    // Initialize Socket.IO only if available
+    let socket = null;
+    if (typeof io !== 'undefined') {
+      try {
+        socket = io({ transports: ["polling"], upgrade: false, timeout: 20000 });
+        socket.on('connected', (m) => {
+          mySid = m?.sid || null;
+          window.mySid = mySid;
+          appendOut('[Connected]\n');
+        });
+        socket.on('connect_error', err => appendOut('[Socket error] ' + (err?.message || err) + '\n'));
+        socket.on('run_ack', () => appendOut('[Run acknowledged]\n'));
+        socket.on('output', msg => {
+          let s = msg.data || '';
+          if (!s) return;
+          if (s.includes(INPUT_TOKEN)) {
+            // Remove INPUT_TOKEN but don't append anything - user input will appear on same line
+            s = s.split(INPUT_TOKEN).join('');
+            if (s) appendOut(s); // Only append if there's content besides the token
+            // Immediately focus the input field
+            setTimeout(() => {
+              try { 
+                stdinEl.focus(); 
+                stdinEl.select(); // Select any existing text
+              } catch {}
+            }, 50); // Small delay to ensure rendering
+          } else if (/[?:] ?$/.test(s) && !s.includes('\n')) {
+            appendOut(s);
+            setTimeout(() => {
+              try { stdinEl.focus(); } catch {}
+            }, 50);
+          } else {
+            appendOut(s);
+          }
+        });
+        socket.on('finished', () => appendOut('[Process finished]\n'));
+      } catch (e) {
+        console.error('Socket.IO initialization failed:', e);
+        appendOut('[Socket.IO unavailable - IDE functionality limited]\n');
       }
-    });
-    socket.on('finished', () => appendOut('[Process finished]\n'));
+    } else {
+      appendOut('[Socket.IO library not loaded - IDE functionality limited]\n');
+    }
 
     document.getElementById('runBtn').addEventListener('click', () => {
       // Auto-expand sidebar to show output
@@ -1025,12 +1043,22 @@ for i in range(3):
       outputEl.textContent = '';
       clearErrorHighlights();
       appendOut('[Sending code]\n');
-      socket.emit('run_code', { code: editor.getValue() });
+      if (socket) {
+        socket.emit('run_code', { code: editor.getValue() });
+      } else {
+        appendOut('[Error: Cannot run code - Socket.IO not available]\n');
+      }
     });
-    document.getElementById('stopBtn').addEventListener('click', () => socket.emit('stop', {}));
+    document.getElementById('stopBtn').addEventListener('click', () => {
+      if (socket) {
+        socket.emit('stop', {});
+      }
+    });
     function sendInput(){ 
       const v = stdinEl.value ?? ""; 
-      socket.emit('send_input', { data: v }); 
+      if (socket) {
+        socket.emit('send_input', { data: v }); 
+      }
       // Append user input inline (on same line as prompt), then add newline after
       appendOut(v, true); // Mark as user input, no leading newline
       appendOut("\n"); // Add newline after user input
@@ -1038,13 +1066,6 @@ for i in range(3):
     }
     document.getElementById('sendBtn').addEventListener('click', sendInput);
     stdinEl.addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); sendInput(); } });
-
-    // Shell toggle button
-    document.getElementById('toggleShellBtn').addEventListener('click', () => {
-      const btn = document.getElementById('toggleShellBtn');
-      const isHidden = document.body.classList.toggle('shell-hidden');
-      btn.textContent = isHidden ? 'Show Shell ▲' : 'Hide Shell ▼';
-    });
 
     // Clear error highlights button
     document.getElementById('clearErrorsBtn').addEventListener('click', () => {
