@@ -117,6 +117,26 @@
     .chat-inputbar textarea{ flex:1; resize:vertical; min-height:44px; max-height:160px; background:#1a1a1a; color:#fff; border:1px solid #2b2b2b; border-radius:10px; padding:10px; }
     .cooldown{ opacity:.8; margin-left:8px; }
 
+    /* Assignment styles */
+    .assignment-card{ background:#1a1a1a; border:1px solid #2b2b2b; border-radius:10px; padding:12px; margin-bottom:12px; }
+    .assignment-card h4{ margin:0 0 8px; color:var(--columbia-blue); font-size:16px; }
+    .assignment-card .task{ color:#ddd; margin:8px 0; white-space:pre-wrap; }
+    .assignment-card .meta{ color:#888; font-size:12px; margin-top:8px; }
+    .assignment-actions{ display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+    .submission-item{ background:#0f0f0f; border:1px solid #333; border-radius:8px; padding:10px; margin:8px 0; cursor:pointer; }
+    .submission-item:hover{ background:#1a1a1a; border-color:#444; }
+    .submission-item .name{ color:var(--columbia-blue); font-weight:700; }
+    .submission-item .email{ color:#999; font-size:12px; }
+    .modal{ position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.8); display:flex; align-items:center; justify-content:center; z-index:10000; }
+    .modal-content{ background:var(--bg-dark); border:1px solid #333; border-radius:12px; padding:20px; max-width:500px; width:90%; max-height:90vh; overflow:auto; }
+    .modal-content h3{ margin-top:0; color:var(--columbia-blue); }
+    .modal-content label{ display:block; margin:12px 0 4px; color:#ddd; font-weight:600; }
+    .modal-content input, .modal-content textarea{ width:100%; padding:8px; background:#1a1a1a; color:#fff; border:1px solid #2b2b2b; border-radius:8px; font-family:inherit; }
+    .modal-content textarea{ resize:vertical; min-height:100px; font-family:monospace; }
+    .modal-actions{ display:flex; gap:10px; margin-top:16px; justify-content:flex-end; }
+    .score-input{ display:inline-flex; align-items:center; gap:8px; }
+    .score-input input{ width:80px; }
+
     /* Code block adornments */
     pre{ position:relative }
     .copy-btn{
@@ -243,6 +263,7 @@
           <div class="tabs">
             <button class="tab-btn active" data-tab="notesTab" id="notesTabBtn">Notes</button>
             <button class="tab-btn" data-tab="lessonTab" id="lessonTabBtn">Wiki</button>
+            <button class="tab-btn" data-tab="assignmentTab" id="assignmentTabBtn">Assignment</button>
             <button class="tab-btn" data-tab="aiTab" id="aiTabBtn" style="display:none;">AI Explain</button>
             <button class="tab-btn" data-tab="aiChallengeTab" id="aiChallengeTabBtn" style="display:none;">Challenge</button>
             <button class="tab-btn" data-tab="assistantTab" id="assistantTabBtn" style="display:none;">AI Assistant</button>
@@ -310,6 +331,24 @@
                   <button class="btn run" id="assistantSend">Send</button>
                   <span class="cooldown" id="assistantCooldown"></span>
                 </div>
+              </div>
+            </div>
+
+            <!-- Assignment -->
+            <div class="tab-pane" id="assignmentTab">
+              <!-- Admin view -->
+              <div id="assignmentAdminView" style="display:none; padding:12px;">
+                <div style="display:flex; gap:10px; align-items:center; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid #2b2b2b;">
+                  <button class="btn run" id="newAssignmentBtn">New Assignment</button>
+                  <span id="assignmentStatus" style="opacity:.8;"></span>
+                </div>
+                <div id="assignmentList"></div>
+              </div>
+
+              <!-- Student view -->
+              <div id="assignmentStudentView" style="padding:12px;">
+                <h3 style="color:var(--columbia-blue); margin-top:0;">Active Assignments</h3>
+                <div id="studentAssignmentList"></div>
               </div>
             </div>
 
@@ -1323,6 +1362,396 @@ for i in range(3):
 
     // Kick off leaderboard load once
     (async () => { try { await refreshLeaderboard(); } catch {} })();
+
+    // =============================================
+    // Assignment System
+    // =============================================
+    let currentAssignments = [];
+    let isAdmin = false;
+
+    async function loadAssignments() {
+      try {
+        const resp = await fetch('/api/assignments', {
+          headers: ADMIN_TOKEN ? { 'X-Admin-Token': ADMIN_TOKEN } : {}
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          currentAssignments = data.assignments || [];
+          isAdmin = data.isAdmin || false;
+          renderAssignments();
+        }
+      } catch (e) {
+        console.error('Failed to load assignments:', e);
+      }
+    }
+
+    function renderAssignments() {
+      if (isAdmin) {
+        document.getElementById('assignmentAdminView').style.display = 'block';
+        document.getElementById('assignmentStudentView').style.display = 'none';
+        renderAdminAssignments();
+      } else {
+        document.getElementById('assignmentAdminView').style.display = 'none';
+        document.getElementById('assignmentStudentView').style.display = 'block';
+        renderStudentAssignments();
+      }
+    }
+
+    function renderAdminAssignments() {
+      const list = document.getElementById('assignmentList');
+      if (!currentAssignments.length) {
+        list.innerHTML = '<p style="color:#888;">No assignments yet. Click "New Assignment" to create one.</p>';
+        return;
+      }
+
+      list.innerHTML = currentAssignments.map(a => `
+        <div class="assignment-card">
+          <h4>${escapeHtml(a.name)}</h4>
+          <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
+          <div class="meta">
+            Max Score: ${a.maxScore} | 
+            Status: ${a.active ? '<span style="color:#4caf50;">Active</span>' : '<span style="color:#888;">Inactive</span>'} | 
+            Submissions: ${(a.submissions || []).length}
+          </div>
+          <div class="assignment-actions">
+            <button class="btn secondary" onclick="toggleAssignmentActive('${escapeHtml(a.name)}', ${!a.active})">${a.active ? 'Deactivate' : 'Activate'}</button>
+            <button class="btn secondary" onclick="viewSubmissions('${escapeHtml(a.name)}')">View Submissions</button>
+            <button class="btn secondary" onclick="downloadCSV('${escapeHtml(a.name)}')">Download CSV</button>
+            <button class="btn stop" onclick="deleteAssignment('${escapeHtml(a.name)}')">Delete</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderStudentAssignments() {
+      const list = document.getElementById('studentAssignmentList');
+      if (!currentAssignments.length) {
+        list.innerHTML = '<p style="color:#888;">No active assignments.</p>';
+        return;
+      }
+
+      list.innerHTML = currentAssignments.map(a => `
+        <div class="assignment-card">
+          <h4>${escapeHtml(a.name)}</h4>
+          <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
+          <div class="meta">Max Score: ${a.maxScore}</div>
+          <div class="assignment-actions">
+            <button class="btn run" onclick="submitAssignment('${escapeHtml(a.name)}')">Submit Code</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    document.getElementById('newAssignmentBtn').addEventListener('click', () => {
+      showNewAssignmentModal();
+    });
+
+    function showNewAssignmentModal() {
+      const modal = document.createElement('div');
+      modal.className = 'modal';
+      modal.innerHTML = `
+        <div class="modal-content">
+          <h3>New Assignment</h3>
+          <label>Assignment Name</label>
+          <input type="text" id="modalAssignmentName" placeholder="e.g., Loops Practice 1" />
+          <label>Task Description</label>
+          <textarea id="modalAssignmentTask" placeholder="Describe what students need to do..."></textarea>
+          <label>Max Score</label>
+          <input type="number" id="modalAssignmentMaxScore" value="100" min="1" />
+          <div class="modal-actions">
+            <button class="btn secondary" onclick="this.closest('.modal').remove()">Cancel</button>
+            <button class="btn run" onclick="createAssignment()">Create</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.remove();
+      });
+    }
+
+    async function createAssignment() {
+      const name = document.getElementById('modalAssignmentName').value.trim();
+      const task = document.getElementById('modalAssignmentTask').value.trim();
+      const maxScore = parseInt(document.getElementById('modalAssignmentMaxScore').value) || 100;
+
+      if (!name) {
+        alert('Please enter an assignment name');
+        return;
+      }
+
+      try {
+        const resp = await fetch('/api/assignments/create', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Token': ADMIN_TOKEN
+          },
+          body: JSON.stringify({ name, task, maxScore })
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          document.querySelector('.modal').remove();
+          await loadAssignments();
+          document.getElementById('assignmentStatus').textContent = 'Assignment created!';
+          setTimeout(() => { document.getElementById('assignmentStatus').textContent = ''; }, 3000);
+        } else {
+          alert(data.error || 'Failed to create assignment');
+        }
+      } catch (e) {
+        alert('Network error');
+      }
+    }
+
+    async function toggleAssignmentActive(name, active) {
+      try {
+        const resp = await fetch('/api/assignments/update', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Token': ADMIN_TOKEN
+          },
+          body: JSON.stringify({ name, active })
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          await loadAssignments();
+        } else {
+          alert(data.error || 'Failed to update assignment');
+        }
+      } catch (e) {
+        alert('Network error');
+      }
+    }
+
+    async function deleteAssignment(name) {
+      if (!confirm(`Delete assignment "${name}"? This cannot be undone.`)) return;
+      
+      try {
+        const resp = await fetch('/api/assignments/delete', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Token': ADMIN_TOKEN
+          },
+          body: JSON.stringify({ name })
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          await loadAssignments();
+          document.getElementById('assignmentStatus').textContent = 'Assignment deleted';
+          setTimeout(() => { document.getElementById('assignmentStatus').textContent = ''; }, 3000);
+        } else {
+          alert(data.error || 'Failed to delete assignment');
+        }
+      } catch (e) {
+        alert('Network error');
+      }
+    }
+
+    function submitAssignment(assignmentName) {
+      const modal = document.createElement('div');
+      modal.className = 'modal';
+      modal.innerHTML = `
+        <div class="modal-content">
+          <h3>Submit: ${escapeHtml(assignmentName)}</h3>
+          <label>Your Name</label>
+          <input type="text" id="modalStudentName" placeholder="First Last" />
+          <label>Email</label>
+          <input type="email" id="modalStudentEmail" placeholder="you@example.com" />
+          <label>Class Period</label>
+          <input type="text" id="modalClassPeriod" placeholder="e.g., Period 3" />
+          <div class="modal-actions">
+            <button class="btn secondary" onclick="this.closest('.modal').remove()">Cancel</button>
+            <button class="btn run" onclick="doSubmitAssignment('${escapeHtml(assignmentName)}')">Submit</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.remove();
+      });
+    }
+
+    async function doSubmitAssignment(assignmentName) {
+      const studentName = document.getElementById('modalStudentName').value.trim();
+      const studentEmail = document.getElementById('modalStudentEmail').value.trim();
+      const classPeriod = document.getElementById('modalClassPeriod').value.trim();
+      const code = editor.getValue();
+
+      if (!studentName || !studentEmail) {
+        alert('Name and email are required');
+        return;
+      }
+
+      try {
+        const resp = await fetch('/api/assignments/submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            assignmentName,
+            studentName,
+            studentEmail,
+            classPeriod,
+            code
+          })
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          document.querySelector('.modal').remove();
+          alert('Assignment submitted successfully!');
+        } else {
+          alert(data.error || 'Failed to submit assignment');
+        }
+      } catch (e) {
+        alert('Network error');
+      }
+    }
+
+    function viewSubmissions(assignmentName) {
+      const assignment = currentAssignments.find(a => a.name === assignmentName);
+      if (!assignment) return;
+
+      const submissions = assignment.submissions || [];
+      const modal = document.createElement('div');
+      modal.className = 'modal';
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width:800px;">
+          <h3>Submissions: ${escapeHtml(assignmentName)}</h3>
+          <div id="submissionsList">
+            ${submissions.length ? submissions.map(s => `
+              <div class="submission-item" onclick="viewSubmissionCode('${escapeHtml(assignmentName)}', '${escapeHtml(s.email)}')">
+                <div class="name">${escapeHtml(s.name || 'Anonymous')}</div>
+                <div class="email">${escapeHtml(s.email)} | Period: ${escapeHtml(s.classPeriod || 'N/A')} | Submitted: ${escapeHtml(s.submittedAt || 'Unknown')}</div>
+                <div class="score-input" onclick="event.stopPropagation();">
+                  Score: <input type="number" value="${s.score || ''}" min="0" max="${assignment.maxScore}" 
+                    onchange="updateScore('${escapeHtml(assignmentName)}', '${escapeHtml(s.email)}', this.value)" 
+                    style="width:80px;" /> / ${assignment.maxScore}
+                </div>
+              </div>
+            `).join('') : '<p style="color:#888;">No submissions yet.</p>'}
+          </div>
+          <div class="modal-actions">
+            <button class="btn secondary" onclick="this.closest('.modal').remove()">Close</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.remove();
+      });
+    }
+
+    function viewSubmissionCode(assignmentName, email) {
+      const assignment = currentAssignments.find(a => a.name === assignmentName);
+      if (!assignment) return;
+
+      const submission = assignment.submissions.find(s => s.email.toLowerCase() === email.toLowerCase());
+      if (!submission) return;
+
+      const modal = document.createElement('div');
+      modal.className = 'modal';
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width:900px;">
+          <h3>${escapeHtml(submission.name || 'Anonymous')} - ${escapeHtml(email)}</h3>
+          <div style="margin:12px 0;">
+            <strong>Period:</strong> ${escapeHtml(submission.classPeriod || 'N/A')} | 
+            <strong>Submitted:</strong> ${escapeHtml(submission.submittedAt || 'Unknown')}
+          </div>
+          <textarea readonly style="width:100%; height:400px; font-family:monospace; background:#0c0c0c; color:#ddd; border:1px solid #333; padding:10px;">${escapeHtml(submission.code || '(No code)')}</textarea>
+          <div class="modal-actions">
+            <button class="btn secondary" onclick="loadSubmissionToEditor('${escapeHtml(assignmentName)}', '${escapeHtml(email)}')">Load to Editor</button>
+            <button class="btn secondary" onclick="this.closest('.modal').remove()">Close</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.remove();
+      });
+    }
+
+    function loadSubmissionToEditor(assignmentName, email) {
+      const assignment = currentAssignments.find(a => a.name === assignmentName);
+      if (!assignment) return;
+
+      const submission = assignment.submissions.find(s => s.email.toLowerCase() === email.toLowerCase());
+      if (!submission) return;
+
+      editor.setValue(submission.code || '');
+      document.querySelector('.modal').remove();
+      alert('Student code loaded into editor');
+    }
+
+    async function updateScore(assignmentName, email, score) {
+      try {
+        const resp = await fetch('/api/assignments/score', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Token': ADMIN_TOKEN
+          },
+          body: JSON.stringify({
+            assignmentName,
+            studentEmail: email,
+            score: score ? parseFloat(score) : null
+          })
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          await loadAssignments();
+        }
+      } catch (e) {
+        console.error('Failed to update score:', e);
+      }
+    }
+
+    async function downloadCSV(assignmentName) {
+      if (!ADMIN_TOKEN) return;
+      const url = `/api/assignments/${encodeURIComponent(assignmentName)}/csv`;
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${assignmentName}_scores.csv`;
+      // Add auth header via fetch and create blob
+      try {
+        const resp = await fetch(url, {
+          headers: { 'X-Admin-Token': ADMIN_TOKEN }
+        });
+        if (resp.ok) {
+          const blob = await resp.blob();
+          const blobUrl = URL.createObjectURL(blob);
+          a.href = blobUrl;
+          a.click();
+          URL.revokeObjectURL(blobUrl);
+        } else {
+          alert('Failed to download CSV');
+        }
+      } catch (e) {
+        alert('Network error');
+      }
+    }
+
+    // Load assignments when admin mode changes or on page load
+    (async () => {
+      await loadAssignments();
+    })();
+
+    // Reload assignments when admin login changes
+    const origAdminBtn = document.getElementById('adminBtn');
+    const origClickHandler = origAdminBtn.onclick;
+    origAdminBtn.onclick = async function(e) {
+      if (origClickHandler) origClickHandler.call(this, e);
+      // Wait a bit for admin token to be set
+      setTimeout(async () => {
+        await loadAssignments();
+      }, 100);
+    };
   </script>
 </body>
 </html>
