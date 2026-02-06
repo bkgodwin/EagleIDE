@@ -1086,9 +1086,8 @@ for i in range(3):
       if (socket) {
         socket.emit('send_input', { data: v }); 
       }
-      // Append user input inline (on same line as prompt), then add newline after
-      appendOut(v, false); // Display as plain text, not highlighted
-      appendOut("\n"); // Add newline after user input
+      // DON'T display the input here - let the backend echo it back
+      // This ensures proper ordering with the prompt
       stdinEl.value=''; 
     }
     document.getElementById('sendBtn').addEventListener('click', sendInput);
