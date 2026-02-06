@@ -382,7 +382,7 @@ def _ide_input(prompt=""):
     if prompt:
         sys.stdout.write(str(prompt))
         sys.stdout.flush()
-    sys.stdout.write("{INPUT_TOKEN}")
+    sys.stdout.write("{INPUT_TOKEN}\\n")
     sys.stdout.flush()
     line = sys.stdin.readline()
     # Echo the user's input back so it appears in the shell
