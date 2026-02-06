@@ -127,6 +127,28 @@
     .submission-item:hover{ background:#1a1a1a; border-color:#444; }
     .submission-item .name{ color:var(--columbia-blue); font-weight:700; }
     .submission-item .email{ color:#999; font-size:12px; }
+    
+    /* Submissions sidebar */
+    #submissionsSidebar{ display:none; border-bottom:1px solid #2b2b2b; padding:12px; background:#0f0f0f; max-height:400px; overflow-y:auto; }
+    .sidebar-submission{ background:#1a1a1a; border:1px solid #2b2b2b; border-radius:6px; padding:8px; margin-bottom:8px; cursor:pointer; transition: all 0.2s; }
+    .sidebar-submission:hover{ background:#222; border-color:#3a3a3a; }
+    .sidebar-submission .student-info{ display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; }
+    .sidebar-submission .student-name{ color:var(--columbia-blue); font-weight:600; font-size:13px; }
+    .sidebar-submission .student-score{ color:#4caf50; font-size:12px; font-weight:700; }
+    .sidebar-submission .student-email{ color:#888; font-size:11px; }
+    
+    /* Student score lookup */
+    #studentScoreLookup{ padding:12px; border-bottom:1px solid #2b2b2b; background:#0f0f0f; }
+    #studentScoreLookup input{ width:100%; padding:8px; background:#1a1a1a; color:#fff; border:1px solid #2b2b2b; border-radius:6px; margin-bottom:8px; }
+    #studentScoreResults{ max-height:300px; overflow-y:auto; }
+    .score-result-item{ background:#1a1a1a; border:1px solid #2b2b2b; border-radius:6px; padding:8px; margin-bottom:8px; }
+    .score-result-item .assignment-name{ color:var(--columbia-blue); font-weight:600; font-size:13px; }
+    .score-result-item .assignment-score{ color:#4caf50; font-size:12px; }
+    
+    /* AI grading button */
+    .ai-grade-btn{ margin-left:8px; padding:4px 10px; background:#4caf50; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:11px; font-weight:600; }
+    .ai-grade-btn:hover{ background:#45a049; }
+    .ai-grade-btn:disabled{ background:#666; cursor:not-allowed; }
     .modal{ position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.8); display:flex; align-items:center; justify-content:center; z-index:10000; }
     .modal-content{ background:var(--bg-dark); border:1px solid #333; border-radius:12px; padding:20px; max-width:500px; width:90%; max-height:90vh; overflow:auto; }
     .modal-content h3{ margin-top:0; color:var(--columbia-blue); }
@@ -336,6 +358,21 @@
 
             <!-- Assignment -->
             <div class="tab-pane" id="assignmentTab">
+              <!-- Submissions sidebar (admin only) -->
+              <div id="submissionsSidebar">
+                <h4 style="margin:0 0 10px; color:var(--columbia-blue); font-size:14px;">Submissions</h4>
+                <div id="submissionsSidebarList">
+                  <p style="color:#888; font-size:12px;">Select an assignment to view submissions</p>
+                </div>
+              </div>
+
+              <!-- Student score lookup -->
+              <div id="studentScoreLookup" style="display:none;">
+                <h4 style="margin:0 0 10px; color:var(--columbia-blue); font-size:14px;">View Your Scores</h4>
+                <input type="email" id="studentEmailInput" placeholder="Enter your email address">
+                <div id="studentScoreResults"></div>
+              </div>
+
               <!-- Admin view -->
               <div id="assignmentAdminView" style="display:none; padding:12px;">
                 <div style="display:flex; gap:10px; align-items:center; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid #2b2b2b;">
@@ -1389,10 +1426,14 @@ for i in range(3):
       if (isAdmin) {
         document.getElementById('assignmentAdminView').style.display = 'block';
         document.getElementById('assignmentStudentView').style.display = 'none';
+        document.getElementById('submissionsSidebar').style.display = 'block';
+        document.getElementById('studentScoreLookup').style.display = 'none';
         renderAdminAssignments();
       } else {
         document.getElementById('assignmentAdminView').style.display = 'none';
         document.getElementById('assignmentStudentView').style.display = 'block';
+        document.getElementById('submissionsSidebar').style.display = 'none';
+        document.getElementById('studentScoreLookup').style.display = 'block';
         renderStudentAssignments();
       }
     }
@@ -1415,7 +1456,8 @@ for i in range(3):
           </div>
           <div class="assignment-actions">
             <button class="btn secondary toggle-active-btn" data-name="${escapeHtml(a.name)}" data-active="${!a.active}">${a.active ? 'Deactivate' : 'Activate'}</button>
-            <button class="btn secondary view-submissions-btn" data-name="${escapeHtml(a.name)}">View Submissions</button>
+            <button class="btn run show-sidebar-submissions-btn" data-name="${escapeHtml(a.name)}">Show Submissions</button>
+            <button class="btn secondary view-submissions-btn" data-name="${escapeHtml(a.name)}">View All</button>
             <button class="btn secondary download-csv-btn" data-name="${escapeHtml(a.name)}">Download CSV</button>
             <button class="btn stop delete-assignment-btn" data-name="${escapeHtml(a.name)}">Delete</button>
           </div>
@@ -1425,6 +1467,9 @@ for i in range(3):
       // Add event listeners
       list.querySelectorAll('.toggle-active-btn').forEach(btn => {
         btn.addEventListener('click', () => toggleAssignmentActive(btn.dataset.name, btn.dataset.active === 'true'));
+      });
+      list.querySelectorAll('.show-sidebar-submissions-btn').forEach(btn => {
+        btn.addEventListener('click', () => showSubmissionsInSidebar(btn.dataset.name));
       });
       list.querySelectorAll('.view-submissions-btn').forEach(btn => {
         btn.addEventListener('click', () => viewSubmissions(btn.dataset.name));
@@ -1656,8 +1701,9 @@ for i in range(3):
                 <div class="email">${escapeHtml(s.email)} | Period: ${escapeHtml(s.classPeriod || 'N/A')} | Submitted: ${escapeHtml(s.submittedAt || 'Unknown')}</div>
                 <div class="score-input">
                   Score: <input type="number" class="score-field" value="${s.score || ''}" min="0" max="${assignment.maxScore}" 
-                    data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}"
+                    data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}" data-idx="${escapeHtml(String(idx))}"
                     style="width:80px;" /> / ${assignment.maxScore}
+                  <button class="ai-grade-btn" data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}" data-idx="${escapeHtml(String(idx))}">Grade with AI</button>
                 </div>
               </div>
             `).join('') : '<p style="color:#888;">No submissions yet.</p>'}
@@ -1676,8 +1722,8 @@ for i in range(3):
       // Add event listeners for submission items
       modal.querySelectorAll('.submission-item').forEach(item => {
         item.addEventListener('click', (e) => {
-          // Don't trigger if clicking on score input
-          if (e.target.classList.contains('score-field')) return;
+          // Don't trigger if clicking on score input or AI grade button
+          if (e.target.classList.contains('score-field') || e.target.classList.contains('ai-grade-btn')) return;
           const idx = parseInt(item.dataset.idx);
           const sub = submissions[idx];
           if (sub) viewSubmissionCode(assignmentName, sub.email);
@@ -1689,6 +1735,14 @@ for i in range(3):
         field.addEventListener('change', (e) => {
           e.stopPropagation();
           updateScore(field.dataset.assignment, field.dataset.email, field.value);
+        });
+      });
+
+      // Add event listeners for AI grade buttons
+      modal.querySelectorAll('.ai-grade-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          gradeWithAI(btn.dataset.assignment, btn.dataset.email, parseInt(btn.dataset.idx), modal);
         });
       });
     }
@@ -1784,6 +1838,187 @@ for i in range(3):
       } catch (e) {
         alert('Network error');
       }
+    }
+
+    // =============================================
+    // AI Grading Function
+    // =============================================
+    async function gradeWithAI(assignmentName, email, submissionIdx, modalElement) {
+      const assignment = currentAssignments.find(a => a.name === assignmentName);
+      if (!assignment) return;
+
+      const submission = assignment.submissions.find(s => s.email.toLowerCase() === email.toLowerCase());
+      if (!submission) return;
+
+      // Find the button and disable it
+      const btn = modalElement.querySelector(`.ai-grade-btn[data-idx="${submissionIdx}"]`);
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Grading...';
+      }
+
+      try {
+        const resp = await fetch('/api/assignments/grade-ai', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Token': ADMIN_TOKEN
+          },
+          body: JSON.stringify({
+            assignmentName: assignmentName,
+            studentEmail: email,
+            code: submission.code,
+            task: assignment.task,
+            maxScore: assignment.maxScore
+          })
+        });
+
+        const data = await resp.json();
+        
+        if (data.ok) {
+          // Update the score field
+          const scoreField = modalElement.querySelector(`.score-field[data-idx="${submissionIdx}"]`);
+          if (scoreField) {
+            scoreField.value = data.score;
+            // Trigger change event to save the score
+            scoreField.dispatchEvent(new Event('change'));
+          }
+          
+          if (btn) {
+            btn.textContent = 'Grade with AI';
+            btn.disabled = false;
+          }
+        } else {
+          alert(data.error || 'AI grading failed');
+          if (btn) {
+            btn.textContent = 'Grade with AI';
+            btn.disabled = false;
+          }
+        }
+      } catch (e) {
+        console.error('AI grading error:', e);
+        alert('Network error during AI grading');
+        if (btn) {
+          btn.textContent = 'Grade with AI';
+          btn.disabled = false;
+        }
+      }
+    }
+
+    // =============================================
+    // Submissions Sidebar Functions
+    // =============================================
+    function showSubmissionsInSidebar(assignmentName) {
+      const assignment = currentAssignments.find(a => a.name === assignmentName);
+      if (!assignment) return;
+
+      const submissions = assignment.submissions || [];
+      const sidebar = document.getElementById('submissionsSidebarList');
+      
+      if (!submissions.length) {
+        sidebar.innerHTML = '<p style="color:#888; font-size:12px;">No submissions yet for this assignment.</p>';
+        return;
+      }
+
+      sidebar.innerHTML = submissions.map(s => `
+        <div class="sidebar-submission" data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}">
+          <div class="student-info">
+            <span class="student-name">${escapeHtml(s.name || 'Anonymous')}</span>
+            <span class="student-score">${s.score !== null && s.score !== undefined ? s.score + '/' + assignment.maxScore : '—/' + assignment.maxScore}</span>
+          </div>
+          <div class="student-email">${escapeHtml(s.email)}</div>
+        </div>
+      `).join('');
+
+      // Add click handlers to load submissions into editor
+      sidebar.querySelectorAll('.sidebar-submission').forEach(item => {
+        item.addEventListener('click', () => {
+          loadSubmissionToEditorDirect(item.dataset.assignment, item.dataset.email);
+        });
+      });
+    }
+
+    function loadSubmissionToEditorDirect(assignmentName, email) {
+      const assignment = currentAssignments.find(a => a.name === assignmentName);
+      if (!assignment) return;
+
+      const submission = assignment.submissions.find(s => s.email.toLowerCase() === email.toLowerCase());
+      if (!submission) return;
+
+      editor.setValue(submission.code || '');
+      // Scroll to top of editor
+      if (editor.scrollTo) {
+        editor.scrollTo(0, 0);
+      }
+      // Show a notification
+      const statusEl = document.getElementById('assignmentStatus');
+      if (statusEl) {
+        statusEl.textContent = `Loaded: ${submission.name || email}`;
+        setTimeout(() => { statusEl.textContent = ''; }, 3000);
+      }
+    }
+
+    // =============================================
+    // Student Score Lookup
+    // =============================================
+    const studentEmailInput = document.getElementById('studentEmailInput');
+    if (studentEmailInput) {
+      studentEmailInput.addEventListener('input', debounce(lookupStudentScores, 300));
+    }
+
+    function debounce(func, wait) {
+      let timeout;
+      return function executedFunction(...args) {
+        const later = () => {
+          clearTimeout(timeout);
+          func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+      };
+    }
+
+    function lookupStudentScores() {
+      const email = studentEmailInput.value.trim().toLowerCase();
+      const resultsDiv = document.getElementById('studentScoreResults');
+      
+      if (!email) {
+        resultsDiv.innerHTML = '';
+        return;
+      }
+
+      // Filter assignments where student has a submission
+      const studentSubmissions = currentAssignments
+        .map(a => {
+          const submission = (a.submissions || []).find(s => s.email.toLowerCase() === email);
+          if (submission) {
+            return {
+              assignmentName: a.name,
+              maxScore: a.maxScore,
+              score: submission.score,
+              submittedAt: submission.submittedAt
+            };
+          }
+          return null;
+        })
+        .filter(s => s !== null);
+
+      if (!studentSubmissions.length) {
+        resultsDiv.innerHTML = '<p style="color:#888; font-size:12px;">No submissions found for this email.</p>';
+        return;
+      }
+
+      resultsDiv.innerHTML = studentSubmissions.map(s => `
+        <div class="score-result-item">
+          <div class="assignment-name">${escapeHtml(s.assignmentName)}</div>
+          <div class="assignment-score">
+            Score: ${s.score !== null && s.score !== undefined ? s.score : '—'} / ${s.maxScore}
+          </div>
+          <div style="color:#666; font-size:11px; margin-top:4px;">
+            Submitted: ${escapeHtml(s.submittedAt || 'Unknown')}
+          </div>
+        </div>
+      `).join('');
     }
 
     // Load assignments when admin mode changes or on page load

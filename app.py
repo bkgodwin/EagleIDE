@@ -745,6 +745,93 @@ def score_submission():
         return jsonify(ok=True)
     return jsonify(ok=False, error="Failed to save score"), 500
 
+@app.post("/api/assignments/grade-ai")
+def grade_assignment_ai():
+    """Grade a student submission using AI (admin only)"""
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    
+    cfg = _load_config()
+    if not cfg.get("ai_explainer_enabled", False):
+        return jsonify(ok=False, error="AI features disabled by admin"), 403
+    
+    data = request.get_json(silent=True) or {}
+    assignment_name = (data.get("assignmentName") or "").strip()
+    student_email = (data.get("studentEmail") or "").strip()
+    code = data.get("code", "")
+    task = data.get("task", "")
+    max_score = data.get("maxScore", 100)
+    
+    if not assignment_name or not student_email or not code or not task:
+        return jsonify(ok=False, error="Missing required fields"), 400
+    
+    # Validate and sanitize inputs
+    if len(code) > 100000:  # Limit code to 100KB
+        return jsonify(ok=False, error="Code is too long"), 400
+    if len(task) > 10000:  # Limit task description to 10KB
+        return jsonify(ok=False, error="Task description is too long"), 400
+    
+    # Build prompt for AI grading
+    prompt = (
+        "Grade the following student's Python code submission strictly from 0 to {max_score}.\n"
+        "Return ONLY the integer score, with no additional words or explanation.\n\n"
+        "Assignment Task:\n{task}\n\n"
+        "Student Code:\n{code}\n\n"
+        "Grading Criteria:\n"
+        "- Does the code solve the problem correctly?\n"
+        "- Is the code efficient and well-structured?\n"
+        "- Are there any errors or bugs?\n"
+        "- Does it follow Python best practices?\n\n"
+        "Score (0-{max_score}):"
+    ).format(max_score=max_score, task=task, code=code)
+    
+    res = call_ollama_generate(cfg.get("ai_ollama_url", ""), cfg.get("ai_model", "gemma3:4b"), prompt, timeout=30.0)
+    if not res.get("ok"):
+        return jsonify(ok=False, error=res.get("error", "AI error"))
+    
+    raw = (res.get("text") or "").strip()
+    
+    # Extract score from AI response
+    score = None
+    # Look for first positive integer in the response
+    for tok in raw.split():
+        tok = tok.strip('.,!?;:')  # Remove punctuation
+        if tok.isdigit():
+            score = int(tok)
+            break
+    
+    # Fallback: extract all digits as a number
+    if score is None:
+        digits = "".join([c for c in raw if c.isdigit()])
+        if digits:
+            score = int(digits)
+    
+    if score is None:
+        return jsonify(ok=False, error=f"AI returned invalid score: {raw!r}")
+    
+    # Ensure score is within valid range
+    score = max(0, min(max_score, score))
+    
+    # Save the score
+    assignment = _load_assignment(assignment_name)
+    if not assignment:
+        return jsonify(ok=False, error="Assignment not found"), 404
+    
+    submissions = assignment.get("submissions", [])
+    found = False
+    for sub in submissions:
+        if sub.get("email", "").lower() == student_email.lower():
+            sub["score"] = score
+            found = True
+            break
+    
+    if not found:
+        return jsonify(ok=False, error="Submission not found"), 404
+    
+    if _save_assignment(assignment):
+        return jsonify(ok=True, score=score)
+    return jsonify(ok=False, error="Failed to save score"), 500
+
 @app.get("/api/assignments/<assignment_name>/csv")
 def download_assignment_csv(assignment_name: str):
     """Download CSV of student numbers and scores (admin only)"""
