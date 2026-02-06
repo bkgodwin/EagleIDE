@@ -384,11 +384,11 @@ def _ide_input(prompt=""):
         sys.stdout.flush()
     sys.stdout.write("{INPUT_TOKEN}\\n")
     sys.stdout.flush()
+    # Wait for user input
     line = sys.stdin.readline()
-    # Echo the input back WITHOUT the newline, then add it
+    # Echo back the user's input (without newline) on same line
     user_input = line.rstrip("\\n")
-    sys.stdout.write(user_input)
-    sys.stdout.write("\\n")
+    sys.stdout.write(user_input + "\\n")
     sys.stdout.flush()
     return user_input
 
