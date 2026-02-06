@@ -1414,13 +1414,27 @@ for i in range(3):
             Submissions: ${(a.submissions || []).length}
           </div>
           <div class="assignment-actions">
-            <button class="btn secondary" onclick="toggleAssignmentActive('${escapeHtml(a.name)}', ${!a.active})">${a.active ? 'Deactivate' : 'Activate'}</button>
-            <button class="btn secondary" onclick="viewSubmissions('${escapeHtml(a.name)}')">View Submissions</button>
-            <button class="btn secondary" onclick="downloadCSV('${escapeHtml(a.name)}')">Download CSV</button>
-            <button class="btn stop" onclick="deleteAssignment('${escapeHtml(a.name)}')">Delete</button>
+            <button class="btn secondary toggle-active-btn" data-name="${escapeHtml(a.name)}" data-active="${!a.active}">${a.active ? 'Deactivate' : 'Activate'}</button>
+            <button class="btn secondary view-submissions-btn" data-name="${escapeHtml(a.name)}">View Submissions</button>
+            <button class="btn secondary download-csv-btn" data-name="${escapeHtml(a.name)}">Download CSV</button>
+            <button class="btn stop delete-assignment-btn" data-name="${escapeHtml(a.name)}">Delete</button>
           </div>
         </div>
       `).join('');
+      
+      // Add event listeners
+      list.querySelectorAll('.toggle-active-btn').forEach(btn => {
+        btn.addEventListener('click', () => toggleAssignmentActive(btn.dataset.name, btn.dataset.active === 'true'));
+      });
+      list.querySelectorAll('.view-submissions-btn').forEach(btn => {
+        btn.addEventListener('click', () => viewSubmissions(btn.dataset.name));
+      });
+      list.querySelectorAll('.download-csv-btn').forEach(btn => {
+        btn.addEventListener('click', () => downloadCSV(btn.dataset.name));
+      });
+      list.querySelectorAll('.delete-assignment-btn').forEach(btn => {
+        btn.addEventListener('click', () => deleteAssignment(btn.dataset.name));
+      });
     }
 
     function renderStudentAssignments() {
@@ -1436,10 +1450,15 @@ for i in range(3):
           <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
           <div class="meta">Max Score: ${a.maxScore}</div>
           <div class="assignment-actions">
-            <button class="btn run" onclick="submitAssignment('${escapeHtml(a.name)}')">Submit Code</button>
+            <button class="btn run submit-assignment-btn" data-name="${escapeHtml(a.name)}">Submit Code</button>
           </div>
         </div>
       `).join('');
+      
+      // Add event listeners
+      list.querySelectorAll('.submit-assignment-btn').forEach(btn => {
+        btn.addEventListener('click', () => submitAssignment(btn.dataset.name));
+      });
     }
 
     function escapeHtml(text) {
@@ -1465,8 +1484,8 @@ for i in range(3):
           <label>Max Score</label>
           <input type="number" id="modalAssignmentMaxScore" value="100" min="1" />
           <div class="modal-actions">
-            <button class="btn secondary" onclick="this.closest('.modal').remove()">Cancel</button>
-            <button class="btn run" onclick="createAssignment()">Create</button>
+            <button class="btn secondary modal-cancel-btn">Cancel</button>
+            <button class="btn run modal-create-btn">Create</button>
           </div>
         </div>
       `;
@@ -1474,6 +1493,8 @@ for i in range(3):
       modal.addEventListener('click', (e) => {
         if (e.target === modal) modal.remove();
       });
+      modal.querySelector('.modal-cancel-btn').addEventListener('click', () => modal.remove());
+      modal.querySelector('.modal-create-btn').addEventListener('click', () => createAssignment());
     }
 
     async function createAssignment() {
@@ -1568,14 +1589,18 @@ for i in range(3):
           <label>Class Period</label>
           <input type="text" id="modalClassPeriod" placeholder="e.g., Period 3" />
           <div class="modal-actions">
-            <button class="btn secondary" onclick="this.closest('.modal').remove()">Cancel</button>
-            <button class="btn run" onclick="doSubmitAssignment('${escapeHtml(assignmentName)}')">Submit</button>
+            <button class="btn secondary modal-cancel-btn">Cancel</button>
+            <button class="btn run modal-submit-btn" data-assignment="${escapeHtml(assignmentName)}">Submit</button>
           </div>
         </div>
       `;
       document.body.appendChild(modal);
       modal.addEventListener('click', (e) => {
         if (e.target === modal) modal.remove();
+      });
+      modal.querySelector('.modal-cancel-btn').addEventListener('click', () => modal.remove());
+      modal.querySelector('.modal-submit-btn').addEventListener('click', (e) => {
+        doSubmitAssignment(e.target.dataset.assignment);
       });
     }
 
@@ -1625,26 +1650,46 @@ for i in range(3):
         <div class="modal-content" style="max-width:800px;">
           <h3>Submissions: ${escapeHtml(assignmentName)}</h3>
           <div id="submissionsList">
-            ${submissions.length ? submissions.map(s => `
-              <div class="submission-item" onclick="viewSubmissionCode('${escapeHtml(assignmentName)}', '${escapeHtml(s.email)}')">
+            ${submissions.length ? submissions.map((s, idx) => `
+              <div class="submission-item" data-idx="${idx}">
                 <div class="name">${escapeHtml(s.name || 'Anonymous')}</div>
                 <div class="email">${escapeHtml(s.email)} | Period: ${escapeHtml(s.classPeriod || 'N/A')} | Submitted: ${escapeHtml(s.submittedAt || 'Unknown')}</div>
-                <div class="score-input" onclick="event.stopPropagation();">
-                  Score: <input type="number" value="${s.score || ''}" min="0" max="${assignment.maxScore}" 
-                    onchange="updateScore('${escapeHtml(assignmentName)}', '${escapeHtml(s.email)}', this.value)" 
+                <div class="score-input">
+                  Score: <input type="number" class="score-field" value="${s.score || ''}" min="0" max="${assignment.maxScore}" 
+                    data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}"
                     style="width:80px;" /> / ${assignment.maxScore}
                 </div>
               </div>
             `).join('') : '<p style="color:#888;">No submissions yet.</p>'}
           </div>
           <div class="modal-actions">
-            <button class="btn secondary" onclick="this.closest('.modal').remove()">Close</button>
+            <button class="btn secondary modal-close-btn">Close</button>
           </div>
         </div>
       `;
       document.body.appendChild(modal);
       modal.addEventListener('click', (e) => {
         if (e.target === modal) modal.remove();
+      });
+      modal.querySelector('.modal-close-btn').addEventListener('click', () => modal.remove());
+      
+      // Add event listeners for submission items
+      modal.querySelectorAll('.submission-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+          // Don't trigger if clicking on score input
+          if (e.target.classList.contains('score-field')) return;
+          const idx = parseInt(item.dataset.idx);
+          const sub = submissions[idx];
+          if (sub) viewSubmissionCode(assignmentName, sub.email);
+        });
+      });
+      
+      // Add event listeners for score inputs
+      modal.querySelectorAll('.score-field').forEach(field => {
+        field.addEventListener('change', (e) => {
+          e.stopPropagation();
+          updateScore(field.dataset.assignment, field.dataset.email, field.value);
+        });
       });
     }
 
@@ -1666,14 +1711,18 @@ for i in range(3):
           </div>
           <textarea readonly style="width:100%; height:400px; font-family:monospace; background:#0c0c0c; color:#ddd; border:1px solid #333; padding:10px;">${escapeHtml(submission.code || '(No code)')}</textarea>
           <div class="modal-actions">
-            <button class="btn secondary" onclick="loadSubmissionToEditor('${escapeHtml(assignmentName)}', '${escapeHtml(email)}')">Load to Editor</button>
-            <button class="btn secondary" onclick="this.closest('.modal').remove()">Close</button>
+            <button class="btn secondary load-to-editor-btn" data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(email)}">Load to Editor</button>
+            <button class="btn secondary modal-close-btn">Close</button>
           </div>
         </div>
       `;
       document.body.appendChild(modal);
       modal.addEventListener('click', (e) => {
         if (e.target === modal) modal.remove();
+      });
+      modal.querySelector('.modal-close-btn').addEventListener('click', () => modal.remove());
+      modal.querySelector('.load-to-editor-btn').addEventListener('click', (e) => {
+        loadSubmissionToEditor(e.target.dataset.assignment, e.target.dataset.email);
       });
     }
 
@@ -1742,16 +1791,24 @@ for i in range(3):
       await loadAssignments();
     })();
 
-    // Reload assignments when admin login changes
-    const origAdminBtn = document.getElementById('adminBtn');
-    const origClickHandler = origAdminBtn.onclick;
-    origAdminBtn.onclick = async function(e) {
-      if (origClickHandler) origClickHandler.call(this, e);
-      // Wait a bit for admin token to be set
-      setTimeout(async () => {
-        await loadAssignments();
-      }, 100);
-    };
+    // Reload assignments when admin login/logout happens
+    // Listen for changes to admin mode by observing the admin button class changes
+    const adminBtn = document.getElementById('adminBtn');
+    let wasAdmin = false;
+    
+    // Create a MutationObserver to watch for class changes on the admin button
+    const observer = new MutationObserver(() => {
+      const isAdminNow = adminBtn.classList.contains('active') || document.body.classList.contains('admin-mode');
+      if (isAdminNow !== wasAdmin) {
+        wasAdmin = isAdminNow;
+        setTimeout(async () => {
+          await loadAssignments();
+        }, 100);
+      }
+    });
+    
+    observer.observe(adminBtn, { attributes: true, attributeFilter: ['class'] });
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
   </script>
 </body>
 </html>
