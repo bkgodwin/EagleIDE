@@ -299,7 +299,6 @@
         <section class="panel" id="shellPanel" style="grid-row:1 / 2; grid-column:1;">
           <header>
             <h3>Shell Output</h3>
-            <button class="btn secondary" id="toggleShellBtn" style="font-size:12px; padding:4px 8px;">Hide Shell ▼</button>
           </header>
           <div class="content"><div id="output"></div></div>
           <div class="shell-input-bar">
@@ -312,7 +311,10 @@
 
         <!-- Tabs -->
         <section class="panel" id="rightStackPanel" style="grid-row:3 / 4; grid-column:1;">
-          <header><h3>Notes, Wiki & AI</h3></header>
+          <header>
+            <h3>Notes, Wiki & AI</h3>
+            <button class="btn secondary" id="toggleShellBtn" style="font-size:12px; padding:4px 8px;">Hide Shell ▼</button>
+          </header>
 
           <div class="notes-toolbar">
             <button class="btn secondary" id="notesEditBtn">Edit Notes</button>
@@ -442,6 +444,9 @@
               <div id="assignmentStudentView" style="padding:12px;">
                 <h3 style="color:var(--columbia-blue); margin-top:0;">Active Assignments</h3>
                 <div id="studentAssignmentList"></div>
+                
+                <h3 style="color:var(--columbia-blue); margin-top:24px;">Past Assignments</h3>
+                <div id="studentPastAssignmentList"></div>
               </div>
             </div>
 
@@ -985,8 +990,9 @@ for i in range(3):
       let s = msg.data || '';
       if (!s) return;
       if (s.includes(INPUT_TOKEN)) {
+        // Remove INPUT_TOKEN but don't append anything - user input will appear on same line
         s = s.split(INPUT_TOKEN).join('');
-        appendOut(s);
+        if (s) appendOut(s); // Only append if there's content besides the token
         // Immediately focus the input field
         setTimeout(() => {
           try { 
@@ -1025,7 +1031,9 @@ for i in range(3):
     function sendInput(){ 
       const v = stdinEl.value ?? ""; 
       socket.emit('send_input', { data: v }); 
-      appendOut((v ?? "") + "\n", true); // Mark as user input
+      // Append user input inline (on same line as prompt), then add newline after
+      appendOut(v, true); // Mark as user input, no leading newline
+      appendOut("\n"); // Add newline after user input
       stdinEl.value=''; 
     }
     document.getElementById('sendBtn').addEventListener('click', sendInput);
@@ -1773,27 +1781,46 @@ for i in range(3):
     }
 
     function renderStudentAssignments() {
-      const list = document.getElementById('studentAssignmentList');
-      if (!currentAssignments.length) {
-        list.innerHTML = '<p style="color:#888;">No active assignments.</p>';
-        return;
-      }
-
-      list.innerHTML = currentAssignments.map(a => `
-        <div class="assignment-card">
-          <h4>${escapeHtml(a.name)}</h4>
-          <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
-          <div class="meta">Max Score: ${a.maxScore}</div>
-          <div class="assignment-actions">
-            <button class="btn run submit-assignment-btn" data-name="${escapeHtml(a.name)}">Submit Code</button>
-          </div>
-        </div>
-      `).join('');
+      const activeList = document.getElementById('studentAssignmentList');
+      const pastList = document.getElementById('studentPastAssignmentList');
       
-      // Add event listeners
-      list.querySelectorAll('.submit-assignment-btn').forEach(btn => {
-        btn.addEventListener('click', () => submitAssignment(btn.dataset.name));
-      });
+      const activeAssignments = currentAssignments.filter(a => a.active);
+      const pastAssignments = currentAssignments.filter(a => !a.active);
+      
+      if (!activeAssignments.length) {
+        activeList.innerHTML = '<p style="color:#888;">No active assignments.</p>';
+      } else {
+        activeList.innerHTML = activeAssignments.map(a => `
+          <div class="assignment-card">
+            <h4>${escapeHtml(a.name)}</h4>
+            <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
+            <div class="meta">Max Score: ${a.maxScore}</div>
+            <div class="assignment-actions">
+              <button class="btn run submit-assignment-btn" data-name="${escapeHtml(a.name)}">Submit Code</button>
+            </div>
+          </div>
+        `).join('');
+        
+        // Add event listeners for active assignments
+        activeList.querySelectorAll('.submit-assignment-btn').forEach(btn => {
+          btn.addEventListener('click', () => submitAssignment(btn.dataset.name));
+        });
+      }
+      
+      if (!pastAssignments.length) {
+        pastList.innerHTML = '<p style="color:#888;">No past assignments.</p>';
+      } else {
+        pastList.innerHTML = pastAssignments.map(a => `
+          <div class="assignment-card" style="opacity:0.7;">
+            <h4>${escapeHtml(a.name)} <span style="color:#888; font-size:12px; font-weight:normal;">(Closed)</span></h4>
+            <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
+            <div class="meta">Max Score: ${a.maxScore}</div>
+            <div class="assignment-actions">
+              <button class="btn secondary" disabled style="opacity:0.5; cursor:not-allowed;">Submissions Closed</button>
+            </div>
+          </div>
+        `).join('');
+      }
     }
 
     function escapeHtml(text) {
@@ -2460,7 +2487,7 @@ for i in range(3):
       };
     }
 
-    function lookupStudentScores() {
+    async function lookupStudentScores() {
       const email = studentEmailInput.value.trim().toLowerCase();
       const resultsDiv = document.getElementById('studentScoreResults');
       
@@ -2469,38 +2496,64 @@ for i in range(3):
         return;
       }
 
-      // Filter assignments where student has a submission
-      const studentSubmissions = currentAssignments
-        .map(a => {
-          const submission = (a.submissions || []).find(s => s.email.toLowerCase() === email);
-          if (submission) {
-            return {
-              assignmentName: a.name,
-              maxScore: a.maxScore,
-              score: submission.score,
-              submittedAt: submission.submittedAt
-            };
-          }
-          return null;
-        })
-        .filter(s => s !== null);
+      // Call API to get student scores
+      try {
+        const response = await fetch('/api/assignments/student-scores', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email })
+        });
+        
+        const result = await response.json();
+        
+        if (!result.ok || !result.scores || result.scores.length === 0) {
+          resultsDiv.innerHTML = '<p style="color:#888; font-size:12px;">No submissions found for this email.</p>';
+          return;
+        }
 
-      if (!studentSubmissions.length) {
-        resultsDiv.innerHTML = '<p style="color:#888; font-size:12px;">No submissions found for this email.</p>';
-        return;
+        // Separate active and past assignments
+        const activeScores = result.scores.filter(s => s.active);
+        const pastScores = result.scores.filter(s => !s.active);
+
+        let html = '';
+        
+        if (activeScores.length > 0) {
+          html += '<div style="margin-bottom:16px;"><h5 style="color:var(--columbia-blue); margin:8px 0;">Active Assignments</h5>';
+          html += activeScores.map(s => `
+            <div class="score-result-item">
+              <div class="assignment-name">${escapeHtml(s.assignmentName)}</div>
+              <div class="assignment-score">
+                Score: ${s.score !== null && s.score !== undefined ? s.score : '—'} / ${s.maxScore}
+              </div>
+              <div style="color:#666; font-size:11px; margin-top:4px;">
+                Submitted: ${escapeHtml(s.submittedAt || 'Unknown')}
+              </div>
+            </div>
+          `).join('');
+          html += '</div>';
+        }
+        
+        if (pastScores.length > 0) {
+          html += '<div><h5 style="color:var(--columbia-blue); margin:8px 0;">Past Assignments</h5>';
+          html += pastScores.map(s => `
+            <div class="score-result-item" style="opacity:0.8;">
+              <div class="assignment-name">${escapeHtml(s.assignmentName)} <span style="color:#888; font-size:11px;">(Closed)</span></div>
+              <div class="assignment-score">
+                Score: ${s.score !== null && s.score !== undefined ? s.score : '—'} / ${s.maxScore}
+              </div>
+              <div style="color:#666; font-size:11px; margin-top:4px;">
+                Submitted: ${escapeHtml(s.submittedAt || 'Unknown')}
+              </div>
+            </div>
+          `).join('');
+          html += '</div>';
+        }
+
+        resultsDiv.innerHTML = html;
+      } catch (error) {
+        console.error('Error looking up scores:', error);
+        resultsDiv.innerHTML = '<p style="color:#ff5555; font-size:12px;">Error looking up scores. Please try again.</p>';
       }
-
-      resultsDiv.innerHTML = studentSubmissions.map(s => `
-        <div class="score-result-item">
-          <div class="assignment-name">${escapeHtml(s.assignmentName)}</div>
-          <div class="assignment-score">
-            Score: ${s.score !== null && s.score !== undefined ? s.score : '—'} / ${s.maxScore}
-          </div>
-          <div style="color:#666; font-size:11px; margin-top:4px;">
-            Submitted: ${escapeHtml(s.submittedAt || 'Unknown')}
-          </div>
-        </div>
-      `).join('');
     }
 
     // =============================================
