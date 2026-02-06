@@ -198,6 +198,39 @@
     body.right-collapsed #hsplitter { display: none !important; }
     body.right-collapsed .outer { grid-template-columns: 1fr !important; }
 
+    /* Shell collapse styles */
+    body.shell-hidden #shellPanel { display: none !important; }
+    body.shell-hidden .vsplitter { display: none !important; }
+    body.shell-hidden .rightstack { grid-template-rows: 1fr !important; }
+
+    /* Error highlighting in shell */
+    .shell-error { color: #ff5555; }
+    .shell-user-input { color: #50fa7b; }
+
+    /* Error highlighting in editor */
+    .cm-error-line { background-color: rgba(255, 85, 85, 0.15); }
+
+    /* AI thinking indicator */
+    .ai-thinking {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--columbia-blue);
+      font-style: italic;
+    }
+    .ai-thinking::after {
+      content: '';
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--columbia-blue);
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
     @media (max-width:1000px){
       .outer{ grid-template-columns: 1fr; grid-template-rows: auto auto auto; }
       .hsplitter{ display:none }
@@ -226,13 +259,17 @@
       <button class="btn secondary" id="autocompleteBtn" title="Toggle autocomplete">Autocomplete: On</button>
       <button class="btn secondary" id="toggleSidebarBtn" title="Toggle right sidebar">Hide Sidebar ◀</button>
       <button class="btn admin" id="adminBtn" title="Enter Admin Mode">Admin</button>
+      <button class="btn admin" id="adminSettingsBtn" title="Admin Settings" style="display:none;">⚙</button>
     </div>
   </header>
 
   <div class="outer" id="outer">
     <!-- Left: Editor -->
     <section class="panel" id="editorPanel" style="grid-column:1 / 2; grid-row:1 / 2;">
-      <header aria-label="Code editor with Python syntax highlighting"><h3>Editor</h3></header>
+      <header aria-label="Code editor with Python syntax highlighting">
+        <h3>Editor</h3>
+        <button class="btn secondary" id="clearErrorsBtn" style="display:none; font-size:12px; padding:4px 8px;">Clear Error Highlights</button>
+      </header>
       <div class="content"><textarea id="editor"></textarea></div>
     </section>
 
@@ -244,7 +281,10 @@
       <div class="rightstack" id="rightstack">
         <!-- Shell -->
         <section class="panel" id="shellPanel" style="grid-row:1 / 2; grid-column:1;">
-          <header><h3>Shell Output</h3></header>
+          <header>
+            <h3>Shell Output</h3>
+            <button class="btn secondary" id="toggleShellBtn" style="font-size:12px; padding:4px 8px;">Hide Shell ▼</button>
+          </header>
           <div class="content"><div id="output"></div></div>
           <div class="shell-input-bar">
             <input id="stdin" placeholder="Type input() here and press Enter…"/>
@@ -391,6 +431,34 @@
 
           </div>
         </section>
+      </div>
+    </div>
+  </div>
+
+  <!-- Admin Password Modal -->
+  <div id="adminPasswordModal" class="modal" style="display:none;">
+    <div class="modal-content">
+      <h3>Admin Login</h3>
+      <label for="adminPasswordInput">Password:</label>
+      <input type="password" id="adminPasswordInput" placeholder="Enter admin password">
+      <div class="modal-actions">
+        <button class="btn secondary" id="adminCancelBtn">Cancel</button>
+        <button class="btn run" id="adminLoginBtn">Login</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Admin Settings Modal -->
+  <div id="adminSettingsModal" class="modal" style="display:none;">
+    <div class="modal-content">
+      <h3>Admin Settings</h3>
+      <label for="pageTitleInput">Page Title:</label>
+      <input type="text" id="pageTitleInput" placeholder="Eagles Web IDE (Python)">
+      <label for="topBarColorInput">Top Bar Color (CSS gradient or color):</label>
+      <input type="text" id="topBarColorInput" placeholder="linear-gradient(90deg,#a5c8f0,#7fb2eb)">
+      <div class="modal-actions">
+        <button class="btn secondary" id="settingsCancelBtn">Cancel</button>
+        <button class="btn run" id="settingsSaveBtn">Save</button>
       </div>
     </div>
   </div>
@@ -803,22 +871,68 @@ for i in range(3):
     let ADMIN_TOKEN = null;
     let currentConfig = null;
     let mySid = null;
+    let errorLineMarkers = []; // Track error line highlights
 
     const SYSTEM_MESSAGE_PATTERN = /^\[.*?\]/;
     const outputEl = document.getElementById('output');
     const stdinEl = document.getElementById('stdin');
-    const appendOut = s => { 
+    
+    const appendOut = (s, isUserInput = false) => { 
       const isSysMsg = SYSTEM_MESSAGE_PATTERN.test(s);
+      
+      // Check if this is an error or traceback line
+      const isError = s.includes('Traceback') || s.includes('Error:') || s.match(/^\s*(File|  )/);
+      
       if (isSysMsg) {
         const msgSpan = document.createElement('span');
         msgSpan.className = 'sys-msg';
         msgSpan.textContent = s;
         outputEl.appendChild(msgSpan);
+      } else if (isUserInput) {
+        const userSpan = document.createElement('span');
+        userSpan.className = 'shell-user-input';
+        userSpan.textContent = s;
+        outputEl.appendChild(userSpan);
+      } else if (isError) {
+        const errorSpan = document.createElement('span');
+        errorSpan.className = 'shell-error';
+        errorSpan.textContent = s;
+        outputEl.appendChild(errorSpan);
+        
+        // Extract line numbers from traceback
+        const lineMatch = s.match(/line (\d+)/);
+        if (lineMatch && window.eagleEditor) {
+          const lineNum = parseInt(lineMatch[1]) - 1; // 0-indexed
+          highlightErrorLine(lineNum);
+        }
       } else {
         outputEl.appendChild(document.createTextNode(s));
       }
       outputEl.scrollTop = outputEl.scrollHeight; 
     };
+
+    function highlightErrorLine(lineNum) {
+      if (!window.eagleEditor) return;
+      const cm = window.eagleEditor;
+      const line = cm.getLine(lineNum);
+      if (!line) return;
+      
+      const marker = cm.markText(
+        { line: lineNum, ch: 0 },
+        { line: lineNum, ch: line.length },
+        { className: 'cm-error-line' }
+      );
+      errorLineMarkers.push(marker);
+      
+      // Show the clear button
+      document.getElementById('clearErrorsBtn').style.display = '';
+    }
+
+    function clearErrorHighlights() {
+      errorLineMarkers.forEach(marker => marker.clear());
+      errorLineMarkers = [];
+      document.getElementById('clearErrorsBtn').style.display = 'none';
+    }
 
     const socket = io({ transports: ["polling"], upgrade: false, timeout: 20000 });
     socket.on('connected', (m) => {
@@ -858,14 +972,37 @@ for i in range(3):
       if (collapsed) {
         document.getElementById('toggleSidebarBtn').click();
       }
+      // Auto-show shell if hidden
+      const shellHidden = document.body.classList.contains('shell-hidden');
+      if (shellHidden) {
+        document.getElementById('toggleShellBtn').click();
+      }
       outputEl.textContent = '';
+      clearErrorHighlights();
       appendOut('[Sending code]\n');
       socket.emit('run_code', { code: editor.getValue() });
     });
     document.getElementById('stopBtn').addEventListener('click', () => socket.emit('stop', {}));
-    function sendInput(){ const v = stdinEl.value ?? ""; socket.emit('send_input', { data: v }); appendOut((v ?? "") + "\n"); stdinEl.value=''; }
+    function sendInput(){ 
+      const v = stdinEl.value ?? ""; 
+      socket.emit('send_input', { data: v }); 
+      appendOut((v ?? "") + "\n", true); // Mark as user input
+      stdinEl.value=''; 
+    }
     document.getElementById('sendBtn').addEventListener('click', sendInput);
     stdinEl.addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); sendInput(); } });
+
+    // Shell toggle button
+    document.getElementById('toggleShellBtn').addEventListener('click', () => {
+      const btn = document.getElementById('toggleShellBtn');
+      const isHidden = document.body.classList.toggle('shell-hidden');
+      btn.textContent = isHidden ? 'Show Shell ▲' : 'Hide Shell ▼';
+    });
+
+    // Clear error highlights button
+    document.getElementById('clearErrorsBtn').addEventListener('click', () => {
+      clearErrorHighlights();
+    });
 
     // Import / Export
     document.getElementById('fileIn').addEventListener('change', (e) => {
@@ -901,6 +1038,15 @@ for i in range(3):
     function applyConfig(cfg){
       if (!cfg) return;
       document.getElementById('notesView').innerHTML = cfg.notes_html || '';
+
+      // Apply page title and top bar color
+      if (cfg.page_title) {
+        document.title = cfg.page_title;
+        document.querySelector('.topbar .brand div:first-child').textContent = cfg.page_title.split('(')[0].trim();
+      }
+      if (cfg.topbar_color) {
+        document.querySelector('.topbar').style.background = cfg.topbar_color;
+      }
 
       const iframe = document.getElementById('lessonFrame');
       const localDiv = document.getElementById('lessonLocal');
@@ -940,12 +1086,64 @@ for i in range(3):
 
     // Admin login
     document.getElementById('adminBtn').addEventListener('click', async () => {
-      if (ADMIN_TOKEN) { ADMIN_TOKEN = null; document.body.classList.remove('admin-mode'); setEditable(false); return; }
-      const pw = prompt("Admin password:"); if (!pw) return;
+      if (ADMIN_TOKEN) { 
+        ADMIN_TOKEN = null; 
+        document.body.classList.remove('admin-mode'); 
+        setEditable(false); 
+        document.getElementById('adminSettingsBtn').style.display = 'none';
+        document.getElementById('adminBtn').textContent = 'Admin';
+        return; 
+      }
+      // Show modal
+      document.getElementById('adminPasswordModal').style.display = 'flex';
+      document.getElementById('adminPasswordInput').value = '';
+      document.getElementById('adminPasswordInput').focus();
+    });
+
+    // Admin password modal handlers
+    document.getElementById('adminCancelBtn').addEventListener('click', () => {
+      document.getElementById('adminPasswordModal').style.display = 'none';
+    });
+
+    document.getElementById('adminLoginBtn').addEventListener('click', async () => {
+      const pw = document.getElementById('adminPasswordInput').value;
+      if (!pw) return;
       const res = await fetch('/api/admin/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({password: pw})});
       const j = await res.json().catch(()=>({}));
-      if (j?.ok) { ADMIN_TOKEN = j.token; document.body.classList.add('admin-mode'); }
+      if (j?.ok) { 
+        ADMIN_TOKEN = j.token; 
+        document.body.classList.add('admin-mode'); 
+        document.getElementById('adminPasswordModal').style.display = 'none';
+        document.getElementById('adminSettingsBtn').style.display = '';
+        document.getElementById('adminBtn').textContent = 'Logout';
+      }
       else { alert('Invalid password'); }
+    });
+
+    // Allow Enter key to submit password
+    document.getElementById('adminPasswordInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        document.getElementById('adminLoginBtn').click();
+      }
+    });
+
+    // Admin settings modal handlers
+    document.getElementById('adminSettingsBtn').addEventListener('click', () => {
+      document.getElementById('adminSettingsModal').style.display = 'flex';
+      document.getElementById('pageTitleInput').value = currentConfig?.page_title || 'Eagles Web IDE (Python)';
+      document.getElementById('topBarColorInput').value = currentConfig?.topbar_color || 'linear-gradient(90deg,#a5c8f0,#7fb2eb)';
+    });
+
+    document.getElementById('settingsCancelBtn').addEventListener('click', () => {
+      document.getElementById('adminSettingsModal').style.display = 'none';
+    });
+
+    document.getElementById('settingsSaveBtn').addEventListener('click', async () => {
+      const page_title = document.getElementById('pageTitleInput').value.trim();
+      const topbar_color = document.getElementById('topBarColorInput').value.trim();
+      await saveConfig({ page_title, topbar_color });
+      applyConfig(currentConfig);
+      document.getElementById('adminSettingsModal').style.display = 'none';
     });
 
     function setEditable(on){
@@ -1023,7 +1221,10 @@ for i in range(3):
       const tnow = Math.floor(Date.now()/1000);
       if (tnow < explainCooldownUntil) return;
 
-      status.textContent = 'Explaining…'; out.textContent = ''; btn.disabled = true;
+      // Show thinking indicator
+      status.innerHTML = '<span class="ai-thinking">Thinking</span>';
+      out.textContent = ''; 
+      btn.disabled = true;
 
       const code = editor.getValue();
       try {
@@ -1309,9 +1510,14 @@ for i in range(3):
 
         // Render markdown for assistant messages; user messages as text
         if (m.role === 'assistant'){
-          const inner = document.createElement('div');
-          renderMarkdownTo(inner, m.content, 'python');
-          div.appendChild(inner);
+          // Check if it's HTML (like thinking indicator)
+          if (m.content.includes('<span class="ai-thinking">')) {
+            div.innerHTML = m.content;
+          } else {
+            const inner = document.createElement('div');
+            renderMarkdownTo(inner, m.content, 'python');
+            div.appendChild(inner);
+          }
         } else {
           div.textContent = m.content;
         }
@@ -1337,16 +1543,16 @@ for i in range(3):
       const base = (currentConfig?.ai_assistant_preprompt || '').trim();
       const policy =
         `${base ? base + '\n\n' : ''}` +
-        `ROLE: You are a strict CODING TUTOR for students learning to code.\n` +
-        `SCOPE: Programming questions only (default to Python). If asked anything non-coding, reply: "I can only help with coding questions."\n` +
+        `ROLE: You are a strict CODING TUTOR for students learning Python.\n` +
+        `SCOPE: Python programming questions only. If asked anything non-coding, reply: "I can only help with Python coding questions."\n` +
         `ASSISTANCE POLICY:\n` +
-        `- You may explain concepts, syntax, and debugging techniques\n` +
+        `- You may explain concepts, syntax, and debugging techniques BRIEFLY (2-3 sentences max)\n` +
         `- You may point out errors and guide students to fix them\n` +
         `- You MUST NOT write complete solutions to coding problems/assignments\n` +
         `- If asked to "write code for" or "solve this problem", respond: "I can help you understand how to solve this, but I can't write the solution for you. What part are you stuck on?"\n` +
         `- Instead of giving answers, ask guiding questions\n` +
-        `STYLE: Keep answers brief and focused. Use Markdown. Format code snippets with fenced blocks (default to \`\`\`python).\n` +
-        `SAFETY: Do not give non-coding advice. Do not do students' assignments.`;
+        `STYLE: Keep ALL answers VERY brief (2-3 sentences). Use Markdown sparingly. Format code snippets with fenced blocks (\`\`\`python).\n` +
+        `SAFETY: Do not give non-coding advice. Do not do students' assignments. Never provide full code solutions.`;
       if (!assistantMsgs.length || assistantMsgs[0].role !== 'system'){
         assistantMsgs.unshift({ role:'system', content: policy });
       } else {
@@ -1363,14 +1569,22 @@ for i in range(3):
       ensureAssistantSystemMessage();
 
       assistantMsgs.push({role:'user', content});
-      assistantInput.value = ''; renderChat();
+      assistantInput.value = ''; 
+      
+      // Add thinking indicator as temporary message
+      assistantMsgs.push({role:'assistant', content: '<span class="ai-thinking">Thinking</span>', temporary: true});
+      renderChat();
 
       try{
         const r = await fetch('/api/assistant/chat', {
           method:'POST',
           headers:{ 'Content-Type':'application/json', 'X-SID': (window.mySid || '') },
-          body: JSON.stringify({ messages: assistantMsgs, sid: (mySid || window.mySid || '') })
+          body: JSON.stringify({ messages: assistantMsgs.filter(m => !m.temporary), sid: (mySid || window.mySid || '') })
         });
+        
+        // Remove thinking indicator
+        assistantMsgs = assistantMsgs.filter(m => !m.temporary);
+        
         const j = await r.json().catch(()=>({}));
         if (j?.ok){
           const reply = (j.reply || '').trim();
@@ -1385,6 +1599,8 @@ for i in range(3):
           startAssistantCooldown(15);
         }
       }catch(e){
+        // Remove thinking indicator
+        assistantMsgs = assistantMsgs.filter(m => !m.temporary);
         assistantMsgs.push({role:'assistant', content: 'Network error'});
         renderChat();
         startAssistantCooldown(15);
@@ -1927,6 +2143,16 @@ for i in range(3):
             <span class="student-score">${s.score !== null && s.score !== undefined ? s.score + '/' + assignment.maxScore : '—/' + assignment.maxScore}</span>
           </div>
           <div class="student-email">${escapeHtml(s.email)}</div>
+          <div class="score-input" style="margin-top:8px;">
+            <input type="number" class="score-input-field" placeholder="Score" min="0" max="${assignment.maxScore}" 
+              value="${s.score !== null && s.score !== undefined ? s.score : ''}" 
+              style="width:60px; padding:4px; background:#1a1a1a; color:#fff; border:1px solid #2b2b2b; border-radius:4px; font-size:12px;"
+              onclick="event.stopPropagation();">
+            <button class="btn secondary ai-grade-btn" onclick="event.stopPropagation(); aiGradeSubmission('${escapeHtml(assignmentName)}', '${escapeHtml(s.email)}');" 
+              style="padding:4px 8px; font-size:11px;">AI Grade</button>
+            <button class="btn run" onclick="event.stopPropagation(); saveSubmissionScore('${escapeHtml(assignmentName)}', '${escapeHtml(s.email)}', this.previousElementSibling.previousElementSibling);" 
+              style="padding:4px 8px; font-size:11px;">Save</button>
+          </div>
         </div>
       `).join('');
 
@@ -1955,6 +2181,93 @@ for i in range(3):
       if (statusEl) {
         statusEl.textContent = `Loaded: ${submission.name || email}`;
         setTimeout(() => { statusEl.textContent = ''; }, 3000);
+      }
+    }
+
+    // Save submission score
+    async function saveSubmissionScore(assignmentName, email, inputElement) {
+      const score = parseInt(inputElement.value);
+      if (isNaN(score)) {
+        alert('Please enter a valid score');
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/assignments/score', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Token': ADMIN_TOKEN
+          },
+          body: JSON.stringify({
+            assignmentName: assignmentName,
+            studentEmail: email,
+            score: score
+          })
+        });
+
+        const result = await response.json();
+        if (result?.ok) {
+          alert('Score saved successfully!');
+          await loadAssignments();
+          showSubmissionsInSidebar(assignmentName);
+        } else {
+          alert('Failed to save score: ' + (result?.error || 'Unknown error'));
+        }
+      } catch (error) {
+        alert('Error saving score: ' + error.message);
+      }
+    }
+
+    // AI Grade submission
+    async function aiGradeSubmission(assignmentName, email) {
+      const assignment = currentAssignments.find(a => a.name === assignmentName);
+      if (!assignment) return;
+
+      const submission = assignment.submissions.find(s => s.email.toLowerCase() === email.toLowerCase());
+      if (!submission) return;
+
+      const statusEl = document.getElementById('assignmentStatus');
+      if (statusEl) {
+        statusEl.innerHTML = '<span class="ai-thinking">Grading</span>';
+      }
+
+      try {
+        const response = await fetch('/api/assignments/grade-ai', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Token': ADMIN_TOKEN
+          },
+          body: JSON.stringify({
+            assignmentName: assignmentName,
+            studentEmail: email,
+            code: submission.code || '',
+            task: assignment.task || '',
+            maxScore: assignment.maxScore || 100
+          })
+        });
+
+        const result = await response.json();
+        if (statusEl) statusEl.textContent = '';
+        
+        if (result?.ok) {
+          alert(`AI Grade: ${result.score}/${assignment.maxScore}\n\nYou can now save this score.`);
+          // Update the input field with AI score
+          const sidebar = document.getElementById('submissionsSidebarList');
+          const inputFields = sidebar.querySelectorAll('.score-input-field');
+          inputFields.forEach(input => {
+            const parent = input.closest('.sidebar-submission');
+            if (parent && parent.dataset.email === email) {
+              input.value = result.score;
+            }
+          });
+        } else {
+          alert('Failed to grade: ' + (result?.error || 'Unknown error'));
+        }
+      } catch (error) {
+        if (statusEl) statusEl.textContent = '';
+        alert('Error grading submission: ' + error.message);
       }
     }
 
