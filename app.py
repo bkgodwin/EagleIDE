@@ -153,7 +153,11 @@ def api_explain():
     if not code:
         return jsonify(ok=False, error="No code provided"), 400
 
-    pretext = "Explain the following Python code in a simple, brief, and step-by-step format:\n\n"
+    pretext = (
+        "Explain the following Python code in 2-3 concise sentences. "
+        "If there are any errors or issues, identify them and suggest how to fix them. "
+        "Keep your response brief and focused:\n\n"
+    )
     res = call_ollama_generate(cfg.get("ai_ollama_url", ""), cfg.get("ai_model", "gemma3:4b"), pretext + code)
     if not res.get("ok"):
         return jsonify(ok=False, error=res.get("error", "AI error"))

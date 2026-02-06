@@ -18,7 +18,12 @@ DEFAULT_CONFIG = {
     "ai_assistant_preprompt": (
         "You are a helpful Python tutor for high-school students. "
         "Only answer questions about programming and debugging code. "
-        "Keep explanations short, accurate, and step-by-step. If a question is not about coding, "
-        "politely decline and redirect to Python topics."
+        "Keep responses brief (2-3 sentences max). "
+        "Never write complete solutions - guide students with hints and questions. "
+        "If a question is not about coding, politely decline and redirect to Python topics."
     ),
+    
+    # Page customization settings
+    "page_title": "Eagles Web IDE (Python)",
+    "topbar_color": "linear-gradient(90deg,#a5c8f0,#7fb2eb)",
 }
