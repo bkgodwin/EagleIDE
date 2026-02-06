@@ -1036,9 +1036,12 @@ for i in range(3):
             }
           } else if (/[?:] ?$/.test(s) && !s.includes('\n')) {
             appendOut(s);
-            setTimeout(() => {
-              try { stdinEl.focus(); } catch {}
-            }, 50);
+            // Focus input for prompts ending with ? or : (fallback detection)
+            try { 
+              stdinEl.focus(); 
+            } catch (e) {
+              console.warn('Failed to focus stdin:', e);
+            }
           } else {
             appendOut(s);
           }
