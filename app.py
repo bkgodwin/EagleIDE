@@ -381,7 +381,7 @@ import builtins
 def _ide_input(prompt=""):
     if prompt:
         sys.stdout.write(str(prompt))
-    sys.stdout.write("{INPUT_TOKEN}\\n")
+    sys.stdout.write("{INPUT_TOKEN}")
     sys.stdout.flush()
     line = sys.stdin.readline()
     return line.rstrip("\\n")
@@ -569,20 +569,18 @@ def _list_assignments() -> list:
 
 @app.get("/api/assignments")
 def get_assignments():
-    """Get all assignments (students see only active ones)"""
+    """Get all assignments"""
     is_admin = _require_admin(request)
     all_assignments = _list_assignments()
     
     if is_admin:
-        # Admins see all assignments
+        # Admins see all assignments with submissions
         return jsonify(ok=True, assignments=all_assignments, isAdmin=True)
     else:
-        # Students see only active assignments
-        active = [a for a in all_assignments if a.get("active", False)]
-        # Remove submissions from student view
-        for a in active:
+        # Students see all assignments (both active and past) but without submissions data
+        for a in all_assignments:
             a.pop("submissions", None)
-        return jsonify(ok=True, assignments=active, isAdmin=False)
+        return jsonify(ok=True, assignments=all_assignments, isAdmin=False)
 
 @app.post("/api/assignments/create")
 def create_assignment():
@@ -867,6 +865,34 @@ def download_assignment_csv(assignment_name: str):
         mimetype="text/csv",
         headers={"Content-Disposition": f"attachment;filename={assignment_name}_scores.csv"}
     )
+
+@app.post("/api/assignments/student-scores")
+def get_student_scores():
+    """Get scores for a specific student email across all assignments"""
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    
+    if not email:
+        return jsonify(ok=False, error="Email required"), 400
+    
+    all_assignments = _list_assignments()
+    student_scores = []
+    
+    for assignment in all_assignments:
+        submissions = assignment.get("submissions", [])
+        # Find submission for this email
+        for sub in submissions:
+            if sub.get("email", "").lower() == email:
+                student_scores.append({
+                    "assignmentName": assignment.get("name", ""),
+                    "maxScore": assignment.get("maxScore", 100),
+                    "score": sub.get("score"),
+                    "submittedAt": sub.get("submittedAt", ""),
+                    "active": assignment.get("active", False)
+                })
+                break
+    
+    return jsonify(ok=True, scores=student_scores)
 
 # -------------------------
 # Health
