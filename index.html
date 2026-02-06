@@ -97,7 +97,7 @@
     .tab-pane.active{ display:block }
 
     .notes-toolbar, .lesson-toolbar{ display:none; gap:6px; padding:8px; border-bottom:1px solid #2b2b2b; background:#141414 }
-    .ai-toolbar{ display:none !important; gap:6px; padding:8px; border-bottom:1px solid #2b2b2b; background:#141414 }
+    .ai-toolbar{ display:none; gap:6px; padding:8px; border-bottom:1px solid #2b2b2b; background:#141414 }
     body.admin-mode .notes-toolbar{ display:flex }
     body.admin-mode .lesson-toolbar{ display:flex }
     
@@ -1218,7 +1218,7 @@ for i in range(3):
       
       applyConfig(currentConfig);
       document.getElementById('adminSettingsModal').style.display = 'none';
-      alert('Settings saved successfully!');
+      alert('All settings saved successfully!');
     });
 
     function setEditable(on){
@@ -2232,23 +2232,48 @@ for i in range(3):
           <div class="score-input" style="margin-top:8px;">
             <input type="number" class="score-input-field" placeholder="Score" min="0" max="${assignment.maxScore}" 
               value="${hasScore ? s.score : ''}" 
-              style="width:60px; padding:4px; background:#1a1a1a; color:#fff; border:1px solid #2b2b2b; border-radius:4px; font-size:12px;"
-              onclick="event.stopPropagation();"
-              oninput="markSubmissionPending(this);">
-            <button class="btn secondary ai-grade-btn" onclick="event.stopPropagation(); aiGradeSubmission('${escapeHtml(assignmentName)}', '${escapeHtml(s.email)}');" 
-              style="padding:4px 8px; font-size:11px;">AI Grade</button>
-            <button class="btn run" onclick="event.stopPropagation(); saveSubmissionScore('${escapeHtml(assignmentName)}', '${escapeHtml(s.email)}', this.previousElementSibling.previousElementSibling);" 
-              style="padding:4px 8px; font-size:11px;">Save</button>
+              style="width:60px; padding:4px; background:#1a1a1a; color:#fff; border:1px solid #2b2b2b; border-radius:4px; font-size:12px;">
+            <button class="btn secondary ai-grade-btn" style="padding:4px 8px; font-size:11px;">AI Grade</button>
+            <button class="btn run save-score-btn" style="padding:4px 8px; font-size:11px;">Save</button>
           </div>
         </div>
         `;
       }).join('');
 
-      // Add click handlers to load submissions into editor
+      // Add event handlers using addEventListener (safer than inline handlers)
       sidebar.querySelectorAll('.sidebar-submission').forEach(item => {
+        const assignName = item.dataset.assignment;
+        const studentEmail = item.dataset.email;
+        
+        // Click on card to view submission
         item.addEventListener('click', () => {
-          loadSubmissionToEditorDirect(item.dataset.assignment, item.dataset.email);
+          loadSubmissionToEditorDirect(assignName, studentEmail);
         });
+        
+        // Input field - stop propagation and mark pending
+        const inputField = item.querySelector('.score-input-field');
+        if (inputField) {
+          inputField.addEventListener('click', (e) => e.stopPropagation());
+          inputField.addEventListener('input', () => markSubmissionPending(inputField));
+        }
+        
+        // AI Grade button
+        const aiGradeBtn = item.querySelector('.ai-grade-btn');
+        if (aiGradeBtn) {
+          aiGradeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            aiGradeSubmission(assignName, studentEmail);
+          });
+        }
+        
+        // Save button
+        const saveBtn = item.querySelector('.save-score-btn');
+        if (saveBtn) {
+          saveBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            saveSubmissionScore(assignName, studentEmail, inputField);
+          });
+        }
       });
     }
 
@@ -2482,6 +2507,8 @@ for i in range(3):
     // Save All and AI Grade All Functions
     // =============================================
     
+    const AI_GRADING_DELAY_MS = 500; // Delay between AI grading requests to avoid overwhelming the service
+    
     // Save All Grades button handler
     document.getElementById('saveAllGradesBtn')?.addEventListener('click', async () => {
       if (!currentSidebarAssignment) return;
@@ -2641,8 +2668,8 @@ for i in range(3):
           failed++;
         }
         
-        // Small delay between requests to avoid overwhelming the AI service
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // Delay between requests to avoid overwhelming the AI service
+        await new Promise(resolve => setTimeout(resolve, AI_GRADING_DELAY_MS));
       }
       
       await loadAssignments();
