@@ -15,12 +15,14 @@ PERSIST_FILE = BASE_DIR / "config.txt"        # persisted settings (JSON)
 CHALLENGE_CSV = BASE_DIR / "challenges.csv"   # optional challenge bank
 LEADERBOARD_CSV = BASE_DIR / "leaderboard.csv"
 SANDBOX_DIR = BASE_DIR / "sandboxes"
+ASSIGNMENTS_DIR = BASE_DIR / "assignments"
 
 INPUT_TOKEN = "[[_IDE_INPUT_]]"
 MAX_WALL_TIME = 30.0       # seconds (hard kill for user code)
 IDLE_TIMEOUT = 10.0        # reserved, if you later want idle detection
 
 os.makedirs(SANDBOX_DIR, exist_ok=True)
+os.makedirs(ASSIGNMENTS_DIR, exist_ok=True)
 
 # -------------------------
 # Defaults from config.py
@@ -508,6 +510,272 @@ def on_stop(_=None):
     r.stop()
     emit("output", {"data": "\n[Stopped]\n"})
     emit("finished", {})
+
+# -------------------------
+# Assignment system
+# -------------------------
+_assignment_lock = threading.Lock()
+
+def _get_assignment_path(name: str) -> Path:
+    """Get the path to an assignment's JSON file"""
+    # Sanitize name to prevent directory traversal
+    safe_name = "".join(c for c in name if c.isalnum() or c in (' ', '-', '_')).strip()
+    return ASSIGNMENTS_DIR / f"{safe_name}.json"
+
+def _load_assignment(name: str) -> Optional[Dict[str, Any]]:
+    """Load an assignment by name"""
+    with _assignment_lock:
+        path = _get_assignment_path(name)
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"Error loading assignment {name}: {e}")
+            return None
+
+def _save_assignment(assignment: Dict[str, Any]) -> bool:
+    """Save an assignment"""
+    with _assignment_lock:
+        name = assignment.get("name", "").strip()
+        if not name:
+            return False
+        path = _get_assignment_path(name)
+        try:
+            path.write_text(json.dumps(assignment, ensure_ascii=False, indent=2), encoding="utf-8")
+            return True
+        except Exception as e:
+            print(f"Error saving assignment {name}: {e}")
+            return False
+
+def _list_assignments() -> list:
+    """List all assignments"""
+    with _assignment_lock:
+        assignments = []
+        if not ASSIGNMENTS_DIR.exists():
+            return assignments
+        for path in ASSIGNMENTS_DIR.iterdir():
+            if path.suffix == ".json":
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    assignments.append(data)
+                except Exception as e:
+                    print(f"Error loading assignment {path.name}: {e}")
+        return sorted(assignments, key=lambda a: a.get("name", ""))
+
+@app.get("/api/assignments")
+def get_assignments():
+    """Get all assignments (students see only active ones)"""
+    is_admin = _require_admin(request)
+    all_assignments = _list_assignments()
+    
+    if is_admin:
+        # Admins see all assignments
+        return jsonify(ok=True, assignments=all_assignments, isAdmin=True)
+    else:
+        # Students see only active assignments
+        active = [a for a in all_assignments if a.get("active", False)]
+        # Remove submissions from student view
+        for a in active:
+            a.pop("submissions", None)
+        return jsonify(ok=True, assignments=active, isAdmin=False)
+
+@app.post("/api/assignments/create")
+def create_assignment():
+    """Create a new assignment (admin only)"""
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    task = (data.get("task") or "").strip()
+    max_score = data.get("maxScore", 100)
+    
+    if not name:
+        return jsonify(ok=False, error="Assignment name required"), 400
+    
+    # Check if assignment already exists
+    if _load_assignment(name):
+        return jsonify(ok=False, error="Assignment with this name already exists"), 400
+    
+    assignment = {
+        "name": name,
+        "task": task,
+        "maxScore": max_score,
+        "active": False,
+        "submissions": []
+    }
+    
+    if _save_assignment(assignment):
+        return jsonify(ok=True, assignment=assignment)
+    return jsonify(ok=False, error="Failed to save assignment"), 500
+
+@app.post("/api/assignments/update")
+def update_assignment():
+    """Update an assignment (admin only)"""
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    
+    if not name:
+        return jsonify(ok=False, error="Assignment name required"), 400
+    
+    assignment = _load_assignment(name)
+    if not assignment:
+        return jsonify(ok=False, error="Assignment not found"), 404
+    
+    # Update fields
+    if "task" in data:
+        assignment["task"] = data["task"]
+    if "maxScore" in data:
+        assignment["maxScore"] = data["maxScore"]
+    if "active" in data:
+        assignment["active"] = data["active"]
+    
+    if _save_assignment(assignment):
+        return jsonify(ok=True, assignment=assignment)
+    return jsonify(ok=False, error="Failed to save assignment"), 500
+
+@app.post("/api/assignments/delete")
+def delete_assignment():
+    """Delete an assignment (admin only)"""
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    
+    if not name:
+        return jsonify(ok=False, error="Assignment name required"), 400
+    
+    with _assignment_lock:
+        path = _get_assignment_path(name)
+        if not path.exists():
+            return jsonify(ok=False, error="Assignment not found"), 404
+        try:
+            path.unlink()
+            return jsonify(ok=True)
+        except Exception as e:
+            return jsonify(ok=False, error=f"Failed to delete: {e}"), 500
+
+@app.post("/api/assignments/submit")
+def submit_assignment():
+    """Submit code for an assignment"""
+    data = request.get_json(silent=True) or {}
+    assignment_name = (data.get("assignmentName") or "").strip()
+    student_name = (data.get("studentName") or "").strip()
+    student_email = (data.get("studentEmail") or "").strip()
+    class_period = (data.get("classPeriod") or "").strip()
+    code = data.get("code", "")
+    
+    if not assignment_name or not student_email:
+        return jsonify(ok=False, error="Assignment name and email required"), 400
+    
+    assignment = _load_assignment(assignment_name)
+    if not assignment:
+        return jsonify(ok=False, error="Assignment not found"), 404
+    
+    if not assignment.get("active", False):
+        return jsonify(ok=False, error="Assignment is not active"), 403
+    
+    # Create or update submission
+    submissions = assignment.get("submissions", [])
+    
+    # Find existing submission by email
+    existing_idx = None
+    for i, sub in enumerate(submissions):
+        if sub.get("email", "").lower() == student_email.lower():
+            existing_idx = i
+            break
+    
+    submission = {
+        "name": student_name,
+        "email": student_email,
+        "classPeriod": class_period,
+        "code": code,
+        "submittedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "score": None
+    }
+    
+    if existing_idx is not None:
+        # Overwrite existing submission
+        submissions[existing_idx] = submission
+    else:
+        # Add new submission
+        submissions.append(submission)
+    
+    assignment["submissions"] = submissions
+    
+    if _save_assignment(assignment):
+        return jsonify(ok=True, message="Submission saved successfully")
+    return jsonify(ok=False, error="Failed to save submission"), 500
+
+@app.post("/api/assignments/score")
+def score_submission():
+    """Set a score for a student submission (admin only)"""
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    
+    data = request.get_json(silent=True) or {}
+    assignment_name = (data.get("assignmentName") or "").strip()
+    student_email = (data.get("studentEmail") or "").strip()
+    score = data.get("score")
+    
+    if not assignment_name or not student_email:
+        return jsonify(ok=False, error="Assignment name and email required"), 400
+    
+    assignment = _load_assignment(assignment_name)
+    if not assignment:
+        return jsonify(ok=False, error="Assignment not found"), 404
+    
+    submissions = assignment.get("submissions", [])
+    found = False
+    for sub in submissions:
+        if sub.get("email", "").lower() == student_email.lower():
+            sub["score"] = score
+            found = True
+            break
+    
+    if not found:
+        return jsonify(ok=False, error="Submission not found"), 404
+    
+    if _save_assignment(assignment):
+        return jsonify(ok=True)
+    return jsonify(ok=False, error="Failed to save score"), 500
+
+@app.get("/api/assignments/<assignment_name>/csv")
+def download_assignment_csv(assignment_name: str):
+    """Download CSV of student numbers and scores (admin only)"""
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    
+    assignment = _load_assignment(assignment_name)
+    if not assignment:
+        return jsonify(ok=False, error="Assignment not found"), 404
+    
+    from flask import Response
+    import io
+    
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Student Number", "Score"])
+    
+    submissions = assignment.get("submissions", [])
+    for sub in submissions:
+        email = sub.get("email", "")
+        # Extract student number (everything before @)
+        student_num = email.split("@")[0] if "@" in email else email
+        score = sub.get("score", "")
+        writer.writerow([student_num, score])
+    
+    output.seek(0)
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment;filename={assignment_name}_scores.csv"}
+    )
 
 # -------------------------
 # Health
