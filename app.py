@@ -765,6 +765,12 @@ def grade_assignment_ai():
     if not assignment_name or not student_email or not code or not task:
         return jsonify(ok=False, error="Missing required fields"), 400
     
+    # Validate and sanitize inputs
+    if len(code) > 100000:  # Limit code to 100KB
+        return jsonify(ok=False, error="Code is too long"), 400
+    if len(task) > 10000:  # Limit task description to 10KB
+        return jsonify(ok=False, error="Task description is too long"), 400
+    
     # Build prompt for AI grading
     prompt = (
         "Grade the following student's Python code submission strictly from 0 to {max_score}.\n"
@@ -787,17 +793,23 @@ def grade_assignment_ai():
     
     # Extract score from AI response
     score = None
+    # Look for first positive integer in the response
     for tok in raw.split():
-        if tok.strip("-+").isdigit():
+        tok = tok.strip('.,!?;:')  # Remove punctuation
+        if tok.isdigit():
             score = int(tok)
             break
+    
+    # Fallback: extract all digits as a number
     if score is None:
         digits = "".join([c for c in raw if c.isdigit()])
         if digits:
             score = int(digits)
+    
     if score is None:
         return jsonify(ok=False, error=f"AI returned invalid score: {raw!r}")
     
+    # Ensure score is within valid range
     score = max(0, min(max_score, score))
     
     # Save the score

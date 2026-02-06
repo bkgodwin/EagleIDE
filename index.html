@@ -1701,9 +1701,9 @@ for i in range(3):
                 <div class="email">${escapeHtml(s.email)} | Period: ${escapeHtml(s.classPeriod || 'N/A')} | Submitted: ${escapeHtml(s.submittedAt || 'Unknown')}</div>
                 <div class="score-input">
                   Score: <input type="number" class="score-field" value="${s.score || ''}" min="0" max="${assignment.maxScore}" 
-                    data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}" data-idx="${idx}"
+                    data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}" data-idx="${escapeHtml(String(idx))}"
                     style="width:80px;" /> / ${assignment.maxScore}
-                  <button class="ai-grade-btn" data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}" data-idx="${idx}">Grade with AI</button>
+                  <button class="ai-grade-btn" data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}" data-idx="${escapeHtml(String(idx))}">Grade with AI</button>
                 </div>
               </div>
             `).join('') : '<p style="color:#888;">No submissions yet.</p>'}
@@ -1963,7 +1963,7 @@ for i in range(3):
     // =============================================
     const studentEmailInput = document.getElementById('studentEmailInput');
     if (studentEmailInput) {
-      studentEmailInput.addEventListener('input', debounce(lookupStudentScores, 500));
+      studentEmailInput.addEventListener('input', debounce(lookupStudentScores, 300));
     }
 
     function debounce(func, wait) {
