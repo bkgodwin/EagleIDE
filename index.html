@@ -222,7 +222,7 @@
 
     /* Error highlighting in shell */
     .shell-error { color: #ff5555; }
-    .shell-user-input { color: #dcdcdc; font-weight: normal; }
+    .shell-user-input { color: #4caf50; font-weight: normal; }
 
     /* Error highlighting in editor */
     .cm-error-line { background-color: rgba(255, 85, 85, 0.15); }
@@ -913,6 +913,7 @@ for i in range(3):
   <!-- App state & sockets -->
   <script>
     const INPUT_TOKEN = "[[_IDE_INPUT_]]";
+    const USER_INPUT_TOKEN = "[[_IDE_USER_INPUT_]]";
     let ADMIN_TOKEN = null;
     let currentConfig = null;
     let mySid = null;
@@ -928,11 +929,22 @@ for i in range(3):
       // Check if this is an error or traceback line
       const isError = s.includes('Traceback') || s.includes('Error:') || s.match(/^\s*(File|  )/);
       
+      // Check if this line contains user input token
+      const hasUserInputToken = s.includes(USER_INPUT_TOKEN);
+      
       if (isSysMsg) {
         const msgSpan = document.createElement('span');
         msgSpan.className = 'sys-msg';
         msgSpan.textContent = s;
         outputEl.appendChild(msgSpan);
+      } else if (hasUserInputToken) {
+        // Handle user input with green styling
+        const cleanText = s.replace(USER_INPUT_TOKEN, '');
+        const userSpan = document.createElement('span');
+        userSpan.className = 'shell-user-input';
+        userSpan.style.color = '#4caf50';  // Green color for user input
+        userSpan.textContent = cleanText;
+        outputEl.appendChild(userSpan);
       } else if (isUserInput) {
         const userSpan = document.createElement('span');
         userSpan.className = 'shell-user-input';
