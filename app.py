@@ -389,7 +389,7 @@ def _ide_input(prompt=""):
     # Echo back the user's input WITHOUT newline
     # (Frontend will add newline after displaying input inline with prompt)
     user_input = line.rstrip("\\n")
-    sys.stdout.write(user_input)
+    sys.stdout.write(user_input + "\\n")
     sys.stdout.flush()
     return user_input
 
