@@ -11,7 +11,7 @@ DEFAULT_CONFIG = {
 
     # AI master toggle + model/endpoint (used by Explain, Challenge, and Assistant)
     "ai_explainer_enabled": True,
-    "ai_ollama_url": "http://127.0.0.1:11434",
+    "ai_ollama_url": "http://192.168.0.105:11434",
     "ai_model": "gemma3:4b",
 
     # NEW: AI Assistant preprompt (editable in Admin)
@@ -24,6 +24,6 @@ DEFAULT_CONFIG = {
     ),
     
     # Page customization settings
-    "page_title": "Eagles Web IDE (Python)",
+    "page_title": "Eagle IDE (Python)",
     "topbar_color": "linear-gradient(90deg,#a5c8f0,#7fb2eb)",
 }
