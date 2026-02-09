@@ -156,7 +156,7 @@ def api_explain():
     pretext = (
         "Explain the following Python code in 2-3 concise sentences. "
         "If there are any errors or issues, identify them and suggest how to fix them. "
-        "Keep your response brief and focused:\n\n"
+        "Keep your response brief and focused. do not respond if it isn't python code:\n\n"
     )
     res = call_ollama_generate(cfg.get("ai_ollama_url", ""), cfg.get("ai_model", "gemma3:4b"), pretext + code)
     if not res.get("ok"):
@@ -213,7 +213,7 @@ def challenge_score():
         return jsonify(ok=False, error="Missing code or challenge"), 400
 
     prompt = (
-        "Grade the student's Python solution strictly from 0 to {max_points}.\n"
+        "Grade the student's Python solution with strict adherence to the challenge and high rigor strictly from 0 to {max_points}.\n"
         "Return ONLY the integer number, with no words.\n\n"
         "Challenge:\n{challenge}\n\n"
         "Student code:\n{code}\n"

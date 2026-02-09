@@ -284,7 +284,7 @@
     <!-- Left: Editor -->
     <section class="panel" id="editorPanel" style="grid-column:1 / 2; grid-row:1 / 2;">
       <header aria-label="Code editor with Python syntax highlighting">
-        <h3>Editor</h3>
+        <h3>Editor:</h3>
         <button class="btn secondary" id="clearErrorsBtn" style="display:none; font-size:12px; padding:4px 8px;">Clear Error Highlights</button>
       </header>
       <div class="content"><textarea id="editor"></textarea></div>
@@ -299,7 +299,7 @@
         <!-- Shell -->
         <section class="panel" id="shellPanel" style="grid-row:1 / 2; grid-column:1;">
           <header>
-            <h3>Shell Output</h3>
+            <h3>Shell:</h3>
           </header>
           <div class="content"><div id="output"></div></div>
           <div class="shell-input-bar">
@@ -313,7 +313,7 @@
         <!-- Tabs -->
         <section class="panel" id="rightStackPanel" style="grid-row:3 / 4; grid-column:1;">
           <header>
-            <h3>Notes, Wiki & AI</h3>
+            <h3>Resources:</h3>
             <button class="btn secondary" id="toggleShellBtn" style="font-size:12px; padding:4px 8px;">Hide Shell ▼</button>
           </header>
 
@@ -856,10 +856,9 @@
     });
 
     // Starter example
-    editor.setValue(`# Tabs are used for indentation in this IDE.
+    editor.setValue(`# Welcome Eagles!.
 name = input("Type your name: ")
-for i in range(3):
-\tprint(i, name)
+print("Hello " + name)
 `);
   </script>
 
