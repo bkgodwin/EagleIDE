@@ -388,7 +388,7 @@ def _ide_input(prompt=""):
     line = sys.stdin.readline()
     # Echo back the user's input (without newline) on same line
     user_input = line.rstrip("\\n")
-    sys.stdout.write(user_input + "\\n")
+    sys.stdout.write(user_input)
     sys.stdout.flush()
     return user_input
 
