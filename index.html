@@ -917,6 +917,7 @@ for i in range(3):
     let currentConfig = null;
     let mySid = null;
     let errorLineMarkers = []; // Track error line highlights
+    let waitingForUserInput = false; // Track if we're waiting for user input
 
     const SYSTEM_MESSAGE_PATTERN = /^\[.*?\]/;
     const outputEl = document.getElementById('output');
@@ -1025,9 +1026,12 @@ for i in range(3):
           let s = msg.data || '';
           if (!s) return;
           if (s.includes(INPUT_TOKEN)) {
-            // Remove INPUT_TOKEN(s) and display the prompt text
-            s = s.split(INPUT_TOKEN).join('');
-            if (s) appendOut(s);
+            // Remove INPUT_TOKEN and display prompt WITHOUT newline
+            s = s.replace(INPUT_TOKEN, '').replace(/\n$/, '');
+            if (s) {
+              outputEl.appendChild(document.createTextNode(s));
+            }
+            waitingForUserInput = true;
             // Focus input field immediately - no setTimeout delay
             try { 
               stdinEl.focus(); 
@@ -1035,6 +1039,15 @@ for i in range(3):
             } catch (e) {
               console.warn('Failed to focus stdin:', e);
             }
+          } else if (waitingForUserInput && !s.startsWith('[') && !s.includes('Traceback')) {
+            // This is user input - display inline in green
+            const userSpan = document.createElement('span');
+            userSpan.style.color = '#4caf50';  // Green
+            userSpan.textContent = s.replace(/\n$/, '');  // Remove trailing newline
+            outputEl.appendChild(userSpan);
+            outputEl.appendChild(document.createTextNode('\n'));  // Add newline AFTER input
+            waitingForUserInput = false;
+            outputEl.scrollTop = outputEl.scrollHeight;
           } else if (/[?:] ?$/.test(s) && !s.includes('\n')) {
             appendOut(s);
             // Focus input for prompts ending with ? or : (fallback detection)
