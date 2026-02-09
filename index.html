@@ -942,7 +942,6 @@ for i in range(3):
         const cleanText = s.replace(USER_INPUT_TOKEN, '');
         const userSpan = document.createElement('span');
         userSpan.className = 'shell-user-input';
-        userSpan.style.color = '#4caf50';  // Green color for user input
         userSpan.textContent = cleanText;
         outputEl.appendChild(userSpan);
       } else if (isUserInput) {
