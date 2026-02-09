@@ -19,6 +19,7 @@ ENV/
 # Temporary files
 *.tmp
 config.tmp
+config.txt
 
 # Application specific
 sandboxes/
