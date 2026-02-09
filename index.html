@@ -1,1 +1,2805 @@
-.shell-user-input { color: #dcdcdc; }
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Eagles Web IDE (Python)</title>
+
+  <!-- CodeMirror 5 -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/monokai.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
+
+  <!-- Socket.IO client -->
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+  <!-- Markdown + Sanitizer + Syntax highlight -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/monokai-sublime.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+
+  <style>
+    :root{
+      --columbia-blue:#a5c8f0;
+      --eagle-red:#c62828;
+      --bg-dark:#1e1e1e;
+      --text-light:#eaeaea;
+      --panel-dark:#141414;
+      --panel-mid:#222;
+
+      --splitter-size: 8px;
+      --vsplitter-size: 10px;
+      --shell-size: 35%;
+      --left-width: 50%;
+      --splitter-hit: 8px;
+
+      --cm-font-size: 14px;
+      --indent-ch: 4;
+      --indent-tabs: 4;
+    }
+    *{box-sizing:border-box}
+    body{ margin:0; background:var(--panel-dark); color:var(--text-light); font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Arial }
+    header.topbar{ display:flex; align-items:center; justify-content:space-between; padding:10px 16px; background:linear-gradient(90deg,var(--columbia-blue),#7fb2eb); color:#0b2540; font-weight:700; letter-spacing:.3px }
+    header .brand{ display:flex; gap:12px; align-items:center }
+    header .brand .badge{ background:var(--eagle-red); color:#fff; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:800; letter-spacing:.5px; text-transform:uppercase }
+    header .actions{ display:flex; gap:8px; align-items:center }
+
+    .btn{ border:0; border-radius:10px; padding:8px 14px; font-weight:700; cursor:pointer; background:var(--panel-mid); color:var(--text-light); box-shadow:0 2px 8px rgba(0,0,0,.3); transition:transform .05s, box-shadow .2s, background .2s; font-size:14px; line-height:1; display:inline-flex; align-items:center; gap:6px; }
+    .btn:hover{ transform:translateY(-1px); background:#2a2a2a }
+    .run{ background:var(--eagle-red) } .run:hover{ background:#b71c1c }
+    .stop{ background:#444 }
+    .secondary{ background:#2b2b2b }
+    .admin{ background:#315 }
+
+    .outer{ display:grid; grid-template-columns: var(--left-width) var(--vsplitter-size) 1fr; grid-template-rows: 1fr; gap:10px; padding:10px; height:calc(100vh - 60px); min-height:400px; overflow:hidden; }
+    .panel{ background:var(--bg-dark); border:1px solid #333; border-radius:14px; overflow:hidden; display:flex; flex-direction:column; min-height:0; }
+    .panel header{ background:#121212; color:var(--columbia-blue); padding:8px 12px; border-bottom:1px solid #2b2b2b; display:flex; align-items:center; justify-content:space-between }
+    .panel header h3{ margin:0; font-size:14px; color:var(--columbia-blue) }
+    .panel .content{ flex:1; min-height:0; overflow:auto; }
+    #rightStackPanel .content{ overflow:auto; }
+    #rightColumn{ overflow:hidden; }
+
+    .CodeMirror{ height:100%; background:var(--bg-dark); color:var(--text-light); font-size: var(--cm-font-size); line-height:1.4 }
+    .CodeMirror pre{ tab-size: var(--indent-tabs); -moz-tab-size: var(--indent-tabs) }
+    .CodeMirror pre.CodeMirror-line,
+    .CodeMirror pre.CodeMirror-line-like{
+      background-image:
+        repeating-linear-gradient(to right, rgba(165,200,240,0.18) 0, rgba(165,200,240,0.18) 1px, transparent 1px, transparent calc(var(--indent-ch) * 1ch));
+      background-attachment: local; background-repeat: repeat-y;
+    }
+    body.guides-off .CodeMirror pre.CodeMirror-line,
+    body.guides-off .CodeMirror pre.CodeMirror-line-like{ background-image:none }
+
+    #output{ background:#0c0c0c; color:#dcdcdc; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Courier New",monospace; padding:12px; height:100%; overflow:auto; white-space:pre-wrap }
+    .sys-msg{ color:#ff9933; }
+    .shell-input-bar{ display:flex; gap:8px; border-top:1px solid #2b2b2b; padding:8px; background:#111 }
+    .shell-input-bar input{ flex:1; padding:8px 10px; background:#1a1a1a; color:#fff; border:1px solid #2b2b2b; border-radius:8px; outline:none; font-size:14px; }
+
+    .rightstack{ display:grid; grid-template-rows: var(--shell-size) var(--splitter-size) 1fr; grid-template-columns: 1fr; height:100%; min-height:0; overflow:hidden; }
+    .rightstack .panel{ min-height:0; overflow:hidden; display:flex; flex-direction:column; }
+    .vsplitter{ grid-row:2 / 3; grid-column:1; background:linear-gradient(180deg,#2b2b2b,#1a1a1a); border-top:1px solid #333; border-bottom:1px solid #111; position:relative; cursor:row-resize; user-select:none; }
+    .vsplitter::before{ content:""; position:absolute; left:0; right:0; top:calc(-1 * var(--splitter-hit)); height:calc(var(--splitter-size) + 2 * var(--splitter-hit)); }
+    .vsplitter::after{ content:"···"; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); color:#666; letter-spacing:4px; font-weight:900; pointer-events:none; }
+
+    .hsplitter{ grid-column:2 / 3; grid-row:1 / 2; background:linear-gradient(90deg,#2b2b2b,#1a1a1a); border-left:1px solid #333; border-right:1px solid #111; position:relative; cursor:col-resize; user-select:none; border-radius:12px; }
+    .hsplitter::before{ content:""; position:absolute; top:0; bottom:0; left:calc(-1 * var(--splitter-hit)); width:calc(var(--vsplitter-size) + 2 * var(--splitter-hit)); }
+    .hsplitter::after{ content:"⋮"; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); color:#666; font-weight:900; pointer-events:none; }
+
+    .tabs{ display:flex; gap:6px; border-bottom:1px solid #2b2b2b; background:#111; padding:6px }
+    .tab-btn{ padding:6px 10px; border-radius:8px; background:#222; color:#ddd; border:1px solid #333; cursor:pointer; font-weight:700; }
+    .tab-btn.active{ background:#2b2b2b; color:var(--columbia-blue); border-color:#3a3a3a }
+    .tab-pane{ display:none; height:100% }
+    .tab-pane.active{ display:block }
+
+    .notes-toolbar, .lesson-toolbar{ display:none; gap:6px; padding:8px; border-bottom:1px solid #2b2b2b; background:#141414 }
+    .ai-toolbar{ display:none; gap:6px; padding:8px; border-bottom:1px solid #2b2b2b; background:#141414 }
+    body.admin-mode .notes-toolbar{ display:flex }
+    body.admin-mode .lesson-toolbar{ display:flex }
+    
+
+    #notesView, #lessonLocal, #aiOutput, #challengeOutput, #assistantChat { padding:12px; height:100%; overflow:auto; }
+    #lessonFrame{ width:100%; height:100%; border:0; background:#0c0c0c }
+
+    table.lb{ width:100%; border-collapse:collapse; font-size:14px; }
+    table.lb th, table.lb td{ border-bottom:1px solid #2b2b2b; padding:6px 8px; text-align:left }
+    table.lb th{ color:var(--columbia-blue) }
+
+    .chat-wrap{ display:flex; flex-direction:column; gap:10px; height:100%; }
+    .chat-log{ flex:1; overflow:auto; padding:10px; background:#0f0f0f; border:1px solid #2a2a2a; border-radius:10px; }
+    .msg{ max-width:80%; padding:10px 12px; border-radius:12px; margin:2px 0; white-space:pre-wrap; }
+    .msg.user{ margin-left:auto; background:#19324d; color:#e6f1ff; border:1px solid #2a4f79; }
+    .msg.bot{ margin-right:auto; background:#1f1f1f; color:#f2f2f2; border:1px solid #333; }
+
+    .chat-inputbar{ display:flex; gap:8px; margin-top:8px; }
+    .chat-inputbar textarea{ flex:1; resize:vertical; min-height:44px; max-height:160px; background:#1a1a1a; color:#fff; border:1px solid #2b2b2b; border-radius:10px; padding:10px; }
+    .cooldown{ opacity:.8; margin-left:8px; }
+
+    /* Assignment styles */
+    .assignment-card{ background:#1a1a1a; border:1px solid #2b2b2b; border-radius:10px; padding:12px; margin-bottom:12px; }
+    .assignment-card h4{ margin:0 0 8px; color:var(--columbia-blue); font-size:16px; }
+    .assignment-card .task{ color:#ddd; margin:8px 0; white-space:pre-wrap; }
+    .assignment-card .meta{ color:#888; font-size:12px; margin-top:8px; }
+    .assignment-actions{ display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+    .submission-item{ background:#0f0f0f; border:1px solid #333; border-radius:8px; padding:10px; margin:8px 0; cursor:pointer; }
+    .submission-item:hover{ background:#1a1a1a; border-color:#444; }
+    .submission-item .name{ color:var(--columbia-blue); font-weight:700; }
+    .submission-item .email{ color:#999; font-size:12px; }
+    
+    /* Submissions sidebar */
+    #submissionsSidebar{ display:none; border-bottom:1px solid #2b2b2b; padding:12px; background:#0f0f0f; max-height:400px; overflow-y:auto; }
+    .sidebar-submission{ background:#1a1a1a; border:1px solid #2b2b2b; border-radius:6px; padding:8px; margin-bottom:8px; cursor:pointer; transition: all 0.2s; }
+    .sidebar-submission:hover{ background:#222; border-color:#3a3a3a; }
+    .sidebar-submission .student-info{ display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; }
+    .sidebar-submission .student-name{ color:var(--columbia-blue); font-weight:600; font-size:13px; }
+    .sidebar-submission .student-score{ color:#4caf50; font-size:12px; font-weight:700; }
+    .sidebar-submission .student-email{ color:#888; font-size:11px; }
+    
+    /* Color-coded submission states */
+    .sidebar-submission.ungraded{ background:#2a1515; border-color:#c62828; }
+    .sidebar-submission.pending{ background:#2a2615; border-color:#ffa726; }
+    .sidebar-submission.saved{ background:#152a15; border-color:#4caf50; }
+    .sidebar-submission.ai-grading{ background:#152a2a; border-color:#2196f3; animation: pulse 1s infinite; }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.8; }
+    }
+    
+    /* Submission action buttons */
+    .submissions-toolbar{ display:flex; gap:8px; margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid #2b2b2b; }
+    
+    /* Student score lookup */
+    #studentScoreLookup{ padding:12px; border-bottom:1px solid #2b2b2b; background:#0f0f0f; }
+    #studentScoreLookup input{ width:100%; padding:8px; background:#1a1a1a; color:#fff; border:1px solid #2b2b2b; border-radius:6px; margin-bottom:8px; }
+    #studentScoreResults{ max-height:300px; overflow-y:auto; }
+    .score-result-item{ background:#1a1a1a; border:1px solid #2b2b2b; border-radius:6px; padding:8px; margin-bottom:8px; }
+    .score-result-item .assignment-name{ color:var(--columbia-blue); font-weight:600; font-size:13px; }
+    .score-result-item .assignment-score{ color:#4caf50; font-size:12px; }
+    
+    /* AI grading button */
+    .ai-grade-btn{ margin-left:8px; padding:4px 10px; background:#4caf50; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:11px; font-weight:600; }
+    .ai-grade-btn:hover{ background:#45a049; }
+    .ai-grade-btn:disabled{ background:#666; cursor:not-allowed; }
+    .modal{ position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.8); display:flex; align-items:center; justify-content:center; z-index:10000; }
+    .modal-content{ background:var(--bg-dark); border:1px solid #333; border-radius:12px; padding:20px; max-width:500px; width:90%; max-height:90vh; overflow:auto; }
+    .modal-content h3{ margin-top:0; color:var(--columbia-blue); }
+    .modal-content label{ display:block; margin:12px 0 4px; color:#ddd; font-weight:600; }
+    .modal-content input, .modal-content textarea{ width:100%; padding:8px; background:#1a1a1a; color:#fff; border:1px solid #2b2b2b; border-radius:8px; font-family:inherit; }
+    .modal-content textarea{ resize:vertical; min-height:100px; font-family:monospace; }
+    .modal-actions{ display:flex; gap:10px; margin-top:16px; justify-content:flex-end; }
+    .score-input{ display:inline-flex; align-items:center; gap:8px; }
+    .score-input input{ width:80px; }
+
+    /* Code block adornments */
+    pre{ position:relative }
+    .copy-btn{
+      position:absolute; top:6px; right:6px;
+      background:#2b2b2b; color:#eaeaea; border:1px solid #3a3a3a;
+      border-radius:8px; padding:4px 8px; font-size:12px; cursor:pointer;
+    }
+    .copy-btn:hover{ background:#3a3a3a }
+
+    input[type=file]{ display:none }
+
+    /* Custom completion widget styles */
+    .eagle-completions{ 
+      position:absolute; 
+      z-index:9999; 
+      background:#252526; 
+      border:1px solid #454545; 
+      border-radius:6px; 
+      box-shadow:0 4px 12px rgba(0,0,0,0.5); 
+      max-height:320px; 
+      overflow-y:auto; 
+      font-family:Consolas,Monaco,monospace; 
+      font-size:13px; 
+    }
+    .eagle-completions.hidden{ display:none; }
+    .completion-item{ padding:4px 12px; cursor:pointer; display:flex; align-items:center; gap:8px; color:#cccccc; }
+    .completion-item:hover, .completion-item.selected{ background:#094771; }
+    .completion-icon{ width:16px; height:16px; flex-shrink:0; font-size:11px; font-weight:bold; text-align:center; line-height:16px; border-radius:3px; }
+    .icon-func{ background:#b180d7; color:#fff; }
+    .icon-class{ background:#ee9d28; color:#fff; }
+    .icon-var{ background:#4fc1ff; color:#000; }
+    .icon-kw{ background:#569cd6; color:#fff; }
+    .icon-attr{ background:#9cdcfe; color:#000; }
+
+    /* Sidebar collapse styles */
+    body.right-collapsed #rightColumn { display: none !important; }
+    body.right-collapsed #hsplitter { display: none !important; }
+    body.right-collapsed .outer { grid-template-columns: 1fr !important; }
+
+    /* Shell collapse styles */
+    body.shell-hidden #shellPanel { display: none !important; }
+    body.shell-hidden .vsplitter { display: none !important; }
+    body.shell-hidden .rightstack { grid-template-rows: 1fr !important; }
+    body.shell-hidden #rightStackPanel { grid-row: 1 / 2 !important; }
+
+    /* Error highlighting in shell */
+    .shell-error { color: #ff5555; }
+    .shell-user-input { color: #dcdcdc; font-weight: normal; }
+
+    /* Error highlighting in editor */
+    .cm-error-line { background-color: rgba(255, 85, 85, 0.15); }
+
+    /* AI thinking indicator */
+    .ai-thinking {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--columbia-blue);
+      font-style: italic;
+    }
+    .ai-thinking::after {
+      content: '';
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--columbia-blue);
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @media (max-width:1000px){
+      .outer{ grid-template-columns: 1fr; grid-template-rows: auto auto auto; }
+      .hsplitter{ display:none }
+      #editorPanel{ height:50vh; grid-column:1; grid-row:auto }
+      #rightColumn{ grid-column:1; grid-row:auto }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><div>Eagles Web IDE</div><div class="badge">Python</div></div>
+    <div class="actions">
+      <button class="btn run" id="runBtn">Run ▶</button>
+      <button class="btn stop" id="stopBtn">Stop ⏹</button>
+      <label class="btn secondary" for="fileIn" id="importBtn">Import .txt</label>
+      <input id="fileIn" type="file" accept=".txt,.py,text/plain"/>
+      <button class="btn secondary" id="exportBtn">Export .txt</button>
+
+      <div class="btn secondary" style="gap:8px; padding:6px 10px;">
+        <span style="font-weight:800;">A</span>
+        <input id="fontRange" type="range" min="12" max="40" value="14" step="1" style="width:120px;">
+        <span id="fontVal" style="min-width:2ch; text-align:center;">14</span>
+      </div>
+
+      <button class="btn secondary" id="guidesBtn" title="Show/Hide indent guides">Guides: On</button>
+      <button class="btn secondary" id="autocompleteBtn" title="Toggle autocomplete">Autocomplete: On</button>
+      <button class="btn secondary" id="toggleSidebarBtn" title="Toggle right sidebar">Hide Sidebar ◀</button>
+      <button class="btn admin" id="adminBtn" title="Enter Admin Mode">Admin</button>
+      <button class="btn admin" id="adminSettingsBtn" title="Admin Settings" style="display:none;">⚙</button>
+    </div>
+  </header>
+
+  <div class="outer" id="outer">
+    <!-- Left: Editor -->
+    <section class="panel" id="editorPanel" style="grid-column:1 / 2; grid-row:1 / 2;">
+      <header aria-label="Code editor with Python syntax highlighting">
+        <h3>Editor</h3>
+        <button class="btn secondary" id="clearErrorsBtn" style="display:none; font-size:12px; padding:4px 8px;">Clear Error Highlights</button>
+      </header>
+      <div class="content"><textarea id="editor"></textarea></div>
+    </section>
+
+    <!-- Vertical splitter -->
+    <div class="hsplitter" id="hsplitter" role="separator" aria-orientation="vertical" title="Drag to resize"></div>
+
+    <!-- Right column: Shell + Tabs -->
+    <div id="rightColumn" style="grid-column:3 / 4; grid-row:1 / 2;">
+      <div class="rightstack" id="rightstack">
+        <!-- Shell -->
+        <section class="panel" id="shellPanel" style="grid-row:1 / 2; grid-column:1;">
+          <header>
+            <h3>Shell Output</h3>
+          </header>
+          <div class="content"><div id="output"></div></div>
+          <div class="shell-input-bar">
+            <input id="stdin" placeholder="Type input() here and press Enter…"/>
+            <button class="btn secondary" id="sendBtn">Send ↵</button>
+          </div>
+        </section>
+
+        <div class="vsplitter" id="vsplitter" role="separator" aria-orientation="horizontal" title="Drag to resize"></div>
+
+        <!-- Tabs -->
+        <section class="panel" id="rightStackPanel" style="grid-row:3 / 4; grid-column:1;">
+          <header>
+            <h3>Notes, Wiki & AI</h3>
+            <button class="btn secondary" id="toggleShellBtn" style="font-size:12px; padding:4px 8px;">Hide Shell ▼</button>
+          </header>
+
+          <div class="notes-toolbar">
+            <button class="btn secondary" id="notesEditBtn">Edit Notes</button>
+            <button class="btn run" id="notesSaveBtn">Save Notes</button>
+          </div>
+
+          <div class="lesson-toolbar">
+            <button class="btn secondary" id="lessonEditBtn">Edit Wiki Content</button>
+            <button class="btn run" id="lessonSaveBtn">Save Wiki</button>
+          </div>
+
+          <div class="ai-toolbar">
+            <label class="btn secondary" style="gap:8px;">
+              <input type="checkbox" id="aiEnabled" style="accent-color:#c62828"> Enable AI Features
+            </label>
+            <input class="btn secondary" style="padding:8px; background:#1a1a1a; border:1px solid #333; width:28%;" id="aiUrlInput" placeholder="Ollama URL (e.g. http://127.0.0.1:11434)"/>
+            <input class="btn secondary" style="padding:8px; background:#1a1a1a; border:1px solid #333; width:18%;" id="aiModelInput" placeholder="Model (e.g. gemma3:4b)"/>
+            <input class="btn secondary" style="padding:8px; background:#1a1a1a; border:1px solid #333; width:38%;" id="assistantPromptInput" placeholder="Assistant preprompt (coding-only policy)"/>
+            <button class="btn run" id="aiSaveBtn">Save AI Settings</button>
+          </div>
+
+          <div class="tabs">
+            <button class="tab-btn active" data-tab="notesTab" id="notesTabBtn">Notes</button>
+            <button class="tab-btn" data-tab="lessonTab" id="lessonTabBtn">Wiki</button>
+            <button class="tab-btn" data-tab="assignmentTab" id="assignmentTabBtn">Assignment</button>
+            <button class="tab-btn" data-tab="aiTab" id="aiTabBtn" style="display:none;">AI Explain</button>
+            <button class="tab-btn" data-tab="aiChallengeTab" id="aiChallengeTabBtn" style="display:none;">Challenge</button>
+            <button class="tab-btn" data-tab="assistantTab" id="assistantTabBtn" style="display:none;">AI Assistant</button>
+          </div>
+
+          <div class="content">
+            <!-- Notes -->
+            <div class="tab-pane active" id="notesTab">
+              <div id="notesView" contenteditable="false"></div>
+              <textarea id="notesEdit" style="display:none; width:100%; height:100%; padding:12px; background:#1a1a1a; color:#fff; border:none; font-family:monospace;"></textarea>
+            </div>
+
+            <!-- Lesson -->
+            <div class="tab-pane" id="lessonTab">
+              <div id="lessonLocal" contenteditable="false" style="display:none;"></div>
+              <iframe id="lessonFrame" sandbox="allow-scripts allow-same-origin allow-popups" referrerpolicy="no-referrer"></iframe>
+            </div>
+
+            <!-- AI Explain -->
+            <div class="tab-pane" id="aiTab">
+              <div style="padding:12px; display:flex; gap:10px; align-items:center; border-bottom:1px solid #2b2b2b; background:#111;">
+                <button class="btn run" id="aiExplainBtn">Explain my code</button>
+                <span id="aiStatus" style="opacity:.8;"></span>
+                <span id="aiCooldown" style="opacity:.8; margin-left:10px;"></span>
+              </div>
+              <div id="aiOutput"></div>
+            </div>
+
+            <!-- Challenge -->
+            <div class="tab-pane" id="aiChallengeTab">
+              <div style="padding:12px; display:flex; flex-wrap:wrap; gap:10px; align-items:center; border-bottom:1px solid #2b2b2b; background:#111;">
+                <span style="opacity:.9;">New challenge (pick difficulty 1–5):</span>
+                <button class="btn secondary" data-diff="1" id="btnD1">1</button>
+                <button class="btn secondary" data-diff="2" id="btnD2">2</button>
+                <button class="btn secondary" data-diff="3" id="btnD3">3</button>
+                <button class="btn secondary" data-diff="4" id="btnD4">4</button>
+                <button class="btn secondary" data-diff="5" id="btnD5">5</button>
+                <span id="chStatus" style="opacity:.8; margin-left:10px;"></span>
+              </div>
+
+              <div id="challengeOutput" style="min-height:80px; padding:12px;"></div>
+
+              <div style="padding:12px; display:flex; gap:10px; align-items:center; border-top:1px solid #2b2b2b; background:#111;">
+                <input id="studentName" class="btn secondary" style="padding:8px; background:#1a1a1a; border:1px solid #333; width:30%;" placeholder="Your name for leaderboard"/>
+                <button class="btn run" id="scoreBtn">Submit for score</button>
+                <span id="scoreStatus" style="opacity:.9;"></span>
+                <button class="btn secondary" id="saveScoreBtn" disabled>Save score</button>
+              </div>
+
+              <div style="padding:12px;">
+                <h4 style="margin:8px 0 8px; color:var(--columbia-blue);">Leaderboard (Top 10)</h4>
+                <table class="lb" id="lbTable">
+                  <thead><tr><th>Name</th><th>Total Score</th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- AI Assistant -->
+            <div class="tab-pane" id="assistantTab">
+              <div class="chat-wrap">
+                <div id="assistantChat" class="chat-log"></div>
+                <div class="chat-inputbar">
+                  <textarea id="assistantInput" placeholder="Ask a coding question…"></textarea>
+                  <button class="btn run" id="assistantSend">Send</button>
+                  <span class="cooldown" id="assistantCooldown"></span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Assignment -->
+            <div class="tab-pane" id="assignmentTab">
+              <!-- Submissions sidebar (admin only) -->
+              <div id="submissionsSidebar">
+                <h4 style="margin:0 0 10px; color:var(--columbia-blue); font-size:14px;">Submissions</h4>
+                <div class="submissions-toolbar" style="display:none;">
+                  <button class="btn run" id="saveAllGradesBtn" title="Save all pending grade changes">Save All</button>
+                  <button class="btn run" id="aiGradeAllBtn" title="AI grade all ungraded submissions">AI Grade All</button>
+                </div>
+                <div id="submissionsSidebarList">
+                  <p style="color:#888; font-size:12px;">Select an assignment to view submissions</p>
+                </div>
+              </div>
+
+              <!-- Student score lookup -->
+              <div id="studentScoreLookup" style="display:none;">
+                <h4 style="margin:0 0 10px; color:var(--columbia-blue); font-size:14px;">View Your Scores</h4>
+                <input type="email" id="studentEmailInput" placeholder="Enter your email address">
+                <div id="studentScoreResults"></div>
+              </div>
+
+              <!-- Admin view -->
+              <div id="assignmentAdminView" style="display:none; padding:12px;">
+                <div style="display:flex; gap:10px; align-items:center; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid #2b2b2b;">
+                  <button class="btn run" id="newAssignmentBtn">New Assignment</button>
+                  <span id="assignmentStatus" style="opacity:.8;"></span>
+                </div>
+                <div id="assignmentList"></div>
+              </div>
+
+              <!-- Student view -->
+              <div id="assignmentStudentView" style="padding:12px;">
+                <h3 style="color:var(--columbia-blue); margin-top:0;">Active Assignments</h3>
+                <div id="studentAssignmentList"></div>
+                
+                <h3 style="color:var(--columbia-blue); margin-top:24px;">Past Assignments</h3>
+                <div id="studentPastAssignmentList"></div>
+              </div>
+            </div>
+
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <!-- Admin Password Modal -->
+  <div id="adminPasswordModal" class="modal" style="display:none;">
+    <div class="modal-content">
+      <h3>Admin Login</h3>
+      <label for="adminPasswordInput">Password:</label>
+      <input type="password" id="adminPasswordInput" placeholder="Enter admin password">
+      <div class="modal-actions">
+        <button class="btn secondary" id="adminCancelBtn">Cancel</button>
+        <button class="btn run" id="adminLoginBtn">Login</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Admin Settings Modal -->
+  <div id="adminSettingsModal" class="modal" style="display:none;">
+    <div class="modal-content" style="max-width:700px;">
+      <h3>Admin Settings</h3>
+      
+      <h4 style="margin-top:20px; color:var(--columbia-blue); font-size:14px;">Page Settings</h4>
+      <label for="pageTitleInput">Page Title:</label>
+      <input type="text" id="pageTitleInput" placeholder="Eagles Web IDE (Python)">
+      <label for="topBarColorInput">Top Bar Color (CSS gradient or color):</label>
+      <input type="text" id="topBarColorInput" placeholder="linear-gradient(90deg,#a5c8f0,#7fb2eb)">
+      
+      <h4 style="margin-top:20px; color:var(--columbia-blue); font-size:14px;">Wiki/Lesson Settings</h4>
+      <label for="lessonUrlInputModal">Lesson URL:</label>
+      <input type="text" id="lessonUrlInputModal" placeholder="https://example.com/lesson">
+      <label style="display:flex; align-items:center; gap:8px; margin-top:8px;">
+        <input type="checkbox" id="lessonUseLocalModal" style="accent-color:#c62828">
+        Use local wiki content (instead of iframe)
+      </label>
+      
+      <h4 style="margin-top:20px; color:var(--columbia-blue); font-size:14px;">AI Settings</h4>
+      <label style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+        <input type="checkbox" id="aiEnabledModal" style="accent-color:#c62828">
+        Enable AI Features
+      </label>
+      <label for="aiUrlInputModal">Ollama URL:</label>
+      <input type="text" id="aiUrlInputModal" placeholder="http://127.0.0.1:11434">
+      <label for="aiModelInputModal">AI Model:</label>
+      <input type="text" id="aiModelInputModal" placeholder="gemma3:4b">
+      <label for="assistantPromptInputModal">AI Assistant Preprompt:</label>
+      <textarea id="assistantPromptInputModal" placeholder="You are a helpful Python tutor..." style="width:100%; height:80px; padding:8px; background:#1a1a1a; color:#fff; border:1px solid #2b2b2b; border-radius:6px; font-family:monospace; resize:vertical;"></textarea>
+      
+      <div class="modal-actions" style="margin-top:20px;">
+        <button class="btn secondary" id="settingsCancelBtn">Cancel</button>
+        <button class="btn run" id="settingsSaveBtn">Save All Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Editor init -->
+  <script>
+    function initEditor() {
+      const ta = document.getElementById('editor');
+      if (window.CodeMirror) {
+        const cm = CodeMirror.fromTextArea(ta, {
+          mode: "python",
+          theme: "monokai",
+          lineNumbers: true,
+          indentUnit: 4,
+          tabSize: 4,
+          indentWithTabs: true,
+          smartIndent: true,
+          electricChars: true,
+          autoCloseBrackets: true,
+          matchBrackets: true,
+          viewportMargin: Infinity
+        });
+        let dirty = true;
+        cm.on('change', () => { dirty = true; });
+        window.__isDirty = () => dirty;
+        
+        // Custom autocomplete system
+        window.eagleEditor = cm;
+        return {
+          getValue: () => cm.getValue(),
+          setValue: (v) => { cm.setValue(v); dirty = true; }
+        };
+      } else {
+        // Fallback textarea: keep tab characters on Enter after colon
+        ta.style.width = "100%"; ta.style.height = "100%"; ta.style.background = "var(--bg-dark)";
+        ta.style.color = "var(--text-light)"; ta.style.border = "0"; ta.style.outline = "none";
+        ta.addEventListener("keydown", (e) => {
+          if (e.key === "Tab") { e.preventDefault();
+            const s = ta.selectionStart, e2 = ta.selectionEnd;
+            ta.value = ta.value.substring(0, s) + "\t" + ta.value.substring(e2);
+            ta.selectionStart = ta.selectionEnd = s + 1;
+          } else if (e.key === "Enter") {
+            const before = ta.value.slice(0, ta.selectionStart);
+            const lastLine = before.split(/\r?\n/).pop() || "";
+            const base = lastLine.match(/^\t*/)?.[0] ?? "";
+            const extra = /:\s*$/.test(lastLine) ? "\t" : "";
+            setTimeout(() => {
+              const pos = ta.selectionStart;
+              const insert = base + extra;
+              ta.value = ta.value.slice(0, pos) + insert + ta.value.slice(pos);
+              ta.selectionStart = ta.selectionEnd = pos + insert.length;
+            }, 0);
+          }
+        });
+        window.__isDirty = () => true;
+        return { getValue: () => ta.value, setValue: (v) => { ta.value = v; } };
+      }
+    }
+    const editor = initEditor();
+
+    // Eagle IDE Custom Completion Engine
+    (function() {
+      if (!window.eagleEditor) return;
+      
+      const cmInst = window.eagleEditor;
+      const COMPLETION_DEBOUNCE_MS = 50;
+      let suggestionBox = null;
+      let activeSuggIdx = 0;
+      let suggestionList = [];
+      let completionActive = true;
+      
+      // Python stdlib + common identifiers
+      const pyBuiltins = ['print','input','len','range','str','int','float','list','dict','set','tuple','type','isinstance','hasattr','getattr','setattr','abs','all','any','max','min','sum','sorted','reversed','enumerate','zip','map','filter','open','round','pow','divmod','chr','ord','bin','hex','oct','bool','bytes','bytearray','complex','frozenset','slice','super','property','staticmethod','classmethod','vars','dir','help','id','hash','iter','next','callable','compile','eval','exec','format','globals','locals','memoryview','object','repr','ascii','breakpoint'];
+      const pyKeyTerms = ['def','class','if','elif','else','for','while','return','yield','import','from','as','try','except','finally','raise','with','assert','pass','break','continue','global','nonlocal','lambda','and','or','not','in','is','None','True','False','self'];
+      
+      // Token extraction engine
+      function extractCodeTokens(sourceCode) {
+        const tokenMap = { funcs: new Set(), classes: new Set(), vars: new Set() };
+        const codeLines = sourceCode.split('\n');
+        
+        codeLines.forEach(ln => {
+          // Function definitions
+          const funcMatch = ln.match(/^\s*def\s+([a-zA-Z_]\w*)/);
+          if (funcMatch) tokenMap.funcs.add(funcMatch[1]);
+          
+          // Class definitions
+          const classMatch = ln.match(/^\s*class\s+([a-zA-Z_]\w*)/);
+          if (classMatch) tokenMap.classes.add(classMatch[1]);
+          
+          // Variable assignments
+          const varMatches = ln.matchAll(/([a-zA-Z_]\w*)\s*=/g);
+          for (const vm of varMatches) {
+            if (vm[1] && !pyKeyTerms.includes(vm[1])) tokenMap.vars.add(vm[1]);
+          }
+        });
+        
+        return tokenMap;
+      }
+      
+      // Build suggestion list based on context
+      function buildSuggestions(partialToken, cursorPos) {
+        const fullCode = cmInst.getValue();
+        const preCursor = fullCode.substring(0, cursorPos.index);
+        const tokens = extractCodeTokens(fullCode);
+        const results = [];
+        
+        // Check for attribute access
+        const attrPattern = /([a-zA-Z_]\w*)\.([a-zA-Z_]*)$/;
+        const attrMatch = preCursor.match(attrPattern);
+        
+        if (attrMatch) {
+          const objName = attrMatch[1];
+          const partial = attrMatch[2];
+          
+          // Common string/list/dict methods
+          const strMethods = ['upper','lower','strip','split','join','replace','find','index','count','startswith','endswith','capitalize','title','swapcase','isalpha','isdigit','isspace','isupper','islower'];
+          const listMethods = ['append','extend','insert','remove','pop','clear','index','count','sort','reverse','copy'];
+          const dictMethods = ['keys','values','items','get','pop','update','clear','copy','setdefault'];
+          
+          const allMethods = [...new Set([...strMethods, ...listMethods, ...dictMethods])];
+          allMethods.forEach(m => {
+            if (m.startsWith(partial)) {
+              results.push({ text: m, category: 'attr', icon: 'A' });
+            }
+          });
+        } else {
+          // Regular completions
+          const lowerPartial = partialToken.toLowerCase();
+          
+          // User functions
+          tokens.funcs.forEach(f => {
+            if (f.toLowerCase().startsWith(lowerPartial)) {
+              results.push({ text: f, category: 'func', icon: 'ƒ' });
+            }
+          });
+          
+          // User classes
+          tokens.classes.forEach(c => {
+            if (c.toLowerCase().startsWith(lowerPartial)) {
+              results.push({ text: c, category: 'class', icon: 'C' });
+            }
+          });
+          
+          // Variables
+          tokens.vars.forEach(v => {
+            if (v.toLowerCase().startsWith(lowerPartial) && !results.find(r => r.text === v)) {
+              results.push({ text: v, category: 'var', icon: 'V' });
+            }
+          });
+          
+          // Keywords
+          pyKeyTerms.forEach(k => {
+            if (k.toLowerCase().startsWith(lowerPartial)) {
+              results.push({ text: k, category: 'kw', icon: 'K' });
+            }
+          });
+          
+          // Builtins
+          pyBuiltins.forEach(b => {
+            if (b.toLowerCase().startsWith(lowerPartial)) {
+              results.push({ text: b, category: 'func', icon: 'ƒ' });
+            }
+          });
+        }
+        
+        // Sort: exact matches first, then alphabetical
+        return results.sort((a, b) => {
+          const aExact = a.text === partialToken ? 0 : 1;
+          const bExact = b.text === partialToken ? 0 : 1;
+          if (aExact !== bExact) return aExact - bExact;
+          return a.text.localeCompare(b.text);
+        });
+      }
+      
+      // Create suggestion widget
+      function createSuggestionWidget() {
+        const widget = document.createElement('div');
+        widget.className = 'eagle-completions hidden';
+        document.body.appendChild(widget);
+        return widget;
+      }
+      
+      // Position and show suggestions
+      function displaySuggestions(suggestions, coords) {
+        if (!suggestionBox) suggestionBox = createSuggestionWidget();
+        if (suggestions.length === 0) {
+          suggestionBox.classList.add('hidden');
+          return;
+        }
+        
+        suggestionList = suggestions;
+        activeSuggIdx = 0;
+        suggestionBox.innerHTML = '';
+        
+        const allItems = [];
+        suggestions.forEach((sugg, idx) => {
+          const itemEl = document.createElement('div');
+          itemEl.className = 'completion-item' + (idx === 0 ? ' selected' : '');
+          
+          const iconEl = document.createElement('span');
+          iconEl.className = `completion-icon icon-${sugg.category}`;
+          iconEl.textContent = sugg.icon;
+          
+          const txtEl = document.createElement('span');
+          txtEl.textContent = sugg.text;
+          
+          itemEl.appendChild(iconEl);
+          itemEl.appendChild(txtEl);
+          itemEl.dataset.index = idx;
+          
+          itemEl.addEventListener('click', () => applySuggestion(sugg));
+          itemEl.addEventListener('mouseenter', () => {
+            allItems.forEach(el => el.classList.remove('selected'));
+            itemEl.classList.add('selected');
+            activeSuggIdx = idx;
+          });
+          
+          allItems.push(itemEl);
+          suggestionBox.appendChild(itemEl);
+        });
+        
+        suggestionBox.style.left = coords.left + 'px';
+        suggestionBox.style.top = coords.bottom + 'px';
+        suggestionBox.classList.remove('hidden');
+      }
+      
+      // Apply selected suggestion
+      function applySuggestion(sugg) {
+        const cursor = cmInst.getCursor();
+        const lineContent = cmInst.getLine(cursor.line);
+        const beforeCursor = lineContent.substring(0, cursor.ch);
+        
+        // Find token start
+        const tokenMatch = beforeCursor.match(/[a-zA-Z_]\w*$/);
+        const attrMatch = beforeCursor.match(/[a-zA-Z_]\w*\.[a-zA-Z_]*$/);
+        
+        let replaceFrom;
+        if (attrMatch) {
+          const parts = attrMatch[0].split('.');
+          replaceFrom = cursor.ch - parts[parts.length - 1].length;
+        } else if (tokenMatch) {
+          replaceFrom = cursor.ch - tokenMatch[0].length;
+        } else {
+          replaceFrom = cursor.ch;
+        }
+        
+        cmInst.replaceRange(sugg.text, 
+          { line: cursor.line, ch: replaceFrom },
+          { line: cursor.line, ch: cursor.ch }
+        );
+        
+        hideSuggestions();
+        cmInst.focus();
+      }
+      
+      // Hide suggestions
+      function hideSuggestions() {
+        if (suggestionBox) suggestionBox.classList.add('hidden');
+        suggestionList = [];
+        activeSuggIdx = 0;
+      }
+      
+      // Trigger completion check
+      function checkCompletion() {
+        if (!completionActive) return;
+        
+        const cursor = cmInst.getCursor();
+        const lineContent = cmInst.getLine(cursor.line);
+        const beforeCursor = lineContent.substring(0, cursor.ch);
+        
+        // Match partial identifier or attribute access
+        const tokenMatch = beforeCursor.match(/([a-zA-Z_]\w*\.)?([a-zA-Z_]\w*)$/);
+        if (!tokenMatch || !tokenMatch[0]) {
+          hideSuggestions();
+          return;
+        }
+        
+        const partialToken = tokenMatch[2] || '';
+        if (!partialToken && !tokenMatch[1]) {
+          hideSuggestions();
+          return;
+        }
+        
+        const cursorPos = cmInst.indexFromPos(cursor);
+        const suggestions = buildSuggestions(partialToken, { index: cursorPos });
+        
+        if (suggestions.length > 0) {
+          const coords = cmInst.cursorCoords(cursor, 'page');
+          displaySuggestions(suggestions, coords);
+        } else {
+          hideSuggestions();
+        }
+      }
+      
+      // Keyboard navigation
+      cmInst.on('keydown', (cm, ev) => {
+        if (!completionActive || suggestionList.length === 0) return;
+        
+        const items = document.querySelectorAll('.completion-item');
+        
+        if (ev.key === 'ArrowDown') {
+          ev.preventDefault();
+          activeSuggIdx = (activeSuggIdx + 1) % suggestionList.length;
+          items.forEach((el, i) => {
+            el.classList.toggle('selected', i === activeSuggIdx);
+          });
+          items[activeSuggIdx]?.scrollIntoView({ block: 'nearest' });
+        } else if (ev.key === 'ArrowUp') {
+          ev.preventDefault();
+          activeSuggIdx = (activeSuggIdx - 1 + suggestionList.length) % suggestionList.length;
+          items.forEach((el, i) => {
+            el.classList.toggle('selected', i === activeSuggIdx);
+          });
+          items[activeSuggIdx]?.scrollIntoView({ block: 'nearest' });
+        } else if (ev.key === 'Enter') {
+          if (suggestionList.length > 0) {
+            ev.preventDefault();
+            applySuggestion(suggestionList[activeSuggIdx]);
+          }
+        } else if (ev.key === 'Escape') {
+          ev.preventDefault();
+          hideSuggestions();
+        }
+      });
+      
+      // Trigger on input
+      cmInst.on('inputRead', () => {
+        setTimeout(checkCompletion, COMPLETION_DEBOUNCE_MS);
+      });
+      
+      // Hide on click outside
+      document.addEventListener('click', (ev) => {
+        if (suggestionBox && !suggestionBox.contains(ev.target)) {
+          hideSuggestions();
+        }
+      });
+      
+      // Toggle button handler
+      window.toggleEagleCompletion = function(enabled) {
+        completionActive = enabled;
+        if (!enabled) hideSuggestions();
+      };
+    })();
+
+    // Warn before closing/reloading
+    window.addEventListener('beforeunload', (e) => {
+      if (typeof window.__isDirty === 'function' ? window.__isDirty() : true) {
+        e.preventDefault(); e.returnValue = '';
+      }
+    });
+
+    // Starter example
+    editor.setValue(`# Tabs are used for indentation in this IDE.
+name = input("Type your name: ")
+for i in range(3):
+\tprint(i, name)
+`);
+  </script>
+
+  <!-- Shared Markdown render helpers -->
+  <script>
+    function renderMarkdownTo(el, text, defaultLang='python'){
+      try{
+        // Configure marked for GitHub-like Markdown
+        marked.setOptions({
+          breaks: true,
+          gfm: true
+        });
+        // Sanitize & render
+        const html = DOMPurify.sanitize(marked.parse(text || ''));
+        el.innerHTML = html;
+
+        // Post-process code blocks: force language (default python), highlight, and add copy buttons
+        const blocks = el.querySelectorAll('pre > code');
+        blocks.forEach(code => {
+          // If no language class present, default to python
+          if (![...code.classList].some(c => c.startsWith('language-'))){
+            code.classList.add('language-' + defaultLang);
+          }
+          // Highlight
+          try { hljs.highlightElement(code); } catch {}
+
+          // Add copy button
+          const pre = code.parentElement;
+          const btn = document.createElement('button');
+          btn.className = 'copy-btn';
+          btn.textContent = 'Copy';
+          btn.addEventListener('click', async () => {
+            try{
+              await navigator.clipboard.writeText(code.textContent);
+              const old = btn.textContent; btn.textContent = 'Copied!';
+              setTimeout(()=> btn.textContent = old, 1200);
+            }catch(e){
+              btn.textContent = 'Error';
+              setTimeout(()=> btn.textContent = 'Copy', 1200);
+            }
+          });
+          pre.appendChild(btn);
+        });
+      }catch(e){
+        // Fallback to plain text
+        el.textContent = text || '';
+      }
+    }
+  </script>
+
+  <!-- App state & sockets -->
+  <script>
+    const INPUT_TOKEN = "[[_IDE_INPUT_]]";
+    let ADMIN_TOKEN = null;
+    let currentConfig = null;
+    let mySid = null;
+    let errorLineMarkers = []; // Track error line highlights
+
+    const SYSTEM_MESSAGE_PATTERN = /^\[.*?\]/;
+    const outputEl = document.getElementById('output');
+    const stdinEl = document.getElementById('stdin');
+    
+    const appendOut = (s, isUserInput = false) => { 
+      const isSysMsg = SYSTEM_MESSAGE_PATTERN.test(s);
+      
+      // Check if this is an error or traceback line
+      const isError = s.includes('Traceback') || s.includes('Error:') || s.match(/^\s*(File|  )/);
+      
+      if (isSysMsg) {
+        const msgSpan = document.createElement('span');
+        msgSpan.className = 'sys-msg';
+        msgSpan.textContent = s;
+        outputEl.appendChild(msgSpan);
+      } else if (isUserInput) {
+        const userSpan = document.createElement('span');
+        userSpan.className = 'shell-user-input';
+        userSpan.textContent = s;
+        outputEl.appendChild(userSpan);
+      } else if (isError) {
+        const errorSpan = document.createElement('span');
+        errorSpan.className = 'shell-error';
+        errorSpan.textContent = s;
+        outputEl.appendChild(errorSpan);
+        
+        // Extract line numbers from traceback
+        const lineMatch = s.match(/line (\d+)/);
+        if (lineMatch && window.eagleEditor) {
+          const lineNum = parseInt(lineMatch[1]) - 1; // 0-indexed
+          highlightErrorLine(lineNum);
+        }
+      } else {
+        outputEl.appendChild(document.createTextNode(s));
+      }
+      outputEl.scrollTop = outputEl.scrollHeight; 
+    };
+
+    function highlightErrorLine(lineNum) {
+      if (!window.eagleEditor) return;
+      const cm = window.eagleEditor;
+      const line = cm.getLine(lineNum);
+      if (!line) return;
+      
+      const marker = cm.markText(
+        { line: lineNum, ch: 0 },
+        { line: lineNum, ch: line.length },
+        { className: 'cm-error-line' }
+      );
+      errorLineMarkers.push(marker);
+      
+      // Show the clear button
+      document.getElementById('clearErrorsBtn').style.display = '';
+    }
+
+    function clearErrorHighlights() {
+      errorLineMarkers.forEach(marker => marker.clear());
+      errorLineMarkers = [];
+      document.getElementById('clearErrorsBtn').style.display = 'none';
+    }
+
+    // Shell toggle button - moved before Socket.IO to ensure it always works
+    (function() {
+      const btn = document.getElementById('toggleShellBtn');
+      const SHELL_TOGGLE_KEY = 'eagleide-shell-hidden';
+      
+      // Restore saved toggle state on page load
+      try {
+        const savedState = localStorage.getItem(SHELL_TOGGLE_KEY);
+        if (savedState === '1') {
+          document.body.classList.add('shell-hidden');
+          btn.textContent = 'Show Shell ▲';
+        }
+      } catch (e) {
+        console.warn('Failed to restore shell toggle state:', e);
+      }
+      
+      // Handle toggle button clicks
+      btn.addEventListener('click', () => {
+        const isHidden = document.body.classList.toggle('shell-hidden');
+        btn.textContent = isHidden ? 'Show Shell ▲' : 'Hide Shell ▼';
+        
+        // Save state to localStorage
+        try {
+          localStorage.setItem(SHELL_TOGGLE_KEY, isHidden ? '1' : '0');
+        } catch (e) {
+          console.warn('Failed to save shell toggle state:', e);
+        }
+      });
+    })();
+
+    // Initialize Socket.IO only if available
+    let socket = null;
+    if (typeof io !== 'undefined') {
+      try {
+        socket = io({ transports: ["polling"], upgrade: false, timeout: 20000 });
+        socket.on('connected', (m) => {
+          mySid = m?.sid || null;
+          window.mySid = mySid;
+          appendOut('[Connected]\n');
+        });
+        socket.on('connect_error', err => appendOut('[Socket error] ' + (err?.message || err) + '\n'));
+        socket.on('run_ack', () => appendOut('[Run acknowledged]\n'));
+        socket.on('output', msg => {
+          let s = msg.data || '';
+          if (!s) return;
+          if (s.includes(INPUT_TOKEN)) {
+            // Remove INPUT_TOKEN(s) and display the prompt text
+            s = s.split(INPUT_TOKEN).join('');
+            if (s) appendOut(s);
+            // Focus input field immediately - no setTimeout delay
+            try { 
+              stdinEl.focus(); 
+              stdinEl.select(); // Select any existing text
+            } catch (e) {
+              console.warn('Failed to focus stdin:', e);
+            }
+          } else if (/[?:] ?$/.test(s) && !s.includes('\n')) {
+            appendOut(s);
+            // Focus input for prompts ending with ? or : (fallback detection)
+            try { 
+              stdinEl.focus(); 
+            } catch (e) {
+              console.warn('Failed to focus stdin:', e);
+            }
+          } else {
+            appendOut(s);
+          }
+        });
+        socket.on('finished', () => appendOut('[Process finished]\n'));
+      } catch (e) {
+        console.error('Socket.IO initialization failed:', e);
+        appendOut('[Socket.IO unavailable - IDE functionality limited]\n');
+      }
+    } else {
+      appendOut('[Socket.IO library not loaded - IDE functionality limited]\n');
+    }
+
+    document.getElementById('runBtn').addEventListener('click', () => {
+      // Auto-expand sidebar to show output
+      const collapsed = document.body.classList.contains('right-collapsed');
+      if (collapsed) {
+        document.getElementById('toggleSidebarBtn').click();
+      }
+      // Auto-show shell if hidden
+      const shellHidden = document.body.classList.contains('shell-hidden');
+      if (shellHidden) {
+        document.getElementById('toggleShellBtn').click();
+      }
+      outputEl.textContent = '';
+      clearErrorHighlights();
+      appendOut('[Sending code]\n');
+      if (socket) {
+        socket.emit('run_code', { code: editor.getValue() });
+      } else {
+        appendOut('[Error: Cannot run code - Socket.IO not available]\n');
+      }
+    });
+    document.getElementById('stopBtn').addEventListener('click', () => {
+      if (socket) {
+        socket.emit('stop', {});
+      }
+    });
+    function sendInput(){ 
+      const v = stdinEl.value ?? ""; 
+      if (socket) {
+        socket.emit('send_input', { data: v }); 
+      }
+      // DON'T display the input here - let the backend echo it back
+      // This ensures proper ordering with the prompt
+      stdinEl.value=''; 
+    }
+    document.getElementById('sendBtn').addEventListener('click', sendInput);
+    stdinEl.addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); sendInput(); } });
+
+    // Clear error highlights button
+    document.getElementById('clearErrorsBtn').addEventListener('click', () => {
+      clearErrorHighlights();
+    });
+
+    // Import / Export
+    document.getElementById('fileIn').addEventListener('change', (e) => {
+      const file = e.target.files[0]; if (!file) return;
+      const reader = new FileReader(); reader.onload = () => editor.setValue(reader.result);
+      reader.readAsText(file); e.target.value = '';
+    });
+    document.getElementById('exportBtn').addEventListener('click', () => {
+      let name = prompt('File name for export (with or without .txt):', 'code.txt');
+      if (!name) return; name = name.trim(); if (!/\.(txt|py)$/i.test(name)) name += '.txt';
+      const blob = new Blob([editor.getValue()], {type: 'text/plain'});
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    });
+
+    // Tabs switching (refresh leaderboard when opening Challenge)
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active'); document.getElementById(btn.dataset.tab).classList.add('active');
+        if (btn.dataset.tab === 'aiChallengeTab') refreshLeaderboard();
+      });
+    });
+  </script>
+
+  <!-- Config load & apply + splitters + font & guides controls + admin + AI & Assistant -->
+  <script>
+    async function loadConfig(){
+      const res = await fetch('/api/config'); const j = await res.json().catch(()=>({}));
+      if (j?.ok) { currentConfig = j.data; applyConfig(currentConfig); }
+    }
+    function applyConfig(cfg){
+      if (!cfg) return;
+      document.getElementById('notesView').innerHTML = cfg.notes_html || '';
+
+      // Apply page title and top bar color
+      if (cfg.page_title) {
+        document.title = cfg.page_title;
+        document.querySelector('.topbar .brand div:first-child').textContent = cfg.page_title.split('(')[0].trim();
+      }
+      if (cfg.topbar_color) {
+        document.querySelector('.topbar').style.background = cfg.topbar_color;
+      }
+
+      const iframe = document.getElementById('lessonFrame');
+      const localDiv = document.getElementById('lessonLocal');
+      const urlIn = document.getElementById('lessonUrlInput');
+      const useLocal = document.getElementById('lessonUseLocal');
+      if (urlIn) urlIn.value = cfg.lesson_url || '';
+      if (useLocal) useLocal.checked = !!cfg.lesson_use_local;
+      if (cfg.lesson_use_local){
+        iframe.style.display = 'none'; localDiv.style.display = 'block';
+        localDiv.innerHTML = cfg.lesson_html || '<p>(No local lesson content yet)</p>';
+      } else {
+        localDiv.style.display = 'none'; iframe.style.display = 'block'; iframe.src = cfg.lesson_url || '';
+      }
+
+      const enabled = !!cfg.ai_explainer_enabled;
+      const tExplain = document.getElementById('aiTabBtn');
+      const tChal = document.getElementById('aiChallengeTabBtn');
+      const tAssist = document.getElementById('assistantTabBtn');
+      if (tExplain) tExplain.style.display = enabled ? '' : 'none';
+      if (tChal) tChal.style.display = enabled ? '' : 'none';
+      if (tAssist) tAssist.style.display = enabled ? '' : 'none';
+
+      document.getElementById('aiEnabled')?.setAttribute('checked', enabled ? 'checked' : '');
+      const u = document.getElementById('aiUrlInput'); if (u) u.value = cfg.ai_ollama_url || '';
+      const m = document.getElementById('aiModelInput'); if (m) m.value = cfg.ai_model || 'gemma3:4b';
+      const ap = document.getElementById('assistantPromptInput'); if (ap) ap.value = cfg.ai_assistant_preprompt || '';
+    }
+    async function saveConfig(partial){
+      const headers = {'Content-Type':'application/json'};
+      if (ADMIN_TOKEN) headers['X-Admin-Token'] = ADMIN_TOKEN;
+      const res = await fetch('/api/config/save', { method:'POST', headers, body:JSON.stringify({data: partial}) });
+      const j = await res.json().catch(()=>({}));
+      if (!j?.ok){ alert(j?.error || 'Save failed'); }
+      else { currentConfig = {...(currentConfig||{}), ...partial}; }
+    }
+    loadConfig();
+
+    // Admin login
+    document.getElementById('adminBtn').addEventListener('click', async () => {
+      if (ADMIN_TOKEN) { 
+        ADMIN_TOKEN = null; 
+        document.body.classList.remove('admin-mode'); 
+        setEditable(false); 
+        document.getElementById('adminSettingsBtn').style.display = 'none';
+        document.getElementById('adminBtn').textContent = 'Admin';
+        return; 
+      }
+      // Show modal
+      document.getElementById('adminPasswordModal').style.display = 'flex';
+      document.getElementById('adminPasswordInput').value = '';
+      document.getElementById('adminPasswordInput').focus();
+    });
+
+    // Admin password modal handlers
+    document.getElementById('adminCancelBtn').addEventListener('click', () => {
+      document.getElementById('adminPasswordModal').style.display = 'none';
+    });
+
+    document.getElementById('adminLoginBtn').addEventListener('click', async () => {
+      const pw = document.getElementById('adminPasswordInput').value;
+      if (!pw) return;
+      const res = await fetch('/api/admin/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({password: pw})});
+      const j = await res.json().catch(()=>({}));
+      if (j?.ok) { 
+        ADMIN_TOKEN = j.token; 
+        document.body.classList.add('admin-mode'); 
+        document.getElementById('adminPasswordModal').style.display = 'none';
+        document.getElementById('adminSettingsBtn').style.display = '';
+        document.getElementById('adminBtn').textContent = 'Logout';
+      }
+      else { alert('Invalid password'); }
+    });
+
+    // Allow Enter key to submit password
+    document.getElementById('adminPasswordInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        document.getElementById('adminLoginBtn').click();
+      }
+    });
+
+    // Admin settings modal handlers
+    document.getElementById('adminSettingsBtn').addEventListener('click', () => {
+      document.getElementById('adminSettingsModal').style.display = 'flex';
+      
+      // Page settings
+      document.getElementById('pageTitleInput').value = currentConfig?.page_title || 'Eagles Web IDE (Python)';
+      document.getElementById('topBarColorInput').value = currentConfig?.topbar_color || 'linear-gradient(90deg,#a5c8f0,#7fb2eb)';
+      
+      // Wiki/Lesson settings
+      document.getElementById('lessonUrlInputModal').value = currentConfig?.lesson_url || '';
+      document.getElementById('lessonUseLocalModal').checked = currentConfig?.lesson_use_local || false;
+      
+      // AI settings
+      document.getElementById('aiEnabledModal').checked = currentConfig?.ai_explainer_enabled || false;
+      document.getElementById('aiUrlInputModal').value = currentConfig?.ai_ollama_url || 'http://127.0.0.1:11434';
+      document.getElementById('aiModelInputModal').value = currentConfig?.ai_model || 'gemma3:4b';
+      document.getElementById('assistantPromptInputModal').value = currentConfig?.ai_assistant_preprompt || '';
+    });
+
+    document.getElementById('settingsCancelBtn').addEventListener('click', () => {
+      document.getElementById('adminSettingsModal').style.display = 'none';
+    });
+
+    document.getElementById('settingsSaveBtn').addEventListener('click', async () => {
+      // Page settings
+      const page_title = document.getElementById('pageTitleInput').value.trim();
+      const topbar_color = document.getElementById('topBarColorInput').value.trim();
+      
+      // Wiki/Lesson settings
+      const lesson_url = document.getElementById('lessonUrlInputModal').value.trim();
+      const lesson_use_local = document.getElementById('lessonUseLocalModal').checked;
+      
+      // AI settings
+      const ai_explainer_enabled = document.getElementById('aiEnabledModal').checked;
+      const ai_ollama_url = document.getElementById('aiUrlInputModal').value.trim();
+      const ai_model = document.getElementById('aiModelInputModal').value.trim();
+      const ai_assistant_preprompt = document.getElementById('assistantPromptInputModal').value.trim();
+      
+      // Save all settings at once
+      await saveConfig({ 
+        page_title, 
+        topbar_color, 
+        lesson_url, 
+        lesson_use_local,
+        ai_explainer_enabled, 
+        ai_ollama_url, 
+        ai_model, 
+        ai_assistant_preprompt 
+      });
+      
+      applyConfig(currentConfig);
+      document.getElementById('adminSettingsModal').style.display = 'none';
+      alert('All settings saved successfully!');
+    });
+
+    function setEditable(on){
+      document.getElementById('notesView').setAttribute('contenteditable', on ? 'true' : 'false');
+      document.getElementById('lessonLocal').setAttribute('contenteditable', on ? 'true' : 'false');
+    }
+
+    // Notes/Lesson controls (admin)
+    document.getElementById('notesEditBtn').addEventListener('click', () => {
+      const notesView = document.getElementById('notesView');
+      const notesEdit = document.getElementById('notesEdit');
+      // Get current Markdown from config or fallback to text content
+      notesEdit.value = currentConfig?.notes_markdown || notesView.textContent || '';
+      notesView.style.display = 'none';
+      notesEdit.style.display = 'block';
+      notesEdit.focus();
+    });
+    document.getElementById('notesSaveBtn').addEventListener('click', async () => {
+      if (!ADMIN_TOKEN) return alert('Enter Admin Mode first.');
+      const notesEdit = document.getElementById('notesEdit');
+      const notesView = document.getElementById('notesView');
+      
+      const markdown = notesEdit.value;
+      const html = DOMPurify.sanitize(marked.parse(markdown));
+      
+      // Save both Markdown source and rendered HTML
+      await saveConfig({notes_markdown: markdown, notes_html: html}); 
+      
+      notesView.innerHTML = html;
+      notesEdit.style.display = 'none';
+      notesView.style.display = 'block';
+    });
+    document.getElementById('lessonEditBtn').addEventListener('click', () => setEditable(true));
+    document.getElementById('lessonSaveBtn').addEventListener('click', async () => {
+      if (!ADMIN_TOKEN) return alert('Enter Admin Mode first.');
+      const lesson_html = document.getElementById('lessonLocal').innerHTML;
+      await saveConfig({lesson_html});
+      setEditable(false);
+      alert('Wiki content saved!');
+    });
+
+    // AI toolbar controls (admin)
+    document.getElementById('aiSaveBtn').addEventListener('click', async () => {
+      if (!ADMIN_TOKEN) return alert('Enter Admin Mode first.');
+      const ai_explainer_enabled = document.getElementById('aiEnabled').checked;
+      const ai_ollama_url = document.getElementById('aiUrlInput').value.trim();
+      const ai_model = document.getElementById('aiModelInput').value.trim();
+      const ai_assistant_preprompt = document.getElementById('assistantPromptInput').value.trim();
+      await saveConfig({ ai_explainer_enabled, ai_ollama_url, ai_model, ai_assistant_preprompt });
+      applyConfig(currentConfig);
+    });
+
+    // === AI Explain with cooldown (renders Markdown) ===
+    let explainCooldownUntil = 0, explainTimer = null;
+    function startExplainCooldown(seconds){
+      const btn = document.getElementById('aiExplainBtn');
+      const cd = document.getElementById('aiCooldown');
+      const now = Math.floor(Date.now()/1000);
+      explainCooldownUntil = now + Math.max(1, seconds|0);
+      btn.disabled = true;
+      if (explainTimer) clearInterval(explainTimer);
+      const tick = () => {
+        const t = Math.max(0, explainCooldownUntil - Math.floor(Date.now()/1000));
+        cd.textContent = t > 0 ? `Cooldown: ${t}s` : '';
+        if (t <= 0){ clearInterval(explainTimer); explainTimer = null; btn.disabled = false; }
+      };
+      tick(); explainTimer = setInterval(tick, 1000);
+    }
+    document.getElementById('aiExplainBtn').addEventListener('click', async () => {
+      const status = document.getElementById('aiStatus');
+      const out = document.getElementById('aiOutput');
+      const btn = document.getElementById('aiExplainBtn');
+
+      const tnow = Math.floor(Date.now()/1000);
+      if (tnow < explainCooldownUntil) return;
+
+      // Show thinking indicator
+      status.innerHTML = '<span class="ai-thinking">Thinking</span>';
+      out.textContent = ''; 
+      btn.disabled = true;
+
+      const code = editor.getValue();
+      try {
+        const res = await fetch('/api/explain', {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json', 'X-SID': (window.mySid || '') },
+          body: JSON.stringify({ code, sid: (mySid || window.mySid || '') })
+        });
+        const j = await res.json().catch(()=>({}));
+        if (j?.ok){
+          const txt = j.text || '(No response)';
+          renderMarkdownTo(out, txt, 'python');   // <-- Markdown + highlight + copy
+          status.textContent = 'Done';
+          startExplainCooldown(j.cooldown ?? 45);
+        } else {
+          out.textContent = '';
+          status.textContent = (j?.error ? 'Error: ' + j.error : 'Error');
+          startExplainCooldown(45);
+        }
+      } catch (e) {
+        out.textContent = ''; status.textContent = 'Network error'; startExplainCooldown(45);
+      }
+    });
+
+    // === Challenge CSV logic (unchanged UI) ===
+    let currentChallenge = { text: '', difficulty: 1, points: 3 };
+    let lastScore = null;
+    async function refreshLeaderboard(){
+      try{
+        const r = await fetch('/api/challenge/leaderboard');
+        const j = await r.json();
+        if (j?.ok){
+          const tb = document.querySelector('#lbTable tbody'); tb.innerHTML = '';
+          (j.top || []).forEach(row => {
+            const tr = document.createElement('tr');
+            const td1 = document.createElement('td'); td1.textContent = row.name;
+            const td2 = document.createElement('td'); td2.textContent = row.score;
+            tr.appendChild(td1); tr.appendChild(td2); tb.appendChild(tr);
+          });
+        }
+      }catch{}
+    }
+    async function newChallenge(diff){
+      const chStatus = document.getElementById('chStatus'); const out = document.getElementById('challengeOutput');
+      chStatus.textContent = 'Loading…'; out.textContent = '';
+      try{
+        const r = await fetch('/api/challenge/random', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ difficulty: parseInt(diff,10) })});
+        const j = await r.json().catch(()=>({}));
+        if (j?.ok){
+          currentChallenge = { text: j.challenge || '', difficulty: j.difficulty, points: j.points };
+          out.textContent = currentChallenge.text + `\n\n(Difficulty: ${currentChallenge.difficulty} • ${currentChallenge.points} pts)`;
+          chStatus.textContent = 'Ready'; lastScore = null; document.getElementById('scoreStatus').textContent = ''; document.getElementById('saveScoreBtn').disabled = true;
+        }else{ chStatus.textContent = j?.error || 'Error'; }
+      }catch(e){ chStatus.textContent = 'Network error'; }
+    }
+    document.getElementById('btnD1').addEventListener('click', () => newChallenge(1));
+    document.getElementById('btnD2').addEventListener('click', () => newChallenge(2));
+    document.getElementById('btnD3').addEventListener('click', () => newChallenge(3));
+    document.getElementById('btnD4').addEventListener('click', () => newChallenge(4));
+    document.getElementById('btnD5').addEventListener('click', () => newChallenge(5));
+    document.getElementById('scoreBtn').addEventListener('click', async () => {
+      const status = document.getElementById('scoreStatus'); status.textContent = 'Scoring…'; lastScore = null; document.getElementById('saveScoreBtn').disabled = true;
+      try{
+        const r = await fetch('/api/challenge/score', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code: editor.getValue(), challenge: currentChallenge.text, points: currentChallenge.points }) });
+        const j = await r.json().catch(()=>({}));
+        if (j?.ok){ lastScore = j.score; status.textContent = `Score: ${j.score} / ${j.max}`; document.getElementById('saveScoreBtn').disabled = false; }
+        else { status.textContent = j?.error || 'Error'; }
+      }catch(e){ status.textContent = 'Network error'; }
+    });
+    document.getElementById('saveScoreBtn').addEventListener('click', async () => {
+      const name = (document.getElementById('studentName').value || '').trim();
+      const status = document.getElementById('scoreStatus');
+      if (!name){ alert('Enter your name first.'); return; }
+      if (lastScore == null){ alert('Get a score first.'); return; }
+      try{
+        const r = await fetch('/api/challenge/submit', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name, score: lastScore }) });
+        const j = await r.json().catch(()=>({}));
+        if (j?.ok){
+          status.textContent = `Saved! (added ${lastScore} points)`; lastScore = null; document.getElementById('saveScoreBtn').disabled = true;
+          const tb = document.querySelector('#lbTable tbody'); tb.innerHTML = '';
+          (j.top || []).forEach(row => {
+            const tr = document.createElement('tr'); const td1 = document.createElement('td'); td1.textContent = row.name;
+            const td2 = document.createElement('td'); td2.textContent = row.score; tr.appendChild(td1); tr.appendChild(td2); tb.appendChild(tr);
+          });
+        }else{ status.textContent = j?.error || 'Save failed'; }
+      }catch(e){ status.textContent = 'Network error'; }
+    });
+
+    // Horizontal splitter (Shell vs Tabs)
+    (function(){
+      const container = document.getElementById('rightstack');
+      const splitter  = document.getElementById('vsplitter');
+      const STORAGE_KEY = 'ide-shell-size';
+      try { const saved = localStorage.getItem(STORAGE_KEY); if (saved) container.style.setProperty('--shell-size', saved + 'px'); } catch {}
+
+      function setShellSize(px){
+        const rect = container.getBoundingClientRect();
+        const max = Math.max(0, rect.height - splitter.offsetHeight - 20);
+        const clamped = Math.min(Math.max(px, 0), max);
+        container.style.setProperty('--shell-size', clamped + 'px');
+        try { localStorage.setItem(STORAGE_KEY, String(clamped)); } catch {}
+      }
+      let dragging = false, startY = 0, startH = 0;
+      function onDown(ev){
+        dragging = true;
+        startY = (ev.touches ? ev.touches[0].clientY : ev.clientY);
+        const shellRect = document.getElementById('shellPanel').getBoundingClientRect();
+        startH = shellRect.height;
+        document.body.style.userSelect = 'none';
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+        window.addEventListener('touchmove', onMove, {passive:false});
+        window.addEventListener('touchend', onUp);
+        ev.preventDefault();
+      }
+      function onMove(ev){
+        if (!dragging) return;
+        const y = (ev.touches ? ev.touches[0].clientY : ev.clientY);
+        const dy = y - startY;
+        setShellSize(startH + dy);
+        ev.preventDefault();
+      }
+      function onUp(){
+        dragging = false;
+        document.body.style.userSelect = '';
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+        window.removeEventListener('touchmove', onMove);
+        window.removeEventListener('touchend', onUp);
+      }
+      splitter.addEventListener('mousedown', onDown);
+      splitter.addEventListener('touchstart', onDown, {passive:false});
+      splitter.addEventListener('dblclick', () => {
+        const rect = container.getBoundingClientRect();
+        const current = document.getElementById('shellPanel').getBoundingClientRect().height;
+        const target = Math.abs(current - rect.height*0.33) < 8 ? rect.height*0.5 : rect.height*0.33;
+        setShellSize(target);
+      });
+      window.addEventListener('resize', () => {
+        const shellRect = document.getElementById('shellPanel').getBoundingClientRect();
+        setShellSize(shellRect.height);
+      });
+    })();
+
+    // Vertical splitter (Editor vs Right Column)
+    (function(){
+      const outer = document.getElementById('outer');
+      const splitter = document.getElementById('hsplitter');
+      const STORAGE_KEY = 'ide-left-width';
+      try {
+        const saved = parseFloat(localStorage.getItem(STORAGE_KEY) || '');
+        if (!Number.isNaN(saved) && saved > 100) outer.style.setProperty('--left-width', saved + 'px');
+      } catch {}
+      function setLeftWidth(px){
+        const rect = outer.getBoundingClientRect();
+        const min = 200; const max = Math.max(300, rect.width - 300);
+        const clamped = Math.min(Math.max(px, min), max);
+        outer.style.setProperty('--left-width', clamped + 'px');
+        try { localStorage.setItem(STORAGE_KEY, String(clamped)); } catch {}
+      }
+      let dragging = false, startX = 0, startW = 0;
+      function onDown(ev){
+        dragging = true;
+        startX = (ev.touches ? ev.touches[0].clientX : ev.clientX);
+        const leftRect = document.getElementById('editorPanel').getBoundingClientRect();
+        startW = leftRect.width;
+        document.body.style.userSelect = 'none';
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+        window.addEventListener('touchmove', onMove, {passive:false});
+        window.addEventListener('touchend', onUp);
+        ev.preventDefault();
+      }
+      function onMove(ev){
+        if (!dragging) return;
+        const x = (ev.touches ? ev.touches[0].clientX : ev.clientX);
+        const dx = x - startX;
+        setLeftWidth(startW + dx);
+        ev.preventDefault();
+      }
+      function onUp(){
+        dragging = false;
+        document.body.style.userSelect = '';
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+        window.removeEventListener('touchmove', onMove);
+        window.removeEventListener('touchend', onUp);
+      }
+      splitter.addEventListener('mousedown', onDown);
+      splitter.addEventListener('touchstart', onDown, {passive:false});
+      splitter.addEventListener('dblclick', () => {
+        const rect = outer.getBoundingClientRect();
+        const leftRect = document.getElementById('editorPanel').getBoundingClientRect();
+        const target = Math.abs(leftRect.width - rect.width*0.5) < 8 ? rect.width*0.65 : rect.width*0.5;
+        setLeftWidth(target);
+      });
+      window.addEventListener('resize', () => {
+        const leftRect = document.getElementById('editorPanel').getBoundingClientRect();
+        setLeftWidth(leftRect.width);
+      });
+    })();
+
+    // Font size control
+    (function(){
+      const key = 'ide-font-size';
+      const slider = document.getElementById('fontRange');
+      const label  = document.getElementById('fontVal');
+      let size = parseInt(localStorage.getItem(key) || '14', 10);
+      if (Number.isNaN(size)) size = 14;
+      slider.value = String(size);
+      label.textContent = String(size);
+      document.documentElement.style.setProperty('--cm-font-size', size + 'px');
+      const refresh = () => {
+        document.querySelectorAll('.CodeMirror').forEach(w => {
+          w.style.fontSize = `var(--cm-font-size)`;
+          if (w.CodeMirror) w.CodeMirror.refresh();
+        });
+      };
+      refresh();
+      slider.addEventListener('input', () => {
+        const val = parseInt(slider.value, 10);
+        label.textContent = String(val);
+        document.documentElement.style.setProperty('--cm-font-size', val + 'px');
+        try { localStorage.setItem(key, String(val)); } catch {}
+        refresh();
+      });
+    })();
+
+    // Indent guides toggle
+    (function(){
+      const key = 'ide-guides';
+      const btn = document.getElementById('guidesBtn');
+      let on = true;
+      try { const saved = localStorage.getItem(key); if (saved !== null) on = saved === '1'; } catch {}
+      function apply(){ document.body.classList.toggle('guides-off', !on); btn.textContent = `Guides: ${on ? 'On' : 'Off'}`; try { localStorage.setItem(key, on ? '1' : '0'); } catch {} }
+      apply(); btn.addEventListener('click', () => { on = !on; apply(); });
+    })();
+
+    // Autocomplete toggle
+    (function(){
+      const key = 'ide-autocomplete';
+      const btn = document.getElementById('autocompleteBtn');
+      let on = true;
+      try { const saved = localStorage.getItem(key); if (saved !== null) on = saved === '1'; } catch {}
+      function apply(){ 
+        btn.textContent = `Autocomplete: ${on ? 'On' : 'Off'}`;
+        if (window.toggleEagleCompletion) window.toggleEagleCompletion(on);
+        try { localStorage.setItem(key, on ? '1' : '0'); } catch {} 
+      }
+      apply(); 
+      btn.addEventListener('click', () => { on = !on; apply(); });
+    })();
+
+    // Sidebar collapse/expand toggle
+    (function(){
+      const key = 'ide-sidebar-collapsed';
+      const btn = document.getElementById('toggleSidebarBtn');
+      let collapsed = false;
+      try { const saved = localStorage.getItem(key); if (saved !== null) collapsed = saved === '1'; } catch {}
+      function apply(){ 
+        document.body.classList.toggle('right-collapsed', collapsed); 
+        btn.textContent = collapsed ? 'Show Sidebar ▶' : 'Hide Sidebar ◀';
+        try { localStorage.setItem(key, collapsed ? '1' : '0'); } catch {} 
+      }
+      apply(); 
+      btn.addEventListener('click', () => { collapsed = !collapsed; apply(); });
+    })();
+
+    // --- AI Assistant chat (15s cooldown) ---
+    const assistantChat = document.getElementById('assistantChat');
+    const assistantInput = document.getElementById('assistantInput');
+    const assistantSend = document.getElementById('assistantSend');
+    const assistantCooldown = document.getElementById('assistantCooldown');
+    let assistantMsgs = []; // {role:'user'|'assistant'|'system', content:''}
+    let assistantCooldownUntil = 0; let assistantTimer = null;
+
+    function renderChat(){
+      assistantChat.innerHTML = '';
+      assistantMsgs.forEach(m => {
+        if (m.role === 'system') return; // don't show system prompt
+        const div = document.createElement('div');
+        div.className = 'msg ' + (m.role === 'user' ? 'user' : 'bot');
+
+        // Render markdown for assistant messages; user messages as text
+        if (m.role === 'assistant'){
+          // Check if it's HTML (like thinking indicator)
+          if (m.content.includes('<span class="ai-thinking">')) {
+            div.innerHTML = m.content;
+          } else {
+            const inner = document.createElement('div');
+            renderMarkdownTo(inner, m.content, 'python');
+            div.appendChild(inner);
+          }
+        } else {
+          div.textContent = m.content;
+        }
+        assistantChat.appendChild(div);
+      });
+      assistantChat.scrollTop = assistantChat.scrollHeight;
+    }
+
+    function startAssistantCooldown(seconds){
+      const now = Math.floor(Date.now()/1000);
+      assistantCooldownUntil = now + Math.max(1, seconds|0);
+      assistantSend.disabled = true;
+      if (assistantTimer) clearInterval(assistantTimer);
+      const tick = () => {
+        const t = Math.max(0, assistantCooldownUntil - Math.floor(Date.now()/1000));
+        assistantCooldown.textContent = t > 0 ? `Cooldown: ${t}s` : '';
+        if (t <= 0){ clearInterval(assistantTimer); assistantTimer = null; assistantSend.disabled = false; }
+      };
+      tick(); assistantTimer = setInterval(tick, 1000);
+    }
+
+    function ensureAssistantSystemMessage(){
+      const base = (currentConfig?.ai_assistant_preprompt || '').trim();
+      const policy =
+        `${base ? base + '\n\n' : ''}` +
+        `ROLE: You are a strict CODING TUTOR for students learning Python.\n` +
+        `SCOPE: Python programming questions only. If asked anything non-coding, reply: "I can only help with Python coding questions."\n` +
+        `ASSISTANCE POLICY:\n` +
+        `- You may explain concepts, syntax, and debugging techniques BRIEFLY (2-3 sentences max)\n` +
+        `- You may point out errors and guide students to fix them\n` +
+        `- You MUST NOT write complete solutions to coding problems/assignments\n` +
+        `- If asked to "write code for" or "solve this problem", respond: "I can help you understand how to solve this, but I can't write the solution for you. What part are you stuck on?"\n` +
+        `- Instead of giving answers, ask guiding questions\n` +
+        `STYLE: Keep ALL answers VERY brief (2-3 sentences). Use Markdown sparingly. Format code snippets with fenced blocks (\`\`\`python).\n` +
+        `SAFETY: Do not give non-coding advice. Do not do students' assignments. Never provide full code solutions.`;
+      if (!assistantMsgs.length || assistantMsgs[0].role !== 'system'){
+        assistantMsgs.unshift({ role:'system', content: policy });
+      } else {
+        assistantMsgs[0].content = policy;
+      }
+    }
+
+    async function assistantDoSend(){
+      const content = assistantInput.value.trim();
+      if (!content) return;
+      const nowS = Math.floor(Date.now()/1000);
+      if (nowS < assistantCooldownUntil) return;
+
+      ensureAssistantSystemMessage();
+
+      assistantMsgs.push({role:'user', content});
+      assistantInput.value = ''; 
+      
+      // Add thinking indicator as temporary message
+      assistantMsgs.push({role:'assistant', content: '<span class="ai-thinking">Thinking</span>', temporary: true});
+      renderChat();
+
+      try{
+        const r = await fetch('/api/assistant/chat', {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json', 'X-SID': (window.mySid || '') },
+          body: JSON.stringify({ messages: assistantMsgs.filter(m => !m.temporary), sid: (mySid || window.mySid || '') })
+        });
+        
+        // Remove thinking indicator
+        assistantMsgs = assistantMsgs.filter(m => !m.temporary);
+        
+        const j = await r.json().catch(()=>({}));
+        if (j?.ok){
+          const reply = (j.reply || '').trim();
+          assistantMsgs.push({role:'assistant', content: reply || '(no reply)'});
+          renderChat();
+          startAssistantCooldown(j.cooldown ?? 15);
+        } else if (j?.error === 'Cooldown') {
+          startAssistantCooldown(j.cooldown ?? 15);
+        } else {
+          assistantMsgs.push({role:'assistant', content: `Error: ${j?.error || 'AI error'}`});
+          renderChat();
+          startAssistantCooldown(15);
+        }
+      }catch(e){
+        // Remove thinking indicator
+        assistantMsgs = assistantMsgs.filter(m => !m.temporary);
+        assistantMsgs.push({role:'assistant', content: 'Network error'});
+        renderChat();
+        startAssistantCooldown(15);
+      }
+    }
+    assistantSend.addEventListener('click', assistantDoSend);
+    assistantInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey){
+        e.preventDefault(); assistantDoSend();
+      }
+    });
+
+    // Kick off leaderboard load once
+    (async () => { try { await refreshLeaderboard(); } catch {} })();
+
+    // =============================================
+    // Assignment System
+    // =============================================
+    let currentAssignments = [];
+    let isAdmin = false;
+
+    async function loadAssignments() {
+      try {
+        const resp = await fetch('/api/assignments', {
+          headers: ADMIN_TOKEN ? { 'X-Admin-Token': ADMIN_TOKEN } : {}
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          currentAssignments = data.assignments || [];
+          isAdmin = data.isAdmin || false;
+          renderAssignments();
+        }
+      } catch (e) {
+        console.error('Failed to load assignments:', e);
+      }
+    }
+
+    function renderAssignments() {
+      if (isAdmin) {
+        document.getElementById('assignmentAdminView').style.display = 'block';
+        document.getElementById('assignmentStudentView').style.display = 'none';
+        document.getElementById('submissionsSidebar').style.display = 'block';
+        document.getElementById('studentScoreLookup').style.display = 'none';
+        renderAdminAssignments();
+      } else {
+        document.getElementById('assignmentAdminView').style.display = 'none';
+        document.getElementById('assignmentStudentView').style.display = 'block';
+        document.getElementById('submissionsSidebar').style.display = 'none';
+        document.getElementById('studentScoreLookup').style.display = 'block';
+        renderStudentAssignments();
+      }
+    }
+
+    function renderAdminAssignments() {
+      const list = document.getElementById('assignmentList');
+      if (!currentAssignments.length) {
+        list.innerHTML = '<p style="color:#888;">No assignments yet. Click "New Assignment" to create one.</p>';
+        return;
+      }
+
+      list.innerHTML = currentAssignments.map(a => `
+        <div class="assignment-card">
+          <h4>${escapeHtml(a.name)}</h4>
+          <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
+          <div class="meta">
+            Max Score: ${a.maxScore} | 
+            Status: ${a.active ? '<span style="color:#4caf50;">Active</span>' : '<span style="color:#888;">Inactive</span>'} | 
+            Submissions: ${(a.submissions || []).length}
+          </div>
+          <div class="assignment-actions">
+            <button class="btn secondary toggle-active-btn" data-name="${escapeHtml(a.name)}" data-active="${!a.active}">${a.active ? 'Deactivate' : 'Activate'}</button>
+            <button class="btn run show-sidebar-submissions-btn" data-name="${escapeHtml(a.name)}">Show Submissions</button>
+            <button class="btn secondary view-submissions-btn" data-name="${escapeHtml(a.name)}">View All</button>
+            <button class="btn secondary download-csv-btn" data-name="${escapeHtml(a.name)}">Download CSV</button>
+            <button class="btn stop delete-assignment-btn" data-name="${escapeHtml(a.name)}">Delete</button>
+          </div>
+        </div>
+      `).join('');
+      
+      // Add event listeners
+      list.querySelectorAll('.toggle-active-btn').forEach(btn => {
+        btn.addEventListener('click', () => toggleAssignmentActive(btn.dataset.name, btn.dataset.active === 'true'));
+      });
+      list.querySelectorAll('.show-sidebar-submissions-btn').forEach(btn => {
+        btn.addEventListener('click', () => showSubmissionsInSidebar(btn.dataset.name));
+      });
+      list.querySelectorAll('.view-submissions-btn').forEach(btn => {
+        btn.addEventListener('click', () => viewSubmissions(btn.dataset.name));
+      });
+      list.querySelectorAll('.download-csv-btn').forEach(btn => {
+        btn.addEventListener('click', () => downloadCSV(btn.dataset.name));
+      });
+      list.querySelectorAll('.delete-assignment-btn').forEach(btn => {
+        btn.addEventListener('click', () => deleteAssignment(btn.dataset.name));
+      });
+    }
+
+    function renderStudentAssignments() {
+      const activeList = document.getElementById('studentAssignmentList');
+      const pastList = document.getElementById('studentPastAssignmentList');
+      
+      const activeAssignments = currentAssignments.filter(a => a.active);
+      const pastAssignments = currentAssignments.filter(a => !a.active);
+      
+      if (!activeAssignments.length) {
+        activeList.innerHTML = '<p style="color:#888;">No active assignments.</p>';
+      } else {
+        activeList.innerHTML = activeAssignments.map(a => `
+          <div class="assignment-card">
+            <h4>${escapeHtml(a.name)}</h4>
+            <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
+            <div class="meta">Max Score: ${a.maxScore}</div>
+            <div class="assignment-actions">
+              <button class="btn run submit-assignment-btn" data-name="${escapeHtml(a.name)}">Submit Code</button>
+            </div>
+          </div>
+        `).join('');
+        
+        // Add event listeners for active assignments
+        activeList.querySelectorAll('.submit-assignment-btn').forEach(btn => {
+          btn.addEventListener('click', () => submitAssignment(btn.dataset.name));
+        });
+      }
+      
+      if (!pastAssignments.length) {
+        pastList.innerHTML = '<p style="color:#888;">No past assignments.</p>';
+      } else {
+        pastList.innerHTML = pastAssignments.map(a => `
+          <div class="assignment-card" style="opacity:0.7;">
+            <h4>${escapeHtml(a.name)} <span style="color:#888; font-size:12px; font-weight:normal;">(Closed)</span></h4>
+            <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
+            <div class="meta">Max Score: ${a.maxScore}</div>
+            <div class="assignment-actions">
+              <button class="btn secondary" disabled style="opacity:0.5; cursor:not-allowed;">Submissions Closed</button>
+            </div>
+          </div>
+        `).join('');
+      }
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    document.getElementById('newAssignmentBtn').addEventListener('click', () => {
+      showNewAssignmentModal();
+    });
+
+    function showNewAssignmentModal() {
+      const modal = document.createElement('div');
+      modal.className = 'modal';
+      modal.innerHTML = `
+        <div class="modal-content">
+          <h3>New Assignment</h3>
+          <label>Assignment Name</label>
+          <input type="text" id="modalAssignmentName" placeholder="e.g., Loops Practice 1" />
+          <label>Task Description</label>
+          <textarea id="modalAssignmentTask" placeholder="Describe what students need to do..."></textarea>
+          <label>Max Score</label>
+          <input type="number" id="modalAssignmentMaxScore" value="100" min="1" />
+          <div class="modal-actions">
+            <button class="btn secondary modal-cancel-btn">Cancel</button>
+            <button class="btn run modal-create-btn">Create</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.remove();
+      });
+      modal.querySelector('.modal-cancel-btn').addEventListener('click', () => modal.remove());
+      modal.querySelector('.modal-create-btn').addEventListener('click', () => createAssignment());
+    }
+
+    async function createAssignment() {
+      const name = document.getElementById('modalAssignmentName').value.trim();
+      const task = document.getElementById('modalAssignmentTask').value.trim();
+      const maxScore = parseInt(document.getElementById('modalAssignmentMaxScore').value) || 100;
+
+      if (!name) {
+        alert('Please enter an assignment name');
+        return;
+      }
+
+      try {
+        const resp = await fetch('/api/assignments/create', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Token': ADMIN_TOKEN
+          },
+          body: JSON.stringify({ name, task, maxScore })
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          document.querySelector('.modal').remove();
+          await loadAssignments();
+          document.getElementById('assignmentStatus').textContent = 'Assignment created!';
+          setTimeout(() => { document.getElementById('assignmentStatus').textContent = ''; }, 3000);
+        } else {
+          alert(data.error || 'Failed to create assignment');
+        }
+      } catch (e) {
+        alert('Network error');
+      }
+    }
+
+    async function toggleAssignmentActive(name, active) {
+      try {
+        const resp = await fetch('/api/assignments/update', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Token': ADMIN_TOKEN
+          },
+          body: JSON.stringify({ name, active })
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          await loadAssignments();
+        } else {
+          alert(data.error || 'Failed to update assignment');
+        }
+      } catch (e) {
+        alert('Network error');
+      }
+    }
+
+    async function deleteAssignment(name) {
+      if (!confirm(`Delete assignment "${name}"? This cannot be undone.`)) return;
+      
+      try {
+        const resp = await fetch('/api/assignments/delete', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Token': ADMIN_TOKEN
+          },
+          body: JSON.stringify({ name })
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          await loadAssignments();
+          document.getElementById('assignmentStatus').textContent = 'Assignment deleted';
+          setTimeout(() => { document.getElementById('assignmentStatus').textContent = ''; }, 3000);
+        } else {
+          alert(data.error || 'Failed to delete assignment');
+        }
+      } catch (e) {
+        alert('Network error');
+      }
+    }
+
+    function submitAssignment(assignmentName) {
+      const modal = document.createElement('div');
+      modal.className = 'modal';
+      modal.innerHTML = `
+        <div class="modal-content">
+          <h3>Submit: ${escapeHtml(assignmentName)}</h3>
+          <label>Your Name</label>
+          <input type="text" id="modalStudentName" placeholder="First Last" />
+          <label>Email</label>
+          <input type="email" id="modalStudentEmail" placeholder="you@example.com" />
+          <label>Class Period</label>
+          <input type="text" id="modalClassPeriod" placeholder="e.g., Period 3" />
+          <div class="modal-actions">
+            <button class="btn secondary modal-cancel-btn">Cancel</button>
+            <button class="btn run modal-submit-btn" data-assignment="${escapeHtml(assignmentName)}">Submit</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.remove();
+      });
+      modal.querySelector('.modal-cancel-btn').addEventListener('click', () => modal.remove());
+      modal.querySelector('.modal-submit-btn').addEventListener('click', (e) => {
+        doSubmitAssignment(e.target.dataset.assignment);
+      });
+    }
+
+    async function doSubmitAssignment(assignmentName) {
+      const studentName = document.getElementById('modalStudentName').value.trim();
+      const studentEmail = document.getElementById('modalStudentEmail').value.trim();
+      const classPeriod = document.getElementById('modalClassPeriod').value.trim();
+      const code = editor.getValue();
+
+      if (!studentName || !studentEmail) {
+        alert('Name and email are required');
+        return;
+      }
+
+      try {
+        const resp = await fetch('/api/assignments/submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            assignmentName,
+            studentName,
+            studentEmail,
+            classPeriod,
+            code
+          })
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          document.querySelector('.modal').remove();
+          alert('Assignment submitted successfully!');
+        } else {
+          alert(data.error || 'Failed to submit assignment');
+        }
+      } catch (e) {
+        alert('Network error');
+      }
+    }
+
+    function viewSubmissions(assignmentName) {
+      const assignment = currentAssignments.find(a => a.name === assignmentName);
+      if (!assignment) return;
+
+      const submissions = assignment.submissions || [];
+      const modal = document.createElement('div');
+      modal.className = 'modal';
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width:800px;">
+          <h3>Submissions: ${escapeHtml(assignmentName)}</h3>
+          <div id="submissionsList">
+            ${submissions.length ? submissions.map((s, idx) => `
+              <div class="submission-item" data-idx="${idx}">
+                <div class="name">${escapeHtml(s.name || 'Anonymous')}</div>
+                <div class="email">${escapeHtml(s.email)} | Period: ${escapeHtml(s.classPeriod || 'N/A')} | Submitted: ${escapeHtml(s.submittedAt || 'Unknown')}</div>
+                <div class="score-input">
+                  Score: <input type="number" class="score-field" value="${s.score || ''}" min="0" max="${assignment.maxScore}" 
+                    data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}" data-idx="${escapeHtml(String(idx))}"
+                    style="width:80px;" /> / ${assignment.maxScore}
+                  <button class="ai-grade-btn" data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}" data-idx="${escapeHtml(String(idx))}">Grade with AI</button>
+                </div>
+              </div>
+            `).join('') : '<p style="color:#888;">No submissions yet.</p>'}
+          </div>
+          <div class="modal-actions">
+            <button class="btn secondary modal-close-btn">Close</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.remove();
+      });
+      modal.querySelector('.modal-close-btn').addEventListener('click', () => modal.remove());
+      
+      // Add event listeners for submission items
+      modal.querySelectorAll('.submission-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+          // Don't trigger if clicking on score input or AI grade button
+          if (e.target.classList.contains('score-field') || e.target.classList.contains('ai-grade-btn')) return;
+          const idx = parseInt(item.dataset.idx);
+          const sub = submissions[idx];
+          if (sub) viewSubmissionCode(assignmentName, sub.email);
+        });
+      });
+      
+      // Add event listeners for score inputs
+      modal.querySelectorAll('.score-field').forEach(field => {
+        field.addEventListener('change', (e) => {
+          e.stopPropagation();
+          updateScore(field.dataset.assignment, field.dataset.email, field.value);
+        });
+      });
+
+      // Add event listeners for AI grade buttons
+      modal.querySelectorAll('.ai-grade-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          gradeWithAI(btn.dataset.assignment, btn.dataset.email, parseInt(btn.dataset.idx), modal);
+        });
+      });
+    }
+
+    function viewSubmissionCode(assignmentName, email) {
+      const assignment = currentAssignments.find(a => a.name === assignmentName);
+      if (!assignment) return;
+
+      const submission = assignment.submissions.find(s => s.email.toLowerCase() === email.toLowerCase());
+      if (!submission) return;
+
+      const modal = document.createElement('div');
+      modal.className = 'modal';
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width:900px;">
+          <h3>${escapeHtml(submission.name || 'Anonymous')} - ${escapeHtml(email)}</h3>
+          <div style="margin:12px 0;">
+            <strong>Period:</strong> ${escapeHtml(submission.classPeriod || 'N/A')} | 
+            <strong>Submitted:</strong> ${escapeHtml(submission.submittedAt || 'Unknown')}
+          </div>
+          <textarea readonly style="width:100%; height:400px; font-family:monospace; background:#0c0c0c; color:#ddd; border:1px solid #333; padding:10px;">${escapeHtml(submission.code || '(No code)')}</textarea>
+          <div class="modal-actions">
+            <button class="btn secondary load-to-editor-btn" data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(email)}">Load to Editor</button>
+            <button class="btn secondary modal-close-btn">Close</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.remove();
+      });
+      modal.querySelector('.modal-close-btn').addEventListener('click', () => modal.remove());
+      modal.querySelector('.load-to-editor-btn').addEventListener('click', (e) => {
+        loadSubmissionToEditor(e.target.dataset.assignment, e.target.dataset.email);
+      });
+    }
+
+    function loadSubmissionToEditor(assignmentName, email) {
+      const assignment = currentAssignments.find(a => a.name === assignmentName);
+      if (!assignment) return;
+
+      const submission = assignment.submissions.find(s => s.email.toLowerCase() === email.toLowerCase());
+      if (!submission) return;
+
+      editor.setValue(submission.code || '');
+      document.querySelector('.modal').remove();
+      alert('Student code loaded into editor');
+    }
+
+    async function updateScore(assignmentName, email, score) {
+      try {
+        const resp = await fetch('/api/assignments/score', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Token': ADMIN_TOKEN
+          },
+          body: JSON.stringify({
+            assignmentName,
+            studentEmail: email,
+            score: score ? parseFloat(score) : null
+          })
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          await loadAssignments();
+        }
+      } catch (e) {
+        console.error('Failed to update score:', e);
+      }
+    }
+
+    async function downloadCSV(assignmentName) {
+      if (!ADMIN_TOKEN) return;
+      const url = `/api/assignments/${encodeURIComponent(assignmentName)}/csv`;
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${assignmentName}_scores.csv`;
+      // Add auth header via fetch and create blob
+      try {
+        const resp = await fetch(url, {
+          headers: { 'X-Admin-Token': ADMIN_TOKEN }
+        });
+        if (resp.ok) {
+          const blob = await resp.blob();
+          const blobUrl = URL.createObjectURL(blob);
+          a.href = blobUrl;
+          a.click();
+          URL.revokeObjectURL(blobUrl);
+        } else {
+          alert('Failed to download CSV');
+        }
+      } catch (e) {
+        alert('Network error');
+      }
+    }
+
+    // =============================================
+    // AI Grading Function
+    // =============================================
+    async function gradeWithAI(assignmentName, email, submissionIdx, modalElement) {
+      const assignment = currentAssignments.find(a => a.name === assignmentName);
+      if (!assignment) return;
+
+      const submission = assignment.submissions.find(s => s.email.toLowerCase() === email.toLowerCase());
+      if (!submission) return;
+
+      // Find the button and disable it
+      const btn = modalElement.querySelector(`.ai-grade-btn[data-idx="${submissionIdx}"]`);
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Grading...';
+      }
+
+      try {
+        const resp = await fetch('/api/assignments/grade-ai', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Token': ADMIN_TOKEN
+          },
+          body: JSON.stringify({
+            assignmentName: assignmentName,
+            studentEmail: email,
+            code: submission.code,
+            task: assignment.task,
+            maxScore: assignment.maxScore
+          })
+        });
+
+        const data = await resp.json();
+        
+        if (data.ok) {
+          // Update the score field
+          const scoreField = modalElement.querySelector(`.score-field[data-idx="${submissionIdx}"]`);
+          if (scoreField) {
+            scoreField.value = data.score;
+            // Trigger change event to save the score
+            scoreField.dispatchEvent(new Event('change'));
+          }
+          
+          if (btn) {
+            btn.textContent = 'Grade with AI';
+            btn.disabled = false;
+          }
+        } else {
+          alert(data.error || 'AI grading failed');
+          if (btn) {
+            btn.textContent = 'Grade with AI';
+            btn.disabled = false;
+          }
+        }
+      } catch (e) {
+        console.error('AI grading error:', e);
+        alert('Network error during AI grading');
+        if (btn) {
+          btn.textContent = 'Grade with AI';
+          btn.disabled = false;
+        }
+      }
+    }
+
+    // =============================================
+    // Submissions Sidebar Functions
+    // =============================================
+    let currentSidebarAssignment = null;
+    
+    function showSubmissionsInSidebar(assignmentName) {
+      const assignment = currentAssignments.find(a => a.name === assignmentName);
+      if (!assignment) return;
+
+      currentSidebarAssignment = assignmentName;
+      const submissions = assignment.submissions || [];
+      const sidebar = document.getElementById('submissionsSidebarList');
+      const toolbar = document.querySelector('.submissions-toolbar');
+      
+      if (!submissions.length) {
+        sidebar.innerHTML = '<p style="color:#888; font-size:12px;">No submissions yet for this assignment.</p>';
+        if (toolbar) toolbar.style.display = 'none';
+        return;
+      }
+
+      // Show toolbar
+      if (toolbar) toolbar.style.display = 'flex';
+
+      sidebar.innerHTML = submissions.map(s => {
+        const hasScore = s.score !== null && s.score !== undefined;
+        const stateClass = hasScore ? 'saved' : 'ungraded';
+        
+        return `
+        <div class="sidebar-submission ${stateClass}" data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}" data-original-score="${s.score !== null && s.score !== undefined ? s.score : ''}">
+          <div class="student-info">
+            <span class="student-name">${escapeHtml(s.name || 'Anonymous')}</span>
+            <span class="student-score">${hasScore ? s.score + '/' + assignment.maxScore : '—/' + assignment.maxScore}</span>
+          </div>
+          <div class="student-email">${escapeHtml(s.email)}</div>
+          <div class="score-input" style="margin-top:8px;">
+            <input type="number" class="score-input-field" placeholder="Score" min="0" max="${assignment.maxScore}" 
+              value="${hasScore ? s.score : ''}" 
+              style="width:60px; padding:4px; background:#1a1a1a; color:#fff; border:1px solid #2b2b2b; border-radius:4px; font-size:12px;">
+            <button class="btn secondary ai-grade-btn" style="padding:4px 8px; font-size:11px;">AI Grade</button>
+            <button class="btn run save-score-btn" style="padding:4px 8px; font-size:11px;">Save</button>
+          </div>
+        </div>
+        `;
+      }).join('');
+
+      // Add event handlers using addEventListener (safer than inline handlers)
+      sidebar.querySelectorAll('.sidebar-submission').forEach(item => {
+        const assignName = item.dataset.assignment;
+        const studentEmail = item.dataset.email;
+        
+        // Click on card to view submission
+        item.addEventListener('click', () => {
+          loadSubmissionToEditorDirect(assignName, studentEmail);
+        });
+        
+        // Input field - stop propagation and mark pending
+        const inputField = item.querySelector('.score-input-field');
+        if (inputField) {
+          inputField.addEventListener('click', (e) => e.stopPropagation());
+          inputField.addEventListener('input', () => markSubmissionPending(inputField));
+        }
+        
+        // AI Grade button
+        const aiGradeBtn = item.querySelector('.ai-grade-btn');
+        if (aiGradeBtn) {
+          aiGradeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            aiGradeSubmission(assignName, studentEmail);
+          });
+        }
+        
+        // Save button
+        const saveBtn = item.querySelector('.save-score-btn');
+        if (saveBtn) {
+          saveBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            saveSubmissionScore(assignName, studentEmail, inputField);
+          });
+        }
+      });
+    }
+
+    function markSubmissionPending(inputElement) {
+      const submissionCard = inputElement.closest('.sidebar-submission');
+      if (!submissionCard) return;
+      
+      const originalScore = submissionCard.dataset.originalScore || '';
+      const currentValue = inputElement.value;
+      
+      // Remove all state classes
+      submissionCard.classList.remove('ungraded', 'saved', 'pending', 'ai-grading');
+      
+      // Determine new state
+      if (currentValue === '') {
+        submissionCard.classList.add('ungraded');
+      } else if (currentValue !== originalScore) {
+        submissionCard.classList.add('pending');
+      } else {
+        submissionCard.classList.add('saved');
+      }
+    }
+
+    function loadSubmissionToEditorDirect(assignmentName, email) {
+      const assignment = currentAssignments.find(a => a.name === assignmentName);
+      if (!assignment) return;
+
+      const submission = assignment.submissions.find(s => s.email.toLowerCase() === email.toLowerCase());
+      if (!submission) return;
+
+      editor.setValue(submission.code || '');
+      // Scroll to top of editor
+      if (editor.scrollTo) {
+        editor.scrollTo(0, 0);
+      }
+      // Show a notification
+      const statusEl = document.getElementById('assignmentStatus');
+      if (statusEl) {
+        statusEl.textContent = `Loaded: ${submission.name || email}`;
+        setTimeout(() => { statusEl.textContent = ''; }, 3000);
+      }
+    }
+
+    // Save submission score
+    async function saveSubmissionScore(assignmentName, email, inputElement) {
+      const score = parseInt(inputElement.value);
+      if (isNaN(score)) {
+        alert('Please enter a valid score');
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/assignments/score', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Token': ADMIN_TOKEN
+          },
+          body: JSON.stringify({
+            assignmentName: assignmentName,
+            studentEmail: email,
+            score: score
+          })
+        });
+
+        const result = await response.json();
+        if (result?.ok) {
+          // Update the submission card state to "saved"
+          const submissionCard = inputElement.closest('.sidebar-submission');
+          if (submissionCard) {
+            submissionCard.classList.remove('ungraded', 'pending', 'ai-grading');
+            submissionCard.classList.add('saved');
+            submissionCard.dataset.originalScore = score;
+          }
+          
+          alert('Score saved successfully!');
+          await loadAssignments();
+          showSubmissionsInSidebar(assignmentName);
+        } else {
+          alert('Failed to save score: ' + (result?.error || 'Unknown error'));
+        }
+      } catch (error) {
+        alert('Error saving score: ' + error.message);
+      }
+    }
+
+    // AI Grade submission
+    async function aiGradeSubmission(assignmentName, email) {
+      const assignment = currentAssignments.find(a => a.name === assignmentName);
+      if (!assignment) return;
+
+      const submission = assignment.submissions.find(s => s.email.toLowerCase() === email.toLowerCase());
+      if (!submission) return;
+
+      const statusEl = document.getElementById('assignmentStatus');
+      
+      // Mark submission card as being AI graded
+      const sidebar = document.getElementById('submissionsSidebarList');
+      const submissionCards = sidebar.querySelectorAll('.sidebar-submission');
+      let currentCard = null;
+      submissionCards.forEach(card => {
+        if (card.dataset.email === email) {
+          currentCard = card;
+          card.classList.remove('ungraded', 'pending', 'saved');
+          card.classList.add('ai-grading');
+        }
+      });
+      
+      if (statusEl) {
+        statusEl.innerHTML = '<span class="ai-thinking">Grading</span>';
+      }
+
+      try {
+        const response = await fetch('/api/assignments/grade-ai', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Token': ADMIN_TOKEN
+          },
+          body: JSON.stringify({
+            assignmentName: assignmentName,
+            studentEmail: email,
+            code: submission.code || '',
+            task: assignment.task || '',
+            maxScore: assignment.maxScore || 100
+          })
+        });
+
+        const result = await response.json();
+        if (statusEl) statusEl.textContent = '';
+        
+        if (result?.ok) {
+          // Update the input field with AI score
+          const inputFields = sidebar.querySelectorAll('.score-input-field');
+          inputFields.forEach(input => {
+            const parent = input.closest('.sidebar-submission');
+            if (parent && parent.dataset.email === email) {
+              input.value = result.score;
+              // Mark as pending (AI scored but not saved)
+              parent.classList.remove('ai-grading', 'ungraded', 'saved');
+              parent.classList.add('pending');
+            }
+          });
+          
+          alert(`AI Grade: ${result.score}/${assignment.maxScore}\n\nScore set. Click Save to confirm.`);
+        } else {
+          // Revert to original state
+          if (currentCard) {
+            currentCard.classList.remove('ai-grading');
+            const hasScore = currentCard.dataset.originalScore !== '';
+            currentCard.classList.add(hasScore ? 'saved' : 'ungraded');
+          }
+          alert('Failed to grade: ' + (result?.error || 'Unknown error'));
+        }
+      } catch (error) {
+        if (statusEl) statusEl.textContent = '';
+        // Revert to original state
+        if (currentCard) {
+          currentCard.classList.remove('ai-grading');
+          const hasScore = currentCard.dataset.originalScore !== '';
+          currentCard.classList.add(hasScore ? 'saved' : 'ungraded');
+        }
+        alert('Error grading submission: ' + error.message);
+      }
+    }
+
+    // =============================================
+    // Student Score Lookup
+    // =============================================
+    const studentEmailInput = document.getElementById('studentEmailInput');
+    if (studentEmailInput) {
+      studentEmailInput.addEventListener('input', debounce(lookupStudentScores, 300));
+    }
+
+    function debounce(func, wait) {
+      let timeout;
+      return function executedFunction(...args) {
+        const later = () => {
+          clearTimeout(timeout);
+          func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+      };
+    }
+
+    async function lookupStudentScores() {
+      const email = studentEmailInput.value.trim().toLowerCase();
+      const resultsDiv = document.getElementById('studentScoreResults');
+      
+      if (!email) {
+        resultsDiv.innerHTML = '';
+        return;
+      }
+
+      // Call API to get student scores
+      try {
+        const response = await fetch('/api/assignments/student-scores', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email })
+        });
+        
+        const result = await response.json();
+        
+        if (!result.ok || !result.scores || result.scores.length === 0) {
+          resultsDiv.innerHTML = '<p style="color:#888; font-size:12px;">No submissions found for this email.</p>';
+          return;
+        }
+
+        // Separate active and past assignments
+        const activeScores = result.scores.filter(s => s.active);
+        const pastScores = result.scores.filter(s => !s.active);
+
+        let html = '';
+        
+        if (activeScores.length > 0) {
+          html += '<div style="margin-bottom:16px;"><h5 style="color:var(--columbia-blue); margin:8px 0;">Active Assignments</h5>';
+          html += activeScores.map(s => `
+            <div class="score-result-item">
+              <div class="assignment-name">${escapeHtml(s.assignmentName)}</div>
+              <div class="assignment-score">
+                Score: ${s.score !== null && s.score !== undefined ? s.score : '—'} / ${s.maxScore}
+              </div>
+              <div style="color:#666; font-size:11px; margin-top:4px;">
+                Submitted: ${escapeHtml(s.submittedAt || 'Unknown')}
+              </div>
+            </div>
+          `).join('');
+          html += '</div>';
+        }
+        
+        if (pastScores.length > 0) {
+          html += '<div><h5 style="color:var(--columbia-blue); margin:8px 0;">Past Assignments</h5>';
+          html += pastScores.map(s => `
+            <div class="score-result-item" style="opacity:0.8;">
+              <div class="assignment-name">${escapeHtml(s.assignmentName)} <span style="color:#888; font-size:11px;">(Closed)</span></div>
+              <div class="assignment-score">
+                Score: ${s.score !== null && s.score !== undefined ? s.score : '—'} / ${s.maxScore}
+              </div>
+              <div style="color:#666; font-size:11px; margin-top:4px;">
+                Submitted: ${escapeHtml(s.submittedAt || 'Unknown')}
+              </div>
+            </div>
+          `).join('');
+          html += '</div>';
+        }
+
+        resultsDiv.innerHTML = html;
+      } catch (error) {
+        console.error('Error looking up scores:', error);
+        resultsDiv.innerHTML = '<p style="color:#ff5555; font-size:12px;">Error looking up scores. Please try again.</p>';
+      }
+    }
+
+    // =============================================
+    // Save All and AI Grade All Functions
+    // =============================================
+    
+    const AI_GRADING_DELAY_MS = 500; // Delay between AI grading requests to avoid overwhelming the service
+    
+    // Save All Grades button handler
+    document.getElementById('saveAllGradesBtn')?.addEventListener('click', async () => {
+      if (!currentSidebarAssignment) return;
+      
+      const sidebar = document.getElementById('submissionsSidebarList');
+      const pendingCards = sidebar.querySelectorAll('.sidebar-submission.pending');
+      
+      if (pendingCards.length === 0) {
+        alert('No pending grade changes to save.');
+        return;
+      }
+      
+      if (!confirm(`Save ${pendingCards.length} pending grade(s)?`)) return;
+      
+      let saved = 0;
+      let failed = 0;
+      
+      for (const card of pendingCards) {
+        const email = card.dataset.email;
+        const input = card.querySelector('.score-input-field');
+        const score = parseInt(input.value);
+        
+        if (isNaN(score)) {
+          failed++;
+          continue;
+        }
+        
+        try {
+          const response = await fetch('/api/assignments/score', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Admin-Token': ADMIN_TOKEN
+            },
+            body: JSON.stringify({
+              assignmentName: currentSidebarAssignment,
+              studentEmail: email,
+              score: score
+            })
+          });
+          
+          const result = await response.json();
+          if (result?.ok) {
+            card.classList.remove('pending');
+            card.classList.add('saved');
+            card.dataset.originalScore = score;
+            saved++;
+          } else {
+            failed++;
+          }
+        } catch (error) {
+          console.error('Error saving score:', error);
+          failed++;
+        }
+      }
+      
+      await loadAssignments();
+      alert(`Saved ${saved} grade(s).${failed > 0 ? ` Failed to save ${failed}.` : ''}`);
+    });
+    
+    // AI Grade All button handler
+    document.getElementById('aiGradeAllBtn')?.addEventListener('click', async () => {
+      if (!currentSidebarAssignment) return;
+      
+      const assignment = currentAssignments.find(a => a.name === currentSidebarAssignment);
+      if (!assignment) return;
+      
+      const sidebar = document.getElementById('submissionsSidebarList');
+      const ungradedCards = sidebar.querySelectorAll('.sidebar-submission.ungraded');
+      
+      if (ungradedCards.length === 0) {
+        alert('No ungraded submissions to AI grade.');
+        return;
+      }
+      
+      if (!confirm(`AI grade all ${ungradedCards.length} ungraded submission(s)? This will proceed one at a time and auto-save each score.`)) return;
+      
+      let graded = 0;
+      let failed = 0;
+      
+      for (const card of ungradedCards) {
+        const email = card.dataset.email;
+        const submission = assignment.submissions.find(s => s.email.toLowerCase() === email.toLowerCase());
+        
+        if (!submission) {
+          failed++;
+          continue;
+        }
+        
+        // Mark as AI grading
+        card.classList.remove('ungraded', 'pending', 'saved');
+        card.classList.add('ai-grading');
+        
+        // Scroll the card into view
+        card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        
+        try {
+          // AI Grade
+          const gradeResponse = await fetch('/api/assignments/grade-ai', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Admin-Token': ADMIN_TOKEN
+            },
+            body: JSON.stringify({
+              assignmentName: currentSidebarAssignment,
+              studentEmail: email,
+              code: submission.code || '',
+              task: assignment.task || '',
+              maxScore: assignment.maxScore || 100
+            })
+          });
+          
+          const gradeResult = await gradeResponse.json();
+          
+          if (gradeResult?.ok) {
+            // Auto-save the score
+            const saveResponse = await fetch('/api/assignments/score', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Admin-Token': ADMIN_TOKEN
+              },
+              body: JSON.stringify({
+                assignmentName: currentSidebarAssignment,
+                studentEmail: email,
+                score: gradeResult.score
+              })
+            });
+            
+            const saveResult = await saveResponse.json();
+            
+            if (saveResult?.ok) {
+              // Update card to saved state
+              const input = card.querySelector('.score-input-field');
+              if (input) input.value = gradeResult.score;
+              card.classList.remove('ai-grading');
+              card.classList.add('saved');
+              card.dataset.originalScore = gradeResult.score;
+              graded++;
+            } else {
+              // Failed to save
+              card.classList.remove('ai-grading');
+              card.classList.add('pending');
+              failed++;
+            }
+          } else {
+            // Failed to grade
+            card.classList.remove('ai-grading');
+            card.classList.add('ungraded');
+            failed++;
+          }
+        } catch (error) {
+          console.error('Error AI grading:', error);
+          card.classList.remove('ai-grading');
+          card.classList.add('ungraded');
+          failed++;
+        }
+        
+        // Delay between requests to avoid overwhelming the AI service
+        await new Promise(resolve => setTimeout(resolve, AI_GRADING_DELAY_MS));
+      }
+      
+      await loadAssignments();
+      showSubmissionsInSidebar(currentSidebarAssignment);
+      alert(`AI graded and saved ${graded} submission(s).${failed > 0 ? ` Failed ${failed}.` : ''}`);
+    });
+
+    // Load assignments when admin mode changes or on page load
+    (async () => {
+      await loadAssignments();
+    })();
+
+    // Reload assignments when admin login/logout happens
+    // Listen for changes to admin mode by observing the admin button class changes
+    const adminBtn = document.getElementById('adminBtn');
+    let wasAdmin = false;
+    
+    // Create a MutationObserver to watch for class changes on the admin button
+    const observer = new MutationObserver(() => {
+      const isAdminNow = adminBtn.classList.contains('active') || document.body.classList.contains('admin-mode');
+      if (isAdminNow !== wasAdmin) {
+        wasAdmin = isAdminNow;
+        setTimeout(async () => {
+          await loadAssignments();
+        }, 100);
+      }
+    });
+    
+    observer.observe(adminBtn, { attributes: true, attributeFilter: ['class'] });
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  </script>
+</body>
+</html>
