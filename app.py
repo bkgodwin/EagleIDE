@@ -386,9 +386,10 @@ def _ide_input(prompt=""):
     sys.stdout.flush()
     # Wait for user input
     line = sys.stdin.readline()
-    # Echo back the user's input (without newline) on same line
+    # Echo back the user's input WITHOUT newline
+    # (Frontend will add newline after displaying input inline with prompt)
     user_input = line.rstrip("\\n")
-    sys.stdout.write(user_input + "\\n")
+    sys.stdout.write(user_input)
     sys.stdout.flush()
     return user_input
 
