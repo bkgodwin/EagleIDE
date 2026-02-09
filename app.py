@@ -18,6 +18,7 @@ SANDBOX_DIR = BASE_DIR / "sandboxes"
 ASSIGNMENTS_DIR = BASE_DIR / "assignments"
 
 INPUT_TOKEN = "[[_IDE_INPUT_]]"
+USER_INPUT_TOKEN = "[[_IDE_USER_INPUT_]]"
 MAX_WALL_TIME = 30.0       # seconds (hard kill for user code)
 IDLE_TIMEOUT = 10.0        # reserved, if you later want idle detection
 
@@ -378,6 +379,8 @@ class Runner:
         wrapper_code = f'''import sys
 import builtins
 
+USER_INPUT_TOKEN = "[[_IDE_USER_INPUT_]]"
+
 def _ide_input(prompt=""):
     if prompt:
         sys.stdout.write(str(prompt))
@@ -386,9 +389,9 @@ def _ide_input(prompt=""):
     sys.stdout.flush()
     # Wait for user input
     line = sys.stdin.readline()
-    # Echo back the user's input (without newline) on same line
     user_input = line.rstrip("\\n")
-    sys.stdout.write(user_input + "\\n")
+    # Echo user input with special token so frontend can style it green
+    sys.stdout.write(USER_INPUT_TOKEN + user_input + "\\n")
     sys.stdout.flush()
     return user_input
 
