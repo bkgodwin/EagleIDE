@@ -1940,8 +1940,8 @@ print("Hello " + name)
       };
     }
 
-    // Set up event listeners for student info fields
-    setTimeout(() => {
+    // Set up event listeners for student info fields after DOM is ready
+    function setupStudentInfoListeners() {
       const nameInput = document.getElementById('persistentStudentName');
       const emailInput = document.getElementById('persistentStudentEmail');
       const periodInput = document.getElementById('persistentClassPeriod');
@@ -1952,7 +1952,14 @@ print("Hello " + name)
       
       // Load saved info on page load
       loadStudentInfo();
-    }, 100);
+    }
+    
+    // Call when assignment tab is shown
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', setupStudentInfoListeners);
+    } else {
+      setupStudentInfoListeners();
+    }
 
     async function loadAssignments() {
       try {
@@ -2159,6 +2166,8 @@ print("Hello " + name)
         showAddQuestionModal(quizQuestions, renderQuizQuestions);
       });
       
+      let questionIdCounter = 0;  // Counter to ensure unique IDs
+      
       renderQuizQuestions();
       
       modal.addEventListener('click', (e) => {
@@ -2282,7 +2291,8 @@ print("Hello " + name)
       }
       
       document.getElementById('addOptionBtn').addEventListener('click', () => {
-        if (options.length < 6) {
+        const MAX_OPTIONS = 6;  // Maximum number of answer options for multiple choice
+        if (options.length < MAX_OPTIONS) {
           options.push(`Option ${options.length + 1}`);
           renderOptions();
         }
@@ -2312,7 +2322,7 @@ print("Hello " + name)
         }
         
         const question = {
-          id: 'q' + Date.now(),
+          id: 'q' + Date.now() + '_' + (questionIdCounter++),
           type: type,
           question: text,
           points: points
