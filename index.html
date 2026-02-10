@@ -2273,11 +2273,13 @@ print("Hello " + name)
               placeholder="Enter option ${idx + 1} text..."
               style="flex:1; padding:10px 12px; background:#0c0c0c; border:1px solid #555; border-radius:6px; color:#eee; font-size:14px; min-width:0;"
             />
+            ${options.length > 2 ? `
             <button class="btn-remove-option" 
                     data-idx="${idx}" 
                     style="background:#d32f2f; color:#fff; border:none; padding:8px 12px; border-radius:6px; cursor:pointer; font-size:12px; white-space:nowrap; flex-shrink:0;">
               Remove
             </button>
+            ` : ''}
           </div>
         `).join('');
         
@@ -2300,14 +2302,10 @@ print("Hello " + name)
         list.querySelectorAll('.btn-remove-option').forEach(btn => {
           btn.addEventListener('click', () => {
             const idx = parseInt(btn.dataset.idx);
-            if (options.length > 2) {  // Minimum 2 options required
-              options.splice(idx, 1);
-              if (correctAnswer >= options.length) correctAnswer = options.length - 1;
-              if (correctAnswer < 0) correctAnswer = 0;
-              renderOptions();
-            } else {
-              alert('Multiple choice questions must have at least 2 options');
-            }
+            options.splice(idx, 1);
+            if (correctAnswer >= options.length) correctAnswer = options.length - 1;
+            if (correctAnswer < 0) correctAnswer = 0;
+            renderOptions();
           });
         });
       }
