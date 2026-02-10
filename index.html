@@ -2049,14 +2049,15 @@ print("Hello " + name)
       } else {
         activeList.innerHTML = activeAssignments.map(a => {
           const hasQuiz = a.quiz && a.quiz.questions && a.quiz.questions.length > 0;
+          const questionCount = hasQuiz ? a.quiz.questions.length : 0;
           return `
           <div class="assignment-card">
             <h4>${escapeHtml(a.name)} ${hasQuiz ? '<span style="background:#4a90e2; color:#fff; font-size:10px; padding:2px 6px; border-radius:3px; margin-left:8px; font-weight:normal;">QUIZ</span>' : ''}</h4>
             <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
             <div class="meta">Max Score: ${a.maxScore}</div>
-            <div class="assignment-actions">
+            <div class="assignment-actions" style="display:flex; gap:10px; margin-top:10px;">
               <button class="btn run submit-assignment-btn" data-name="${escapeHtml(a.name)}">Submit Code</button>
-              ${hasQuiz ? `<button class="btn secondary take-quiz-btn" data-name="${escapeHtml(a.name)}">Take Quiz</button>` : ''}
+              ${hasQuiz ? `<button class="btn secondary open-questions-btn" data-name="${escapeHtml(a.name)}">Questions (${questionCount})</button>` : ''}
             </div>
           </div>
         `;
@@ -2067,8 +2068,8 @@ print("Hello " + name)
           btn.addEventListener('click', () => submitAssignment(btn.dataset.name));
         });
         
-        activeList.querySelectorAll('.take-quiz-btn').forEach(btn => {
-          btn.addEventListener('click', () => takeQuiz(btn.dataset.name));
+        activeList.querySelectorAll('.open-questions-btn').forEach(btn => {
+          btn.addEventListener('click', () => openQuestions(btn.dataset.name));
         });
       }
       
@@ -2501,7 +2502,228 @@ print("Hello " + name)
       }
     }
 
-    async function takeQuiz(assignmentName) {
+    // New function: Opens questions modal with improved UI
+    async function openQuestions(assignmentName) {
+      const studentInfo = getStudentInfo();
+      
+      // Validate student info is filled out
+      if (!studentInfo.name || !studentInfo.email) {
+        alert('Please fill in your name and email in the Student Information section first.');
+        return;
+      }
+      
+      // Fetch the quiz/questions
+      try {
+        const resp = await fetch(`/api/quiz/${encodeURIComponent(assignmentName)}`);
+        const data = await resp.json();
+        
+        if (!data.ok) {
+          alert(data.error || 'Failed to load questions');
+          return;
+        }
+        
+        const quiz = data.quiz;
+        const questions = quiz.questions || [];
+        
+        if (!questions.length) {
+          alert('This assignment has no questions');
+          return;
+        }
+        
+        // Build questions modal
+        const modal = document.createElement('div');
+        modal.className = 'modal';
+        modal.innerHTML = `
+          <div class="modal-content" style="max-width:900px; max-height:90vh; overflow-y:auto; padding:30px;">
+            <h3 style="margin-top:0; color:var(--columbia-blue);">Assignment Questions: ${escapeHtml(assignmentName)}</h3>
+            <p style="color:#aaa; font-size:14px; margin:10px 0 20px;">
+              Submitting as: <strong style="color:#eee;">${escapeHtml(studentInfo.name)}</strong> (${escapeHtml(studentInfo.email)})<br>
+              <span style="color:#888; font-size:12px;">Note: You can resubmit your answers until this assignment is closed.</span>
+            </p>
+            
+            <div id="questionsContainer" style="margin:20px 0;">
+              ${questions.map((q, idx) => {
+                if (q.type === 'multiple_choice') {
+                  return `
+                    <div class="question-block" style="margin-bottom:30px; padding:24px; background:#0d0d0d; border:1px solid #444; border-radius:10px;">
+                      <div style="color:var(--columbia-blue); font-weight:700; margin-bottom:14px; font-size:16px;">
+                        Question ${idx + 1} <span style="color:#888; font-weight:400; font-size:14px;">(${q.points || 0} points)</span>
+                      </div>
+                      <div style="color:#eee; margin-bottom:18px; font-size:15px; line-height:1.6;">
+                        ${escapeHtml(q.question)}
+                      </div>
+                      <div class="question-options">
+                        ${(q.options || []).map((opt, optIdx) => `
+                          <div class="option-wrapper" style="margin:12px 0; padding:14px 16px; background:#1a1a1a; border:2px solid #333; border-radius:8px; cursor:pointer; transition:all 0.2s;"
+                               onmouseover="this.style.borderColor='var(--columbia-blue)'; this.style.backgroundColor='#222';" 
+                               onmouseout="this.style.borderColor='#333'; this.style.backgroundColor='#1a1a1a';"
+                               onclick="this.querySelector('input[type=radio]').checked=true;">
+                            <label style="cursor:pointer; display:flex; align-items:center; width:100%; margin:0;">
+                              <input type="radio" 
+                                     name="question_${q.id}" 
+                                     value="${optIdx}" 
+                                     style="margin:0 14px 0 0; cursor:pointer; width:20px; height:20px; flex-shrink:0;">
+                              <span style="color:#ddd; font-size:15px; line-height:1.5;">${escapeHtml(opt)}</span>
+                            </label>
+                          </div>
+                        `).join('')}
+                      </div>
+                    </div>
+                  `;
+                } else if (q.type === 'written') {
+                  return `
+                    <div class="question-block" style="margin-bottom:30px; padding:24px; background:#0d0d0d; border:1px solid #444; border-radius:10px;">
+                      <div style="color:var(--columbia-blue); font-weight:700; margin-bottom:14px; font-size:16px;">
+                        Question ${idx + 1} <span style="color:#888; font-weight:400; font-size:14px;">(${q.points || 0} points)</span>
+                      </div>
+                      <div style="color:#eee; margin-bottom:18px; font-size:15px; line-height:1.6;">
+                        ${escapeHtml(q.question)}
+                      </div>
+                      <textarea 
+                        id="written_answer_${q.id}" 
+                        placeholder="Type your answer here..."
+                        style="width:100%; min-height:140px; padding:14px; background:#1a1a1a; border:2px solid #444; border-radius:8px; color:#eee; font-family:inherit; resize:vertical; font-size:15px; line-height:1.5;"
+                      ></textarea>
+                    </div>
+                  `;
+                }
+                return '';
+              }).join('')}
+            </div>
+            
+            <div class="modal-actions" style="display:flex; gap:12px; justify-content:flex-end; margin-top:30px; padding-top:20px; border-top:1px solid #333;">
+              <button class="btn secondary modal-cancel-btn" style="padding:10px 24px;">Cancel</button>
+              <button class="btn run modal-submit-questions-btn" style="padding:10px 24px;">Submit Answers</button>
+            </div>
+          </div>
+        `;
+        
+        document.body.appendChild(modal);
+        
+        // Escape key to close - define first so other handlers can reference it
+        const escapeHandler = (e) => {
+          if (e.key === 'Escape') {
+            modal.remove();
+            document.removeEventListener('keydown', escapeHandler);
+          }
+        };
+        document.addEventListener('keydown', escapeHandler);
+        
+        // Cancel button - just close modal
+        modal.querySelector('.modal-cancel-btn').addEventListener('click', () => {
+          modal.remove();
+          document.removeEventListener('keydown', escapeHandler);
+        });
+        
+        // Click outside to close
+        modal.addEventListener('click', (e) => {
+          if (e.target === modal) {
+            modal.remove();
+            document.removeEventListener('keydown', escapeHandler);
+          }
+        });
+        
+        // Submit button handler
+        modal.querySelector('.modal-submit-questions-btn').addEventListener('click', async () => {
+          await submitQuestionAnswers(assignmentName, questions, modal, studentInfo, escapeHandler);
+        });
+        
+      } catch (e) {
+        console.error('Error loading questions:', e);
+        alert('Network error loading questions');
+      }
+    }
+
+    // Helper function to submit question answers
+    async function submitQuestionAnswers(assignmentName, questions, modal, studentInfo, escapeHandler) {
+      // Collect all answers
+      const quizResponses = [];
+      let allAnswered = true;
+      let unansweredQuestions = [];
+      
+      for (let i = 0; i < questions.length; i++) {
+        const q = questions[i];
+        
+        if (q.type === 'multiple_choice') {
+          const selected = modal.querySelector(`input[name="question_${q.id}"]:checked`);
+          if (!selected) {
+            allAnswered = false;
+            unansweredQuestions.push(i + 1);
+          } else {
+            quizResponses.push({
+              questionId: q.id,
+              answer: parseInt(selected.value),
+              questionType: 'multiple_choice'
+            });
+          }
+        } else if (q.type === 'written') {
+          const answerTextarea = modal.querySelector(`#written_answer_${q.id}`);
+          const answer = answerTextarea ? answerTextarea.value.trim() : '';
+          if (!answer) {
+            allAnswered = false;
+            unansweredQuestions.push(i + 1);
+          } else {
+            quizResponses.push({
+              questionId: q.id,
+              answer: answer,
+              questionType: 'written'
+            });
+          }
+        }
+      }
+      
+      // Validate all questions answered
+      if (!allAnswered) {
+        alert(`Please answer all questions before submitting. Unanswered: Question(s) ${unansweredQuestions.join(', ')}`);
+        return;
+      }
+      
+      // Add visual feedback while submitting
+      const submitBtn = modal.querySelector('.modal-submit-questions-btn');
+      const originalText = submitBtn.textContent;
+      submitBtn.textContent = 'Submitting...';
+      submitBtn.disabled = true;
+      
+      // Submit answers to backend
+      try {
+        const submitResp = await fetch('/api/quiz/submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            assignmentName,
+            studentName: studentInfo.name,
+            studentEmail: studentInfo.email,
+            classPeriod: studentInfo.period,
+            quizResponses
+          })
+        });
+        
+        const submitData = await submitResp.json();
+        
+        if (submitData.ok) {
+          // Close modal FIRST
+          modal.remove();
+          document.removeEventListener('keydown', escapeHandler);
+          
+          // THEN show success message
+          alert('Your answers have been submitted successfully! You can resubmit until the assignment closes.');
+        } else {
+          // Re-enable button on error
+          submitBtn.textContent = originalText;
+          submitBtn.disabled = false;
+          alert(submitData.error || 'Failed to submit answers');
+        }
+      } catch (e) {
+        console.error('Error submitting answers:', e);
+        // Re-enable button on error
+        submitBtn.textContent = originalText;
+        submitBtn.disabled = false;
+        alert('Network error submitting answers');
+      }
+    }
+
+    // OLD FUNCTION - DEPRECATED - Use openQuestions() instead
+    /* async function takeQuiz(assignmentName) {
       const studentInfo = getStudentInfo();
       
       // Validate student info is filled out
@@ -2665,7 +2887,7 @@ print("Hello " + name)
       } catch (e) {
         alert('Network error loading quiz');
       }
-    }
+    } */
 
     function viewSubmissions(assignmentName) {
       const assignment = currentAssignments.find(a => a.name === assignmentName);
