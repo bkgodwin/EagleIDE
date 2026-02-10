@@ -756,9 +756,14 @@ def submit_assignment():
         submission["codeScore"] = submissions[existing_idx].get("codeScore")
     
     # Calculate total score
-    code_score = submission.get("codeScore") or 0
-    quiz_score = submission.get("quizScore") or 0
-    submission["totalScore"] = code_score + quiz_score if (submission.get("codeScore") is not None or submission.get("quizScore") is not None) else None
+    code_score_value = submission.get("codeScore") if submission.get("codeScore") is not None else 0
+    quiz_score_value = submission.get("quizScore") if submission.get("quizScore") is not None else 0
+    
+    # Only set total score if at least one component has been scored
+    if submission.get("codeScore") is not None or submission.get("quizScore") is not None:
+        submission["totalScore"] = code_score_value + quiz_score_value
+    else:
+        submission["totalScore"] = None
     
     if existing_idx is not None:
         # Overwrite existing submission
@@ -1016,7 +1021,8 @@ def get_quiz(assignment_name: str):
     is_admin = _require_admin(request)
     if not is_admin:
         # Remove correct answers from multiple choice questions for students
-        quiz_copy = json.loads(json.dumps(quiz))  # Deep copy
+        import copy
+        quiz_copy = copy.deepcopy(quiz)
         for question in quiz_copy.get("questions", []):
             if question.get("type") == "multiple_choice":
                 question.pop("correctAnswer", None)
@@ -1144,22 +1150,31 @@ def grade_written_response():
     
     raw = (res.get("text") or "").strip()
     
-    # Extract score from AI response
+    # Extract score from AI response using multiple strategies
     score = None
-    for tok in raw.split():
-        tok = tok.strip('.,!?;:')
-        if tok.isdigit():
-            score = int(tok)
-            break
     
+    # Strategy 1: Look for standalone integer
+    import re
+    matches = re.findall(r'\b(\d+)\b', raw)
+    if matches:
+        score = int(matches[0])
+    
+    # Strategy 2: Look for "X/Y" or "X out of Y" patterns
     if score is None:
-        digits = "".join([c for c in raw if c.isdigit()])
-        if digits:
-            score = int(digits)
+        fraction_match = re.search(r'(\d+)\s*[/out of]+\s*\d+', raw, re.IGNORECASE)
+        if fraction_match:
+            score = int(fraction_match.group(1))
+    
+    # Strategy 3: Extract first number with decimal point and round
+    if score is None:
+        decimal_match = re.search(r'(\d+\.?\d*)', raw)
+        if decimal_match:
+            score = round(float(decimal_match.group(1)))
     
     if score is None:
         return jsonify(ok=False, error=f"AI returned invalid score: {raw!r}")
     
+    # Ensure score is within valid range
     score = max(0, min(max_points, score))
     
     # Update the submission
