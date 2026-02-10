@@ -873,6 +873,11 @@
             ev.preventDefault();
             applySuggestion(suggestionList[activeSuggIdx]);
           }
+        } else if (ev.key === 'Tab') {
+          if (suggestionList.length > 0) {
+            ev.preventDefault();
+            applySuggestion(suggestionList[activeSuggIdx]);
+          }
         } else if (ev.key === 'Escape') {
           ev.preventDefault();
           hideSuggestions();
