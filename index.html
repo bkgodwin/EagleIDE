@@ -2600,6 +2600,15 @@ print("Hello " + name)
         
         document.body.appendChild(modal);
         
+        // Escape key to close - define first so other handlers can reference it
+        const escapeHandler = (e) => {
+          if (e.key === 'Escape') {
+            modal.remove();
+            document.removeEventListener('keydown', escapeHandler);
+          }
+        };
+        document.addEventListener('keydown', escapeHandler);
+        
         // Cancel button - just close modal
         modal.querySelector('.modal-cancel-btn').addEventListener('click', () => {
           modal.remove();
@@ -2613,15 +2622,6 @@ print("Hello " + name)
             document.removeEventListener('keydown', escapeHandler);
           }
         });
-        
-        // Escape key to close
-        const escapeHandler = (e) => {
-          if (e.key === 'Escape') {
-            modal.remove();
-            document.removeEventListener('keydown', escapeHandler);
-          }
-        };
-        document.addEventListener('keydown', escapeHandler);
         
         // Submit button handler
         modal.querySelector('.modal-submit-questions-btn').addEventListener('click', async () => {
