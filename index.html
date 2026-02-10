@@ -2128,6 +2128,7 @@ print("Hello " + name)
       document.body.appendChild(modal);
       
       let quizQuestions = [];
+      let questionIdCounter = { value: 0 };  // Counter object to ensure unique IDs (passed by reference)
       
       function renderQuizQuestions() {
         const list = document.getElementById('quizQuestionsList');
@@ -2163,10 +2164,8 @@ print("Hello " + name)
       }
       
       document.getElementById('addQuestionBtn').addEventListener('click', () => {
-        showAddQuestionModal(quizQuestions, renderQuizQuestions);
+        showAddQuestionModal(quizQuestions, renderQuizQuestions, questionIdCounter);
       });
-      
-      let questionIdCounter = 0;  // Counter to ensure unique IDs
       
       renderQuizQuestions();
       
@@ -2220,7 +2219,7 @@ print("Hello " + name)
       }
     }
 
-    function showAddQuestionModal(quizQuestions, renderCallback) {
+    function showAddQuestionModal(quizQuestions, renderCallback, questionIdCounter) {
       const questionModal = document.createElement('div');
       questionModal.className = 'modal';
       questionModal.innerHTML = `
@@ -2338,7 +2337,7 @@ print("Hello " + name)
         }
         
         const question = {
-          id: 'q' + Date.now() + '_' + (questionIdCounter++),
+          id: 'q' + Date.now() + '_' + (questionIdCounter.value++),
           type: type,
           question: text,
           points: points
