@@ -453,6 +453,26 @@
 
               <!-- Student view -->
               <div id="assignmentStudentView" style="padding:12px;">
+                <!-- Student Information Form -->
+                <div id="studentInfoSection" style="background:#1a1a1a; border:1px solid #2b2b2b; border-radius:10px; padding:16px; margin-bottom:20px;">
+                  <h4 style="color:var(--columbia-blue); margin:0 0 12px;">Student Information</h4>
+                  <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;">
+                    <div>
+                      <label style="color:#ddd; font-size:12px; display:block; margin-bottom:4px;">Your Name</label>
+                      <input type="text" id="persistentStudentName" placeholder="First Last" style="width:100%; padding:8px; background:#0c0c0c; border:1px solid #333; border-radius:5px; color:#ddd; font-size:13px;">
+                    </div>
+                    <div>
+                      <label style="color:#ddd; font-size:12px; display:block; margin-bottom:4px;">Email</label>
+                      <input type="email" id="persistentStudentEmail" placeholder="you@example.com" style="width:100%; padding:8px; background:#0c0c0c; border:1px solid #333; border-radius:5px; color:#ddd; font-size:13px;">
+                    </div>
+                    <div>
+                      <label style="color:#ddd; font-size:12px; display:block; margin-bottom:4px;">Class Period</label>
+                      <input type="text" id="persistentClassPeriod" placeholder="e.g., Period 3" style="width:100%; padding:8px; background:#0c0c0c; border:1px solid #333; border-radius:5px; color:#ddd; font-size:13px;">
+                    </div>
+                  </div>
+                  <div style="margin-top:8px; font-size:11px; color:#888;" id="studentInfoStatus"></div>
+                </div>
+
                 <h3 style="color:var(--columbia-blue); margin-top:0;">Active Assignments</h3>
                 <div id="studentAssignmentList"></div>
                 
@@ -1881,6 +1901,59 @@ print("Hello " + name)
     let currentAssignments = [];
     let isAdmin = false;
 
+    // Persistent Student Information
+    function loadStudentInfo() {
+      const name = sessionStorage.getItem('studentName') || '';
+      const email = sessionStorage.getItem('studentEmail') || '';
+      const period = sessionStorage.getItem('classPeriod') || '';
+      
+      const nameInput = document.getElementById('persistentStudentName');
+      const emailInput = document.getElementById('persistentStudentEmail');
+      const periodInput = document.getElementById('persistentClassPeriod');
+      
+      if (nameInput) nameInput.value = name;
+      if (emailInput) emailInput.value = email;
+      if (periodInput) periodInput.value = period;
+    }
+
+    function saveStudentInfo() {
+      const name = document.getElementById('persistentStudentName')?.value || '';
+      const email = document.getElementById('persistentStudentEmail')?.value || '';
+      const period = document.getElementById('persistentClassPeriod')?.value || '';
+      
+      sessionStorage.setItem('studentName', name);
+      sessionStorage.setItem('studentEmail', email);
+      sessionStorage.setItem('classPeriod', period);
+      
+      const status = document.getElementById('studentInfoStatus');
+      if (status) {
+        status.textContent = 'ℹ️ Information saved for this session';
+        setTimeout(() => { status.textContent = ''; }, 3000);
+      }
+    }
+
+    function getStudentInfo() {
+      return {
+        name: sessionStorage.getItem('studentName') || '',
+        email: sessionStorage.getItem('studentEmail') || '',
+        period: sessionStorage.getItem('classPeriod') || ''
+      };
+    }
+
+    // Set up event listeners for student info fields
+    setTimeout(() => {
+      const nameInput = document.getElementById('persistentStudentName');
+      const emailInput = document.getElementById('persistentStudentEmail');
+      const periodInput = document.getElementById('persistentClassPeriod');
+      
+      if (nameInput) nameInput.addEventListener('change', saveStudentInfo);
+      if (emailInput) emailInput.addEventListener('change', saveStudentInfo);
+      if (periodInput) periodInput.addEventListener('change', saveStudentInfo);
+      
+      // Load saved info on page load
+      loadStudentInfo();
+    }, 100);
+
     async function loadAssignments() {
       try {
         const resp = await fetch('/api/assignments', {
@@ -1967,20 +2040,28 @@ print("Hello " + name)
       if (!activeAssignments.length) {
         activeList.innerHTML = '<p style="color:#888;">No active assignments.</p>';
       } else {
-        activeList.innerHTML = activeAssignments.map(a => `
+        activeList.innerHTML = activeAssignments.map(a => {
+          const hasQuiz = a.quiz && a.quiz.questions && a.quiz.questions.length > 0;
+          return `
           <div class="assignment-card">
-            <h4>${escapeHtml(a.name)}</h4>
+            <h4>${escapeHtml(a.name)} ${hasQuiz ? '<span style="background:#4a90e2; color:#fff; font-size:10px; padding:2px 6px; border-radius:3px; margin-left:8px; font-weight:normal;">QUIZ</span>' : ''}</h4>
             <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
             <div class="meta">Max Score: ${a.maxScore}</div>
             <div class="assignment-actions">
               <button class="btn run submit-assignment-btn" data-name="${escapeHtml(a.name)}">Submit Code</button>
+              ${hasQuiz ? `<button class="btn secondary take-quiz-btn" data-name="${escapeHtml(a.name)}">Take Quiz</button>` : ''}
             </div>
           </div>
-        `).join('');
+        `;
+        }).join('');
         
         // Add event listeners for active assignments
         activeList.querySelectorAll('.submit-assignment-btn').forEach(btn => {
           btn.addEventListener('click', () => submitAssignment(btn.dataset.name));
+        });
+        
+        activeList.querySelectorAll('.take-quiz-btn').forEach(btn => {
+          btn.addEventListener('click', () => takeQuiz(btn.dataset.name));
         });
       }
       
@@ -2014,29 +2095,80 @@ print("Hello " + name)
       const modal = document.createElement('div');
       modal.className = 'modal';
       modal.innerHTML = `
-        <div class="modal-content">
+        <div class="modal-content" style="max-width:800px; max-height:80vh; overflow-y:auto;">
           <h3>New Assignment</h3>
           <label>Assignment Name</label>
           <input type="text" id="modalAssignmentName" placeholder="e.g., Loops Practice 1" />
           <label>Task Description</label>
           <textarea id="modalAssignmentTask" placeholder="Describe what students need to do..."></textarea>
-          <label>Max Score</label>
+          <label>Max Score (Code)</label>
           <input type="number" id="modalAssignmentMaxScore" value="100" min="1" />
-          <div class="modal-actions">
+          
+          <div style="margin-top:20px; padding-top:20px; border-top:1px solid #333;">
+            <h4 style="color:var(--columbia-blue); margin:0 0 12px;">Quiz (Optional)</h4>
+            <div id="quizBuilder">
+              <div id="quizQuestionsList"></div>
+              <button type="button" class="btn secondary" id="addQuestionBtn" style="margin-top:10px;">+ Add Question</button>
+            </div>
+          </div>
+          
+          <div class="modal-actions" style="margin-top:20px;">
             <button class="btn secondary modal-cancel-btn">Cancel</button>
             <button class="btn run modal-create-btn">Create</button>
           </div>
         </div>
       `;
       document.body.appendChild(modal);
+      
+      let quizQuestions = [];
+      
+      function renderQuizQuestions() {
+        const list = document.getElementById('quizQuestionsList');
+        if (!quizQuestions.length) {
+          list.innerHTML = '<p style="color:#888; font-size:12px;">No questions added yet.</p>';
+          return;
+        }
+        
+        list.innerHTML = quizQuestions.map((q, idx) => `
+          <div class="quiz-question-item" style="background:#0c0c0c; border:1px solid #333; border-radius:6px; padding:12px; margin-bottom:10px;">
+            <div style="display:flex; justify-content:space-between; align-items:start;">
+              <div style="flex:1;">
+                <strong style="color:var(--columbia-blue);">Question ${idx + 1}</strong>
+                <span style="color:#888; margin-left:10px;">(${q.type === 'multiple_choice' ? 'Multiple Choice' : 'Written Response'}, ${q.points} pts)</span>
+              </div>
+              <button class="btn-delete-question" data-idx="${idx}" style="background:#d32f2f; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:11px;">Delete</button>
+            </div>
+            <div style="color:#ddd; margin-top:8px;">${escapeHtml(q.question)}</div>
+            ${q.type === 'multiple_choice' ? `
+              <div style="margin-top:8px; font-size:12px; color:#888;">
+                Options: ${q.options.map((opt, i) => `<span style="${i === q.correctAnswer ? 'color:#4caf50; font-weight:600;' : ''}">${escapeHtml(opt)}</span>`).join(', ')}
+              </div>
+            ` : ''}
+          </div>
+        `).join('');
+        
+        list.querySelectorAll('.btn-delete-question').forEach(btn => {
+          btn.addEventListener('click', () => {
+            quizQuestions.splice(parseInt(btn.dataset.idx), 1);
+            renderQuizQuestions();
+          });
+        });
+      }
+      
+      document.getElementById('addQuestionBtn').addEventListener('click', () => {
+        showAddQuestionModal(quizQuestions, renderQuizQuestions);
+      });
+      
+      renderQuizQuestions();
+      
       modal.addEventListener('click', (e) => {
         if (e.target === modal) modal.remove();
       });
       modal.querySelector('.modal-cancel-btn').addEventListener('click', () => modal.remove());
-      modal.querySelector('.modal-create-btn').addEventListener('click', () => createAssignment());
+      modal.querySelector('.modal-create-btn').addEventListener('click', () => createAssignment(quizQuestions));
     }
 
-    async function createAssignment() {
+    async function createAssignment(quizQuestions) {
       const name = document.getElementById('modalAssignmentName').value.trim();
       const task = document.getElementById('modalAssignmentTask').value.trim();
       const maxScore = parseInt(document.getElementById('modalAssignmentMaxScore').value) || 100;
@@ -2046,6 +2178,16 @@ print("Hello " + name)
         return;
       }
 
+      // Build quiz object if there are questions
+      let quiz = null;
+      if (quizQuestions && quizQuestions.length > 0) {
+        const totalPoints = quizQuestions.reduce((sum, q) => sum + (q.points || 0), 0);
+        quiz = {
+          questions: quizQuestions,
+          totalPoints: totalPoints
+        };
+      }
+
       try {
         const resp = await fetch('/api/assignments/create', {
           method: 'POST',
@@ -2053,7 +2195,7 @@ print("Hello " + name)
             'Content-Type': 'application/json',
             'X-Admin-Token': ADMIN_TOKEN
           },
-          body: JSON.stringify({ name, task, maxScore })
+          body: JSON.stringify({ name, task, maxScore, quiz })
         });
         const data = await resp.json();
         if (data.ok) {
@@ -2067,6 +2209,128 @@ print("Hello " + name)
       } catch (e) {
         alert('Network error');
       }
+    }
+
+    function showAddQuestionModal(quizQuestions, renderCallback) {
+      const questionModal = document.createElement('div');
+      questionModal.className = 'modal';
+      questionModal.innerHTML = `
+        <div class="modal-content" style="max-width:600px;">
+          <h3>Add Question</h3>
+          
+          <label>Question Type</label>
+          <select id="questionType" style="width:100%; padding:8px; background:#0c0c0c; border:1px solid #333; color:#ddd; border-radius:4px; margin-bottom:12px;">
+            <option value="multiple_choice">Multiple Choice</option>
+            <option value="written">Written Response</option>
+          </select>
+          
+          <label>Question Text</label>
+          <textarea id="questionText" placeholder="Enter your question..." style="width:100%; min-height:80px; padding:8px; background:#0c0c0c; border:1px solid #333; color:#ddd; border-radius:4px; margin-bottom:12px; font-family:inherit;"></textarea>
+          
+          <label>Points</label>
+          <input type="number" id="questionPoints" value="10" min="1" style="width:100%; padding:8px; background:#0c0c0c; border:1px solid #333; color:#ddd; border-radius:4px; margin-bottom:12px;" />
+          
+          <div id="mcOptionsSection" style="display:block;">
+            <label>Answer Options</label>
+            <div id="optionsList" style="margin-bottom:12px;"></div>
+            <button type="button" class="btn secondary" id="addOptionBtn" style="font-size:12px;">+ Add Option</button>
+          </div>
+          
+          <div class="modal-actions">
+            <button class="btn secondary modal-cancel-btn-q">Cancel</button>
+            <button class="btn run modal-add-btn-q">Add Question</button>
+          </div>
+        </div>
+      `;
+      
+      document.body.appendChild(questionModal);
+      
+      let options = ['Option 1', 'Option 2'];
+      let correctAnswer = 0;
+      
+      function renderOptions() {
+        const list = document.getElementById('optionsList');
+        list.innerHTML = options.map((opt, idx) => `
+          <div style="display:flex; gap:8px; margin-bottom:8px; align-items:center;">
+            <input type="radio" name="correctAnswer" value="${idx}" ${idx === correctAnswer ? 'checked' : ''} style="margin:0;">
+            <input type="text" class="option-input" data-idx="${idx}" value="${escapeHtml(opt)}" placeholder="Option ${idx + 1}" style="flex:1; padding:6px; background:#0c0c0c; border:1px solid #333; color:#ddd; border-radius:4px;">
+            ${options.length > 2 ? `<button class="btn-remove-option" data-idx="${idx}" style="background:#d32f2f; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer;">×</button>` : ''}
+          </div>
+        `).join('');
+        
+        list.querySelectorAll('input[name="correctAnswer"]').forEach(radio => {
+          radio.addEventListener('change', () => {
+            correctAnswer = parseInt(radio.value);
+          });
+        });
+        
+        list.querySelectorAll('.option-input').forEach(input => {
+          input.addEventListener('input', () => {
+            options[parseInt(input.dataset.idx)] = input.value;
+          });
+        });
+        
+        list.querySelectorAll('.btn-remove-option').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const idx = parseInt(btn.dataset.idx);
+            options.splice(idx, 1);
+            if (correctAnswer >= options.length) correctAnswer = options.length - 1;
+            if (correctAnswer < 0) correctAnswer = 0;
+            renderOptions();
+          });
+        });
+      }
+      
+      document.getElementById('addOptionBtn').addEventListener('click', () => {
+        if (options.length < 6) {
+          options.push(`Option ${options.length + 1}`);
+          renderOptions();
+        }
+      });
+      
+      document.getElementById('questionType').addEventListener('change', (e) => {
+        const mcSection = document.getElementById('mcOptionsSection');
+        mcSection.style.display = e.target.value === 'multiple_choice' ? 'block' : 'none';
+      });
+      
+      renderOptions();
+      
+      questionModal.addEventListener('click', (e) => {
+        if (e.target === questionModal) questionModal.remove();
+      });
+      
+      questionModal.querySelector('.modal-cancel-btn-q').addEventListener('click', () => questionModal.remove());
+      
+      questionModal.querySelector('.modal-add-btn-q').addEventListener('click', () => {
+        const type = document.getElementById('questionType').value;
+        const text = document.getElementById('questionText').value.trim();
+        const points = parseInt(document.getElementById('questionPoints').value) || 10;
+        
+        if (!text) {
+          alert('Please enter a question');
+          return;
+        }
+        
+        const question = {
+          id: 'q' + Date.now(),
+          type: type,
+          question: text,
+          points: points
+        };
+        
+        if (type === 'multiple_choice') {
+          if (options.length < 2) {
+            alert('Please add at least 2 options');
+            return;
+          }
+          question.options = [...options];
+          question.correctAnswer = correctAnswer;
+        }
+        
+        quizQuestions.push(question);
+        renderCallback();
+        questionModal.remove();
+      });
     }
 
     async function toggleAssignmentActive(name, active) {
@@ -2116,20 +2380,25 @@ print("Hello " + name)
     }
 
     function submitAssignment(assignmentName) {
+      const studentInfo = getStudentInfo();
+      
+      // Validate student info is filled out
+      if (!studentInfo.name || !studentInfo.email) {
+        alert('Please fill in your name and email in the Student Information section above first.');
+        return;
+      }
+      
       const modal = document.createElement('div');
       modal.className = 'modal';
       modal.innerHTML = `
         <div class="modal-content">
           <h3>Submit: ${escapeHtml(assignmentName)}</h3>
-          <label>Your Name</label>
-          <input type="text" id="modalStudentName" placeholder="First Last" />
-          <label>Email</label>
-          <input type="email" id="modalStudentEmail" placeholder="you@example.com" />
-          <label>Class Period</label>
-          <input type="text" id="modalClassPeriod" placeholder="e.g., Period 3" />
+          <p style="color:#888; font-size:13px; margin:10px 0;">
+            Submitting as: <strong>${escapeHtml(studentInfo.name)}</strong> (${escapeHtml(studentInfo.email)})
+          </p>
           <div class="modal-actions">
             <button class="btn secondary modal-cancel-btn">Cancel</button>
-            <button class="btn run modal-submit-btn" data-assignment="${escapeHtml(assignmentName)}">Submit</button>
+            <button class="btn run modal-submit-btn" data-assignment="${escapeHtml(assignmentName)}">Submit Code</button>
           </div>
         </div>
       `;
@@ -2144,12 +2413,10 @@ print("Hello " + name)
     }
 
     async function doSubmitAssignment(assignmentName) {
-      const studentName = document.getElementById('modalStudentName').value.trim();
-      const studentEmail = document.getElementById('modalStudentEmail').value.trim();
-      const classPeriod = document.getElementById('modalClassPeriod').value.trim();
+      const studentInfo = getStudentInfo();
       const code = editor.getValue();
 
-      if (!studentName || !studentEmail) {
+      if (!studentInfo.name || !studentInfo.email) {
         alert('Name and email are required');
         return;
       }
@@ -2160,9 +2427,9 @@ print("Hello " + name)
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             assignmentName,
-            studentName,
-            studentEmail,
-            classPeriod,
+            studentName: studentInfo.name,
+            studentEmail: studentInfo.email,
+            classPeriod: studentInfo.period,
             code
           })
         });
@@ -2178,29 +2445,200 @@ print("Hello " + name)
       }
     }
 
+    async function takeQuiz(assignmentName) {
+      const studentInfo = getStudentInfo();
+      
+      // Validate student info is filled out
+      if (!studentInfo.name || !studentInfo.email) {
+        alert('Please fill in your name and email in the Student Information section above first.');
+        return;
+      }
+      
+      // Fetch the quiz
+      try {
+        const resp = await fetch(`/api/quiz/${encodeURIComponent(assignmentName)}`);
+        const data = await resp.json();
+        
+        if (!data.ok) {
+          alert(data.error || 'Failed to load quiz');
+          return;
+        }
+        
+        const quiz = data.quiz;
+        const questions = quiz.questions || [];
+        
+        if (!questions.length) {
+          alert('This quiz has no questions');
+          return;
+        }
+        
+        // Build quiz modal
+        const modal = document.createElement('div');
+        modal.className = 'modal';
+        modal.innerHTML = `
+          <div class="modal-content" style="max-width:700px; max-height:80vh; overflow-y:auto;">
+            <h3>Quiz: ${escapeHtml(assignmentName)}</h3>
+            <p style="color:#888; font-size:13px; margin:10px 0;">
+              Submitting as: <strong>${escapeHtml(studentInfo.name)}</strong> (${escapeHtml(studentInfo.email)})
+            </p>
+            <div id="quizQuestions" style="margin:20px 0;">
+              ${questions.map((q, idx) => {
+                if (q.type === 'multiple_choice') {
+                  return `
+                    <div class="quiz-question" style="margin-bottom:24px; padding:16px; background:#0c0c0c; border:1px solid #333; border-radius:8px;">
+                      <div style="color:var(--columbia-blue); font-weight:600; margin-bottom:8px;">Question ${idx + 1} (${q.points || 0} points)</div>
+                      <div style="color:#ddd; margin-bottom:12px;">${escapeHtml(q.question)}</div>
+                      <div class="quiz-options">
+                        ${(q.options || []).map((opt, optIdx) => `
+                          <div style="margin:6px 0;">
+                            <label style="cursor:pointer; display:flex; align-items:center;">
+                              <input type="radio" name="q_${q.id}" value="${optIdx}" style="margin-right:8px;">
+                              <span style="color:#ddd;">${escapeHtml(opt)}</span>
+                            </label>
+                          </div>
+                        `).join('')}
+                      </div>
+                    </div>
+                  `;
+                } else if (q.type === 'written') {
+                  return `
+                    <div class="quiz-question" style="margin-bottom:24px; padding:16px; background:#0c0c0c; border:1px solid #333; border-radius:8px;">
+                      <div style="color:var(--columbia-blue); font-weight:600; margin-bottom:8px;">Question ${idx + 1} (${q.points || 0} points)</div>
+                      <div style="color:#ddd; margin-bottom:12px;">${escapeHtml(q.question)}</div>
+                      <textarea 
+                        id="answer_${q.id}" 
+                        placeholder="Type your answer here..."
+                        style="width:100%; min-height:100px; padding:8px; background:#1a1a1a; border:1px solid #444; border-radius:4px; color:#ddd; font-family:inherit; resize:vertical;"
+                      ></textarea>
+                    </div>
+                  `;
+                }
+                return '';
+              }).join('')}
+            </div>
+            <div class="modal-actions">
+              <button class="btn secondary modal-cancel-btn">Cancel</button>
+              <button class="btn run modal-submit-quiz-btn">Submit Quiz</button>
+            </div>
+          </div>
+        `;
+        
+        document.body.appendChild(modal);
+        
+        modal.addEventListener('click', (e) => {
+          if (e.target === modal) modal.remove();
+        });
+        
+        modal.querySelector('.modal-cancel-btn').addEventListener('click', () => modal.remove());
+        
+        modal.querySelector('.modal-submit-quiz-btn').addEventListener('click', async () => {
+          // Collect all answers
+          const quizResponses = [];
+          let allAnswered = true;
+          
+          for (const q of questions) {
+            if (q.type === 'multiple_choice') {
+              const selected = modal.querySelector(`input[name="q_${q.id}"]:checked`);
+              if (!selected) {
+                allAnswered = false;
+                break;
+              }
+              quizResponses.push({
+                questionId: q.id,
+                answer: parseInt(selected.value),
+                questionType: 'multiple_choice'
+              });
+            } else if (q.type === 'written') {
+              const answer = modal.querySelector(`#answer_${q.id}`).value.trim();
+              if (!answer) {
+                allAnswered = false;
+                break;
+              }
+              quizResponses.push({
+                questionId: q.id,
+                answer: answer,
+                questionType: 'written'
+              });
+            }
+          }
+          
+          if (!allAnswered) {
+            alert('Please answer all questions before submitting.');
+            return;
+          }
+          
+          // Submit quiz
+          try {
+            const submitResp = await fetch('/api/quiz/submit', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                assignmentName,
+                studentName: studentInfo.name,
+                studentEmail: studentInfo.email,
+                classPeriod: studentInfo.period,
+                quizResponses
+              })
+            });
+            
+            const submitData = await submitResp.json();
+            if (submitData.ok) {
+              modal.remove();
+              alert('Quiz submitted successfully!');
+            } else {
+              alert(submitData.error || 'Failed to submit quiz');
+            }
+          } catch (e) {
+            alert('Network error');
+          }
+        });
+        
+      } catch (e) {
+        alert('Network error loading quiz');
+      }
+    }
+
     function viewSubmissions(assignmentName) {
       const assignment = currentAssignments.find(a => a.name === assignmentName);
       if (!assignment) return;
 
       const submissions = assignment.submissions || [];
+      const hasQuiz = assignment.quiz && assignment.quiz.questions && assignment.quiz.questions.length > 0;
+      
       const modal = document.createElement('div');
       modal.className = 'modal';
       modal.innerHTML = `
         <div class="modal-content" style="max-width:800px;">
           <h3>Submissions: ${escapeHtml(assignmentName)}</h3>
           <div id="submissionsList">
-            ${submissions.length ? submissions.map((s, idx) => `
+            ${submissions.length ? submissions.map((s, idx) => {
+              // Handle both old and new format
+              const hasNewFormat = 'codeScore' in s || 'quizScore' in s;
+              const codeScore = hasNewFormat ? (s.codeScore ?? '') : (s.score ?? '');
+              const quizScore = s.quizScore ?? '';
+              const totalScore = s.totalScore ?? '';
+              
+              return `
               <div class="submission-item" data-idx="${idx}">
                 <div class="name">${escapeHtml(s.name || 'Anonymous')}</div>
                 <div class="email">${escapeHtml(s.email)} | Period: ${escapeHtml(s.classPeriod || 'N/A')} | Submitted: ${escapeHtml(s.submittedAt || 'Unknown')}</div>
                 <div class="score-input">
-                  Score: <input type="number" class="score-field" value="${s.score || ''}" min="0" max="${assignment.maxScore}" 
-                    data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}" data-idx="${escapeHtml(String(idx))}"
-                    style="width:80px;" /> / ${assignment.maxScore}
-                  <button class="ai-grade-btn" data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}" data-idx="${escapeHtml(String(idx))}">Grade with AI</button>
+                  ${hasNewFormat ? `
+                    Code: <input type="number" class="code-score-field" value="${codeScore}" min="0" max="${assignment.maxScore}" 
+                      data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}" data-idx="${escapeHtml(String(idx))}"
+                      style="width:60px;" /> / ${assignment.maxScore}
+                    ${hasQuiz ? `| Quiz: <span class="quiz-score-display">${quizScore}</span> / ${assignment.quiz.totalPoints || 0}` : ''}
+                    | Total: <span class="total-score-display">${totalScore}</span>
+                  ` : `
+                    Score: <input type="number" class="score-field" value="${codeScore}" min="0" max="${assignment.maxScore}" 
+                      data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}" data-idx="${escapeHtml(String(idx))}"
+                      style="width:80px;" /> / ${assignment.maxScore}
+                  `}
+                  <button class="ai-grade-btn" data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}" data-idx="${escapeHtml(String(idx))}">Grade Code with AI</button>
                 </div>
               </div>
-            `).join('') : '<p style="color:#888;">No submissions yet.</p>'}
+            `;
+            }).join('') : '<p style="color:#888;">No submissions yet.</p>'}
           </div>
           <div class="modal-actions">
             <button class="btn secondary modal-close-btn">Close</button>
@@ -2217,15 +2655,25 @@ print("Hello " + name)
       modal.querySelectorAll('.submission-item').forEach(item => {
         item.addEventListener('click', (e) => {
           // Don't trigger if clicking on score input or AI grade button
-          if (e.target.classList.contains('score-field') || e.target.classList.contains('ai-grade-btn')) return;
+          if (e.target.classList.contains('score-field') || 
+              e.target.classList.contains('code-score-field') || 
+              e.target.classList.contains('ai-grade-btn')) return;
           const idx = parseInt(item.dataset.idx);
           const sub = submissions[idx];
           if (sub) viewSubmissionCode(assignmentName, sub.email);
         });
       });
       
-      // Add event listeners for score inputs
+      // Add event listeners for old-style score inputs
       modal.querySelectorAll('.score-field').forEach(field => {
+        field.addEventListener('change', (e) => {
+          e.stopPropagation();
+          updateScore(field.dataset.assignment, field.dataset.email, field.value);
+        });
+      });
+      
+      // Add event listeners for new-style code score inputs
+      modal.querySelectorAll('.code-score-field').forEach(field => {
         field.addEventListener('change', (e) => {
           e.stopPropagation();
           updateScore(field.dataset.assignment, field.dataset.email, field.value);
@@ -2248,29 +2696,209 @@ print("Hello " + name)
       const submission = assignment.submissions.find(s => s.email.toLowerCase() === email.toLowerCase());
       if (!submission) return;
 
+      const hasQuiz = submission.quizResponses && submission.quizResponses.length > 0;
+      const quiz = assignment.quiz;
+      
+      // Build quiz responses HTML
+      let quizHTML = '';
+      if (hasQuiz && quiz) {
+        quizHTML = `
+          <div style="margin-top:20px; padding-top:20px; border-top:1px solid #333;">
+            <h4 style="color:var(--columbia-blue); margin:0 0 12px;">Quiz Responses</h4>
+            ${submission.quizResponses.map((resp, idx) => {
+              const question = quiz.questions.find(q => q.id === resp.questionId);
+              if (!question) return '';
+              
+              if (question.type === 'multiple_choice') {
+                const selectedOption = question.options[resp.answer];
+                const correctOption = question.options[question.correctAnswer];
+                const isCorrect = resp.isCorrect;
+                
+                return `
+                  <div style="margin-bottom:16px; padding:12px; background:#0c0c0c; border:1px solid #333; border-radius:6px;">
+                    <div style="color:var(--columbia-blue); font-weight:600; margin-bottom:6px;">
+                      Question ${idx + 1}: ${escapeHtml(question.question)}
+                    </div>
+                    <div style="margin:6px 0;">
+                      <strong>Student Answer:</strong> 
+                      <span style="color:${isCorrect ? '#4caf50' : '#f44336'};">${escapeHtml(selectedOption)}</span>
+                      ${isCorrect ? '✓' : '✗'}
+                    </div>
+                    ${!isCorrect ? `<div style="margin:6px 0; color:#888;"><strong>Correct Answer:</strong> ${escapeHtml(correctOption)}</div>` : ''}
+                    <div style="margin:6px 0; color:#888;">
+                      <strong>Points:</strong> ${resp.pointsEarned || 0} / ${question.points || 0}
+                    </div>
+                  </div>
+                `;
+              } else if (question.type === 'written') {
+                return `
+                  <div style="margin-bottom:16px; padding:12px; background:#0c0c0c; border:1px solid #333; border-radius:6px;">
+                    <div style="color:var(--columbia-blue); font-weight:600; margin-bottom:6px;">
+                      Question ${idx + 1}: ${escapeHtml(question.question)}
+                    </div>
+                    <div style="margin:8px 0; padding:8px; background:#1a1a1a; border:1px solid #444; border-radius:4px;">
+                      ${escapeHtml(resp.answer)}
+                    </div>
+                    <div style="margin:8px 0; display:flex; gap:12px; align-items:center;">
+                      <div>
+                        <strong>Manual Score:</strong>
+                        <input type="number" 
+                          class="manual-score-input" 
+                          data-assignment="${escapeHtml(assignmentName)}"
+                          data-email="${escapeHtml(email)}"
+                          data-question-id="${resp.questionId}"
+                          value="${resp.manualScore ?? ''}" 
+                          min="0" 
+                          max="${question.points || 0}" 
+                          placeholder="0"
+                          style="width:60px; padding:4px; background:#0c0c0c; border:1px solid #333; color:#ddd; border-radius:4px; margin-left:4px;">
+                        / ${question.points || 0}
+                      </div>
+                      ${resp.aiScore !== null && resp.aiScore !== undefined ? `
+                        <div style="color:#888;">
+                          <strong>AI Score:</strong> ${resp.aiScore} / ${question.points || 0}
+                        </div>
+                      ` : ''}
+                      <button class="btn secondary ai-grade-written-btn"
+                        data-assignment="${escapeHtml(assignmentName)}"
+                        data-email="${escapeHtml(email)}"
+                        data-question-id="${resp.questionId}"
+                        data-question-text="${escapeHtml(question.question)}"
+                        data-answer="${escapeHtml(resp.answer)}"
+                        data-max-points="${question.points || 0}"
+                        style="font-size:12px; padding:4px 8px;">
+                        Grade with AI
+                      </button>
+                    </div>
+                    <div style="margin:6px 0; color:#888;">
+                      <strong>Points Earned:</strong> ${resp.pointsEarned || 0} / ${question.points || 0}
+                    </div>
+                  </div>
+                `;
+              }
+              return '';
+            }).join('')}
+          </div>
+        `;
+      }
+
       const modal = document.createElement('div');
       modal.className = 'modal';
       modal.innerHTML = `
-        <div class="modal-content" style="max-width:900px;">
+        <div class="modal-content" style="max-width:900px; max-height:80vh; overflow-y:auto;">
           <h3>${escapeHtml(submission.name || 'Anonymous')} - ${escapeHtml(email)}</h3>
           <div style="margin:12px 0;">
             <strong>Period:</strong> ${escapeHtml(submission.classPeriod || 'N/A')} | 
             <strong>Submitted:</strong> ${escapeHtml(submission.submittedAt || 'Unknown')}
           </div>
-          <textarea readonly style="width:100%; height:400px; font-family:monospace; background:#0c0c0c; color:#ddd; border:1px solid #333; padding:10px;">${escapeHtml(submission.code || '(No code)')}</textarea>
-          <div class="modal-actions">
-            <button class="btn secondary load-to-editor-btn" data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(email)}">Load to Editor</button>
+          
+          <h4 style="color:var(--columbia-blue); margin:16px 0 8px;">Code Submission</h4>
+          <textarea readonly style="width:100%; height:300px; font-family:monospace; background:#0c0c0c; color:#ddd; border:1px solid #333; padding:10px; border-radius:6px;">${escapeHtml(submission.code || '(No code)')}</textarea>
+          
+          ${quizHTML}
+          
+          <div class="modal-actions" style="margin-top:20px;">
+            <button class="btn secondary load-to-editor-btn" data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(email)}">Load Code to Editor</button>
             <button class="btn secondary modal-close-btn">Close</button>
           </div>
         </div>
       `;
       document.body.appendChild(modal);
+      
       modal.addEventListener('click', (e) => {
         if (e.target === modal) modal.remove();
       });
+      
       modal.querySelector('.modal-close-btn').addEventListener('click', () => modal.remove());
       modal.querySelector('.load-to-editor-btn').addEventListener('click', (e) => {
         loadSubmissionToEditor(e.target.dataset.assignment, e.target.dataset.email);
+      });
+      
+      // Add event listeners for manual score inputs
+      modal.querySelectorAll('.manual-score-input').forEach(input => {
+        input.addEventListener('change', async () => {
+          const assignmentName = input.dataset.assignment;
+          const email = input.dataset.email;
+          const questionId = input.dataset.questionId;
+          const manualScore = input.value ? parseFloat(input.value) : null;
+          
+          try {
+            const resp = await fetch('/api/quiz/override-score', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Admin-Token': ADMIN_TOKEN
+              },
+              body: JSON.stringify({
+                assignmentName,
+                studentEmail: email,
+                questionId,
+                manualScore
+              })
+            });
+            
+            const data = await resp.json();
+            if (data.ok) {
+              await loadAssignments();
+              // Refresh the modal
+              modal.remove();
+              viewSubmissionCode(assignmentName, email);
+            } else {
+              alert(data.error || 'Failed to update score');
+            }
+          } catch (e) {
+            alert('Network error');
+          }
+        });
+      });
+      
+      // Add event listeners for AI grading written responses
+      modal.querySelectorAll('.ai-grade-written-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          btn.textContent = 'Grading...';
+          
+          const assignmentName = btn.dataset.assignment;
+          const email = btn.dataset.email;
+          const questionId = btn.dataset.questionId;
+          const questionText = btn.dataset.questionText;
+          const answer = btn.dataset.answer;
+          const maxPoints = parseInt(btn.dataset.maxPoints);
+          
+          try {
+            const resp = await fetch('/api/quiz/grade-written', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Admin-Token': ADMIN_TOKEN
+              },
+              body: JSON.stringify({
+                assignmentName,
+                studentEmail: email,
+                questionId,
+                questionText,
+                answer,
+                maxPoints
+              })
+            });
+            
+            const data = await resp.json();
+            if (data.ok) {
+              await loadAssignments();
+              // Refresh the modal
+              modal.remove();
+              viewSubmissionCode(assignmentName, email);
+            } else {
+              alert(data.error || 'Failed to grade with AI');
+              btn.disabled = false;
+              btn.textContent = 'Grade with AI';
+            }
+          } catch (e) {
+            alert('Network error');
+            btn.disabled = false;
+            btn.textContent = 'Grade with AI';
+          }
+        });
       });
     }
 
