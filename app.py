@@ -652,6 +652,8 @@ def update_assignment():
         assignment["maxScore"] = data["maxScore"]
     if "active" in data:
         assignment["active"] = data["active"]
+    if "quiz" in data:
+        assignment["quiz"] = data["quiz"]
     
     if _save_assignment(assignment):
         return jsonify(ok=True, assignment=assignment)
@@ -688,6 +690,7 @@ def submit_assignment():
     student_email = (data.get("studentEmail") or "").strip()
     class_period = (data.get("classPeriod") or "").strip()
     code = data.get("code", "")
+    quiz_responses = data.get("quizResponses", [])
     
     if not assignment_name or not student_email:
         return jsonify(ok=False, error="Assignment name and email required"), 400
@@ -715,8 +718,47 @@ def submit_assignment():
         "classPeriod": class_period,
         "code": code,
         "submittedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "score": None
+        "codeScore": None,
+        "quizResponses": quiz_responses,
+        "quizScore": None,
+        "totalScore": None
     }
+    
+    # Calculate quiz score if quiz responses provided
+    if quiz_responses and assignment.get("quiz"):
+        quiz = assignment["quiz"]
+        quiz_score = 0
+        for response in quiz_responses:
+            question_id = response.get("questionId")
+            # Find the question in the quiz
+            question = next((q for q in quiz.get("questions", []) if q.get("id") == question_id), None)
+            if question:
+                if question.get("type") == "multiple_choice":
+                    # Auto-grade multiple choice
+                    if response.get("answer") == question.get("correctAnswer"):
+                        response["isCorrect"] = True
+                        response["pointsEarned"] = question.get("points", 0)
+                        quiz_score += question.get("points", 0)
+                    else:
+                        response["isCorrect"] = False
+                        response["pointsEarned"] = 0
+                else:
+                    # Written response - set to pending grading
+                    response["pointsEarned"] = 0
+                    response["aiScore"] = None
+                    response["manualScore"] = None
+        
+        submission["quizScore"] = quiz_score
+        submission["quizResponses"] = quiz_responses
+    
+    # Preserve existing code score if updating
+    if existing_idx is not None and submissions[existing_idx].get("codeScore") is not None:
+        submission["codeScore"] = submissions[existing_idx].get("codeScore")
+    
+    # Calculate total score
+    code_score = submission.get("codeScore") or 0
+    quiz_score = submission.get("quizScore") or 0
+    submission["totalScore"] = code_score + quiz_score if (submission.get("codeScore") is not None or submission.get("quizScore") is not None) else None
     
     if existing_idx is not None:
         # Overwrite existing submission
@@ -740,7 +782,7 @@ def score_submission():
     data = request.get_json(silent=True) or {}
     assignment_name = (data.get("assignmentName") or "").strip()
     student_email = (data.get("studentEmail") or "").strip()
-    score = data.get("score")
+    score = data.get("score")  # This is now the code score
     
     if not assignment_name or not student_email:
         return jsonify(ok=False, error="Assignment name and email required"), 400
@@ -753,7 +795,16 @@ def score_submission():
     found = False
     for sub in submissions:
         if sub.get("email", "").lower() == student_email.lower():
-            sub["score"] = score
+            # Handle both old "score" field and new "codeScore" field
+            if "codeScore" in sub or "quizScore" in sub:
+                sub["codeScore"] = score
+                # Recalculate total score
+                code_score = sub.get("codeScore") or 0
+                quiz_score = sub.get("quizScore") or 0
+                sub["totalScore"] = code_score + quiz_score if (sub.get("codeScore") is not None or sub.get("quizScore") is not None) else None
+            else:
+                # Backward compatibility - old format
+                sub["score"] = score
             found = True
             break
     
@@ -840,7 +891,16 @@ def grade_assignment_ai():
     found = False
     for sub in submissions:
         if sub.get("email", "").lower() == student_email.lower():
-            sub["score"] = score
+            # Handle both old and new format
+            if "codeScore" in sub or "quizScore" in sub:
+                sub["codeScore"] = score
+                # Recalculate total score
+                code_score = sub.get("codeScore") or 0
+                quiz_score = sub.get("quizScore") or 0
+                sub["totalScore"] = code_score + quiz_score if (sub.get("codeScore") is not None or sub.get("quizScore") is not None) else None
+            else:
+                # Backward compatibility
+                sub["score"] = score
             found = True
             break
     
@@ -853,7 +913,7 @@ def grade_assignment_ai():
 
 @app.get("/api/assignments/<assignment_name>/csv")
 def download_assignment_csv(assignment_name: str):
-    """Download CSV of student numbers and scores (admin only)"""
+    """Download CSV of student scores (admin only)"""
     if not _require_admin(request):
         return jsonify(ok=False, error="Admin token required"), 401
     
@@ -866,15 +926,32 @@ def download_assignment_csv(assignment_name: str):
     
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Student Number", "Score"])
     
+    # Check if we have new-style submissions with separate scores
     submissions = assignment.get("submissions", [])
-    for sub in submissions:
-        email = sub.get("email", "")
-        # Extract student number (everything before @)
-        student_num = email.split("@")[0] if "@" in email else email
-        score = sub.get("score", "")
-        writer.writerow([student_num, score])
+    has_new_format = any("codeScore" in sub or "quizScore" in sub for sub in submissions)
+    
+    if has_new_format:
+        writer.writerow(["Name", "Email", "Class Period", "Assignment", "Code Score", "Quiz Score", "Total Score", "Submission Date"])
+        for sub in submissions:
+            writer.writerow([
+                sub.get("name", ""),
+                sub.get("email", ""),
+                sub.get("classPeriod", ""),
+                assignment_name,
+                sub.get("codeScore", ""),
+                sub.get("quizScore", ""),
+                sub.get("totalScore", ""),
+                sub.get("submittedAt", "")
+            ])
+    else:
+        # Old format - backward compatibility
+        writer.writerow(["Student Number", "Score"])
+        for sub in submissions:
+            email = sub.get("email", "")
+            student_num = email.split("@")[0] if "@" in email else email
+            score = sub.get("score", "")
+            writer.writerow([student_num, score])
     
     output.seek(0)
     return Response(
@@ -900,16 +977,274 @@ def get_student_scores():
         # Find submission for this email
         for sub in submissions:
             if sub.get("email", "").lower() == email:
-                student_scores.append({
-                    "assignmentName": assignment.get("name", ""),
-                    "maxScore": assignment.get("maxScore", 100),
-                    "score": sub.get("score"),
-                    "submittedAt": sub.get("submittedAt", ""),
-                    "active": assignment.get("active", False)
-                })
+                # Handle both old and new format
+                if "codeScore" in sub or "quizScore" in sub:
+                    student_scores.append({
+                        "assignmentName": assignment.get("name", ""),
+                        "maxScore": assignment.get("maxScore", 100),
+                        "codeScore": sub.get("codeScore"),
+                        "quizScore": sub.get("quizScore"),
+                        "totalScore": sub.get("totalScore"),
+                        "submittedAt": sub.get("submittedAt", ""),
+                        "active": assignment.get("active", False)
+                    })
+                else:
+                    # Old format
+                    student_scores.append({
+                        "assignmentName": assignment.get("name", ""),
+                        "maxScore": assignment.get("maxScore", 100),
+                        "score": sub.get("score"),
+                        "submittedAt": sub.get("submittedAt", ""),
+                        "active": assignment.get("active", False)
+                    })
                 break
     
     return jsonify(ok=True, scores=student_scores)
+
+@app.get("/api/quiz/<assignment_name>")
+def get_quiz(assignment_name: str):
+    """Get quiz for a specific assignment"""
+    assignment = _load_assignment(assignment_name)
+    if not assignment:
+        return jsonify(ok=False, error="Assignment not found"), 404
+    
+    quiz = assignment.get("quiz")
+    if not quiz:
+        return jsonify(ok=False, error="No quiz for this assignment"), 404
+    
+    # Return quiz without correct answers for students (unless admin)
+    is_admin = _require_admin(request)
+    if not is_admin:
+        # Remove correct answers from multiple choice questions for students
+        quiz_copy = json.loads(json.dumps(quiz))  # Deep copy
+        for question in quiz_copy.get("questions", []):
+            if question.get("type") == "multiple_choice":
+                question.pop("correctAnswer", None)
+        return jsonify(ok=True, quiz=quiz_copy)
+    
+    return jsonify(ok=True, quiz=quiz)
+
+@app.post("/api/quiz/submit")
+def submit_quiz():
+    """Submit quiz responses separately (alternative to combined submission)"""
+    data = request.get_json(silent=True) or {}
+    assignment_name = (data.get("assignmentName") or "").strip()
+    student_email = (data.get("studentEmail") or "").strip()
+    quiz_responses = data.get("quizResponses", [])
+    
+    if not assignment_name or not student_email:
+        return jsonify(ok=False, error="Assignment name and email required"), 400
+    
+    assignment = _load_assignment(assignment_name)
+    if not assignment:
+        return jsonify(ok=False, error="Assignment not found"), 404
+    
+    if not assignment.get("active", False):
+        return jsonify(ok=False, error="Assignment is not active"), 403
+    
+    quiz = assignment.get("quiz")
+    if not quiz:
+        return jsonify(ok=False, error="No quiz for this assignment"), 404
+    
+    # Calculate quiz score
+    quiz_score = 0
+    for response in quiz_responses:
+        question_id = response.get("questionId")
+        # Find the question in the quiz
+        question = next((q for q in quiz.get("questions", []) if q.get("id") == question_id), None)
+        if question:
+            if question.get("type") == "multiple_choice":
+                # Auto-grade multiple choice
+                if response.get("answer") == question.get("correctAnswer"):
+                    response["isCorrect"] = True
+                    response["pointsEarned"] = question.get("points", 0)
+                    quiz_score += question.get("points", 0)
+                else:
+                    response["isCorrect"] = False
+                    response["pointsEarned"] = 0
+            else:
+                # Written response - set to pending grading
+                response["pointsEarned"] = 0
+                response["aiScore"] = None
+                response["manualScore"] = None
+    
+    # Find or create submission
+    submissions = assignment.get("submissions", [])
+    existing_idx = None
+    for i, sub in enumerate(submissions):
+        if sub.get("email", "").lower() == student_email.lower():
+            existing_idx = i
+            break
+    
+    if existing_idx is not None:
+        # Update existing submission
+        submissions[existing_idx]["quizResponses"] = quiz_responses
+        submissions[existing_idx]["quizScore"] = quiz_score
+        # Recalculate total score
+        code_score = submissions[existing_idx].get("codeScore") or 0
+        submissions[existing_idx]["totalScore"] = code_score + quiz_score if submissions[existing_idx].get("codeScore") is not None else quiz_score
+    else:
+        # Create new submission with just quiz data
+        submission = {
+            "name": data.get("studentName", ""),
+            "email": student_email,
+            "classPeriod": data.get("classPeriod", ""),
+            "code": "",
+            "submittedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "codeScore": None,
+            "quizResponses": quiz_responses,
+            "quizScore": quiz_score,
+            "totalScore": quiz_score
+        }
+        submissions.append(submission)
+    
+    assignment["submissions"] = submissions
+    
+    if _save_assignment(assignment):
+        return jsonify(ok=True, message="Quiz submitted successfully", quizScore=quiz_score)
+    return jsonify(ok=False, error="Failed to save quiz submission"), 500
+
+@app.post("/api/quiz/grade-written")
+def grade_written_response():
+    """Grade a written response using AI (admin only)"""
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    
+    cfg = _load_config()
+    if not cfg.get("ai_explainer_enabled", False):
+        return jsonify(ok=False, error="AI features disabled by admin"), 403
+    
+    data = request.get_json(silent=True) or {}
+    assignment_name = (data.get("assignmentName") or "").strip()
+    student_email = (data.get("studentEmail") or "").strip()
+    question_id = (data.get("questionId") or "").strip()
+    answer = data.get("answer", "")
+    question_text = data.get("questionText", "")
+    max_points = data.get("maxPoints", 10)
+    
+    if not assignment_name or not student_email or not question_id:
+        return jsonify(ok=False, error="Missing required fields"), 400
+    
+    # Build prompt for AI grading
+    prompt = (
+        f"Grade the following student's written response to a question strictly from 0 to {max_points}.\n"
+        f"Return ONLY the integer score, with no additional words or explanation.\n\n"
+        f"Question: {question_text}\n\n"
+        f"Student Answer: {answer}\n\n"
+        f"Grading Criteria:\n"
+        f"- Is the answer accurate and complete?\n"
+        f"- Does it demonstrate understanding of the concept?\n"
+        f"- Is it well-explained?\n\n"
+        f"Score (0-{max_points}):"
+    )
+    
+    res = call_ollama_generate(cfg.get("ai_ollama_url", ""), cfg.get("ai_model", "gemma3:4b"), prompt, timeout=30.0)
+    if not res.get("ok"):
+        return jsonify(ok=False, error=res.get("error", "AI error"))
+    
+    raw = (res.get("text") or "").strip()
+    
+    # Extract score from AI response
+    score = None
+    for tok in raw.split():
+        tok = tok.strip('.,!?;:')
+        if tok.isdigit():
+            score = int(tok)
+            break
+    
+    if score is None:
+        digits = "".join([c for c in raw if c.isdigit()])
+        if digits:
+            score = int(digits)
+    
+    if score is None:
+        return jsonify(ok=False, error=f"AI returned invalid score: {raw!r}")
+    
+    score = max(0, min(max_points, score))
+    
+    # Update the submission
+    assignment = _load_assignment(assignment_name)
+    if not assignment:
+        return jsonify(ok=False, error="Assignment not found"), 404
+    
+    submissions = assignment.get("submissions", [])
+    found = False
+    for sub in submissions:
+        if sub.get("email", "").lower() == student_email.lower():
+            quiz_responses = sub.get("quizResponses", [])
+            for response in quiz_responses:
+                if response.get("questionId") == question_id:
+                    response["aiScore"] = score
+                    # If no manual override, use AI score
+                    if response.get("manualScore") is None:
+                        response["pointsEarned"] = score
+                    found = True
+                    break
+            if found:
+                # Recalculate quiz score
+                quiz_score = sum(r.get("pointsEarned", 0) for r in quiz_responses)
+                sub["quizScore"] = quiz_score
+                # Recalculate total score
+                code_score = sub.get("codeScore") or 0
+                sub["totalScore"] = code_score + quiz_score if sub.get("codeScore") is not None else quiz_score
+                break
+    
+    if not found:
+        return jsonify(ok=False, error="Submission or question not found"), 404
+    
+    if _save_assignment(assignment):
+        return jsonify(ok=True, aiScore=score)
+    return jsonify(ok=False, error="Failed to save score"), 500
+
+@app.post("/api/quiz/override-score")
+def override_quiz_score():
+    """Override quiz question score manually (admin only)"""
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    
+    data = request.get_json(silent=True) or {}
+    assignment_name = (data.get("assignmentName") or "").strip()
+    student_email = (data.get("studentEmail") or "").strip()
+    question_id = (data.get("questionId") or "").strip()
+    manual_score = data.get("manualScore")
+    
+    if not assignment_name or not student_email or not question_id:
+        return jsonify(ok=False, error="Missing required fields"), 400
+    
+    assignment = _load_assignment(assignment_name)
+    if not assignment:
+        return jsonify(ok=False, error="Assignment not found"), 404
+    
+    submissions = assignment.get("submissions", [])
+    found = False
+    for sub in submissions:
+        if sub.get("email", "").lower() == student_email.lower():
+            quiz_responses = sub.get("quizResponses", [])
+            for response in quiz_responses:
+                if response.get("questionId") == question_id:
+                    response["manualScore"] = manual_score
+                    # Manual score takes precedence
+                    if manual_score is not None:
+                        response["pointsEarned"] = manual_score
+                    elif response.get("aiScore") is not None:
+                        response["pointsEarned"] = response["aiScore"]
+                    found = True
+                    break
+            if found:
+                # Recalculate quiz score
+                quiz_score = sum(r.get("pointsEarned", 0) for r in quiz_responses)
+                sub["quizScore"] = quiz_score
+                # Recalculate total score
+                code_score = sub.get("codeScore") or 0
+                sub["totalScore"] = code_score + quiz_score if sub.get("codeScore") is not None else quiz_score
+                break
+    
+    if not found:
+        return jsonify(ok=False, error="Submission or question not found"), 404
+    
+    if _save_assignment(assignment):
+        return jsonify(ok=True)
+    return jsonify(ok=False, error="Failed to save score"), 500
 
 # -------------------------
 # Health
