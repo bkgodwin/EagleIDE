@@ -3345,6 +3345,12 @@ print("Hello " + name)
         const hasScore = s.score !== null && s.score !== undefined;
         const stateClass = hasScore ? 'saved' : 'ungraded';
         
+        // Quiz summary calculation
+        const hasQuizResponses = s.quizResponses && s.quizResponses.length > 0;
+        const quizScore = s.quizScore || 0;
+        const quiz = assignment.quiz || {};
+        const maxQuizScore = (quiz.questions || []).reduce((sum, q) => sum + (q.points || 0), 0);
+        
         return `
         <div class="sidebar-submission ${stateClass}" data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}" data-original-score="${s.score !== null && s.score !== undefined ? s.score : ''}">
           <div class="student-info">
@@ -3352,6 +3358,15 @@ print("Hello " + name)
             <span class="student-score">${hasScore ? s.score + '/' + assignment.maxScore : '—/' + assignment.maxScore}</span>
           </div>
           <div class="student-email">${escapeHtml(s.email)}</div>
+          ${hasQuizResponses ? `
+            <div class="quiz-summary" style="color:#888; font-size:11px; margin-top:4px; cursor:pointer;" 
+                 data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}">
+              📋 Quiz: ${quizScore}/${maxQuizScore} pts (click to expand)
+            </div>
+            <div class="quiz-details" style="display:none; margin-top:8px; padding-top:8px; border-top:1px solid #333;">
+              <!-- Quiz questions and responses go here -->
+            </div>
+          ` : ''}
           <div class="score-input" style="margin-top:8px;">
             <input type="number" class="score-input-field" placeholder="Score" min="0" max="${assignment.maxScore}" 
               value="${hasScore ? s.score : ''}" 
@@ -3397,6 +3412,15 @@ print("Hello " + name)
             saveSubmissionScore(assignName, studentEmail, inputField);
           });
         }
+        
+        // Quiz summary - toggle quiz details
+        const quizSummary = item.querySelector('.quiz-summary');
+        if (quizSummary) {
+          quizSummary.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleQuizDetails(quizSummary, assignName, studentEmail);
+          });
+        }
       });
     }
 
@@ -3437,6 +3461,181 @@ print("Hello " + name)
       if (statusEl) {
         statusEl.textContent = `Loaded: ${submission.name || email}`;
         setTimeout(() => { statusEl.textContent = ''; }, 3000);
+      }
+    }
+
+    // Toggle quiz details visibility
+    function toggleQuizDetails(summaryEl, assignmentName, studentEmail) {
+      const card = summaryEl.closest('.sidebar-submission');
+      const detailsEl = card.querySelector('.quiz-details');
+      
+      if (detailsEl.style.display === 'none') {
+        // Expand - render quiz details
+        detailsEl.style.display = 'block';
+        summaryEl.textContent = summaryEl.textContent.replace('expand', 'collapse');
+        renderQuizDetails(detailsEl, assignmentName, studentEmail);
+      } else {
+        // Collapse
+        detailsEl.style.display = 'none';
+        summaryEl.textContent = summaryEl.textContent.replace('collapse', 'expand');
+      }
+    }
+
+    // Render quiz details with questions and student responses
+    function renderQuizDetails(containerEl, assignmentName, studentEmail) {
+      const assignment = currentAssignments.find(a => a.name === assignmentName);
+      if (!assignment) return;
+      
+      const submission = assignment.submissions.find(s => s.email.toLowerCase() === studentEmail.toLowerCase());
+      if (!submission || !submission.quizResponses) return;
+      
+      const quiz = assignment.quiz || {};
+      const questions = quiz.questions || [];
+      
+      let html = '';
+      
+      submission.quizResponses.forEach((response, idx) => {
+        const question = questions.find(q => q.id === response.questionId);
+        if (!question) return;
+        
+        const isMultipleChoice = question.type === 'multiple_choice';
+        const isCorrect = response.isCorrect;
+        const pointsEarned = response.pointsEarned || 0;
+        const maxPoints = question.points || 0;
+        
+        html += `
+          <div style="margin-bottom:12px; padding:8px; background:#0f0f0f; border:1px solid #2b2b2b; border-radius:4px;">
+            <div style="color:var(--columbia-blue); font-size:11px; font-weight:600; margin-bottom:4px;">
+              Q${idx + 1}: ${escapeHtml(question.question)} (${pointsEarned}/${maxPoints} pts)
+            </div>
+            
+            ${isMultipleChoice ? `
+              <div style="color:${isCorrect ? '#4caf50' : '#f44336'}; font-size:11px;">
+                Student answer: ${escapeHtml(question.options[response.answer])}
+                ${isCorrect ? '✓ Correct' : '✗ Incorrect'}
+              </div>
+            ` : `
+              <div style="color:#ddd; font-size:11px; margin:4px 0;">
+                Student answer: ${escapeHtml(response.answer)}
+              </div>
+              <div style="display:flex; gap:4px; align-items:center; margin-top:4px;">
+                <button class="btn secondary quiz-ai-grade-btn" style="padding:2px 6px; font-size:10px;" 
+                        data-assignment="${escapeHtml(assignmentName)}" 
+                        data-email="${escapeHtml(studentEmail)}" 
+                        data-question-id="${response.questionId}" 
+                        data-question-text="${escapeHtml(question.question)}" 
+                        data-answer="${escapeHtml(response.answer)}" 
+                        data-max-points="${maxPoints}">
+                  AI Grade
+                </button>
+                <input type="number" min="0" max="${maxPoints}" value="${pointsEarned}" 
+                       class="quiz-manual-score-input"
+                       data-assignment="${escapeHtml(assignmentName)}" 
+                       data-email="${escapeHtml(studentEmail)}" 
+                       data-question-id="${response.questionId}"
+                       style="width:40px; padding:2px; background:#1a1a1a; color:#fff; border:1px solid #333; border-radius:3px; font-size:10px;">
+                <span style="font-size:10px; color:#888;">Manual override</span>
+              </div>
+            `}
+          </div>
+        `;
+      });
+      
+      containerEl.innerHTML = html;
+      
+      // Add event listeners for AI grade buttons
+      containerEl.querySelectorAll('.quiz-ai-grade-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          aiGradeWrittenResponse(
+            btn.dataset.assignment,
+            btn.dataset.email,
+            btn.dataset.questionId,
+            btn.dataset.questionText,
+            btn.dataset.answer,
+            parseInt(btn.dataset.maxPoints)
+          );
+        });
+      });
+      
+      // Add event listeners for manual score inputs
+      containerEl.querySelectorAll('.quiz-manual-score-input').forEach(input => {
+        input.addEventListener('click', (e) => e.stopPropagation());
+        input.addEventListener('change', (e) => {
+          e.stopPropagation();
+          overrideQuizScore(
+            input.dataset.assignment,
+            input.dataset.email,
+            input.dataset.questionId,
+            input.value
+          );
+        });
+      });
+    }
+
+    // AI grade a written response
+    async function aiGradeWrittenResponse(assignmentName, studentEmail, questionId, questionText, answer, maxPoints) {
+      try {
+        const response = await fetch('/api/quiz/grade-written', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Token': ADMIN_TOKEN
+          },
+          body: JSON.stringify({
+            assignmentName,
+            studentEmail,
+            questionId,
+            questionText,
+            answer,
+            maxPoints
+          })
+        });
+        
+        const result = await response.json();
+        
+        if (result.ok) {
+          alert(`AI graded: ${result.aiScore}/${maxPoints} points`);
+          await loadAssignments();
+          showSubmissionsInSidebar(assignmentName);
+        } else {
+          alert('AI grading failed: ' + (result.error || 'Unknown error'));
+        }
+      } catch (error) {
+        console.error('Error AI grading:', error);
+        alert('Error grading response');
+      }
+    }
+
+    // Override quiz score manually
+    async function overrideQuizScore(assignmentName, studentEmail, questionId, manualScore) {
+      try {
+        const response = await fetch('/api/quiz/override-score', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Token': ADMIN_TOKEN
+          },
+          body: JSON.stringify({
+            assignmentName,
+            studentEmail,
+            questionId,
+            manualScore: parseInt(manualScore)
+          })
+        });
+        
+        const result = await response.json();
+        
+        if (result.ok) {
+          alert('Score updated successfully');
+          await loadAssignments();
+          showSubmissionsInSidebar(assignmentName);
+        } else {
+          alert('Failed to update score: ' + (result.error || 'Unknown error'));
+        }
+      } catch (error) {
+        console.error('Error updating score:', error);
+        alert('Error updating score');
       }
     }
 
