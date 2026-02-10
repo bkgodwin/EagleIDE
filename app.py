@@ -522,6 +522,16 @@ def on_stop(_=None):
     emit("output", {"data": "\n[Stopped]\n"})
     emit("finished", {})
 
+@socketio.on("teacher_code_update")
+def on_teacher_code_update(payload):
+    """Broadcast teacher code to all connected students (admin only)"""
+    token = (payload or {}).get("token", "")
+    if token not in _admin_tokens:
+        return
+    code = (payload or {}).get("code", "")
+    # Broadcast to all clients except the sender
+    emit("teacher_code", {"code": code}, broadcast=True, include_self=False)
+
 # -------------------------
 # Assignment system
 # -------------------------
