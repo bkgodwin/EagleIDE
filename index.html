@@ -1273,6 +1273,7 @@ print("Hello " + name)
         setEditable(false); 
         document.getElementById('adminSettingsBtn').style.display = 'none';
         document.getElementById('adminBtn').textContent = 'Admin';
+        stopTeacherBroadcast();
         return; 
       }
       // Show modal
@@ -1297,6 +1298,7 @@ print("Hello " + name)
         document.getElementById('adminPasswordModal').style.display = 'none';
         document.getElementById('adminSettingsBtn').style.display = '';
         document.getElementById('adminBtn').textContent = 'Logout';
+        startTeacherBroadcast();
       }
       else { alert('Invalid password'); }
     });
@@ -1338,18 +1340,6 @@ print("Hello " + name)
         teacherBroadcastInterval = null;
       }
     }
-    
-    // Start/stop broadcasting when admin logs in/out
-    // Note: 100ms timeout ensures ADMIN_TOKEN is set before checking
-    document.getElementById('adminBtn').addEventListener('click', () => {
-      setTimeout(() => {
-        if (ADMIN_TOKEN) {
-          startTeacherBroadcast();
-        } else {
-          stopTeacherBroadcast();
-        }
-      }, 100);
-    });
     
     // Start broadcasting if already logged in (on page refresh)
     if (ADMIN_TOKEN) {
