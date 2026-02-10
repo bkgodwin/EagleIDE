@@ -339,6 +339,7 @@
 
           <div class="tabs">
             <button class="tab-btn active" data-tab="notesTab" id="notesTabBtn">Notes</button>
+            <button class="tab-btn" data-tab="teacherTab" id="teacherTabBtn">Teacher</button>
             <button class="tab-btn" data-tab="lessonTab" id="lessonTabBtn">Wiki</button>
             <button class="tab-btn" data-tab="assignmentTab" id="assignmentTabBtn">Assignment</button>
             <button class="tab-btn" data-tab="aiTab" id="aiTabBtn" style="display:none;">AI Explain</button>
@@ -351,6 +352,15 @@
             <div class="tab-pane active" id="notesTab">
               <div id="notesView" contenteditable="false"></div>
               <textarea id="notesEdit" style="display:none; width:100%; height:100%; padding:12px; background:#1a1a1a; color:#fff; border:none; font-family:monospace;"></textarea>
+            </div>
+
+            <!-- Teacher -->
+            <div class="tab-pane" id="teacherTab">
+              <div style="padding:12px; display:flex; gap:10px; align-items:center; border-bottom:1px solid #2b2b2b; background:#111;">
+                <button class="btn run" id="teacherPasteBtn">Auto Paste to Editor</button>
+                <span id="teacherStatus" style="opacity:.8; color:var(--columbia-blue);">Teacher Code View</span>
+              </div>
+              <div id="teacherEditorWrapper" style="height:calc(100% - 50px);"></div>
             </div>
 
             <!-- Lesson -->
@@ -563,6 +573,46 @@
       }
     }
     const editor = initEditor();
+
+    // Initialize Teacher Tab CodeMirror Editor
+    let teacherEditor = null;
+    const TEACHER_CODE_KEY = 'eagleide-teacher-code';
+    
+    function initTeacherEditor() {
+      const wrapper = document.getElementById('teacherEditorWrapper');
+      if (!wrapper || !window.CodeMirror) return;
+      
+      const textarea = document.createElement('textarea');
+      wrapper.appendChild(textarea);
+      
+      teacherEditor = CodeMirror.fromTextArea(textarea, {
+        mode: "python",
+        theme: "monokai",
+        lineNumbers: true,
+        readOnly: true,
+        indentUnit: 4,
+        tabSize: 4,
+        indentWithTabs: true,
+        viewportMargin: Infinity
+      });
+      
+      // Load last saved teacher code from localStorage
+      try {
+        const savedCode = localStorage.getItem(TEACHER_CODE_KEY);
+        if (savedCode) {
+          teacherEditor.setValue(savedCode);
+        }
+      } catch (e) {
+        console.warn('Failed to load teacher code:', e);
+      }
+    }
+    
+    // Initialize teacher editor when DOM is ready
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initTeacherEditor);
+    } else {
+      initTeacherEditor();
+    }
 
     // Eagle IDE Custom Completion Engine
     (function() {
@@ -1060,6 +1110,19 @@ print("Hello " + name)
           }
         });
         socket.on('finished', () => appendOut('[Process finished]\n'));
+        
+        // Listen for teacher code updates
+        socket.on('teacher_code', (msg) => {
+          if (teacherEditor && msg && msg.code !== undefined) {
+            teacherEditor.setValue(msg.code);
+            // Save to localStorage
+            try {
+              localStorage.setItem(TEACHER_CODE_KEY, msg.code);
+            } catch (e) {
+              console.warn('Failed to save teacher code:', e);
+            }
+          }
+        });
       } catch (e) {
         console.error('Socket.IO initialization failed:', e);
         appendOut('[Socket.IO unavailable - IDE functionality limited]\n');
@@ -1122,6 +1185,18 @@ print("Hello " + name)
       const blob = new Blob([editor.getValue()], {type: 'text/plain'});
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
       document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    });
+
+    // Teacher Tab: Auto Paste button
+    document.getElementById('teacherPasteBtn').addEventListener('click', () => {
+      if (teacherEditor) {
+        const teacherCode = teacherEditor.getValue();
+        if (teacherCode) {
+          editor.setValue(teacherCode);
+          // Switch to the editor/code area (optionally you could keep them on teacher tab)
+          // User can see the code was pasted successfully
+        }
+      }
     });
 
     // Tabs switching (refresh leaderboard when opening Challenge)
@@ -1232,6 +1307,52 @@ print("Hello " + name)
         document.getElementById('adminLoginBtn').click();
       }
     });
+
+    // Teacher Code Broadcasting (Admin only)
+    // Broadcast teacher code updates at minimum 2x per second (every 500ms)
+    let teacherBroadcastInterval = null;
+    let lastBroadcastedCode = '';
+    
+    function startTeacherBroadcast() {
+      if (teacherBroadcastInterval) return;
+      
+      teacherBroadcastInterval = setInterval(() => {
+        if (!ADMIN_TOKEN || !socket) return;
+        
+        const currentCode = editor.getValue();
+        // Only broadcast if code has changed to reduce network traffic
+        if (currentCode !== lastBroadcastedCode) {
+          socket.emit('teacher_code_update', {
+            token: ADMIN_TOKEN,
+            code: currentCode
+          });
+          lastBroadcastedCode = currentCode;
+        }
+      }, 500); // Update at least twice per second (every 500ms)
+    }
+    
+    function stopTeacherBroadcast() {
+      if (teacherBroadcastInterval) {
+        clearInterval(teacherBroadcastInterval);
+        teacherBroadcastInterval = null;
+      }
+    }
+    
+    // Start/stop broadcasting when admin logs in/out
+    document.getElementById('adminBtn').addEventListener('click', () => {
+      setTimeout(() => {
+        if (ADMIN_TOKEN) {
+          startTeacherBroadcast();
+        } else {
+          stopTeacherBroadcast();
+        }
+      }, 100);
+    });
+    
+    // Start broadcasting if already logged in (on page refresh)
+    if (ADMIN_TOKEN) {
+      startTeacherBroadcast();
+    }
 
     // Admin settings modal handlers
     document.getElementById('adminSettingsBtn').addEventListener('click', () => {
