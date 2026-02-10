@@ -2128,6 +2128,7 @@ print("Hello " + name)
       document.body.appendChild(modal);
       
       let quizQuestions = [];
+      let questionIdCounter = { value: 0 };  // Counter object to ensure unique IDs (passed by reference)
       
       function renderQuizQuestions() {
         const list = document.getElementById('quizQuestionsList');
@@ -2163,10 +2164,8 @@ print("Hello " + name)
       }
       
       document.getElementById('addQuestionBtn').addEventListener('click', () => {
-        showAddQuestionModal(quizQuestions, renderQuizQuestions);
+        showAddQuestionModal(quizQuestions, renderQuizQuestions, questionIdCounter);
       });
-      
-      let questionIdCounter = 0;  // Counter to ensure unique IDs
       
       renderQuizQuestions();
       
@@ -2220,11 +2219,11 @@ print("Hello " + name)
       }
     }
 
-    function showAddQuestionModal(quizQuestions, renderCallback) {
+    function showAddQuestionModal(quizQuestions, renderCallback, questionIdCounter) {
       const questionModal = document.createElement('div');
       questionModal.className = 'modal';
       questionModal.innerHTML = `
-        <div class="modal-content" style="max-width:600px;">
+        <div class="modal-content" style="max-width:700px; max-height:85vh; overflow-y:auto; padding:20px;">
           <h3>Add Question</h3>
           
           <label>Question Type</label>
@@ -2254,7 +2253,7 @@ print("Hello " + name)
       
       document.body.appendChild(questionModal);
       
-      let options = ['Option 1', 'Option 2'];
+      let options = ['Option 1', 'Option 2', 'Option 3', 'Option 4'];
       let correctAnswer = 0;
       
       function renderOptions() {
@@ -2262,30 +2261,45 @@ print("Hello " + name)
         list.innerHTML = options.map((opt, idx) => `
           <div style="display:flex; gap:8px; margin-bottom:8px; align-items:center;">
             <input type="radio" name="correctAnswer" value="${idx}" ${idx === correctAnswer ? 'checked' : ''} style="margin:0;">
-            <input type="text" class="option-input" data-idx="${idx}" value="${escapeHtml(opt)}" placeholder="Option ${idx + 1}" style="flex:1; padding:6px; background:#0c0c0c; border:1px solid #333; color:#ddd; border-radius:4px;">
-            ${options.length > 2 ? `<button class="btn-remove-option" data-idx="${idx}" style="background:#d32f2f; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer;">×</button>` : ''}
+            <input 
+              type="text" 
+              class="option-text-input" 
+              data-idx="${idx}" 
+              value="${escapeHtml(opt)}" 
+              placeholder="Option ${idx + 1}"
+              style="flex:1; padding:6px 8px; background:#0c0c0c; border:1px solid #444; border-radius:4px; color:#ddd; font-size:13px;"
+            />
+            ${options.length > 2 ? `<button class="btn-remove-option" data-idx="${idx}" style="background:#d32f2f; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:11px;">Remove</button>` : ''}
           </div>
         `).join('');
         
-        list.querySelectorAll('input[name="correctAnswer"]').forEach(radio => {
-          radio.addEventListener('change', () => {
-            correctAnswer = parseInt(radio.value);
+        // Add event listeners for radio buttons
+        list.querySelectorAll('input[name="correctAnswer"]').forEach((radio) => {
+          radio.addEventListener('change', (e) => {
+            correctAnswer = parseInt(e.target.value);
           });
         });
         
-        list.querySelectorAll('.option-input').forEach(input => {
-          input.addEventListener('input', () => {
-            options[parseInt(input.dataset.idx)] = input.value;
+        // Add event listeners for text inputs
+        list.querySelectorAll('.option-text-input').forEach(input => {
+          input.addEventListener('input', (e) => {
+            const idx = parseInt(input.dataset.idx);
+            options[idx] = e.target.value;
           });
         });
         
+        // Add event listeners for remove buttons
         list.querySelectorAll('.btn-remove-option').forEach(btn => {
           btn.addEventListener('click', () => {
             const idx = parseInt(btn.dataset.idx);
-            options.splice(idx, 1);
-            if (correctAnswer >= options.length) correctAnswer = options.length - 1;
-            if (correctAnswer < 0) correctAnswer = 0;
-            renderOptions();
+            if (options.length > 2) {  // Minimum 2 options required
+              options.splice(idx, 1);
+              if (correctAnswer >= options.length) correctAnswer = options.length - 1;
+              if (correctAnswer < 0) correctAnswer = 0;
+              renderOptions();
+            } else {
+              alert('At least 2 options are required');
+            }
           });
         });
       }
@@ -2316,29 +2330,55 @@ print("Hello " + name)
         const text = document.getElementById('questionText').value.trim();
         const points = parseInt(document.getElementById('questionPoints').value) || 10;
         
+        // Better validation with specific error messages
         if (!text) {
           alert('Please enter a question');
           return;
         }
         
         const question = {
-          id: 'q' + Date.now() + '_' + (questionIdCounter++),
+          id: 'q' + Date.now() + '_' + (questionIdCounter.value++),
           type: type,
           question: text,
           points: points
         };
         
         if (type === 'multiple_choice') {
-          if (options.length < 2) {
-            alert('Please add at least 2 options');
+          // Validate options - check for empty option text
+          const validOptions = options.filter(opt => opt.trim() !== '');
+          if (validOptions.length < 2) {
+            alert('Please add at least 2 non-empty options');
             return;
           }
-          question.options = [...options];
-          question.correctAnswer = correctAnswer;
+          
+          // Validate correct answer is within bounds of original array
+          if (correctAnswer >= options.length || correctAnswer < 0) {
+            alert('Please select a valid correct answer');
+            return;
+          }
+          
+          // Recalculate correctAnswer index based on filtered options
+          // Find which valid option corresponds to the selected radio button
+          let validCorrectAnswer = 0;
+          let validIdx = 0;
+          for (let i = 0; i < options.length; i++) {
+            if (options[i].trim() !== '') {
+              if (i === correctAnswer) {
+                validCorrectAnswer = validIdx;
+                break;
+              }
+              validIdx++;
+            }
+          }
+          
+          question.options = validOptions;  // Use filtered valid options
+          question.correctAnswer = validCorrectAnswer;
         }
         
         quizQuestions.push(question);
-        renderCallback();
+        console.log('Question added:', question);
+        console.log('Total questions:', quizQuestions.length);
+        renderCallback();  // This should call renderQuizQuestions()
         questionModal.remove();
       });
     }
