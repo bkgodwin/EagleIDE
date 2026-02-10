@@ -3511,7 +3511,7 @@ print("Hello " + name)
             
             ${isMultipleChoice ? `
               <div style="color:${isCorrect ? '#4caf50' : '#f44336'}; font-size:11px;">
-                Student answer: ${escapeHtml(question.options[response.answer])}
+                Student answer: ${response.answer !== null && response.answer !== undefined && question.options && question.options[response.answer] ? escapeHtml(question.options[response.answer]) : 'No answer'}
                 ${isCorrect ? '✓ Correct' : '✗ Incorrect'}
               </div>
             ` : `
@@ -3553,7 +3553,7 @@ print("Hello " + name)
             btn.dataset.questionId,
             btn.dataset.questionText,
             btn.dataset.answer,
-            parseInt(btn.dataset.maxPoints)
+            parseInt(btn.dataset.maxPoints, 10)
           );
         });
       });
@@ -3620,7 +3620,7 @@ print("Hello " + name)
             assignmentName,
             studentEmail,
             questionId,
-            manualScore: parseInt(manualScore)
+            manualScore: parseInt(manualScore, 10)
           })
         });
         
