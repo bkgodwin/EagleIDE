@@ -2603,12 +2603,14 @@ print("Hello " + name)
         // Cancel button - just close modal
         modal.querySelector('.modal-cancel-btn').addEventListener('click', () => {
           modal.remove();
+          document.removeEventListener('keydown', escapeHandler);
         });
         
         // Click outside to close
         modal.addEventListener('click', (e) => {
           if (e.target === modal) {
             modal.remove();
+            document.removeEventListener('keydown', escapeHandler);
           }
         });
         
@@ -2623,7 +2625,7 @@ print("Hello " + name)
         
         // Submit button handler
         modal.querySelector('.modal-submit-questions-btn').addEventListener('click', async () => {
-          await submitQuestionAnswers(assignmentName, questions, modal, studentInfo);
+          await submitQuestionAnswers(assignmentName, questions, modal, studentInfo, escapeHandler);
         });
         
       } catch (e) {
@@ -2633,7 +2635,7 @@ print("Hello " + name)
     }
 
     // Helper function to submit question answers
-    async function submitQuestionAnswers(assignmentName, questions, modal, studentInfo) {
+    async function submitQuestionAnswers(assignmentName, questions, modal, studentInfo, escapeHandler) {
       // Collect all answers
       const quizResponses = [];
       let allAnswered = true;
@@ -2701,6 +2703,7 @@ print("Hello " + name)
         if (submitData.ok) {
           // Close modal FIRST
           modal.remove();
+          document.removeEventListener('keydown', escapeHandler);
           
           // THEN show success message
           alert('Your answers have been submitted successfully! You can resubmit until the assignment closes.');
