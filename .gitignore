@@ -25,3 +25,10 @@ config.txt
 sandboxes/
 leaderboard.csv
 assignments/
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
