@@ -230,8 +230,12 @@ def auth_register():
         return jsonify(ok=False, error="Password must be at least 6 characters"), 400
     if len(name) > 100:
         name = name[:100]
-    # Basic email validation
-    if not re.match(r'^[^@]+@[^@]+\.[^@]+$', email):
+    # Basic email validation (simple, non-backtracking)
+    at_idx = email.find('@')
+    if at_idx <= 0 or at_idx == len(email) - 1:
+        return jsonify(ok=False, error="Invalid email address"), 400
+    dot_idx = email.find('.', at_idx)
+    if dot_idx <= at_idx + 1 or dot_idx == len(email) - 1:
         return jsonify(ok=False, error="Invalid email address"), 400
     
     if _find_user(email):
@@ -410,8 +414,8 @@ def files_read():
     try:
         content = target.read_text(encoding="utf-8")
         return jsonify(ok=True, content=content, path=path_str)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+    except Exception:
+        return jsonify(ok=False, error="Could not read file"), 500
 
 @app.post("/api/files/write")
 def files_write():
@@ -446,8 +450,8 @@ def files_write():
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         return jsonify(ok=True)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+    except Exception:
+        return jsonify(ok=False, error="Could not write file"), 500
 
 @app.post("/api/files/rename")
 def files_rename():
@@ -478,8 +482,8 @@ def files_rename():
     try:
         old.rename(new_validated)
         return jsonify(ok=True, new_path=str(new_validated.relative_to(user_dir)))
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+    except Exception:
+        return jsonify(ok=False, error="Could not rename item"), 500
 
 @app.delete("/api/files/delete")
 def files_delete():
@@ -504,8 +508,8 @@ def files_delete():
         else:
             target.unlink()
         return jsonify(ok=True)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+    except Exception:
+        return jsonify(ok=False, error="Could not delete item"), 500
 
 @app.post("/api/files/upload")
 def files_upload():
@@ -554,8 +558,8 @@ def files_upload():
     try:
         target_validated.write_bytes(content)
         return jsonify(ok=True, path=str(target_validated.relative_to(user_dir)))
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+    except Exception:
+        return jsonify(ok=False, error="Could not save uploaded file"), 500
 
 @app.get("/api/files/storage")
 def files_storage():

@@ -1698,10 +1698,15 @@ print("Hello " + name)
         if (!u.enabled) tr.className = 'disabled-row';
         tr.innerHTML = `<td>${escapeHtml(u.name || '')}</td><td>${escapeHtml(u.email)}</td><td>${escapeHtml(u.created_at || '')}</td><td>${u.enabled ? '✅ Active' : '🔒 Disabled'}</td>
           <td style="display:flex;gap:4px;flex-wrap:wrap;">
-            <button class="btn secondary" style="font-size:11px;padding:2px 6px;" onclick="adminResetPassword('${escapeHtml(u.email)}')">Reset PW</button>
-            <button class="btn secondary" style="font-size:11px;padding:2px 6px;" onclick="adminToggleUser('${escapeHtml(u.email)}',${!u.enabled})">${u.enabled ? 'Disable' : 'Enable'}</button>
-            <button class="btn secondary" style="font-size:11px;padding:2px 6px;color:#ef5350;" onclick="adminDeleteUser('${escapeHtml(u.email)}')">Delete</button>
+            <button class="btn secondary" data-action="reset" style="font-size:11px;padding:2px 6px;">Reset PW</button>
+            <button class="btn secondary" data-action="toggle" data-enable="${!u.enabled}" style="font-size:11px;padding:2px 6px;">${u.enabled ? 'Disable' : 'Enable'}</button>
+            <button class="btn secondary" data-action="delete" style="font-size:11px;padding:2px 6px;color:#ef5350;">Delete</button>
           </td>`;
+        // Use data attributes + event listeners to avoid inline JS with user data
+        const [resetBtn, toggleBtn, deleteBtn] = tr.querySelectorAll('button[data-action]');
+        resetBtn.addEventListener('click', () => adminResetPassword(u.email));
+        toggleBtn.addEventListener('click', () => adminToggleUser(u.email, !u.enabled));
+        deleteBtn.addEventListener('click', () => adminDeleteUser(u.email));
         tbody.appendChild(tr);
       });
     }
