@@ -1723,11 +1723,26 @@ print("Hello " + name)
         const pwd = j.temp_password;
         const msg = document.createElement('div');
         msg.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#1e1e2e;border:1px solid #444;border-radius:12px;padding:24px;z-index:9999;min-width:320px;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.5)';
-        msg.innerHTML = `<p style="margin:0 0 8px;color:#ccc">Temporary password for <b>${email.replace(/</g,'&lt;')}</b>:</p>
-          <code style="display:block;background:#111;padding:10px 16px;border-radius:6px;font-size:1.1em;letter-spacing:.05em;margin:8px 0;user-select:all">${pwd}</code>
-          <p style="color:#f59e0b;font-size:.82em;margin:8px 0 16px">Instruct the student to change this password immediately.</p>
-          <button onclick="navigator.clipboard?.writeText('${pwd}');this.textContent='Copied!'" style="margin-right:8px;padding:6px 14px;border-radius:6px;border:none;background:#3b82f6;color:#fff;cursor:pointer">Copy</button>
-          <button onclick="this.closest('div').remove()" style="padding:6px 14px;border-radius:6px;border:none;background:#444;color:#fff;cursor:pointer">Close</button>`;
+        const safeEmail = document.createElement('b');
+        safeEmail.textContent = email;
+        const codeEl = document.createElement('code');
+        codeEl.style.cssText = 'display:block;background:#111;padding:10px 16px;border-radius:6px;font-size:1.1em;letter-spacing:.05em;margin:8px 0;user-select:all';
+        codeEl.textContent = pwd;
+        const note = document.createElement('p');
+        note.style.cssText = 'color:#f59e0b;font-size:.82em;margin:8px 0 16px';
+        note.textContent = 'Instruct the student to change this password immediately.';
+        const copyBtn = document.createElement('button');
+        copyBtn.style.cssText = 'margin-right:8px;padding:6px 14px;border-radius:6px;border:none;background:#3b82f6;color:#fff;cursor:pointer';
+        copyBtn.textContent = 'Copy';
+        copyBtn.addEventListener('click', () => { navigator.clipboard?.writeText(pwd); copyBtn.textContent = 'Copied!'; });
+        const closeBtn = document.createElement('button');
+        closeBtn.style.cssText = 'padding:6px 14px;border-radius:6px;border:none;background:#444;color:#fff;cursor:pointer';
+        closeBtn.textContent = 'Close';
+        closeBtn.addEventListener('click', () => msg.remove());
+        const header = document.createElement('p');
+        header.style.cssText = 'margin:0 0 8px;color:#ccc';
+        header.append('Temporary password for ', safeEmail, ':');
+        msg.append(header, codeEl, note, copyBtn, closeBtn);
         document.body.appendChild(msg);
       } else {
         alert(j.error || 'Failed');
