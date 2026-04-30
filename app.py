@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-import os, sys, json, time, uuid, csv, random, threading, subprocess
+import os, sys, json, time, uuid, csv, random, threading, subprocess, hmac, re, shutil
 from pathlib import Path
 from typing import Dict, Any, Optional
 
 from flask import Flask, send_from_directory, request, jsonify
 from flask_socketio import SocketIO, emit
 import requests
+import bcrypt
+from collections import defaultdict
 
 # -------------------------
 # Paths & constants
@@ -24,13 +26,20 @@ IDLE_TIMEOUT = 10.0        # reserved, if you later want idle detection
 os.makedirs(SANDBOX_DIR, exist_ok=True)
 os.makedirs(ASSIGNMENTS_DIR, exist_ok=True)
 
+USERS_FILE = BASE_DIR / "users.json"
+USER_FILES_DIR = BASE_DIR / "user_files"
+os.makedirs(USER_FILES_DIR, exist_ok=True)
+
 # -------------------------
 # Defaults from config.py
 # -------------------------
 try:
-    from config import DEFAULT_CONFIG, DEFAULT_ADMIN_PASSWORD
+    from config import DEFAULT_CONFIG, DEFAULT_ADMIN_PASSWORD, ADMIN_EMAIL, SERVER_PORT, USER_STORAGE_LIMIT_MB
 except Exception:
     DEFAULT_ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "password")
+    ADMIN_EMAIL = "admin@eagleide.local"
+    SERVER_PORT = 8000
+    USER_STORAGE_LIMIT_MB = 250
     DEFAULT_CONFIG = {
         "notes_html": "<h2>Welcome</h2><p>Edit me in Admin.</p>",
         "lesson_url": "https://publish.obsidian.md/mrgodwinsclassroom/Coding/Coding+1/2.+Python+Basics/1.+What+Is+Python",
@@ -45,6 +54,7 @@ except Exception:
             "Keep explanations short, accurate, and step-by-step. If a question is not about coding, "
             "politely decline and redirect to Python topics."
         ),
+        "registration_enabled": True,
     }
 
 # -------------------------
@@ -97,17 +107,86 @@ def _require_admin(req) -> bool:
     return token in _admin_tokens
 
 # -------------------------
+# User account management
+# -------------------------
+_users_lock = threading.Lock()
+_student_tokens: Dict[str, dict] = {}  # token -> user info dict
+_reg_rate_limit: dict = defaultdict(list)  # ip -> list of timestamps
+
+def _sanitize_email_for_path(email: str) -> str:
+    """Convert email to safe directory name"""
+    safe = email.replace("@", "_at_").replace(".", "_dot_")
+    safe = re.sub(r"[^a-zA-Z0-9_\-]", "", safe)
+    return safe[:64]  # limit length
+
+def _load_users() -> dict:
+    with _users_lock:
+        if USERS_FILE.exists():
+            try:
+                return json.loads(USERS_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return {"users": []}
+
+def _save_users(data: dict) -> None:
+    with _users_lock:
+        tmp = USERS_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(USERS_FILE)
+
+def _find_user(email: str) -> Optional[dict]:
+    data = _load_users()
+    for u in data.get("users", []):
+        if u.get("email", "").lower() == email.lower():
+            return u
+    return None
+
+def _get_user_dir(email: str) -> Path:
+    return USER_FILES_DIR / _sanitize_email_for_path(email)
+
+def _require_user(req) -> Optional[dict]:
+    token = req.headers.get("X-User-Token", "").strip()
+    return _student_tokens.get(token)
+
+def _get_user_storage_used(user_dir: Path) -> int:
+    """Return total bytes used in user directory"""
+    total = 0
+    if user_dir.exists():
+        for f in user_dir.rglob("*"):
+            if f.is_file():
+                try:
+                    total += f.stat().st_size
+                except Exception:
+                    pass
+    return total
+
+def _validate_user_path(user_dir: Path, path_str: str) -> Optional[Path]:
+    """Validate and resolve a path within user directory. Returns None if invalid."""
+    try:
+        p = (user_dir / path_str).resolve()
+        user_dir_resolved = user_dir.resolve()
+        # Ensure path is within user directory
+        p.relative_to(user_dir_resolved)
+        return p
+    except (ValueError, Exception):
+        return None
+
+# -------------------------
 # Admin & Config routes
 # -------------------------
 @app.post("/api/admin/login")
 def admin_login():
     data = request.get_json(silent=True) or {}
+    email = str(data.get("email", "")).strip()
     pw = str(data.get("password", ""))
-    if pw == DEFAULT_ADMIN_PASSWORD:
+    # Constant-time comparison to prevent timing attacks
+    email_ok = hmac.compare_digest(email.lower(), ADMIN_EMAIL.lower())
+    pw_ok = hmac.compare_digest(pw, DEFAULT_ADMIN_PASSWORD)
+    if email_ok and pw_ok:
         token = uuid.uuid4().hex
         _admin_tokens.add(token)
         return jsonify(ok=True, token=token)
-    return jsonify(ok=False, error="Invalid password"), 401
+    return jsonify(ok=False, error="Invalid email or password"), 401
 
 @app.get("/api/config")
 def get_config():
@@ -121,6 +200,496 @@ def save_config():
     partial = data.get("data", {})
     new_cfg = _update_config(partial)
     return jsonify(ok=True, data=new_cfg)
+
+# -------------------------
+# Student auth endpoints
+# -------------------------
+@app.post("/api/auth/register")
+def auth_register():
+    cfg = _load_config()
+    if not cfg.get("registration_enabled", True):
+        return jsonify(ok=False, error="Registration is currently disabled"), 403
+    
+    # Rate limiting: max 5 registrations per hour per IP
+    ip = request.remote_addr or "unknown"
+    now = time.time()
+    timestamps = _reg_rate_limit[ip]
+    # Clean old entries
+    _reg_rate_limit[ip] = [t for t in timestamps if now - t < 3600]
+    if len(_reg_rate_limit[ip]) >= 5:
+        return jsonify(ok=False, error="Too many registration attempts. Try again later."), 429
+    
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    password = (data.get("password") or "")
+    name = (data.get("name") or "").strip()
+    
+    if not email or not password or not name:
+        return jsonify(ok=False, error="Email, password, and name are required"), 400
+    if len(password) < 6:
+        return jsonify(ok=False, error="Password must be at least 6 characters"), 400
+    if len(name) > 100:
+        name = name[:100]
+    # Basic email validation
+    if not re.match(r'^[^@]+@[^@]+\.[^@]+$', email):
+        return jsonify(ok=False, error="Invalid email address"), 400
+    
+    if _find_user(email):
+        return jsonify(ok=False, error="Email already registered"), 409
+    
+    password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    user = {
+        "email": email,
+        "password_hash": password_hash,
+        "name": name,
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "enabled": True
+    }
+    
+    users_data = _load_users()
+    users_data["users"].append(user)
+    _save_users(users_data)
+    _reg_rate_limit[ip].append(now)
+    
+    # Create user directory
+    user_dir = _get_user_dir(email)
+    user_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Issue token
+    token = uuid.uuid4().hex
+    user_info = {"email": email, "name": name}
+    _student_tokens[token] = user_info
+    
+    return jsonify(ok=True, token=token, user=user_info)
+
+@app.post("/api/auth/login")
+def auth_login():
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    password = (data.get("password") or "")
+    
+    if not email or not password:
+        return jsonify(ok=False, error="Email and password required"), 400
+    
+    user = _find_user(email)
+    if not user:
+        return jsonify(ok=False, error="Invalid email or password"), 401
+    if not user.get("enabled", True):
+        return jsonify(ok=False, error="Account is disabled"), 403
+    
+    try:
+        pw_ok = bcrypt.checkpw(password.encode("utf-8"), user["password_hash"].encode("utf-8"))
+    except Exception:
+        pw_ok = False
+    
+    if not pw_ok:
+        return jsonify(ok=False, error="Invalid email or password"), 401
+    
+    # Ensure user directory exists
+    user_dir = _get_user_dir(email)
+    user_dir.mkdir(parents=True, exist_ok=True)
+    
+    token = uuid.uuid4().hex
+    user_info = {"email": email, "name": user.get("name", "")}
+    _student_tokens[token] = user_info
+    return jsonify(ok=True, token=token, user=user_info)
+
+@app.post("/api/auth/logout")
+def auth_logout():
+    token = request.headers.get("X-User-Token", "").strip()
+    _student_tokens.pop(token, None)
+    return jsonify(ok=True)
+
+@app.get("/api/auth/me")
+def auth_me():
+    user = _require_user(request)
+    if not user:
+        return jsonify(ok=False, error="Not authenticated"), 401
+    return jsonify(ok=True, user=user)
+
+# -------------------------
+# File management endpoints
+# -------------------------
+ALLOWED_EXTENSIONS = {".py", ".txt", ".csv"}
+
+@app.get("/api/files/list")
+def files_list():
+    user = _require_user(request)
+    if not user:
+        return jsonify(ok=False, error="Authentication required"), 401
+    
+    user_dir = _get_user_dir(user["email"])
+    user_dir.mkdir(parents=True, exist_ok=True)
+    
+    def build_tree(directory: Path, base: Path) -> list:
+        items = []
+        try:
+            for entry in sorted(directory.iterdir(), key=lambda x: (x.is_file(), x.name.lower())):
+                rel = str(entry.relative_to(base))
+                if entry.is_dir():
+                    items.append({
+                        "name": entry.name,
+                        "path": rel,
+                        "type": "folder",
+                        "children": build_tree(entry, base)
+                    })
+                elif entry.is_file() and entry.suffix in ALLOWED_EXTENSIONS:
+                    items.append({
+                        "name": entry.name,
+                        "path": rel,
+                        "type": "file",
+                        "size": entry.stat().st_size
+                    })
+        except PermissionError:
+            pass
+        return items
+    
+    tree = build_tree(user_dir, user_dir)
+    return jsonify(ok=True, files=tree)
+
+@app.post("/api/files/create")
+def files_create():
+    user = _require_user(request)
+    if not user:
+        return jsonify(ok=False, error="Authentication required"), 401
+    
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    file_type = (data.get("type") or "file")
+    parent = (data.get("parent") or "").strip()
+    
+    if not name:
+        return jsonify(ok=False, error="Name required"), 400
+    
+    user_dir = _get_user_dir(user["email"])
+    
+    if parent:
+        parent_path = _validate_user_path(user_dir, parent)
+        if not parent_path:
+            return jsonify(ok=False, error="Invalid parent path"), 400
+        target = parent_path / name
+    else:
+        target = user_dir / name
+    
+    # Validate target is within user dir
+    target_validated = _validate_user_path(user_dir, str(target.relative_to(user_dir.resolve())) if target.is_relative_to(user_dir.resolve()) else name)
+    if not target_validated:
+        return jsonify(ok=False, error="Invalid path"), 400
+    
+    if file_type == "folder":
+        target_validated.mkdir(parents=True, exist_ok=True)
+        return jsonify(ok=True, path=str(target_validated.relative_to(user_dir)))
+    else:
+        # File - check extension
+        suffix = Path(name).suffix.lower()
+        if suffix not in ALLOWED_EXTENSIONS:
+            return jsonify(ok=False, error=f"Only {', '.join(ALLOWED_EXTENSIONS)} files allowed"), 400
+        target_validated.parent.mkdir(parents=True, exist_ok=True)
+        if not target_validated.exists():
+            target_validated.write_text("", encoding="utf-8")
+        return jsonify(ok=True, path=str(target_validated.relative_to(user_dir)))
+
+@app.get("/api/files/read")
+def files_read():
+    user = _require_user(request)
+    if not user:
+        return jsonify(ok=False, error="Authentication required"), 401
+    
+    path_str = request.args.get("path", "")
+    if not path_str:
+        return jsonify(ok=False, error="Path required"), 400
+    
+    user_dir = _get_user_dir(user["email"])
+    target = _validate_user_path(user_dir, path_str)
+    if not target or not target.exists() or not target.is_file():
+        return jsonify(ok=False, error="File not found"), 404
+    
+    if target.suffix.lower() not in ALLOWED_EXTENSIONS:
+        return jsonify(ok=False, error="File type not allowed"), 400
+    
+    try:
+        content = target.read_text(encoding="utf-8")
+        return jsonify(ok=True, content=content, path=path_str)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
+
+@app.post("/api/files/write")
+def files_write():
+    user = _require_user(request)
+    if not user:
+        return jsonify(ok=False, error="Authentication required"), 401
+    
+    data = request.get_json(silent=True) or {}
+    path_str = (data.get("path") or "").strip()
+    content = data.get("content", "")
+    
+    if not path_str:
+        return jsonify(ok=False, error="Path required"), 400
+    
+    user_dir = _get_user_dir(user["email"])
+    target = _validate_user_path(user_dir, path_str)
+    if not target:
+        return jsonify(ok=False, error="Invalid path"), 400
+    
+    if target.suffix.lower() not in ALLOWED_EXTENSIONS:
+        return jsonify(ok=False, error="File type not allowed"), 400
+    
+    # Check storage limit
+    limit_bytes = USER_STORAGE_LIMIT_MB * 1024 * 1024
+    used = _get_user_storage_used(user_dir)
+    content_bytes = len(content.encode("utf-8"))
+    existing_size = target.stat().st_size if target.exists() else 0
+    if used - existing_size + content_bytes > limit_bytes:
+        return jsonify(ok=False, error=f"Storage limit of {USER_STORAGE_LIMIT_MB}MB exceeded"), 413
+    
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        return jsonify(ok=True)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
+
+@app.post("/api/files/rename")
+def files_rename():
+    user = _require_user(request)
+    if not user:
+        return jsonify(ok=False, error="Authentication required"), 401
+    
+    data = request.get_json(silent=True) or {}
+    old_path = (data.get("old_path") or "").strip()
+    new_name = (data.get("new_name") or "").strip()
+    
+    if not old_path or not new_name:
+        return jsonify(ok=False, error="old_path and new_name required"), 400
+    
+    user_dir = _get_user_dir(user["email"])
+    old = _validate_user_path(user_dir, old_path)
+    if not old or not old.exists():
+        return jsonify(ok=False, error="File not found"), 404
+    
+    new = old.parent / new_name
+    new_validated = _validate_user_path(user_dir, str(new.relative_to(user_dir.resolve())))
+    if not new_validated:
+        return jsonify(ok=False, error="Invalid new name"), 400
+    
+    if new_validated.exists():
+        return jsonify(ok=False, error="A file/folder with that name already exists"), 409
+    
+    try:
+        old.rename(new_validated)
+        return jsonify(ok=True, new_path=str(new_validated.relative_to(user_dir)))
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
+
+@app.delete("/api/files/delete")
+def files_delete():
+    user = _require_user(request)
+    if not user:
+        return jsonify(ok=False, error="Authentication required"), 401
+    
+    data = request.get_json(silent=True) or {}
+    path_str = (data.get("path") or "").strip()
+    
+    if not path_str:
+        return jsonify(ok=False, error="Path required"), 400
+    
+    user_dir = _get_user_dir(user["email"])
+    target = _validate_user_path(user_dir, path_str)
+    if not target or not target.exists():
+        return jsonify(ok=False, error="File not found"), 404
+    
+    try:
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+        return jsonify(ok=True)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
+
+@app.post("/api/files/upload")
+def files_upload():
+    user = _require_user(request)
+    if not user:
+        return jsonify(ok=False, error="Authentication required"), 401
+    
+    if "file" not in request.files:
+        return jsonify(ok=False, error="No file provided"), 400
+    
+    f = request.files["file"]
+    parent = request.form.get("parent", "").strip()
+    
+    filename = f.filename or ""
+    if not filename:
+        return jsonify(ok=False, error="No filename"), 400
+    
+    # Sanitize filename
+    filename = Path(filename).name  # Strip path components
+    suffix = Path(filename).suffix.lower()
+    if suffix not in ALLOWED_EXTENSIONS:
+        return jsonify(ok=False, error=f"Only {', '.join(ALLOWED_EXTENSIONS)} files allowed"), 400
+    
+    user_dir = _get_user_dir(user["email"])
+    
+    if parent:
+        parent_path = _validate_user_path(user_dir, parent)
+        if not parent_path or not parent_path.is_dir():
+            return jsonify(ok=False, error="Invalid parent directory"), 400
+        target = parent_path / filename
+    else:
+        target = user_dir / filename
+    
+    target_validated = _validate_user_path(user_dir, str(target.relative_to(user_dir.resolve())))
+    if not target_validated:
+        return jsonify(ok=False, error="Invalid path"), 400
+    
+    # Check storage limit
+    content = f.read()
+    limit_bytes = USER_STORAGE_LIMIT_MB * 1024 * 1024
+    used = _get_user_storage_used(user_dir)
+    existing_size = target_validated.stat().st_size if target_validated.exists() else 0
+    if used - existing_size + len(content) > limit_bytes:
+        return jsonify(ok=False, error=f"Storage limit exceeded"), 413
+    
+    try:
+        target_validated.write_bytes(content)
+        return jsonify(ok=True, path=str(target_validated.relative_to(user_dir)))
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
+
+@app.get("/api/files/storage")
+def files_storage():
+    user = _require_user(request)
+    if not user:
+        return jsonify(ok=False, error="Authentication required"), 401
+    
+    user_dir = _get_user_dir(user["email"])
+    used = _get_user_storage_used(user_dir)
+    limit = USER_STORAGE_LIMIT_MB * 1024 * 1024
+    return jsonify(ok=True, used_bytes=used, limit_bytes=limit)
+
+# -------------------------
+# Admin user management
+# -------------------------
+@app.get("/api/admin/users")
+def admin_list_users():
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    data = _load_users()
+    users = []
+    for u in data.get("users", []):
+        users.append({
+            "email": u.get("email"),
+            "name": u.get("name"),
+            "created_at": u.get("created_at"),
+            "enabled": u.get("enabled", True)
+        })
+    return jsonify(ok=True, users=users)
+
+@app.post("/api/admin/users/reset-password")
+def admin_reset_password():
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    if not email:
+        return jsonify(ok=False, error="Email required"), 400
+    
+    import secrets
+    new_password = secrets.token_urlsafe(10)
+    password_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    
+    users_data = _load_users()
+    found = False
+    for u in users_data.get("users", []):
+        if u.get("email", "").lower() == email:
+            u["password_hash"] = password_hash
+            found = True
+            break
+    
+    if not found:
+        return jsonify(ok=False, error="User not found"), 404
+    
+    _save_users(users_data)
+    
+    # Invalidate existing tokens
+    for token, info in list(_student_tokens.items()):
+        if info.get("email", "").lower() == email:
+            del _student_tokens[token]
+    
+    return jsonify(ok=True, temp_password=new_password)
+
+@app.post("/api/admin/users/delete")
+def admin_delete_user():
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    if not email:
+        return jsonify(ok=False, error="Email required"), 400
+    
+    users_data = _load_users()
+    before = len(users_data.get("users", []))
+    users_data["users"] = [u for u in users_data.get("users", []) if u.get("email", "").lower() != email]
+    if len(users_data["users"]) == before:
+        return jsonify(ok=False, error="User not found"), 404
+    
+    _save_users(users_data)
+    
+    # Invalidate tokens
+    for token, info in list(_student_tokens.items()):
+        if info.get("email", "").lower() == email:
+            del _student_tokens[token]
+    
+    # Delete user files
+    user_dir = _get_user_dir(email)
+    if user_dir.exists():
+        try:
+            shutil.rmtree(user_dir)
+        except Exception as e:
+            print(f"Warning: failed to delete user dir {user_dir}: {e}")
+    
+    return jsonify(ok=True)
+
+@app.post("/api/admin/users/toggle")
+def admin_toggle_user():
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    enabled = data.get("enabled", True)
+    if not email:
+        return jsonify(ok=False, error="Email required"), 400
+    
+    users_data = _load_users()
+    found = False
+    for u in users_data.get("users", []):
+        if u.get("email", "").lower() == email:
+            u["enabled"] = bool(enabled)
+            found = True
+            break
+    
+    if not found:
+        return jsonify(ok=False, error="User not found"), 404
+    
+    _save_users(users_data)
+    
+    # If disabling, invalidate tokens
+    if not enabled:
+        for token, info in list(_student_tokens.items()):
+            if info.get("email", "").lower() == email:
+                del _student_tokens[token]
+    
+    return jsonify(ok=True)
+
+@app.post("/api/admin/registration")
+def admin_toggle_registration():
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    data = request.get_json(silent=True) or {}
+    enabled = data.get("enabled", True)
+    _update_config({"registration_enabled": bool(enabled)})
+    return jsonify(ok=True, registration_enabled=bool(enabled))
 
 # -------------------------
 # Ollama helpers (AI)
@@ -242,6 +811,8 @@ def challenge_score():
 def challenge_submit():
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
+    # Sanitize name to prevent injection
+    name = re.sub(r'[<>&"\'\\]', '', name)[:50]
     try:
         score = int(data.get("score", 0))
     except Exception:
@@ -353,7 +924,7 @@ class Runner:
         self.stop_evt = threading.Event()
         self.started_at = 0.0
 
-    def start(self, code: str):
+    def start(self, code: str, user_dir: Optional[Path] = None):
         if self.proc:
             self.stop()
 
@@ -370,6 +941,9 @@ class Runner:
 
         runner_py = sbox / "runner.py"
         runner_py.write_text(code, encoding="utf-8")
+
+        # Use user_dir as cwd if provided and exists, so relative file paths work
+        cwd = str(user_dir) if (user_dir and user_dir.exists()) else str(sbox)
 
         # Create wrapper script that intercepts input() to send INPUT_TOKEN
         # Escape backslashes in the path for Windows compatibility
@@ -404,7 +978,7 @@ exec(open(r"{runner_py_escaped}", "r", encoding="utf-8").read(), {{}})
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            cwd=str(sbox)
+            cwd=cwd
         )
         self.started_at = time.time()
         self.stop_evt.clear()
@@ -498,9 +1072,15 @@ def on_disconnect():
 @socketio.on("run_code")
 def on_run_code(payload):
     code = (payload or {}).get("code", "")
+    user_token = (payload or {}).get("user_token", "")
+    user_dir = None
+    if user_token:
+        user_info = _student_tokens.get(user_token)
+        if user_info:
+            user_dir = _get_user_dir(user_info["email"])
     r = _get_runner(request.sid)
     try:
-        r.start(code)
+        r.start(code, user_dir=user_dir)
         emit("run_ack", {"ok": True})
     except Exception as e:
         emit("output", {"data": f"[Error starting process] {e}\n"})
@@ -1273,7 +1853,7 @@ def health():
 # -------------------------
 if __name__ == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")
-    port = int(os.environ.get("PORT", "8000"))
+    port = int(os.environ.get("PORT", str(SERVER_PORT)))
     print("Server initialized for threading.")
     socketio.run(app, host=host, port=port, debug=False, allow_unsafe_werkzeug=True)
 

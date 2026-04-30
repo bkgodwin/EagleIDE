@@ -1,5 +1,12 @@
-# Default admin password
+# Default admin credentials
 DEFAULT_ADMIN_PASSWORD = "password"
+ADMIN_EMAIL = "admin@eagleide.local"
+
+# Server port
+SERVER_PORT = 8000
+
+# File storage limit per user
+USER_STORAGE_LIMIT_MB = 250
 
 # Server UI defaults and AI settings
 DEFAULT_CONFIG = {
@@ -26,4 +33,7 @@ DEFAULT_CONFIG = {
     # Page customization settings
     "page_title": "Eagle IDE (Python)",
     "topbar_color": "linear-gradient(90deg,#a5c8f0,#7fb2eb)",
+
+    # Registration toggle
+    "registration_enabled": True,
 }
