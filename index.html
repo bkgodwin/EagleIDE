@@ -1297,7 +1297,9 @@ print("Hello " + name)
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
           body: JSON.stringify({ path: currentOpenFile.path, content: code })
-        }).catch(() => {});
+        }).catch((err) => {
+          appendOut(`[Warning: could not save "${currentOpenFile.name}" before running]\n`);
+        });
       }
       appendOut('[Sending code]\n');
       if (socket) {
@@ -1814,7 +1816,7 @@ print("Hello " + name)
         const row = document.createElement('div');
         row.className = 'file-tree-item' + (currentOpenFile?.path === item.path ? ' active' : '');
         row.style.paddingLeft = (12 + depth * 14) + 'px';
-        row.innerHTML = `<span class="icon">${item.type === 'folder' ? '📂' : '🐍'}</span><span>${escapeHtml(item.name)}</span>`;
+        row.innerHTML = `<span class="icon">${item.type === 'folder' ? '📂' : (item.name.endsWith('.py') ? '🐍' : item.name.endsWith('.csv') ? '📊' : '📄')}</span><span>${escapeHtml(item.name)}</span>`;
         row.addEventListener('click', (e) => {
           e.stopPropagation();
           if (item.type === 'file') openFile(item);

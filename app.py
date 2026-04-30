@@ -164,10 +164,10 @@ def _validate_user_path(user_dir: Path, path_str: str) -> Optional[Path]:
     """Validate and resolve a path within user directory. Returns None if invalid."""
     try:
         p = (user_dir / path_str).resolve()
-        user_dir_resolved = str(user_dir.resolve())
-        p_str = str(p)
-        # Ensure path is within user directory using startswith
-        if p_str != user_dir_resolved and not p_str.startswith(user_dir_resolved + os.sep):
+        user_dir_resolved = user_dir.resolve()
+        # Use os.path.commonpath for robust cross-platform containment check
+        common = os.path.commonpath([str(p), str(user_dir_resolved)])
+        if common != str(user_dir_resolved):
             return None
         return p
     except Exception:
@@ -605,7 +605,7 @@ def admin_reset_password():
     if not email:
         return jsonify(ok=False, error="Email required"), 400
     
-    new_password = secrets.token_urlsafe(10)
+    new_password = secrets.token_urlsafe(16)
     password_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     
     users_data = _load_users()
@@ -655,8 +655,8 @@ def admin_delete_user():
     if user_dir.exists():
         try:
             shutil.rmtree(user_dir)
-        except Exception:
-            print(f"Warning: failed to delete user directory")  # don't expose path in logs
+        except Exception as exc:
+            print(f"Warning: failed to delete user directory for {email}: {type(exc).__name__}")
     
     return jsonify(ok=True)
 
@@ -819,9 +819,9 @@ def challenge_score():
 @app.post("/api/challenge/submit")
 def challenge_submit():
     data = request.get_json(silent=True) or {}
-    name = (data.get("name") or "").strip()
+    name = (data.get("name") or "").strip()[:50]
     # Sanitize name to prevent injection
-    name = re.sub(r'[<>&"\'\\]', '', name)[:50]
+    name = re.sub(r'[<>&"\'\\]', '', name)
     try:
         score = int(data.get("score", 0))
     except Exception:
