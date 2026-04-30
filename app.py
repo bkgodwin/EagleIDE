@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, sys, json, time, uuid, csv, random, threading, subprocess, hmac, re, shutil
+import os, sys, json, time, uuid, csv, random, threading, subprocess, hmac, re, shutil, secrets
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -116,7 +116,7 @@ _reg_rate_limit: dict = defaultdict(list)  # ip -> list of timestamps
 def _sanitize_email_for_path(email: str) -> str:
     """Convert email to safe directory name"""
     safe = email.replace("@", "_at_").replace(".", "_dot_")
-    safe = re.sub(r"[^a-zA-Z0-9_\-]", "", safe)
+    safe = re.sub(r"[^a-zA-Z0-9_-]", "", safe)
     return safe[:64]  # limit length
 
 def _load_users() -> dict:
@@ -164,11 +164,13 @@ def _validate_user_path(user_dir: Path, path_str: str) -> Optional[Path]:
     """Validate and resolve a path within user directory. Returns None if invalid."""
     try:
         p = (user_dir / path_str).resolve()
-        user_dir_resolved = user_dir.resolve()
-        # Ensure path is within user directory
-        p.relative_to(user_dir_resolved)
+        user_dir_resolved = str(user_dir.resolve())
+        p_str = str(p)
+        # Ensure path is within user directory using startswith
+        if p_str != user_dir_resolved and not p_str.startswith(user_dir_resolved + os.sep):
+            return None
         return p
-    except (ValueError, Exception):
+    except Exception:
         return None
 
 # -------------------------
@@ -376,7 +378,11 @@ def files_create():
         target = user_dir / name
     
     # Validate target is within user dir
-    target_validated = _validate_user_path(user_dir, str(target.relative_to(user_dir.resolve())) if target.is_relative_to(user_dir.resolve()) else name)
+    try:
+        rel = target.relative_to(user_dir.resolve())
+        target_validated = _validate_user_path(user_dir, str(rel))
+    except ValueError:
+        target_validated = _validate_user_path(user_dir, name)
     if not target_validated:
         return jsonify(ok=False, error="Invalid path"), 400
     
@@ -599,7 +605,6 @@ def admin_reset_password():
     if not email:
         return jsonify(ok=False, error="Email required"), 400
     
-    import secrets
     new_password = secrets.token_urlsafe(10)
     password_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     
@@ -650,8 +655,8 @@ def admin_delete_user():
     if user_dir.exists():
         try:
             shutil.rmtree(user_dir)
-        except Exception as e:
-            print(f"Warning: failed to delete user dir {user_dir}: {e}")
+        except Exception:
+            print(f"Warning: failed to delete user directory")  # don't expose path in logs
     
     return jsonify(ok=True)
 
