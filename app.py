@@ -64,7 +64,7 @@ except Exception:
 app = Flask(__name__, static_folder=None)
 socketio = SocketIO(
     app,
-    async_mode="threading",             # LXC/containers friendly
+    async_mode="gevent",             # LXC/containers friendly
     cors_allowed_origins="*",
     logger=False,
     engineio_logger=False
