@@ -34,12 +34,13 @@ os.makedirs(USER_FILES_DIR, exist_ok=True)
 # Defaults from config.py
 # -------------------------
 try:
-    from config import DEFAULT_CONFIG, DEFAULT_ADMIN_PASSWORD, ADMIN_EMAIL, SERVER_PORT, USER_STORAGE_LIMIT_MB
+    from config import DEFAULT_CONFIG, DEFAULT_ADMIN_PASSWORD, ADMIN_EMAIL, SERVER_PORT, USER_STORAGE_LIMIT_MB, DEBUG_MODE
 except Exception:
     DEFAULT_ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "password")
     ADMIN_EMAIL = "admin@eagleide.local"
     SERVER_PORT = 8000
     USER_STORAGE_LIMIT_MB = 250
+    DEBUG_MODE = False
     DEFAULT_CONFIG = {
         "notes_html": "<h2>Welcome</h2><p>Edit me in Admin.</p>",
         "lesson_url": "https://publish.obsidian.md/mrgodwinsclassroom/Coding/Coding+1/2.+Python+Basics/1.+What+Is+Python",
@@ -68,6 +69,11 @@ socketio = SocketIO(
     logger=False,
     engineio_logger=False
 )
+
+# Suppress noisy werkzeug HTTP request logs when not in debug mode
+if not DEBUG_MODE:
+    import logging as _logging
+    _logging.getLogger('werkzeug').setLevel(_logging.ERROR)
 
 # -------------------------
 # Config load/save
@@ -566,6 +572,41 @@ def files_upload():
         return jsonify(ok=True, path=str(target_validated.relative_to(user_dir)))
     except Exception:
         return jsonify(ok=False, error="Could not save uploaded file"), 500
+
+@app.get("/api/files/download")
+def files_download():
+    """Download a user file as an attachment"""
+    user = _require_user(request)
+    if not user:
+        return jsonify(ok=False, error="Authentication required"), 401
+
+    path_str = request.args.get("path", "")
+    if not path_str:
+        return jsonify(ok=False, error="Path required"), 400
+
+    user_dir = _get_user_dir(user["email"])
+    target = _validate_user_path(user_dir, path_str)
+    if not target or not target.exists() or not target.is_file():
+        return jsonify(ok=False, error="File not found"), 404
+
+    if target.suffix.lower() not in ALLOWED_EXTENSIONS:
+        return jsonify(ok=False, error="File type not allowed"), 400
+
+    ext = target.suffix.lower()
+    mimetypes_map = {".py": "text/x-python", ".txt": "text/plain", ".csv": "text/csv"}
+    mimetype = mimetypes_map.get(ext, "text/plain")
+
+    try:
+        data = target.read_bytes()
+    except Exception:
+        return jsonify(ok=False, error="Could not read file"), 500
+
+    from flask import Response
+    return Response(
+        data,
+        mimetype=mimetype,
+        headers={"Content-Disposition": f'attachment; filename="{target.name}"'}
+    )
 
 @app.get("/api/files/storage")
 def files_storage():
@@ -1148,14 +1189,23 @@ def on_disconnect():
 def on_run_code(payload):
     code = (payload or {}).get("code", "")
     user_token = (payload or {}).get("user_token", "")
-    user_dir = None
+    file_path = (payload or {}).get("file_path", "")  # relative path of the open file
+    run_dir = None
     if user_token:
         user_info = _student_tokens.get(user_token)
         if user_info:
-            user_dir = _get_user_dir(user_info["email"])
+            user_root_dir = _get_user_dir(user_info["email"])
+            # Use the directory containing the open file as CWD so relative
+            # file operations in user code work from that folder.
+            if file_path:
+                file_abs = _validate_user_path(user_root_dir, file_path)
+                if file_abs and file_abs.exists():
+                    run_dir = file_abs.parent
+            if not run_dir:
+                run_dir = user_root_dir
     r = _get_runner(request.sid)
     try:
-        r.start(code, user_dir=user_dir)
+        r.start(code, user_dir=run_dir)
         emit("run_ack", {"ok": True})
     except Exception as e:
         emit("output", {"data": f"[Error starting process] {e}\n"})
