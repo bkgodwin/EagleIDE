@@ -81,7 +81,7 @@
     #rightStackPanel .content{ overflow:auto; }
     #rightColumn{ overflow:hidden; }
 
-    .CodeMirror{ height:100%; background:rgba(30,30,30,0.82); color:var(--text-light); font-size: var(--cm-font-size); line-height:1.4 }
+    .CodeMirror{ height:100%; background:rgba(30,30,30,0.60); color:var(--text-light); font-size: var(--cm-font-size); line-height:1.4 }
     .CodeMirror pre{ tab-size: var(--indent-tabs); -moz-tab-size: var(--indent-tabs) }
     .CodeMirror pre.CodeMirror-line,
     .CodeMirror pre.CodeMirror-line-like{
@@ -354,6 +354,7 @@
           <button id="dropAdminLoginBtn">Admin Login</button>
         </div>
       </div>
+      <button class="btn secondary" id="streamingToggleBtn" title="Toggle code streaming to students" style="display:none;">📡 Streaming: On</button>
       <button class="btn admin" id="adminSettingsBtn" title="Admin Settings" style="display:none;">⚙</button>
     </div>
   </header>
@@ -1142,6 +1143,16 @@ print("Hello " + name)
     const SYSTEM_MESSAGE_PATTERN = /^\[.*?\]/;
     const outputEl = document.getElementById('output');
     const stdinEl = document.getElementById('stdin');
+
+    // --- File auth helpers ---
+    function fileAuthHeaders() {
+      if (USER_TOKEN) return { 'X-User-Token': USER_TOKEN };
+      if (ADMIN_TOKEN) return { 'X-Admin-Token': ADMIN_TOKEN };
+      return {};
+    }
+    function fileJsonHeaders() {
+      return { 'Content-Type': 'application/json', ...fileAuthHeaders() };
+    }
     
     const appendOut = (s, isUserInput = false) => { 
       const isSysMsg = SYSTEM_MESSAGE_PATTERN.test(s);
@@ -1280,7 +1291,14 @@ print("Hello " + name)
             appendOut(s);
           }
         });
-        socket.on('finished', () => appendOut('[Process finished]\n'));
+        socket.on('finished', () => {
+          appendOut('[Process finished]\n');
+          // Refresh file browser so files created by the program appear immediately
+          const sidebar = document.getElementById('fileSidebar');
+          if ((USER_TOKEN || ADMIN_TOKEN) && sidebar && sidebar.style.display !== 'none') {
+            loadFileTree();
+          }
+        });
         
         // Listen for teacher code updates
         socket.on('teacher_code', (msg) => {
@@ -1316,14 +1334,14 @@ print("Hello " + name)
       outputEl.textContent = '';
       clearErrorHighlights();
       // Save current file before running (saveCurrentFile defined in file browser section)
-      if (currentOpenFile && USER_TOKEN) {
+      if (currentOpenFile && (USER_TOKEN || ADMIN_TOKEN)) {
         saveCurrentFile().catch((err) => {
           appendOut(`[Warning: could not save "${currentOpenFile.name}" before running: ${err}]\n`);
         });
       }
       appendOut('[Sending code]\n');
       if (socket) {
-        socket.emit('run_code', { code: editor.getValue(), user_token: USER_TOKEN || '', file_path: currentOpenFile ? currentOpenFile.path : '' });
+        socket.emit('run_code', { code: editor.getValue(), user_token: USER_TOKEN || '', admin_token: ADMIN_TOKEN || '', file_path: currentOpenFile ? currentOpenFile.path : '' });
       } else {
         appendOut('[Error: Cannot run code - Socket.IO not available]\n');
       }
@@ -1495,6 +1513,10 @@ print("Hello " + name)
         userChip.style.display = '';
         userChip.textContent = currentUser.name || currentUser.email;
         toggleFileSidebarBtn.style.display = '';
+      } else if (ADMIN_TOKEN) {
+        // Admin also gets access to the file browser
+        toggleFileSidebarBtn.style.display = '';
+        userChip.style.display = 'none';
       } else {
         userChip.style.display = 'none';
         toggleFileSidebarBtn.style.display = 'none';
@@ -1531,6 +1553,9 @@ print("Hello " + name)
           document.body.classList.remove('admin-mode');
           setEditable(false);
           document.getElementById('adminSettingsBtn').style.display = 'none';
+          document.getElementById('streamingToggleBtn').style.display = 'none';
+          currentOpenFile = null;
+          hideFileBrowser();
           stopTeacherBroadcast();
           // Clear editor for admin logout too
           editor.setValue('');
@@ -1607,6 +1632,9 @@ print("Hello " + name)
         document.body.classList.add('admin-mode');
         closeLoginModal();
         document.getElementById('adminSettingsBtn').style.display = '';
+        document.getElementById('streamingToggleBtn').style.display = '';
+        document.getElementById('streamingToggleBtn').textContent = '📡 Streaming: On';
+        document.getElementById('streamingToggleBtn').classList.remove('stop');
         startTeacherBroadcast();
         updateAuthUI();
       } else { errEl.textContent = j.error || 'Invalid credentials'; }
@@ -1662,6 +1690,22 @@ print("Hello " + name)
         teacherBroadcastInterval = null;
       }
     }
+
+    // Streaming toggle button handler
+    document.getElementById('streamingToggleBtn').addEventListener('click', () => {
+      const btn = document.getElementById('streamingToggleBtn');
+      if (teacherBroadcastInterval) {
+        // Streaming is on — turn it off
+        stopTeacherBroadcast();
+        btn.textContent = '📡 Streaming: Off';
+        btn.classList.add('stop');
+      } else {
+        // Streaming is off — turn it on
+        startTeacherBroadcast();
+        btn.textContent = '📡 Streaming: On';
+        btn.classList.remove('stop');
+      }
+    });
     
     // Start broadcasting if already logged in (on page refresh)
     if (ADMIN_TOKEN) {
@@ -1878,8 +1922,8 @@ print("Hello " + name)
     }
 
     async function loadFileTree() {
-      if (!USER_TOKEN) return;
-      const res = await fetch('/api/files/list', { headers: { 'X-User-Token': USER_TOKEN } });
+      if (!USER_TOKEN && !ADMIN_TOKEN) return;
+      const res = await fetch('/api/files/list', { headers: fileAuthHeaders() });
       const j = await res.json().catch(() => ({}));
       const treeEl = document.getElementById('fileTree');
       treeEl.innerHTML = '';
@@ -2024,10 +2068,10 @@ print("Hello " + name)
     }
 
     async function moveItem(srcPath, destFolderPath) {
-      if (!USER_TOKEN) return;
+      if (!USER_TOKEN && !ADMIN_TOKEN) return;
       const res = await fetch('/api/files/move', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
+        headers: fileJsonHeaders(),
         body: JSON.stringify({ src: srcPath, dest: destFolderPath })
       });
       const j = await res.json().catch(() => ({}));
@@ -2042,12 +2086,12 @@ print("Hello " + name)
     // Save the currently open file (if any).
     // Returns true on success (or if nothing to save), false on error.
     async function saveCurrentFile() {
-      if (!currentOpenFile || !USER_TOKEN) return true;
+      if (!currentOpenFile || (!USER_TOKEN && !ADMIN_TOKEN)) return true;
       const code = editor.getValue();
       try {
         const res = await fetch('/api/files/write', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
+          headers: fileJsonHeaders(),
           body: JSON.stringify({ path: currentOpenFile.path, content: code })
         });
         if (!res.ok) return false;
@@ -2067,7 +2111,7 @@ print("Hello " + name)
     // Autosave: save current file 1.5 s after the last edit
     let _autosaveTimer = null;
     function scheduleAutosave() {
-      if (!currentOpenFile || !USER_TOKEN) return;
+      if (!currentOpenFile || (!USER_TOKEN && !ADMIN_TOKEN)) return;
       if (_autosaveTimer) clearTimeout(_autosaveTimer);
       _autosaveTimer = setTimeout(async () => {
         _autosaveTimer = null;
@@ -2090,10 +2134,10 @@ print("Hello " + name)
     }
 
     async function openFile(item) {
-      if (!USER_TOKEN) return;
+      if (!USER_TOKEN && !ADMIN_TOKEN) return;
       // Save the currently open file before switching
       await saveCurrentFile();
-      const res = await fetch('/api/files/read?path=' + encodeURIComponent(item.path), { headers: { 'X-User-Token': USER_TOKEN } });
+      const res = await fetch('/api/files/read?path=' + encodeURIComponent(item.path), { headers: fileAuthHeaders() });
       const j = await res.json().catch(() => ({}));
       if (!j.ok) { alert(j.error || 'Cannot open file'); return; }
       currentOpenFile = { path: item.path, name: item.name };
@@ -2125,7 +2169,7 @@ print("Hello " + name)
           a.href = '/api/files/download?path=' + encodeURIComponent(item.path);
           a.setAttribute('download', item.name);
           // Pass auth token via a temporary fetch/blob approach
-          fetch(a.href, { headers: { 'X-User-Token': USER_TOKEN } })
+          fetch(a.href, { headers: fileAuthHeaders() })
             .then(r => r.ok ? r.blob() : Promise.reject(r.statusText))
             .then(blob => {
               const url = URL.createObjectURL(blob);
@@ -2160,7 +2204,7 @@ print("Hello " + name)
       if (!newName || newName === item.name) return;
       const res = await fetch('/api/files/rename', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
+        headers: fileJsonHeaders(),
         body: JSON.stringify({ old_path: item.path, new_name: newName })
       });
       const j = await res.json().catch(() => ({}));
@@ -2174,7 +2218,7 @@ print("Hello " + name)
       if (!confirm(`Delete "${item.name}"?`)) return;
       const res = await fetch('/api/files/delete', {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
+        headers: fileJsonHeaders(),
         body: JSON.stringify({ path: item.path })
       });
       const j = await res.json().catch(() => ({}));
@@ -2193,7 +2237,7 @@ print("Hello " + name)
       if (!name) return;
       const res = await fetch('/api/files/create', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
+        headers: fileJsonHeaders(),
         body: JSON.stringify({ name, type: 'file', parent: _currentFolderPath })
       });
       const j = await res.json().catch(() => ({}));
@@ -2206,7 +2250,7 @@ print("Hello " + name)
       if (!name) return;
       const res = await fetch('/api/files/create', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
+        headers: fileJsonHeaders(),
         body: JSON.stringify({ name, type: 'folder', parent: _currentFolderPath })
       });
       const j = await res.json().catch(() => ({}));
@@ -2226,7 +2270,7 @@ print("Hello " + name)
       if (_currentFolderPath) formData.append('parent', _currentFolderPath);
       const res = await fetch('/api/files/upload', {
         method: 'POST',
-        headers: { 'X-User-Token': USER_TOKEN },
+        headers: fileAuthHeaders(),
         body: formData
       });
       const j = await res.json().catch(() => ({}));
