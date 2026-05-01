@@ -1144,7 +1144,7 @@ exec(open(r"{runner_py_escaped}", "r", encoding="utf-8").read(), {{}})
                     except Exception:
                         pass
                     try:
-                        socketio.emit("output", {"data": "\n[Output limit exceeded (500 KB) — process killed to protect your browser]\n"}, to=self.sid)
+                        socketio.emit("output", {"data": "\n[Output limit exceeded (500 KB) -- process killed to protect your browser]\n"}, to=self.sid)
                     except Exception:
                         pass
                     return
