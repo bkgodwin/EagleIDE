@@ -1116,9 +1116,9 @@ _real_open = builtins.open
 def _safe_open(file, mode="r", *args, **kwargs):
     try:
         p = _os.path.realpath(str(file))
-        if not (p.startswith(_ALLOWED_DIR + _os.sep) or p == _ALLOWED_DIR):
+        if _os.path.commonpath([p, _ALLOWED_DIR]) != _ALLOWED_DIR:
             raise PermissionError(f"Access to {{file!r}} is not allowed in this environment")
-    except TypeError:
+    except (TypeError, ValueError):
         pass  # non-string file argument (e.g. integer fd) — let the OS decide
     return _real_open(file, mode, *args, **kwargs)
 builtins.open = _safe_open
@@ -1196,7 +1196,7 @@ exec(_user_code, {{}})
         BATCH_SECS = 0.05  # 50 ms
 
         def reader():
-            buf: list = []
+            buf: list[str] = []
             buf_size = 0
             last_flush = time.time()
 
@@ -1230,7 +1230,7 @@ exec(_user_code, {{}})
                     return
                 decoded = b.decode("utf-8", errors="replace")
                 buf.append(decoded)
-                buf_size += len(b)
+                buf_size += len(decoded)  # track decoded character count for batch threshold
                 now = time.time()
                 if buf_size >= BATCH_BYTES or (now - last_flush) >= BATCH_SECS:
                     flush()
