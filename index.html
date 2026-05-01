@@ -1317,8 +1317,8 @@ print("Hello " + name)
       clearErrorHighlights();
       // Save current file before running (saveCurrentFile defined in file browser section)
       if (currentOpenFile && USER_TOKEN) {
-        saveCurrentFile().catch(() => {
-          appendOut(`[Warning: could not save "${currentOpenFile.name}" before running]\n`);
+        saveCurrentFile().catch((err) => {
+          appendOut(`[Warning: could not save "${currentOpenFile.name}" before running: ${err}]\n`);
         });
       }
       appendOut('[Sending code]\n');
@@ -2050,6 +2050,7 @@ print("Hello " + name)
           headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
           body: JSON.stringify({ path: currentOpenFile.path, content: code })
         });
+        if (!res.ok) return false;
         const j = await res.json().catch(() => ({}));
         return !!j.ok;
       } catch (e) {
@@ -2070,11 +2071,17 @@ print("Hello " + name)
       if (_autosaveTimer) clearTimeout(_autosaveTimer);
       _autosaveTimer = setTimeout(async () => {
         _autosaveTimer = null;
-        await saveCurrentFile();
+        const ok = await saveCurrentFile().catch((err) => {
+          console.warn('Autosave failed:', err);
+          return false;
+        });
+        if (!ok) console.warn('Autosave: server returned failure for', currentOpenFile?.name);
       }, 1500);
     }
 
-    // Hook autosave into CodeMirror's change event (after editor is initialised)
+    // Hook autosave into CodeMirror's change event.
+    // initEditor() runs in an earlier <script> block and sets window.eagleEditor synchronously,
+    // so it is always defined by the time this block executes.
     if (window.eagleEditor) {
       window.eagleEditor.on('change', scheduleAutosave);
     } else {

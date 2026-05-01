@@ -592,11 +592,20 @@ def files_download():
     if target.suffix.lower() not in ALLOWED_EXTENSIONS:
         return jsonify(ok=False, error="File type not allowed"), 400
 
-    return send_file(
-        str(target),
-        as_attachment=True,
-        download_name=target.name,
-        mimetype="text/plain"
+    ext = target.suffix.lower()
+    mimetypes_map = {".py": "text/x-python", ".txt": "text/plain", ".csv": "text/csv"}
+    mimetype = mimetypes_map.get(ext, "text/plain")
+
+    try:
+        data = target.read_bytes()
+    except Exception:
+        return jsonify(ok=False, error="Could not read file"), 500
+
+    from flask import Response
+    return Response(
+        data,
+        mimetype=mimetype,
+        headers={"Content-Disposition": f'attachment; filename="{target.name}"'}
     )
 
 @app.get("/api/files/storage")
@@ -1185,15 +1194,15 @@ def on_run_code(payload):
     if user_token:
         user_info = _student_tokens.get(user_token)
         if user_info:
-            user_dir = _get_user_dir(user_info["email"])
+            user_root_dir = _get_user_dir(user_info["email"])
             # Use the directory containing the open file as CWD so relative
             # file operations in user code work from that folder.
             if file_path:
-                file_abs = _validate_user_path(user_dir, file_path)
+                file_abs = _validate_user_path(user_root_dir, file_path)
                 if file_abs and file_abs.exists():
                     run_dir = file_abs.parent
             if not run_dir:
-                run_dir = user_dir
+                run_dir = user_root_dir
     r = _get_runner(request.sid)
     try:
         r.start(code, user_dir=run_dir)
