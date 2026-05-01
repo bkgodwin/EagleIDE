@@ -58,7 +58,7 @@
       --theme-cm-bg:      rgba(30,30,30,0.60);
       --theme-splitter-a: #2b2b2b;
       --theme-splitter-b: #1a1a1a;
-      --theme-bg-image:   url(/api/background);
+      --theme-bg-image:   url(/api/background_dark);
 
       --splitter-size: 8px;
       --vsplitter-size: 10px;
@@ -754,10 +754,13 @@
   <script>
     function initEditor() {
       const ta = document.getElementById('editor');
+      // Determine saved theme at startup
+      let _savedCmTheme = 'monokai';
+      try { _savedCmTheme = localStorage.getItem('ide-theme') === 'light' ? 'default' : 'monokai'; } catch {}
       if (window.CodeMirror) {
         const cm = CodeMirror.fromTextArea(ta, {
           mode: "python",
-          theme: "monokai",
+          theme: _savedCmTheme,
           lineNumbers: true,
           indentUnit: 4,
           tabSize: 4,
@@ -819,7 +822,7 @@
       
       teacherEditor = CodeMirror.fromTextArea(textarea, {
         mode: "python",
-        theme: "monokai",
+        theme: (function(){ try { return localStorage.getItem('ide-theme') === 'light' ? 'default' : 'monokai'; } catch { return 'monokai'; } })(),
         lineNumbers: true,
         readOnly: true,
         indentUnit: 4,
@@ -1453,10 +1456,13 @@ print("Hello " + name)
           document.documentElement.style.setProperty('--theme-bg-image', 'url(/api/background_dark)');
           btn.textContent = '🌙 Dark';
         }
-        // Refresh CodeMirror so it re-renders with the new background
+        // Clear any inline backgroundImage so the CSS variable takes effect
+        document.body.style.backgroundImage = '';
+        // Switch CodeMirror theme to match light/dark mode
+        const cmTheme = isLight ? 'default' : 'monokai';
         try {
           document.querySelectorAll('.CodeMirror').forEach(w => {
-            if (w.CodeMirror) w.CodeMirror.refresh();
+            if (w.CodeMirror) { w.CodeMirror.setOption('theme', cmTheme); w.CodeMirror.refresh(); }
           });
         } catch {}
         try { localStorage.setItem(THEME_KEY, isLight ? 'light' : 'dark'); } catch {}
@@ -1497,10 +1503,6 @@ print("Hello " + name)
       if (j?.ok) { currentConfig = j.data; applyConfig(currentConfig); }
     }
 
-    // Load background image if available (single request, graceful fallback on 404)
-    (function loadBackground() {
-      document.body.style.backgroundImage = 'url(/api/background)';
-    })();
     function applyConfig(cfg){
       if (!cfg) return;
       document.getElementById('notesView').innerHTML = cfg.notes_html || '';
@@ -1700,7 +1702,7 @@ print("Hello " + name)
           currentUser = j.user;
           closeLoginModal();
           updateAuthUI();
-          loadFileTree();
+          showFileBrowser();
         } else { errEl.textContent = j.error || 'Registration failed'; }
       } else {
         const res = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
@@ -1710,7 +1712,7 @@ print("Hello " + name)
           currentUser = j.user;
           closeLoginModal();
           updateAuthUI();
-          loadFileTree();
+          showFileBrowser();
         } else { errEl.textContent = j.error || 'Login failed'; }
       }
     });
@@ -1735,6 +1737,7 @@ print("Hello " + name)
         document.getElementById('streamingToggleBtn').classList.remove('stop');
         startTeacherBroadcast();
         updateAuthUI();
+        showFileBrowser();
       } else { errEl.textContent = j.error || 'Invalid credentials'; }
     });
     document.getElementById('adminPasswordInput').addEventListener('keypress', (e) => {
