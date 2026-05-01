@@ -578,6 +578,66 @@ def files_storage():
     limit = USER_STORAGE_LIMIT_MB * 1024 * 1024
     return jsonify(ok=True, used_bytes=used, limit_bytes=limit)
 
+@app.post("/api/files/move")
+def files_move():
+    """Move a file or folder to a new parent directory"""
+    user = _require_user(request)
+    if not user:
+        return jsonify(ok=False, error="Authentication required"), 401
+
+    data = request.get_json(silent=True) or {}
+    src_path = (data.get("src") or "").strip()
+    dest_folder = (data.get("dest") or "").strip()  # destination folder path ("" = root)
+
+    if not src_path:
+        return jsonify(ok=False, error="src path required"), 400
+
+    user_dir = _get_user_dir(user["email"])
+    src = _validate_user_path(user_dir, src_path)
+    if not src or not src.exists():
+        return jsonify(ok=False, error="Source not found"), 404
+
+    if dest_folder:
+        dest_dir = _validate_user_path(user_dir, dest_folder)
+        if not dest_dir or not dest_dir.is_dir():
+            return jsonify(ok=False, error="Destination folder not found"), 404
+    else:
+        dest_dir = user_dir
+
+    # Prevent moving into itself or a child
+    try:
+        dest_dir.resolve().relative_to(src.resolve())
+        return jsonify(ok=False, error="Cannot move a folder into itself"), 400
+    except ValueError:
+        pass
+
+    new_path = dest_dir / src.name
+    new_validated = _validate_user_path(user_dir, str(new_path.relative_to(user_dir.resolve())))
+    if not new_validated:
+        return jsonify(ok=False, error="Invalid destination path"), 400
+
+    if new_validated.exists():
+        return jsonify(ok=False, error="A file or folder with that name already exists in the destination"), 409
+
+    try:
+        src.rename(new_validated)
+        return jsonify(ok=True, new_path=str(new_validated.relative_to(user_dir)))
+    except Exception:
+        return jsonify(ok=False, error="Could not move item"), 500
+
+# -------------------------
+# Background image
+# -------------------------
+@app.get("/api/background")
+def serve_background():
+    """Serve the background image if it exists"""
+    for ext in ("png", "jpg", "jpeg", "webp", "gif"):
+        img = BASE_DIR / f"background.{ext}"
+        if img.exists():
+            from flask import send_file
+            return send_file(str(img))
+    return jsonify(ok=False, error="No background image found"), 404
+
 # -------------------------
 # Admin user management
 # -------------------------
