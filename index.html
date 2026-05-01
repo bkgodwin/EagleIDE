@@ -8,6 +8,10 @@
   <!-- CodeMirror 5 -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/monokai.min.css">
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
@@ -43,7 +47,7 @@
       --indent-tabs: 4;
     }
     *{box-sizing:border-box}
-    body{ margin:0; background:var(--panel-dark); color:var(--text-light); font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Arial }
+    body{ margin:0; background:var(--panel-dark); color:var(--text-light); font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Arial }
     header.topbar{ display:flex; align-items:center; justify-content:space-between; padding:10px 16px; background:linear-gradient(90deg,var(--columbia-blue),#7fb2eb); color:#0b2540; font-weight:700; letter-spacing:.3px }
     header .brand{ display:flex; gap:12px; align-items:center }
     header .brand .badge{ background:var(--eagle-red); color:#fff; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:800; letter-spacing:.5px; text-transform:uppercase }
@@ -56,7 +60,8 @@
     .secondary{ background:#2b2b2b }
     .admin{ background:#315 }
 
-    .outer{ display:grid; grid-template-columns: var(--left-width) var(--vsplitter-size) 1fr; grid-template-rows: 1fr; gap:10px; padding:10px; height:calc(100vh - 60px); min-height:400px; overflow:hidden; }
+    .outer{ display:grid; grid-template-columns: var(--sidebar-width, 0px) var(--left-width) var(--vsplitter-size) 1fr; grid-template-rows: 1fr; gap:10px; padding:10px; height:calc(100vh - 60px); min-height:400px; overflow:hidden; }
+    .outer.no-sidebar{ grid-template-columns: var(--left-width) var(--vsplitter-size) 1fr }
     .panel{ background:var(--bg-dark); border:1px solid #333; border-radius:14px; overflow:hidden; display:flex; flex-direction:column; min-height:0; }
     .panel header{ background:#121212; color:var(--columbia-blue); padding:8px 12px; border-bottom:1px solid #2b2b2b; display:flex; align-items:center; justify-content:space-between }
     .panel header h3{ margin:0; font-size:14px; color:var(--columbia-blue) }
@@ -165,6 +170,47 @@
     .ai-grade-btn{ margin-left:8px; padding:4px 10px; background:#4caf50; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:11px; font-weight:600; }
     .ai-grade-btn:hover{ background:#45a049; }
     .ai-grade-btn:disabled{ background:#666; cursor:not-allowed; }
+    /* File Sidebar */
+    .file-sidebar{ background:var(--bg-dark); border:1px solid #333; border-radius:14px; overflow:hidden; display:flex; flex-direction:column; min-height:0; grid-column:1; grid-row:1; }
+    .file-sidebar-header{ background:#121212; color:var(--columbia-blue); padding:8px 12px; border-bottom:1px solid #2b2b2b; display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
+    .file-tree{ flex:1; overflow:auto; padding:8px 0; font-size:13px; }
+    .file-tree-item{ display:flex; align-items:center; gap:6px; padding:4px 12px; cursor:pointer; user-select:none; white-space:nowrap; }
+    .file-tree-item:hover{ background:#1e1e1e; }
+    .file-tree-item.active{ background:#1e2a3a; color:var(--columbia-blue); }
+    .file-tree-item .icon{ font-size:14px; flex-shrink:0; }
+    .file-tree-children{ padding-left:16px; }
+    .file-sidebar-actions{ padding:8px; border-top:1px solid #2b2b2b; display:flex; gap:6px; flex-wrap:wrap; }
+
+    /* Guest badge */
+    .guest-badge{ background:#2b2b2b; color:#aaa; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:600; }
+    .user-chip{ background:#1a3a5c; color:var(--columbia-blue); padding:4px 10px; border-radius:999px; font-size:12px; font-weight:600; }
+
+    /* Login dropdown */
+    .login-dropdown-wrap{ position:relative; }
+    .login-dropdown{ position:absolute; right:0; top:calc(100% + 6px); background:#1e1e1e; border:1px solid #333; border-radius:10px; min-width:160px; box-shadow:0 8px 32px rgba(0,0,0,.5); z-index:9999; padding:6px 0; display:none; }
+    .login-dropdown.open{ display:block; }
+    .login-dropdown button{ width:100%; background:none; border:0; color:#ddd; text-align:left; padding:8px 16px; cursor:pointer; font-size:13px; }
+    .login-dropdown button:hover{ background:#2b2b2b; }
+
+    /* Login modal tabs */
+    .login-tabs{ display:flex; border-bottom:1px solid #2b2b2b; margin-bottom:16px; }
+    .login-tab{ flex:1; padding:8px; background:none; border:0; border-bottom:3px solid transparent; color:#aaa; cursor:pointer; font-weight:600; font-size:14px; }
+    .login-tab.active{ color:var(--columbia-blue); border-bottom-color:var(--columbia-blue); }
+    .login-pane{ display:none; }
+    .login-pane.active{ display:block; }
+
+    /* Users table in admin settings */
+    .users-table{ width:100%; border-collapse:collapse; font-size:13px; margin-top:8px; }
+    .users-table th, .users-table td{ border-bottom:1px solid #2b2b2b; padding:6px 8px; text-align:left; }
+    .users-table th{ color:var(--columbia-blue); }
+    .users-table .disabled-row{ opacity:.5; }
+
+    /* Context menu */
+    .ctx-menu{ position:fixed; background:#1e1e1e; border:1px solid #444; border-radius:8px; padding:4px 0; min-width:140px; z-index:9999; box-shadow:0 4px 20px rgba(0,0,0,.5); }
+    .ctx-menu button{ width:100%; background:none; border:0; color:#ddd; text-align:left; padding:6px 14px; cursor:pointer; font-size:13px; }
+    .ctx-menu button:hover{ background:#2b2b2b; }
+    .ctx-menu .danger{ color:#ef5350; }
+
     .modal{ position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.8); display:flex; align-items:center; justify-content:center; z-index:10000; }
     .modal-content{ background:var(--bg-dark); border:1px solid #333; border-radius:12px; padding:20px; max-width:500px; width:90%; max-height:90vh; overflow:auto; }
     .modal-content h3{ margin-top:0; color:var(--columbia-blue); }
@@ -275,14 +321,39 @@
       <button class="btn secondary" id="guidesBtn" title="Show/Hide indent guides">Guides: On</button>
       <button class="btn secondary" id="autocompleteBtn" title="Toggle autocomplete">Autocomplete: On</button>
       <button class="btn secondary" id="toggleSidebarBtn" title="Toggle right sidebar">Hide Sidebar ◀</button>
-      <button class="btn admin" id="adminBtn" title="Enter Admin Mode">Admin</button>
+      <span class="guest-badge" id="guestBadge">Guest</span>
+      <span class="user-chip" id="userChip" style="display:none;"></span>
+      <button class="btn secondary" id="toggleFileSidebarBtn" title="Toggle file browser" style="display:none;">📁 Files</button>
+      <div class="login-dropdown-wrap">
+        <button class="btn admin" id="loginBtn" title="Login">Login</button>
+        <div class="login-dropdown" id="loginDropdown">
+          <button id="dropStudentLoginBtn">Student Login</button>
+          <button id="dropAdminLoginBtn">Admin Login</button>
+          <button id="dropLogoutBtn" style="display:none;">Logout</button>
+        </div>
+      </div>
       <button class="btn admin" id="adminSettingsBtn" title="Admin Settings" style="display:none;">⚙</button>
     </div>
   </header>
 
-  <div class="outer" id="outer">
+  <div class="outer no-sidebar" id="outer">
+    <!-- File Browser Sidebar (hidden by default) -->
+    <aside class="file-sidebar" id="fileSidebar" style="display:none;">
+      <div class="file-sidebar-header">
+        <span>📁 My Files</span>
+        <button class="btn secondary" id="closeSidebarBtn" style="padding:2px 8px; font-size:12px;">✕</button>
+      </div>
+      <div class="file-tree" id="fileTree"></div>
+      <div class="file-sidebar-actions">
+        <button class="btn secondary" id="newFileBtn" style="font-size:11px; padding:4px 8px;">+ File</button>
+        <button class="btn secondary" id="newFolderBtn" style="font-size:11px; padding:4px 8px;">+ Folder</button>
+        <button class="btn secondary" id="uploadFileBtn" style="font-size:11px; padding:4px 8px;">⬆ Upload</button>
+        <input type="file" id="sidebarFileInput" accept=".py,.txt,.csv" style="display:none;">
+        <button class="btn secondary" id="refreshFilesBtn" style="font-size:11px; padding:4px 8px;">↻</button>
+      </div>
+    </aside>
     <!-- Left: Editor -->
-    <section class="panel" id="editorPanel" style="grid-column:1 / 2; grid-row:1 / 2;">
+    <section class="panel" id="editorPanel" style="grid-column:2 / 3; grid-row:1 / 2;">
       <header aria-label="Code editor with Python syntax highlighting">
         <h3>Editor:</h3>
         <button class="btn secondary" id="clearErrorsBtn" style="display:none; font-size:12px; padding:4px 8px;">Clear Error Highlights</button>
@@ -291,10 +362,10 @@
     </section>
 
     <!-- Vertical splitter -->
-    <div class="hsplitter" id="hsplitter" role="separator" aria-orientation="vertical" title="Drag to resize"></div>
+    <div class="hsplitter" id="hsplitter" role="separator" aria-orientation="vertical" title="Drag to resize" style="grid-column:3 / 4; grid-row:1 / 2;"></div>
 
     <!-- Right column: Shell + Tabs -->
-    <div id="rightColumn" style="grid-column:3 / 4; grid-row:1 / 2;">
+    <div id="rightColumn" style="grid-column:4 / 5; grid-row:1 / 2;">
       <div class="rightstack" id="rightstack">
         <!-- Shell -->
         <section class="panel" id="shellPanel" style="grid-row:1 / 2; grid-column:1;">
@@ -487,15 +558,46 @@
     </div>
   </div>
 
-  <!-- Admin Password Modal -->
-  <div id="adminPasswordModal" class="modal" style="display:none;">
-    <div class="modal-content">
-      <h3>Admin Login</h3>
-      <label for="adminPasswordInput">Password:</label>
-      <input type="password" id="adminPasswordInput" placeholder="Enter admin password">
-      <div class="modal-actions">
-        <button class="btn secondary" id="adminCancelBtn">Cancel</button>
-        <button class="btn run" id="adminLoginBtn">Login</button>
+  <!-- Unified Login Modal -->
+  <div id="loginModal" class="modal" style="display:none;">
+    <div class="modal-content" style="max-width:420px;">
+      <h3 id="loginModalTitle">Login</h3>
+      <div class="login-tabs">
+        <button class="login-tab active" id="tabStudentBtn" onclick="switchLoginTab('student')">Student</button>
+        <button class="login-tab" id="tabAdminBtn" onclick="switchLoginTab('admin')">Admin</button>
+      </div>
+
+      <!-- Student pane -->
+      <div class="login-pane active" id="paneStudent">
+        <div id="studentRegisterSection" style="display:none;">
+          <label>Name:</label>
+          <input type="text" id="regName" placeholder="Your full name">
+        </div>
+        <label>Email:</label>
+        <input type="email" id="studentEmail" placeholder="you@example.com" autocomplete="username">
+        <label>Password:</label>
+        <input type="password" id="studentPassword" placeholder="Password" autocomplete="current-password">
+        <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+          <button class="btn secondary" id="toggleRegisterBtn" onclick="toggleStudentRegister()" style="font-size:12px; padding:4px 10px;">Create Account</button>
+          <span id="studentAuthError" style="color:#ef5350; font-size:12px;"></span>
+        </div>
+        <div class="modal-actions">
+          <button class="btn secondary" id="studentCancelBtn">Cancel</button>
+          <button class="btn run" id="studentLoginBtn">Login</button>
+        </div>
+      </div>
+
+      <!-- Admin pane -->
+      <div class="login-pane" id="paneAdmin">
+        <label>Admin Email:</label>
+        <input type="email" id="adminEmailInput" placeholder="admin@eagleide.local" autocomplete="username">
+        <label>Password:</label>
+        <input type="password" id="adminPasswordInput" placeholder="Enter admin password" autocomplete="current-password">
+        <span id="adminAuthError" style="color:#ef5350; font-size:12px; display:block; margin-top:6px;"></span>
+        <div class="modal-actions">
+          <button class="btn secondary" id="adminCancelBtn">Cancel</button>
+          <button class="btn run" id="adminLoginBtn">Login</button>
+        </div>
       </div>
     </div>
   </div>
@@ -531,6 +633,22 @@
       <label for="assistantPromptInputModal">AI Assistant Preprompt:</label>
       <textarea id="assistantPromptInputModal" placeholder="You are a helpful Python tutor..." style="width:100%; height:80px; padding:8px; background:#1a1a1a; color:#fff; border:1px solid #2b2b2b; border-radius:6px; font-family:monospace; resize:vertical;"></textarea>
       
+      <h4 style="margin-top:20px; color:var(--columbia-blue); font-size:14px;">Student Registration</h4>
+      <label style="display:flex; align-items:center; gap:8px;">
+        <input type="checkbox" id="registrationEnabledModal" style="accent-color:#c62828">
+        Allow new student registrations
+      </label>
+      <button class="btn secondary" id="saveRegistrationBtn" style="margin-top:8px; font-size:13px;">Save Registration Setting</button>
+
+      <h4 style="margin-top:20px; color:var(--columbia-blue); font-size:14px;">Student Accounts
+        <button class="btn secondary" id="refreshUsersBtn" style="margin-left:10px; font-size:11px; padding:3px 8px;">↻ Refresh</button>
+      </h4>
+      <div id="usersTableWrap" style="max-height:220px; overflow-y:auto; margin-top:8px;">
+        <table class="users-table"><thead><tr><th>Name</th><th>Email</th>  <th>Registered</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody id="usersTableBody"></tbody>
+        </table>
+      </div>
+
       <div class="modal-actions" style="margin-top:20px;">
         <button class="btn secondary" id="settingsCancelBtn">Cancel</button>
         <button class="btn run" id="settingsSaveBtn">Save All Settings</button>
@@ -988,6 +1106,9 @@ print("Hello " + name)
   <script>
     const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let ADMIN_TOKEN = null;
+    let USER_TOKEN = null;
+    let currentUser = null;   // { email, name }
+    let currentOpenFile = null; // { path, name } of open file in sidebar
     let currentConfig = null;
     let mySid = null;
     let errorLineMarkers = []; // Track error line highlights
@@ -1169,9 +1290,20 @@ print("Hello " + name)
       }
       outputEl.textContent = '';
       clearErrorHighlights();
+      // If a file is open in the sidebar, save it first
+      if (currentOpenFile && USER_TOKEN) {
+        const code = editor.getValue();
+        fetch('/api/files/write', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
+          body: JSON.stringify({ path: currentOpenFile.path, content: code })
+        }).catch((err) => {
+          appendOut(`[Warning: could not save "${currentOpenFile.name}" before running]\n`);
+        });
+      }
       appendOut('[Sending code]\n');
       if (socket) {
-        socket.emit('run_code', { code: editor.getValue() });
+        socket.emit('run_code', { code: editor.getValue(), user_token: USER_TOKEN || '' });
       } else {
         appendOut('[Error: Cannot run code - Socket.IO not available]\n');
       }
@@ -1290,49 +1422,156 @@ print("Hello " + name)
     }
     loadConfig();
 
-    // Admin login
-    document.getElementById('adminBtn').addEventListener('click', async () => {
-      if (ADMIN_TOKEN) { 
-        ADMIN_TOKEN = null; 
-        document.body.classList.remove('admin-mode'); 
-        setEditable(false); 
+    // ---- Login UI ----
+    function switchLoginTab(tab) {
+      document.getElementById('paneStudent').classList.toggle('active', tab === 'student');
+      document.getElementById('paneAdmin').classList.toggle('active', tab === 'admin');
+      document.getElementById('tabStudentBtn').classList.toggle('active', tab === 'student');
+      document.getElementById('tabAdminBtn').classList.toggle('active', tab === 'admin');
+      document.getElementById('loginModalTitle').textContent = tab === 'student' ? 'Student Login' : 'Admin Login';
+    }
+
+    function toggleStudentRegister() {
+      const reg = document.getElementById('studentRegisterSection');
+      const btn = document.getElementById('toggleRegisterBtn');
+      const loginBtn = document.getElementById('studentLoginBtn');
+      const isReg = reg.style.display === 'none' || reg.style.display === '';
+      reg.style.display = isReg ? 'block' : 'none';
+      btn.textContent = isReg ? 'Back to Login' : 'Create Account';
+      loginBtn.textContent = isReg ? 'Register' : 'Login';
+      document.getElementById('studentAuthError').textContent = '';
+    }
+
+    function openLoginModal(tab = 'student') {
+      switchLoginTab(tab);
+      document.getElementById('loginModal').style.display = 'flex';
+      if (tab === 'student') {
+        document.getElementById('studentRegisterSection').style.display = 'none';
+        document.getElementById('toggleRegisterBtn').textContent = 'Create Account';
+        document.getElementById('studentLoginBtn').textContent = 'Login';
+      }
+    }
+
+    function closeLoginModal() {
+      document.getElementById('loginModal').style.display = 'none';
+    }
+
+    function updateAuthUI() {
+      const guestBadge = document.getElementById('guestBadge');
+      const userChip = document.getElementById('userChip');
+      const toggleFileSidebarBtn = document.getElementById('toggleFileSidebarBtn');
+      const dropLogoutBtn = document.getElementById('dropLogoutBtn');
+      if (currentUser) {
+        guestBadge.style.display = 'none';
+        userChip.style.display = '';
+        userChip.textContent = currentUser.name || currentUser.email;
+        toggleFileSidebarBtn.style.display = '';
+        dropLogoutBtn.style.display = '';
+      } else {
+        guestBadge.style.display = '';
+        userChip.style.display = 'none';
+        toggleFileSidebarBtn.style.display = 'none';
+        dropLogoutBtn.style.display = ADMIN_TOKEN ? '' : 'none';
+        hideFileBrowser();
+      }
+    }
+
+    // Login dropdown toggle
+    document.getElementById('loginBtn').addEventListener('click', () => {
+      const dd = document.getElementById('loginDropdown');
+      dd.classList.toggle('open');
+    });
+    document.addEventListener('click', (e) => {
+      const wrap = document.querySelector('.login-dropdown-wrap');
+      if (wrap && !wrap.contains(e.target)) {
+        document.getElementById('loginDropdown').classList.remove('open');
+      }
+    });
+
+    document.getElementById('dropStudentLoginBtn').addEventListener('click', () => {
+      document.getElementById('loginDropdown').classList.remove('open');
+      openLoginModal('student');
+    });
+    document.getElementById('dropAdminLoginBtn').addEventListener('click', () => {
+      document.getElementById('loginDropdown').classList.remove('open');
+      openLoginModal('admin');
+    });
+    document.getElementById('dropLogoutBtn').addEventListener('click', async () => {
+      document.getElementById('loginDropdown').classList.remove('open');
+      if (USER_TOKEN) {
+        await fetch('/api/auth/logout', { method: 'POST', headers: { 'X-User-Token': USER_TOKEN } }).catch(() => {});
+        USER_TOKEN = null;
+        currentUser = null;
+        currentOpenFile = null;
+      }
+      if (ADMIN_TOKEN) {
+        ADMIN_TOKEN = null;
+        document.body.classList.remove('admin-mode');
+        setEditable(false);
         document.getElementById('adminSettingsBtn').style.display = 'none';
-        document.getElementById('adminBtn').textContent = 'Admin';
         stopTeacherBroadcast();
-        return; 
       }
-      // Show modal
-      document.getElementById('adminPasswordModal').style.display = 'flex';
-      document.getElementById('adminPasswordInput').value = '';
-      document.getElementById('adminPasswordInput').focus();
+      updateAuthUI();
     });
 
-    // Admin password modal handlers
-    document.getElementById('adminCancelBtn').addEventListener('click', () => {
-      document.getElementById('adminPasswordModal').style.display = 'none';
+    // Student login/register
+    document.getElementById('studentCancelBtn').addEventListener('click', closeLoginModal);
+    document.getElementById('studentLoginBtn').addEventListener('click', async () => {
+      const errEl = document.getElementById('studentAuthError');
+      errEl.textContent = '';
+      const isRegister = document.getElementById('studentLoginBtn').textContent === 'Register';
+      const email = document.getElementById('studentEmail').value.trim();
+      const password = document.getElementById('studentPassword').value;
+      if (!email || !password) { errEl.textContent = 'Email and password required.'; return; }
+      if (isRegister) {
+        const name = document.getElementById('regName').value.trim();
+        if (!name) { errEl.textContent = 'Name is required.'; return; }
+        const res = await fetch('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, name }) });
+        const j = await res.json().catch(() => ({}));
+        if (j?.ok) {
+          USER_TOKEN = j.token;
+          currentUser = j.user;
+          closeLoginModal();
+          updateAuthUI();
+          loadFileTree();
+        } else { errEl.textContent = j.error || 'Registration failed'; }
+      } else {
+        const res = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
+        const j = await res.json().catch(() => ({}));
+        if (j?.ok) {
+          USER_TOKEN = j.token;
+          currentUser = j.user;
+          closeLoginModal();
+          updateAuthUI();
+          loadFileTree();
+        } else { errEl.textContent = j.error || 'Login failed'; }
+      }
     });
 
+    // Admin login modal
+    document.getElementById('adminCancelBtn').addEventListener('click', closeLoginModal);
     document.getElementById('adminLoginBtn').addEventListener('click', async () => {
+      const errEl = document.getElementById('adminAuthError');
+      errEl.textContent = '';
+      const email = document.getElementById('adminEmailInput').value.trim();
       const pw = document.getElementById('adminPasswordInput').value;
-      if (!pw) return;
-      const res = await fetch('/api/admin/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({password: pw})});
-      const j = await res.json().catch(()=>({}));
-      if (j?.ok) { 
-        ADMIN_TOKEN = j.token; 
-        document.body.classList.add('admin-mode'); 
-        document.getElementById('adminPasswordModal').style.display = 'none';
+      if (!email || !pw) { errEl.textContent = 'Email and password required.'; return; }
+      const res = await fetch('/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: pw }) });
+      const j = await res.json().catch(() => ({}));
+      if (j?.ok) {
+        ADMIN_TOKEN = j.token;
+        document.body.classList.add('admin-mode');
+        closeLoginModal();
         document.getElementById('adminSettingsBtn').style.display = '';
-        document.getElementById('adminBtn').textContent = 'Logout';
         startTeacherBroadcast();
-      }
-      else { alert('Invalid password'); }
+        updateAuthUI();
+      } else { errEl.textContent = j.error || 'Invalid credentials'; }
     });
-
-    // Allow Enter key to submit password
     document.getElementById('adminPasswordInput').addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') {
-        document.getElementById('adminLoginBtn').click();
-      }
+      if (e.key === 'Enter') document.getElementById('adminLoginBtn').click();
+    });
+    document.getElementById('studentPassword').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') document.getElementById('studentLoginBtn').click();
     });
 
     // Teacher Code Broadcasting (Admin only)
@@ -1388,6 +1627,12 @@ print("Hello " + name)
       document.getElementById('aiUrlInputModal').value = currentConfig?.ai_ollama_url || 'http://127.0.0.1:11434';
       document.getElementById('aiModelInputModal').value = currentConfig?.ai_model || 'gemma3:4b';
       document.getElementById('assistantPromptInputModal').value = currentConfig?.ai_assistant_preprompt || '';
+
+      // Registration setting
+      document.getElementById('registrationEnabledModal').checked = currentConfig?.registration_enabled !== false;
+
+      // Load users
+      loadAdminUsers();
     });
 
     document.getElementById('settingsCancelBtn').addEventListener('click', () => {
@@ -1425,6 +1670,283 @@ print("Hello " + name)
       document.getElementById('adminSettingsModal').style.display = 'none';
       alert('All settings saved successfully!');
     });
+
+    // ---- Admin Users Management ----
+    document.getElementById('saveRegistrationBtn').addEventListener('click', async () => {
+      if (!ADMIN_TOKEN) return;
+      const enabled = document.getElementById('registrationEnabledModal').checked;
+      const res = await fetch('/api/admin/registration', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+        body: JSON.stringify({ enabled })
+      });
+      const j = await res.json().catch(() => ({}));
+      if (j?.ok) { currentConfig.registration_enabled = enabled; alert('Registration setting saved.'); }
+      else alert(j.error || 'Failed');
+    });
+
+    document.getElementById('refreshUsersBtn').addEventListener('click', loadAdminUsers);
+
+    async function loadAdminUsers() {
+      if (!ADMIN_TOKEN) return;
+      const res = await fetch('/api/admin/users', { headers: { 'X-Admin-Token': ADMIN_TOKEN } });
+      const j = await res.json().catch(() => ({}));
+      const tbody = document.getElementById('usersTableBody');
+      tbody.innerHTML = '';
+      if (!j.ok) { tbody.innerHTML = '<tr><td colspan="5" style="color:#ef5350;">Failed to load users</td></tr>'; return; }
+      if (!j.users.length) { tbody.innerHTML = '<tr><td colspan="5" style="color:#888;">No students registered yet.</td></tr>'; return; }
+      j.users.forEach(u => {
+        const tr = document.createElement('tr');
+        if (!u.enabled) tr.className = 'disabled-row';
+        tr.innerHTML = `<td>${escapeHtml(u.name || '')}</td><td>${escapeHtml(u.email)}</td><td>${escapeHtml(u.created_at || '')}</td><td>${u.enabled ? '✅ Active' : '🔒 Disabled'}</td>
+          <td style="display:flex;gap:4px;flex-wrap:wrap;">
+            <button class="btn secondary" data-action="reset" style="font-size:11px;padding:2px 6px;">Reset PW</button>
+            <button class="btn secondary" data-action="toggle" data-enable="${!u.enabled}" style="font-size:11px;padding:2px 6px;">${u.enabled ? 'Disable' : 'Enable'}</button>
+            <button class="btn secondary" data-action="delete" style="font-size:11px;padding:2px 6px;color:#ef5350;">Delete</button>
+          </td>`;
+        // Use data attributes + event listeners to avoid inline JS with user data
+        const [resetBtn, toggleBtn, deleteBtn] = tr.querySelectorAll('button[data-action]');
+        resetBtn.addEventListener('click', () => adminResetPassword(u.email));
+        toggleBtn.addEventListener('click', () => adminToggleUser(u.email, !u.enabled));
+        deleteBtn.addEventListener('click', () => adminDeleteUser(u.email));
+        tbody.appendChild(tr);
+      });
+    }
+
+    async function adminResetPassword(email) {
+      if (!confirm(`Reset password for ${email}?`)) return;
+      const res = await fetch('/api/admin/users/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+        body: JSON.stringify({ email })
+      });
+      const j = await res.json().catch(() => ({}));
+      if (j?.ok) {
+        const pwd = j.temp_password;
+        const msg = document.createElement('div');
+        msg.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#1e1e2e;border:1px solid #444;border-radius:12px;padding:24px;z-index:9999;min-width:320px;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.5)';
+        const safeEmail = document.createElement('b');
+        safeEmail.textContent = email;
+        const codeEl = document.createElement('code');
+        codeEl.style.cssText = 'display:block;background:#111;padding:10px 16px;border-radius:6px;font-size:1.1em;letter-spacing:.05em;margin:8px 0;user-select:all';
+        codeEl.textContent = pwd;
+        const note = document.createElement('p');
+        note.style.cssText = 'color:#f59e0b;font-size:.82em;margin:8px 0 16px';
+        note.textContent = 'Instruct the student to change this password immediately.';
+        const copyBtn = document.createElement('button');
+        copyBtn.style.cssText = 'margin-right:8px;padding:6px 14px;border-radius:6px;border:none;background:#3b82f6;color:#fff;cursor:pointer';
+        copyBtn.textContent = 'Copy';
+        copyBtn.addEventListener('click', () => { navigator.clipboard?.writeText(pwd); copyBtn.textContent = 'Copied!'; });
+        const closeBtn = document.createElement('button');
+        closeBtn.style.cssText = 'padding:6px 14px;border-radius:6px;border:none;background:#444;color:#fff;cursor:pointer';
+        closeBtn.textContent = 'Close';
+        closeBtn.addEventListener('click', () => msg.remove());
+        const header = document.createElement('p');
+        header.style.cssText = 'margin:0 0 8px;color:#ccc';
+        header.append('Temporary password for ', safeEmail, ':');
+        msg.append(header, codeEl, note, copyBtn, closeBtn);
+        document.body.appendChild(msg);
+      } else {
+        alert(j.error || 'Failed');
+      }
+    }
+
+    async function adminToggleUser(email, enable) {
+      const res = await fetch('/api/admin/users/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+        body: JSON.stringify({ email, enabled: enable })
+      });
+      const j = await res.json().catch(() => ({}));
+      if (j?.ok) loadAdminUsers();
+      else alert(j.error || 'Failed');
+    }
+
+    async function adminDeleteUser(email) {
+      if (!confirm(`Delete user ${email} and all their files? This cannot be undone.`)) return;
+      const res = await fetch('/api/admin/users/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+        body: JSON.stringify({ email })
+      });
+      const j = await res.json().catch(() => ({}));
+      if (j?.ok) loadAdminUsers();
+      else alert(j.error || 'Failed');
+    }
+
+    // ---- File Browser ----
+    function showFileBrowser() {
+      const outer = document.getElementById('outer');
+      const sidebar = document.getElementById('fileSidebar');
+      outer.classList.remove('no-sidebar');
+      outer.style.setProperty('--sidebar-width', '220px');
+      sidebar.style.display = 'flex';
+      loadFileTree();
+    }
+
+    function hideFileBrowser() {
+      const outer = document.getElementById('outer');
+      const sidebar = document.getElementById('fileSidebar');
+      outer.classList.add('no-sidebar');
+      outer.style.removeProperty('--sidebar-width');
+      sidebar.style.display = 'none';
+    }
+
+    document.getElementById('toggleFileSidebarBtn').addEventListener('click', () => {
+      const sidebar = document.getElementById('fileSidebar');
+      if (sidebar.style.display === 'none') showFileBrowser();
+      else hideFileBrowser();
+    });
+    document.getElementById('closeSidebarBtn').addEventListener('click', hideFileBrowser);
+
+    async function loadFileTree() {
+      if (!USER_TOKEN) return;
+      const res = await fetch('/api/files/list', { headers: { 'X-User-Token': USER_TOKEN } });
+      const j = await res.json().catch(() => ({}));
+      const treeEl = document.getElementById('fileTree');
+      treeEl.innerHTML = '';
+      if (!j.ok) { treeEl.innerHTML = '<div style="padding:12px;color:#ef5350;">Error loading files</div>'; return; }
+      if (!j.files.length) { treeEl.innerHTML = '<div style="padding:12px;color:#888;">No files yet. Create one!</div>'; return; }
+      treeEl.appendChild(renderFileTree(j.files, 0));
+    }
+
+    function renderFileTree(items, depth) {
+      const ul = document.createElement('div');
+      items.forEach(item => {
+        const row = document.createElement('div');
+        row.className = 'file-tree-item' + (currentOpenFile?.path === item.path ? ' active' : '');
+        row.style.paddingLeft = (12 + depth * 14) + 'px';
+        row.innerHTML = `<span class="icon">${item.type === 'folder' ? '📂' : (item.name.endsWith('.py') ? '🐍' : item.name.endsWith('.csv') ? '📊' : '📄')}</span><span>${escapeHtml(item.name)}</span>`;
+        row.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (item.type === 'file') openFile(item);
+        });
+        row.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          showCtxMenu(e.clientX, e.clientY, item);
+        });
+        ul.appendChild(row);
+        if (item.type === 'folder' && item.children) {
+          ul.appendChild(renderFileTree(item.children, depth + 1));
+        }
+      });
+      return ul;
+    }
+
+    async function openFile(item) {
+      if (!USER_TOKEN) return;
+      const res = await fetch('/api/files/read?path=' + encodeURIComponent(item.path), { headers: { 'X-User-Token': USER_TOKEN } });
+      const j = await res.json().catch(() => ({}));
+      if (!j.ok) { alert(j.error || 'Cannot open file'); return; }
+      currentOpenFile = { path: item.path, name: item.name };
+      editor.setValue(j.content || '');
+      // Refresh tree to update active highlight
+      loadFileTree();
+    }
+
+    // Context menu
+    let _ctxMenu = null;
+    function showCtxMenu(x, y, item) {
+      if (_ctxMenu) _ctxMenu.remove();
+      _ctxMenu = document.createElement('div');
+      _ctxMenu.className = 'ctx-menu';
+      _ctxMenu.style.left = x + 'px';
+      _ctxMenu.style.top = y + 'px';
+      if (item.type === 'file') {
+        const openBtn = document.createElement('button');
+        openBtn.textContent = '📂 Open';
+        openBtn.onclick = () => { openFile(item); _ctxMenu.remove(); };
+        _ctxMenu.appendChild(openBtn);
+      }
+      const renameBtn = document.createElement('button');
+      renameBtn.textContent = '✏️ Rename';
+      renameBtn.onclick = () => { _ctxMenu.remove(); renameItem(item); };
+      _ctxMenu.appendChild(renameBtn);
+      const delBtn = document.createElement('button');
+      delBtn.textContent = '🗑️ Delete';
+      delBtn.className = 'danger';
+      delBtn.onclick = () => { _ctxMenu.remove(); deleteItem(item); };
+      _ctxMenu.appendChild(delBtn);
+      document.body.appendChild(_ctxMenu);
+      document.addEventListener('click', () => { if (_ctxMenu) { _ctxMenu.remove(); _ctxMenu = null; } }, { once: true });
+    }
+
+    async function renameItem(item) {
+      const newName = prompt('New name:', item.name);
+      if (!newName || newName === item.name) return;
+      const res = await fetch('/api/files/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
+        body: JSON.stringify({ old_path: item.path, new_name: newName })
+      });
+      const j = await res.json().catch(() => ({}));
+      if (j.ok) {
+        if (currentOpenFile?.path === item.path) currentOpenFile = { path: j.new_path, name: newName };
+        loadFileTree();
+      } else alert(j.error || 'Rename failed');
+    }
+
+    async function deleteItem(item) {
+      if (!confirm(`Delete "${item.name}"?`)) return;
+      const res = await fetch('/api/files/delete', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
+        body: JSON.stringify({ path: item.path })
+      });
+      const j = await res.json().catch(() => ({}));
+      if (j.ok) {
+        if (currentOpenFile?.path === item.path) currentOpenFile = null;
+        loadFileTree();
+      } else alert(j.error || 'Delete failed');
+    }
+
+    document.getElementById('newFileBtn').addEventListener('click', async () => {
+      const name = prompt('New file name (e.g. main.py):');
+      if (!name) return;
+      const res = await fetch('/api/files/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
+        body: JSON.stringify({ name, type: 'file' })
+      });
+      const j = await res.json().catch(() => ({}));
+      if (j.ok) loadFileTree();
+      else alert(j.error || 'Failed to create file');
+    });
+
+    document.getElementById('newFolderBtn').addEventListener('click', async () => {
+      const name = prompt('New folder name:');
+      if (!name) return;
+      const res = await fetch('/api/files/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
+        body: JSON.stringify({ name, type: 'folder' })
+      });
+      const j = await res.json().catch(() => ({}));
+      if (j.ok) loadFileTree();
+      else alert(j.error || 'Failed to create folder');
+    });
+
+    document.getElementById('uploadFileBtn').addEventListener('click', () => {
+      document.getElementById('sidebarFileInput').click();
+    });
+
+    document.getElementById('sidebarFileInput').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch('/api/files/upload', {
+        method: 'POST',
+        headers: { 'X-User-Token': USER_TOKEN },
+        body: formData
+      });
+      const j = await res.json().catch(() => ({}));
+      e.target.value = '';
+      if (j.ok) loadFileTree();
+      else alert(j.error || 'Upload failed');
+    });
+
+    document.getElementById('refreshFilesBtn').addEventListener('click', loadFileTree);
 
     function setEditable(on){
       document.getElementById('notesView').setAttribute('contenteditable', on ? 'true' : 'false');
