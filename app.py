@@ -1088,9 +1088,67 @@ class Runner:
         # Create wrapper script that intercepts input() to send INPUT_TOKEN
         # Escape backslashes in the path for Windows compatibility
         runner_py_escaped = str(runner_py).replace("\\", "\\\\")
-        
+        cwd_escaped = cwd.replace("\\", "\\\\")
+
         wrapper_code = f'''import sys
 import builtins
+import os as _os
+
+# ---- Read user code BEFORE sandbox is applied ----
+with open(r"{runner_py_escaped}", "r", encoding="utf-8") as _f:
+    _user_code = _f.read()
+
+# ---- Security sandbox ----
+_ALLOWED_DIR = _os.path.realpath(r"{cwd_escaped}")
+
+# Apply resource limits (POSIX/Linux only – silently ignored elsewhere)
+try:
+    import resource as _resource
+    # Max virtual memory: 256 MB
+    _resource.setrlimit(_resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
+    # Max open file descriptors
+    _resource.setrlimit(_resource.RLIMIT_NOFILE, (64, 64))
+except Exception:
+    pass
+
+# Restrict open() to the allowed working directory
+_real_open = builtins.open
+def _safe_open(file, mode="r", *args, **kwargs):
+    try:
+        p = _os.path.realpath(str(file))
+        if _os.path.commonpath([p, _ALLOWED_DIR]) != _ALLOWED_DIR:
+            raise PermissionError(f"Access to {{file!r}} is not allowed in this environment")
+    except (TypeError, ValueError):
+        pass  # non-string file argument (e.g. integer fd) — let the OS decide
+    return _real_open(file, mode, *args, **kwargs)
+builtins.open = _safe_open
+
+# Block modules that allow network access, process spawning, or privilege escalation
+_BLOCKED_MODULES = frozenset([
+    "subprocess", "multiprocessing", "socket", "socketserver",
+    "ftplib", "http", "urllib", "xmlrpc", "smtplib", "imaplib",
+    "poplib", "nntplib", "telnetlib", "ssl", "asyncio",
+    "ctypes", "cffi", "mmap",
+])
+_real_import = builtins.__import__
+def _safe_import(name, *args, **kwargs):
+    top = name.split(".")[0]
+    if top in _BLOCKED_MODULES:
+        raise ImportError(f"Module {{name!r}} is not available in this environment")
+    return _real_import(name, *args, **kwargs)
+builtins.__import__ = _safe_import
+
+# Disable dangerous os-level calls (process spawning / shell execution)
+def _blocked_call(*a, **kw):
+    raise PermissionError("This operation is not allowed in this environment")
+_os.system = _blocked_call
+_os.popen  = _blocked_call
+for _fn in ("fork", "forkpty", "execv", "execve", "execvp", "execvpe",
+            "spawnl", "spawnle", "spawnlp", "spawnlpe",
+            "spawnv", "spawnve", "spawnvp", "spawnvpe"):
+    if hasattr(_os, _fn):
+        setattr(_os, _fn, _blocked_call)
+# ---- End security sandbox ----
 
 def _ide_input(prompt=""):
     if prompt:
@@ -1110,7 +1168,7 @@ def _ide_input(prompt=""):
 builtins.input = _ide_input
 
 # Execute user code
-exec(open(r"{runner_py_escaped}", "r", encoding="utf-8").read(), {{}})
+exec(_user_code, {{}})
 '''
 
         self.proc = subprocess.Popen(
@@ -1132,13 +1190,35 @@ exec(open(r"{runner_py_escaped}", "r", encoding="utf-8").read(), {{}})
         stdout = self.proc.stdout
         total_output_bytes = [0]  # mutable container for closure
 
+        # Batch output to avoid overwhelming the browser with rapid socket messages.
+        # Lines are collected until BATCH_BYTES is reached or BATCH_SECS has elapsed.
+        BATCH_BYTES = 4096
+        BATCH_SECS = 0.05  # 50 ms
+
         def reader():
+            buf: list[str] = []
+            buf_size = 0
+            last_flush = time.time()
+
+            def flush():
+                nonlocal buf, buf_size, last_flush
+                if buf:
+                    try:
+                        socketio.emit("output", {"data": "".join(buf)}, to=self.sid)
+                    except Exception:
+                        pass
+                buf = []
+                buf_size = 0
+                last_flush = time.time()
+
             while not self.stop_evt.is_set():
                 b = stdout.readline()
                 if not b:
+                    flush()
                     break
                 total_output_bytes[0] += len(b)
                 if total_output_bytes[0] > MAX_OUTPUT_BYTES:
+                    flush()
                     try:
                         self.proc.kill()
                     except Exception:
@@ -1148,10 +1228,13 @@ exec(open(r"{runner_py_escaped}", "r", encoding="utf-8").read(), {{}})
                     except Exception:
                         pass
                     return
-                try:
-                    socketio.emit("output", {"data": b.decode("utf-8", errors="replace")}, to=self.sid)
-                except Exception:
-                    pass
+                decoded = b.decode("utf-8", errors="replace")
+                buf.append(decoded)
+                buf_size += len(decoded)  # track decoded character count for batch threshold
+                now = time.time()
+                if buf_size >= BATCH_BYTES or (now - last_flush) >= BATCH_SECS:
+                    flush()
+            flush()
 
         t = threading.Thread(target=reader, daemon=True)
         t.start()
