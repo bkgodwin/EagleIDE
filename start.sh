@@ -10,8 +10,19 @@ if ! command -v python3 &>/dev/null; then
   exit 1
 fi
 
+# Create virtual environment if it doesn't exist
+VENV_DIR="$SCRIPT_DIR/.venv"
+if [ ! -d "$VENV_DIR" ]; then
+  echo "Creating virtual environment..."
+  python3 -m venv "$VENV_DIR"
+fi
+
+# Activate the virtual environment
+# shellcheck disable=SC1091
+source "$VENV_DIR/bin/activate"
+
 echo "Installing/updating Python dependencies..."
-python3 -m pip install --quiet --upgrade \
+pip install --quiet --upgrade \
   flask \
   flask-socketio \
   eventlet \

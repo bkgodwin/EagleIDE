@@ -154,6 +154,16 @@ def _require_user(req) -> Optional[dict]:
     token = req.headers.get("X-User-Token", "").strip()
     return _student_tokens.get(token)
 
+def _require_user_for_files(req) -> Optional[dict]:
+    """Allow either a student or the admin to access file routes."""
+    user = _require_user(req)
+    if user:
+        return user
+    admin_token = req.headers.get("X-Admin-Token", "").strip()
+    if admin_token and admin_token in _admin_tokens:
+        return {"email": ADMIN_EMAIL, "name": "Admin"}
+    return None
+
 def _get_user_storage_used(user_dir: Path) -> int:
     """Return total bytes used in user directory"""
     total = 0
@@ -326,7 +336,7 @@ ALLOWED_EXTENSIONS = {".py", ".txt", ".csv"}
 
 @app.get("/api/files/list")
 def files_list():
-    user = _require_user(request)
+    user = _require_user_for_files(request)
     if not user:
         return jsonify(ok=False, error="Authentication required"), 401
     
@@ -361,7 +371,7 @@ def files_list():
 
 @app.post("/api/files/create")
 def files_create():
-    user = _require_user(request)
+    user = _require_user_for_files(request)
     if not user:
         return jsonify(ok=False, error="Authentication required"), 401
     
@@ -407,7 +417,7 @@ def files_create():
 
 @app.get("/api/files/read")
 def files_read():
-    user = _require_user(request)
+    user = _require_user_for_files(request)
     if not user:
         return jsonify(ok=False, error="Authentication required"), 401
     
@@ -431,7 +441,7 @@ def files_read():
 
 @app.post("/api/files/write")
 def files_write():
-    user = _require_user(request)
+    user = _require_user_for_files(request)
     if not user:
         return jsonify(ok=False, error="Authentication required"), 401
     
@@ -467,7 +477,7 @@ def files_write():
 
 @app.post("/api/files/rename")
 def files_rename():
-    user = _require_user(request)
+    user = _require_user_for_files(request)
     if not user:
         return jsonify(ok=False, error="Authentication required"), 401
     
@@ -499,7 +509,7 @@ def files_rename():
 
 @app.delete("/api/files/delete")
 def files_delete():
-    user = _require_user(request)
+    user = _require_user_for_files(request)
     if not user:
         return jsonify(ok=False, error="Authentication required"), 401
     
@@ -525,7 +535,7 @@ def files_delete():
 
 @app.post("/api/files/upload")
 def files_upload():
-    user = _require_user(request)
+    user = _require_user_for_files(request)
     if not user:
         return jsonify(ok=False, error="Authentication required"), 401
     
@@ -576,7 +586,7 @@ def files_upload():
 @app.get("/api/files/download")
 def files_download():
     """Download a user file as an attachment"""
-    user = _require_user(request)
+    user = _require_user_for_files(request)
     if not user:
         return jsonify(ok=False, error="Authentication required"), 401
 
@@ -610,7 +620,7 @@ def files_download():
 
 @app.get("/api/files/storage")
 def files_storage():
-    user = _require_user(request)
+    user = _require_user_for_files(request)
     if not user:
         return jsonify(ok=False, error="Authentication required"), 401
     
@@ -622,7 +632,7 @@ def files_storage():
 @app.post("/api/files/move")
 def files_move():
     """Move a file or folder to a new parent directory"""
-    user = _require_user(request)
+    user = _require_user_for_files(request)
     if not user:
         return jsonify(ok=False, error="Authentication required"), 401
 
@@ -1189,6 +1199,7 @@ def on_disconnect():
 def on_run_code(payload):
     code = (payload or {}).get("code", "")
     user_token = (payload or {}).get("user_token", "")
+    admin_token = (payload or {}).get("admin_token", "")
     file_path = (payload or {}).get("file_path", "")  # relative path of the open file
     run_dir = None
     if user_token:
@@ -1203,6 +1214,15 @@ def on_run_code(payload):
                     run_dir = file_abs.parent
             if not run_dir:
                 run_dir = user_root_dir
+    elif admin_token and admin_token in _admin_tokens:
+        admin_root_dir = _get_user_dir(ADMIN_EMAIL)
+        admin_root_dir.mkdir(parents=True, exist_ok=True)
+        if file_path:
+            file_abs = _validate_user_path(admin_root_dir, file_path)
+            if file_abs and file_abs.exists():
+                run_dir = file_abs.parent
+        if not run_dir:
+            run_dir = admin_root_dir
     r = _get_runner(request.sid)
     try:
         r.start(code, user_dir=run_dir)
