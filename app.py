@@ -3,7 +3,7 @@ import os, sys, json, time, uuid, csv, random, threading, subprocess, hmac, re, 
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from flask import Flask, send_from_directory, request, jsonify
+from flask import Flask, send_from_directory, send_file, request, jsonify
 from flask_socketio import SocketIO, emit
 import requests
 import bcrypt
@@ -577,6 +577,72 @@ def files_storage():
     used = _get_user_storage_used(user_dir)
     limit = USER_STORAGE_LIMIT_MB * 1024 * 1024
     return jsonify(ok=True, used_bytes=used, limit_bytes=limit)
+
+@app.post("/api/files/move")
+def files_move():
+    """Move a file or folder to a new parent directory"""
+    user = _require_user(request)
+    if not user:
+        return jsonify(ok=False, error="Authentication required"), 401
+
+    data = request.get_json(silent=True) or {}
+    src_path = (data.get("src") or "").strip()
+    dest_folder = (data.get("dest") or "").strip()  # destination folder path ("" = root)
+
+    if not src_path:
+        return jsonify(ok=False, error="src path required"), 400
+
+    user_dir = _get_user_dir(user["email"])
+    src = _validate_user_path(user_dir, src_path)
+    if not src or not src.exists():
+        return jsonify(ok=False, error="Source not found"), 404
+
+    if dest_folder:
+        dest_dir = _validate_user_path(user_dir, dest_folder)
+        if not dest_dir or not dest_dir.is_dir():
+            return jsonify(ok=False, error="Destination folder not found"), 404
+    else:
+        dest_dir = user_dir.resolve()
+
+    # Prevent moving a folder into itself or any of its descendants
+    if src.is_dir():
+        try:
+            dest_dir.resolve().relative_to(src.resolve())
+            return jsonify(ok=False, error="Cannot move a folder into itself or its subfolders"), 400
+        except ValueError:
+            pass  # dest_dir is not inside src — this is the valid case
+
+    # Extract and validate the base filename (Path.name strips directory components)
+    safe_name = src.name  # Path.name is always just the final component
+    # Reject any name that is empty, '.' or '..'
+    if not safe_name or safe_name in ('.', '..'):
+        return jsonify(ok=False, error="Invalid source name"), 400
+
+    new_dest = dest_dir / safe_name
+    new_validated = _validate_user_path(user_dir, str(new_dest.relative_to(user_dir.resolve())))
+    if not new_validated:
+        return jsonify(ok=False, error="Invalid destination path"), 400
+
+    if new_validated.exists():
+        return jsonify(ok=False, error="A file or folder with that name already exists in the destination"), 409
+
+    try:
+        src.rename(new_validated)
+        return jsonify(ok=True, new_path=str(new_validated.relative_to(user_dir.resolve())))
+    except Exception:
+        return jsonify(ok=False, error="Could not move item"), 500
+
+# -------------------------
+# Background image
+# -------------------------
+@app.get("/api/background")
+def serve_background():
+    """Serve the background image if it exists"""
+    for ext in ("png", "jpg", "jpeg", "webp", "gif"):
+        img = BASE_DIR / f"background.{ext}"
+        if img.exists():
+            return send_file(str(img))
+    return jsonify(ok=False, error="No background image found"), 404
 
 # -------------------------
 # Admin user management
