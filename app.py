@@ -2004,6 +2004,9 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", str(SERVER_PORT)))
     print(f"Async mode: {socketio.async_mode}")
     print("starting server...")
-    socketio.run(app, host=host, port=port, debug=False)
-    print("This should never print")
+    try:
+        socketio.run(app, host=host, port=port, debug=False)
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    print("Server stopped.")
 
