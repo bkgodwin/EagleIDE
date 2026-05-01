@@ -5,6 +5,10 @@ ADMIN_EMAIL = "admin@eagleide.local"
 # Server port
 SERVER_PORT = 8000
 
+# Debug mode: set True to show full Flask/werkzeug request logs,
+# False to only show startup status and errors.
+DEBUG_MODE = False
+
 # File storage limit per user
 USER_STORAGE_LIMIT_MB = 250
 

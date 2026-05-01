@@ -48,7 +48,7 @@
     }
     *{box-sizing:border-box}
     body{ margin:0; background:var(--panel-dark); color:var(--text-light); font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Arial; background-attachment:fixed; background-size:cover; background-position:center; background-repeat:no-repeat; }
-    header.topbar{ display:flex; align-items:center; justify-content:space-between; padding:10px 16px; background:linear-gradient(90deg,rgba(165,200,240,0.92),rgba(127,178,235,0.92)); color:#0b2540; font-weight:700; letter-spacing:.3px; backdrop-filter:blur(4px); }
+    header.topbar{ display:flex; align-items:center; justify-content:space-between; padding:10px 16px; background:linear-gradient(90deg,rgba(165,200,240,0.92),rgba(127,178,235,0.92)); color:#0b2540; font-weight:700; letter-spacing:.3px; backdrop-filter:blur(4px); position:relative; z-index:100; }
     header .brand{ display:flex; gap:12px; align-items:center }
     header .brand .badge{ background:var(--eagle-red); color:#fff; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:800; letter-spacing:.5px; text-transform:uppercase }
     header .actions{ display:flex; gap:8px; align-items:center }
@@ -74,14 +74,14 @@
     .outer:not(.no-sidebar) #rightColumn  { grid-column: 4 / 5; }
     /* All items row */
     .outer #editorPanel, .outer #hsplitter, .outer #rightColumn, .outer #fileSidebar { grid-row: 1 / 2; }
-    .panel{ background:rgba(30,30,30,0.88); border:1px solid #333; border-radius:14px; overflow:hidden; display:flex; flex-direction:column; min-height:0; backdrop-filter:blur(2px); }
+    .panel{ background:rgba(30,30,30,0.72); border:1px solid #333; border-radius:14px; overflow:hidden; display:flex; flex-direction:column; min-height:0; backdrop-filter:blur(4px); }
     .panel header{ background:rgba(18,18,18,0.92); color:var(--columbia-blue); padding:8px 12px; border-bottom:1px solid #2b2b2b; display:flex; align-items:center; justify-content:space-between }
     .panel header h3{ margin:0; font-size:14px; color:var(--columbia-blue) }
     .panel .content{ flex:1; min-height:0; overflow:auto; }
     #rightStackPanel .content{ overflow:auto; }
     #rightColumn{ overflow:hidden; }
 
-    .CodeMirror{ height:100%; background:var(--bg-dark); color:var(--text-light); font-size: var(--cm-font-size); line-height:1.4 }
+    .CodeMirror{ height:100%; background:rgba(30,30,30,0.82); color:var(--text-light); font-size: var(--cm-font-size); line-height:1.4 }
     .CodeMirror pre{ tab-size: var(--indent-tabs); -moz-tab-size: var(--indent-tabs) }
     .CodeMirror pre.CodeMirror-line,
     .CodeMirror pre.CodeMirror-line-like{
@@ -92,7 +92,7 @@
     body.guides-off .CodeMirror pre.CodeMirror-line,
     body.guides-off .CodeMirror pre.CodeMirror-line-like{ background-image:none }
 
-    #output{ background:#0c0c0c; color:#dcdcdc; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Courier New",monospace; padding:12px; height:100%; overflow:auto; white-space:pre-wrap }
+    #output{ background:rgba(12,12,12,0.80); color:#dcdcdc; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Courier New",monospace; padding:12px; height:100%; overflow:auto; white-space:pre-wrap }
     .sys-msg{ color:#ff9933; }
     .shell-input-bar{ display:flex; gap:8px; border-top:1px solid #2b2b2b; padding:8px; background:#111 }
     .shell-input-bar input{ flex:1; padding:8px 10px; background:#1a1a1a; color:#fff; border:1px solid #2b2b2b; border-radius:8px; outline:none; font-size:14px; }
@@ -183,7 +183,7 @@
     .ai-grade-btn:hover{ background:#45a049; }
     .ai-grade-btn:disabled{ background:#666; cursor:not-allowed; }
     /* File Sidebar */
-    .file-sidebar{ background:rgba(30,30,30,0.88); border:1px solid #333; border-radius:14px; overflow:hidden; display:flex; flex-direction:column; min-height:0; grid-row:1; backdrop-filter:blur(2px); }
+    .file-sidebar{ background:rgba(30,30,30,0.72); border:1px solid #333; border-radius:14px; overflow:hidden; display:flex; flex-direction:column; min-height:0; grid-row:1; backdrop-filter:blur(4px); }
     .file-sidebar-header{ background:rgba(18,18,18,0.92); color:var(--columbia-blue); padding:8px 12px; border-bottom:1px solid #2b2b2b; display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
     .file-tree{ flex:1; overflow:auto; padding:4px 0; font-size:13px; }
     .file-tree-item{ display:flex; align-items:center; gap:6px; padding:6px 12px; cursor:pointer; user-select:none; white-space:nowrap; border-radius:6px; margin:1px 4px; transition:background 0.1s; }
@@ -380,7 +380,7 @@
     <!-- Left: Editor -->
     <section class="panel" id="editorPanel">
       <header aria-label="Code editor with Python syntax highlighting">
-        <h3>Editor:</h3>
+        <h3>Editor: <span id="activeFileName" style="color:#a5c8f0; font-weight:400;"></span></h3>
         <button class="btn secondary" id="clearErrorsBtn" style="display:none; font-size:12px; padding:4px 8px;">Clear Error Highlights</button>
       </header>
       <div class="content"><textarea id="editor"></textarea></div>
@@ -1315,20 +1315,15 @@ print("Hello " + name)
       }
       outputEl.textContent = '';
       clearErrorHighlights();
-      // If a file is open in the sidebar, save it first
+      // Save current file before running (saveCurrentFile defined in file browser section)
       if (currentOpenFile && USER_TOKEN) {
-        const code = editor.getValue();
-        fetch('/api/files/write', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
-          body: JSON.stringify({ path: currentOpenFile.path, content: code })
-        }).catch((err) => {
+        saveCurrentFile().catch(() => {
           appendOut(`[Warning: could not save "${currentOpenFile.name}" before running]\n`);
         });
       }
       appendOut('[Sending code]\n');
       if (socket) {
-        socket.emit('run_code', { code: editor.getValue(), user_token: USER_TOKEN || '' });
+        socket.emit('run_code', { code: editor.getValue(), user_token: USER_TOKEN || '', file_path: currentOpenFile ? currentOpenFile.path : '' });
       } else {
         appendOut('[Error: Cannot run code - Socket.IO not available]\n');
       }
@@ -1526,6 +1521,10 @@ print("Hello " + name)
           USER_TOKEN = null;
           currentUser = null;
           currentOpenFile = null;
+          // Clear editor and reset to blank state
+          editor.setValue('');
+          if (typeof updateActiveFileName === 'function') updateActiveFileName();
+          hideFileBrowser();
         }
         if (ADMIN_TOKEN) {
           ADMIN_TOKEN = null;
@@ -1533,6 +1532,9 @@ print("Hello " + name)
           setEditable(false);
           document.getElementById('adminSettingsBtn').style.display = 'none';
           stopTeacherBroadcast();
+          // Clear editor for admin logout too
+          editor.setValue('');
+          if (typeof updateActiveFileName === 'function') updateActiveFileName();
         }
         updateAuthUI();
       } else {
@@ -2037,13 +2039,59 @@ print("Hello " + name)
       }
     }
 
+    // Save the currently open file (if any).
+    // Returns true on success (or if nothing to save), false on error.
+    async function saveCurrentFile() {
+      if (!currentOpenFile || !USER_TOKEN) return true;
+      const code = editor.getValue();
+      try {
+        const res = await fetch('/api/files/write', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
+          body: JSON.stringify({ path: currentOpenFile.path, content: code })
+        });
+        const j = await res.json().catch(() => ({}));
+        return !!j.ok;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    // Update the editor header to show the active filename
+    function updateActiveFileName() {
+      const el = document.getElementById('activeFileName');
+      if (el) el.textContent = currentOpenFile ? currentOpenFile.name : '';
+    }
+
+    // Autosave: save current file 1.5 s after the last edit
+    let _autosaveTimer = null;
+    function scheduleAutosave() {
+      if (!currentOpenFile || !USER_TOKEN) return;
+      if (_autosaveTimer) clearTimeout(_autosaveTimer);
+      _autosaveTimer = setTimeout(async () => {
+        _autosaveTimer = null;
+        await saveCurrentFile();
+      }, 1500);
+    }
+
+    // Hook autosave into CodeMirror's change event (after editor is initialised)
+    if (window.eagleEditor) {
+      window.eagleEditor.on('change', scheduleAutosave);
+    } else {
+      // Fallback: textarea change
+      document.getElementById('editor').addEventListener('input', scheduleAutosave);
+    }
+
     async function openFile(item) {
       if (!USER_TOKEN) return;
+      // Save the currently open file before switching
+      await saveCurrentFile();
       const res = await fetch('/api/files/read?path=' + encodeURIComponent(item.path), { headers: { 'X-User-Token': USER_TOKEN } });
       const j = await res.json().catch(() => ({}));
       if (!j.ok) { alert(j.error || 'Cannot open file'); return; }
       currentOpenFile = { path: item.path, name: item.name };
       editor.setValue(j.content || '');
+      updateActiveFileName();
       loadFileTree();
     }
 
@@ -2060,6 +2108,31 @@ print("Hello " + name)
         openBtn.textContent = '📂 Open';
         openBtn.onclick = () => { openFile(item); _ctxMenu.remove(); };
         _ctxMenu.appendChild(openBtn);
+
+        // Download button
+        const dlBtn = document.createElement('button');
+        dlBtn.textContent = '⬇️ Download';
+        dlBtn.onclick = () => {
+          _ctxMenu.remove();
+          const a = document.createElement('a');
+          a.href = '/api/files/download?path=' + encodeURIComponent(item.path);
+          a.setAttribute('download', item.name);
+          // Pass auth token via a temporary fetch/blob approach
+          fetch(a.href, { headers: { 'X-User-Token': USER_TOKEN } })
+            .then(r => r.ok ? r.blob() : Promise.reject(r.statusText))
+            .then(blob => {
+              const url = URL.createObjectURL(blob);
+              const link = document.createElement('a');
+              link.href = url;
+              link.download = item.name;
+              document.body.appendChild(link);
+              link.click();
+              link.remove();
+              setTimeout(() => URL.revokeObjectURL(url), 1000);
+            })
+            .catch(err => alert('Download failed: ' + err));
+        };
+        _ctxMenu.appendChild(dlBtn);
       }
       const renameBtn = document.createElement('button');
       renameBtn.textContent = '✏️ Rename';
@@ -2073,6 +2146,7 @@ print("Hello " + name)
       document.body.appendChild(_ctxMenu);
       document.addEventListener('click', () => { if (_ctxMenu) { _ctxMenu.remove(); _ctxMenu = null; } }, { once: true });
     }
+
 
     async function renameItem(item) {
       const newName = prompt('New name:', item.name);
