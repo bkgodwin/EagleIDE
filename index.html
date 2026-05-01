@@ -1400,14 +1400,9 @@ print("Hello " + name)
       if (j?.ok) { currentConfig = j.data; applyConfig(currentConfig); }
     }
 
-    // Load background image if available
-    (async function loadBackground() {
-      try {
-        const res = await fetch('/api/background', { method: 'HEAD' }).catch(() => null);
-        if (res && res.ok) {
-          document.body.style.backgroundImage = 'url(/api/background)';
-        }
-      } catch(e) { /* no background image */ }
+    // Load background image if available (single request, graceful fallback on 404)
+    (function loadBackground() {
+      document.body.style.backgroundImage = 'url(/api/background)';
     })();
     function applyConfig(cfg){
       if (!cfg) return;
@@ -2003,8 +1998,8 @@ print("Hello " + name)
             row.classList.remove('drag-over');
             const srcPath = e.dataTransfer.getData('text/plain');
             if (!srcPath || srcPath === item.path) return;
-            // Prevent dropping parent into child
-            if (item.path.startsWith(srcPath + '/')) {
+            // Prevent dropping parent into child - use proper path prefix check with separator
+            if (item.path === srcPath || item.path.startsWith(srcPath + '/')) {
               alert('Cannot move a folder into one of its subfolders.');
               return;
             }
@@ -2014,10 +2009,8 @@ print("Hello " + name)
 
         ul.appendChild(row);
 
-        // Show children if we're NOT in folder-enter mode (depth > 0 means flat sub-view)
-        // In folder-enter mode (depth === 0, has currentFolderPath) we don't recurse;
-        // instead the "enter folder" click navigates into it.
-        // For depth > 0 (sub-items rendered by recursive call at root), show all.
+        // Show children of sub-folders when rendering nested (depth > 0)
+        // At depth 0, folder navigation is via click-to-enter; children aren't shown inline
         if (item.type === 'folder' && item.children && depth > 0) {
           const childDiv = document.createElement('div');
           childDiv.className = 'file-tree-children';
