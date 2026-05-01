@@ -25,6 +25,7 @@ ASSIGNMENTS_DIR = BASE_DIR / "assignments"
 INPUT_TOKEN = "[[_IDE_INPUT_]]"
 MAX_WALL_TIME = 30.0       # seconds (hard kill for user code)
 IDLE_TIMEOUT = 10.0        # reserved, if you later want idle detection
+MAX_OUTPUT_BYTES = 500_000  # 500 KB max stdout before killing the process
 
 os.makedirs(SANDBOX_DIR, exist_ok=True)
 os.makedirs(ASSIGNMENTS_DIR, exist_ok=True)
@@ -698,6 +699,16 @@ def serve_background():
             return send_file(str(img))
     return jsonify(ok=False, error="No background image found"), 404
 
+@app.get("/api/background_dark")
+def serve_background_dark():
+    """Serve the dark-mode background image; falls back to the regular background"""
+    for ext in ("png", "jpg", "jpeg", "webp", "gif"):
+        img = BASE_DIR / f"background_dark.{ext}"
+        if img.exists():
+            return send_file(str(img))
+    # Fallback to regular background
+    return serve_background()
+
 # -------------------------
 # Admin user management
 # -------------------------
@@ -1119,12 +1130,24 @@ exec(open(r"{runner_py_escaped}", "r", encoding="utf-8").read(), {{}})
     def _pump(self):
         assert self.proc and self.proc.stdout and self.proc.stdin
         stdout = self.proc.stdout
+        total_output_bytes = [0]  # mutable container for closure
 
         def reader():
             while not self.stop_evt.is_set():
                 b = stdout.readline()
                 if not b:
                     break
+                total_output_bytes[0] += len(b)
+                if total_output_bytes[0] > MAX_OUTPUT_BYTES:
+                    try:
+                        self.proc.kill()
+                    except Exception:
+                        pass
+                    try:
+                        socketio.emit("output", {"data": "\n[Output limit exceeded (500 KB) -- process killed to protect your browser]\n"}, to=self.sid)
+                    except Exception:
+                        pass
+                    return
                 try:
                     socketio.emit("output", {"data": b.decode("utf-8", errors="replace")}, to=self.sid)
                 except Exception:
@@ -2002,8 +2025,9 @@ def health():
 if __name__ == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", str(SERVER_PORT)))
-    print(f"Async mode: {socketio.async_mode}")
-    print("starting server...")
+    print(f"Async mode: {socketio.async_mode}", flush=True)
+    print(f"EagleIDE server starting on http://{host}:{port}", flush=True)
+    print("Press Ctrl+C to stop.", flush=True)
     try:
         socketio.run(app, host=host, port=port, debug=False)
     except (KeyboardInterrupt, SystemExit):
