@@ -2000,5 +2000,5 @@ if __name__ == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", str(SERVER_PORT)))
     print(f"Async mode: {socketio.async_mode}")
-    socketio.run(app, host=host, port=port, debug=False, allow_unsafe_werkzeug=True)
+    socketio.run(app, host=host, port=port, debug=False)
 
