@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+import eventlet
+eventlet.monkey_patch()
+
 import os, sys, json, time, uuid, csv, random, threading, subprocess, hmac, re, shutil, secrets
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -64,7 +67,7 @@ except Exception:
 app = Flask(__name__, static_folder=None)
 socketio = SocketIO(
     app,
-    async_mode="gevent",             # LXC/containers friendly
+    async_mode="eventlet",
     cors_allowed_origins="*",
     logger=False,
     engineio_logger=False

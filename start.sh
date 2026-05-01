@@ -22,12 +22,7 @@ fi
 source "$VENV_DIR/bin/activate"
 
 echo "Installing/updating Python dependencies..."
-pip install --quiet --upgrade \
-  flask \
-  flask-socketio \
-  eventlet \
-  requests \
-  bcrypt
+pip install --quiet --upgrade -r "$SCRIPT_DIR/requirements.txt"
 
 echo "Starting EagleIDE..."
 python3 app.py
