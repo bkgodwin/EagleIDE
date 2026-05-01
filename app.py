@@ -3,7 +3,7 @@ import os, sys, json, time, uuid, csv, random, threading, subprocess, hmac, re, 
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from flask import Flask, send_from_directory, request, jsonify
+from flask import Flask, send_from_directory, send_file, request, jsonify
 from flask_socketio import SocketIO, emit
 import requests
 import bcrypt
@@ -602,17 +602,24 @@ def files_move():
         if not dest_dir or not dest_dir.is_dir():
             return jsonify(ok=False, error="Destination folder not found"), 404
     else:
-        dest_dir = user_dir
+        dest_dir = user_dir.resolve()
 
-    # Prevent moving into itself or a child
-    try:
-        dest_dir.resolve().relative_to(src.resolve())
-        return jsonify(ok=False, error="Cannot move a folder into itself"), 400
-    except ValueError:
-        pass
+    # Prevent moving a folder into itself or any of its descendants
+    if src.is_dir():
+        try:
+            dest_dir.resolve().relative_to(src.resolve())
+            return jsonify(ok=False, error="Cannot move a folder into itself or its subfolders"), 400
+        except ValueError:
+            pass  # dest_dir is not inside src — this is the valid case
 
-    new_path = dest_dir / src.name
-    new_validated = _validate_user_path(user_dir, str(new_path.relative_to(user_dir.resolve())))
+    # Extract and validate the base filename (Path.name strips directory components)
+    safe_name = src.name  # Path.name is always just the final component
+    # Reject any name that is empty, '.' or '..'
+    if not safe_name or safe_name in ('.', '..'):
+        return jsonify(ok=False, error="Invalid source name"), 400
+
+    new_dest = dest_dir / safe_name
+    new_validated = _validate_user_path(user_dir, str(new_dest.relative_to(user_dir.resolve())))
     if not new_validated:
         return jsonify(ok=False, error="Invalid destination path"), 400
 
@@ -621,7 +628,7 @@ def files_move():
 
     try:
         src.rename(new_validated)
-        return jsonify(ok=True, new_path=str(new_validated.relative_to(user_dir)))
+        return jsonify(ok=True, new_path=str(new_validated.relative_to(user_dir.resolve())))
     except Exception:
         return jsonify(ok=False, error="Could not move item"), 500
 
@@ -634,7 +641,6 @@ def serve_background():
     for ext in ("png", "jpg", "jpeg", "webp", "gif"):
         img = BASE_DIR / f"background.{ext}"
         if img.exists():
-            from flask import send_file
             return send_file(str(img))
     return jsonify(ok=False, error="No background image found"), 404
 

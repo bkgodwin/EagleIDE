@@ -1499,13 +1499,13 @@ print("Hello " + name)
       const loginBtn = document.getElementById('loginBtn');
       const loginDropdown = document.getElementById('loginDropdown');
       const isLoggedIn = !!(currentUser || ADMIN_TOKEN);
+      // Update guest badge, user chip, and file browser button
+      guestBadge.style.display = isLoggedIn ? 'none' : '';
       if (currentUser) {
-        guestBadge.style.display = 'none';
         userChip.style.display = '';
         userChip.textContent = currentUser.name || currentUser.email;
         toggleFileSidebarBtn.style.display = '';
       } else {
-        guestBadge.style.display = isLoggedIn ? 'none' : '';
         userChip.style.display = 'none';
         toggleFileSidebarBtn.style.display = 'none';
         if (!isLoggedIn) hideFileBrowser();
