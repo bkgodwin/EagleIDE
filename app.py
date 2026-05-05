@@ -30,6 +30,7 @@ MAX_OUTPUT_BYTES = 500_000  # 500 KB max stdout before killing the process
 # File count limits
 MAX_FILES_PER_FOLDER = 20
 MAX_FILES_PER_ACCOUNT = 100
+ALLOWED_EXTENSIONS = {".py", ".txt", ".csv"}
 
 os.makedirs(SANDBOX_DIR, exist_ok=True)
 os.makedirs(ASSIGNMENTS_DIR, exist_ok=True)
@@ -399,8 +400,6 @@ def auth_me():
 # -------------------------
 # File management endpoints
 # -------------------------
-ALLOWED_EXTENSIONS = {".py", ".txt", ".csv"}
-
 @app.get("/api/files/list")
 def files_list():
     user = _require_user_for_files(request)
