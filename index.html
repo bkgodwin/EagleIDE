@@ -38,8 +38,8 @@
 
       /* Themeable tokens — dark mode (default) */
       --theme-bg:         #141414;
-      --theme-panel:      rgba(30,30,30,0.72);
-      --theme-panel-hdr:  rgba(18,18,18,0.92);
+      --theme-panel:      rgba(30,30,30,0.50);
+      --theme-panel-hdr:  rgba(18,18,18,0.72);
       --theme-border:     #333;
       --theme-border-mid: #2b2b2b;
       --theme-text:       #eaeaea;
@@ -48,14 +48,14 @@
       --theme-btn:        #222;
       --theme-btn-hover:  #2a2a2a;
       --theme-secondary:  #2b2b2b;
-      --theme-shell-bg:   rgba(12,12,12,0.80);
+      --theme-shell-bg:   rgba(12,12,12,0.60);
       --theme-shell-text: #dcdcdc;
       --theme-tab-bg:     #111;
       --theme-tab-btn:    #222;
       --theme-topbar:     linear-gradient(90deg,rgba(165,200,240,0.92),rgba(127,178,235,0.92));
       --theme-topbar-txt: #0b2540;
       --theme-output-bg:  #0f0f0f;
-      --theme-cm-bg:      rgba(30,30,30,0.60);
+      --theme-cm-bg:      rgba(30,30,30,0.40);
       --theme-splitter-a: #2b2b2b;
       --theme-splitter-b: #1a1a1a;
       --theme-bg-image:   url(/api/background_dark);
@@ -1210,6 +1210,7 @@ print("Hello " + name)
     let mySid = null;
     let errorLineMarkers = []; // Track error line highlights
     let waitingForUserInput = false; // Track if we're waiting for user input
+    let _inTraceback = false; // Track if we're currently inside a Python traceback block
 
     const SYSTEM_MESSAGE_PATTERN = /^\[.*?\]/;
     const outputEl = document.getElementById('output');
@@ -1224,39 +1225,67 @@ print("Hello " + name)
     function fileJsonHeaders() {
       return { 'Content-Type': 'application/json', ...fileAuthHeaders() };
     }
-    
-    const appendOut = (s, isUserInput = false) => { 
-      const isSysMsg = SYSTEM_MESSAGE_PATTERN.test(s);
-      
-      // Check if this is an error or traceback line
-      const isError = s.includes('Traceback') || s.includes('Error:') || s.match(/^\s*(File|  )/);
-      
-      if (isSysMsg) {
-        const msgSpan = document.createElement('span');
-        msgSpan.className = 'sys-msg';
-        msgSpan.textContent = s;
-        outputEl.appendChild(msgSpan);
-      } else if (isUserInput) {
-        const userSpan = document.createElement('span');
-        userSpan.className = 'shell-user-input';
-        userSpan.textContent = s;
-        outputEl.appendChild(userSpan);
-      } else if (isError) {
-        const errorSpan = document.createElement('span');
-        errorSpan.className = 'shell-error';
-        errorSpan.textContent = s;
-        outputEl.appendChild(errorSpan);
-        
-        // Extract line numbers from traceback
-        const lineMatch = s.match(/line (\d+)/);
+
+    // Append a single line (no embedded newlines) to the shell output with correct coloring.
+    function _appendLine(line) {
+      if (!line) return; // skip null, undefined, and empty string
+      // System messages: [Connected], [Process started], etc.
+      if (SYSTEM_MESSAGE_PATTERN.test(line)) {
+        const span = document.createElement('span');
+        span.className = 'sys-msg';
+        span.textContent = line;
+        outputEl.appendChild(span);
+        return;
+      }
+      // Start of a Python traceback
+      if (/^Traceback \(most recent call last\):/.test(line)) {
+        _inTraceback = true;
+        const span = document.createElement('span');
+        span.className = 'shell-error';
+        span.textContent = line;
+        outputEl.appendChild(span);
+        return;
+      }
+      // Lines that are part of an active traceback
+      if (_inTraceback) {
+        const span = document.createElement('span');
+        span.className = 'shell-error';
+        span.textContent = line;
+        outputEl.appendChild(span);
+        // The exception type line ends the traceback (e.g. "NameError: name 'x' is not defined")
+        if (/^\w[\w.]*(?:Error|Exception|Warning|Interrupt)[:\s]/.test(line) ||
+            /^(KeyboardInterrupt|SystemExit|StopIteration|GeneratorExit)\s*$/.test(line)) {
+          _inTraceback = false;
+        }
+        // Highlight error line numbers (from "File ..., line N" lines)
+        const lineMatch = line.match(/^\s+File ".*?", line (\d+)/);
         if (lineMatch && window.eagleEditor) {
-          const lineNum = parseInt(lineMatch[1]) - 1; // 0-indexed
+          const lineNum = parseInt(lineMatch[1]) - 1;
           highlightErrorLine(lineNum);
         }
-      } else {
-        outputEl.appendChild(document.createTextNode(s));
+        return;
       }
-      outputEl.scrollTop = outputEl.scrollHeight; 
+      // Standalone exception line outside a traceback (bare exception without Traceback header)
+      if (/^\w[\w.]*(?:Error|Exception)[:\s]/.test(line)) {
+        const span = document.createElement('span');
+        span.className = 'shell-error';
+        span.textContent = line;
+        outputEl.appendChild(span);
+        return;
+      }
+      // Normal output
+      outputEl.appendChild(document.createTextNode(line));
+    }
+
+    // Append a (possibly multi-line) string to the shell output with correct per-line coloring.
+    const appendOut = (s) => {
+      if (!s) return;
+      // Split into lines while preserving newlines at end of each segment
+      const segments = s.split(/(?<=\n)/);
+      for (const seg of segments) {
+        _appendLine(seg);
+      }
+      outputEl.scrollTop = outputEl.scrollHeight;
     };
 
     function highlightErrorLine(lineNum) {
@@ -1316,7 +1345,7 @@ print("Hello " + name)
     let socket = null;
     if (typeof io !== 'undefined') {
       try {
-        socket = io({ transports: ["polling"], upgrade: false, timeout: 20000 });
+        socket = io({ transports: ["websocket", "polling"], timeout: 20000 });
         socket.on('connected', (m) => {
           mySid = m?.sid || null;
           window.mySid = mySid;
@@ -1328,41 +1357,53 @@ print("Hello " + name)
           let s = msg.data || '';
           if (!s) return;
           if (s.includes(INPUT_TOKEN)) {
-            // Remove INPUT_TOKEN and display prompt WITHOUT newline
-            s = s.replace(INPUT_TOKEN, '').replace(/\n$/, '');
-            if (s) {
-              outputEl.appendChild(document.createTextNode(s));
+            // Split on INPUT_TOKEN to handle any output that preceded the prompt in the same batch
+            const tokenIdx = s.indexOf(INPUT_TOKEN);
+            const before = s.substring(0, tokenIdx);
+            // Display all text before the INPUT_TOKEN (prior output + prompt) through appendOut
+            // The prompt itself is the last line of `before` (no trailing newline)
+            if (before) {
+              const lastNl = before.lastIndexOf('\n');
+              if (lastNl >= 0) {
+                // Output lines before the prompt
+                appendOut(before.substring(0, lastNl + 1));
+                // Prompt text (no newline — stays on same line as future input)
+                const prompt = before.substring(lastNl + 1);
+                if (prompt) outputEl.appendChild(document.createTextNode(prompt));
+              } else {
+                // Entire `before` is the prompt with no preceding newline
+                outputEl.appendChild(document.createTextNode(before));
+              }
             }
             waitingForUserInput = true;
-            // Focus input field immediately - no setTimeout delay
-            try { 
-              stdinEl.focus(); 
-              stdinEl.select(); // Select any existing text
+            try {
+              stdinEl.focus();
+              stdinEl.select();
             } catch (e) {
               console.warn('Failed to focus stdin:', e);
             }
-          } else if (waitingForUserInput && !s.startsWith('[') && !s.includes('Traceback')) {
-            // This is user input - display inline in green
+          } else if (waitingForUserInput && !s.startsWith('[')) {
+            // The first line is the echoed user input; any lines after that are regular output
+            const nlIdx = s.indexOf('\n');
+            const echoLine = nlIdx >= 0 ? s.substring(0, nlIdx) : s.replace(/\n$/, '');
+            const remainder = nlIdx >= 0 ? s.substring(nlIdx + 1) : '';
+            // Display echo in green
             const userSpan = document.createElement('span');
             userSpan.className = 'shell-user-input';
-            userSpan.textContent = s.replace(/\n$/, '');  // Remove trailing newline
+            userSpan.textContent = echoLine;
             outputEl.appendChild(userSpan);
-            outputEl.appendChild(document.createTextNode('\n'));  // Add newline AFTER input
+            outputEl.appendChild(document.createTextNode('\n'));
             waitingForUserInput = false;
+            // Process any remaining output after the echo normally
+            if (remainder) appendOut(remainder);
             outputEl.scrollTop = outputEl.scrollHeight;
-          } else if (/[?:] ?$/.test(s) && !s.includes('\n')) {
-            appendOut(s);
-            // Focus input for prompts ending with ? or : (fallback detection)
-            try { 
-              stdinEl.focus(); 
-            } catch (e) {
-              console.warn('Failed to focus stdin:', e);
-            }
           } else {
             appendOut(s);
           }
         });
         socket.on('finished', () => {
+          _inTraceback = false; // Reset traceback state when process finishes
+          waitingForUserInput = false;
           appendOut('[Process finished]\n');
           // Refresh file browser so files created by the program appear immediately
           const sidebar = document.getElementById('fileSidebar');
@@ -1391,7 +1432,7 @@ print("Hello " + name)
       appendOut('[Socket.IO library not loaded - IDE functionality limited]\n');
     }
 
-    document.getElementById('runBtn').addEventListener('click', () => {
+    document.getElementById('runBtn').addEventListener('click', async () => {
       // Auto-expand sidebar to show output
       const collapsed = document.body.classList.contains('right-collapsed');
       if (collapsed) {
@@ -1404,11 +1445,15 @@ print("Hello " + name)
       }
       outputEl.textContent = '';
       clearErrorHighlights();
-      // Save current file before running (saveCurrentFile defined in file browser section)
+      _inTraceback = false;      // reset traceback coloring state for new run
+      waitingForUserInput = false;
+      // Save current file before running
       if (currentOpenFile && (USER_TOKEN || ADMIN_TOKEN)) {
-        saveCurrentFile().catch((err) => {
+        try {
+          await saveCurrentFile();
+        } catch (err) {
           appendOut(`[Warning: could not save "${currentOpenFile.name}" before running: ${err}]\n`);
-        });
+        }
       }
       appendOut('[Sending code]\n');
       if (socket) {
