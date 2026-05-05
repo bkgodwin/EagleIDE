@@ -95,15 +95,16 @@ _admin_tokens = set()   # ephemeral, cleared on restart
 def _load_config() -> Dict[str, Any]:
     # Start with defaults so any keys added to DEFAULT_CONFIG are always present.
     merged = DEFAULT_CONFIG.copy()
-    if PERSIST_FILE.exists():
-        try:
-            stored = json.loads(PERSIST_FILE.read_text(encoding="utf-8"))
-            merged.update(stored)
-            return merged
-        except Exception as e:
-            print(f"Warning: Failed to load config from {PERSIST_FILE}: {e}")
-            print("Creating default config...")
-    # No valid config file — save the defaults and return them.
+    with _cfg_lock:
+        if PERSIST_FILE.exists():
+            try:
+                stored = json.loads(PERSIST_FILE.read_text(encoding="utf-8"))
+                merged.update(stored)
+                return merged
+            except Exception as e:
+                print(f"Warning: Failed to load config from {PERSIST_FILE}: {e}")
+                print("Creating default config...")
+    # No valid config file — _cfg_lock is released above before calling _save_config.
     _save_config(merged)
     return merged
 
@@ -306,10 +307,12 @@ def auth_register():
     _reg_rate_limit[ip] = [t for t in timestamps if now - t < 3600]
     if len(_reg_rate_limit[ip]) >= 5:
         return jsonify(ok=False, error="Too many registration attempts. Try again later."), 429
-    # Evict IPs with no recent activity to prevent unbounded dict growth
-    stale_ips = [k for k, v in _reg_rate_limit.items() if not v]
-    for stale_ip in stale_ips:
-        _reg_rate_limit.pop(stale_ip, None)
+    # Probabilistically evict IPs with no recent activity (~5 % of requests)
+    # to prevent unbounded dict growth without paying full scan cost every time.
+    if random.random() < 0.05:
+        stale_ips = [k for k, v in list(_reg_rate_limit.items()) if not v]
+        for stale_ip in stale_ips:
+            _reg_rate_limit.pop(stale_ip, None)
     
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
@@ -1111,10 +1114,12 @@ def assistant_chat():
     if remain > 0:
         return jsonify(ok=False, error="Cooldown", cooldown=remain), 429
 
-    # Evict stale SID entries (older than 1 hour) to prevent unbounded growth
-    stale_cutoff = now - 3600
-    for stale_sid in [k for k, v in _ASSISTANT_LAST.items() if v < stale_cutoff]:
-        _ASSISTANT_LAST.pop(stale_sid, None)
+    # Evict stale SID entries (older than 1 hour) with ~5 % probability
+    # to bound memory growth without scanning on every request.
+    if random.random() < 0.05:
+        stale_cutoff = now - 3600
+        for stale_sid in [k for k, v in list(_ASSISTANT_LAST.items()) if v < stale_cutoff]:
+            _ASSISTANT_LAST.pop(stale_sid, None)
 
     # Build prompt: preprompt + condensed transcript
     preprompt = cfg.get("ai_assistant_preprompt") or ""
