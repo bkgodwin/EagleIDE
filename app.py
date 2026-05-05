@@ -212,8 +212,8 @@ def _enforce_file_limits(user_dir: Path) -> int:
         while len(files) > MAX_FILES_PER_FOLDER:
             try:
                 files[0].unlink()
-            except Exception:
-                pass
+            except (OSError, FileNotFoundError) as exc:
+                print(f"Warning: could not delete {files[0]}: {exc}")
             files.pop(0)
             deleted += 1
     # Enforce per-account limit
@@ -224,8 +224,8 @@ def _enforce_file_limits(user_dir: Path) -> int:
     while len(all_files) > MAX_FILES_PER_ACCOUNT:
         try:
             all_files[0].unlink()
-        except Exception:
-            pass
+        except (OSError, FileNotFoundError) as exc:
+            print(f"Warning: could not delete {all_files[0]}: {exc}")
         all_files.pop(0)
         deleted += 1
     return deleted

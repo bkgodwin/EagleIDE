@@ -1256,11 +1256,6 @@ print("Hello " + name)
         if (/^\w[\w.]*(?:Error|Exception|Warning|Interrupt)[:\s]/.test(line) ||
             /^(KeyboardInterrupt|SystemExit|StopIteration|GeneratorExit)\s*$/.test(line)) {
           _inTraceback = false;
-          // Extract and highlight error line number from traceback
-          const lineMatch = line.match(/line (\d+)/);
-          if (!lineMatch) {
-            // Check the traceback body already appended for line numbers
-          }
         }
         // Highlight error line numbers (from "File ..., line N" lines)
         const lineMatch = line.match(/^\s+File ".*?", line (\d+)/);
