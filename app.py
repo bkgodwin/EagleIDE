@@ -27,6 +27,10 @@ MAX_WALL_TIME = 30.0       # seconds (hard kill for user code)
 IDLE_TIMEOUT = 10.0        # reserved, if you later want idle detection
 MAX_OUTPUT_BYTES = 500_000  # 500 KB max stdout before killing the process
 
+# File count limits
+MAX_FILES_PER_FOLDER = 20
+MAX_FILES_PER_ACCOUNT = 100
+
 os.makedirs(SANDBOX_DIR, exist_ok=True)
 os.makedirs(ASSIGNMENTS_DIR, exist_ok=True)
 
@@ -180,6 +184,62 @@ def _get_user_storage_used(user_dir: Path) -> int:
                     pass
     return total
 
+def _count_files_in_folder(directory: Path) -> int:
+    """Count files (allowed extensions only) directly in a directory (not recursive)."""
+    if not directory.exists() or not directory.is_dir():
+        return 0
+    return sum(1 for f in directory.iterdir() if f.is_file() and f.suffix.lower() in ALLOWED_EXTENSIONS)
+
+def _count_all_files_for_user(user_dir: Path) -> int:
+    """Count all files (allowed extensions only) recursively under user directory."""
+    if not user_dir.exists():
+        return 0
+    return sum(1 for f in user_dir.rglob("*") if f.is_file() and f.suffix.lower() in ALLOWED_EXTENSIONS)
+
+def _enforce_file_limits(user_dir: Path) -> int:
+    """Delete oldest files exceeding per-folder (20) and per-account (100) limits.
+    Returns the number of files deleted."""
+    if not user_dir.exists():
+        return 0
+    deleted = 0
+    # Enforce per-folder limit first
+    all_dirs = [user_dir] + [d for d in user_dir.rglob("*") if d.is_dir()]
+    for folder in all_dirs:
+        files = sorted(
+            [f for f in folder.iterdir() if f.is_file() and f.suffix.lower() in ALLOWED_EXTENSIONS],
+            key=lambda f: f.stat().st_mtime
+        )
+        while len(files) > MAX_FILES_PER_FOLDER:
+            try:
+                files[0].unlink()
+            except Exception:
+                pass
+            files.pop(0)
+            deleted += 1
+    # Enforce per-account limit
+    all_files = sorted(
+        [f for f in user_dir.rglob("*") if f.is_file() and f.suffix.lower() in ALLOWED_EXTENSIONS],
+        key=lambda f: f.stat().st_mtime
+    )
+    while len(all_files) > MAX_FILES_PER_ACCOUNT:
+        try:
+            all_files[0].unlink()
+        except Exception:
+            pass
+        all_files.pop(0)
+        deleted += 1
+    return deleted
+
+def _cleanup_all_user_files() -> None:
+    """Enforce file limits for all existing users at startup."""
+    if not USER_FILES_DIR.exists():
+        return
+    for user_dir in USER_FILES_DIR.iterdir():
+        if user_dir.is_dir():
+            removed = _enforce_file_limits(user_dir)
+            if removed:
+                print(f"Startup cleanup: removed {removed} excess file(s) from {user_dir.name}")
+
 def _validate_user_path(user_dir: Path, path_str: str) -> Optional[Path]:
     """Validate and resolve a path within user directory. Returns None if invalid."""
     try:
@@ -192,6 +252,9 @@ def _validate_user_path(user_dir: Path, path_str: str) -> Optional[Path]:
         return p
     except Exception:
         return None
+
+# Run startup file-limit cleanup after all helpers are defined
+_cleanup_all_user_files()
 
 # -------------------------
 # Admin & Config routes
@@ -414,6 +477,13 @@ def files_create():
         suffix = Path(name).suffix.lower()
         if suffix not in ALLOWED_EXTENSIONS:
             return jsonify(ok=False, error=f"Only {', '.join(ALLOWED_EXTENSIONS)} files allowed"), 400
+        # Check file count limits (only for new files)
+        if not target_validated.exists():
+            parent_dir = target_validated.parent
+            if _count_files_in_folder(parent_dir) >= MAX_FILES_PER_FOLDER:
+                return jsonify(ok=False, error=f"Folder limit reached (max {MAX_FILES_PER_FOLDER} files per folder)"), 400
+            if _count_all_files_for_user(user_dir) >= MAX_FILES_PER_ACCOUNT:
+                return jsonify(ok=False, error=f"Account limit reached (max {MAX_FILES_PER_ACCOUNT} files per account)"), 400
         target_validated.parent.mkdir(parents=True, exist_ok=True)
         if not target_validated.exists():
             target_validated.write_text("", encoding="utf-8")
@@ -580,6 +650,14 @@ def files_upload():
     existing_size = target_validated.stat().st_size if target_validated.exists() else 0
     if used - existing_size + len(content) > limit_bytes:
         return jsonify(ok=False, error=f"Storage limit exceeded"), 413
+
+    # Check file count limits (only for new files)
+    if not target_validated.exists():
+        parent_dir = target_validated.parent
+        if _count_files_in_folder(parent_dir) >= MAX_FILES_PER_FOLDER:
+            return jsonify(ok=False, error=f"Folder limit reached (max {MAX_FILES_PER_FOLDER} files per folder)"), 400
+        if _count_all_files_for_user(user_dir) >= MAX_FILES_PER_ACCOUNT:
+            return jsonify(ok=False, error=f"Account limit reached (max {MAX_FILES_PER_ACCOUNT} files per account)"), 400
     
     try:
         target_validated.write_bytes(content)
@@ -1231,9 +1309,14 @@ exec(_user_code, {{}})
                 decoded = b.decode("utf-8", errors="replace")
                 buf.append(decoded)
                 buf_size += len(decoded)  # track decoded character count for batch threshold
-                now = time.time()
-                if buf_size >= BATCH_BYTES or (now - last_flush) >= BATCH_SECS:
+                # Immediately flush when an input() prompt token is detected
+                # so the user sees the prompt without waiting for the batch timer
+                if INPUT_TOKEN in decoded:
                     flush()
+                else:
+                    now = time.time()
+                    if buf_size >= BATCH_BYTES or (now - last_flush) >= BATCH_SECS:
+                        flush()
             flush()
 
         t = threading.Thread(target=reader, daemon=True)
@@ -1246,7 +1329,7 @@ exec(_user_code, {{}})
                 except Exception: pass
                 socketio.emit("output", {"data": "\n[Process killed due to wall-time limit]\n"}, to=self.sid)
                 break
-            time.sleep(0.15)
+            time.sleep(0.05)
 
         try:
             socketio.emit("finished", {}, to=self.sid)
