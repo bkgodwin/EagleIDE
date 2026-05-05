@@ -64,6 +64,8 @@ except Exception:
             "Keep explanations short, accurate, and step-by-step. If a question is not about coding, "
             "politely decline and redirect to Python topics."
         ),
+        "page_title": "Eagle IDE (Python)",
+        "topbar_color": "linear-gradient(90deg,#a5c8f0,#7fb2eb)",
         "registration_enabled": True,
     }
 
@@ -91,16 +93,20 @@ _cfg_lock = threading.Lock()
 _admin_tokens = set()   # ephemeral, cleared on restart
 
 def _load_config() -> Dict[str, Any]:
+    # Start with defaults so any keys added to DEFAULT_CONFIG are always present.
+    merged = DEFAULT_CONFIG.copy()
     with _cfg_lock:
         if PERSIST_FILE.exists():
             try:
-                return json.loads(PERSIST_FILE.read_text(encoding="utf-8"))
+                stored = json.loads(PERSIST_FILE.read_text(encoding="utf-8"))
+                merged.update(stored)
+                return merged
             except Exception as e:
                 print(f"Warning: Failed to load config from {PERSIST_FILE}: {e}")
                 print("Creating default config...")
-    # Call _save_config OUTSIDE the lock context
-    _save_config(DEFAULT_CONFIG)
-    return DEFAULT_CONFIG.copy()
+    # No valid config file — _cfg_lock is released above before calling _save_config.
+    _save_config(merged)
+    return merged
 
 def _save_config(new_cfg: Dict[str, Any]) -> None:
     with _cfg_lock:
@@ -213,10 +219,10 @@ def _enforce_file_limits(user_dir: Path) -> int:
         while len(files) > MAX_FILES_PER_FOLDER:
             try:
                 files[0].unlink()
+                deleted += 1
             except (OSError, FileNotFoundError) as exc:
                 print(f"Warning: could not delete {files[0]}: {exc}")
             files.pop(0)
-            deleted += 1
     # Enforce per-account limit
     all_files = sorted(
         [f for f in user_dir.rglob("*") if f.is_file() and f.suffix.lower() in ALLOWED_EXTENSIONS],
@@ -225,10 +231,10 @@ def _enforce_file_limits(user_dir: Path) -> int:
     while len(all_files) > MAX_FILES_PER_ACCOUNT:
         try:
             all_files[0].unlink()
+            deleted += 1
         except (OSError, FileNotFoundError) as exc:
             print(f"Warning: could not delete {all_files[0]}: {exc}")
         all_files.pop(0)
-        deleted += 1
     return deleted
 
 def _cleanup_all_user_files() -> None:
@@ -253,9 +259,6 @@ def _validate_user_path(user_dir: Path, path_str: str) -> Optional[Path]:
         return p
     except Exception:
         return None
-
-# Run startup file-limit cleanup after all helpers are defined
-_cleanup_all_user_files()
 
 # -------------------------
 # Admin & Config routes
@@ -300,10 +303,16 @@ def auth_register():
     ip = request.remote_addr or "unknown"
     now = time.time()
     timestamps = _reg_rate_limit[ip]
-    # Clean old entries
+    # Clean old entries for this IP
     _reg_rate_limit[ip] = [t for t in timestamps if now - t < 3600]
     if len(_reg_rate_limit[ip]) >= 5:
         return jsonify(ok=False, error="Too many registration attempts. Try again later."), 429
+    # Probabilistically evict IPs with no recent activity (~5 % of requests)
+    # to prevent unbounded dict growth without paying full scan cost every time.
+    if random.random() < 0.05:
+        stale_ips = [k for k, v in list(_reg_rate_limit.items()) if not v]
+        for stale_ip in stale_ips:
+            _reg_rate_limit.pop(stale_ip, None)
     
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
@@ -994,7 +1003,10 @@ def challenge_score():
     data = request.get_json(silent=True) or {}
     code = data.get("code", "")
     challenge_text = data.get("challenge", "")
-    points = int(data.get("points", 3))
+    try:
+        points = max(1, min(100, int(data.get("points", 3))))
+    except (TypeError, ValueError):
+        points = 3
     if not code or not challenge_text:
         return jsonify(ok=False, error="Missing code or challenge"), 400
 
@@ -1101,6 +1113,13 @@ def assistant_chat():
     remain = ASSISTANT_COOLDOWN - int(now - last)
     if remain > 0:
         return jsonify(ok=False, error="Cooldown", cooldown=remain), 429
+
+    # Evict stale SID entries (older than 1 hour) with ~5 % probability
+    # to bound memory growth without scanning on every request.
+    if random.random() < 0.05:
+        stale_cutoff = now - 3600
+        for stale_sid in [k for k, v in list(_ASSISTANT_LAST.items()) if v < stale_cutoff]:
+            _ASSISTANT_LAST.pop(stale_sid, None)
 
     # Build prompt: preprompt + condensed transcript
     preprompt = cfg.get("ai_assistant_preprompt") or ""
@@ -2193,6 +2212,7 @@ if __name__ == "__main__":
     print(f"Async mode: {socketio.async_mode}", flush=True)
     print(f"EagleIDE server starting on http://{host}:{port}", flush=True)
     print("Press Ctrl+C to stop.", flush=True)
+    _cleanup_all_user_files()
     try:
         socketio.run(app, host=host, port=port, debug=False)
     except (KeyboardInterrupt, SystemExit):
