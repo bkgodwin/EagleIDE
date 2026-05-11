@@ -983,9 +983,11 @@ def _read_exception_help_rows() -> list[dict]:
 
 @app.get("/api/exception-help")
 def api_exception_help():
+    if not EXCEPTION_HELP_CSV.exists():
+        return jsonify(ok=False, error="exception_help.csv not found"), 404
     rows = _read_exception_help_rows()
     if not rows:
-        return jsonify(ok=False, error="No exception_help.csv found or it is empty"), 404
+        return jsonify(ok=False, error="exception_help.csv is empty"), 404
     return jsonify(ok=True, entries=rows)
 
 def _read_challenges() -> list[dict]:
