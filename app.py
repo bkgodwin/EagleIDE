@@ -18,6 +18,7 @@ from collections import defaultdict
 BASE_DIR = Path(__file__).resolve().parent
 PERSIST_FILE = BASE_DIR / "config.txt"        # persisted settings (JSON)
 CHALLENGE_CSV = BASE_DIR / "challenges.csv"   # optional challenge bank
+EXCEPTION_HELP_CSV = BASE_DIR / "exception_help.csv"
 LEADERBOARD_CSV = BASE_DIR / "leaderboard.csv"
 SANDBOX_DIR = BASE_DIR / "sandboxes"
 ASSIGNMENTS_DIR = BASE_DIR / "assignments"
@@ -962,6 +963,30 @@ def api_explain():
 # Challenge system (CSV)
 # -------------------------
 _lb_lock = threading.Lock()
+
+def _read_exception_help_rows() -> list[dict]:
+    rows = []
+    if not EXCEPTION_HELP_CSV.exists():
+        return rows
+    with EXCEPTION_HELP_CSV.open("r", newline="", encoding="utf-8") as f:
+        rd = csv.DictReader(f)
+        for r in rd:
+            exc = (r.get("Exception") or "").strip()
+            if not exc:
+                continue
+            rows.append({
+                "exception": exc,
+                "description": (r.get("Description") or "").strip(),
+                "troubleshooting": (r.get("Troubleshooting") or "").strip(),
+            })
+    return rows
+
+@app.get("/api/exception-help")
+def api_exception_help():
+    rows = _read_exception_help_rows()
+    if not rows:
+        return jsonify(ok=False, error="No exception_help.csv found or it is empty"), 404
+    return jsonify(ok=True, entries=rows)
 
 def _read_challenges() -> list[dict]:
     rows = []
@@ -2218,4 +2243,3 @@ if __name__ == "__main__":
     except (KeyboardInterrupt, SystemExit):
         pass
     print("Server stopped.")
-
