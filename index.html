@@ -1237,8 +1237,11 @@ print("Hello " + name)
     const TRACEBACK_SPECIAL_END_PATTERN = /^(KeyboardInterrupt|SystemExit|StopIteration|GeneratorExit)\s*$/;
     const STANDALONE_EXCEPTION_PATTERN = /^\w[\w.]*(?:Error|Exception|Interrupt)[:\s]/;
     const EXCEPTION_TYPE_PATTERN = /^([A-Za-z_][\w.]*(?:Error|Exception|Interrupt))(?::|\s|$)/;
-    // 0.4s animation x 5 iterations + small buffer to ensure class removal after animation completes.
-    const EXCEPTION_FLASH_DURATION_MS = 2200;
+    const EXCEPTION_FLASH_ANIMATION_MS = 400;
+    const EXCEPTION_FLASH_ITERATIONS = 5;
+    const EXCEPTION_FLASH_BUFFER_MS = 200;
+    const EXCEPTION_FLASH_DURATION_MS =
+      (EXCEPTION_FLASH_ANIMATION_MS * EXCEPTION_FLASH_ITERATIONS) + EXCEPTION_FLASH_BUFFER_MS;
     const outputEl = document.getElementById('output');
     const stdinEl = document.getElementById('stdin');
     const exceptionHelpBtn = document.getElementById('exceptionHelpBtn');
@@ -1317,7 +1320,7 @@ print("Hello " + name)
       if (!exceptionHelpModal || !exceptionHelpContent) return;
       const entry = lastRunExceptionEntry || findExceptionHelpEntry(lastRunExceptionType);
       if (!entry) {
-        exceptionHelpContent.textContent = `Last exception: ${lastRunExceptionType || 'Unknown'}\n\nNo troubleshooting entry was found.\nPlease check Python documentation or ask your instructor for help with this exception type.`;
+        exceptionHelpContent.textContent = `Last exception: ${lastRunExceptionType || 'Unknown'}\n\nNo troubleshooting entry was found.\nPlease check Python documentation (https://docs.python.org/3/library/exceptions.html) or ask your instructor for help with this exception type.`;
       } else {
         const title = entry.exception || lastRunExceptionType || 'Exception';
         const desc = entry.description || 'No description available.';
