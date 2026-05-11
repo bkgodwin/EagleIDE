@@ -114,6 +114,13 @@
     .stop{ background:#444; color:#fff; }
     .secondary{ background:var(--theme-secondary) }
     .admin{ background:#315; color:#fff; }
+    .exception-help-btn{ min-width:38px; padding:8px 10px; background:#8b1c1c; color:#fff; display:none; }
+    .exception-help-btn:hover{ background:#6d0f0f; }
+    .exception-help-btn.flash{ animation: exception-help-flash 0.4s ease-in-out 5; }
+    @keyframes exception-help-flash{
+      0%, 100% { background:#8b1c1c; box-shadow:0 0 0 rgba(255,0,0,0); }
+      50% { background:#ff2e2e; box-shadow:0 0 12px rgba(255,46,46,0.9); }
+    }
 
     .outer{ display:grid; grid-template-columns: var(--left-width) var(--vsplitter-size) 1fr; grid-template-rows: 1fr; gap:10px; padding:10px; height:calc(100vh - 60px); min-height:400px; overflow:hidden; }
     /* With file sidebar visible */
@@ -399,6 +406,7 @@
     <div class="brand"><div>Eagles Web IDE</div><div class="badge">Python</div></div>
     <div class="actions">
       <button class="btn run" id="runBtn">Run ▶</button>
+      <button class="btn exception-help-btn" id="exceptionHelpBtn" title="Troubleshooting Assistant" aria-label="Open troubleshooting assistant">🛠️</button>
       <button class="btn stop" id="stopBtn">Stop ⏹</button>
 
       <button class="btn secondary" id="themeToggleBtn" title="Toggle light/dark mode">🌙 Dark</button>
@@ -648,6 +656,17 @@
 
           </div>
         </section>
+      </div>
+    </div>
+  </div>
+
+  <!-- Exception Help Modal -->
+  <div id="exceptionHelpModal" class="modal" style="display:none;">
+    <div class="modal-content" style="max-width:460px;">
+      <h3>Troubleshooting Assistant</h3>
+      <div id="exceptionHelpContent" style="white-space:pre-wrap; line-height:1.45;"></div>
+      <div class="modal-actions">
+        <button class="btn secondary" id="exceptionHelpCloseBtn">Exit</button>
       </div>
     </div>
   </div>
@@ -1215,6 +1234,97 @@ print("Hello " + name)
     const SYSTEM_MESSAGE_PATTERN = /^\[.*?\]/;
     const outputEl = document.getElementById('output');
     const stdinEl = document.getElementById('stdin');
+    const exceptionHelpBtn = document.getElementById('exceptionHelpBtn');
+    const exceptionHelpModal = document.getElementById('exceptionHelpModal');
+    const exceptionHelpContent = document.getElementById('exceptionHelpContent');
+    let exceptionHelpEntries = [];
+    let exceptionHelpByName = new Map();
+    let lastRunExceptionType = null;
+    let lastRunExceptionEntry = null;
+    let exceptionInCurrentRun = false;
+
+    async function loadExceptionHelpEntries() {
+      try {
+        const res = await fetch('/api/exception-help');
+        const j = await res.json();
+        if (!j?.ok || !Array.isArray(j?.entries)) return;
+        exceptionHelpEntries = j.entries;
+        exceptionHelpByName = new Map();
+        for (const entry of exceptionHelpEntries) {
+          const key = String(entry?.exception || '').trim().toLowerCase();
+          if (key) exceptionHelpByName.set(key, entry);
+        }
+      } catch (e) {
+        console.warn('Failed to load exception help data:', e);
+      }
+    }
+
+    function normalizeExceptionType(raw) {
+      const val = String(raw || '').trim();
+      if (!val) return '';
+      const lastSegment = val.split('.').pop() || val;
+      return lastSegment.trim();
+    }
+
+    function findExceptionHelpEntry(exceptionType) {
+      const normalized = normalizeExceptionType(exceptionType);
+      if (!normalized) return null;
+      return (
+        exceptionHelpByName.get(normalized.toLowerCase()) ||
+        exceptionHelpByName.get('exception') ||
+        null
+      );
+    }
+
+    function detectExceptionType(line) {
+      const m = String(line || '').trim().match(/^([A-Za-z_][\w.]*(?:Error|Exception|Interrupt))(?::|\s|$)/);
+      return m ? normalizeExceptionType(m[1]) : null;
+    }
+
+    function markExceptionFromLine(line) {
+      const exceptionType = detectExceptionType(line);
+      if (!exceptionType) return;
+      exceptionInCurrentRun = true;
+      lastRunExceptionType = exceptionType;
+      lastRunExceptionEntry = findExceptionHelpEntry(exceptionType);
+    }
+
+    function hideExceptionHelpButton() {
+      if (!exceptionHelpBtn) return;
+      exceptionHelpBtn.style.display = 'none';
+      exceptionHelpBtn.classList.remove('flash');
+    }
+
+    function showExceptionHelpButton() {
+      if (!exceptionHelpBtn) return;
+      exceptionHelpBtn.style.display = '';
+      exceptionHelpBtn.classList.remove('flash');
+      void exceptionHelpBtn.offsetWidth;
+      exceptionHelpBtn.classList.add('flash');
+      setTimeout(() => {
+        exceptionHelpBtn.classList.remove('flash');
+      }, 2200);
+    }
+
+    function openExceptionHelpModal() {
+      if (!exceptionHelpModal || !exceptionHelpContent) return;
+      const entry = lastRunExceptionEntry || findExceptionHelpEntry(lastRunExceptionType);
+      if (!entry) {
+        exceptionHelpContent.textContent = `Last exception: ${lastRunExceptionType || 'Unknown'}\n\nNo troubleshooting entry was found.`;
+      } else {
+        const title = entry.exception || lastRunExceptionType || 'Exception';
+        const desc = entry.description || 'No description available.';
+        const tips = entry.troubleshooting || 'No troubleshooting steps available.';
+        exceptionHelpContent.textContent = `Exception: ${title}\n\nDescription:\n${desc}\n\nTroubleshooting:\n${tips}`;
+      }
+      exceptionHelpModal.style.display = 'flex';
+    }
+
+    function closeExceptionHelpModal() {
+      if (exceptionHelpModal) exceptionHelpModal.style.display = 'none';
+    }
+
+    loadExceptionHelpEntries();
 
     // --- File auth helpers ---
     function fileAuthHeaders() {
@@ -1255,6 +1365,7 @@ print("Hello " + name)
         // The exception type line ends the traceback (e.g. "NameError: name 'x' is not defined")
         if (/^\w[\w.]*(?:Error|Exception|Warning|Interrupt)[:\s]/.test(line) ||
             /^(KeyboardInterrupt|SystemExit|StopIteration|GeneratorExit)\s*$/.test(line)) {
+          markExceptionFromLine(line);
           _inTraceback = false;
         }
         // Highlight error line numbers (from "File ..., line N" lines)
@@ -1266,7 +1377,8 @@ print("Hello " + name)
         return;
       }
       // Standalone exception line outside a traceback (bare exception without Traceback header)
-      if (/^\w[\w.]*(?:Error|Exception)[:\s]/.test(line)) {
+      if (/^\w[\w.]*(?:Error|Exception|Interrupt)[:\s]/.test(line)) {
+        markExceptionFromLine(line);
         const span = document.createElement('span');
         span.className = 'shell-error';
         span.textContent = line;
@@ -1404,6 +1516,11 @@ print("Hello " + name)
         socket.on('finished', () => {
           _inTraceback = false; // Reset traceback state when process finishes
           waitingForUserInput = false;
+          if (exceptionInCurrentRun) {
+            showExceptionHelpButton();
+          } else {
+            hideExceptionHelpButton();
+          }
           appendOut('[Process finished]\n');
           // Refresh file browser so files created by the program appear immediately
           const sidebar = document.getElementById('fileSidebar');
@@ -1447,6 +1564,11 @@ print("Hello " + name)
       clearErrorHighlights();
       _inTraceback = false;      // reset traceback coloring state for new run
       waitingForUserInput = false;
+      exceptionInCurrentRun = false;
+      lastRunExceptionType = null;
+      lastRunExceptionEntry = null;
+      hideExceptionHelpButton();
+      closeExceptionHelpModal();
       // Save current file before running
       if (currentOpenFile && (USER_TOKEN || ADMIN_TOKEN)) {
         try {
@@ -1461,6 +1583,19 @@ print("Hello " + name)
       } else {
         appendOut('[Error: Cannot run code - Socket.IO not available]\n');
       }
+    });
+    exceptionHelpBtn?.addEventListener('click', async () => {
+      if (!exceptionHelpByName.size) {
+        await loadExceptionHelpEntries();
+        if (lastRunExceptionType) {
+          lastRunExceptionEntry = findExceptionHelpEntry(lastRunExceptionType);
+        }
+      }
+      openExceptionHelpModal();
+    });
+    document.getElementById('exceptionHelpCloseBtn')?.addEventListener('click', closeExceptionHelpModal);
+    exceptionHelpModal?.addEventListener('click', (e) => {
+      if (e.target === exceptionHelpModal) closeExceptionHelpModal();
     });
     document.getElementById('stopBtn').addEventListener('click', () => {
       if (socket) {
