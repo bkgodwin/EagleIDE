@@ -1232,6 +1232,10 @@ print("Hello " + name)
     let _inTraceback = false; // Track if we're currently inside a Python traceback block
 
     const SYSTEM_MESSAGE_PATTERN = /^\[.*?\]/;
+    const TRACEBACK_START_PATTERN = /^Traceback \(most recent call last\):/;
+    const TRACEBACK_END_PATTERN = /^\w[\w.]*(?:Error|Exception|Warning|Interrupt)[:\s]|^(KeyboardInterrupt|SystemExit|StopIteration|GeneratorExit)\s*$/;
+    const STANDALONE_EXCEPTION_PATTERN = /^\w[\w.]*(?:Error|Exception|Interrupt)[:\s]/;
+    const EXCEPTION_TYPE_PATTERN = /^([A-Za-z_][\w.]*(?:Error|Exception|Interrupt))(?::|\s|$)/;
     const outputEl = document.getElementById('output');
     const stdinEl = document.getElementById('stdin');
     const exceptionHelpBtn = document.getElementById('exceptionHelpBtn');
@@ -1277,7 +1281,7 @@ print("Hello " + name)
     }
 
     function detectExceptionType(line) {
-      const m = String(line || '').trim().match(/^([A-Za-z_][\w.]*(?:Error|Exception|Interrupt))(?::|\s|$)/);
+      const m = String(line || '').trim().match(EXCEPTION_TYPE_PATTERN);
       return m ? normalizeExceptionType(m[1]) : null;
     }
 
@@ -1310,7 +1314,7 @@ print("Hello " + name)
       if (!exceptionHelpModal || !exceptionHelpContent) return;
       const entry = lastRunExceptionEntry || findExceptionHelpEntry(lastRunExceptionType);
       if (!entry) {
-        exceptionHelpContent.textContent = `Last exception: ${lastRunExceptionType || 'Unknown'}\n\nNo troubleshooting entry was found.`;
+        exceptionHelpContent.textContent = `Last exception: ${lastRunExceptionType || 'Unknown'}\n\nNo troubleshooting entry was found.\nPlease check Python documentation or ask your instructor for help with this exception type.`;
       } else {
         const title = entry.exception || lastRunExceptionType || 'Exception';
         const desc = entry.description || 'No description available.';
@@ -1348,7 +1352,7 @@ print("Hello " + name)
         return;
       }
       // Start of a Python traceback
-      if (/^Traceback \(most recent call last\):/.test(line)) {
+      if (TRACEBACK_START_PATTERN.test(line)) {
         _inTraceback = true;
         const span = document.createElement('span');
         span.className = 'shell-error';
@@ -1363,8 +1367,7 @@ print("Hello " + name)
         span.textContent = line;
         outputEl.appendChild(span);
         // The exception type line ends the traceback (e.g. "NameError: name 'x' is not defined")
-        if (/^\w[\w.]*(?:Error|Exception|Warning|Interrupt)[:\s]/.test(line) ||
-            /^(KeyboardInterrupt|SystemExit|StopIteration|GeneratorExit)\s*$/.test(line)) {
+        if (TRACEBACK_END_PATTERN.test(line)) {
           markExceptionFromLine(line);
           _inTraceback = false;
         }
@@ -1377,7 +1380,7 @@ print("Hello " + name)
         return;
       }
       // Standalone exception line outside a traceback (bare exception without Traceback header)
-      if (/^\w[\w.]*(?:Error|Exception|Interrupt)[:\s]/.test(line)) {
+      if (STANDALONE_EXCEPTION_PATTERN.test(line)) {
         markExceptionFromLine(line);
         const span = document.createElement('span');
         span.className = 'shell-error';
