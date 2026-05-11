@@ -406,7 +406,7 @@
     <div class="brand"><div>Eagles Web IDE</div><div class="badge">Python</div></div>
     <div class="actions">
       <button class="btn run" id="runBtn">Run ▶</button>
-      <button class="btn exception-help-btn" id="exceptionHelpBtn" title="Troubleshooting Assistant" aria-label="Open troubleshooting assistant">🛠️</button>
+      <button class="btn exception-help-btn" id="exceptionHelpBtn" title="Troubleshooting Assistant" aria-label="Open troubleshooting assistant">🛠️ Help</button>
       <button class="btn stop" id="stopBtn">Stop ⏹</button>
 
       <button class="btn secondary" id="themeToggleBtn" title="Toggle light/dark mode">🌙 Dark</button>
@@ -1233,9 +1233,12 @@ print("Hello " + name)
 
     const SYSTEM_MESSAGE_PATTERN = /^\[.*?\]/;
     const TRACEBACK_START_PATTERN = /^Traceback \(most recent call last\):/;
-    const TRACEBACK_END_PATTERN = /^\w[\w.]*(?:Error|Exception|Warning|Interrupt)[:\s]|^(KeyboardInterrupt|SystemExit|StopIteration|GeneratorExit)\s*$/;
+    const TRACEBACK_EXCEPTION_LINE_PATTERN = /^\w[\w.]*(?:Error|Exception|Warning|Interrupt)[:\s]/;
+    const TRACEBACK_SPECIAL_END_PATTERN = /^(KeyboardInterrupt|SystemExit|StopIteration|GeneratorExit)\s*$/;
     const STANDALONE_EXCEPTION_PATTERN = /^\w[\w.]*(?:Error|Exception|Interrupt)[:\s]/;
     const EXCEPTION_TYPE_PATTERN = /^([A-Za-z_][\w.]*(?:Error|Exception|Interrupt))(?::|\s|$)/;
+    // 0.4s animation x 5 iterations + small buffer to ensure class removal after animation completes.
+    const EXCEPTION_FLASH_DURATION_MS = 2200;
     const outputEl = document.getElementById('output');
     const stdinEl = document.getElementById('stdin');
     const exceptionHelpBtn = document.getElementById('exceptionHelpBtn');
@@ -1250,9 +1253,9 @@ print("Hello " + name)
     async function loadExceptionHelpEntries() {
       try {
         const res = await fetch('/api/exception-help');
-        const j = await res.json();
-        if (!j?.ok || !Array.isArray(j?.entries)) return;
-        exceptionHelpEntries = j.entries;
+        const data = await res.json();
+        if (!data?.ok || !Array.isArray(data?.entries)) return;
+        exceptionHelpEntries = data.entries;
         exceptionHelpByName = new Map();
         for (const entry of exceptionHelpEntries) {
           const key = String(entry?.exception || '').trim().toLowerCase();
@@ -1307,7 +1310,7 @@ print("Hello " + name)
       exceptionHelpBtn.classList.add('flash');
       setTimeout(() => {
         exceptionHelpBtn.classList.remove('flash');
-      }, 2200);
+      }, EXCEPTION_FLASH_DURATION_MS);
     }
 
     function openExceptionHelpModal() {
@@ -1367,7 +1370,7 @@ print("Hello " + name)
         span.textContent = line;
         outputEl.appendChild(span);
         // The exception type line ends the traceback (e.g. "NameError: name 'x' is not defined")
-        if (TRACEBACK_END_PATTERN.test(line)) {
+        if (TRACEBACK_EXCEPTION_LINE_PATTERN.test(line) || TRACEBACK_SPECIAL_END_PATTERN.test(line)) {
           markExceptionFromLine(line);
           _inTraceback = false;
         }
