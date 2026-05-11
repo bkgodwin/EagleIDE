@@ -968,6 +968,8 @@ _exception_help_cache_rows: list[dict] = []
 
 def _read_exception_help_rows() -> list[dict]:
     global _exception_help_cache_mtime, _exception_help_cache_rows
+    if not EXCEPTION_HELP_CSV.exists():
+        raise FileNotFoundError("exception_help.csv not found")
     mtime = EXCEPTION_HELP_CSV.stat().st_mtime
     if _exception_help_cache_mtime == mtime and _exception_help_cache_rows:
         return list(_exception_help_cache_rows)
