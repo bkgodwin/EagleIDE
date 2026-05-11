@@ -18,6 +18,7 @@ from collections import defaultdict
 BASE_DIR = Path(__file__).resolve().parent
 PERSIST_FILE = BASE_DIR / "config.txt"        # persisted settings (JSON)
 CHALLENGE_CSV = BASE_DIR / "challenges.csv"   # optional challenge bank
+EXCEPTION_HELP_CSV = BASE_DIR / "exception_help.csv"
 LEADERBOARD_CSV = BASE_DIR / "leaderboard.csv"
 SANDBOX_DIR = BASE_DIR / "sandboxes"
 ASSIGNMENTS_DIR = BASE_DIR / "assignments"
@@ -962,6 +963,44 @@ def api_explain():
 # Challenge system (CSV)
 # -------------------------
 _lb_lock = threading.Lock()
+_exception_help_lock = threading.Lock()
+_exception_help_cache_mtime: Optional[float] = None
+_exception_help_cache_rows: list[dict] = []
+
+def _read_exception_help_rows() -> list[dict]:
+    global _exception_help_cache_mtime, _exception_help_cache_rows
+    if not EXCEPTION_HELP_CSV.exists():
+        raise FileNotFoundError("exception_help.csv not found")
+    with _exception_help_lock:
+        mtime = EXCEPTION_HELP_CSV.stat().st_mtime
+        if _exception_help_cache_mtime == mtime and _exception_help_cache_rows:
+            return list(_exception_help_cache_rows)
+
+        rows = []
+        with EXCEPTION_HELP_CSV.open("r", newline="", encoding="utf-8") as f:
+            rd = csv.DictReader(f)
+            for r in rd:
+                exc = (r.get("Exception") or "").strip()
+                if not exc:
+                    continue
+                rows.append({
+                    "exception": exc,
+                    "description": (r.get("Description") or "").strip(),
+                    "troubleshooting": (r.get("Troubleshooting") or "").strip(),
+                })
+        _exception_help_cache_mtime = mtime
+        _exception_help_cache_rows = rows
+        return rows
+
+@app.get("/api/exception-help")
+def api_exception_help():
+    try:
+        rows = _read_exception_help_rows()
+    except FileNotFoundError:
+        return jsonify(ok=False, error="exception_help.csv not found"), 404
+    if not rows:
+        return jsonify(ok=False, error="exception_help.csv is empty"), 404
+    return jsonify(ok=True, entries=rows)
 
 def _read_challenges() -> list[dict]:
     rows = []
@@ -2218,4 +2257,3 @@ if __name__ == "__main__":
     except (KeyboardInterrupt, SystemExit):
         pass
     print("Server stopped.")
-
