@@ -963,6 +963,7 @@ def api_explain():
 # Challenge system (CSV)
 # -------------------------
 _lb_lock = threading.Lock()
+_exception_help_lock = threading.Lock()
 _exception_help_cache_mtime: Optional[float] = None
 _exception_help_cache_rows: list[dict] = []
 
@@ -970,25 +971,26 @@ def _read_exception_help_rows() -> list[dict]:
     global _exception_help_cache_mtime, _exception_help_cache_rows
     if not EXCEPTION_HELP_CSV.exists():
         raise FileNotFoundError("exception_help.csv not found")
-    mtime = EXCEPTION_HELP_CSV.stat().st_mtime
-    if _exception_help_cache_mtime == mtime and _exception_help_cache_rows:
-        return list(_exception_help_cache_rows)
+    with _exception_help_lock:
+        mtime = EXCEPTION_HELP_CSV.stat().st_mtime
+        if _exception_help_cache_mtime == mtime and _exception_help_cache_rows:
+            return list(_exception_help_cache_rows)
 
-    rows = []
-    with EXCEPTION_HELP_CSV.open("r", newline="", encoding="utf-8") as f:
-        rd = csv.DictReader(f)
-        for r in rd:
-            exc = (r.get("Exception") or "").strip()
-            if not exc:
-                continue
-            rows.append({
-                "exception": exc,
-                "description": (r.get("Description") or "").strip(),
-                "troubleshooting": (r.get("Troubleshooting") or "").strip(),
-            })
-    _exception_help_cache_mtime = mtime
-    _exception_help_cache_rows = rows
-    return rows
+        rows = []
+        with EXCEPTION_HELP_CSV.open("r", newline="", encoding="utf-8") as f:
+            rd = csv.DictReader(f)
+            for r in rd:
+                exc = (r.get("Exception") or "").strip()
+                if not exc:
+                    continue
+                rows.append({
+                    "exception": exc,
+                    "description": (r.get("Description") or "").strip(),
+                    "troubleshooting": (r.get("Troubleshooting") or "").strip(),
+                })
+        _exception_help_cache_mtime = mtime
+        _exception_help_cache_rows = rows
+        return rows
 
 @app.get("/api/exception-help")
 def api_exception_help():
