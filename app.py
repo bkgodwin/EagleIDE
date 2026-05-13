@@ -41,6 +41,7 @@ INPUT_TOKEN = "[[_IDE_INPUT_]]"
 MAX_WALL_TIME = 30.0       # seconds (hard kill for user code)
 IDLE_TIMEOUT = 10.0        # reserved, if you later want idle detection
 MAX_OUTPUT_BYTES = 500_000  # 500 KB max stdout before killing the process
+MAX_ASSISTANT_CODE_CHARS = 12_000
 
 # File count limits
 MAX_FILES_PER_FOLDER = 20
@@ -1302,7 +1303,7 @@ def assistant_chat():
     file_name = (data.get("fileName") or data.get("file_name") or "").strip()
     language = _normalize_language_hint(data.get("language"), file_name)
     language_label = _language_label(language)
-    code = str(data.get("code") or "")[:12000]
+    code = str(data.get("code") or "")[:MAX_ASSISTANT_CODE_CHARS]
 
     if not sid:
         return jsonify(ok=False, error="Missing SID"), 400
@@ -1583,7 +1584,7 @@ exec(_user_code, {{}})
                 pass
         self.proc = None
 
-_runners: Dict[str, object] = {}
+_runners: Dict[str, "Runner | JsRunner"] = {}
 _runner_lock = threading.Lock()
 
 NODE_EXECUTABLE = shutil.which("node") or "node"
