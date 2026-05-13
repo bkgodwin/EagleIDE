@@ -74,12 +74,12 @@ except Exception:
         "ai_ollama_url": "http://127.0.0.1:11434",
         "ai_model": "gemma3:4b",
         "ai_assistant_preprompt": (
-            "You are a helpful Python tutor for high-school students. "
+            "You are a helpful programming tutor for high-school students working in Python and JavaScript. "
             "Only answer questions about programming and debugging code. "
             "Keep explanations short, accurate, and step-by-step. If a question is not about coding, "
-            "politely decline and redirect to Python topics."
+            "politely decline and redirect to Python or JavaScript topics."
         ),
-        "page_title": "Eagle IDE (Python)",
+        "page_title": "Eagle IDE (Python + JavaScript)",
         "topbar_color": "linear-gradient(90deg,#a5c8f0,#7fb2eb)",
         "registration_enabled": True,
     }
@@ -1007,6 +1007,22 @@ def call_ollama_generate(ollama_url: str, model: str, prompt: str, timeout: floa
     except Exception as e:
         return {"ok": False, "error": f"Ollama error: {e}"}
 
+
+def _normalize_language_hint(language: Any, file_name: str = "") -> str:
+    raw = str(language or "").strip().lower()
+    file_name = (file_name or "").strip().lower()
+    if raw in {"js", "javascript", "node", "nodejs"} or file_name.endswith(".js"):
+        return "javascript"
+    return "python"
+
+
+def _language_label(language: str) -> str:
+    return "JavaScript" if language == "javascript" else "Python"
+
+
+def _language_best_practices(language: str) -> str:
+    return "Does it follow JavaScript best practices?" if language == "javascript" else "Does it follow Python best practices?"
+
 # -------------------------
 # Explain endpoint
 # -------------------------
@@ -1018,14 +1034,18 @@ def api_explain():
 
     data = request.get_json(silent=True) or {}
     code = data.get("code", "")
+    file_name = (data.get("fileName") or data.get("file_name") or "").strip()
+    language = _normalize_language_hint(data.get("language"), file_name)
+    language_label = _language_label(language)
     if not code:
         return jsonify(ok=False, error="No code provided"), 400
 
     pretext = (
-        "Explain the following Python code in 2-3 concise sentences. "
+        "Explain the following {language} code in 2-3 concise sentences. "
         "If there are any errors or issues, identify them and suggest how to fix them. "
-        "Keep your response brief and focused. do not respond if it isn't python code:\n\n"
-    )
+        "Keep your response brief and focused. "
+        "If it is clearly not {language} code, say that briefly.\n\n"
+    ).format(language=language_label)
     res = call_ollama_generate(cfg.get("ai_ollama_url", ""), cfg.get("ai_model", "gemma3:4b"), pretext + code)
     if not res.get("ok"):
         return jsonify(ok=False, error=res.get("error", "AI error"))
@@ -1171,12 +1191,15 @@ def challenge_score():
     if not code or not challenge_text:
         return jsonify(ok=False, error="Missing code or challenge"), 400
 
+    file_name = (data.get("fileName") or data.get("file_name") or "").strip()
+    language = _normalize_language_hint(data.get("language"), file_name)
+    language_label = _language_label(language)
     prompt = (
-        "Grade the student's Python solution with strict adherence to the challenge and high rigor strictly from 0 to {max_points}.\n"
+        "Grade the student's {language} solution with strict adherence to the challenge and high rigor strictly from 0 to {max_points}.\n"
         "Return ONLY the integer number, with no words.\n\n"
         "Challenge:\n{challenge}\n\n"
         "Student code:\n{code}\n"
-    ).format(max_points=points, challenge=challenge_text, code=code)
+    ).format(language=language_label, max_points=points, challenge=challenge_text, code=code)
 
     res = call_ollama_generate(cfg.get("ai_ollama_url", ""), cfg.get("ai_model", "gemma3:4b"), prompt)
     if not res.get("ok"):
@@ -1251,7 +1274,21 @@ def challenge_leaderboard():
 # NEW: AI Assistant chat (15s cooldown per client SID)
 # -------------------------
 _ASSISTANT_LAST: Dict[str, float] = {}
+_ASSISTANT_LOCK = threading.Lock()
 ASSISTANT_COOLDOWN = 15  # seconds
+ASSISTANT_STALE_SECONDS = 3600
+ASSISTANT_MAX_SIDS = 2048
+
+
+def _prune_assistant_sessions(now: float) -> None:
+    stale_cutoff = now - ASSISTANT_STALE_SECONDS
+    for stale_sid in [sid for sid, seen in list(_ASSISTANT_LAST.items()) if seen < stale_cutoff]:
+        _ASSISTANT_LAST.pop(stale_sid, None)
+    overflow = len(_ASSISTANT_LAST) - ASSISTANT_MAX_SIDS
+    if overflow > 0:
+        oldest = sorted(_ASSISTANT_LAST.items(), key=lambda item: item[1])[:overflow]
+        for sid, _ in oldest:
+            _ASSISTANT_LAST.pop(sid, None)
 
 @app.post("/api/assistant/chat")
 def assistant_chat():
@@ -1262,6 +1299,10 @@ def assistant_chat():
     data = request.get_json(silent=True) or {}
     sid = (request.headers.get("X-SID") or data.get("sid") or "").strip()
     msgs = data.get("messages", [])  # [{role: 'user'|'assistant', content: '...'}, ...]
+    file_name = (data.get("fileName") or data.get("file_name") or "").strip()
+    language = _normalize_language_hint(data.get("language"), file_name)
+    language_label = _language_label(language)
+    code = str(data.get("code") or "")[:12000]
 
     if not sid:
         return jsonify(ok=False, error="Missing SID"), 400
@@ -1269,17 +1310,12 @@ def assistant_chat():
         return jsonify(ok=False, error="No messages"), 400
 
     now = time.time()
-    last = _ASSISTANT_LAST.get(sid, 0)
-    remain = ASSISTANT_COOLDOWN - int(now - last)
-    if remain > 0:
-        return jsonify(ok=False, error="Cooldown", cooldown=remain), 429
-
-    # Evict stale SID entries (older than 1 hour) with ~5 % probability
-    # to bound memory growth without scanning on every request.
-    if random.random() < 0.05:
-        stale_cutoff = now - 3600
-        for stale_sid in [k for k, v in list(_ASSISTANT_LAST.items()) if v < stale_cutoff]:
-            _ASSISTANT_LAST.pop(stale_sid, None)
+    with _ASSISTANT_LOCK:
+        _prune_assistant_sessions(now)
+        last = _ASSISTANT_LAST.get(sid, 0)
+        remain = ASSISTANT_COOLDOWN - int(now - last)
+        if remain > 0:
+            return jsonify(ok=False, error="Cooldown", cooldown=remain), 429
 
     # Build prompt: preprompt + condensed transcript
     preprompt = cfg.get("ai_assistant_preprompt") or ""
@@ -1293,13 +1329,22 @@ def assistant_chat():
             transcript_lines.append(f"User: {content}")
         else:
             transcript_lines.append(f"Assistant: {content}")
-    prompt = preprompt + "\n\n" + "\n".join(transcript_lines) + "\n\nAssistant:"
+    context_lines = [
+        f"The student is currently working in {language_label}.",
+    ]
+    if file_name:
+        context_lines.append(f"Current file: {file_name}")
+    if code:
+        context_lines.append(f"Current {language_label} code:\n{code}")
+    prompt = preprompt.strip() + "\n\n" + "\n".join(context_lines) + "\n\n" + "\n".join(transcript_lines) + "\n\nAssistant:"
 
     res = call_ollama_generate(cfg.get("ai_ollama_url", ""), cfg.get("ai_model", "gemma3:4b"), prompt)
     if not res.get("ok"):
         return jsonify(ok=False, error=res.get("error", "AI error"))
 
-    _ASSISTANT_LAST[sid] = time.time()
+    with _ASSISTANT_LOCK:
+        _ASSISTANT_LAST[sid] = time.time()
+        _prune_assistant_sessions(time.time())
     return jsonify(ok=True, reply=(res.get("text") or "").strip(), cooldown=ASSISTANT_COOLDOWN)
 
 # -------------------------
@@ -1538,7 +1583,7 @@ exec(_user_code, {{}})
                 pass
         self.proc = None
 
-_runners: Dict[str, Runner] = {}
+_runners: Dict[str, object] = {}
 _runner_lock = threading.Lock()
 
 NODE_EXECUTABLE = shutil.which("node") or "node"
@@ -1724,21 +1769,47 @@ try {{
 
 
 def _get_runner(sid: str) -> Runner:
+    stale_runner = None
     with _runner_lock:
         r = _runners.get(sid)
-        if not r:
-            r = Runner(sid)
-            _runners[sid] = r
-        return r
+        if isinstance(r, Runner) and not isinstance(r, JsRunner):
+            return r
+        stale_runner = r
+        r = Runner(sid)
+        _runners[sid] = r
+    if stale_runner:
+        try:
+            stale_runner.stop()
+        except Exception:
+            pass
+    return r
+
+
+def _get_active_runner(sid: str):
+    with _runner_lock:
+        return _runners.get(sid)
+
+
+def _pop_runner(sid: str):
+    with _runner_lock:
+        return _runners.pop(sid, None)
 
 
 def _get_js_runner(sid: str) -> JsRunner:
+    stale_runner = None
     with _runner_lock:
         r = _runners.get(sid)
-        if not isinstance(r, JsRunner):
-            r = JsRunner(sid)
-            _runners[sid] = r
-        return r
+        if isinstance(r, JsRunner):
+            return r
+        stale_runner = r
+        r = JsRunner(sid)
+        _runners[sid] = r
+    if stale_runner:
+        try:
+            stale_runner.stop()
+        except Exception:
+            pass
+    return r
 
 # -------------------------
 # Socket.IO handlers
@@ -1749,12 +1820,12 @@ def on_connect():
 
 @socketio.on("disconnect")
 def on_disconnect():
-    try:
-        r = _runners.get(request.sid)
-        if r:
+    r = _pop_runner(request.sid)
+    if r:
+        try:
             r.stop()
-    except Exception:
-        pass
+        except Exception:
+            pass
 
 @socketio.on("run_code")
 def on_run_code(payload):
@@ -1801,7 +1872,9 @@ def on_run_code(payload):
 @socketio.on("send_input")
 def on_send_input(payload):
     data = (payload or {}).get("data", "")
-    r = _get_runner(request.sid)
+    r = _get_active_runner(request.sid)
+    if not r:
+        return
     try:
         r.send_stdin(str(data))
     except Exception:
@@ -1809,8 +1882,9 @@ def on_send_input(payload):
 
 @socketio.on("stop")
 def on_stop(_=None):
-    r = _get_runner(request.sid)
-    r.stop()
+    r = _pop_runner(request.sid)
+    if r:
+        r.stop()
     emit("output", {"data": "\n[Stopped]\n"})
     emit("finished", {})
 
@@ -2138,6 +2212,9 @@ def grade_assignment_ai():
     code = data.get("code", "")
     task = data.get("task", "")
     max_score = data.get("maxScore", 100)
+    file_name = (data.get("fileName") or data.get("file_name") or "").strip()
+    language = _normalize_language_hint(data.get("language"), file_name)
+    language_label = _language_label(language)
     
     if not assignment_name or not student_email or not code or not task:
         return jsonify(ok=False, error="Missing required fields"), 400
@@ -2150,7 +2227,7 @@ def grade_assignment_ai():
     
     # Build prompt for AI grading
     prompt = (
-        "Grade the following student's Python code submission strictly from 0 to {max_score}.\n"
+        "Grade the following student's {language} code submission strictly from 0 to {max_score}.\n"
         "Return ONLY the integer score, with no additional words or explanation.\n\n"
         "Assignment Task:\n{task}\n\n"
         "Student Code:\n{code}\n\n"
@@ -2158,9 +2235,15 @@ def grade_assignment_ai():
         "- Does the code solve the problem correctly?\n"
         "- Is the code efficient and well-structured?\n"
         "- Are there any errors or bugs?\n"
-        "- Does it follow Python best practices?\n\n"
+        "- {best_practices}\n\n"
         "Score (0-{max_score}):"
-    ).format(max_score=max_score, task=task, code=code)
+    ).format(
+        language=language_label,
+        best_practices=_language_best_practices(language),
+        max_score=max_score,
+        task=task,
+        code=code,
+    )
     
     res = call_ollama_generate(cfg.get("ai_ollama_url", ""), cfg.get("ai_model", "gemma3:4b"), prompt, timeout=30.0)
     if not res.get("ok"):

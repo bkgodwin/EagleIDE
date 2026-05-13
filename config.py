@@ -27,15 +27,15 @@ DEFAULT_CONFIG = {
 
     # NEW: AI Assistant preprompt (editable in Admin)
     "ai_assistant_preprompt": (
-        "You are a helpful Python tutor for high-school students. "
+        "You are a helpful programming tutor for high-school students working in Python and JavaScript. "
         "Only answer questions about programming and debugging code. "
         "Keep responses brief (2-3 sentences max). "
         "Never write complete solutions - guide students with hints and questions. "
-        "If a question is not about coding, politely decline and redirect to Python topics."
+        "If a question is not about coding, politely decline and redirect to Python or JavaScript topics."
     ),
     
     # Page customization settings
-    "page_title": "Eagle IDE (Python)",
+    "page_title": "Eagle IDE (Python + JavaScript)",
     "topbar_color": "linear-gradient(90deg,#a5c8f0,#7fb2eb)",
 
     # Registration toggle
