@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Eagles Web IDE (Python)</title>
+  <title>Eagles Web IDE (Python + JavaScript)</title>
 
   <!-- CodeMirror 5 -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
@@ -14,6 +14,7 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
 
@@ -26,6 +27,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/monokai-sublime.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
 
   <style>
     :root{
@@ -419,7 +421,7 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><div>Eagles Web IDE</div><div class="badge">Python</div></div>
+    <div class="brand"><div>Eagles Web IDE</div><div class="badge">Python</div><div class="badge" style="background:#f0db4f; color:#323330;">JS</div></div>
     <div class="actions">
       <button class="btn run" id="runBtn">Run ▶</button>
       <button class="btn exception-help-btn" id="exceptionHelpBtn" title="Troubleshooting Assistant" aria-label="Open troubleshooting assistant">🛠️ Help</button>
@@ -466,7 +468,7 @@
         <button class="file-action-btn" id="newFileBtn" title="Create a new file">📄 New File</button>
         <button class="file-action-btn" id="newFolderBtn" title="Create a new folder">📁 New Folder</button>
         <button class="file-action-btn" id="uploadFileBtn" title="Upload a file from your computer">⬆️ Upload</button>
-        <input type="file" id="sidebarFileInput" accept=".py,.txt,.csv" style="display:none;">
+        <input type="file" id="sidebarFileInput" accept=".py,.js,.txt,.csv" style="display:none;">
         <button class="file-action-btn" id="refreshFilesBtn" title="Refresh file list">🔄 Refresh</button>
       </div>
       <div id="submissionScoringPanel" class="submission-scoring-panel" style="display:none;">
@@ -2392,7 +2394,7 @@ print("Hello " + name)
           arrow.textContent = '▶';
           row.appendChild(arrow);
         } else {
-          icon.textContent = item.name.endsWith('.py') ? '🐍' : item.name.endsWith('.csv') ? '📊' : '📄';
+          icon.textContent = item.name.endsWith('.py') ? '🐍' : item.name.endsWith('.js') ? '⚡' : item.name.endsWith('.csv') ? '📊' : '📄';
         }
 
         row.appendChild(icon);
@@ -2534,6 +2536,12 @@ print("Hello " + name)
       if (!j.ok) { alert(j.error || 'Cannot open file'); return; }
       currentOpenFile = { path: item.path, name: item.name };
       editor.setValue(j.content || '');
+      // Switch CodeMirror syntax highlighting mode based on file extension
+      if (window.eagleEditor) {
+        const ext = item.name.split('.').pop().toLowerCase();
+        const mode = ext === 'js' ? 'javascript' : 'python';
+        window.eagleEditor.setOption('mode', mode);
+      }
       updateActiveFileName();
       updateEditorOverlay();
       loadFileTree();
@@ -2632,7 +2640,7 @@ print("Hello " + name)
     }
 
     document.getElementById('newFileBtn').addEventListener('click', async () => {
-      let name = prompt('New file name (e.g. main.py):');
+      let name = prompt('New file name (e.g. main.py or script.js):');
       if (!name) return;
       name = name.trim();
       // Auto-add .py extension if no extension is provided
