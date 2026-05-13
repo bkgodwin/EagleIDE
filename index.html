@@ -272,6 +272,19 @@
     .file-sidebar-breadcrumb{ padding:6px 10px; font-size:12px; color:var(--theme-text-dim); background:rgba(0,0,0,0.1); border-bottom:1px solid var(--theme-border-mid); display:flex; align-items:center; gap:6px; flex-wrap:wrap; min-height:30px; }
     .file-sidebar-breadcrumb .crumb{ cursor:pointer; color:var(--columbia-blue); } .file-sidebar-breadcrumb .crumb:hover{ text-decoration:underline; }
     .file-sidebar-actions{ padding:8px; border-top:1px solid var(--theme-border-mid); display:flex; gap:6px; flex-wrap:wrap; background:rgba(0,0,0,0.08); }
+    .submission-scoring-panel{ padding:12px; border-top:1px solid var(--theme-border-mid); background:var(--theme-output-bg); display:flex; flex-direction:column; gap:10px; }
+    .submission-scoring-panel h4{ margin:0; color:var(--columbia-blue); font-size:14px; }
+    .submission-scoring-meta{ color:var(--theme-text-dim); font-size:12px; line-height:1.5; }
+    .submission-scoring-row{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .submission-scoring-panel input[type=number]{ width:90px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border); border-radius:8px; }
+    .submission-save-status{ font-size:12px; color:var(--theme-text-dim); min-height:16px; }
+    .assignment-admin-layout{ display:grid; grid-template-columns:minmax(260px, 320px) minmax(0, 1fr); gap:16px; align-items:start; }
+    .assignment-detail-panel{ background:var(--theme-input-bg); border:1px solid var(--theme-border-mid); border-radius:10px; padding:14px; min-height:180px; }
+    .assignment-detail-panel h4{ margin:0 0 8px; color:var(--columbia-blue); }
+    .scores-table{ width:100%; border-collapse:collapse; font-size:13px; }
+    .scores-table th, .scores-table td{ border-bottom:1px solid var(--theme-border-mid); padding:8px 6px; text-align:left; vertical-align:top; }
+    .scores-table th{ color:var(--columbia-blue); }
+    .account-notice{ background:var(--theme-input-bg); border:1px solid var(--theme-border-mid); border-radius:10px; padding:14px; margin-bottom:18px; color:var(--theme-text-dim); }
     .file-action-btn{ border:0; border-radius:8px; padding:8px 10px; font-weight:700; cursor:pointer; background:var(--theme-btn); color:var(--theme-text); box-shadow:0 1px 4px rgba(0,0,0,.3); transition:background .15s; font-size:12px; display:inline-flex; align-items:center; gap:5px; }
     .file-action-btn:hover{ background:var(--theme-btn-hover); }
 
@@ -453,6 +466,18 @@
         <input type="file" id="sidebarFileInput" accept=".py,.txt,.csv" style="display:none;">
         <button class="file-action-btn" id="refreshFilesBtn" title="Refresh file list">🔄 Refresh</button>
       </div>
+      <div id="submissionScoringPanel" class="submission-scoring-panel" style="display:none;">
+        <h4 id="submissionScoringTitle">Submission Scoring</h4>
+        <div id="submissionScoringMeta" class="submission-scoring-meta"></div>
+        <div id="submissionQuizSummary" class="submission-scoring-meta" style="display:none;"></div>
+        <div class="submission-scoring-row">
+          <label for="submissionScoreInput" style="font-size:12px; color:var(--theme-text-dim);">Score</label>
+          <input type="number" id="submissionScoreInput" min="0" step="1" />
+          <button class="btn secondary" id="submissionAiGradeBtn" style="display:none;">AI Grade</button>
+        </div>
+        <div id="submissionScoreTotals" class="submission-scoring-meta"></div>
+        <div id="submissionScoreSaveStatus" class="submission-save-status"></div>
+      </div>
     </aside>
     <!-- Left: Editor -->
     <section class="panel" id="editorPanel">
@@ -566,15 +591,16 @@
 
               <div id="challengeOutput" style="min-height:80px; padding:12px;"></div>
 
-              <div style="padding:12px; display:flex; gap:10px; align-items:center; border-top:1px solid var(--theme-border-mid); background:var(--theme-tab-bg);">
-                <input id="studentName" class="btn secondary" style="padding:8px; background:var(--theme-input-bg); border:1px solid var(--theme-border); width:30%;" placeholder="Your name for leaderboard"/>
-                <button class="btn run" id="scoreBtn">Submit for score</button>
+              <div style="padding:12px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; border-top:1px solid var(--theme-border-mid); background:var(--theme-tab-bg);">
+                <div id="challengeAccountStatus" style="color:var(--theme-text-dim); min-width:220px;">Sign in to submit challenge scores.</div>
+                <button class="btn run" id="scoreBtn">Run AI Score</button>
                 <span id="scoreStatus" style="opacity:.9;"></span>
-                <button class="btn secondary" id="saveScoreBtn" disabled>Save score</button>
+                <button class="btn secondary" id="saveScoreBtn" disabled>Hold This Score</button>
               </div>
 
               <div style="padding:12px;">
-                <h4 style="margin:8px 0 8px; color:var(--columbia-blue);">Leaderboard (Top 10)</h4>
+                <h4 style="margin:8px 0 8px; color:var(--columbia-blue);">Leaderboard</h4>
+                <div id="challengeLeaderboardNote" style="color:var(--theme-text-dim); font-size:12px; margin-bottom:8px;">All student accounts are shown, including students with 0 points.</div>
                 <table class="lb" id="lbTable">
                   <thead><tr><th>Name</th><th>Total Score</th></tr></thead>
                   <tbody></tbody>
@@ -597,58 +623,31 @@
             <!-- Assignment -->
             <div class="tab-pane" id="assignmentTab">
               <!-- Submissions sidebar (admin only) -->
-              <div id="submissionsSidebar">
-                <h4 style="margin:0 0 10px; color:var(--columbia-blue); font-size:14px;">Submissions</h4>
-                <div class="submissions-toolbar" style="display:none;">
-                  <button class="btn run" id="saveAllGradesBtn" title="Save all pending grade changes">Save All</button>
-                  <button class="btn run" id="aiGradeAllBtn" title="AI grade all ungraded submissions">AI Grade All</button>
-                </div>
-                <div id="submissionsSidebarList">
-                  <p style="color:#888; font-size:12px;">Select an assignment to view submissions</p>
-                </div>
-              </div>
+              <div id="submissionsSidebar" style="display:none;"></div>
 
-              <!-- Student score lookup -->
-              <div id="studentScoreLookup" style="display:none;">
-                <h4 style="margin:0 0 10px; color:var(--columbia-blue); font-size:14px;">View Your Scores</h4>
-                <input type="email" id="studentEmailInput" placeholder="Enter your email address">
+              <div id="studentScoreLookup" style="display:none; padding:12px;">
+                <h4 style="margin:0 0 10px; color:var(--columbia-blue); font-size:14px;">Your Scores</h4>
                 <div id="studentScoreResults"></div>
               </div>
 
-              <!-- Admin view -->
               <div id="assignmentAdminView" style="display:none; padding:12px;">
                 <div style="display:flex; gap:10px; align-items:center; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid var(--theme-border-mid);">
                   <button class="btn run" id="newAssignmentBtn">New Assignment</button>
                   <span id="assignmentStatus" style="opacity:.8;"></span>
                 </div>
-                <div id="assignmentList"></div>
+                <div class="assignment-admin-layout">
+                  <div id="assignmentList"></div>
+                  <div id="assignmentDetailPanel" class="assignment-detail-panel">
+                    <p style="color:#888; margin:0;">Select an assignment to review scores and open submissions.</p>
+                  </div>
+                </div>
               </div>
 
-              <!-- Student view -->
               <div id="assignmentStudentView" style="padding:12px;">
-                <!-- Student Information Form -->
-                <div id="studentInfoSection" style="background:var(--theme-input-bg); border:1px solid var(--theme-border-mid); border-radius:10px; padding:16px; margin-bottom:20px;">
-                  <h4 style="color:var(--columbia-blue); margin:0 0 12px;">Student Information</h4>
-                  <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;">
-                    <div>
-                      <label style="color:var(--theme-text); font-size:12px; display:block; margin-bottom:4px;">Your Name</label>
-                      <input type="text" id="persistentStudentName" placeholder="First Last" style="width:100%; padding:8px; background:var(--theme-bg); border:1px solid var(--theme-border); border-radius:5px; color:var(--theme-text); font-size:13px;">
-                    </div>
-                    <div>
-                      <label style="color:var(--theme-text); font-size:12px; display:block; margin-bottom:4px;">Email</label>
-                      <input type="email" id="persistentStudentEmail" placeholder="you@example.com" style="width:100%; padding:8px; background:var(--theme-bg); border:1px solid var(--theme-border); border-radius:5px; color:var(--theme-text); font-size:13px;">
-                    </div>
-                    <div>
-                      <label style="color:var(--theme-text); font-size:12px; display:block; margin-bottom:4px;">Class Period</label>
-                      <input type="text" id="persistentClassPeriod" placeholder="e.g., Period 3" style="width:100%; padding:8px; background:var(--theme-bg); border:1px solid var(--theme-border); border-radius:5px; color:var(--theme-text); font-size:13px;">
-                    </div>
-                  </div>
-                  <div style="margin-top:8px; font-size:11px; color:var(--theme-text-dim);" id="studentInfoStatus"></div>
-                </div>
-
+                <div id="studentAccountNotice" class="account-notice">Sign in with a student account to submit assignment files and view your scores.</div>
                 <h3 style="color:var(--columbia-blue); margin-top:0;">Active Assignments</h3>
                 <div id="studentAssignmentList"></div>
-                
+
                 <h3 style="color:var(--columbia-blue); margin-top:24px;">Past Assignments</h3>
                 <div id="studentPastAssignmentList"></div>
               </div>
@@ -757,7 +756,7 @@
         <button class="btn secondary" id="refreshUsersBtn" style="margin-left:10px; font-size:11px; padding:3px 8px;">↻ Refresh</button>
       </h4>
       <div id="usersTableWrap" style="max-height:220px; overflow-y:auto; margin-top:8px;">
-        <table class="users-table"><thead><tr><th>Name</th><th>Email</th>  <th>Registered</th><th>Status</th><th>Actions</th></tr></thead>
+        <table class="users-table"><thead><tr><th>Name</th><th>Email</th><th>Registered</th><th>Last Sign In</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody id="usersTableBody"></tbody>
         </table>
       </div>
@@ -1812,6 +1811,7 @@ print("Hello " + name)
         loginBtn.title = 'Login';
       }
       updateEditorOverlay();
+      if (typeof window.afterAuthUiUpdate === "function") window.afterAuthUiUpdate();
     }
 
     // Show/hide an "no file selected" overlay on the editor when signed in but no file open
@@ -2090,12 +2090,12 @@ print("Hello " + name)
       const j = await res.json().catch(() => ({}));
       const tbody = document.getElementById('usersTableBody');
       tbody.innerHTML = '';
-      if (!j.ok) { tbody.innerHTML = '<tr><td colspan="5" style="color:#ef5350;">Failed to load users</td></tr>'; return; }
-      if (!j.users.length) { tbody.innerHTML = '<tr><td colspan="5" style="color:#888;">No students registered yet.</td></tr>'; return; }
+      if (!j.ok) { tbody.innerHTML = '<tr><td colspan="6" style="color:#ef5350;">Failed to load users</td></tr>'; return; }
+      if (!j.users.length) { tbody.innerHTML = '<tr><td colspan="6" style="color:#888;">No students registered yet.</td></tr>'; return; }
       j.users.forEach(u => {
         const tr = document.createElement('tr');
         if (!u.enabled) tr.className = 'disabled-row';
-        tr.innerHTML = `<td>${escapeHtml(u.name || '')}</td><td>${escapeHtml(u.email)}</td><td>${escapeHtml(u.created_at || '')}</td><td>${u.enabled ? '✅ Active' : '🔒 Disabled'}</td>
+        tr.innerHTML = `<td>${escapeHtml(u.name || '')}</td><td>${escapeHtml(u.email)}</td><td>${escapeHtml(u.created_at || '')}</td><td>${escapeHtml(u.last_sign_in || '—')}</td><td>${u.enabled ? '✅ Active' : '🔒 Disabled'}</td>
           <td style="display:flex;gap:4px;flex-wrap:wrap;">
             <button class="btn secondary" data-action="reset" style="font-size:11px;padding:2px 6px;">Reset PW</button>
             <button class="btn secondary" data-action="toggle" data-enable="${!u.enabled}" style="font-size:11px;padding:2px 6px;">${u.enabled ? 'Disable' : 'Enable'}</button>
@@ -2687,369 +2687,153 @@ print("Hello " + name)
       }
     });
 
-    // === Challenge CSV logic (unchanged UI) ===
-    let currentChallenge = { text: '', difficulty: 1, points: 3 };
+    // === Challenge scoring and leaderboard ===
+    let currentChallenge = { id: '', text: '', difficulty: 1, points: 3 };
     let lastScore = null;
-    async function refreshLeaderboard(){
-      try{
+
+    function renderChallengeLeaderboard(rows) {
+      const tb = document.querySelector('#lbTable tbody');
+      if (!tb) return;
+      tb.innerHTML = '';
+      const items = rows || [];
+      if (!items.length) {
+        tb.innerHTML = '<tr><td colspan="2" style="color:#888;">No student accounts yet.</td></tr>';
+        return;
+      }
+      items.forEach(row => {
+        const tr = document.createElement('tr');
+        const td1 = document.createElement('td'); td1.textContent = row.name || row.email || 'Unknown';
+        const td2 = document.createElement('td'); td2.textContent = row.score ?? 0;
+        tr.appendChild(td1);
+        tr.appendChild(td2);
+        tb.appendChild(tr);
+      });
+    }
+
+    async function refreshLeaderboard() {
+      try {
         const r = await fetch('/api/challenge/leaderboard');
-        const j = await r.json();
-        if (j?.ok){
-          const tb = document.querySelector('#lbTable tbody'); tb.innerHTML = '';
-          (j.top || []).forEach(row => {
-            const tr = document.createElement('tr');
-            const td1 = document.createElement('td'); td1.textContent = row.name;
-            const td2 = document.createElement('td'); td2.textContent = row.score;
-            tr.appendChild(td1); tr.appendChild(td2); tb.appendChild(tr);
-          });
+        const j = await r.json().catch(() => ({}));
+        if (j?.ok) renderChallengeLeaderboard(j.leaderboard || j.top || []);
+      } catch {}
+    }
+
+    function refreshChallengeAuthState() {
+      const label = document.getElementById('challengeAccountStatus');
+      const scoreBtn = document.getElementById('scoreBtn');
+      const saveBtn = document.getElementById('saveScoreBtn');
+      const canSubmit = !!USER_TOKEN && !!currentUser;
+      if (label) {
+        label.textContent = canSubmit
+          ? `Signed in as ${currentUser.name || currentUser.email}`
+          : 'Sign in with a student account to submit challenge scores.';
+      }
+      if (scoreBtn) scoreBtn.disabled = !canSubmit || !currentChallenge.text;
+      if (saveBtn) saveBtn.disabled = !canSubmit || lastScore == null;
+    }
+
+    async function newChallenge(diff) {
+      const chStatus = document.getElementById('chStatus');
+      const out = document.getElementById('challengeOutput');
+      chStatus.textContent = 'Loading…';
+      out.textContent = '';
+      try {
+        const r = await fetch('/api/challenge/random', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ difficulty: parseInt(diff, 10) })
+        });
+        const j = await r.json().catch(() => ({}));
+        if (j?.ok) {
+          currentChallenge = { id: j.challengeId || '', text: j.challenge || '', difficulty: j.difficulty, points: j.points };
+          out.textContent = currentChallenge.text + `
+
+(Difficulty: ${currentChallenge.difficulty} • ${currentChallenge.points} pts)`;
+          chStatus.textContent = 'Ready';
+          lastScore = null;
+          document.getElementById('scoreStatus').textContent = '';
+          refreshChallengeAuthState();
+        } else {
+          chStatus.textContent = j?.error || 'Error';
         }
-      }catch{}
+      } catch (e) {
+        chStatus.textContent = 'Network error';
+      }
     }
-    async function newChallenge(diff){
-      const chStatus = document.getElementById('chStatus'); const out = document.getElementById('challengeOutput');
-      chStatus.textContent = 'Loading…'; out.textContent = '';
-      try{
-        const r = await fetch('/api/challenge/random', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ difficulty: parseInt(diff,10) })});
-        const j = await r.json().catch(()=>({}));
-        if (j?.ok){
-          currentChallenge = { text: j.challenge || '', difficulty: j.difficulty, points: j.points };
-          out.textContent = currentChallenge.text + `\n\n(Difficulty: ${currentChallenge.difficulty} • ${currentChallenge.points} pts)`;
-          chStatus.textContent = 'Ready'; lastScore = null; document.getElementById('scoreStatus').textContent = ''; document.getElementById('saveScoreBtn').disabled = true;
-        }else{ chStatus.textContent = j?.error || 'Error'; }
-      }catch(e){ chStatus.textContent = 'Network error'; }
-    }
+
     document.getElementById('btnD1').addEventListener('click', () => newChallenge(1));
     document.getElementById('btnD2').addEventListener('click', () => newChallenge(2));
     document.getElementById('btnD3').addEventListener('click', () => newChallenge(3));
     document.getElementById('btnD4').addEventListener('click', () => newChallenge(4));
     document.getElementById('btnD5').addEventListener('click', () => newChallenge(5));
+
     document.getElementById('scoreBtn').addEventListener('click', async () => {
-      const status = document.getElementById('scoreStatus'); status.textContent = 'Scoring…'; lastScore = null; document.getElementById('saveScoreBtn').disabled = true;
-      try{
-        const r = await fetch('/api/challenge/score', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code: editor.getValue(), challenge: currentChallenge.text, points: currentChallenge.points }) });
-        const j = await r.json().catch(()=>({}));
-        if (j?.ok){ lastScore = j.score; status.textContent = `Score: ${j.score} / ${j.max}`; document.getElementById('saveScoreBtn').disabled = false; }
-        else { status.textContent = j?.error || 'Error'; }
-      }catch(e){ status.textContent = 'Network error'; }
-    });
-    document.getElementById('saveScoreBtn').addEventListener('click', async () => {
-      const name = (document.getElementById('studentName').value || '').trim();
+      if (!USER_TOKEN || !currentUser) {
+        alert('Please sign in with a student account first.');
+        return;
+      }
+      if (!currentChallenge.text) {
+        alert('Load a challenge first.');
+        return;
+      }
       const status = document.getElementById('scoreStatus');
-      if (!name){ alert('Enter your name first.'); return; }
-      if (lastScore == null){ alert('Get a score first.'); return; }
-      try{
-        const r = await fetch('/api/challenge/submit', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name, score: lastScore }) });
-        const j = await r.json().catch(()=>({}));
-        if (j?.ok){
-          status.textContent = `Saved! (added ${lastScore} points)`; lastScore = null; document.getElementById('saveScoreBtn').disabled = true;
-          const tb = document.querySelector('#lbTable tbody'); tb.innerHTML = '';
-          (j.top || []).forEach(row => {
-            const tr = document.createElement('tr'); const td1 = document.createElement('td'); td1.textContent = row.name;
-            const td2 = document.createElement('td'); td2.textContent = row.score; tr.appendChild(td1); tr.appendChild(td2); tb.appendChild(tr);
-          });
-        }else{ status.textContent = j?.error || 'Save failed'; }
-      }catch(e){ status.textContent = 'Network error'; }
-    });
-
-    // Horizontal splitter (Shell vs Tabs)
-    (function(){
-      const container = document.getElementById('rightstack');
-      const splitter  = document.getElementById('vsplitter');
-      const STORAGE_KEY = 'ide-shell-size';
-      try { const saved = localStorage.getItem(STORAGE_KEY); if (saved) container.style.setProperty('--shell-size', saved + 'px'); } catch {}
-
-      function setShellSize(px){
-        const rect = container.getBoundingClientRect();
-        const max = Math.max(0, rect.height - splitter.offsetHeight - 20);
-        const clamped = Math.min(Math.max(px, 0), max);
-        container.style.setProperty('--shell-size', clamped + 'px');
-        try { localStorage.setItem(STORAGE_KEY, String(clamped)); } catch {}
-      }
-      let dragging = false, startY = 0, startH = 0;
-      function onDown(ev){
-        dragging = true;
-        startY = (ev.touches ? ev.touches[0].clientY : ev.clientY);
-        const shellRect = document.getElementById('shellPanel').getBoundingClientRect();
-        startH = shellRect.height;
-        document.body.style.userSelect = 'none';
-        window.addEventListener('mousemove', onMove);
-        window.addEventListener('mouseup', onUp);
-        window.addEventListener('touchmove', onMove, {passive:false});
-        window.addEventListener('touchend', onUp);
-        ev.preventDefault();
-      }
-      function onMove(ev){
-        if (!dragging) return;
-        const y = (ev.touches ? ev.touches[0].clientY : ev.clientY);
-        const dy = y - startY;
-        setShellSize(startH + dy);
-        ev.preventDefault();
-      }
-      function onUp(){
-        dragging = false;
-        document.body.style.userSelect = '';
-        window.removeEventListener('mousemove', onMove);
-        window.removeEventListener('mouseup', onUp);
-        window.removeEventListener('touchmove', onMove);
-        window.removeEventListener('touchend', onUp);
-      }
-      splitter.addEventListener('mousedown', onDown);
-      splitter.addEventListener('touchstart', onDown, {passive:false});
-      splitter.addEventListener('dblclick', () => {
-        const rect = container.getBoundingClientRect();
-        const current = document.getElementById('shellPanel').getBoundingClientRect().height;
-        const target = Math.abs(current - rect.height*0.33) < 8 ? rect.height*0.5 : rect.height*0.33;
-        setShellSize(target);
-      });
-      window.addEventListener('resize', () => {
-        const shellRect = document.getElementById('shellPanel').getBoundingClientRect();
-        setShellSize(shellRect.height);
-      });
-    })();
-
-    // Vertical splitter (Editor vs Right Column)
-    (function(){
-      const outer = document.getElementById('outer');
-      const splitter = document.getElementById('hsplitter');
-      const STORAGE_KEY = 'ide-left-width';
+      status.textContent = 'Scoring…';
+      lastScore = null;
+      refreshChallengeAuthState();
       try {
-        const saved = parseFloat(localStorage.getItem(STORAGE_KEY) || '');
-        if (!Number.isNaN(saved) && saved > 100) outer.style.setProperty('--left-width', saved + 'px');
-      } catch {}
-      function setLeftWidth(px){
-        const rect = outer.getBoundingClientRect();
-        const min = 200; const max = Math.max(300, rect.width - 300);
-        const clamped = Math.min(Math.max(px, min), max);
-        outer.style.setProperty('--left-width', clamped + 'px');
-        try { localStorage.setItem(STORAGE_KEY, String(clamped)); } catch {}
-      }
-      let dragging = false, startX = 0, startW = 0;
-      function onDown(ev){
-        dragging = true;
-        startX = (ev.touches ? ev.touches[0].clientX : ev.clientX);
-        const leftRect = document.getElementById('editorPanel').getBoundingClientRect();
-        startW = leftRect.width;
-        document.body.style.userSelect = 'none';
-        window.addEventListener('mousemove', onMove);
-        window.addEventListener('mouseup', onUp);
-        window.addEventListener('touchmove', onMove, {passive:false});
-        window.addEventListener('touchend', onUp);
-        ev.preventDefault();
-      }
-      function onMove(ev){
-        if (!dragging) return;
-        const x = (ev.touches ? ev.touches[0].clientX : ev.clientX);
-        const dx = x - startX;
-        setLeftWidth(startW + dx);
-        ev.preventDefault();
-      }
-      function onUp(){
-        dragging = false;
-        document.body.style.userSelect = '';
-        window.removeEventListener('mousemove', onMove);
-        window.removeEventListener('mouseup', onUp);
-        window.removeEventListener('touchmove', onMove);
-        window.removeEventListener('touchend', onUp);
-      }
-      splitter.addEventListener('mousedown', onDown);
-      splitter.addEventListener('touchstart', onDown, {passive:false});
-      splitter.addEventListener('dblclick', () => {
-        const rect = outer.getBoundingClientRect();
-        const leftRect = document.getElementById('editorPanel').getBoundingClientRect();
-        const target = Math.abs(leftRect.width - rect.width*0.5) < 8 ? rect.width*0.65 : rect.width*0.5;
-        setLeftWidth(target);
-      });
-      window.addEventListener('resize', () => {
-        const leftRect = document.getElementById('editorPanel').getBoundingClientRect();
-        setLeftWidth(leftRect.width);
-      });
-    })();
-
-    // Font size control
-    (function(){
-      const key = 'ide-font-size';
-      const slider = document.getElementById('fontRange');
-      const label  = document.getElementById('fontVal');
-      let size = parseInt(localStorage.getItem(key) || '14', 10);
-      if (Number.isNaN(size)) size = 14;
-      slider.value = String(size);
-      label.textContent = String(size);
-      document.documentElement.style.setProperty('--cm-font-size', size + 'px');
-      const refresh = () => {
-        document.querySelectorAll('.CodeMirror').forEach(w => {
-          w.style.fontSize = `var(--cm-font-size)`;
-          if (w.CodeMirror) w.CodeMirror.refresh();
+        const r = await fetch('/api/challenge/score', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
+          body: JSON.stringify({ code: editor.getValue(), challenge: currentChallenge.text, points: currentChallenge.points })
         });
-      };
-      refresh();
-      slider.addEventListener('input', () => {
-        const val = parseInt(slider.value, 10);
-        label.textContent = String(val);
-        document.documentElement.style.setProperty('--cm-font-size', val + 'px');
-        try { localStorage.setItem(key, String(val)); } catch {}
-        refresh();
-      });
-    })();
-
-    // Indent guides toggle
-    (function(){
-      const key = 'ide-guides';
-      const btn = document.getElementById('guidesBtn');
-      let on = true;
-      try { const saved = localStorage.getItem(key); if (saved !== null) on = saved === '1'; } catch {}
-      function apply(){ document.body.classList.toggle('guides-off', !on); btn.textContent = `Guides: ${on ? 'On' : 'Off'}`; try { localStorage.setItem(key, on ? '1' : '0'); } catch {} }
-      apply(); btn.addEventListener('click', () => { on = !on; apply(); });
-    })();
-
-    // Autocomplete toggle
-    (function(){
-      const key = 'ide-autocomplete';
-      const btn = document.getElementById('autocompleteBtn');
-      let on = true;
-      try { const saved = localStorage.getItem(key); if (saved !== null) on = saved === '1'; } catch {}
-      function apply(){ 
-        btn.textContent = `Autocomplete: ${on ? 'On' : 'Off'}`;
-        if (window.toggleEagleCompletion) window.toggleEagleCompletion(on);
-        try { localStorage.setItem(key, on ? '1' : '0'); } catch {} 
-      }
-      apply(); 
-      btn.addEventListener('click', () => { on = !on; apply(); });
-    })();
-
-    // Sidebar collapse/expand toggle
-    (function(){
-      const key = 'ide-sidebar-collapsed';
-      const btn = document.getElementById('toggleSidebarBtn');
-      let collapsed = false;
-      try { const saved = localStorage.getItem(key); if (saved !== null) collapsed = saved === '1'; } catch {}
-      function apply(){ 
-        document.body.classList.toggle('right-collapsed', collapsed); 
-        btn.textContent = collapsed ? 'Show Sidebar ▶' : 'Hide Sidebar ◀';
-        try { localStorage.setItem(key, collapsed ? '1' : '0'); } catch {} 
-      }
-      apply(); 
-      btn.addEventListener('click', () => { collapsed = !collapsed; apply(); });
-    })();
-
-    // --- AI Assistant chat (15s cooldown) ---
-    const assistantChat = document.getElementById('assistantChat');
-    const assistantInput = document.getElementById('assistantInput');
-    const assistantSend = document.getElementById('assistantSend');
-    const assistantCooldown = document.getElementById('assistantCooldown');
-    let assistantMsgs = []; // {role:'user'|'assistant'|'system', content:''}
-    let assistantCooldownUntil = 0; let assistantTimer = null;
-
-    function renderChat(){
-      assistantChat.innerHTML = '';
-      assistantMsgs.forEach(m => {
-        if (m.role === 'system') return; // don't show system prompt
-        const div = document.createElement('div');
-        div.className = 'msg ' + (m.role === 'user' ? 'user' : 'bot');
-
-        // Render markdown for assistant messages; user messages as text
-        if (m.role === 'assistant'){
-          // Check if it's HTML (like thinking indicator)
-          if (m.content.includes('<span class="ai-thinking">')) {
-            div.innerHTML = m.content;
-          } else {
-            const inner = document.createElement('div');
-            renderMarkdownTo(inner, m.content, 'python');
-            div.appendChild(inner);
-          }
+        const j = await r.json().catch(() => ({}));
+        if (j?.ok) {
+          lastScore = j.score;
+          status.textContent = `Score: ${j.score} / ${j.max}`;
+          refreshChallengeAuthState();
         } else {
-          div.textContent = m.content;
+          status.textContent = j?.error || 'Error';
         }
-        assistantChat.appendChild(div);
-      });
-      assistantChat.scrollTop = assistantChat.scrollHeight;
-    }
-
-    function startAssistantCooldown(seconds){
-      const now = Math.floor(Date.now()/1000);
-      assistantCooldownUntil = now + Math.max(1, seconds|0);
-      assistantSend.disabled = true;
-      if (assistantTimer) clearInterval(assistantTimer);
-      const tick = () => {
-        const t = Math.max(0, assistantCooldownUntil - Math.floor(Date.now()/1000));
-        assistantCooldown.textContent = t > 0 ? `Cooldown: ${t}s` : '';
-        if (t <= 0){ clearInterval(assistantTimer); assistantTimer = null; assistantSend.disabled = false; }
-      };
-      tick(); assistantTimer = setInterval(tick, 1000);
-    }
-
-    function ensureAssistantSystemMessage(){
-      const base = (currentConfig?.ai_assistant_preprompt || '').trim();
-      const policy =
-        `${base ? base + '\n\n' : ''}` +
-        `ROLE: You are a strict CODING TUTOR for students learning Python.\n` +
-        `SCOPE: Python programming questions only. If asked anything non-coding, reply: "I can only help with Python coding questions."\n` +
-        `ASSISTANCE POLICY:\n` +
-        `- You may explain concepts, syntax, and debugging techniques BRIEFLY (2-3 sentences max)\n` +
-        `- You may point out errors and guide students to fix them\n` +
-        `- You MUST NOT write complete solutions to coding problems/assignments\n` +
-        `- If asked to "write code for" or "solve this problem", respond: "I can help you understand how to solve this, but I can't write the solution for you. What part are you stuck on?"\n` +
-        `- Instead of giving answers, ask guiding questions\n` +
-        `STYLE: Keep ALL answers VERY brief (2-3 sentences). Use Markdown sparingly. Format code snippets with fenced blocks (\`\`\`python).\n` +
-        `SAFETY: Do not give non-coding advice. Do not do students' assignments. Never provide full code solutions.`;
-      if (!assistantMsgs.length || assistantMsgs[0].role !== 'system'){
-        assistantMsgs.unshift({ role:'system', content: policy });
-      } else {
-        assistantMsgs[0].content = policy;
-      }
-    }
-
-    async function assistantDoSend(){
-      const content = assistantInput.value.trim();
-      if (!content) return;
-      const nowS = Math.floor(Date.now()/1000);
-      if (nowS < assistantCooldownUntil) return;
-
-      ensureAssistantSystemMessage();
-
-      assistantMsgs.push({role:'user', content});
-      assistantInput.value = ''; 
-      
-      // Add thinking indicator as temporary message
-      assistantMsgs.push({role:'assistant', content: '<span class="ai-thinking">Thinking</span>', temporary: true});
-      renderChat();
-
-      try{
-        const r = await fetch('/api/assistant/chat', {
-          method:'POST',
-          headers:{ 'Content-Type':'application/json', 'X-SID': (window.mySid || '') },
-          body: JSON.stringify({ messages: assistantMsgs.filter(m => !m.temporary), sid: (mySid || window.mySid || '') })
-        });
-        
-        // Remove thinking indicator
-        assistantMsgs = assistantMsgs.filter(m => !m.temporary);
-        
-        const j = await r.json().catch(()=>({}));
-        if (j?.ok){
-          const reply = (j.reply || '').trim();
-          assistantMsgs.push({role:'assistant', content: reply || '(no reply)'});
-          renderChat();
-          startAssistantCooldown(j.cooldown ?? 15);
-        } else if (j?.error === 'Cooldown') {
-          startAssistantCooldown(j.cooldown ?? 15);
-        } else {
-          assistantMsgs.push({role:'assistant', content: `Error: ${j?.error || 'AI error'}`});
-          renderChat();
-          startAssistantCooldown(15);
-        }
-      }catch(e){
-        // Remove thinking indicator
-        assistantMsgs = assistantMsgs.filter(m => !m.temporary);
-        assistantMsgs.push({role:'assistant', content: 'Network error'});
-        renderChat();
-        startAssistantCooldown(15);
-      }
-    }
-    assistantSend.addEventListener('click', assistantDoSend);
-    assistantInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey){
-        e.preventDefault(); assistantDoSend();
+      } catch (e) {
+        status.textContent = 'Network error';
       }
     });
+
+    document.getElementById('saveScoreBtn').addEventListener('click', async () => {
+      if (!USER_TOKEN || !currentUser) {
+        alert('Please sign in with a student account first.');
+        return;
+      }
+      if (!currentChallenge.id) {
+        alert('Load a challenge first.');
+        return;
+      }
+      if (lastScore == null) {
+        alert('Run the AI score first.');
+        return;
+      }
+      const status = document.getElementById('scoreStatus');
+      try {
+        const r = await fetch('/api/challenge/submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
+          body: JSON.stringify({ challengeId: currentChallenge.id, score: lastScore })
+        });
+        const j = await r.json().catch(() => ({}));
+        if (j?.ok) {
+          status.textContent = `Saved latest score: ${lastScore}`;
+          lastScore = null;
+          refreshChallengeAuthState();
+          renderChallengeLeaderboard(j.leaderboard || j.top || []);
+        } else {
+          status.textContent = j?.error || 'Save failed';
+        }
+      } catch (e) {
+        status.textContent = 'Network error';
+      }
+    });
+
+    refreshChallengeAuthState();
 
     // Kick off leaderboard load once
     (async () => { try { await refreshLeaderboard(); } catch {} })();
@@ -3059,77 +2843,95 @@ print("Hello " + name)
     // =============================================
     let currentAssignments = [];
     let isAdmin = false;
+    let currentAdminAssignmentName = null;
+    let activeSubmissionContext = null;
+    let submissionSaveTimer = null;
 
-    // Persistent Student Information
-    function loadStudentInfo() {
-      const name = sessionStorage.getItem('studentName') || '';
-      const email = sessionStorage.getItem('studentEmail') || '';
-      const period = sessionStorage.getItem('classPeriod') || '';
-      
-      const nameInput = document.getElementById('persistentStudentName');
-      const emailInput = document.getElementById('persistentStudentEmail');
-      const periodInput = document.getElementById('persistentClassPeriod');
-      
-      if (nameInput) nameInput.value = name;
-      if (emailInput) emailInput.value = email;
-      if (periodInput) periodInput.value = period;
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text ?? '';
+      return div.innerHTML;
     }
 
-    function saveStudentInfo() {
-      const name = document.getElementById('persistentStudentName')?.value || '';
-      const email = document.getElementById('persistentStudentEmail')?.value || '';
-      const period = document.getElementById('persistentClassPeriod')?.value || '';
-      
-      sessionStorage.setItem('studentName', name);
-      sessionStorage.setItem('studentEmail', email);
-      sessionStorage.setItem('classPeriod', period);
-      
-      const status = document.getElementById('studentInfoStatus');
-      if (status) {
-        status.textContent = 'ℹ️ Information saved for this session';
-        setTimeout(() => { status.textContent = ''; }, 3000);
+    function assignmentScoreValue(submission) {
+      if (!submission) return null;
+      if (submission.totalScore !== null && submission.totalScore !== undefined) return submission.totalScore;
+      if (submission.codeScore !== null && submission.codeScore !== undefined) return submission.codeScore;
+      if (submission.score !== null && submission.score !== undefined) return submission.score;
+      return null;
+    }
+
+    function flattenFiles(items, output = []) {
+      (items || []).forEach(item => {
+        if (item.type === 'file') output.push(item);
+        if (item.type === 'folder' && item.children) flattenFiles(item.children, output);
+      });
+      return output;
+    }
+
+    function setAssignmentStatus(message, isError = false) {
+      const el = document.getElementById('assignmentStatus');
+      if (!el) return;
+      el.textContent = message || '';
+      el.style.color = isError ? '#ef5350' : '';
+      if (message) {
+        setTimeout(() => {
+          if (el.textContent === message) el.textContent = '';
+        }, 3000);
       }
     }
 
-    function getStudentInfo() {
-      return {
-        name: sessionStorage.getItem('studentName') || '',
-        email: sessionStorage.getItem('studentEmail') || '',
-        period: sessionStorage.getItem('classPeriod') || ''
-      };
+    function hideSubmissionScoringPanel() {
+      activeSubmissionContext = null;
+      if (submissionSaveTimer) {
+        clearTimeout(submissionSaveTimer);
+        submissionSaveTimer = null;
+      }
+      const panel = document.getElementById('submissionScoringPanel');
+      if (panel) panel.style.display = 'none';
+      const input = document.getElementById('submissionScoreInput');
+      if (input) input.value = '';
+      const status = document.getElementById('submissionScoreSaveStatus');
+      if (status) status.textContent = '';
     }
 
-    // Set up event listeners for student info fields after DOM is ready
-    function setupStudentInfoListeners() {
-      const nameInput = document.getElementById('persistentStudentName');
-      const emailInput = document.getElementById('persistentStudentEmail');
-      const periodInput = document.getElementById('persistentClassPeriod');
-      
-      if (nameInput) nameInput.addEventListener('change', saveStudentInfo);
-      if (emailInput) emailInput.addEventListener('change', saveStudentInfo);
-      if (periodInput) periodInput.addEventListener('change', saveStudentInfo);
-      
-      // Load saved info on page load
-      loadStudentInfo();
+    function getAssignmentByName(name) {
+      return currentAssignments.find(a => a.name === name);
     }
-    
-    // Call when assignment tab is shown
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', setupStudentInfoListeners);
-    } else {
-      setupStudentInfoListeners();
+
+    function getSubmissionForAssignment(assignmentName, email) {
+      const assignment = getAssignmentByName(assignmentName);
+      if (!assignment) return { assignment: null, submission: null };
+      const submission = (assignment.submissions || []).find(s => (s.email || '').toLowerCase() === (email || '').toLowerCase());
+      return { assignment, submission };
     }
 
     async function loadAssignments() {
       try {
-        const resp = await fetch('/api/assignments', {
-          headers: ADMIN_TOKEN ? { 'X-Admin-Token': ADMIN_TOKEN } : {}
-        });
-        const data = await resp.json();
-        if (data.ok) {
-          currentAssignments = data.assignments || [];
-          isAdmin = data.isAdmin || false;
-          renderAssignments();
+        const headers = ADMIN_TOKEN ? { 'X-Admin-Token': ADMIN_TOKEN } : {};
+        const resp = await fetch('/api/assignments', { headers });
+        const data = await resp.json().catch(() => ({}));
+        if (!data.ok) return;
+        currentAssignments = data.assignments || [];
+        isAdmin = data.isAdmin || false;
+        if (isAdmin && currentAssignments.length) {
+          if (!currentAdminAssignmentName || !getAssignmentByName(currentAdminAssignmentName)) {
+            currentAdminAssignmentName = currentAssignments[0].name;
+          }
+        } else {
+          currentAdminAssignmentName = null;
+        }
+        renderAssignments();
+        if (!isAdmin) await loadStudentScores();
+        if (activeSubmissionContext && isAdmin) {
+          const { assignment, submission } = getSubmissionForAssignment(activeSubmissionContext.assignmentName, activeSubmissionContext.studentEmail);
+          if (assignment && submission) {
+            populateSubmissionScoringPanel(assignment, submission);
+          } else {
+            hideSubmissionScoringPanel();
+          }
+        } else if (!isAdmin) {
+          hideSubmissionScoringPanel();
         }
       } catch (e) {
         console.error('Failed to load assignments:', e);
@@ -3137,140 +2939,196 @@ print("Hello " + name)
     }
 
     function renderAssignments() {
+      const adminView = document.getElementById('assignmentAdminView');
+      const studentView = document.getElementById('assignmentStudentView');
+      const scoreLookup = document.getElementById('studentScoreLookup');
       if (isAdmin) {
-        document.getElementById('assignmentAdminView').style.display = 'block';
-        document.getElementById('assignmentStudentView').style.display = 'none';
-        document.getElementById('submissionsSidebar').style.display = 'block';
-        document.getElementById('studentScoreLookup').style.display = 'none';
+        adminView.style.display = 'block';
+        studentView.style.display = 'none';
+        scoreLookup.style.display = 'none';
         renderAdminAssignments();
       } else {
-        document.getElementById('assignmentAdminView').style.display = 'none';
-        document.getElementById('assignmentStudentView').style.display = 'block';
-        document.getElementById('submissionsSidebar').style.display = 'none';
-        document.getElementById('studentScoreLookup').style.display = 'block';
+        adminView.style.display = 'none';
+        studentView.style.display = 'block';
+        scoreLookup.style.display = 'block';
         renderStudentAssignments();
       }
     }
 
     function renderAdminAssignments() {
       const list = document.getElementById('assignmentList');
+      const detail = document.getElementById('assignmentDetailPanel');
       if (!currentAssignments.length) {
-        list.innerHTML = '<p style="color:#888;">No assignments yet. Click "New Assignment" to create one.</p>';
+        list.innerHTML = '<p style="color:#888;">No assignments yet. Create one to get started.</p>';
+        detail.innerHTML = '<p style="color:#888; margin:0;">Create an assignment to review submissions here.</p>';
         return;
       }
 
       list.innerHTML = currentAssignments.map(a => `
-        <div class="assignment-card">
+        <div class="assignment-card" style="border-color:${currentAdminAssignmentName === a.name ? 'var(--columbia-blue)' : 'var(--theme-border-mid)'};">
           <h4>${escapeHtml(a.name)}</h4>
           <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
           <div class="meta">
-            Max Score: ${a.maxScore} | 
-            Status: ${a.active ? '<span style="color:#4caf50;">Active</span>' : '<span style="color:#888;">Inactive</span>'} | 
-            Submissions: ${(a.submissions || []).length}
+            Max Score: ${a.maxScore} · ${a.active ? 'Unlocked' : 'Locked'} · ${(a.submissions || []).length} submission(s)
           </div>
           <div class="assignment-actions">
-            <button class="btn secondary toggle-active-btn" data-name="${escapeHtml(a.name)}" data-active="${!a.active}">${a.active ? 'Deactivate' : 'Activate'}</button>
-            <button class="btn run show-sidebar-submissions-btn" data-name="${escapeHtml(a.name)}">Show Submissions</button>
-            <button class="btn secondary view-submissions-btn" data-name="${escapeHtml(a.name)}">View All</button>
-            <button class="btn secondary download-csv-btn" data-name="${escapeHtml(a.name)}">Download CSV</button>
+            <button class="btn secondary select-assignment-btn" data-name="${escapeHtml(a.name)}">Scores</button>
+            <button class="btn secondary edit-assignment-btn" data-name="${escapeHtml(a.name)}">Edit</button>
+            <button class="btn secondary lock-assignment-btn" data-name="${escapeHtml(a.name)}" data-active="${a.active}">${a.active ? 'Lock' : 'Unlock'}</button>
             <button class="btn stop delete-assignment-btn" data-name="${escapeHtml(a.name)}">Delete</button>
           </div>
         </div>
       `).join('');
-      
-      // Add event listeners
-      list.querySelectorAll('.toggle-active-btn').forEach(btn => {
-        btn.addEventListener('click', () => toggleAssignmentActive(btn.dataset.name, btn.dataset.active === 'true'));
-      });
-      list.querySelectorAll('.show-sidebar-submissions-btn').forEach(btn => {
-        btn.addEventListener('click', () => showSubmissionsInSidebar(btn.dataset.name));
-      });
-      list.querySelectorAll('.view-submissions-btn').forEach(btn => {
-        btn.addEventListener('click', () => viewSubmissions(btn.dataset.name));
-      });
-      list.querySelectorAll('.download-csv-btn').forEach(btn => {
-        btn.addEventListener('click', () => downloadCSV(btn.dataset.name));
-      });
-      list.querySelectorAll('.delete-assignment-btn').forEach(btn => {
-        btn.addEventListener('click', () => deleteAssignment(btn.dataset.name));
-      });
+
+      list.querySelectorAll('.select-assignment-btn').forEach(btn => btn.addEventListener('click', () => {
+        currentAdminAssignmentName = btn.dataset.name;
+        renderAdminAssignments();
+      }));
+      list.querySelectorAll('.edit-assignment-btn').forEach(btn => btn.addEventListener('click', () => showAssignmentModal(getAssignmentByName(btn.dataset.name))));
+      list.querySelectorAll('.lock-assignment-btn').forEach(btn => btn.addEventListener('click', () => toggleAssignmentActive(btn.dataset.name, btn.dataset.active !== 'true')));
+      list.querySelectorAll('.delete-assignment-btn').forEach(btn => btn.addEventListener('click', () => deleteAssignment(btn.dataset.name)));
+
+      const assignment = getAssignmentByName(currentAdminAssignmentName);
+      if (!assignment) {
+        detail.innerHTML = '<p style="color:#888; margin:0;">Select an assignment to review scores and open submissions.</p>';
+        return;
+      }
+
+      const submissions = [...(assignment.submissions || [])].sort((a, b) => ((a.name || a.email || '').localeCompare(b.name || b.email || '', undefined, { sensitivity: 'base' })));
+      detail.innerHTML = `
+        <h4>${escapeHtml(assignment.name)}</h4>
+        <div class="meta" style="margin-bottom:12px; white-space:pre-wrap;">${escapeHtml(assignment.task || '(No task description)')}</div>
+        <div class="meta" style="margin-bottom:12px;">Max score ${assignment.maxScore}${assignment.quiz?.totalPoints ? ` · Quiz ${assignment.quiz.totalPoints} pts` : ''}</div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+          <button class="btn secondary" id="downloadScoresBtn">Download CSV</button>
+        </div>
+        <table class="scores-table">
+          <thead>
+            <tr><th>Student</th><th>File</th><th>Submitted</th><th>Score</th><th></th></tr>
+          </thead>
+          <tbody>
+            ${submissions.length ? submissions.map(sub => `
+              <tr>
+                <td>${escapeHtml(sub.name || sub.email || 'Unknown')}</td>
+                <td>${escapeHtml(sub.submittedFileName || '—')}</td>
+                <td>${escapeHtml(sub.submittedAt || '—')}</td>
+                <td>${assignmentScoreValue(sub) ?? '—'}</td>
+                <td><button class="btn secondary open-submission-btn" data-assignment="${escapeHtml(assignment.name)}" data-email="${escapeHtml(sub.email)}">Open</button></td>
+              </tr>
+            `).join('') : '<tr><td colspan="5" style="color:#888;">No submissions yet.</td></tr>'}
+          </tbody>
+        </table>
+      `;
+      detail.querySelector('#downloadScoresBtn')?.addEventListener('click', () => downloadCSV(assignment.name));
+      detail.querySelectorAll('.open-submission-btn').forEach(btn => btn.addEventListener('click', () => openAssignmentSubmission(btn.dataset.assignment, btn.dataset.email)));
     }
 
     function renderStudentAssignments() {
       const activeList = document.getElementById('studentAssignmentList');
       const pastList = document.getElementById('studentPastAssignmentList');
-      
+      const notice = document.getElementById('studentAccountNotice');
+      const files = flattenFiles(_allFileTree || []);
+      const canSubmit = !!USER_TOKEN && !!currentUser;
+      notice.textContent = canSubmit
+        ? `Signed in as ${currentUser.name || currentUser.email}. Choose a file from your account when you submit an assignment.`
+        : 'Sign in with a student account to submit assignment files and view your scores.';
+
       const activeAssignments = currentAssignments.filter(a => a.active);
       const pastAssignments = currentAssignments.filter(a => !a.active);
-      
+
       if (!activeAssignments.length) {
         activeList.innerHTML = '<p style="color:#888;">No active assignments.</p>';
       } else {
-        activeList.innerHTML = activeAssignments.map(a => {
-          const hasQuiz = a.quiz && a.quiz.questions && a.quiz.questions.length > 0;
-          const questionCount = hasQuiz ? a.quiz.questions.length : 0;
-          return `
+        activeList.innerHTML = activeAssignments.map(a => `
           <div class="assignment-card">
-            <h4>${escapeHtml(a.name)} ${hasQuiz ? '<span style="background:#4a90e2; color:#fff; font-size:10px; padding:2px 6px; border-radius:3px; margin-left:8px; font-weight:normal;">QUIZ</span>' : ''}</h4>
+            <h4>${escapeHtml(a.name)}</h4>
             <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
-            <div class="meta">Max Score: ${a.maxScore}</div>
-            <div class="assignment-actions" style="display:flex; gap:10px; margin-top:10px;">
-              <button class="btn run submit-assignment-btn" data-name="${escapeHtml(a.name)}">Submit Code</button>
-              ${hasQuiz ? `<button class="btn secondary open-questions-btn" data-name="${escapeHtml(a.name)}">Questions (${questionCount})</button>` : ''}
+            <div class="meta">Max Score: ${a.maxScore}${a.quiz?.questions?.length ? ` · Questions: ${a.quiz.questions.length}` : ''}</div>
+            <div class="assignment-actions">
+              <button class="btn run submit-assignment-btn" data-name="${escapeHtml(a.name)}" ${canSubmit && files.length ? '' : 'disabled'}>Submit File</button>
+              ${a.quiz?.questions?.length ? `<button class="btn secondary open-questions-btn" data-name="${escapeHtml(a.name)}" ${canSubmit ? '' : 'disabled'}>Questions (${a.quiz.questions.length})</button>` : ''}
             </div>
           </div>
-        `;
-        }).join('');
-        
-        // Add event listeners for active assignments
-        activeList.querySelectorAll('.submit-assignment-btn').forEach(btn => {
-          btn.addEventListener('click', () => submitAssignment(btn.dataset.name));
-        });
-        
-        activeList.querySelectorAll('.open-questions-btn').forEach(btn => {
-          btn.addEventListener('click', () => openQuestions(btn.dataset.name));
-        });
+        `).join('');
+        activeList.querySelectorAll('.submit-assignment-btn').forEach(btn => btn.addEventListener('click', () => showAssignmentSubmitModal(btn.dataset.name)));
+        activeList.querySelectorAll('.open-questions-btn').forEach(btn => btn.addEventListener('click', () => openQuestions(btn.dataset.name)));
       }
-      
+
       if (!pastAssignments.length) {
         pastList.innerHTML = '<p style="color:#888;">No past assignments.</p>';
       } else {
         pastList.innerHTML = pastAssignments.map(a => `
-          <div class="assignment-card" style="opacity:0.7;">
-            <h4>${escapeHtml(a.name)} <span style="color:#888; font-size:12px; font-weight:normal;">(Closed)</span></h4>
+          <div class="assignment-card" style="opacity:0.8;">
+            <h4>${escapeHtml(a.name)} <span style="color:#888; font-size:12px; font-weight:normal;">(Locked)</span></h4>
             <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
             <div class="meta">Max Score: ${a.maxScore}</div>
-            <div class="assignment-actions">
-              <button class="btn secondary" disabled style="opacity:0.5; cursor:not-allowed;">Submissions Closed</button>
-            </div>
           </div>
         `).join('');
       }
     }
 
-    function escapeHtml(text) {
-      const div = document.createElement('div');
-      div.textContent = text;
-      return div.innerHTML;
+    async function loadStudentScores() {
+      const resultsDiv = document.getElementById('studentScoreResults');
+      if (!resultsDiv) return;
+      if (!USER_TOKEN || !currentUser) {
+        resultsDiv.innerHTML = '<p style="color:#888; font-size:12px;">Sign in to see your scores.</p>';
+        return;
+      }
+      try {
+        const response = await fetch('/api/assignments/student-scores', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
+          body: JSON.stringify({})
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!result.ok || !result.scores?.length) {
+          resultsDiv.innerHTML = '<p style="color:#888; font-size:12px;">No submissions yet.</p>';
+          return;
+        }
+        const renderCard = (score, closed) => `
+          <div class="score-result-item" ${closed ? 'style="opacity:0.85;"' : ''}>
+            <div class="assignment-name">${escapeHtml(score.assignmentName)}${closed ? ' <span style="color:#888; font-size:11px;">(Locked)</span>' : ''}</div>
+            <div class="assignment-score">
+              Score: ${score.totalScore ?? score.codeScore ?? score.score ?? '—'} / ${score.maxScore}
+              ${score.quizScore !== null && score.quizScore !== undefined ? ` · Quiz ${score.quizScore}` : ''}
+            </div>
+            <div style="color:#666; font-size:11px; margin-top:4px;">${escapeHtml(score.submittedFileName || 'No code file yet')} · ${escapeHtml(score.submittedAt || 'Not submitted')}</div>
+          </div>
+        `;
+        const activeScores = result.scores.filter(s => s.active);
+        const pastScores = result.scores.filter(s => !s.active);
+        let html = '';
+        if (activeScores.length) html += '<div style="margin-bottom:16px;"><h5 style="color:var(--columbia-blue); margin:8px 0;">Active Assignments</h5>' + activeScores.map(score => renderCard(score, false)).join('') + '</div>';
+        if (pastScores.length) html += '<div><h5 style="color:var(--columbia-blue); margin:8px 0;">Past Assignments</h5>' + pastScores.map(score => renderCard(score, true)).join('') + '</div>';
+        resultsDiv.innerHTML = html || '<p style="color:#888; font-size:12px;">No submissions yet.</p>';
+      } catch (error) {
+        console.error('Error loading scores:', error);
+        resultsDiv.innerHTML = '<p style="color:#ff5555; font-size:12px;">Error loading scores. Please try again.</p>';
+      }
     }
 
-    document.getElementById('newAssignmentBtn').addEventListener('click', () => {
-      showNewAssignmentModal();
-    });
+    function buildQuizPayload(quizQuestions) {
+      if (!quizQuestions?.length) return null;
+      return {
+        questions: quizQuestions,
+        totalPoints: quizQuestions.reduce((sum, q) => sum + (q.points || 0), 0)
+      };
+    }
 
-    function showNewAssignmentModal() {
+    document.getElementById('newAssignmentBtn').addEventListener('click', () => showAssignmentModal());
+
+    function showAssignmentModal(existingAssignment = null) {
       const modal = document.createElement('div');
       modal.className = 'modal';
       modal.innerHTML = `
         <div class="modal-content" style="max-width:800px; max-height:80vh; overflow-y:auto;">
-          <h3>New Assignment</h3>
+          <h3>${existingAssignment ? 'Edit Assignment' : 'New Assignment'}</h3>
           <label>Assignment Name</label>
-          <input type="text" id="modalAssignmentName" placeholder="e.g., Loops Practice 1" />
+          <input type="text" id="modalAssignmentName" value="${escapeHtml(existingAssignment?.name || '')}" ${existingAssignment ? 'disabled' : ''} placeholder="e.g., Loops Practice 1" />
           <label>Task Description</label>
-          <textarea id="modalAssignmentTask" placeholder="Describe what students need to do..."></textarea>
+          <textarea id="modalAssignmentTask" placeholder="Describe what students need to do...">${escapeHtml(existingAssignment?.task || '')}</textarea>
           <label>Max Score (Code)</label>
-          <input type="number" id="modalAssignmentMaxScore" value="100" min="1" />
-          
+          <input type="number" id="modalAssignmentMaxScore" value="${existingAssignment?.maxScore || 100}" min="1" />
           <div style="margin-top:20px; padding-top:20px; border-top:1px solid #333;">
             <h4 style="color:var(--columbia-blue); margin:0 0 12px;">Quiz (Optional)</h4>
             <div id="quizBuilder">
@@ -3278,105 +3136,70 @@ print("Hello " + name)
               <button type="button" class="btn secondary" id="addQuestionBtn" style="margin-top:10px;">+ Add Question</button>
             </div>
           </div>
-          
           <div class="modal-actions" style="margin-top:20px;">
             <button class="btn secondary modal-cancel-btn">Cancel</button>
-            <button class="btn run modal-create-btn">Create</button>
+            <button class="btn run modal-save-btn">${existingAssignment ? 'Save Changes' : 'Create Assignment'}</button>
           </div>
         </div>
       `;
       document.body.appendChild(modal);
-      
-      let quizQuestions = [];
-      let questionIdCounter = { value: 0 };  // Counter object to ensure unique IDs (passed by reference)
-      
+
+      let quizQuestions = JSON.parse(JSON.stringify(existingAssignment?.quiz?.questions || []));
+      let questionIdCounter = { value: quizQuestions.length };
+
       function renderQuizQuestions() {
         const list = document.getElementById('quizQuestionsList');
         if (!quizQuestions.length) {
           list.innerHTML = '<p style="color:#888; font-size:12px;">No questions added yet.</p>';
           return;
         }
-        
         list.innerHTML = quizQuestions.map((q, idx) => `
           <div class="quiz-question-item" style="background:#0c0c0c; border:1px solid #333; border-radius:6px; padding:12px; margin-bottom:10px;">
-            <div style="display:flex; justify-content:space-between; align-items:start;">
+            <div style="display:flex; justify-content:space-between; align-items:start; gap:12px;">
               <div style="flex:1;">
                 <strong style="color:var(--columbia-blue);">Question ${idx + 1}</strong>
                 <span style="color:#888; margin-left:10px;">(${q.type === 'multiple_choice' ? 'Multiple Choice' : 'Written Response'}, ${q.points} pts)</span>
+                <div style="color:#ddd; margin-top:8px;">${escapeHtml(q.question)}</div>
               </div>
               <button class="btn-delete-question" data-idx="${idx}" style="background:#d32f2f; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:11px;">Delete</button>
             </div>
-            <div style="color:#ddd; margin-top:8px;">${escapeHtml(q.question)}</div>
-            ${q.type === 'multiple_choice' ? `
-              <div style="margin-top:8px; font-size:12px; color:#888;">
-                Options: ${q.options.map((opt, i) => `<span style="${i === q.correctAnswer ? 'color:#4caf50; font-weight:600;' : ''}">${escapeHtml(opt)}</span>`).join(', ')}
-              </div>
-            ` : ''}
           </div>
         `).join('');
-        
-        list.querySelectorAll('.btn-delete-question').forEach(btn => {
-          btn.addEventListener('click', () => {
-            quizQuestions.splice(parseInt(btn.dataset.idx), 1);
-            renderQuizQuestions();
-          });
-        });
+        list.querySelectorAll('.btn-delete-question').forEach(btn => btn.addEventListener('click', () => {
+          quizQuestions.splice(parseInt(btn.dataset.idx, 10), 1);
+          renderQuizQuestions();
+        }));
       }
-      
-      document.getElementById('addQuestionBtn').addEventListener('click', () => {
-        showAddQuestionModal(quizQuestions, renderQuizQuestions, questionIdCounter);
-      });
-      
+
+      document.getElementById('addQuestionBtn').addEventListener('click', () => showAddQuestionModal(quizQuestions, renderQuizQuestions, questionIdCounter));
       renderQuizQuestions();
-      
-      modal.addEventListener('click', (e) => {
-        if (e.target === modal) modal.remove();
-      });
+      modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
       modal.querySelector('.modal-cancel-btn').addEventListener('click', () => modal.remove());
-      modal.querySelector('.modal-create-btn').addEventListener('click', () => createAssignment(quizQuestions));
-    }
-
-    async function createAssignment(quizQuestions) {
-      const name = document.getElementById('modalAssignmentName').value.trim();
-      const task = document.getElementById('modalAssignmentTask').value.trim();
-      const maxScore = parseInt(document.getElementById('modalAssignmentMaxScore').value) || 100;
-
-      if (!name) {
-        alert('Please enter an assignment name');
-        return;
-      }
-
-      // Build quiz object if there are questions
-      let quiz = null;
-      if (quizQuestions && quizQuestions.length > 0) {
-        const totalPoints = quizQuestions.reduce((sum, q) => sum + (q.points || 0), 0);
-        quiz = {
-          questions: quizQuestions,
-          totalPoints: totalPoints
-        };
-      }
-
-      try {
-        const resp = await fetch('/api/assignments/create', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Admin-Token': ADMIN_TOKEN
-          },
-          body: JSON.stringify({ name, task, maxScore, quiz })
-        });
-        const data = await resp.json();
-        if (data.ok) {
-          document.querySelector('.modal').remove();
+      modal.querySelector('.modal-save-btn').addEventListener('click', async () => {
+        const name = existingAssignment
+          ? existingAssignment.name
+          : document.getElementById('modalAssignmentName').value.trim();
+        const task = document.getElementById('modalAssignmentTask').value.trim();
+        const maxScore = parseInt(document.getElementById('modalAssignmentMaxScore').value, 10) || 100;
+        if (!name) { alert('Please enter an assignment name.'); return; }
+        const payload = { name, task, maxScore, quiz: buildQuizPayload(quizQuestions) };
+        const url = existingAssignment ? '/api/assignments/update' : '/api/assignments/create';
+        try {
+          const resp = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+            body: JSON.stringify(payload)
+          });
+          const data = await resp.json().catch(() => ({}));
+          if (!data.ok) { alert(data.error || 'Failed to save assignment'); return; }
+          modal.remove();
+          currentAdminAssignmentName = name;
           await loadAssignments();
-          document.getElementById('assignmentStatus').textContent = 'Assignment created!';
-          setTimeout(() => { document.getElementById('assignmentStatus').textContent = ''; }, 3000);
-        } else {
-          alert(data.error || 'Failed to create assignment');
+          setAssignmentStatus(existingAssignment ? 'Assignment updated' : 'Assignment created');
+        } catch (error) {
+          alert('Network error');
         }
-      } catch (e) {
-        alert('Network error');
-      }
+      });
     }
 
     function showAddQuestionModal(quizQuestions, renderCallback, questionIdCounter) {
@@ -3385,167 +3208,77 @@ print("Hello " + name)
       questionModal.innerHTML = `
         <div class="modal-content" style="max-width:700px; max-height:85vh; overflow-y:auto; padding:20px;">
           <h3>Add Question</h3>
-          
           <label>Question Type</label>
           <select id="questionType" style="width:100%; padding:8px; background:#0c0c0c; border:1px solid #333; color:#ddd; border-radius:4px; margin-bottom:12px;">
             <option value="multiple_choice">Multiple Choice</option>
             <option value="written">Written Response</option>
           </select>
-          
           <label>Question Text</label>
           <textarea id="questionText" placeholder="Enter your question..." style="width:100%; min-height:80px; padding:8px; background:#0c0c0c; border:1px solid #333; color:#ddd; border-radius:4px; margin-bottom:12px; font-family:inherit;"></textarea>
-          
           <label>Points</label>
           <input type="number" id="questionPoints" value="10" min="1" style="width:100%; padding:8px; background:#0c0c0c; border:1px solid #333; color:#ddd; border-radius:4px; margin-bottom:12px;" />
-          
           <div id="mcOptionsSection" style="display:block; margin-top:12px;">
             <label style="display:block; margin-bottom:8px; color:#aaa; font-weight:600;">Answer Options (select the correct answer)</label>
             <div id="optionsList" style="margin-bottom:12px;"></div>
             <button type="button" class="btn secondary" id="addOptionBtn" style="font-size:13px; padding:8px 16px;">+ Add Option</button>
           </div>
-          
           <div class="modal-actions">
             <button class="btn secondary modal-cancel-btn-q">Cancel</button>
             <button class="btn run modal-add-btn-q">Add Question</button>
           </div>
         </div>
       `;
-      
       document.body.appendChild(questionModal);
-      
       let options = ['Option 1', 'Option 2', 'Option 3', 'Option 4'];
       let correctAnswer = 0;
-      
+
       function renderOptions() {
         const list = document.getElementById('optionsList');
         list.innerHTML = options.map((opt, idx) => `
           <div style="display:flex; gap:10px; margin-bottom:12px; align-items:center;">
-            <input type="radio" 
-                   name="correctAnswer" 
-                   value="${idx}" 
-                   ${idx === correctAnswer ? 'checked' : ''} 
-                   style="margin:0; width:20px; height:20px; cursor:pointer; flex-shrink:0;">
-            <input 
-              type="text" 
-              class="option-text-input" 
-              data-idx="${idx}" 
-              value="${escapeHtml(opt)}" 
-              placeholder="Enter option ${idx + 1} text..."
-              style="flex:1; padding:10px 12px; background:#0c0c0c; border:1px solid #555; border-radius:6px; color:#eee; font-size:14px; min-width:0;"
-            />
-            ${options.length > 2 ? `
-            <button class="btn-remove-option" 
-                    data-idx="${idx}" 
-                    style="background:#d32f2f; color:#fff; border:none; padding:8px 12px; border-radius:6px; cursor:pointer; font-size:12px; white-space:nowrap; flex-shrink:0;">
-              Remove
-            </button>
-            ` : ''}
+            <input type="radio" name="correctAnswer" value="${idx}" ${idx === correctAnswer ? 'checked' : ''} style="margin:0; width:20px; height:20px; cursor:pointer; flex-shrink:0;">
+            <input type="text" class="option-text-input" data-idx="${idx}" value="${escapeHtml(opt)}" placeholder="Enter option ${idx + 1} text..." style="flex:1; padding:10px 12px; background:#0c0c0c; border:1px solid #555; border-radius:6px; color:#eee; font-size:14px; min-width:0;" />
+            ${options.length > 2 ? `<button class="btn-remove-option" data-idx="${idx}" style="background:#d32f2f; color:#fff; border:none; padding:8px 12px; border-radius:6px; cursor:pointer; font-size:12px; white-space:nowrap; flex-shrink:0;">Remove</button>` : ''}
           </div>
         `).join('');
-        
-        // Add event listeners for radio buttons (correct answer selection)
-        list.querySelectorAll('input[name="correctAnswer"]').forEach((radio) => {
-          radio.addEventListener('change', (e) => {
-            correctAnswer = parseInt(e.target.value);
-          });
-        });
-        
-        // Add event listeners for text inputs (option text editing)
-        list.querySelectorAll('.option-text-input').forEach(input => {
-          input.addEventListener('input', (e) => {
-            const idx = parseInt(input.dataset.idx);
-            options[idx] = e.target.value;
-          });
-        });
-        
-        // Add event listeners for remove buttons
-        list.querySelectorAll('.btn-remove-option').forEach(btn => {
-          btn.addEventListener('click', () => {
-            const idx = parseInt(btn.dataset.idx);
-            options.splice(idx, 1);
-            if (correctAnswer >= options.length) correctAnswer = options.length - 1;
-            if (correctAnswer < 0) correctAnswer = 0;
-            renderOptions();
-          });
-        });
-      }
-      
-      document.getElementById('addOptionBtn').addEventListener('click', () => {
-        const MAX_OPTIONS = 6;  // Maximum number of answer options for multiple choice
-        if (options.length < MAX_OPTIONS) {
-          options.push(`Option ${options.length + 1}`);
+        list.querySelectorAll('input[name="correctAnswer"]').forEach(radio => radio.addEventListener('change', (e) => { correctAnswer = parseInt(e.target.value, 10); }));
+        list.querySelectorAll('.option-text-input').forEach(input => input.addEventListener('input', (e) => { options[parseInt(input.dataset.idx, 10)] = e.target.value; }));
+        list.querySelectorAll('.btn-remove-option').forEach(btn => btn.addEventListener('click', () => {
+          const idx = parseInt(btn.dataset.idx, 10);
+          options.splice(idx, 1);
+          if (correctAnswer >= options.length) correctAnswer = options.length - 1;
           renderOptions();
-        }
-      });
-      
-      document.getElementById('questionType').addEventListener('change', (e) => {
-        const mcSection = document.getElementById('mcOptionsSection');
-        mcSection.style.display = e.target.value === 'multiple_choice' ? 'block' : 'none';
-      });
-      
+        }));
+      }
+
+      document.getElementById('addOptionBtn').addEventListener('click', () => { if (options.length < 6) { options.push(`Option ${options.length + 1}`); renderOptions(); } });
+      document.getElementById('questionType').addEventListener('change', (e) => { document.getElementById('mcOptionsSection').style.display = e.target.value === 'multiple_choice' ? 'block' : 'none'; });
       renderOptions();
-      
-      questionModal.addEventListener('click', (e) => {
-        if (e.target === questionModal) questionModal.remove();
-      });
-      
+      questionModal.addEventListener('click', (e) => { if (e.target === questionModal) questionModal.remove(); });
       questionModal.querySelector('.modal-cancel-btn-q').addEventListener('click', () => questionModal.remove());
-      
       questionModal.querySelector('.modal-add-btn-q').addEventListener('click', () => {
         const type = document.getElementById('questionType').value;
-        const text = document.getElementById('questionText').value.trim();
-        const points = parseInt(document.getElementById('questionPoints').value) || 10;
-        
-        // Better validation with specific error messages
-        if (!text) {
-          alert('Please enter a question');
-          return;
-        }
-        
-        const question = {
-          id: 'q' + Date.now() + '_' + (questionIdCounter.value++),
-          type: type,
-          question: text,
-          points: points
-        };
-        
+        const textValue = document.getElementById('questionText').value.trim();
+        const points = parseInt(document.getElementById('questionPoints').value, 10) || 10;
+        if (!textValue) { alert('Please enter a question.'); return; }
+        const question = { id: 'q' + Date.now() + '_' + (questionIdCounter.value++), type, question: textValue, points };
         if (type === 'multiple_choice') {
-          // Validate options - check for empty option text
           const validOptions = options.filter(opt => opt.trim() !== '');
-          if (validOptions.length < 2) {
-            alert('Please add at least 2 non-empty options');
-            return;
-          }
-          
-          // Validate correct answer is within bounds of original array
-          if (correctAnswer >= options.length || correctAnswer < 0) {
-            alert('Please select a valid correct answer');
-            return;
-          }
-          
-          // Recalculate correctAnswer index based on filtered options
-          // Find which valid option corresponds to the selected radio button
+          if (validOptions.length < 2) { alert('Please add at least 2 non-empty options.'); return; }
           let validCorrectAnswer = 0;
           let validIdx = 0;
           for (let i = 0; i < options.length; i++) {
             if (options[i].trim() !== '') {
-              if (i === correctAnswer) {
-                validCorrectAnswer = validIdx;
-                break;
-              }
+              if (i === correctAnswer) { validCorrectAnswer = validIdx; break; }
               validIdx++;
             }
           }
-          
-          question.options = validOptions;  // Use filtered valid options
+          question.options = validOptions;
           question.correctAnswer = validCorrectAnswer;
         }
-        
         quizQuestions.push(question);
-        console.log('Question added:', question);
-        console.log('Total questions:', quizQuestions.length);
-        questionModal.remove();  // ✅ Close the "Add Question" modal FIRST
-        renderCallback();  // Then update the parent modal's question list
+        questionModal.remove();
+        renderCallback();
       });
     }
 
@@ -3553,1660 +3286,318 @@ print("Hello " + name)
       try {
         const resp = await fetch('/api/assignments/update', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Admin-Token': ADMIN_TOKEN
-          },
+          headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
           body: JSON.stringify({ name, active })
         });
-        const data = await resp.json();
-        if (data.ok) {
-          await loadAssignments();
-        } else {
-          alert(data.error || 'Failed to update assignment');
-        }
-      } catch (e) {
+        const data = await resp.json().catch(() => ({}));
+        if (!data.ok) { alert(data.error || 'Failed to update assignment'); return; }
+        await loadAssignments();
+        setAssignmentStatus(active ? 'Assignment unlocked' : 'Assignment locked');
+      } catch (error) {
         alert('Network error');
       }
     }
 
     async function deleteAssignment(name) {
-      if (!confirm(`Delete assignment "${name}"? This cannot be undone.`)) return;
-      
+      if (!confirm(`Delete assignment "${name}"? This removes the admin submission folder too.`)) return;
       try {
         const resp = await fetch('/api/assignments/delete', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Admin-Token': ADMIN_TOKEN
-          },
+          headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
           body: JSON.stringify({ name })
         });
-        const data = await resp.json();
-        if (data.ok) {
-          await loadAssignments();
-          document.getElementById('assignmentStatus').textContent = 'Assignment deleted';
-          setTimeout(() => { document.getElementById('assignmentStatus').textContent = ''; }, 3000);
-        } else {
-          alert(data.error || 'Failed to delete assignment');
-        }
-      } catch (e) {
+        const data = await resp.json().catch(() => ({}));
+        if (!data.ok) { alert(data.error || 'Failed to delete assignment'); return; }
+        if (currentAdminAssignmentName === name) currentAdminAssignmentName = null;
+        hideSubmissionScoringPanel();
+        await loadAssignments();
+        setAssignmentStatus('Assignment deleted');
+      } catch (error) {
         alert('Network error');
       }
     }
 
-    function submitAssignment(assignmentName) {
-      const studentInfo = getStudentInfo();
-      
-      // Validate student info is filled out
-      if (!studentInfo.name || !studentInfo.email) {
-        alert('Please fill in your name and email in the Student Information section above first.');
+    function showAssignmentSubmitModal(assignmentName) {
+      if (!USER_TOKEN || !currentUser) {
+        alert('Please sign in with a student account first.');
         return;
       }
-      
+      const files = flattenFiles(_allFileTree || []);
+      if (!files.length) {
+        alert('Create or upload a file in your account before submitting.');
+        return;
+      }
+      const selectedPath = currentOpenFile?.path && files.some(file => file.path === currentOpenFile.path) ? currentOpenFile.path : files[0].path;
       const modal = document.createElement('div');
       modal.className = 'modal';
       modal.innerHTML = `
-        <div class="modal-content">
+        <div class="modal-content" style="max-width:520px;">
           <h3>Submit: ${escapeHtml(assignmentName)}</h3>
-          <p style="color:#888; font-size:13px; margin:10px 0;">
-            Submitting as: <strong>${escapeHtml(studentInfo.name)}</strong> (${escapeHtml(studentInfo.email)})
-          </p>
+          <p style="color:#888; font-size:13px;">Submitting as <strong>${escapeHtml(currentUser.name || currentUser.email)}</strong>. Pick the file from your account to copy into the admin workspace.</p>
+          <label for="assignmentFileSelect">File to submit</label>
+          <select id="assignmentFileSelect" style="width:100%; padding:10px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border); border-radius:8px;">
+            ${files.map(file => `<option value="${escapeHtml(file.path)}" ${file.path === selectedPath ? 'selected' : ''}>${escapeHtml(file.path)}</option>`).join('')}
+          </select>
           <div class="modal-actions">
             <button class="btn secondary modal-cancel-btn">Cancel</button>
-            <button class="btn run modal-submit-btn" data-assignment="${escapeHtml(assignmentName)}">Submit Code</button>
+            <button class="btn run modal-submit-btn">Submit File</button>
           </div>
         </div>
       `;
       document.body.appendChild(modal);
-      modal.addEventListener('click', (e) => {
-        if (e.target === modal) modal.remove();
-      });
+      modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
       modal.querySelector('.modal-cancel-btn').addEventListener('click', () => modal.remove());
-      modal.querySelector('.modal-submit-btn').addEventListener('click', (e) => {
-        doSubmitAssignment(e.target.dataset.assignment);
+      modal.querySelector('.modal-submit-btn').addEventListener('click', async () => {
+        const filePath = document.getElementById('assignmentFileSelect').value;
+        if (!filePath) { alert('Select a file first.'); return; }
+        if (currentOpenFile?.path === filePath) {
+          const saved = await saveCurrentFile();
+          if (!saved) {
+            alert('Your latest edits could not be saved. Please save the file again before submitting.');
+            return;
+          }
+        }
+        try {
+          const resp = await fetch('/api/assignments/submit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
+            body: JSON.stringify({ assignmentName, filePath })
+          });
+          const data = await resp.json().catch(() => ({}));
+          if (!data.ok) { alert(data.error || 'Failed to submit assignment'); return; }
+          modal.remove();
+          alert('Assignment submitted successfully.');
+          await loadAssignments();
+        } catch (error) {
+          alert('Network error');
+        }
       });
     }
 
-    async function doSubmitAssignment(assignmentName) {
-      const studentInfo = getStudentInfo();
-      const code = editor.getValue();
-
-      if (!studentInfo.name || !studentInfo.email) {
-        alert('Name and email are required');
-        return;
-      }
-
-      try {
-        const resp = await fetch('/api/assignments/submit', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            assignmentName,
-            studentName: studentInfo.name,
-            studentEmail: studentInfo.email,
-            classPeriod: studentInfo.period,
-            code
-          })
-        });
-        const data = await resp.json();
-        if (data.ok) {
-          document.querySelector('.modal').remove();
-          alert('Assignment submitted successfully!');
-        } else {
-          alert(data.error || 'Failed to submit assignment');
-        }
-      } catch (e) {
-        alert('Network error');
-      }
-    }
-
-    // New function: Opens questions modal with improved UI
     async function openQuestions(assignmentName) {
-      const studentInfo = getStudentInfo();
-      
-      // Validate student info is filled out
-      if (!studentInfo.name || !studentInfo.email) {
-        alert('Please fill in your name and email in the Student Information section first.');
+      if (!USER_TOKEN || !currentUser) {
+        alert('Please sign in with a student account first.');
         return;
       }
-      
-      // Fetch the quiz/questions
       try {
         const resp = await fetch(`/api/quiz/${encodeURIComponent(assignmentName)}`);
-        const data = await resp.json();
-        
-        if (!data.ok) {
-          alert(data.error || 'Failed to load questions');
-          return;
-        }
-        
-        const quiz = data.quiz;
+        const data = await resp.json().catch(() => ({}));
+        if (!data.ok) { alert(data.error || 'Failed to load questions'); return; }
+        const quiz = data.quiz || {};
         const questions = quiz.questions || [];
-        
-        if (!questions.length) {
-          alert('This assignment has no questions');
-          return;
-        }
-        
-        // Build questions modal
+        if (!questions.length) { alert('This assignment has no questions.'); return; }
         const modal = document.createElement('div');
         modal.className = 'modal';
         modal.innerHTML = `
           <div class="modal-content" style="max-width:900px; max-height:90vh; overflow-y:auto; padding:30px;">
             <h3 style="margin-top:0; color:var(--columbia-blue);">Assignment Questions: ${escapeHtml(assignmentName)}</h3>
-            <p style="color:#aaa; font-size:14px; margin:10px 0 20px;">
-              Submitting as: <strong style="color:#eee;">${escapeHtml(studentInfo.name)}</strong> (${escapeHtml(studentInfo.email)})<br>
-              <span style="color:#888; font-size:12px;">Note: You can resubmit your answers until this assignment is closed.</span>
-            </p>
-            
+            <p style="color:#aaa; font-size:14px; margin:10px 0 20px;">Submitting as <strong style="color:#eee;">${escapeHtml(currentUser.name || currentUser.email)}</strong>. You can resubmit answers until the assignment is locked.</p>
             <div id="questionsContainer" style="margin:20px 0;">
-              ${questions.map((q, idx) => {
-                if (q.type === 'multiple_choice') {
-                  return `
-                    <div class="question-block" style="margin-bottom:30px; padding:24px; background:#0d0d0d; border:1px solid #444; border-radius:10px;">
-                      <div style="color:var(--columbia-blue); font-weight:700; margin-bottom:14px; font-size:16px;">
-                        Question ${idx + 1} <span style="color:#888; font-weight:400; font-size:14px;">(${q.points || 0} points)</span>
-                      </div>
-                      <div style="color:#eee; margin-bottom:18px; font-size:15px; line-height:1.6;">
-                        ${escapeHtml(q.question)}
-                      </div>
-                      <div class="question-options">
-                        ${(q.options || []).map((opt, optIdx) => `
-                          <div class="option-wrapper" style="margin:12px 0; padding:14px 16px; background:#1a1a1a; border:2px solid #333; border-radius:8px; cursor:pointer; transition:all 0.2s;"
-                               onmouseover="this.style.borderColor='var(--columbia-blue)'; this.style.backgroundColor='#222';" 
-                               onmouseout="this.style.borderColor='#333'; this.style.backgroundColor='#1a1a1a';"
-                               onclick="this.querySelector('input[type=radio]').checked=true;">
-                            <label style="cursor:pointer; display:flex; align-items:center; width:100%; margin:0;">
-                              <input type="radio" 
-                                     name="question_${q.id}" 
-                                     value="${optIdx}" 
-                                     style="margin:0 14px 0 0; cursor:pointer; width:20px; height:20px; flex-shrink:0;">
-                              <span style="color:#ddd; font-size:15px; line-height:1.5;">${escapeHtml(opt)}</span>
-                            </label>
-                          </div>
-                        `).join('')}
-                      </div>
-                    </div>
-                  `;
-                } else if (q.type === 'written') {
-                  return `
-                    <div class="question-block" style="margin-bottom:30px; padding:24px; background:#0d0d0d; border:1px solid #444; border-radius:10px;">
-                      <div style="color:var(--columbia-blue); font-weight:700; margin-bottom:14px; font-size:16px;">
-                        Question ${idx + 1} <span style="color:#888; font-weight:400; font-size:14px;">(${q.points || 0} points)</span>
-                      </div>
-                      <div style="color:#eee; margin-bottom:18px; font-size:15px; line-height:1.6;">
-                        ${escapeHtml(q.question)}
-                      </div>
-                      <textarea 
-                        id="written_answer_${q.id}" 
-                        placeholder="Type your answer here..."
-                        style="width:100%; min-height:140px; padding:14px; background:#1a1a1a; border:2px solid #444; border-radius:8px; color:#eee; font-family:inherit; resize:vertical; font-size:15px; line-height:1.5;"
-                      ></textarea>
-                    </div>
-                  `;
-                }
-                return '';
-              }).join('')}
+              ${questions.map((q, idx) => q.type === 'multiple_choice' ? `
+                <div class="question-block" style="margin-bottom:30px; padding:24px; background:#0d0d0d; border:1px solid #444; border-radius:10px;">
+                  <div style="color:var(--columbia-blue); font-weight:700; margin-bottom:14px; font-size:16px;">Question ${idx + 1} <span style="color:#888; font-weight:400; font-size:14px;">(${q.points || 0} points)</span></div>
+                  <div style="color:#eee; margin-bottom:18px; font-size:15px; line-height:1.6;">${escapeHtml(q.question)}</div>
+                  ${(q.options || []).map((opt, optIdx) => `
+                    <label style="display:flex; align-items:center; gap:12px; margin:10px 0; padding:12px; background:#1a1a1a; border:1px solid #333; border-radius:8px; cursor:pointer;">
+                      <input type="radio" name="question_${q.id}" value="${optIdx}">
+                      <span>${escapeHtml(opt)}</span>
+                    </label>
+                  `).join('')}
+                </div>
+              ` : `
+                <div class="question-block" style="margin-bottom:30px; padding:24px; background:#0d0d0d; border:1px solid #444; border-radius:10px;">
+                  <div style="color:var(--columbia-blue); font-weight:700; margin-bottom:14px; font-size:16px;">Question ${idx + 1} <span style="color:#888; font-weight:400; font-size:14px;">(${q.points || 0} points)</span></div>
+                  <div style="color:#eee; margin-bottom:18px; font-size:15px; line-height:1.6;">${escapeHtml(q.question)}</div>
+                  <textarea id="written_answer_${q.id}" placeholder="Type your answer here..." style="width:100%; min-height:140px; padding:14px; background:#1a1a1a; border:2px solid #444; border-radius:8px; color:#eee; font-family:inherit; resize:vertical; font-size:15px; line-height:1.5;"></textarea>
+                </div>
+              `).join('')}
             </div>
-            
             <div class="modal-actions" style="display:flex; gap:12px; justify-content:flex-end; margin-top:30px; padding-top:20px; border-top:1px solid #333;">
-              <button class="btn secondary modal-cancel-btn" style="padding:10px 24px;">Cancel</button>
-              <button class="btn run modal-submit-questions-btn" style="padding:10px 24px;">Submit Answers</button>
+              <button class="btn secondary modal-cancel-btn">Cancel</button>
+              <button class="btn run modal-submit-questions-btn">Submit Answers</button>
             </div>
           </div>
         `;
-        
         document.body.appendChild(modal);
-        
-        // Escape key to close - define first so other handlers can reference it
-        const escapeHandler = (e) => {
-          if (e.key === 'Escape') {
-            modal.remove();
-            document.removeEventListener('keydown', escapeHandler);
-          }
-        };
+        const escapeHandler = (e) => { if (e.key === 'Escape') { modal.remove(); document.removeEventListener('keydown', escapeHandler); } };
         document.addEventListener('keydown', escapeHandler);
-        
-        // Cancel button - just close modal
-        modal.querySelector('.modal-cancel-btn').addEventListener('click', () => {
-          modal.remove();
-          document.removeEventListener('keydown', escapeHandler);
-        });
-        
-        // Click outside to close
-        modal.addEventListener('click', (e) => {
-          if (e.target === modal) {
-            modal.remove();
-            document.removeEventListener('keydown', escapeHandler);
-          }
-        });
-        
-        // Submit button handler
-        modal.querySelector('.modal-submit-questions-btn').addEventListener('click', async () => {
-          await submitQuestionAnswers(assignmentName, questions, modal, studentInfo, escapeHandler);
-        });
-        
-      } catch (e) {
-        console.error('Error loading questions:', e);
+        modal.addEventListener('click', (e) => { if (e.target === modal) { modal.remove(); document.removeEventListener('keydown', escapeHandler); } });
+        modal.querySelector('.modal-cancel-btn').addEventListener('click', () => { modal.remove(); document.removeEventListener('keydown', escapeHandler); });
+        modal.querySelector('.modal-submit-questions-btn').addEventListener('click', async () => submitQuestionAnswers(assignmentName, questions, modal, escapeHandler));
+      } catch (error) {
         alert('Network error loading questions');
       }
     }
 
-    // Helper function to submit question answers
-    async function submitQuestionAnswers(assignmentName, questions, modal, studentInfo, escapeHandler) {
-      // Collect all answers
+    async function submitQuestionAnswers(assignmentName, questions, modal, escapeHandler) {
       const quizResponses = [];
-      let allAnswered = true;
-      let unansweredQuestions = [];
-      
-      for (let i = 0; i < questions.length; i++) {
-        const q = questions[i];
-        
+      const missing = [];
+      questions.forEach((q, idx) => {
         if (q.type === 'multiple_choice') {
           const selected = modal.querySelector(`input[name="question_${q.id}"]:checked`);
-          if (!selected) {
-            allAnswered = false;
-            unansweredQuestions.push(i + 1);
-          } else {
-            quizResponses.push({
-              questionId: q.id,
-              answer: parseInt(selected.value),
-              questionType: 'multiple_choice'
-            });
-          }
-        } else if (q.type === 'written') {
-          const answerTextarea = modal.querySelector(`#written_answer_${q.id}`);
-          const answer = answerTextarea ? answerTextarea.value.trim() : '';
-          if (!answer) {
-            allAnswered = false;
-            unansweredQuestions.push(i + 1);
-          } else {
-            quizResponses.push({
-              questionId: q.id,
-              answer: answer,
-              questionType: 'written'
-            });
-          }
+          if (!selected) { missing.push(idx + 1); return; }
+          quizResponses.push({ questionId: q.id, answer: parseInt(selected.value, 10), questionType: 'multiple_choice' });
+        } else {
+          const value = modal.querySelector(`#written_answer_${q.id}`)?.value?.trim() || '';
+          if (!value) { missing.push(idx + 1); return; }
+          quizResponses.push({ questionId: q.id, answer: value, questionType: 'written' });
         }
-      }
-      
-      // Validate all questions answered
-      if (!allAnswered) {
-        alert(`Please answer all questions before submitting. Unanswered: Question(s) ${unansweredQuestions.join(', ')}`);
+      });
+      if (missing.length) {
+        alert(`Please answer all questions before submitting. Missing: ${missing.join(', ')}`);
         return;
       }
-      
-      // Add visual feedback while submitting
-      const submitBtn = modal.querySelector('.modal-submit-questions-btn');
-      const originalText = submitBtn.textContent;
-      submitBtn.textContent = 'Submitting...';
-      submitBtn.disabled = true;
-      
-      // Submit answers to backend
       try {
         const submitResp = await fetch('/api/quiz/submit', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            assignmentName,
-            studentName: studentInfo.name,
-            studentEmail: studentInfo.email,
-            classPeriod: studentInfo.period,
-            quizResponses
-          })
+          headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
+          body: JSON.stringify({ assignmentName, quizResponses })
         });
-        
-        const submitData = await submitResp.json();
-        
-        if (submitData.ok) {
-          // Close modal FIRST
-          modal.remove();
-          document.removeEventListener('keydown', escapeHandler);
-          
-          // THEN show success message
-          alert('Your answers have been submitted successfully! You can resubmit until the assignment closes.');
-        } else {
-          // Re-enable button on error
-          submitBtn.textContent = originalText;
-          submitBtn.disabled = false;
-          alert(submitData.error || 'Failed to submit answers');
-        }
-      } catch (e) {
-        console.error('Error submitting answers:', e);
-        // Re-enable button on error
-        submitBtn.textContent = originalText;
-        submitBtn.disabled = false;
+        const submitData = await submitResp.json().catch(() => ({}));
+        if (!submitData.ok) { alert(submitData.error || 'Failed to submit answers'); return; }
+        modal.remove();
+        document.removeEventListener('keydown', escapeHandler);
+        alert('Your answers were submitted successfully.');
+        await loadAssignments();
+      } catch (error) {
         alert('Network error submitting answers');
       }
     }
 
-    // OLD FUNCTION - DEPRECATED - Use openQuestions() instead
-    /* async function takeQuiz(assignmentName) {
-      const studentInfo = getStudentInfo();
-      
-      // Validate student info is filled out
-      if (!studentInfo.name || !studentInfo.email) {
-        alert('Please fill in your name and email in the Student Information section above first.');
-        return;
-      }
-      
-      // Fetch the quiz
-      try {
-        const resp = await fetch(`/api/quiz/${encodeURIComponent(assignmentName)}`);
-        const data = await resp.json();
-        
-        if (!data.ok) {
-          alert(data.error || 'Failed to load quiz');
-          return;
-        }
-        
-        const quiz = data.quiz;
-        const questions = quiz.questions || [];
-        
-        if (!questions.length) {
-          alert('This quiz has no questions');
-          return;
-        }
-        
-        // Build quiz modal
-        const modal = document.createElement('div');
-        modal.className = 'modal';
-        modal.innerHTML = `
-          <div class="modal-content" style="max-width:800px; max-height:85vh; overflow-y:auto; padding:24px;">
-            <h3>Quiz: ${escapeHtml(assignmentName)}</h3>
-            <p style="color:#888; font-size:13px; margin:10px 0;">
-              Submitting as: <strong>${escapeHtml(studentInfo.name)}</strong> (${escapeHtml(studentInfo.email)})
-            </p>
-            <div id="quizQuestions" style="margin:20px 0;">
-              ${questions.map((q, idx) => {
-                if (q.type === 'multiple_choice') {
-                  return `
-                    <div class="quiz-question" style="margin-bottom:24px; padding:20px; background:#0c0c0c; border:1px solid #444; border-radius:8px;">
-                      <div style="color:var(--columbia-blue); font-weight:600; margin-bottom:12px; font-size:15px;">
-                        Question ${idx + 1} (${q.points || 0} points)
-                      </div>
-                      <div style="color:#eee; margin-bottom:16px; font-size:14px; line-height:1.5;">
-                        ${escapeHtml(q.question)}
-                      </div>
-                      <div class="quiz-options" style="margin-top:12px;">
-                        ${(q.options || []).map((opt, optIdx) => `
-                          <div style="margin:10px 0; padding:10px; background:#1a1a1a; border:1px solid #444; border-radius:6px; cursor:pointer; transition:all 0.2s;" 
-                               onmouseover="this.style.borderColor='var(--columbia-blue)'" 
-                               onmouseout="this.style.borderColor='#444'">
-                            <label style="cursor:pointer; display:flex; align-items:center; width:100%;">
-                              <input type="radio" 
-                                     name="q_${q.id}" 
-                                     value="${optIdx}" 
-                                     style="margin-right:12px; cursor:pointer; width:18px; height:18px;">
-                              <span style="color:#ddd; font-size:14px;">${escapeHtml(opt)}</span>
-                            </label>
-                          </div>
-                        `).join('')}
-                      </div>
-                    </div>
-                  `;
-                } else if (q.type === 'written') {
-                  return `
-                    <div class="quiz-question" style="margin-bottom:24px; padding:20px; background:#0c0c0c; border:1px solid #444; border-radius:8px;">
-                      <div style="color:var(--columbia-blue); font-weight:600; margin-bottom:12px; font-size:15px;">
-                        Question ${idx + 1} (${q.points || 0} points)
-                      </div>
-                      <div style="color:#eee; margin-bottom:16px; font-size:14px; line-height:1.5;">
-                        ${escapeHtml(q.question)}
-                      </div>
-                      <textarea 
-                        id="answer_${q.id}" 
-                        placeholder="Type your answer here..."
-                        style="width:100%; min-height:120px; padding:12px; background:#1a1a1a; border:1px solid #444; border-radius:6px; color:#ddd; font-family:inherit; resize:vertical; font-size:14px;"
-                      ></textarea>
-                    </div>
-                  `;
-                }
-                return '';
-              }).join('')}
-            </div>
-            <div class="modal-actions">
-              <button class="btn secondary modal-cancel-btn">Cancel</button>
-              <button class="btn run modal-submit-quiz-btn">Submit Quiz</button>
-            </div>
-          </div>
-        `;
-        
-        document.body.appendChild(modal);
-        
-        modal.addEventListener('click', (e) => {
-          if (e.target === modal) modal.remove();
-        });
-        
-        modal.querySelector('.modal-cancel-btn').addEventListener('click', () => modal.remove());
-        
-        modal.querySelector('.modal-submit-quiz-btn').addEventListener('click', async () => {
-          // Collect all answers
-          const quizResponses = [];
-          let allAnswered = true;
-          
-          for (const q of questions) {
-            if (q.type === 'multiple_choice') {
-              const selected = modal.querySelector(`input[name="q_${q.id}"]:checked`);
-              if (!selected) {
-                allAnswered = false;
-                break;
-              }
-              quizResponses.push({
-                questionId: q.id,
-                answer: parseInt(selected.value),
-                questionType: 'multiple_choice'
-              });
-            } else if (q.type === 'written') {
-              const answer = modal.querySelector(`#answer_${q.id}`).value.trim();
-              if (!answer) {
-                allAnswered = false;
-                break;
-              }
-              quizResponses.push({
-                questionId: q.id,
-                answer: answer,
-                questionType: 'written'
-              });
-            }
-          }
-          
-          if (!allAnswered) {
-            alert('Please answer all questions before submitting.');
-            return;
-          }
-          
-          // Submit quiz
-          try {
-            const submitResp = await fetch('/api/quiz/submit', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                assignmentName,
-                studentName: studentInfo.name,
-                studentEmail: studentInfo.email,
-                classPeriod: studentInfo.period,
-                quizResponses
-              })
-            });
-            
-            const submitData = await submitResp.json();
-            if (submitData.ok) {
-              modal.remove();
-              alert('Quiz submitted successfully!');
-            } else {
-              alert(submitData.error || 'Failed to submit quiz');
-            }
-          } catch (e) {
-            alert('Network error');
-          }
-        });
-        
-      } catch (e) {
-        alert('Network error loading quiz');
-      }
-    } */
-
-    function viewSubmissions(assignmentName) {
-      const assignment = currentAssignments.find(a => a.name === assignmentName);
-      if (!assignment) return;
-
-      const submissions = assignment.submissions || [];
-      const hasQuiz = assignment.quiz && assignment.quiz.questions && assignment.quiz.questions.length > 0;
-      
-      const modal = document.createElement('div');
-      modal.className = 'modal';
-      modal.innerHTML = `
-        <div class="modal-content" style="max-width:800px;">
-          <h3>Submissions: ${escapeHtml(assignmentName)}</h3>
-          <div id="submissionsList">
-            ${submissions.length ? submissions.map((s, idx) => {
-              // Handle both old and new format
-              const hasNewFormat = 'codeScore' in s || 'quizScore' in s;
-              const codeScore = hasNewFormat ? (s.codeScore ?? '') : (s.score ?? '');
-              const quizScore = s.quizScore ?? '';
-              const totalScore = s.totalScore ?? '';
-              
-              return `
-              <div class="submission-item" data-idx="${idx}">
-                <div class="name">${escapeHtml(s.name || 'Anonymous')}</div>
-                <div class="email">${escapeHtml(s.email)} | Period: ${escapeHtml(s.classPeriod || 'N/A')} | Submitted: ${escapeHtml(s.submittedAt || 'Unknown')}</div>
-                <div class="score-input">
-                  ${hasNewFormat ? `
-                    Code: <input type="number" class="code-score-field" value="${codeScore}" min="0" max="${assignment.maxScore}" 
-                      data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}" data-idx="${escapeHtml(String(idx))}"
-                      style="width:60px;" /> / ${assignment.maxScore}
-                    ${hasQuiz ? `| Quiz: <span class="quiz-score-display">${quizScore}</span> / ${assignment.quiz.totalPoints || 0}` : ''}
-                    | Total: <span class="total-score-display">${totalScore}</span>
-                  ` : `
-                    Score: <input type="number" class="score-field" value="${codeScore}" min="0" max="${assignment.maxScore}" 
-                      data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}" data-idx="${escapeHtml(String(idx))}"
-                      style="width:80px;" /> / ${assignment.maxScore}
-                  `}
-                  <button class="ai-grade-btn" data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}" data-idx="${escapeHtml(String(idx))}">Grade Code with AI</button>
-                </div>
-              </div>
-            `;
-            }).join('') : '<p style="color:#888;">No submissions yet.</p>'}
-          </div>
-          <div class="modal-actions">
-            <button class="btn secondary modal-close-btn">Close</button>
-          </div>
-        </div>
-      `;
-      document.body.appendChild(modal);
-      modal.addEventListener('click', (e) => {
-        if (e.target === modal) modal.remove();
-      });
-      modal.querySelector('.modal-close-btn').addEventListener('click', () => modal.remove());
-      
-      // Add event listeners for submission items
-      modal.querySelectorAll('.submission-item').forEach(item => {
-        item.addEventListener('click', (e) => {
-          // Don't trigger if clicking on score input or AI grade button
-          if (e.target.classList.contains('score-field') || 
-              e.target.classList.contains('code-score-field') || 
-              e.target.classList.contains('ai-grade-btn')) return;
-          const idx = parseInt(item.dataset.idx);
-          const sub = submissions[idx];
-          if (sub) viewSubmissionCode(assignmentName, sub.email);
-        });
-      });
-      
-      // Add event listeners for old-style score inputs
-      modal.querySelectorAll('.score-field').forEach(field => {
-        field.addEventListener('change', (e) => {
-          e.stopPropagation();
-          updateScore(field.dataset.assignment, field.dataset.email, field.value);
-        });
-      });
-      
-      // Add event listeners for new-style code score inputs
-      modal.querySelectorAll('.code-score-field').forEach(field => {
-        field.addEventListener('change', (e) => {
-          e.stopPropagation();
-          updateScore(field.dataset.assignment, field.dataset.email, field.value);
-        });
-      });
-
-      // Add event listeners for AI grade buttons
-      modal.querySelectorAll('.ai-grade-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          gradeWithAI(btn.dataset.assignment, btn.dataset.email, parseInt(btn.dataset.idx), modal);
-        });
-      });
-    }
-
-    function viewSubmissionCode(assignmentName, email) {
-      const assignment = currentAssignments.find(a => a.name === assignmentName);
-      if (!assignment) return;
-
-      const submission = assignment.submissions.find(s => s.email.toLowerCase() === email.toLowerCase());
-      if (!submission) return;
-
-      const hasQuiz = submission.quizResponses && submission.quizResponses.length > 0;
-      const quiz = assignment.quiz;
-      
-      // Build quiz responses HTML
-      let quizHTML = '';
-      if (hasQuiz && quiz) {
-        quizHTML = `
-          <div style="margin-top:20px; padding-top:20px; border-top:1px solid #333;">
-            <h4 style="color:var(--columbia-blue); margin:0 0 12px;">Quiz Responses</h4>
-            ${submission.quizResponses.map((resp, idx) => {
-              const question = quiz.questions.find(q => q.id === resp.questionId);
-              if (!question) return '';
-              
-              if (question.type === 'multiple_choice') {
-                const selectedOption = question.options[resp.answer];
-                const correctOption = question.options[question.correctAnswer];
-                const isCorrect = resp.isCorrect;
-                
-                return `
-                  <div style="margin-bottom:16px; padding:12px; background:#0c0c0c; border:1px solid #333; border-radius:6px;">
-                    <div style="color:var(--columbia-blue); font-weight:600; margin-bottom:6px;">
-                      Question ${idx + 1}: ${escapeHtml(question.question)}
-                    </div>
-                    <div style="margin:6px 0;">
-                      <strong>Student Answer:</strong> 
-                      <span style="color:${isCorrect ? '#4caf50' : '#f44336'};">${escapeHtml(selectedOption)}</span>
-                      ${isCorrect ? '✓' : '✗'}
-                    </div>
-                    ${!isCorrect ? `<div style="margin:6px 0; color:#888;"><strong>Correct Answer:</strong> ${escapeHtml(correctOption)}</div>` : ''}
-                    <div style="margin:6px 0; color:#888;">
-                      <strong>Points:</strong> ${resp.pointsEarned || 0} / ${question.points || 0}
-                    </div>
-                  </div>
-                `;
-              } else if (question.type === 'written') {
-                return `
-                  <div style="margin-bottom:16px; padding:12px; background:#0c0c0c; border:1px solid #333; border-radius:6px;">
-                    <div style="color:var(--columbia-blue); font-weight:600; margin-bottom:6px;">
-                      Question ${idx + 1}: ${escapeHtml(question.question)}
-                    </div>
-                    <div style="margin:8px 0; padding:8px; background:#1a1a1a; border:1px solid #444; border-radius:4px;">
-                      ${escapeHtml(resp.answer)}
-                    </div>
-                    <div style="margin:8px 0; display:flex; gap:12px; align-items:center;">
-                      <div>
-                        <strong>Manual Score:</strong>
-                        <input type="number" 
-                          class="manual-score-input" 
-                          data-assignment="${escapeHtml(assignmentName)}"
-                          data-email="${escapeHtml(email)}"
-                          data-question-id="${resp.questionId}"
-                          value="${resp.manualScore ?? ''}" 
-                          min="0" 
-                          max="${question.points || 0}" 
-                          placeholder="0"
-                          style="width:60px; padding:4px; background:#0c0c0c; border:1px solid #333; color:#ddd; border-radius:4px; margin-left:4px;">
-                        / ${question.points || 0}
-                      </div>
-                      ${resp.aiScore !== null && resp.aiScore !== undefined ? `
-                        <div style="color:#888;">
-                          <strong>AI Score:</strong> ${resp.aiScore} / ${question.points || 0}
-                        </div>
-                      ` : ''}
-                      <button class="btn secondary ai-grade-written-btn"
-                        data-assignment="${escapeHtml(assignmentName)}"
-                        data-email="${escapeHtml(email)}"
-                        data-question-id="${resp.questionId}"
-                        data-question-text="${escapeHtml(question.question)}"
-                        data-answer="${escapeHtml(resp.answer)}"
-                        data-max-points="${question.points || 0}"
-                        style="font-size:12px; padding:4px 8px;">
-                        Grade with AI
-                      </button>
-                    </div>
-                    <div style="margin:6px 0; color:#888;">
-                      <strong>Points Earned:</strong> ${resp.pointsEarned || 0} / ${question.points || 0}
-                    </div>
-                  </div>
-                `;
-              }
-              return '';
-            }).join('')}
-          </div>
-        `;
-      }
-
-      const modal = document.createElement('div');
-      modal.className = 'modal';
-      modal.innerHTML = `
-        <div class="modal-content" style="max-width:900px; max-height:80vh; overflow-y:auto;">
-          <h3>${escapeHtml(submission.name || 'Anonymous')} - ${escapeHtml(email)}</h3>
-          <div style="margin:12px 0;">
-            <strong>Period:</strong> ${escapeHtml(submission.classPeriod || 'N/A')} | 
-            <strong>Submitted:</strong> ${escapeHtml(submission.submittedAt || 'Unknown')}
-          </div>
-          
-          <h4 style="color:var(--columbia-blue); margin:16px 0 8px;">Code Submission</h4>
-          <textarea readonly style="width:100%; height:300px; font-family:monospace; background:#0c0c0c; color:#ddd; border:1px solid #333; padding:10px; border-radius:6px;">${escapeHtml(submission.code || '(No code)')}</textarea>
-          
-          ${quizHTML}
-          
-          <div class="modal-actions" style="margin-top:20px;">
-            <button class="btn secondary load-to-editor-btn" data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(email)}">Load Code to Editor</button>
-            <button class="btn secondary modal-close-btn">Close</button>
-          </div>
-        </div>
-      `;
-      document.body.appendChild(modal);
-      
-      modal.addEventListener('click', (e) => {
-        if (e.target === modal) modal.remove();
-      });
-      
-      modal.querySelector('.modal-close-btn').addEventListener('click', () => modal.remove());
-      modal.querySelector('.load-to-editor-btn').addEventListener('click', (e) => {
-        loadSubmissionToEditor(e.target.dataset.assignment, e.target.dataset.email);
-      });
-      
-      // Add event listeners for manual score inputs
-      modal.querySelectorAll('.manual-score-input').forEach(input => {
-        input.addEventListener('change', async () => {
-          const assignmentName = input.dataset.assignment;
-          const email = input.dataset.email;
-          const questionId = input.dataset.questionId;
-          const manualScore = input.value ? parseFloat(input.value) : null;
-          
-          try {
-            const resp = await fetch('/api/quiz/override-score', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'X-Admin-Token': ADMIN_TOKEN
-              },
-              body: JSON.stringify({
-                assignmentName,
-                studentEmail: email,
-                questionId,
-                manualScore
-              })
-            });
-            
-            const data = await resp.json();
-            if (data.ok) {
-              await loadAssignments();
-              // Refresh the modal
-              modal.remove();
-              viewSubmissionCode(assignmentName, email);
-            } else {
-              alert(data.error || 'Failed to update score');
-            }
-          } catch (e) {
-            alert('Network error');
-          }
-        });
-      });
-      
-      // Add event listeners for AI grading written responses
-      modal.querySelectorAll('.ai-grade-written-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          btn.disabled = true;
-          btn.textContent = 'Grading...';
-          
-          const assignmentName = btn.dataset.assignment;
-          const email = btn.dataset.email;
-          const questionId = btn.dataset.questionId;
-          const questionText = btn.dataset.questionText;
-          const answer = btn.dataset.answer;
-          const maxPoints = parseInt(btn.dataset.maxPoints);
-          
-          try {
-            const resp = await fetch('/api/quiz/grade-written', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'X-Admin-Token': ADMIN_TOKEN
-              },
-              body: JSON.stringify({
-                assignmentName,
-                studentEmail: email,
-                questionId,
-                questionText,
-                answer,
-                maxPoints
-              })
-            });
-            
-            const data = await resp.json();
-            if (data.ok) {
-              await loadAssignments();
-              // Refresh the modal
-              modal.remove();
-              viewSubmissionCode(assignmentName, email);
-            } else {
-              alert(data.error || 'Failed to grade with AI');
-              btn.disabled = false;
-              btn.textContent = 'Grade with AI';
-            }
-          } catch (e) {
-            alert('Network error');
-            btn.disabled = false;
-            btn.textContent = 'Grade with AI';
-          }
-        });
-      });
-    }
-
-    function loadSubmissionToEditor(assignmentName, email) {
-      const assignment = currentAssignments.find(a => a.name === assignmentName);
-      if (!assignment) return;
-
-      const submission = assignment.submissions.find(s => s.email.toLowerCase() === email.toLowerCase());
-      if (!submission) return;
-
-      editor.setValue(submission.code || '');
-      document.querySelector('.modal').remove();
-      alert('Student code loaded into editor');
-    }
-
-    async function updateScore(assignmentName, email, score) {
-      try {
-        const resp = await fetch('/api/assignments/score', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Admin-Token': ADMIN_TOKEN
-          },
-          body: JSON.stringify({
-            assignmentName,
-            studentEmail: email,
-            score: score ? parseFloat(score) : null
-          })
-        });
-        const data = await resp.json();
-        if (data.ok) {
-          await loadAssignments();
-        }
-      } catch (e) {
-        console.error('Failed to update score:', e);
-      }
-    }
-
-    async function downloadCSV(assignmentName) {
-      if (!ADMIN_TOKEN) return;
-      const url = `/api/assignments/${encodeURIComponent(assignmentName)}/csv`;
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${assignmentName}_scores.csv`;
-      // Add auth header via fetch and create blob
-      try {
-        const resp = await fetch(url, {
-          headers: { 'X-Admin-Token': ADMIN_TOKEN }
-        });
-        if (resp.ok) {
-          const blob = await resp.blob();
-          const blobUrl = URL.createObjectURL(blob);
-          a.href = blobUrl;
-          a.click();
-          URL.revokeObjectURL(blobUrl);
-        } else {
-          alert('Failed to download CSV');
-        }
-      } catch (e) {
-        alert('Network error');
-      }
-    }
-
-    // =============================================
-    // AI Grading Function
-    // =============================================
-    async function gradeWithAI(assignmentName, email, submissionIdx, modalElement) {
-      const assignment = currentAssignments.find(a => a.name === assignmentName);
-      if (!assignment) return;
-
-      const submission = assignment.submissions.find(s => s.email.toLowerCase() === email.toLowerCase());
-      if (!submission) return;
-
-      // Find the button and disable it
-      const btn = modalElement.querySelector(`.ai-grade-btn[data-idx="${submissionIdx}"]`);
-      if (btn) {
-        btn.disabled = true;
-        btn.textContent = 'Grading...';
-      }
-
-      try {
-        const resp = await fetch('/api/assignments/grade-ai', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Admin-Token': ADMIN_TOKEN
-          },
-          body: JSON.stringify({
-            assignmentName: assignmentName,
-            studentEmail: email,
-            code: submission.code,
-            task: assignment.task,
-            maxScore: assignment.maxScore
-          })
-        });
-
-        const data = await resp.json();
-        
-        if (data.ok) {
-          // Update the score field
-          const scoreField = modalElement.querySelector(`.score-field[data-idx="${submissionIdx}"]`);
-          if (scoreField) {
-            scoreField.value = data.score;
-            // Trigger change event to save the score
-            scoreField.dispatchEvent(new Event('change'));
-          }
-          
-          if (btn) {
-            btn.textContent = 'Grade with AI';
-            btn.disabled = false;
-          }
-        } else {
-          alert(data.error || 'AI grading failed');
-          if (btn) {
-            btn.textContent = 'Grade with AI';
-            btn.disabled = false;
-          }
-        }
-      } catch (e) {
-        console.error('AI grading error:', e);
-        alert('Network error during AI grading');
-        if (btn) {
-          btn.textContent = 'Grade with AI';
-          btn.disabled = false;
-        }
-      }
-    }
-
-    // =============================================
-    // Submissions Sidebar Functions
-    // =============================================
-    let currentSidebarAssignment = null;
-    
-    function showSubmissionsInSidebar(assignmentName) {
-      const assignment = currentAssignments.find(a => a.name === assignmentName);
-      if (!assignment) return;
-
-      currentSidebarAssignment = assignmentName;
-      const submissions = assignment.submissions || [];
-      const sidebar = document.getElementById('submissionsSidebarList');
-      const toolbar = document.querySelector('.submissions-toolbar');
-      
-      if (!submissions.length) {
-        sidebar.innerHTML = '<p style="color:#888; font-size:12px;">No submissions yet for this assignment.</p>';
-        if (toolbar) toolbar.style.display = 'none';
-        return;
-      }
-
-      // Show toolbar
-      if (toolbar) toolbar.style.display = 'flex';
-
-      sidebar.innerHTML = submissions.map(s => {
-        const hasScore = s.score !== null && s.score !== undefined;
-        const stateClass = hasScore ? 'saved' : 'ungraded';
-        
-        // Quiz summary calculation
-        const hasQuizResponses = s.quizResponses && s.quizResponses.length > 0;
-        const quizScore = s.quizScore || 0;
-        const quiz = assignment.quiz || {};
-        const maxQuizScore = (quiz.questions || []).reduce((sum, q) => sum + (q.points || 0), 0);
-        
-        return `
-        <div class="sidebar-submission ${stateClass}" data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}" data-original-score="${s.score !== null && s.score !== undefined ? s.score : ''}">
-          <div class="student-info">
-            <span class="student-name">${escapeHtml(s.name || 'Anonymous')}</span>
-            <span class="student-score">${hasScore ? s.score + '/' + assignment.maxScore : '—/' + assignment.maxScore}</span>
-          </div>
-          <div class="student-email">${escapeHtml(s.email)}</div>
-          ${hasQuizResponses ? `
-            <div class="quiz-summary" style="color:#888; font-size:11px; margin-top:4px; cursor:pointer;" 
-                 data-assignment="${escapeHtml(assignmentName)}" data-email="${escapeHtml(s.email)}">
-              📋 Quiz: ${quizScore}/${maxQuizScore} pts (click to expand)
-            </div>
-            <div class="quiz-details" style="display:none; margin-top:8px; padding-top:8px; border-top:1px solid #333;">
-              <!-- Quiz questions and responses go here -->
-            </div>
-          ` : ''}
-          <div class="score-input" style="margin-top:8px;">
-            <input type="number" class="score-input-field" placeholder="Score" min="0" max="${assignment.maxScore}" 
-              value="${hasScore ? s.score : ''}" 
-              style="width:60px; padding:4px; background:#1a1a1a; color:#fff; border:1px solid #2b2b2b; border-radius:4px; font-size:12px;">
-            <button class="btn secondary ai-grade-btn" style="padding:4px 8px; font-size:11px;">AI Grade</button>
-            <button class="btn run save-score-btn" style="padding:4px 8px; font-size:11px;">Save</button>
-          </div>
-        </div>
-        `;
-      }).join('');
-
-      // Add event handlers using addEventListener (safer than inline handlers)
-      sidebar.querySelectorAll('.sidebar-submission').forEach(item => {
-        const assignName = item.dataset.assignment;
-        const studentEmail = item.dataset.email;
-        
-        // Click on card to view submission
-        item.addEventListener('click', () => {
-          loadSubmissionToEditorDirect(assignName, studentEmail);
-        });
-        
-        // Input field - stop propagation and mark pending
-        const inputField = item.querySelector('.score-input-field');
-        if (inputField) {
-          inputField.addEventListener('click', (e) => e.stopPropagation());
-          inputField.addEventListener('input', () => markSubmissionPending(inputField));
-        }
-        
-        // AI Grade button
-        const aiGradeBtn = item.querySelector('.ai-grade-btn');
-        if (aiGradeBtn) {
-          aiGradeBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            aiGradeSubmission(assignName, studentEmail);
-          });
-        }
-        
-        // Save button
-        const saveBtn = item.querySelector('.save-score-btn');
-        if (saveBtn) {
-          saveBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            saveSubmissionScore(assignName, studentEmail, inputField);
-          });
-        }
-        
-        // Quiz summary - toggle quiz details
-        const quizSummary = item.querySelector('.quiz-summary');
-        if (quizSummary) {
-          quizSummary.addEventListener('click', (e) => {
-            e.stopPropagation();
-            toggleQuizDetails(quizSummary, assignName, studentEmail);
-          });
-        }
-      });
-    }
-
-    function markSubmissionPending(inputElement) {
-      const submissionCard = inputElement.closest('.sidebar-submission');
-      if (!submissionCard) return;
-      
-      const originalScore = submissionCard.dataset.originalScore || '';
-      const currentValue = inputElement.value;
-      
-      // Remove all state classes
-      submissionCard.classList.remove('ungraded', 'saved', 'pending', 'ai-grading');
-      
-      // Determine new state
-      if (currentValue === '') {
-        submissionCard.classList.add('ungraded');
-      } else if (currentValue !== originalScore) {
-        submissionCard.classList.add('pending');
+    async function openAssignmentSubmission(assignmentName, email) {
+      const { assignment, submission } = getSubmissionForAssignment(assignmentName, email);
+      if (!assignment || !submission) return;
+      currentAdminAssignmentName = assignmentName;
+      showFileBrowser();
+      if (submission.adminFilePath) {
+        await openFile({ path: submission.adminFilePath, name: submission.submittedFileName || `${submission.name || email}.py` });
       } else {
-        submissionCard.classList.add('saved');
+        editor.setValue(submission.code || '');
       }
+      populateSubmissionScoringPanel(assignment, submission);
+      renderAdminAssignments();
     }
 
-    function loadSubmissionToEditorDirect(assignmentName, email) {
-      const assignment = currentAssignments.find(a => a.name === assignmentName);
-      if (!assignment) return;
-
-      const submission = assignment.submissions.find(s => s.email.toLowerCase() === email.toLowerCase());
-      if (!submission) return;
-
-      editor.setValue(submission.code || '');
-      // Scroll to top of editor
-      if (editor.scrollTo) {
-        editor.scrollTo(0, 0);
-      }
-      // Show a notification
-      const statusEl = document.getElementById('assignmentStatus');
-      if (statusEl) {
-        statusEl.textContent = `Loaded: ${submission.name || email}`;
-        setTimeout(() => { statusEl.textContent = ''; }, 3000);
-      }
-    }
-
-    // Toggle quiz details visibility
-    function toggleQuizDetails(summaryEl, assignmentName, studentEmail) {
-      const card = summaryEl.closest('.sidebar-submission');
-      const detailsEl = card.querySelector('.quiz-details');
-      
-      if (detailsEl.style.display === 'none') {
-        // Expand - render quiz details
-        detailsEl.style.display = 'block';
-        summaryEl.textContent = summaryEl.textContent.replace('expand', 'collapse');
-        renderQuizDetails(detailsEl, assignmentName, studentEmail);
+    function populateSubmissionScoringPanel(assignment, submission) {
+      activeSubmissionContext = { assignmentName: assignment.name, studentEmail: submission.email };
+      const panel = document.getElementById('submissionScoringPanel');
+      const title = document.getElementById('submissionScoringTitle');
+      const meta = document.getElementById('submissionScoringMeta');
+      const quiz = document.getElementById('submissionQuizSummary');
+      const totals = document.getElementById('submissionScoreTotals');
+      const input = document.getElementById('submissionScoreInput');
+      const aiBtn = document.getElementById('submissionAiGradeBtn');
+      const maxScore = assignment.maxScore || 100;
+      panel.style.display = 'flex';
+      title.textContent = `${assignment.name} · ${submission.name || submission.email}`;
+      meta.innerHTML = `File: <strong>${escapeHtml(submission.submittedFileName || '—')}</strong><br>Submitted: ${escapeHtml(submission.submittedAt || '—')}`;
+      if (submission.quizScore !== null && submission.quizScore !== undefined) {
+        quiz.style.display = 'block';
+        quiz.textContent = `Quiz score: ${submission.quizScore}${assignment.quiz?.totalPoints ? ` / ${assignment.quiz.totalPoints}` : ''}`;
       } else {
-        // Collapse
-        detailsEl.style.display = 'none';
-        summaryEl.textContent = summaryEl.textContent.replace('collapse', 'expand');
+        quiz.style.display = 'none';
+        quiz.textContent = '';
       }
+      input.max = String(maxScore);
+      input.value = submission.codeScore ?? submission.score ?? '';
+      totals.textContent = `Code max ${maxScore}${submission.totalScore !== null && submission.totalScore !== undefined ? ` · Total ${submission.totalScore}` : ''}`;
+      aiBtn.style.display = currentConfig?.ai_explainer_enabled ? '' : 'none';
+      document.getElementById('submissionScoreSaveStatus').textContent = '';
     }
 
-    // Render quiz details with questions and student responses
-    function renderQuizDetails(containerEl, assignmentName, studentEmail) {
-      const assignment = currentAssignments.find(a => a.name === assignmentName);
-      if (!assignment) return;
-      
-      const submission = assignment.submissions.find(s => s.email.toLowerCase() === studentEmail.toLowerCase());
-      if (!submission || !submission.quizResponses) return;
-      
-      const quiz = assignment.quiz || {};
-      const questions = quiz.questions || [];
-      
-      let html = '';
-      
-      submission.quizResponses.forEach((response, idx) => {
-        const question = questions.find(q => q.id === response.questionId);
-        if (!question) return;
-        
-        const isMultipleChoice = question.type === 'multiple_choice';
-        const isCorrect = response.isCorrect;
-        const pointsEarned = response.pointsEarned || 0;
-        const maxPoints = question.points || 0;
-        
-        html += `
-          <div style="margin-bottom:12px; padding:8px; background:#0f0f0f; border:1px solid #2b2b2b; border-radius:4px;">
-            <div style="color:var(--columbia-blue); font-size:11px; font-weight:600; margin-bottom:4px;">
-              Q${idx + 1}: ${escapeHtml(question.question)} (${pointsEarned}/${maxPoints} pts)
-            </div>
-            
-            ${isMultipleChoice ? `
-              <div style="color:${isCorrect ? '#4caf50' : '#f44336'}; font-size:11px;">
-                Student answer: ${response.answer !== null && response.answer !== undefined && question.options && question.options[response.answer] ? escapeHtml(question.options[response.answer]) : 'No answer'}
-                ${isCorrect ? '✓ Correct' : '✗ Incorrect'}
-              </div>
-            ` : `
-              <div style="color:#ddd; font-size:11px; margin:4px 0;">
-                Student answer: ${escapeHtml(response.answer)}
-              </div>
-              <div style="display:flex; gap:4px; align-items:center; margin-top:4px;">
-                <button class="btn secondary quiz-ai-grade-btn" style="padding:2px 6px; font-size:10px;" 
-                        data-assignment="${escapeHtml(assignmentName)}" 
-                        data-email="${escapeHtml(studentEmail)}" 
-                        data-question-id="${response.questionId}" 
-                        data-question-text="${escapeHtml(question.question)}" 
-                        data-answer="${escapeHtml(response.answer)}" 
-                        data-max-points="${maxPoints}">
-                  AI Grade
-                </button>
-                <input type="number" min="0" max="${maxPoints}" value="${pointsEarned}" 
-                       class="quiz-manual-score-input"
-                       data-assignment="${escapeHtml(assignmentName)}" 
-                       data-email="${escapeHtml(studentEmail)}" 
-                       data-question-id="${response.questionId}"
-                       style="width:40px; padding:2px; background:#1a1a1a; color:#fff; border:1px solid #333; border-radius:3px; font-size:10px;">
-                <span style="font-size:10px; color:#888;">Manual override</span>
-              </div>
-            `}
-          </div>
-        `;
-      });
-      
-      containerEl.innerHTML = html;
-      
-      // Add event listeners for AI grade buttons
-      containerEl.querySelectorAll('.quiz-ai-grade-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          aiGradeWrittenResponse(
-            btn.dataset.assignment,
-            btn.dataset.email,
-            btn.dataset.questionId,
-            btn.dataset.questionText,
-            btn.dataset.answer,
-            parseInt(btn.dataset.maxPoints, 10)
-          );
-        });
-      });
-      
-      // Add event listeners for manual score inputs
-      containerEl.querySelectorAll('.quiz-manual-score-input').forEach(input => {
-        input.addEventListener('click', (e) => e.stopPropagation());
-        input.addEventListener('change', (e) => {
-          e.stopPropagation();
-          overrideQuizScore(
-            input.dataset.assignment,
-            input.dataset.email,
-            input.dataset.questionId,
-            input.value
-          );
-        });
-      });
-    }
-
-    // AI grade a written response
-    async function aiGradeWrittenResponse(assignmentName, studentEmail, questionId, questionText, answer, maxPoints) {
-      try {
-        const response = await fetch('/api/quiz/grade-written', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Admin-Token': ADMIN_TOKEN
-          },
-          body: JSON.stringify({
-            assignmentName,
-            studentEmail,
-            questionId,
-            questionText,
-            answer,
-            maxPoints
-          })
-        });
-        
-        const result = await response.json();
-        
-        if (result.ok) {
-          alert(`AI graded: ${result.aiScore}/${maxPoints} points`);
-          await loadAssignments();
-          showSubmissionsInSidebar(assignmentName);
-        } else {
-          alert('AI grading failed: ' + (result.error || 'Unknown error'));
-        }
-      } catch (error) {
-        console.error('Error AI grading:', error);
-        alert('Error grading response');
-      }
-    }
-
-    // Override quiz score manually
-    async function overrideQuizScore(assignmentName, studentEmail, questionId, manualScore) {
-      try {
-        const response = await fetch('/api/quiz/override-score', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Admin-Token': ADMIN_TOKEN
-          },
-          body: JSON.stringify({
-            assignmentName,
-            studentEmail,
-            questionId,
-            manualScore: parseInt(manualScore, 10)
-          })
-        });
-        
-        const result = await response.json();
-        
-        if (result.ok) {
-          alert('Score updated successfully');
-          await loadAssignments();
-          showSubmissionsInSidebar(assignmentName);
-        } else {
-          alert('Failed to update score: ' + (result.error || 'Unknown error'));
-        }
-      } catch (error) {
-        console.error('Error updating score:', error);
-        alert('Error updating score');
-      }
-    }
-
-    // Save submission score
-    async function saveSubmissionScore(assignmentName, email, inputElement) {
-      const score = parseInt(inputElement.value);
-      if (isNaN(score)) {
-        alert('Please enter a valid score');
+    async function saveSubmissionScore(assignmentName, email, rawScore) {
+      const status = document.getElementById('submissionScoreSaveStatus');
+      const parsedScore = rawScore === '' ? null : parseInt(rawScore, 10);
+      if (rawScore !== '' && Number.isNaN(parsedScore)) {
+        status.textContent = 'Enter a valid score.';
         return;
       }
-
+      status.textContent = 'Saving…';
       try {
         const response = await fetch('/api/assignments/score', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Admin-Token': ADMIN_TOKEN
-          },
-          body: JSON.stringify({
-            assignmentName: assignmentName,
-            studentEmail: email,
-            score: score
-          })
+          headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+          body: JSON.stringify({ assignmentName, studentEmail: email, score: parsedScore })
         });
-
-        const result = await response.json();
-        if (result?.ok) {
-          // Update the submission card state to "saved"
-          const submissionCard = inputElement.closest('.sidebar-submission');
-          if (submissionCard) {
-            submissionCard.classList.remove('ungraded', 'pending', 'ai-grading');
-            submissionCard.classList.add('saved');
-            submissionCard.dataset.originalScore = score;
-          }
-          
-          alert('Score saved successfully!');
-          await loadAssignments();
-          showSubmissionsInSidebar(assignmentName);
-        } else {
-          alert('Failed to save score: ' + (result?.error || 'Unknown error'));
+        const result = await response.json().catch(() => ({}));
+        if (!result.ok) {
+          status.textContent = result.error || 'Failed to save score.';
+          return;
         }
+        status.textContent = 'Saved automatically.';
+        await loadAssignments();
       } catch (error) {
-        alert('Error saving score: ' + error.message);
+        status.textContent = 'Network error while saving.';
       }
     }
 
-    // AI Grade submission
-    async function aiGradeSubmission(assignmentName, email) {
-      const assignment = currentAssignments.find(a => a.name === assignmentName);
-      if (!assignment) return;
+    document.getElementById('submissionScoreInput').addEventListener('input', (e) => {
+      if (!activeSubmissionContext) return;
+      if (submissionSaveTimer) clearTimeout(submissionSaveTimer);
+      submissionSaveTimer = setTimeout(() => {
+        saveSubmissionScore(activeSubmissionContext.assignmentName, activeSubmissionContext.studentEmail, e.target.value);
+      }, 500);
+    });
 
-      const submission = assignment.submissions.find(s => s.email.toLowerCase() === email.toLowerCase());
-      if (!submission) return;
-
-      const statusEl = document.getElementById('assignmentStatus');
-      
-      // Mark submission card as being AI graded
-      const sidebar = document.getElementById('submissionsSidebarList');
-      const submissionCards = sidebar.querySelectorAll('.sidebar-submission');
-      let currentCard = null;
-      submissionCards.forEach(card => {
-        if (card.dataset.email === email) {
-          currentCard = card;
-          card.classList.remove('ungraded', 'pending', 'saved');
-          card.classList.add('ai-grading');
-        }
-      });
-      
-      if (statusEl) {
-        statusEl.innerHTML = '<span class="ai-thinking">Grading</span>';
-      }
-
+    document.getElementById('submissionAiGradeBtn').addEventListener('click', async () => {
+      if (!activeSubmissionContext) return;
+      const { assignment, submission } = getSubmissionForAssignment(activeSubmissionContext.assignmentName, activeSubmissionContext.studentEmail);
+      if (!assignment || !submission) return;
+      const status = document.getElementById('submissionScoreSaveStatus');
+      status.textContent = 'Running AI grader…';
       try {
         const response = await fetch('/api/assignments/grade-ai', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Admin-Token': ADMIN_TOKEN
-          },
+          headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
           body: JSON.stringify({
-            assignmentName: assignmentName,
-            studentEmail: email,
+            assignmentName: assignment.name,
+            studentEmail: submission.email,
             code: submission.code || '',
             task: assignment.task || '',
             maxScore: assignment.maxScore || 100
           })
         });
-
-        const result = await response.json();
-        if (statusEl) statusEl.textContent = '';
-        
-        if (result?.ok) {
-          // Update the input field with AI score
-          const inputFields = sidebar.querySelectorAll('.score-input-field');
-          inputFields.forEach(input => {
-            const parent = input.closest('.sidebar-submission');
-            if (parent && parent.dataset.email === email) {
-              input.value = result.score;
-              // Mark as pending (AI scored but not saved)
-              parent.classList.remove('ai-grading', 'ungraded', 'saved');
-              parent.classList.add('pending');
-            }
-          });
-          
-          alert(`AI Grade: ${result.score}/${assignment.maxScore}\n\nScore set. Click Save to confirm.`);
-        } else {
-          // Revert to original state
-          if (currentCard) {
-            currentCard.classList.remove('ai-grading');
-            const hasScore = currentCard.dataset.originalScore !== '';
-            currentCard.classList.add(hasScore ? 'saved' : 'ungraded');
-          }
-          alert('Failed to grade: ' + (result?.error || 'Unknown error'));
-        }
-      } catch (error) {
-        if (statusEl) statusEl.textContent = '';
-        // Revert to original state
-        if (currentCard) {
-          currentCard.classList.remove('ai-grading');
-          const hasScore = currentCard.dataset.originalScore !== '';
-          currentCard.classList.add(hasScore ? 'saved' : 'ungraded');
-        }
-        alert('Error grading submission: ' + error.message);
-      }
-    }
-
-    // =============================================
-    // Student Score Lookup
-    // =============================================
-    const studentEmailInput = document.getElementById('studentEmailInput');
-    if (studentEmailInput) {
-      studentEmailInput.addEventListener('input', debounce(lookupStudentScores, 300));
-    }
-
-    function debounce(func, wait) {
-      let timeout;
-      return function executedFunction(...args) {
-        const later = () => {
-          clearTimeout(timeout);
-          func(...args);
-        };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-      };
-    }
-
-    async function lookupStudentScores() {
-      const email = studentEmailInput.value.trim().toLowerCase();
-      const resultsDiv = document.getElementById('studentScoreResults');
-      
-      if (!email) {
-        resultsDiv.innerHTML = '';
-        return;
-      }
-
-      // Call API to get student scores
-      try {
-        const response = await fetch('/api/assignments/student-scores', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email })
-        });
-        
-        const result = await response.json();
-        
-        if (!result.ok || !result.scores || result.scores.length === 0) {
-          resultsDiv.innerHTML = '<p style="color:#888; font-size:12px;">No submissions found for this email.</p>';
+        const result = await response.json().catch(() => ({}));
+        if (!result.ok) {
+          status.textContent = result.error || 'AI grading failed.';
           return;
         }
-
-        // Separate active and past assignments
-        const activeScores = result.scores.filter(s => s.active);
-        const pastScores = result.scores.filter(s => !s.active);
-
-        let html = '';
-        
-        if (activeScores.length > 0) {
-          html += '<div style="margin-bottom:16px;"><h5 style="color:var(--columbia-blue); margin:8px 0;">Active Assignments</h5>';
-          html += activeScores.map(s => `
-            <div class="score-result-item">
-              <div class="assignment-name">${escapeHtml(s.assignmentName)}</div>
-              <div class="assignment-score">
-                Score: ${s.score !== null && s.score !== undefined ? s.score : '—'} / ${s.maxScore}
-              </div>
-              <div style="color:#666; font-size:11px; margin-top:4px;">
-                Submitted: ${escapeHtml(s.submittedAt || 'Unknown')}
-              </div>
-            </div>
-          `).join('');
-          html += '</div>';
-        }
-        
-        if (pastScores.length > 0) {
-          html += '<div><h5 style="color:var(--columbia-blue); margin:8px 0;">Past Assignments</h5>';
-          html += pastScores.map(s => `
-            <div class="score-result-item" style="opacity:0.8;">
-              <div class="assignment-name">${escapeHtml(s.assignmentName)} <span style="color:#888; font-size:11px;">(Closed)</span></div>
-              <div class="assignment-score">
-                Score: ${s.score !== null && s.score !== undefined ? s.score : '—'} / ${s.maxScore}
-              </div>
-              <div style="color:#666; font-size:11px; margin-top:4px;">
-                Submitted: ${escapeHtml(s.submittedAt || 'Unknown')}
-              </div>
-            </div>
-          `).join('');
-          html += '</div>';
-        }
-
-        resultsDiv.innerHTML = html;
+        document.getElementById('submissionScoreInput').value = result.score;
+        status.textContent = 'AI grade saved automatically.';
+        await loadAssignments();
       } catch (error) {
-        console.error('Error looking up scores:', error);
-        resultsDiv.innerHTML = '<p style="color:#ff5555; font-size:12px;">Error looking up scores. Please try again.</p>';
+        status.textContent = 'Network error during AI grading.';
+      }
+    });
+
+    async function downloadCSV(assignmentName) {
+      const url = `/api/assignments/${encodeURIComponent(assignmentName)}/csv`;
+      try {
+        const resp = await fetch(url, { headers: { 'X-Admin-Token': ADMIN_TOKEN } });
+        if (!resp.ok) { alert('Failed to download CSV'); return; }
+        const blob = await resp.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = `${assignmentName}_scores.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+      } catch (error) {
+        alert('Network error');
       }
     }
 
-    // =============================================
-    // Save All and AI Grade All Functions
-    // =============================================
-    
-    const AI_GRADING_DELAY_MS = 500; // Delay between AI grading requests to avoid overwhelming the service
-    
-    // Save All Grades button handler
-    document.getElementById('saveAllGradesBtn')?.addEventListener('click', async () => {
-      if (!currentSidebarAssignment) return;
-      
-      const sidebar = document.getElementById('submissionsSidebarList');
-      const pendingCards = sidebar.querySelectorAll('.sidebar-submission.pending');
-      
-      if (pendingCards.length === 0) {
-        alert('No pending grade changes to save.');
-        return;
-      }
-      
-      if (!confirm(`Save ${pendingCards.length} pending grade(s)?`)) return;
-      
-      let saved = 0;
-      let failed = 0;
-      
-      for (const card of pendingCards) {
-        const email = card.dataset.email;
-        const input = card.querySelector('.score-input-field');
-        const score = parseInt(input.value);
-        
-        if (isNaN(score)) {
-          failed++;
-          continue;
-        }
-        
-        try {
-          const response = await fetch('/api/assignments/score', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Admin-Token': ADMIN_TOKEN
-            },
-            body: JSON.stringify({
-              assignmentName: currentSidebarAssignment,
-              studentEmail: email,
-              score: score
-            })
-          });
-          
-          const result = await response.json();
-          if (result?.ok) {
-            card.classList.remove('pending');
-            card.classList.add('saved');
-            card.dataset.originalScore = score;
-            saved++;
-          } else {
-            failed++;
-          }
-        } catch (error) {
-          console.error('Error saving score:', error);
-          failed++;
-        }
-      }
-      
+    window.afterAuthUiUpdate = async () => {
+      refreshChallengeAuthState();
       await loadAssignments();
-      alert(`Saved ${saved} grade(s).${failed > 0 ? ` Failed to save ${failed}.` : ''}`);
-    });
-    
-    // AI Grade All button handler
-    document.getElementById('aiGradeAllBtn')?.addEventListener('click', async () => {
-      if (!currentSidebarAssignment) return;
-      
-      const assignment = currentAssignments.find(a => a.name === currentSidebarAssignment);
-      if (!assignment) return;
-      
-      const sidebar = document.getElementById('submissionsSidebarList');
-      const ungradedCards = sidebar.querySelectorAll('.sidebar-submission.ungraded');
-      
-      if (ungradedCards.length === 0) {
-        alert('No ungraded submissions to AI grade.');
-        return;
-      }
-      
-      if (!confirm(`AI grade all ${ungradedCards.length} ungraded submission(s)? This will proceed one at a time and auto-save each score.`)) return;
-      
-      let graded = 0;
-      let failed = 0;
-      
-      for (const card of ungradedCards) {
-        const email = card.dataset.email;
-        const submission = assignment.submissions.find(s => s.email.toLowerCase() === email.toLowerCase());
-        
-        if (!submission) {
-          failed++;
-          continue;
-        }
-        
-        // Mark as AI grading
-        card.classList.remove('ungraded', 'pending', 'saved');
-        card.classList.add('ai-grading');
-        
-        // Scroll the card into view
-        card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        
-        try {
-          // AI Grade
-          const gradeResponse = await fetch('/api/assignments/grade-ai', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Admin-Token': ADMIN_TOKEN
-            },
-            body: JSON.stringify({
-              assignmentName: currentSidebarAssignment,
-              studentEmail: email,
-              code: submission.code || '',
-              task: assignment.task || '',
-              maxScore: assignment.maxScore || 100
-            })
-          });
-          
-          const gradeResult = await gradeResponse.json();
-          
-          if (gradeResult?.ok) {
-            // Auto-save the score
-            const saveResponse = await fetch('/api/assignments/score', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'X-Admin-Token': ADMIN_TOKEN
-              },
-              body: JSON.stringify({
-                assignmentName: currentSidebarAssignment,
-                studentEmail: email,
-                score: gradeResult.score
-              })
-            });
-            
-            const saveResult = await saveResponse.json();
-            
-            if (saveResult?.ok) {
-              // Update card to saved state
-              const input = card.querySelector('.score-input-field');
-              if (input) input.value = gradeResult.score;
-              card.classList.remove('ai-grading');
-              card.classList.add('saved');
-              card.dataset.originalScore = gradeResult.score;
-              graded++;
-            } else {
-              // Failed to save
-              card.classList.remove('ai-grading');
-              card.classList.add('pending');
-              failed++;
-            }
-          } else {
-            // Failed to grade
-            card.classList.remove('ai-grading');
-            card.classList.add('ungraded');
-            failed++;
-          }
-        } catch (error) {
-          console.error('Error AI grading:', error);
-          card.classList.remove('ai-grading');
-          card.classList.add('ungraded');
-          failed++;
-        }
-        
-        // Delay between requests to avoid overwhelming the AI service
-        await new Promise(resolve => setTimeout(resolve, AI_GRADING_DELAY_MS));
-      }
-      
-      await loadAssignments();
-      showSubmissionsInSidebar(currentSidebarAssignment);
-      alert(`AI graded and saved ${graded} submission(s).${failed > 0 ? ` Failed ${failed}.` : ''}`);
-    });
+    };
 
-    // Load assignments when admin mode changes or on page load
     (async () => {
       await loadAssignments();
+      refreshChallengeAuthState();
     })();
-
-    // Reload assignments when admin login/logout happens
-    // Listen for changes to admin mode by observing the admin button class changes
-    const adminBtn = document.getElementById('adminBtn');
-    let wasAdmin = false;
-    
-    // Create a MutationObserver to watch for class changes on the admin button
-    const observer = new MutationObserver(() => {
-      const isAdminNow = adminBtn.classList.contains('active') || document.body.classList.contains('admin-mode');
-      if (isAdminNow !== wasAdmin) {
-        wasAdmin = isAdminNow;
-        setTimeout(async () => {
-          await loadAssignments();
-        }, 100);
-      }
-    });
-    
-    observer.observe(adminBtn, { attributes: true, attributeFilter: ['class'] });
-    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
   </script>
 </body>
 </html>

@@ -2,7 +2,20 @@
 import eventlet
 eventlet.monkey_patch()
 
-import os, sys, json, time, uuid, csv, random, threading, subprocess, hmac, re, shutil, secrets
+import csv
+import hashlib
+import hmac
+import json
+import os
+import random
+import re
+import secrets
+import shutil
+import subprocess
+import sys
+import threading
+import time
+import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -20,6 +33,7 @@ PERSIST_FILE = BASE_DIR / "config.txt"        # persisted settings (JSON)
 CHALLENGE_CSV = BASE_DIR / "challenges.csv"   # optional challenge bank
 EXCEPTION_HELP_CSV = BASE_DIR / "exception_help.csv"
 LEADERBOARD_CSV = BASE_DIR / "leaderboard.csv"
+CHALLENGE_SCORE_FILE = BASE_DIR / "challenge_scores.json"
 SANDBOX_DIR = BASE_DIR / "sandboxes"
 ASSIGNMENTS_DIR = BASE_DIR / "assignments"
 
@@ -162,6 +176,55 @@ def _find_user(email: str) -> Optional[dict]:
         if u.get("email", "").lower() == email.lower():
             return u
     return None
+
+def _current_timestamp() -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
+def _sanitize_storage_component(value: str, fallback: str = "item", max_length: int = 100) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9 _-]", "", (value or "").strip()).strip(" ")
+    return cleaned[:max_length] or fallback
+
+def _record_user_sign_in(email: str) -> Optional[str]:
+    users_data = _load_users()
+    timestamp = _current_timestamp()
+    changed = False
+    for user in users_data.get("users", []):
+        if user.get("email", "").lower() == email.lower():
+            user["last_sign_in"] = timestamp
+            changed = True
+            break
+    if changed:
+        _save_users(users_data)
+        return timestamp
+    return None
+
+def _sorted_assignment_submissions(submissions: list[dict]) -> list[dict]:
+    return sorted(
+        submissions or [],
+        key=lambda sub: ((sub.get("name") or sub.get("email") or "").lower(), (sub.get("email") or "").lower())
+    )
+
+def _prepend_submission_timestamp(content: str, suffix: str, submitted_at: str) -> str:
+    header = f"# Submitted at: {submitted_at}"
+    if content.startswith(header):
+        return content
+    content = re.sub(r"^# Submitted at: .*\n?", "", content, count=1)
+    return f"{header}\n{content}" if content else header
+
+def _write_assignment_submission_copy(assignment_name: str, student_name: str, source_name: str, content: str) -> str:
+    admin_dir = _get_user_dir(ADMIN_EMAIL)
+    admin_dir.mkdir(parents=True, exist_ok=True)
+    assignment_dir = _validate_user_path(admin_dir, _sanitize_storage_component(assignment_name, fallback="Assignment"))
+    if not assignment_dir:
+        raise ValueError("Invalid assignment storage path")
+    assignment_dir.mkdir(parents=True, exist_ok=True)
+    suffix = Path(source_name).suffix.lower() or ".py"
+    filename = _sanitize_storage_component(student_name, fallback="Student") + suffix
+    target = _validate_user_path(admin_dir, str((assignment_dir / filename).relative_to(admin_dir.resolve())))
+    if not target:
+        raise ValueError("Invalid submission file path")
+    target.write_text(content, encoding="utf-8")
+    return str(target.relative_to(admin_dir))
 
 def _get_user_dir(email: str) -> Path:
     return USER_FILES_DIR / _sanitize_email_for_path(email)
@@ -338,11 +401,13 @@ def auth_register():
         return jsonify(ok=False, error="Email already registered"), 409
     
     password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    timestamp = _current_timestamp()
     user = {
         "email": email,
         "password_hash": password_hash,
         "name": name,
-        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "created_at": timestamp,
+        "last_sign_in": timestamp,
         "enabled": True
     }
     
@@ -389,6 +454,7 @@ def auth_login():
     user_dir = _get_user_dir(email)
     user_dir.mkdir(parents=True, exist_ok=True)
     
+    _record_user_sign_in(email)
     token = uuid.uuid4().hex
     user_info = {"email": email, "name": user.get("name", "")}
     _student_tokens[token] = user_info
@@ -810,8 +876,10 @@ def admin_list_users():
             "email": u.get("email"),
             "name": u.get("name"),
             "created_at": u.get("created_at"),
+            "last_sign_in": u.get("last_sign_in", ""),
             "enabled": u.get("enabled", True)
         })
+    users.sort(key=lambda user: ((user.get("name") or "").lower(), (user.get("email") or "").lower()))
     return jsonify(ok=True, users=users)
 
 @app.post("/api/admin/users/reset-password")
@@ -1019,6 +1087,52 @@ def _read_challenges() -> list[dict]:
                 continue
     return rows
 
+def _challenge_id_for_row(row: dict) -> str:
+    raw = f"{row.get('difficulty', 0)}|{row.get('points', 0)}|{row.get('text', '')}"
+    # 32 hex chars represent 128 bits of the SHA-256 hash while keeping challenge IDs compact in the client.
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+def _find_challenge_by_id(challenge_id: str) -> Optional[dict]:
+    for row in _read_challenges():
+        if _challenge_id_for_row(row) == challenge_id:
+            return row
+    return None
+
+def _load_challenge_scores() -> dict:
+    if CHALLENGE_SCORE_FILE.exists():
+        try:
+            data = json.loads(CHALLENGE_SCORE_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("students", {}), dict):
+                return data
+        except Exception:
+            pass
+    return {"students": {}}
+
+def _save_challenge_scores(data: dict) -> None:
+    tmp = CHALLENGE_SCORE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(CHALLENGE_SCORE_FILE)
+
+def _build_challenge_leaderboard() -> list[dict]:
+    tracker = _load_challenge_scores()
+    students = tracker.get("students", {})
+    leaderboard = []
+    for user in _load_users().get("users", []):
+        email = (user.get("email") or "").strip().lower()
+        if not email or email == ADMIN_EMAIL.lower():
+            continue
+        student_entry = students.get(email, {})
+        challenges = student_entry.get("challenges", {})
+        total_score = sum(max(0, int(challenge.get("score", 0) or 0)) for challenge in challenges.values())
+        leaderboard.append({
+            "name": student_entry.get("name") or user.get("name") or email,
+            "email": email,
+            "score": total_score,
+            "challengeCount": len(challenges),
+        })
+    leaderboard.sort(key=lambda row: (-row["score"], row["name"].lower(), row["email"]))
+    return leaderboard
+
 @app.post("/api/challenge/random")
 def challenge_random():
     data = request.get_json(silent=True) or {}
@@ -1031,10 +1145,14 @@ def challenge_random():
         return jsonify(ok=False, error="No challenges.csv found or it is empty")
     matches = [r for r in all_rows if r["difficulty"] == target] or all_rows
     ch = random.choice(matches)
-    return jsonify(ok=True, difficulty=ch["difficulty"], points=ch["points"], challenge=ch["text"])
+    return jsonify(ok=True, challengeId=_challenge_id_for_row(ch), difficulty=ch["difficulty"], points=ch["points"], challenge=ch["text"])
 
 @app.post("/api/challenge/score")
 def challenge_score():
+    user = _require_user(request)
+    if not user:
+        return jsonify(ok=False, error="Student login required"), 401
+
     cfg = _load_config()
     if not cfg.get("ai_explainer_enabled", False):
         return jsonify(ok=False, error="AI features disabled by admin"), 403
@@ -1073,58 +1191,57 @@ def challenge_score():
     if score is None:
         return jsonify(ok=False, error=f"AI returned invalid score: {raw!r}")
     score = max(0, min(points, score))
-    return jsonify(ok=True, score=score, max=points)
+    return jsonify(ok=True, score=score, max=points, student=user.get("name") or user.get("email"))
 
 @app.post("/api/challenge/submit")
 def challenge_submit():
+    user = _require_user(request)
+    if not user:
+        return jsonify(ok=False, error="Student login required"), 401
+
     data = request.get_json(silent=True) or {}
-    name = (data.get("name") or "").strip()[:50]
-    # Sanitize name to prevent injection
-    name = re.sub(r'[<>&"\'\\]', '', name)
+    challenge_id = (data.get("challengeId") or "").strip()
     try:
         score = int(data.get("score", 0))
     except Exception:
         score = 0
-    if not name:
-        return jsonify(ok=False, error="Name required"), 400
-    if score <= 0:
-        return jsonify(ok=False, error="Non-positive score"), 400
+    if not challenge_id:
+        return jsonify(ok=False, error="Challenge ID required"), 400
+    # Zero scores are allowed for latest challenge submissions; only negative scores are rejected.
+    if score < 0:
+        return jsonify(ok=False, error="Score must be non-negative"), 400
+
+    challenge = _find_challenge_by_id(challenge_id)
+    if not challenge:
+        return jsonify(ok=False, error="Challenge not found"), 404
+
+    student_email = (user.get("email") or "").strip().lower()
+    student_name = user.get("name") or student_email
+    submitted_at = _current_timestamp()
 
     with _lb_lock:
-        scores: Dict[str, int] = {}
-        if LEADERBOARD_CSV.exists():
-            with LEADERBOARD_CSV.open("r", newline="", encoding="utf-8") as f:
-                rd = csv.reader(f)
-                for r in rd:
-                    if len(r) >= 2:
-                        try:
-                            scores[r[0]] = int(r[1])
-                        except Exception:
-                            pass
-        scores[name] = scores.get(name, 0) + score
-        with LEADERBOARD_CSV.open("w", newline="", encoding="utf-8") as f:
-            wr = csv.writer(f)
-            for k, v in scores.items():
-                wr.writerow([k, v])
+        tracker = _load_challenge_scores()
+        students = tracker.setdefault("students", {})
+        student_entry = students.setdefault(student_email, {"name": student_name, "challenges": {}})
+        student_entry["name"] = student_name
+        student_entry.setdefault("challenges", {})[challenge_id] = {
+            "challengeId": challenge_id,
+            "text": challenge.get("text", ""),
+            "difficulty": challenge.get("difficulty", 1),
+            "points": challenge.get("points", 0),
+            "score": score,
+            "submittedAt": submitted_at,
+        }
+        _save_challenge_scores(tracker)
+        leaderboard = _build_challenge_leaderboard()
 
-        top = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:10]
-        return jsonify(ok=True, top=[{"name": k, "score": v} for k, v in top])
+    return jsonify(ok=True, leaderboard=leaderboard, top=leaderboard, heldScore=score, submittedAt=submitted_at)
 
 @app.get("/api/challenge/leaderboard")
 def challenge_leaderboard():
     with _lb_lock:
-        scores = []
-        if LEADERBOARD_CSV.exists():
-            with LEADERBOARD_CSV.open("r", newline="", encoding="utf-8") as f:
-                rd = csv.reader(f)
-                for r in rd:
-                    if len(r) >= 2:
-                        try:
-                            scores.append((r[0], int(r[1])))
-                        except Exception:
-                            pass
-        top = sorted(scores, key=lambda kv: kv[1], reverse=True)[:10]
-        return jsonify(ok=True, top=[{"name": k, "score": v} for k, v in top])
+        leaderboard = _build_challenge_leaderboard()
+    return jsonify(ok=True, leaderboard=leaderboard, top=leaderboard)
 
 # -------------------------
 # NEW: AI Assistant chat (15s cooldown per client SID)
@@ -1596,6 +1713,7 @@ def create_assignment():
         "task": task,
         "maxScore": max_score,
         "active": False,
+        "quiz": data.get("quiz") or None,
         "submissions": []
     }
     
@@ -1651,105 +1769,113 @@ def delete_assignment():
             return jsonify(ok=False, error="Assignment not found"), 404
         try:
             path.unlink()
+            admin_root = _get_user_dir(ADMIN_EMAIL)
+            admin_assignment_dir = _validate_user_path(admin_root, _sanitize_storage_component(name, fallback="Assignment"))
+            if admin_assignment_dir and admin_assignment_dir.exists():
+                try:
+                    shutil.rmtree(admin_assignment_dir)
+                except Exception as cleanup_error:
+                    print(f"Warning: failed to remove admin assignment folder for {name}: {cleanup_error}")
             return jsonify(ok=True)
         except Exception as e:
-            return jsonify(ok=False, error=f"Failed to delete: {e}"), 500
+            print(f"Error deleting assignment {name}: {e}")
+            return jsonify(ok=False, error="Failed to delete assignment"), 500
 
 @app.post("/api/assignments/submit")
 def submit_assignment():
-    """Submit code for an assignment"""
+    """Submit a selected file for an assignment using the logged-in student account."""
+    user = _require_user(request)
+    if not user:
+        return jsonify(ok=False, error="Student login required"), 401
+
     data = request.get_json(silent=True) or {}
     assignment_name = (data.get("assignmentName") or "").strip()
-    student_name = (data.get("studentName") or "").strip()
-    student_email = (data.get("studentEmail") or "").strip()
-    class_period = (data.get("classPeriod") or "").strip()
-    code = data.get("code", "")
+    file_path = (data.get("filePath") or "").strip()
     quiz_responses = data.get("quizResponses", [])
-    
-    if not assignment_name or not student_email:
-        return jsonify(ok=False, error="Assignment name and email required"), 400
-    
+
+    if not assignment_name or not file_path:
+        return jsonify(ok=False, error="Assignment name and file path required"), 400
+
     assignment = _load_assignment(assignment_name)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
-    
     if not assignment.get("active", False):
         return jsonify(ok=False, error="Assignment is not active"), 403
-    
-    # Create or update submission
+
+    student_email = (user.get("email") or "").strip().lower()
+    student_name = user.get("name") or student_email
+    student_dir = _get_user_dir(student_email)
+    source_file = _validate_user_path(student_dir, file_path)
+    if not source_file or not source_file.exists() or not source_file.is_file():
+        return jsonify(ok=False, error="Selected file not found"), 404
+
+    try:
+        original_code = source_file.read_text(encoding="utf-8")
+    except Exception:
+        return jsonify(ok=False, error="Could not read selected file"), 500
+
     submissions = assignment.get("submissions", [])
-    
-    # Find existing submission by email
-    existing_idx = None
-    for i, sub in enumerate(submissions):
-        if sub.get("email", "").lower() == student_email.lower():
-            existing_idx = i
-            break
-    
+    existing_idx = next((i for i, sub in enumerate(submissions) if sub.get("email", "").lower() == student_email), None)
+    previous = submissions[existing_idx] if existing_idx is not None else {}
+
+    submitted_at = _current_timestamp()
+    submitted_code = _prepend_submission_timestamp(original_code, source_file.suffix.lower(), submitted_at)
+    try:
+        admin_file_path = _write_assignment_submission_copy(assignment_name, student_name, source_file.name, submitted_code)
+    except Exception as exc:
+        print(f"Error copying assignment submission for {assignment_name}: {exc}")
+        return jsonify(ok=False, error="Could not copy submission to admin workspace"), 500
+
     submission = {
         "name": student_name,
         "email": student_email,
-        "classPeriod": class_period,
-        "code": code,
-        "submittedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "sourceFilePath": file_path,
+        "submittedFileName": source_file.name,
+        "adminFilePath": admin_file_path,
+        "code": submitted_code,
+        "submittedAt": submitted_at,
         "codeScore": None,
-        "quizResponses": quiz_responses,
-        "quizScore": None,
-        "totalScore": None
+        "quizResponses": previous.get("quizResponses", []),
+        "quizScore": previous.get("quizScore"),
+        "totalScore": None,
     }
-    
-    # Calculate quiz score if quiz responses provided
+
     if quiz_responses and assignment.get("quiz"):
         quiz = assignment["quiz"]
         quiz_score = 0
         for response in quiz_responses:
             question_id = response.get("questionId")
-            # Find the question in the quiz
             question = next((q for q in quiz.get("questions", []) if q.get("id") == question_id), None)
-            if question:
-                if question.get("type") == "multiple_choice":
-                    # Auto-grade multiple choice
-                    if response.get("answer") == question.get("correctAnswer"):
-                        response["isCorrect"] = True
-                        response["pointsEarned"] = question.get("points", 0)
-                        quiz_score += question.get("points", 0)
-                    else:
-                        response["isCorrect"] = False
-                        response["pointsEarned"] = 0
+            if not question:
+                continue
+            if question.get("type") == "multiple_choice":
+                if response.get("answer") == question.get("correctAnswer"):
+                    response["isCorrect"] = True
+                    response["pointsEarned"] = question.get("points", 0)
+                    quiz_score += question.get("points", 0)
                 else:
-                    # Written response - set to pending grading
+                    response["isCorrect"] = False
                     response["pointsEarned"] = 0
-                    response["aiScore"] = None
-                    response["manualScore"] = None
-        
-        submission["quizScore"] = quiz_score
+            else:
+                response["pointsEarned"] = 0
+                response["aiScore"] = None
+                response["manualScore"] = None
         submission["quizResponses"] = quiz_responses
-    
-    # Preserve existing code score if updating
-    if existing_idx is not None and submissions[existing_idx].get("codeScore") is not None:
-        submission["codeScore"] = submissions[existing_idx].get("codeScore")
-    
-    # Calculate total score
+        submission["quizScore"] = quiz_score
+
     code_score_value = submission.get("codeScore") if submission.get("codeScore") is not None else 0
     quiz_score_value = submission.get("quizScore") if submission.get("quizScore") is not None else 0
-    
-    # Only set total score if at least one component has been scored
-    if submission.get("codeScore") is not None or submission.get("quizScore") is not None:
-        submission["totalScore"] = code_score_value + quiz_score_value
-    else:
-        submission["totalScore"] = None
-    
+    has_any_score = submission.get("codeScore") is not None or submission.get("quizScore") is not None
+    submission["totalScore"] = code_score_value + quiz_score_value if has_any_score else None
+
     if existing_idx is not None:
-        # Overwrite existing submission
         submissions[existing_idx] = submission
     else:
-        # Add new submission
         submissions.append(submission)
-    
+
     assignment["submissions"] = submissions
-    
     if _save_assignment(assignment):
-        return jsonify(ok=True, message="Submission saved successfully")
+        return jsonify(ok=True, message="Submission saved successfully", submission=submission)
     return jsonify(ok=False, error="Failed to save submission"), 500
 
 @app.post("/api/assignments/score")
@@ -1911,12 +2037,12 @@ def download_assignment_csv(assignment_name: str):
     has_new_format = any("codeScore" in sub or "quizScore" in sub for sub in submissions)
     
     if has_new_format:
-        writer.writerow(["Name", "Email", "Class Period", "Assignment", "Code Score", "Quiz Score", "Total Score", "Submission Date"])
-        for sub in submissions:
+        writer.writerow(["Name", "Email", "Submitted File", "Assignment", "Code Score", "Quiz Score", "Total Score", "Submission Date"])
+        for sub in _sorted_assignment_submissions(submissions):
             writer.writerow([
                 sub.get("name", ""),
                 sub.get("email", ""),
-                sub.get("classPeriod", ""),
+                sub.get("submittedFileName", ""),
                 assignment_name,
                 sub.get("codeScore", ""),
                 sub.get("quizScore", ""),
@@ -1941,43 +2067,46 @@ def download_assignment_csv(assignment_name: str):
 
 @app.post("/api/assignments/student-scores")
 def get_student_scores():
-    """Get scores for a specific student email across all assignments"""
+    """Get scores for the logged-in student, or for a specific student when requested by an admin."""
+    user = _require_user(request)
+    is_admin = _require_admin(request)
     data = request.get_json(silent=True) or {}
-    email = (data.get("email") or "").strip().lower()
-    
+    email = (user or {}).get("email", "")
+    if is_admin and data.get("email"):
+        email = (data.get("email") or "").strip().lower()
+
     if not email:
-        return jsonify(ok=False, error="Email required"), 400
-    
+        return jsonify(ok=False, error="Authentication required"), 401
+
     all_assignments = _list_assignments()
     student_scores = []
-    
     for assignment in all_assignments:
         submissions = assignment.get("submissions", [])
-        # Find submission for this email
         for sub in submissions:
-            if sub.get("email", "").lower() == email:
-                # Handle both old and new format
-                if "codeScore" in sub or "quizScore" in sub:
-                    student_scores.append({
-                        "assignmentName": assignment.get("name", ""),
-                        "maxScore": assignment.get("maxScore", 100),
-                        "codeScore": sub.get("codeScore"),
-                        "quizScore": sub.get("quizScore"),
-                        "totalScore": sub.get("totalScore"),
-                        "submittedAt": sub.get("submittedAt", ""),
-                        "active": assignment.get("active", False)
-                    })
-                else:
-                    # Old format
-                    student_scores.append({
-                        "assignmentName": assignment.get("name", ""),
-                        "maxScore": assignment.get("maxScore", 100),
-                        "score": sub.get("score"),
-                        "submittedAt": sub.get("submittedAt", ""),
-                        "active": assignment.get("active", False)
-                    })
-                break
-    
+            if sub.get("email", "").lower() != email:
+                continue
+            if "codeScore" in sub or "quizScore" in sub:
+                student_scores.append({
+                    "assignmentName": assignment.get("name", ""),
+                    "maxScore": assignment.get("maxScore", 100),
+                    "codeScore": sub.get("codeScore"),
+                    "quizScore": sub.get("quizScore"),
+                    "totalScore": sub.get("totalScore"),
+                    "submittedAt": sub.get("submittedAt", ""),
+                    "submittedFileName": sub.get("submittedFileName", ""),
+                    "active": assignment.get("active", False)
+                })
+            else:
+                student_scores.append({
+                    "assignmentName": assignment.get("name", ""),
+                    "maxScore": assignment.get("maxScore", 100),
+                    "score": sub.get("score"),
+                    "submittedAt": sub.get("submittedAt", ""),
+                    "active": assignment.get("active", False)
+                })
+            break
+
+    student_scores.sort(key=lambda item: (not item.get("active", False), item.get("assignmentName", "").lower()))
     return jsonify(ok=True, scores=student_scores)
 
 @app.get("/api/quiz/<assignment_name>")
@@ -2006,80 +2135,81 @@ def get_quiz(assignment_name: str):
 
 @app.post("/api/quiz/submit")
 def submit_quiz():
-    """Submit quiz responses separately (alternative to combined submission)"""
+    """Submit quiz responses using the logged-in student account."""
+    user = _require_user(request)
+    if not user:
+        return jsonify(ok=False, error="Student login required"), 401
+
     data = request.get_json(silent=True) or {}
     assignment_name = (data.get("assignmentName") or "").strip()
-    student_email = (data.get("studentEmail") or "").strip()
     quiz_responses = data.get("quizResponses", [])
-    
-    if not assignment_name or not student_email:
-        return jsonify(ok=False, error="Assignment name and email required"), 400
-    
+    student_email = (user.get("email") or "").strip().lower()
+    student_name = user.get("name") or student_email
+
+    if not assignment_name:
+        return jsonify(ok=False, error="Assignment name required"), 400
+
     assignment = _load_assignment(assignment_name)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
-    
     if not assignment.get("active", False):
         return jsonify(ok=False, error="Assignment is not active"), 403
-    
+
     quiz = assignment.get("quiz")
     if not quiz:
         return jsonify(ok=False, error="No quiz for this assignment"), 404
-    
-    # Calculate quiz score
+
     quiz_score = 0
     for response in quiz_responses:
         question_id = response.get("questionId")
-        # Find the question in the quiz
         question = next((q for q in quiz.get("questions", []) if q.get("id") == question_id), None)
-        if question:
-            if question.get("type") == "multiple_choice":
-                # Auto-grade multiple choice
-                if response.get("answer") == question.get("correctAnswer"):
-                    response["isCorrect"] = True
-                    response["pointsEarned"] = question.get("points", 0)
-                    quiz_score += question.get("points", 0)
-                else:
-                    response["isCorrect"] = False
-                    response["pointsEarned"] = 0
+        if not question:
+            continue
+        if question.get("type") == "multiple_choice":
+            if response.get("answer") == question.get("correctAnswer"):
+                response["isCorrect"] = True
+                response["pointsEarned"] = question.get("points", 0)
+                quiz_score += question.get("points", 0)
             else:
-                # Written response - set to pending grading
+                response["isCorrect"] = False
                 response["pointsEarned"] = 0
-                response["aiScore"] = None
-                response["manualScore"] = None
-    
-    # Find or create submission
+        else:
+            response["pointsEarned"] = 0
+            response["aiScore"] = None
+            response["manualScore"] = None
+
     submissions = assignment.get("submissions", [])
     existing_idx = None
     for i, sub in enumerate(submissions):
-        if sub.get("email", "").lower() == student_email.lower():
+        if sub.get("email", "").lower() == student_email:
             existing_idx = i
             break
-    
+
     if existing_idx is not None:
-        # Update existing submission
-        submissions[existing_idx]["quizResponses"] = quiz_responses
-        submissions[existing_idx]["quizScore"] = quiz_score
-        # Recalculate total score
-        code_score = submissions[existing_idx].get("codeScore") or 0
-        submissions[existing_idx]["totalScore"] = code_score + quiz_score if submissions[existing_idx].get("codeScore") is not None else quiz_score
+        existing = submissions[existing_idx]
+        existing["name"] = student_name
+        existing["email"] = student_email
+        existing["quizResponses"] = quiz_responses
+        existing["quizScore"] = quiz_score
+        code_score = existing.get("codeScore") or 0
+        existing["totalScore"] = code_score + quiz_score if existing.get("codeScore") is not None else quiz_score
+        existing["submittedAt"] = existing.get("submittedAt") or _current_timestamp()
     else:
-        # Create new submission with just quiz data
-        submission = {
-            "name": data.get("studentName", ""),
+        submissions.append({
+            "name": student_name,
             "email": student_email,
-            "classPeriod": data.get("classPeriod", ""),
             "code": "",
-            "submittedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "sourceFilePath": "",
+            "submittedFileName": "",
+            "adminFilePath": "",
+            "submittedAt": _current_timestamp(),
             "codeScore": None,
             "quizResponses": quiz_responses,
             "quizScore": quiz_score,
-            "totalScore": quiz_score
-        }
-        submissions.append(submission)
-    
+            "totalScore": quiz_score,
+        })
+
     assignment["submissions"] = submissions
-    
     if _save_assignment(assignment):
         return jsonify(ok=True, message="Quiz submitted successfully", quizScore=quiz_score)
     return jsonify(ok=False, error="Failed to save quiz submission"), 500
