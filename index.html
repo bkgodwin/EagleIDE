@@ -879,7 +879,7 @@
       
       const cmInst = window.eagleEditor;
       const COMPLETION_DEBOUNCE_MS = 50;
-      const MAX_CODE_LENGTH_FOR_COMPLETION = 100000;
+      const MAX_ANALYZABLE_CODE_LENGTH = 100000;
       let suggestionBox = null;
       let activeSuggIdx = 0;
       let suggestionList = [];
@@ -1000,7 +1000,7 @@
         const language = currentLanguage();
         const data = LANGUAGE_COMPLETIONS[language];
         const fullCode = cmInst.getValue();
-        if (fullCode.length > MAX_CODE_LENGTH_FOR_COMPLETION) return [];
+        if (fullCode.length > MAX_ANALYZABLE_CODE_LENGTH) return [];
         const preCursor = fullCode.substring(0, cursorPos.index);
         const tokens = extractCodeTokens(fullCode, language);
         const results = [];
@@ -1835,6 +1835,9 @@ print("Hello " + name)
     loadConfig();
 
     (function initEditorControls() {
+      const MIN_FONT_SIZE = 12;
+      const MAX_FONT_SIZE = 40;
+      const DEFAULT_FONT_SIZE = 14;
       const FONT_KEY = 'eagleide-font-size';
       const GUIDES_KEY = 'eagleide-indent-guides';
       const AUTOCOMPLETE_KEY = 'eagleide-autocomplete';
@@ -1846,7 +1849,7 @@ print("Hello " + name)
       let autocompleteEnabled = true;
       let fontFrame = 0;
 
-      const clampFontSize = (value) => Math.min(40, Math.max(12, parseInt(value, 10) || 14));
+      const clampFontSize = (value) => Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, parseInt(value, 10) || DEFAULT_FONT_SIZE));
       function applyFontSize(value, persist = true) {
         const next = clampFontSize(value);
         fontRange.value = String(next);
