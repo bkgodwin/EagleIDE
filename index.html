@@ -859,6 +859,7 @@
         const savedCode = localStorage.getItem(TEACHER_CODE_KEY);
         if (savedCode) {
           teacherEditor.setValue(savedCode);
+          lastTeacherCodeSnapshot = savedCode;
         }
       } catch (e) {
         console.warn('Failed to load teacher code:', e);
@@ -879,7 +880,7 @@
       
       const cmInst = window.eagleEditor;
       const COMPLETION_DEBOUNCE_MS = 50;
-      const MAX_ANALYZABLE_CODE_LENGTH = 100000;
+      const MAX_AUTOCOMPLETE_ANALYSIS_LENGTH = 100000;
       let suggestionBox = null;
       let activeSuggIdx = 0;
       let suggestionList = [];
@@ -1000,7 +1001,7 @@
         const language = currentLanguage();
         const data = LANGUAGE_COMPLETIONS[language];
         const fullCode = cmInst.getValue();
-        if (fullCode.length > MAX_ANALYZABLE_CODE_LENGTH) return [];
+        if (fullCode.length > MAX_AUTOCOMPLETE_ANALYSIS_LENGTH) return [];
         const preCursor = fullCode.substring(0, cursorPos.index);
         const tokens = extractCodeTokens(fullCode, language);
         const results = [];
@@ -1274,6 +1275,7 @@ print("Hello " + name)
     let currentOpenFile = null; // { path, name } of open file in sidebar
     let currentConfig = null;
     let mySid = null;
+    let lastTeacherCodeSnapshot = '';
     let errorLineMarkers = []; // Track error line highlights
     let waitingForUserInput = false; // Track if we're waiting for user input
     let _inTraceback = false; // Track if we're currently inside a Python traceback block
@@ -1633,8 +1635,9 @@ print("Hello " + name)
         // Listen for teacher code updates
         socket.on('teacher_code', (msg) => {
           if (teacherEditor && msg && typeof msg.code === 'string') {
-            if (teacherEditor.getValue() === msg.code) return;
+            if (lastTeacherCodeSnapshot === msg.code) return;
             teacherEditor.setValue(msg.code);
+            lastTeacherCodeSnapshot = msg.code;
             // Save to localStorage
             try {
               localStorage.setItem(TEACHER_CODE_KEY, msg.code);
@@ -2197,12 +2200,13 @@ print("Hello " + name)
       if (teacherBroadcastInterval) return;
       
       // Update teacher editor immediately with current code
-      if (teacherEditor) {
-        const initialCode = editor.getValue();
-        teacherEditor.setValue(initialCode);
-        lastBroadcastedCode = initialCode;
-        try { localStorage.setItem(TEACHER_CODE_KEY, initialCode); } catch(e) {}
-      }
+       if (teacherEditor) {
+         const initialCode = editor.getValue();
+         teacherEditor.setValue(initialCode);
+         lastTeacherCodeSnapshot = initialCode;
+         lastBroadcastedCode = initialCode;
+         try { localStorage.setItem(TEACHER_CODE_KEY, initialCode); } catch(e) {}
+       }
       
       teacherBroadcastInterval = setInterval(() => {
         if (!ADMIN_TOKEN) return;
@@ -2212,6 +2216,7 @@ print("Hello " + name)
           // Always update local teacher editor view
           if (teacherEditor) {
             teacherEditor.setValue(currentCode);
+            lastTeacherCodeSnapshot = currentCode;
             try { localStorage.setItem(TEACHER_CODE_KEY, currentCode); } catch(e) {}
           }
           // Broadcast to other clients if socket available
