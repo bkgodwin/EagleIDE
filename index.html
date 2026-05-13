@@ -878,7 +878,8 @@
       if (!window.eagleEditor) return;
       
       const cmInst = window.eagleEditor;
-      const COMPLETION_DEBOUNCE_MS = 60;
+      const COMPLETION_DEBOUNCE_MS = 50;
+      const MAX_CODE_LENGTH_FOR_COMPLETION = 200000;
       let suggestionBox = null;
       let activeSuggIdx = 0;
       let suggestionList = [];
@@ -999,7 +1000,7 @@
         const language = currentLanguage();
         const data = LANGUAGE_COMPLETIONS[language];
         const fullCode = cmInst.getValue();
-        if (fullCode.length > 200000) return [];
+        if (fullCode.length > MAX_CODE_LENGTH_FOR_COMPLETION) return [];
         const preCursor = fullCode.substring(0, cursorPos.index);
         const tokens = extractCodeTokens(fullCode, language);
         const results = [];
@@ -2936,6 +2937,8 @@ print("Hello " + name)
       }
     });
 
+    const MAX_ASSISTANT_MESSAGES = 16;
+    const MAX_ASSISTANT_CODE_CHARS = 12000;
     let assistantMessages = [];
     let assistantCooldownUntil = 0;
     let assistantTimer = null;
@@ -2998,7 +3001,7 @@ print("Hello " + name)
       const text = input.value.trim();
       if (!text || Math.floor(Date.now() / 1000) < assistantCooldownUntil) return;
       assistantMessages.push({ role: 'user', content: text });
-      assistantMessages = assistantMessages.slice(-16);
+      assistantMessages = assistantMessages.slice(-MAX_ASSISTANT_MESSAGES);
       input.value = '';
       renderAssistantMessages();
       sendBtn.disabled = true;
@@ -3008,7 +3011,7 @@ print("Hello " + name)
           headers: { 'Content-Type': 'application/json', 'X-SID': ensureAssistantSid() },
           body: JSON.stringify(buildAiContext({
             sid: ensureAssistantSid(),
-            code: editor.getValue().slice(0, 12000),
+            code: editor.getValue().slice(0, MAX_ASSISTANT_CODE_CHARS),
             messages: assistantMessages
           }))
         });
@@ -3023,7 +3026,7 @@ print("Hello " + name)
       } catch (error) {
         assistantMessages.push({ role: 'assistant', content: 'Network error.' });
       } finally {
-        assistantMessages = assistantMessages.slice(-16);
+        assistantMessages = assistantMessages.slice(-MAX_ASSISTANT_MESSAGES);
         renderAssistantMessages();
         if (Math.floor(Date.now() / 1000) >= assistantCooldownUntil) sendBtn.disabled = false;
       }
