@@ -25,3 +25,6 @@ config.txt
 sandboxes/
 leaderboard.csv
 assignments/
+challenge_scores.json
+user_files/
+users.json
