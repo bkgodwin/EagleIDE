@@ -182,8 +182,9 @@ CODING CHALLENGES
 --------------------------------------------------
 - Select difficulty level (1-5)
 - Get random challenge from challenges.csv
-- Submit solution for AI grading
-- Scores posted to leaderboard
+- Submit solution for AI grading while signed in
+- Each account keeps one latest score per challenge
+- Leaderboard totals all challenge scores for every account (including 0-point accounts)
 
 --------------------------------------------------
 AI ASSISTANT (TUTOR)
@@ -202,10 +203,10 @@ FOR STUDENTS
 --------------------------------------------------
 1. View active assignments in Assignments tab
 2. Click assignment to view details
-3. Write code solution
-4. Enter name, email, class period
-5. Submit assignment
-6. Resubmissions overwrite previous attempts
+3. Sign in with your student account
+4. Choose one of your saved files to submit
+5. The selected file is copied to the admin account's assignment folder with a submission timestamp comment added at the top
+6. Resubmissions replace your previous file for that assignment
 
 --------------------------------------------------
 FOR TEACHERS/ADMINS
@@ -215,11 +216,11 @@ FOR TEACHERS/ADMINS
    - Assignment name
    - Task description
    - Maximum score
-3. Activate/deactivate assignments
-4. View all student submissions
-5. Grade manually or use AI grading
-6. Download scores as CSV
-7. View individual student progress
+3. Lock/unlock assignments
+4. Edit or delete assignments from the assignment manager
+5. Open submitted files directly from the admin workspace
+6. Grade from the left sidebar with auto-saving score changes or AI grading
+7. Review alphabetized score tables and download scores as CSV
 
 ================================================================================
                             8. ADMIN PANEL
@@ -238,6 +239,7 @@ CAPABILITIES
 - Grade student work
 - Export grades to CSV
 - Manage challenges
+- View student account last sign-in timestamps
 
 --------------------------------------------------
 IMPORTANT
@@ -263,7 +265,8 @@ Auto-Generated Directories:
   
 Auto-Generated Files:
   config.txt          - Runtime configuration (persisted)
-  leaderboard.csv     - Challenge leaderboard scores
+  users.json          - Student account records
+  challenge_scores.json - Per-account challenge score tracker
 
 ================================================================================
                           10. IMPORTANT NOTES
