@@ -204,11 +204,13 @@ def _sorted_assignment_submissions(submissions: list[dict]) -> list[dict]:
         key=lambda sub: ((sub.get("name") or sub.get("email") or "").lower(), (sub.get("email") or "").lower())
     )
 
+SUBMISSION_HEADER_PREFIX_PATTERN = re.compile(r"^(?:(?:# Submitted by: .*|# Submitted at: .*)\n?)+")
+
 def _prepend_submission_timestamp(content: str, submitted_at: str, student_name: str) -> str:
     student_label = student_name or "Student"
     name_header = f"# Submitted by: {student_label}"
     time_header = f"# Submitted at: {submitted_at}"
-    content = re.sub(r"^(?:(?:# Submitted by: .*|# Submitted at: .*)\n?)+", "", content)
+    content = SUBMISSION_HEADER_PREFIX_PATTERN.sub("", content)
     if content:
         return f"{name_header}\n{time_header}\n{content}"
     return f"{name_header}\n{time_header}"

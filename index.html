@@ -1782,6 +1782,8 @@ print("Hello " + name)
         document.body.classList.toggle('right-collapsed', collapsed);
         if (toggleSidebarBtn) {
           toggleSidebarBtn.textContent = collapsed ? 'Show Sidebar ▶' : 'Hide Sidebar ◀';
+          toggleSidebarBtn.title = collapsed ? 'Show right sidebar' : 'Hide right sidebar';
+          toggleSidebarBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
         }
         if (persist) {
           try { localStorage.setItem(RIGHT_COLLAPSE_KEY, collapsed ? '1' : '0'); } catch {}
