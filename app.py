@@ -45,7 +45,7 @@ MAX_OUTPUT_BYTES = 500_000  # 500 KB max stdout before killing the process
 # File count limits
 MAX_FILES_PER_FOLDER = 20
 MAX_FILES_PER_ACCOUNT = 100
-ALLOWED_EXTENSIONS = {".py", ".txt", ".csv"}
+ALLOWED_EXTENSIONS = {".py", ".js", ".txt", ".csv"}
 
 os.makedirs(SANDBOX_DIR, exist_ok=True)
 os.makedirs(ASSIGNMENTS_DIR, exist_ok=True)
@@ -764,7 +764,7 @@ def files_download():
         return jsonify(ok=False, error="File type not allowed"), 400
 
     ext = target.suffix.lower()
-    mimetypes_map = {".py": "text/x-python", ".txt": "text/plain", ".csv": "text/csv"}
+    mimetypes_map = {".py": "text/x-python", ".js": "text/javascript", ".txt": "text/plain", ".csv": "text/csv"}
     mimetype = mimetypes_map.get(ext, "text/plain")
 
     try:
@@ -1541,11 +1541,202 @@ exec(_user_code, {{}})
 _runners: Dict[str, Runner] = {}
 _runner_lock = threading.Lock()
 
+NODE_EXECUTABLE = shutil.which("node") or "node"
+
+class JsRunner:
+    """Runs JavaScript code via Node.js, mirrors the Runner API."""
+
+    def __init__(self, sid: str):
+        self.sid = sid
+        self.proc: Optional[subprocess.Popen] = None
+        self.thread: Optional[threading.Thread] = None
+        self.stop_evt = threading.Event()
+        self.started_at = 0.0
+
+    def start(self, code: str, user_dir: Optional[Path] = None):
+        if self.proc:
+            self.stop()
+
+        sbox = SANDBOX_DIR / f"jside_{self.sid}"
+        try:
+            if sbox.exists():
+                for p in sbox.iterdir():
+                    try: p.unlink()
+                    except Exception: pass
+            else:
+                sbox.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+
+        runner_js = sbox / "runner.js"
+        runner_js.write_text(code, encoding="utf-8")
+
+        cwd = str(user_dir) if (user_dir and user_dir.exists()) else str(sbox)
+
+        runner_js_repr = repr(str(runner_js))
+        cwd_repr = repr(cwd)
+
+        # Wrapper that provides a synchronous input() helper (mirrors the Python INPUT_TOKEN
+        # protocol so the existing front-end input-handling code works unchanged).
+        wrapper_code = f"""
+const fs = require('fs');
+const INPUT_TOKEN = {repr(INPUT_TOKEN)};
+
+// Synchronous input() — writes prompt + INPUT_TOKEN, then reads a line from stdin.
+function input(prompt) {{
+  if (prompt !== undefined && prompt !== null) {{
+    process.stdout.write(String(prompt));
+  }}
+  process.stdout.write(INPUT_TOKEN + '\\n');
+  // Read from stdin one byte at a time (synchronous).
+  const buf = Buffer.alloc(1);
+  let line = '';
+  while (true) {{
+    let bytes = 0;
+    try {{ bytes = fs.readSync(0, buf, 0, 1); }} catch (e) {{ break; }}
+    if (bytes === 0) break;
+    const ch = buf.toString('utf8', 0, 1);
+    if (ch === '\\n') break;
+    if (ch !== '\\r') line += ch;
+  }}
+  process.stdout.write(line + '\\n');
+  return line;
+}}
+
+// Execute user code
+try {{
+  const __userCode = fs.readFileSync({runner_js_repr}, 'utf8');
+  process.chdir({cwd_repr});
+  eval(__userCode);
+}} catch (e) {{
+  process.stderr.write((e && e.stack) ? e.stack : String(e));
+  process.stderr.write('\\n');
+  process.exit(1);
+}}
+"""
+
+        self.proc = subprocess.Popen(
+            [NODE_EXECUTABLE, "--max-old-space-size=256", "-e", wrapper_code],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=cwd
+        )
+        self.started_at = time.time()
+        self.stop_evt.clear()
+        self.thread = threading.Thread(target=self._pump, daemon=True)
+        self.thread.start()
+
+        socketio.emit("output", {"data": "[Process started]\n"}, to=self.sid)
+
+    def _pump(self):
+        assert self.proc and self.proc.stdout and self.proc.stdin
+        stdout = self.proc.stdout
+        total_output_bytes = [0]
+
+        BATCH_BYTES = 4096
+        BATCH_SECS = 0.05
+
+        def reader():
+            buf: list[str] = []
+            buf_size = 0
+            last_flush = time.time()
+
+            def flush():
+                nonlocal buf, buf_size, last_flush
+                if buf:
+                    try:
+                        socketio.emit("output", {"data": "".join(buf)}, to=self.sid)
+                    except Exception:
+                        pass
+                buf = []
+                buf_size = 0
+                last_flush = time.time()
+
+            while not self.stop_evt.is_set():
+                b = stdout.readline()
+                if not b:
+                    flush()
+                    break
+                total_output_bytes[0] += len(b)
+                if total_output_bytes[0] > MAX_OUTPUT_BYTES:
+                    flush()
+                    try:
+                        self.proc.kill()
+                    except Exception:
+                        pass
+                    try:
+                        socketio.emit("output", {"data": "\n[Output limit exceeded (500 KB) -- process killed to protect your browser]\n"}, to=self.sid)
+                    except Exception:
+                        pass
+                    return
+                decoded = b.decode("utf-8", errors="replace")
+                buf.append(decoded)
+                buf_size += len(decoded)
+                if INPUT_TOKEN in decoded:
+                    flush()
+                else:
+                    now = time.time()
+                    if buf_size >= BATCH_BYTES or (now - last_flush) >= BATCH_SECS:
+                        flush()
+            flush()
+
+        t = threading.Thread(target=reader, daemon=True)
+        t.start()
+
+        while self.proc and self.proc.poll() is None and not self.stop_evt.is_set():
+            now = time.time()
+            if now - self.started_at > MAX_WALL_TIME:
+                try: self.proc.kill()
+                except Exception: pass
+                socketio.emit("output", {"data": "\n[Process killed due to wall-time limit]\n"}, to=self.sid)
+                break
+            time.sleep(0.05)
+
+        try:
+            socketio.emit("finished", {}, to=self.sid)
+        except Exception:
+            pass
+
+    def send_stdin(self, data: str):
+        if self.proc and self.proc.stdin and self.proc.poll() is None:
+            try:
+                self.proc.stdin.write((data + "\n").encode("utf-8"))
+                self.proc.stdin.flush()
+                self.started_at = max(self.started_at, time.time() - 1.0)
+            except Exception:
+                pass
+
+    def stop(self):
+        self.stop_evt.set()
+        if self.proc and self.proc.poll() is None:
+            try: self.proc.terminate()
+            except Exception: pass
+            try:
+                for _ in range(10):
+                    if self.proc.poll() is not None: break
+                    time.sleep(0.1)
+                if self.proc.poll() is None:
+                    self.proc.kill()
+            except Exception:
+                pass
+        self.proc = None
+
+
 def _get_runner(sid: str) -> Runner:
     with _runner_lock:
         r = _runners.get(sid)
         if not r:
             r = Runner(sid)
+            _runners[sid] = r
+        return r
+
+
+def _get_js_runner(sid: str) -> JsRunner:
+    with _runner_lock:
+        r = _runners.get(sid)
+        if not isinstance(r, JsRunner):
+            r = JsRunner(sid)
             _runners[sid] = r
         return r
 
@@ -1593,7 +1784,13 @@ def on_run_code(payload):
                 run_dir = file_abs.parent
         if not run_dir:
             run_dir = admin_root_dir
-    r = _get_runner(request.sid)
+
+    # Choose the appropriate runner based on file extension
+    is_js = Path(file_path).suffix.lower() == ".js" if file_path else False
+    if is_js:
+        r = _get_js_runner(request.sid)
+    else:
+        r = _get_runner(request.sid)
     try:
         r.start(code, user_dir=run_dir)
         emit("run_ack", {"ok": True})
