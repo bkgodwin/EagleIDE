@@ -205,7 +205,7 @@ FOR STUDENTS
 2. Click assignment to view details
 3. Sign in with your student account
 4. Choose one of your saved files to submit
-5. The selected file is copied to the admin account's assignment folder with a submission timestamp comment added at the top
+5. The selected file is copied to the admin account's assignment folder and renamed to the student's name, with a submission comment at the top that includes student name and timestamp
 6. Resubmissions replace your previous file for that assignment
 
 --------------------------------------------------

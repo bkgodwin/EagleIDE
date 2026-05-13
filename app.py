@@ -204,12 +204,16 @@ def _sorted_assignment_submissions(submissions: list[dict]) -> list[dict]:
         key=lambda sub: ((sub.get("name") or sub.get("email") or "").lower(), (sub.get("email") or "").lower())
     )
 
-def _prepend_submission_timestamp(content: str, suffix: str, submitted_at: str) -> str:
-    header = f"# Submitted at: {submitted_at}"
-    if content.startswith(header):
-        return content
-    content = re.sub(r"^# Submitted at: .*\n?", "", content, count=1)
-    return f"{header}\n{content}" if content else header
+SUBMISSION_HEADER_PREFIX_PATTERN = re.compile(r"^(?:# Submitted (?:by|at): .*\n?)+")
+
+def _prepend_submission_timestamp(content: str, submitted_at: str, student_name: str) -> str:
+    student_label = student_name or "Student"
+    name_header = f"# Submitted by: {student_label}"
+    time_header = f"# Submitted at: {submitted_at}"
+    content = SUBMISSION_HEADER_PREFIX_PATTERN.sub("", content)
+    if content:
+        return f"{name_header}\n{time_header}\n{content}"
+    return f"{name_header}\n{time_header}"
 
 def _write_assignment_submission_copy(assignment_name: str, student_name: str, source_name: str, content: str) -> str:
     admin_dir = _get_user_dir(ADMIN_EMAIL)
@@ -1819,18 +1823,19 @@ def submit_assignment():
     previous = submissions[existing_idx] if existing_idx is not None else {}
 
     submitted_at = _current_timestamp()
-    submitted_code = _prepend_submission_timestamp(original_code, source_file.suffix.lower(), submitted_at)
+    submitted_code = _prepend_submission_timestamp(original_code, submitted_at, student_name)
     try:
         admin_file_path = _write_assignment_submission_copy(assignment_name, student_name, source_file.name, submitted_code)
     except Exception as exc:
         print(f"Error copying assignment submission for {assignment_name}: {exc}")
         return jsonify(ok=False, error="Could not copy submission to admin workspace"), 500
+    submitted_filename = Path(admin_file_path).name
 
     submission = {
         "name": student_name,
         "email": student_email,
         "sourceFilePath": file_path,
-        "submittedFileName": source_file.name,
+        "submittedFileName": submitted_filename,
         "adminFilePath": admin_file_path,
         "code": submitted_code,
         "submittedAt": submitted_at,
