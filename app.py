@@ -2,7 +2,20 @@
 import eventlet
 eventlet.monkey_patch()
 
-import os, sys, json, time, uuid, csv, random, threading, subprocess, hmac, re, shutil, secrets, hashlib
+import csv
+import hashlib
+import hmac
+import json
+import os
+import random
+import re
+import secrets
+import shutil
+import subprocess
+import sys
+import threading
+import time
+import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -168,7 +181,7 @@ def _current_timestamp() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
 def _sanitize_storage_component(value: str, fallback: str = "item", max_length: int = 100) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9 _.-]", "", (value or "").strip()).strip(" .")
+    cleaned = re.sub(r"[^A-Za-z0-9 _-]", "", (value or "").strip()).strip(" ")
     return cleaned[:max_length] or fallback
 
 def _record_user_sign_in(email: str) -> Optional[str]:
@@ -195,16 +208,21 @@ def _prepend_submission_timestamp(content: str, suffix: str, submitted_at: str) 
     header = f"# Submitted at: {submitted_at}"
     if content.startswith(header):
         return content
+    content = re.sub(r"^# Submitted at: .*\n?", "", content, count=1)
     return f"{header}\n{content}" if content else header
 
 def _write_assignment_submission_copy(assignment_name: str, student_name: str, source_name: str, content: str) -> str:
     admin_dir = _get_user_dir(ADMIN_EMAIL)
     admin_dir.mkdir(parents=True, exist_ok=True)
-    assignment_dir = admin_dir / _sanitize_storage_component(assignment_name, fallback="Assignment")
+    assignment_dir = _validate_user_path(admin_dir, _sanitize_storage_component(assignment_name, fallback="Assignment"))
+    if not assignment_dir:
+        raise ValueError("Invalid assignment storage path")
     assignment_dir.mkdir(parents=True, exist_ok=True)
     suffix = Path(source_name).suffix.lower() or ".py"
     filename = _sanitize_storage_component(student_name, fallback="Student") + suffix
-    target = assignment_dir / filename
+    target = _validate_user_path(admin_dir, str((assignment_dir / filename).relative_to(admin_dir.resolve())))
+    if not target:
+        raise ValueError("Invalid submission file path")
     target.write_text(content, encoding="utf-8")
     return str(target.relative_to(admin_dir))
 
@@ -1071,7 +1089,8 @@ def _read_challenges() -> list[dict]:
 
 def _challenge_id_for_row(row: dict) -> str:
     raw = f"{row.get('difficulty', 0)}|{row.get('points', 0)}|{row.get('text', '')}"
-    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+    # 32 hex chars represent 128 bits of the SHA-256 hash while keeping challenge IDs compact in the client.
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 def _find_challenge_by_id(challenge_id: str) -> Optional[dict]:
     for row in _read_challenges():
@@ -1104,7 +1123,7 @@ def _build_challenge_leaderboard() -> list[dict]:
             continue
         student_entry = students.get(email, {})
         challenges = student_entry.get("challenges", {})
-        total_score = sum(max(0, int((challenge or {}).get("score", 0) or 0)) for challenge in challenges.values())
+        total_score = sum(max(0, int(challenge.get("score", 0) or 0)) for challenge in challenges.values())
         leaderboard.append({
             "name": student_entry.get("name") or user.get("name") or email,
             "email": email,
@@ -1188,8 +1207,9 @@ def challenge_submit():
         score = 0
     if not challenge_id:
         return jsonify(ok=False, error="Challenge ID required"), 400
+    # Zero scores are allowed for latest challenge submissions; only negative scores are rejected.
     if score < 0:
-        return jsonify(ok=False, error="Score cannot be negative"), 400
+        return jsonify(ok=False, error="Score must be non-negative"), 400
 
     challenge = _find_challenge_by_id(challenge_id)
     if not challenge:
@@ -1749,12 +1769,17 @@ def delete_assignment():
             return jsonify(ok=False, error="Assignment not found"), 404
         try:
             path.unlink()
-            admin_assignment_dir = _get_user_dir(ADMIN_EMAIL) / _sanitize_storage_component(name, fallback="Assignment")
-            if admin_assignment_dir.exists():
-                shutil.rmtree(admin_assignment_dir, ignore_errors=True)
+            admin_root = _get_user_dir(ADMIN_EMAIL)
+            admin_assignment_dir = _validate_user_path(admin_root, _sanitize_storage_component(name, fallback="Assignment"))
+            if admin_assignment_dir and admin_assignment_dir.exists():
+                try:
+                    shutil.rmtree(admin_assignment_dir)
+                except Exception as cleanup_error:
+                    print(f"Warning: failed to remove admin assignment folder for {name}: {cleanup_error}")
             return jsonify(ok=True)
         except Exception as e:
-            return jsonify(ok=False, error=f"Failed to delete: {e}"), 500
+            print(f"Error deleting assignment {name}: {e}")
+            return jsonify(ok=False, error="Failed to delete assignment"), 500
 
 @app.post("/api/assignments/submit")
 def submit_assignment():
@@ -1798,7 +1823,8 @@ def submit_assignment():
     try:
         admin_file_path = _write_assignment_submission_copy(assignment_name, student_name, source_file.name, submitted_code)
     except Exception as exc:
-        return jsonify(ok=False, error=f"Could not copy submission to admin workspace: {exc}"), 500
+        print(f"Error copying assignment submission for {assignment_name}: {exc}")
+        return jsonify(ok=False, error="Could not copy submission to admin workspace"), 500
 
     submission = {
         "name": student_name,
@@ -1839,7 +1865,8 @@ def submit_assignment():
 
     code_score_value = submission.get("codeScore") if submission.get("codeScore") is not None else 0
     quiz_score_value = submission.get("quizScore") if submission.get("quizScore") is not None else 0
-    submission["totalScore"] = code_score_value + quiz_score_value if (submission.get("codeScore") is not None or submission.get("quizScore") is not None) else None
+    has_any_score = submission.get("codeScore") is not None or submission.get("quizScore") is not None
+    submission["totalScore"] = code_score_value + quiz_score_value if has_any_score else None
 
     if existing_idx is not None:
         submissions[existing_idx] = submission
