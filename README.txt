@@ -1,9 +1,10 @@
 ================================================================================
-                            EAGLE WEB IDE (Python)
+                            EAGLE WEB IDE (Python + JavaScript)
 ================================================================================
 
-A browser-based Python IDE with real-time code execution, AI-powered features,
-assignment management, and interactive challenges for educational environments.
+A browser-based IDE with real-time code execution for Python and JavaScript,
+AI-powered features, assignment management, and interactive challenges for
+educational environments.
 
 ================================================================================
                               TABLE OF CONTENTS
@@ -28,12 +29,33 @@ assignment management, and interactive challenges for educational environments.
 
 Required:
 - Python 3.8 or higher
+- Node.js 18 or higher (for JavaScript execution)
 - Modern web browser (Chrome, Firefox, Edge, Safari)
 - Internet connection (for CDN resources)
 
 Optional (for AI features):
 - Ollama installed and running (https://ollama.ai)
 - Compatible AI model (default: gemma3:4b)
+
+--------------------------------------------------
+INSTALLING NODE.JS
+--------------------------------------------------
+Node.js is required for JavaScript (.js) file execution.
+
+  Ubuntu/Debian:
+    sudo apt install nodejs
+
+  Fedora/RHEL:
+    sudo dnf install nodejs
+
+  macOS (with Homebrew):
+    brew install node
+
+  Windows:
+    Download installer from https://nodejs.org/
+
+Verify installation:
+  node --version    # should print v18 or higher
 
 ================================================================================
                               2. INSTALLATION
@@ -146,22 +168,36 @@ For production use, consider:
 ================================================================================
 
 Students can:
-1. Write Python code in the editor
+1. Write Python or JavaScript code in the editor
 2. Run code with the "Run ▶" button
 3. Stop execution with "Stop ⏹"
-4. Import/export .txt or .py files
-5. Adjust font size with the slider
-6. View output in the terminal panel
-7. Provide input when programs use input()
-8. View lessons and notes in the sidebar
+4. Create, save, and run .py and .js files
+5. Import/export .py, .js, or .txt files
+6. Adjust font size with the slider
+7. View output in the terminal panel
+8. Provide input when programs use input()
+9. View lessons and notes in the sidebar
 
 Features:
-- Syntax highlighting for Python
+- Syntax highlighting for Python and JavaScript
 - Auto-indentation
 - Line numbers
 - Error highlighting
 - Real-time code execution (30 second timeout)
-- Interactive input support
+- Interactive input support (input() works in both Python and JavaScript)
+
+--------------------------------------------------
+JAVASCRIPT SUPPORT
+--------------------------------------------------
+- Create .js files in the file browser
+- The editor switches to JavaScript syntax highlighting automatically
+- A synchronous input() function is available in JavaScript files:
+    let name = input("Enter your name: ");
+    console.log("Hello, " + name + "!");
+- Output (console.log, console.error, etc.) appears in the shell
+- All shell input features work the same as with Python
+- JavaScript files are identified by the ⚡ icon in the file browser
+- The "JS" badge in the top bar confirms JavaScript compatibility
 
 ================================================================================
                             6. AI FEATURES
@@ -275,7 +311,10 @@ Auto-Generated Files:
 ⚠️ SECURITY
 --------------------------------------------------
 - Change DEFAULT_ADMIN_PASSWORD before deployment
-- Server executes arbitrary Python code - use in trusted environments
+- Server executes arbitrary Python and JavaScript code - use in trusted environments
+- Python code runs in a sandboxed subprocess with import and filesystem restrictions
+- JavaScript code runs via Node.js; it has access to the Node.js standard library
+  (consider network isolation for student use)
 - 30 second execution timeout prevents infinite loops
 - Consider network isolation for student use
 
@@ -303,6 +342,20 @@ Example:
 ================================================================================
                           11. TROUBLESHOOTING
 ================================================================================
+
+Problem: JavaScript files won't run
+Solution:
+- Verify Node.js is installed: node --version
+- Ensure version is 18 or higher
+- Check that the file has a .js extension
+- Check browser console for errors
+
+Problem: input() not working in JavaScript
+Solution:
+- The input() function is provided automatically for .js files
+- Wait for [[_IDE_INPUT_]] token to appear in the shell
+- Type your input and press Send or Enter
+- Do NOT use readline or process.stdin directly; use input() instead
 
 Problem: Server won't start
 Solution: Check if port 8000 is already in use, try different port
@@ -359,4 +412,4 @@ For classroom or multi-user deployment:
 
 For support or issues: https://github.com/bkgodwin/EagleIDE
 
-Last Updated: 2026-02-10
+Last Updated: 2026-05-13
