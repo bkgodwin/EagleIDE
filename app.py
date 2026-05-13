@@ -4,6 +4,7 @@ eventlet.monkey_patch()
 
 import csv
 import hashlib
+import heapq
 import hmac
 import json
 import os
@@ -1287,7 +1288,7 @@ def _prune_assistant_sessions(now: float) -> None:
         _ASSISTANT_LAST.pop(stale_sid, None)
     overflow = len(_ASSISTANT_LAST) - ASSISTANT_MAX_SIDS
     if overflow > 0:
-        oldest = sorted(_ASSISTANT_LAST.items(), key=lambda item: item[1])[:overflow]
+        oldest = heapq.nsmallest(overflow, _ASSISTANT_LAST.items(), key=lambda item: item[1])
         for sid, _ in oldest:
             _ASSISTANT_LAST.pop(sid, None)
 
@@ -1875,6 +1876,7 @@ def on_send_input(payload):
     data = (payload or {}).get("data", "")
     r = _get_active_runner(request.sid)
     if not r:
+        emit("output", {"data": "[Input ignored: no active process]\n"})
         return
     try:
         r.send_stdin(str(data))
