@@ -1811,6 +1811,7 @@ print("Hello " + name)
         loginBtn.title = 'Login';
       }
       updateEditorOverlay();
+      if (typeof window.afterAuthUiUpdate === "function") window.afterAuthUiUpdate();
     }
 
     // Show/hide an "no file selected" overlay on the editor when signed in but no file open
@@ -2523,7 +2524,6 @@ print("Hello " + name)
           editor.setValue('');
           updateActiveFileName();
           updateEditorOverlay();
-        if (typeof window.afterAuthUiUpdate === "function") window.afterAuthUiUpdate();
         }
         // If we deleted the folder we're currently in, go up
         if (item.type === 'folder' && _currentFolderPath && (_currentFolderPath === item.path || _currentFolderPath.startsWith(item.path + '/'))) {
@@ -3176,7 +3176,9 @@ print("Hello " + name)
       modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
       modal.querySelector('.modal-cancel-btn').addEventListener('click', () => modal.remove());
       modal.querySelector('.modal-save-btn').addEventListener('click', async () => {
-        const name = document.getElementById('modalAssignmentName').value.trim() || existingAssignment?.name || '';
+        const name = existingAssignment
+          ? existingAssignment.name
+          : document.getElementById('modalAssignmentName').value.trim();
         const task = document.getElementById('modalAssignmentTask').value.trim();
         const maxScore = parseInt(document.getElementById('modalAssignmentMaxScore').value, 10) || 100;
         if (!name) { alert('Please enter an assignment name.'); return; }
@@ -3348,7 +3350,13 @@ print("Hello " + name)
       modal.querySelector('.modal-submit-btn').addEventListener('click', async () => {
         const filePath = document.getElementById('assignmentFileSelect').value;
         if (!filePath) { alert('Select a file first.'); return; }
-        if (currentOpenFile?.path === filePath) await saveCurrentFile();
+        if (currentOpenFile?.path === filePath) {
+          const saved = await saveCurrentFile();
+          if (!saved) {
+            alert('Your latest edits could not be saved. Please save the file again before submitting.');
+            return;
+          }
+        }
         try {
           const resp = await fetch('/api/assignments/submit', {
             method: 'POST',
@@ -3529,11 +3537,6 @@ print("Hello " + name)
       submissionSaveTimer = setTimeout(() => {
         saveSubmissionScore(activeSubmissionContext.assignmentName, activeSubmissionContext.studentEmail, e.target.value);
       }, 500);
-    });
-    document.getElementById('submissionScoreInput').addEventListener('change', (e) => {
-      if (!activeSubmissionContext) return;
-      if (submissionSaveTimer) clearTimeout(submissionSaveTimer);
-      saveSubmissionScore(activeSubmissionContext.assignmentName, activeSubmissionContext.studentEmail, e.target.value);
     });
 
     document.getElementById('submissionAiGradeBtn').addEventListener('click', async () => {
