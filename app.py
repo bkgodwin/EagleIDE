@@ -210,11 +210,7 @@ def _prepend_submission_timestamp(content: str, submitted_at: str, student_name:
     time_header = f"# Submitted at: {submitted_at}"
     if content.startswith(f"{name_header}\n{time_header}"):
         return content
-    while True:
-        cleaned = re.sub(r"^(# Submitted by: .*|# Submitted at: .*)\n?", "", content, count=1)
-        if cleaned == content:
-            break
-        content = cleaned
+    content = re.sub(r"^(?:(?:# Submitted by: .*|# Submitted at: .*)\n?)+", "", content)
     if content:
         return f"{name_header}\n{time_header}\n{content}"
     return f"{name_header}\n{time_header}"
