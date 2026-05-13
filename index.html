@@ -879,7 +879,7 @@
       
       const cmInst = window.eagleEditor;
       const COMPLETION_DEBOUNCE_MS = 50;
-      const MAX_CODE_LENGTH_FOR_COMPLETION = 200000;
+      const MAX_CODE_LENGTH_FOR_COMPLETION = 100000;
       let suggestionBox = null;
       let activeSuggIdx = 0;
       let suggestionList = [];
@@ -926,7 +926,7 @@
         if (/^\[/.test(value) || /\bArray\s*\(/.test(value)) return 'array';
         if (/^\{/.test(value) || /\bObject\./.test(value) || /\bnew\s+Object\b/.test(value)) return 'object';
         if (/^(true|false)\b/.test(value)) return 'boolean';
-        if (/^-?\d/.test(value) || /\bNumber\s*\(/.test(value)) return 'number';
+        if (/^-?\d+/.test(value) || /\bNumber\s*\(/.test(value)) return 'number';
         if (/\bPromise\b/.test(value)) return 'promise';
         if (/\bnew\s+Set\b/.test(value)) return 'set';
         if (/\bnew\s+Map\b/.test(value)) return 'map';
@@ -942,13 +942,13 @@
             if (funcDecl) tokenMap.funcs.add(funcDecl[1]);
             const classDecl = ln.match(/^\s*class\s+([A-Za-z_$][\w$]*)/);
             if (classDecl) tokenMap.classes.add(classDecl[1]);
-            const varDecl = ln.match(/^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?)(?:;)?\s*$/);
+            const varDecl = ln.match(/^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?)(?:;\s*)?$/);
             if (varDecl) {
               tokenMap.vars.add(varDecl[1]);
               const inferred = inferJsType(varDecl[2]);
               if (inferred) tokenMap.varTypes.set(varDecl[1], inferred);
             }
-            const arrowFunc = ln.match(/^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/);
+            const arrowFunc = ln.match(/^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?.*=>/);
             if (arrowFunc) {
               tokenMap.funcs.add(arrowFunc[1]);
               tokenMap.vars.add(arrowFunc[1]);
@@ -1126,7 +1126,7 @@
         const beforeCursor = lineContent.substring(0, cursor.ch);
         
         // Match partial identifier or attribute access
-        const tokenMatch = beforeCursor.match(/([a-zA-Z_]\w*\.)?([a-zA-Z_]\w*)$/);
+        const tokenMatch = beforeCursor.match(/(?:([A-Za-z_$][\w$]*)\.)?([A-Za-z_$][\w$]*)$/);
         if (!tokenMatch || !tokenMatch[0]) {
           hideSuggestions();
           return;
