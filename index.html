@@ -792,7 +792,7 @@
           electricChars: true,
           autoCloseBrackets: true,
           matchBrackets: true,
-          viewportMargin: Infinity
+          viewportMargin: 20
         });
         let dirty = true;
         cm.on('change', () => { dirty = true; });
@@ -851,7 +851,7 @@
         indentUnit: 4,
         tabSize: 4,
         indentWithTabs: true,
-        viewportMargin: Infinity
+        viewportMargin: 10
       });
       
       // Load last saved teacher code from localStorage
@@ -859,10 +859,12 @@
         const savedCode = localStorage.getItem(TEACHER_CODE_KEY);
         if (savedCode) {
           teacherEditor.setValue(savedCode);
+          lastTeacherCodeSnapshot = savedCode;
         }
       } catch (e) {
         console.warn('Failed to load teacher code:', e);
       }
+      if (typeof syncEditorLanguage === 'function') syncEditorLanguage();
     }
     
     // Initialize teacher editor when DOM is ready
@@ -878,106 +880,148 @@
       
       const cmInst = window.eagleEditor;
       const COMPLETION_DEBOUNCE_MS = 50;
+      const MAX_AUTOCOMPLETE_ANALYSIS_LENGTH = 100000;
       let suggestionBox = null;
       let activeSuggIdx = 0;
       let suggestionList = [];
       let completionActive = true;
-      
-      // Python stdlib + common identifiers
-      const pyBuiltins = ['print','input','len','range','str','int','float','list','dict','set','tuple','type','isinstance','hasattr','getattr','setattr','abs','all','any','max','min','sum','sorted','reversed','enumerate','zip','map','filter','open','round','pow','divmod','chr','ord','bin','hex','oct','bool','bytes','bytearray','complex','frozenset','slice','super','property','staticmethod','classmethod','vars','dir','help','id','hash','iter','next','callable','compile','eval','exec','format','globals','locals','memoryview','object','repr','ascii','breakpoint'];
-      const pyKeyTerms = ['def','class','if','elif','else','for','while','return','yield','import','from','as','try','except','finally','raise','with','assert','pass','break','continue','global','nonlocal','lambda','and','or','not','in','is','None','True','False','self'];
-      
-      // Token extraction engine
-      function extractCodeTokens(sourceCode) {
-        const tokenMap = { funcs: new Set(), classes: new Set(), vars: new Set() };
-        const codeLines = sourceCode.split('\n');
-        
-        codeLines.forEach(ln => {
-          // Function definitions
-          const funcMatch = ln.match(/^\s*def\s+([a-zA-Z_]\w*)/);
-          if (funcMatch) tokenMap.funcs.add(funcMatch[1]);
-          
-          // Class definitions
-          const classMatch = ln.match(/^\s*class\s+([a-zA-Z_]\w*)/);
-          if (classMatch) tokenMap.classes.add(classMatch[1]);
-          
-          // Variable assignments
-          const varMatches = ln.matchAll(/([a-zA-Z_]\w*)\s*=/g);
-          for (const vm of varMatches) {
-            if (vm[1] && !pyKeyTerms.includes(vm[1])) tokenMap.vars.add(vm[1]);
+      const LANGUAGE_COMPLETIONS = {
+        python: {
+          keywords: ['def','class','if','elif','else','for','while','return','yield','import','from','as','try','except','finally','raise','with','assert','pass','break','continue','global','nonlocal','lambda','and','or','not','in','is','None','True','False','self'],
+          builtins: ['print','input','len','range','str','int','float','list','dict','set','tuple','type','isinstance','hasattr','getattr','setattr','abs','all','any','max','min','sum','sorted','reversed','enumerate','zip','map','filter','open','round','pow','divmod','chr','ord','bin','hex','oct','bool','bytes','bytearray','complex','frozenset','slice','super','property','staticmethod','classmethod','vars','dir','help','id','hash','iter','next','callable','compile','eval','exec','format','globals','locals','memoryview','object','repr','ascii','breakpoint'],
+          memberMap: {
+            string: ['upper','lower','strip','split','join','replace','find','index','count','startswith','endswith','capitalize','title','swapcase','isalpha','isdigit','isspace','isupper','islower'],
+            list: ['append','extend','insert','remove','pop','clear','index','count','sort','reverse','copy'],
+            dict: ['keys','values','items','get','pop','update','clear','copy','setdefault']
           }
-        });
-        
-        return tokenMap;
+        },
+        javascript: {
+          keywords: ['function','class','const','let','var','if','else','switch','case','default','for','while','do','return','break','continue','try','catch','finally','throw','new','typeof','instanceof','in','of','await','async','import','export','from','extends','super','this','null','undefined','true','false'],
+          builtins: ['console','Math','JSON','Array','Object','String','Number','Boolean','Promise','Set','Map','Date','RegExp','parseInt','parseFloat','setTimeout','setInterval','clearTimeout','clearInterval','fetch','document','window'],
+          memberMap: {
+            string: ['toUpperCase','toLowerCase','trim','split','slice','substring','replace','includes','startsWith','endsWith','indexOf','charAt','repeat','match'],
+            array: ['push','pop','shift','unshift','map','filter','reduce','forEach','find','findIndex','includes','slice','splice','join','sort','reverse','flat'],
+            object: ['keys','values','entries','assign','hasOwnProperty','toString'],
+            console: ['log','error','warn','info','table','dir','clear'],
+            math: ['abs','ceil','floor','max','min','pow','random','round','sqrt','trunc'],
+            promise: ['then','catch','finally'],
+            document: ['querySelector','querySelectorAll','getElementById','createElement','addEventListener'],
+            window: ['addEventListener','removeEventListener','setTimeout','setInterval','requestAnimationFrame'],
+            json: ['parse','stringify'],
+            set: ['add','delete','has','clear','forEach'],
+            map: ['set','get','has','delete','clear','forEach'],
+            number: ['toFixed','toPrecision','toString'],
+            boolean: ['valueOf','toString']
+          }
+        }
+      };
+
+      function currentLanguage() {
+        return String(cmInst.getOption('mode') || '').toLowerCase().includes('javascript') ? 'javascript' : 'python';
       }
-      
-      // Build suggestion list based on context
-      function buildSuggestions(partialToken, cursorPos) {
-        const fullCode = cmInst.getValue();
-        const preCursor = fullCode.substring(0, cursorPos.index);
-        const tokens = extractCodeTokens(fullCode);
-        const results = [];
-        
-        // Check for attribute access
-        const attrPattern = /([a-zA-Z_]\w*)\.([a-zA-Z_]*)$/;
-        const attrMatch = preCursor.match(attrPattern);
-        
-        if (attrMatch) {
-          const objName = attrMatch[1];
-          const partial = attrMatch[2];
-          
-          // Common string/list/dict methods
-          const strMethods = ['upper','lower','strip','split','join','replace','find','index','count','startswith','endswith','capitalize','title','swapcase','isalpha','isdigit','isspace','isupper','islower'];
-          const listMethods = ['append','extend','insert','remove','pop','clear','index','count','sort','reverse','copy'];
-          const dictMethods = ['keys','values','items','get','pop','update','clear','copy','setdefault'];
-          
-          const allMethods = [...new Set([...strMethods, ...listMethods, ...dictMethods])];
-          allMethods.forEach(m => {
-            if (m.startsWith(partial)) {
-              results.push({ text: m, category: 'attr', icon: 'A' });
+
+      function inferJsType(expr) {
+        const value = String(expr || '').trim();
+        if (!value) return null;
+        if (/^["'`]/.test(value)) return 'string';
+        if (/^\[/.test(value) || /\bArray\s*\(/.test(value)) return 'array';
+        if (/^\{/.test(value) || /\bObject\./.test(value) || /\bnew\s+Object\b/.test(value)) return 'object';
+        if (/^(true|false)\b/.test(value)) return 'boolean';
+        if (/^-?\d+/.test(value) || /\bNumber\s*\(/.test(value)) return 'number';
+        if (/\bPromise\b/.test(value)) return 'promise';
+        if (/\bnew\s+Set\b/.test(value)) return 'set';
+        if (/\bnew\s+Map\b/.test(value)) return 'map';
+        return null;
+      }
+
+      function extractCodeTokens(sourceCode, language) {
+        const tokenMap = { funcs: new Set(), classes: new Set(), vars: new Set(), varTypes: new Map() };
+        const codeLines = sourceCode.split('\n');
+        if (language === 'javascript') {
+          codeLines.forEach(ln => {
+            const funcDecl = ln.match(/^\s*(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/);
+            if (funcDecl) tokenMap.funcs.add(funcDecl[1]);
+            const classDecl = ln.match(/^\s*class\s+([A-Za-z_$][\w$]*)/);
+            if (classDecl) tokenMap.classes.add(classDecl[1]);
+            const varDecl = ln.match(/^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?)(?:;\s*)?$/);
+            if (varDecl) {
+              tokenMap.vars.add(varDecl[1]);
+              const inferred = inferJsType(varDecl[2]);
+              if (inferred) tokenMap.varTypes.set(varDecl[1], inferred);
             }
+            const arrowFunc = ln.match(/^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?.*=>/);
+            if (arrowFunc) {
+              tokenMap.funcs.add(arrowFunc[1]);
+              tokenMap.vars.add(arrowFunc[1]);
+            }
+            const simpleVarDecl = ln.match(/^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\b/);
+            if (simpleVarDecl) tokenMap.vars.add(simpleVarDecl[1]);
           });
         } else {
-          // Regular completions
-          const lowerPartial = partialToken.toLowerCase();
-          
-          // User functions
-          tokens.funcs.forEach(f => {
-            if (f.toLowerCase().startsWith(lowerPartial)) {
-              results.push({ text: f, category: 'func', icon: 'ƒ' });
-            }
-          });
-          
-          // User classes
-          tokens.classes.forEach(c => {
-            if (c.toLowerCase().startsWith(lowerPartial)) {
-              results.push({ text: c, category: 'class', icon: 'C' });
-            }
-          });
-          
-          // Variables
-          tokens.vars.forEach(v => {
-            if (v.toLowerCase().startsWith(lowerPartial) && !results.find(r => r.text === v)) {
-              results.push({ text: v, category: 'var', icon: 'V' });
-            }
-          });
-          
-          // Keywords
-          pyKeyTerms.forEach(k => {
-            if (k.toLowerCase().startsWith(lowerPartial)) {
-              results.push({ text: k, category: 'kw', icon: 'K' });
-            }
-          });
-          
-          // Builtins
-          pyBuiltins.forEach(b => {
-            if (b.toLowerCase().startsWith(lowerPartial)) {
-              results.push({ text: b, category: 'func', icon: 'ƒ' });
+          const pyKeywords = LANGUAGE_COMPLETIONS.python.keywords;
+          codeLines.forEach(ln => {
+            const funcMatch = ln.match(/^\s*def\s+([a-zA-Z_]\w*)/);
+            if (funcMatch) tokenMap.funcs.add(funcMatch[1]);
+            const classMatch = ln.match(/^\s*class\s+([a-zA-Z_]\w*)/);
+            if (classMatch) tokenMap.classes.add(classMatch[1]);
+            const varMatches = ln.matchAll(/([a-zA-Z_]\w*)\s*=/g);
+            for (const vm of varMatches) {
+              if (vm[1] && !pyKeywords.includes(vm[1])) tokenMap.vars.add(vm[1]);
             }
           });
         }
-        
-        // Sort: exact matches first, then alphabetical
+        return tokenMap;
+      }
+
+      function memberSuggestions(language, tokens, objectName, partial) {
+        const data = LANGUAGE_COMPLETIONS[language];
+        const normalized = String(objectName || '').trim();
+        const lowerName = normalized.toLowerCase();
+        const lowerPartial = String(partial || '').toLowerCase();
+        let typeName = tokens.varTypes.get(normalized) || null;
+        if (!typeName && language === 'javascript') {
+          if (normalized === 'console') typeName = 'console';
+          else if (normalized === 'Math') typeName = 'math';
+          else if (normalized === 'document') typeName = 'document';
+          else if (normalized === 'window') typeName = 'window';
+          else if (normalized === 'JSON') typeName = 'json';
+        }
+        if (!typeName && language === 'python') {
+          if (lowerName.includes('dict')) typeName = 'dict';
+          else if (lowerName.includes('list')) typeName = 'list';
+          else if (lowerName.includes('str') || lowerName.includes('text') || lowerName.includes('name')) typeName = 'string';
+        }
+        const candidates = data.memberMap[typeName] || [];
+        return candidates
+          .filter(name => name.toLowerCase().startsWith(lowerPartial))
+          .map(name => ({ text: name, category: 'attr', icon: 'A' }));
+      }
+
+      function buildSuggestions(partialToken, cursorPos) {
+        const language = currentLanguage();
+        const data = LANGUAGE_COMPLETIONS[language];
+        const fullCode = cmInst.getValue();
+        if (fullCode.length > MAX_AUTOCOMPLETE_ANALYSIS_LENGTH) return [];
+        const preCursor = fullCode.substring(0, cursorPos.index);
+        const tokens = extractCodeTokens(fullCode, language);
+        const results = [];
+        const seen = new Set();
+        const pushResult = (text, category, icon) => {
+          if (!text || seen.has(text)) return;
+          seen.add(text);
+          results.push({ text, category, icon });
+        };
+        const attrMatch = preCursor.match(/([A-Za-z_$][\w$]*)\.([A-Za-z_$]*)$/);
+        if (attrMatch) {
+          memberSuggestions(language, tokens, attrMatch[1], attrMatch[2]).forEach(item => pushResult(item.text, item.category, item.icon));
+        } else {
+          const lowerPartial = partialToken.toLowerCase();
+          tokens.funcs.forEach(name => { if (name.toLowerCase().startsWith(lowerPartial)) pushResult(name, 'func', 'ƒ'); });
+          tokens.classes.forEach(name => { if (name.toLowerCase().startsWith(lowerPartial)) pushResult(name, 'class', 'C'); });
+          tokens.vars.forEach(name => { if (name.toLowerCase().startsWith(lowerPartial)) pushResult(name, 'var', 'V'); });
+          data.keywords.forEach(name => { if (name.toLowerCase().startsWith(lowerPartial)) pushResult(name, 'kw', 'K'); });
+          data.builtins.forEach(name => { if (name.toLowerCase().startsWith(lowerPartial)) pushResult(name, 'func', 'ƒ'); });
+        }
         return results.sort((a, b) => {
           const aExact = a.text === partialToken ? 0 : 1;
           const bExact = b.text === partialToken ? 0 : 1;
@@ -1083,7 +1127,7 @@
         const beforeCursor = lineContent.substring(0, cursor.ch);
         
         // Match partial identifier or attribute access
-        const tokenMatch = beforeCursor.match(/([a-zA-Z_]\w*\.)?([a-zA-Z_]\w*)$/);
+        const tokenMatch = beforeCursor.match(/(?:([A-Za-z_$][\w$]*)\.)?([A-Za-z_$][\w$]*)$/);
         if (!tokenMatch || !tokenMatch[0]) {
           hideSuggestions();
           return;
@@ -1231,9 +1275,50 @@ print("Hello " + name)
     let currentOpenFile = null; // { path, name } of open file in sidebar
     let currentConfig = null;
     let mySid = null;
+    let lastTeacherCodeSnapshot = '';
     let errorLineMarkers = []; // Track error line highlights
     let waitingForUserInput = false; // Track if we're waiting for user input
     let _inTraceback = false; // Track if we're currently inside a Python traceback block
+    const LANGUAGE_INFO = {
+      python: { mode: 'python', label: 'Python', highlight: 'python' },
+      javascript: { mode: 'javascript', label: 'JavaScript', highlight: 'javascript' }
+    };
+
+    function getLanguageInfoForFileName(fileName) {
+      const lower = String(fileName || '').trim().toLowerCase();
+      return lower.endsWith('.js') ? LANGUAGE_INFO.javascript : LANGUAGE_INFO.python;
+    }
+
+    function getActiveLanguageInfo() {
+      const mode = String(window.eagleEditor?.getOption?.('mode') || '').toLowerCase();
+      if (mode.includes('javascript')) return LANGUAGE_INFO.javascript;
+      return getLanguageInfoForFileName(currentOpenFile?.name || '');
+    }
+
+    function refreshEditors() {
+      try { window.eagleEditor?.refresh?.(); } catch {}
+      try { teacherEditor?.refresh?.(); } catch {}
+    }
+
+    function syncEditorLanguage(fileName = currentOpenFile?.name || '') {
+      const info = getLanguageInfoForFileName(fileName);
+      try { window.eagleEditor?.setOption('mode', info.mode); } catch {}
+      try { teacherEditor?.setOption('mode', info.mode); } catch {}
+      const editorHeader = document.querySelector('#editorPanel header');
+      if (editorHeader) {
+        editorHeader.setAttribute('aria-label', `Code editor with ${info.label} syntax highlighting`);
+      }
+      return info;
+    }
+
+    function buildAiContext(extra = {}) {
+      const info = getActiveLanguageInfo();
+      return {
+        language: info.mode,
+        fileName: currentOpenFile?.name || '',
+        ...extra
+      };
+    }
 
     const SYSTEM_MESSAGE_PATTERN = /^\[.*?\]/;
     const TRACEBACK_START_PATTERN = /^Traceback \(most recent call last\):/;
@@ -1550,7 +1635,9 @@ print("Hello " + name)
         // Listen for teacher code updates
         socket.on('teacher_code', (msg) => {
           if (teacherEditor && msg && typeof msg.code === 'string') {
+            if (lastTeacherCodeSnapshot === msg.code) return;
             teacherEditor.setValue(msg.code);
+            lastTeacherCodeSnapshot = msg.code;
             // Save to localStorage
             try {
               localStorage.setItem(TEACHER_CODE_KEY, msg.code);
@@ -1749,6 +1836,70 @@ print("Hello " + name)
       else { currentConfig = {...(currentConfig||{}), ...partial}; }
     }
     loadConfig();
+
+    (function initEditorControls() {
+      const MIN_FONT_SIZE = 12;
+      const MAX_FONT_SIZE = 40;
+      const DEFAULT_FONT_SIZE = 14;
+      const FONT_KEY = 'eagleide-font-size';
+      const GUIDES_KEY = 'eagleide-indent-guides';
+      const AUTOCOMPLETE_KEY = 'eagleide-autocomplete';
+      const fontRange = document.getElementById('fontRange');
+      const fontVal = document.getElementById('fontVal');
+      const guidesBtn = document.getElementById('guidesBtn');
+      const autocompleteBtn = document.getElementById('autocompleteBtn');
+      let guidesEnabled = true;
+      let autocompleteEnabled = true;
+      let fontFrame = 0;
+
+      const clampFontSize = (value) => Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, parseInt(value, 10) || DEFAULT_FONT_SIZE));
+      function applyFontSize(value, persist = true) {
+        const next = clampFontSize(value);
+        fontRange.value = String(next);
+        fontVal.textContent = String(next);
+        if (fontFrame) cancelAnimationFrame(fontFrame);
+        fontFrame = requestAnimationFrame(() => {
+          document.documentElement.style.setProperty('--cm-font-size', `${next}px`);
+          refreshEditors();
+        });
+        if (persist) {
+          try { localStorage.setItem(FONT_KEY, String(next)); } catch {}
+        }
+      }
+
+      function applyGuides(enabled, persist = true) {
+        guidesEnabled = !!enabled;
+        document.body.classList.toggle('guides-off', !guidesEnabled);
+        guidesBtn.textContent = `Guides: ${guidesEnabled ? 'On' : 'Off'}`;
+        if (persist) {
+          try { localStorage.setItem(GUIDES_KEY, guidesEnabled ? '1' : '0'); } catch {}
+        }
+      }
+
+      function applyAutocomplete(enabled, persist = true) {
+        autocompleteEnabled = !!enabled;
+        window.toggleEagleCompletion?.(autocompleteEnabled);
+        autocompleteBtn.textContent = `Autocomplete: ${autocompleteEnabled ? 'On' : 'Off'}`;
+        if (persist) {
+          try { localStorage.setItem(AUTOCOMPLETE_KEY, autocompleteEnabled ? '1' : '0'); } catch {}
+        }
+      }
+
+      try {
+        applyFontSize(localStorage.getItem(FONT_KEY) || fontRange.value, false);
+        applyGuides(localStorage.getItem(GUIDES_KEY) !== '0', false);
+        applyAutocomplete(localStorage.getItem(AUTOCOMPLETE_KEY) !== '0', false);
+      } catch {
+        applyFontSize(fontRange.value, false);
+        applyGuides(true, false);
+        applyAutocomplete(true, false);
+      }
+
+      fontRange.addEventListener('input', (e) => applyFontSize(e.target.value));
+      guidesBtn.addEventListener('click', () => applyGuides(!guidesEnabled));
+      autocompleteBtn.addEventListener('click', () => applyAutocomplete(!autocompleteEnabled));
+      syncEditorLanguage();
+    })();
 
     // ---- Layout controls (sidebar toggle + splitters) ----
     (function initLayoutControls() {
@@ -2049,12 +2200,13 @@ print("Hello " + name)
       if (teacherBroadcastInterval) return;
       
       // Update teacher editor immediately with current code
-      if (teacherEditor) {
-        const initialCode = editor.getValue();
-        teacherEditor.setValue(initialCode);
-        lastBroadcastedCode = initialCode;
-        try { localStorage.setItem(TEACHER_CODE_KEY, initialCode); } catch(e) {}
-      }
+       if (teacherEditor) {
+         const initialCode = editor.getValue();
+         teacherEditor.setValue(initialCode);
+         lastTeacherCodeSnapshot = initialCode;
+         lastBroadcastedCode = initialCode;
+         try { localStorage.setItem(TEACHER_CODE_KEY, initialCode); } catch(e) {}
+       }
       
       teacherBroadcastInterval = setInterval(() => {
         if (!ADMIN_TOKEN) return;
@@ -2064,6 +2216,7 @@ print("Hello " + name)
           // Always update local teacher editor view
           if (teacherEditor) {
             teacherEditor.setValue(currentCode);
+            lastTeacherCodeSnapshot = currentCode;
             try { localStorage.setItem(TEACHER_CODE_KEY, currentCode); } catch(e) {}
           }
           // Broadcast to other clients if socket available
@@ -2500,6 +2653,7 @@ print("Hello " + name)
     function updateActiveFileName() {
       const el = document.getElementById('activeFileName');
       if (el) el.textContent = currentOpenFile ? currentOpenFile.name : '';
+      syncEditorLanguage();
     }
 
     // Autosave: save current file 1.5 s after the last edit
@@ -2536,12 +2690,6 @@ print("Hello " + name)
       if (!j.ok) { alert(j.error || 'Cannot open file'); return; }
       currentOpenFile = { path: item.path, name: item.name };
       editor.setValue(j.content || '');
-      // Switch CodeMirror syntax highlighting mode based on file extension
-      if (window.eagleEditor) {
-        const ext = item.name.split('.').pop().toLowerCase();
-        const mode = ext === 'js' ? 'javascript' : 'python';
-        window.eagleEditor.setOption('mode', mode);
-      }
       updateActiveFileName();
       updateEditorOverlay();
       loadFileTree();
@@ -2611,7 +2759,10 @@ print("Hello " + name)
       });
       const j = await res.json().catch(() => ({}));
       if (j.ok) {
-        if (currentOpenFile?.path === item.path) currentOpenFile = { path: j.new_path, name: newName };
+        if (currentOpenFile?.path === item.path) {
+          currentOpenFile = { path: j.new_path, name: newName };
+          updateActiveFileName();
+        }
         loadFileTree();
       } else alert(j.error || 'Rename failed');
     }
@@ -2761,6 +2912,7 @@ print("Hello " + name)
       const status = document.getElementById('aiStatus');
       const out = document.getElementById('aiOutput');
       const btn = document.getElementById('aiExplainBtn');
+      const langInfo = getActiveLanguageInfo();
 
       const tnow = Math.floor(Date.now()/1000);
       if (tnow < explainCooldownUntil) return;
@@ -2775,12 +2927,12 @@ print("Hello " + name)
         const res = await fetch('/api/explain', {
           method:'POST',
           headers:{ 'Content-Type':'application/json', 'X-SID': (window.mySid || '') },
-          body: JSON.stringify({ code, sid: (mySid || window.mySid || '') })
+          body: JSON.stringify(buildAiContext({ code, sid: (mySid || window.mySid || '') }))
         });
         const j = await res.json().catch(()=>({}));
         if (j?.ok){
           const txt = j.text || '(No response)';
-          renderMarkdownTo(out, txt, 'python');   // <-- Markdown + highlight + copy
+          renderMarkdownTo(out, txt, langInfo.highlight);
           status.textContent = 'Done';
           startExplainCooldown(j.cooldown ?? 45);
         } else {
@@ -2790,6 +2942,109 @@ print("Hello " + name)
         }
       } catch (e) {
         out.textContent = ''; status.textContent = 'Network error'; startExplainCooldown(45);
+      }
+    });
+
+    const MAX_ASSISTANT_MESSAGES = 16;
+    const MAX_ASSISTANT_CODE_CHARS = 12000;
+    let assistantMessages = [];
+    let assistantCooldownUntil = 0;
+    let assistantTimer = null;
+
+    function ensureAssistantSid() {
+      if (window.mySid) return window.mySid;
+      try {
+        const key = 'eagleide-assistant-sid';
+        let sid = sessionStorage.getItem(key);
+        if (!sid) {
+          sid = `local-${Math.random().toString(36).slice(2)}`;
+          sessionStorage.setItem(key, sid);
+        }
+        window.mySid = sid;
+        return sid;
+      } catch {
+        return `local-${Math.random().toString(36).slice(2)}`;
+      }
+    }
+
+    function renderAssistantMessages() {
+      const chat = document.getElementById('assistantChat');
+      const langInfo = getActiveLanguageInfo();
+      chat.innerHTML = '';
+      assistantMessages.forEach(message => {
+        const bubble = document.createElement('div');
+        bubble.className = `msg ${message.role === 'user' ? 'user' : 'bot'}`;
+        if (message.role === 'assistant') {
+          renderMarkdownTo(bubble, message.content || '', langInfo.highlight);
+        } else {
+          bubble.textContent = message.content || '';
+        }
+        chat.appendChild(bubble);
+      });
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function startAssistantCooldown(seconds) {
+      const badge = document.getElementById('assistantCooldown');
+      const sendBtn = document.getElementById('assistantSend');
+      assistantCooldownUntil = Math.floor(Date.now() / 1000) + Math.max(1, seconds | 0);
+      sendBtn.disabled = true;
+      if (assistantTimer) clearInterval(assistantTimer);
+      const tick = () => {
+        const remaining = Math.max(0, assistantCooldownUntil - Math.floor(Date.now() / 1000));
+        badge.textContent = remaining > 0 ? `Cooldown: ${remaining}s` : '';
+        if (remaining <= 0) {
+          clearInterval(assistantTimer);
+          assistantTimer = null;
+          sendBtn.disabled = false;
+        }
+      };
+      tick();
+      assistantTimer = setInterval(tick, 1000);
+    }
+
+    async function sendAssistantMessage() {
+      const input = document.getElementById('assistantInput');
+      const sendBtn = document.getElementById('assistantSend');
+      const text = input.value.trim();
+      if (!text || Math.floor(Date.now() / 1000) < assistantCooldownUntil) return;
+      assistantMessages.push({ role: 'user', content: text });
+      assistantMessages = assistantMessages.slice(-MAX_ASSISTANT_MESSAGES);
+      input.value = '';
+      renderAssistantMessages();
+      sendBtn.disabled = true;
+      try {
+        const response = await fetch('/api/assistant/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-SID': ensureAssistantSid() },
+          body: JSON.stringify(buildAiContext({
+            sid: ensureAssistantSid(),
+            code: editor.getValue().slice(0, MAX_ASSISTANT_CODE_CHARS),
+            messages: assistantMessages
+          }))
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!result?.ok) {
+          if (response.status === 429) startAssistantCooldown(result.cooldown ?? 15);
+          assistantMessages.push({ role: 'assistant', content: result?.error || 'Assistant error.' });
+        } else {
+          assistantMessages.push({ role: 'assistant', content: result.reply || '(No response)' });
+          startAssistantCooldown(result.cooldown ?? 15);
+        }
+      } catch (error) {
+        assistantMessages.push({ role: 'assistant', content: 'Network error.' });
+      } finally {
+        assistantMessages = assistantMessages.slice(-MAX_ASSISTANT_MESSAGES);
+        renderAssistantMessages();
+        if (Math.floor(Date.now() / 1000) >= assistantCooldownUntil) sendBtn.disabled = false;
+      }
+    }
+
+    document.getElementById('assistantSend').addEventListener('click', sendAssistantMessage);
+    document.getElementById('assistantInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendAssistantMessage();
       }
     });
 
@@ -2890,7 +3145,7 @@ print("Hello " + name)
         const r = await fetch('/api/challenge/score', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
-          body: JSON.stringify({ code: editor.getValue(), challenge: currentChallenge.text, points: currentChallenge.points })
+          body: JSON.stringify(buildAiContext({ code: editor.getValue(), challenge: currentChallenge.text, points: currentChallenge.points }))
         });
         const j = await r.json().catch(() => ({}));
         if (j?.ok) {
@@ -3604,6 +3859,7 @@ print("Hello " + name)
         await openFile({ path: submission.adminFilePath, name: submission.submittedFileName || `${submission.name || email}.py` });
       } else {
         editor.setValue(submission.code || '');
+        syncEditorLanguage(submission.submittedFileName || '');
       }
       populateSubmissionScoringPanel(assignment, submission);
       renderAdminAssignments();
@@ -3683,13 +3939,14 @@ print("Hello " + name)
         const response = await fetch('/api/assignments/grade-ai', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
-          body: JSON.stringify({
+          body: JSON.stringify(buildAiContext({
             assignmentName: assignment.name,
             studentEmail: submission.email,
             code: submission.code || '',
             task: assignment.task || '',
-            maxScore: assignment.maxScore || 100
-          })
+            maxScore: assignment.maxScore || 100,
+            fileName: submission.submittedFileName || ''
+          }))
         });
         const result = await response.json().catch(() => ({}));
         if (!result.ok) {
