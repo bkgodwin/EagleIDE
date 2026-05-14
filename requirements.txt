@@ -1,5 +1,8 @@
-flask
-flask-socketio
-eventlet
-requests
-bcrypt
+# Eagle IDE Python dependencies
+# Install with: pip install -r requirements.txt
+
+flask            # Web framework (HTTP routes + template serving)
+flask-socketio   # WebSocket / Socket.IO support (real-time code output)
+eventlet         # Async networking library required by flask-socketio async_mode="eventlet"
+requests         # HTTP client used for Ollama AI API calls
+bcrypt           # Password hashing for student and admin accounts
