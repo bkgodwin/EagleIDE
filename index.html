@@ -1380,7 +1380,7 @@ print("Hello " + name)
     function getManualLanguageInfo() {
       const sel = document.getElementById('languageSelector');
       const isLoggedIn = !!(currentUser || currentTeacher || ADMIN_TOKEN);
-      if (isLoggedIn) return null;
+      if (isLoggedIn) return getLanguageInfoForFileName(currentOpenFile?.name || '');
       const val = String(sel?.value || 'auto').toLowerCase();
       if (val === 'python') return LANGUAGE_INFO.python;
       if (val === 'javascript') return LANGUAGE_INFO.javascript;
@@ -1434,7 +1434,7 @@ print("Hello " + name)
           row.push(cell);
           cell = '';
         } else if ((ch === '\n' || ch === '\r') && !inQuotes) {
-          if (ch === '\r' && next === '\n') i += 1;
+          if (ch === '\r' && next === '\n') i++;
           row.push(cell);
           rows.push(row);
           row = [];
@@ -1444,6 +1444,7 @@ print("Hello " + name)
         }
       }
       row.push(cell);
+      // Keep one blank row for empty files, but avoid adding a redundant trailing empty row.
       if (row.length > 1 || row[0] !== '' || rows.length === 0) rows.push(row);
       return rows;
     }
@@ -1467,7 +1468,16 @@ print("Hello " + name)
       const wrap = document.getElementById('csvEditor');
       if (!wrap) return;
       const maxCols = Math.max(1, ...csvEditorRows.map(r => r.length), 8);
-      const header = `<tr>${Array.from({ length: maxCols }, (_, i) => `<th>${String.fromCharCode(65 + (i % 26))}${i >= 26 ? Math.floor(i / 26) : ''}</th>`).join('')}</tr>`;
+      const colName = (index) => {
+        let n = index;
+        let out = '';
+        while (n >= 0) {
+          out = String.fromCharCode(65 + (n % 26)) + out;
+          n = Math.floor(n / 26) - 1;
+        }
+        return out;
+      };
+      const header = `<tr>${Array.from({ length: maxCols }, (_, i) => `<th>${colName(i)}</th>`).join('')}</tr>`;
       const bodyRows = csvEditorRows.map((row, rIdx) => (
         `<tr>${Array.from({ length: maxCols }, (_, cIdx) => `<td><input data-r="${rIdx}" data-c="${cIdx}" value="${escapeHtml((row || [])[cIdx] || '')}"></td>`).join('')}</tr>`
       )).join('');
@@ -1501,6 +1511,7 @@ print("Hello " + name)
         }
         if (cmWrap) cmWrap.style.display = '';
         if (ta) ta.style.display = '';
+        syncEditorLanguage();
       }
     }
 
