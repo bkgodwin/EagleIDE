@@ -29,14 +29,18 @@ educational environments.
 ================================================================================
 
 Required:
-- Python 3.8 or higher
+- Python 3.9 or higher  (uses PEP 585 built-in generics; 3.8 is NOT supported)
 - Node.js 18 or higher (for JavaScript execution)
 - Modern web browser (Chrome, Firefox, Edge, Safari)
-- Internet connection (for CDN resources)
+- Internet connection (for CDN resources; required at page load for CodeMirror,
+  Socket.IO, marked, DOMPurify, highlight.js, and Google Fonts)
 
 Optional (for AI features):
 - Ollama installed and running (https://ollama.ai)
 - Compatible AI model (default: gemma3:4b)
+
+See REQUIREMENTS.md for a full dependency audit including Python packages,
+browser-side CDN libraries, and optional Ollama setup.
 
 --------------------------------------------------
 INSTALLING NODE.JS
