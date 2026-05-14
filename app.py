@@ -47,6 +47,8 @@ MAX_WALL_TIME = 30.0       # seconds (hard kill for user code)
 IDLE_TIMEOUT = 10.0        # reserved, if you later want idle detection
 MAX_OUTPUT_BYTES = 500_000  # 500 KB max stdout before killing the process
 MAX_ASSISTANT_CODE_CHARS = 12_000
+MAX_RUN_CODE_CHARS = 200_000
+MAX_STDIN_CHARS = 10_000
 
 # HTML runtime defaults/safeguards
 HTML_RUNTIME_DEFAULT_TIMEOUT = 30
@@ -367,6 +369,7 @@ def _load_classes() -> dict:
                 "settings": {
                     "ai_enabled": bool(settings.get("ai_enabled", True)),
                     "wiki_enabled": bool(settings.get("wiki_enabled", True)),
+                    "wiki_url": str(settings.get("wiki_url") or ""),
                     "wiki_html": str(settings.get("wiki_html") or ""),
                 },
                 "students": students,
@@ -1507,6 +1510,7 @@ def teacher_create_class():
         "settings": {
             "ai_enabled": True,
             "wiki_enabled": True,
+            "wiki_url": "",
             "wiki_html": "",
         },
         "students": [],
@@ -1525,16 +1529,20 @@ def teacher_update_class_settings():
     data = request.get_json(silent=True) or {}
     class_id = (data.get("classId") or "").strip()
     settings = data.get("settings") or {}
+    cfg = _load_config()
+    ai_master_enabled = bool(cfg.get("ai_explainer_enabled", False))
     classes_data = _load_classes()
     teacher_email = (teacher.get("email") or "").strip().lower()
     target = None
     for c in classes_data.get("classes", []):
         if c.get("id") == class_id and (c.get("teacher_email") or "").lower() == teacher_email:
             current = c.setdefault("settings", {})
-            if "ai_enabled" in settings:
+            if ai_master_enabled and "ai_enabled" in settings:
                 current["ai_enabled"] = bool(settings.get("ai_enabled"))
             if "wiki_enabled" in settings:
                 current["wiki_enabled"] = bool(settings.get("wiki_enabled"))
+            if "wiki_url" in settings:
+                current["wiki_url"] = str(settings.get("wiki_url") or "")[:1000]
             if "wiki_html" in settings:
                 current["wiki_html"] = str(settings.get("wiki_html") or "")
             target = c
@@ -2406,6 +2414,10 @@ for _fn in ("fork", "forkpty", "execv", "execve", "execvp", "execvpe",
             "spawnv", "spawnve", "spawnvp", "spawnvpe"):
     if hasattr(_os, _fn):
         setattr(_os, _fn, _blocked_call)
+# Block filesystem introspection/mutation helper APIs.
+for _fn in ("listdir", "scandir", "walk", "readlink", "remove", "unlink", "rmdir", "removedirs", "rename", "replace"):
+    if hasattr(_os, _fn):
+        setattr(_os, _fn, _blocked_call)
 # ---- End security sandbox ----
 
 def _ide_input(prompt=""):
@@ -2434,7 +2446,9 @@ exec(_user_code, {{}})
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            cwd=cwd
+            cwd=cwd,
+            env={"PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"},
+            close_fds=True
         )
         self.started_at = time.time()
         self.stop_evt.clear()
@@ -2580,10 +2594,10 @@ class JsRunner:
         runner_js_repr = repr(str(runner_js))
         cwd_repr = repr(cwd)
 
-        # Wrapper that provides a synchronous input() helper (mirrors the Python INPUT_TOKEN
-        # protocol so the existing front-end input-handling code works unchanged).
+        # Wrapper that provides synchronous input() and executes JS in a locked-down vm context.
         wrapper_code = f"""
 const fs = require('fs');
+const vm = require('vm');
 const INPUT_TOKEN = {repr(INPUT_TOKEN)};
 
 // Synchronous input() — writes prompt + INPUT_TOKEN, then reads a line from stdin.
@@ -2607,11 +2621,26 @@ function input(prompt) {{
   return line;
 }}
 
-// Execute user code
+const safeConsole = Object.freeze({{
+  log: (...args) => process.stdout.write(args.map(v => String(v)).join(' ') + '\\n'),
+  info: (...args) => process.stdout.write(args.map(v => String(v)).join(' ') + '\\n'),
+  warn: (...args) => process.stdout.write(args.map(v => String(v)).join(' ') + '\\n'),
+  error: (...args) => process.stderr.write(args.map(v => String(v)).join(' ') + '\\n')
+}});
+
 try {{
   const __userCode = fs.readFileSync({runner_js_repr}, 'utf8');
   process.chdir({cwd_repr});
-  eval(__userCode);
+  const sandbox = {{
+    console: safeConsole,
+    input,
+    Math, Date, JSON,
+    parseInt, parseFloat, isNaN, isFinite, encodeURIComponent, decodeURIComponent,
+    setTimeout, setInterval, clearTimeout, clearInterval
+  }};
+  const context = vm.createContext(sandbox, {{ codeGeneration: {{ strings: false, wasm: false }} }});
+  const script = new vm.Script(__userCode, {{ filename: 'runner.js' }});
+  script.runInContext(context, {{ timeout: {int(MAX_WALL_TIME * 1000)} }});
 }} catch (e) {{
   process.stderr.write((e && e.stack) ? e.stack : String(e));
   process.stderr.write('\\n');
@@ -2624,7 +2653,9 @@ try {{
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            cwd=cwd
+            cwd=cwd,
+            env={"NODE_DISABLE_COLORS": "1"},
+            close_fds=True
         )
         self.started_at = time.time()
         self.stop_evt.clear()
@@ -2791,7 +2822,13 @@ def on_disconnect():
 
 @socketio.on("run_code")
 def on_run_code(payload):
-    code = (payload or {}).get("code", "")
+    payload = payload or {}
+    raw_code = payload.get("code", "")
+    code = str(raw_code if isinstance(raw_code, str) else "")
+    if len(code) > MAX_RUN_CODE_CHARS:
+        emit("output", {"data": f"[Run rejected: code exceeds {MAX_RUN_CODE_CHARS} characters]\n"})
+        emit("finished", {})
+        return
     user_token = (payload or {}).get("user_token", "")
     teacher_token = (payload or {}).get("teacher_token", "")
     admin_token = (payload or {}).get("admin_token", "")
@@ -2830,8 +2867,9 @@ def on_run_code(payload):
         if not run_dir:
             run_dir = admin_root_dir
 
-    # Choose the appropriate runner based on file extension
-    is_js = Path(file_path).suffix.lower() == ".js" if file_path else False
+    # Choose the appropriate runner based on language hint or file extension.
+    language_hint = _normalize_language_hint(payload.get("language"), file_path)
+    is_js = language_hint == "javascript" or (Path(file_path).suffix.lower() == ".js" if file_path else False)
     if is_js:
         r = _get_js_runner(request.sid)
     else:
@@ -2845,7 +2883,10 @@ def on_run_code(payload):
 
 @socketio.on("send_input")
 def on_send_input(payload):
-    data = (payload or {}).get("data", "")
+    data = str((payload or {}).get("data", ""))
+    if len(data) > MAX_STDIN_CHARS:
+        emit("output", {"data": f"[Input rejected: exceeds {MAX_STDIN_CHARS} characters]\n"})
+        return
     r = _get_active_runner(request.sid)
     if not r:
         emit("output", {"data": "[Input ignored: no active process]\n"})
