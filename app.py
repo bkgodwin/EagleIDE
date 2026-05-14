@@ -1305,9 +1305,6 @@ def admin_delete_user():
     for token, info in list(_teacher_tokens.items()):
         if info.get("email", "").lower() == email:
             del _teacher_tokens[token]
-    for token, info in list(_teacher_tokens.items()):
-        if info.get("email", "").lower() == email:
-            del _teacher_tokens[token]
 
     classes_data = _load_classes()
     changed_classes = False
@@ -1550,9 +1547,18 @@ def teacher_remove_student():
             break
     _save_classes(classes_data)
     _save_users(users_data)
-    for info in _student_tokens.values():
+    for token, info in list(_student_tokens.items()):
         if (info.get("email") or "").lower() == student_email:
-            info["class_id"] = None
+            del _student_tokens[token]
+    room_name = f"class_{class_id}"
+    for sid, info in list(_socket_sid_info.items()):
+        if info.get("role") == "student" and (info.get("email") or "").lower() == student_email:
+            try:
+                leave_room(room_name, sid=sid)
+                _socket_sid_rooms.setdefault(sid, set()).discard(class_id)
+                socketio.emit("class_membership_revoked", {"class_id": class_id}, to=sid)
+            except Exception:
+                pass
     return jsonify(ok=True)
 
 
@@ -2519,6 +2525,8 @@ exec(_user_code, {{}})
 
 _runners: Dict[str, "Runner | JsRunner"] = {}
 _runner_lock = threading.Lock()
+_socket_sid_info: Dict[str, dict] = {}
+_socket_sid_rooms: Dict[str, set] = {}
 
 NODE_EXECUTABLE = shutil.which("node") or "node"
 
@@ -2750,6 +2758,7 @@ def _get_js_runner(sid: str) -> JsRunner:
 # -------------------------
 @socketio.on("connect")
 def on_connect():
+    _socket_sid_rooms[request.sid] = set()
     emit("connected", {"sid": request.sid})
 
 @socketio.on("disconnect")
@@ -2760,6 +2769,8 @@ def on_disconnect():
             r.stop()
         except Exception:
             pass
+    _socket_sid_info.pop(request.sid, None)
+    _socket_sid_rooms.pop(request.sid, None)
 
 @socketio.on("run_code")
 def on_run_code(payload):
@@ -2867,17 +2878,21 @@ def on_join_class_room(payload):
         student_class = student.get("class_id") or (_find_user(student.get("email", "")) or {}).get("class_id")
         if student_class != class_id:
             return
+        _socket_sid_info[request.sid] = {"role": "student", "email": (student.get("email") or "").strip().lower()}
     elif role == "teacher":
         teacher = _teacher_tokens.get(token)
         cls = _find_class_by_id(class_id)
         if not teacher or not cls or (cls.get("teacher_email") or "").lower() != (teacher.get("email") or "").lower():
             return
+        _socket_sid_info[request.sid] = {"role": "teacher", "email": (teacher.get("email") or "").strip().lower()}
     elif role == "admin":
         if token not in _admin_tokens:
             return
+        _socket_sid_info[request.sid] = {"role": "admin", "email": ADMIN_ACCOUNT_EMAIL.lower()}
     else:
         return
     join_room(f"class_{class_id}")
+    _socket_sid_rooms.setdefault(request.sid, set()).add(class_id)
 
 
 @socketio.on("leave_class_room")
@@ -2886,6 +2901,7 @@ def on_leave_class_room(payload):
     if not class_id:
         return
     leave_room(f"class_{class_id}")
+    _socket_sid_rooms.setdefault(request.sid, set()).discard(class_id)
 
 # -------------------------
 # Assignment system
