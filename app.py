@@ -203,7 +203,8 @@ def _bootstrap_admin_credentials() -> None:
         except (InvalidToken, Exception):
             print("Warning: Stored admin credentials could not be decrypted. Re-prompting setup.")
     print("\nFirst-time admin setup is required.\n")
-    while True:
+    max_attempts = 10
+    for _ in range(max_attempts):
         entered_email = input("Enter admin email: ").strip()
         entered_password = getpass.getpass("Enter admin password: ").strip()
         if entered_email and entered_password:
@@ -215,6 +216,7 @@ def _bootstrap_admin_credentials() -> None:
             })
             return
         print("Admin email and password are required. They cannot be blank.\n")
+    raise RuntimeError("Admin credential setup failed after maximum attempts")
 
 
 _bootstrap_admin_credentials()
@@ -598,6 +600,25 @@ def _student_in_teacher_class(teacher_email: str, student_email: str) -> Optiona
         if (c.get("teacher_email") or "").lower() == t_email and s_email in [s.lower() for s in c.get("students", [])]:
             return c
     return None
+
+
+def _revoke_student_class_rooms(student_email: str, class_id: Optional[str] = None) -> None:
+    target_email = (student_email or "").strip().lower()
+    target_class = (class_id or "").strip()
+    for sid, info in list(_socket_sid_info.items()):
+        if info.get("role") != "student" or (info.get("email") or "").lower() != target_email:
+            continue
+        rooms = list(_socket_sid_rooms.get(sid, set()))
+        for joined_class_id in rooms:
+            if target_class and joined_class_id != target_class:
+                continue
+            room_name = f"class_{joined_class_id}"
+            try:
+                leave_room(room_name, sid=sid)
+                _socket_sid_rooms.setdefault(sid, set()).discard(joined_class_id)
+                socketio.emit("class_membership_revoked", {"class_id": joined_class_id}, to=sid)
+            except Exception as exc:
+                print(f"Warning: failed to remove sid {sid} from class room {room_name}: {exc}")
 
 
 def _effective_ai_enabled(req, payload: Optional[dict] = None) -> tuple[bool, Optional[str]]:
@@ -1321,6 +1342,8 @@ def admin_delete_user():
         changed_classes = changed_classes or len(classes_data["classes"]) != before_count
     if changed_classes:
         _save_classes(classes_data)
+    if deleted_user and deleted_user.get("role") == "student":
+        _revoke_student_class_rooms(email)
     
     # Delete user files
     user_dir = _get_user_dir(email)
@@ -1552,15 +1575,7 @@ def teacher_remove_student():
     for token, info in list(_student_tokens.items()):
         if (info.get("email") or "").lower() == student_email:
             del _student_tokens[token]
-    room_name = f"class_{class_id}"
-    for sid, info in list(_socket_sid_info.items()):
-        if info.get("role") == "student" and (info.get("email") or "").lower() == student_email:
-            try:
-                leave_room(room_name, sid=sid)
-                _socket_sid_rooms.setdefault(sid, set()).discard(class_id)
-                socketio.emit("class_membership_revoked", {"class_id": class_id}, to=sid)
-            except Exception as exc:
-                print(f"Warning: failed to remove sid {sid} from class room {room_name}: {exc}")
+    _revoke_student_class_rooms(student_email, class_id)
     return jsonify(ok=True)
 
 
