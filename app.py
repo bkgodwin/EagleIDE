@@ -402,10 +402,12 @@ def _find_class_by_id(class_id: str) -> Optional[dict]:
 
 def _generate_join_code(existing_codes: set[str]) -> str:
     alphabet = string.ascii_uppercase + string.digits
-    while True:
+    max_attempts = 5000
+    for _ in range(max_attempts):
         code = "".join(secrets.choice(alphabet) for _ in range(6))
         if code not in existing_codes:
             return code
+    raise RuntimeError("Could not generate unique class join code")
 
 
 def _require_teacher(req) -> Optional[dict]:
@@ -1557,8 +1559,8 @@ def teacher_remove_student():
                 leave_room(room_name, sid=sid)
                 _socket_sid_rooms.setdefault(sid, set()).discard(class_id)
                 socketio.emit("class_membership_revoked", {"class_id": class_id}, to=sid)
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"Warning: failed to remove sid {sid} from class room {room_name}: {exc}")
     return jsonify(ok=True)
 
 
@@ -2966,10 +2968,10 @@ def get_assignments():
     
     if is_admin:
         # Admins see all assignments with submissions
-        return jsonify(ok=True, assignments=all_assignments, isAdmin=True, isTeacher=False)
+        return jsonify(ok=True, assignments=all_assignments, isAdmin=True, isTeacher=False, canManage=True)
     if is_teacher:
         teacher_assignments = [a for a in all_assignments if (a.get("createdByEmail") or "").lower() == teacher_email.lower()]
-        return jsonify(ok=True, assignments=teacher_assignments, isAdmin=True, isTeacher=True)
+        return jsonify(ok=True, assignments=teacher_assignments, isAdmin=False, isTeacher=True, canManage=True)
 
     user = _require_user(request)
     class_id = (user or {}).get("class_id")
@@ -2984,7 +2986,7 @@ def get_assignments():
         assignment_copy = dict(a)
         assignment_copy.pop("submissions", None)
         visible_assignments.append(assignment_copy)
-    return jsonify(ok=True, assignments=visible_assignments, isAdmin=False, isTeacher=False)
+    return jsonify(ok=True, assignments=visible_assignments, isAdmin=False, isTeacher=False, canManage=False)
 
 @app.post("/api/assignments/create")
 def create_assignment():
@@ -3095,14 +3097,17 @@ def delete_assignment():
     if not name:
         return jsonify(ok=False, error="Assignment name required"), 400
     
+    assignment_data = _load_assignment(name)
+    if not assignment_data:
+        return jsonify(ok=False, error="Assignment not found"), 404
+    if actor.get("role") == "teacher" and (assignment_data.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+        return jsonify(ok=False, error="You can only delete your own assignments"), 403
+
     with _assignment_lock:
         path = _get_assignment_path(name)
         if not path.exists():
             return jsonify(ok=False, error="Assignment not found"), 404
         try:
-            assignment_data = json.loads(path.read_text(encoding="utf-8"))
-            if actor.get("role") == "teacher" and (assignment_data.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
-                return jsonify(ok=False, error="You can only delete your own assignments"), 403
             path.unlink()
             owner_email = (assignment_data.get("createdByEmail") or ADMIN_ACCOUNT_EMAIL).strip().lower()
             owner_root = _get_user_dir(owner_email)
