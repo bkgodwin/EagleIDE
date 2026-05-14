@@ -2414,12 +2414,10 @@ for _fn in ("fork", "forkpty", "execv", "execve", "execvp", "execvpe",
             "spawnv", "spawnve", "spawnvp", "spawnvpe"):
     if hasattr(_os, _fn):
         setattr(_os, _fn, _blocked_call)
-# Block filesystem introspection outside allowed dir and network-oriented environment data.
-for _fn in ("listdir", "scandir", "walk", "chdir", "getcwd", "readlink", "remove", "unlink", "rmdir", "removedirs", "rename", "replace"):
+# Block filesystem introspection/mutation helper APIs.
+for _fn in ("listdir", "scandir", "walk", "readlink", "remove", "unlink", "rmdir", "removedirs", "rename", "replace"):
     if hasattr(_os, _fn):
         setattr(_os, _fn, _blocked_call)
-if hasattr(_os, "environ"):
-    _os.environ.clear()
 # ---- End security sandbox ----
 
 def _ide_input(prompt=""):
@@ -2636,7 +2634,7 @@ try {{
   const sandbox = {{
     console: safeConsole,
     input,
-    Math, Date, JSON, Array, Object, String, Number, Boolean, RegExp,
+    Math, Date, JSON,
     parseInt, parseFloat, isNaN, isFinite, encodeURIComponent, decodeURIComponent,
     setTimeout, setInterval, clearTimeout, clearInterval
   }};
