@@ -67,6 +67,7 @@ pip install -r requirements.txt
 | `eventlet` | Async networking library required by `flask-socketio` (`async_mode="eventlet"`) |
 | `requests` | HTTP client — used to call the Ollama AI API for code explain / assistant features |
 | `bcrypt` | Secure password hashing for student and admin accounts |
+| `cryptography` | Encrypts stored admin credentials in `config.txt` using Fernet |
 
 > All packages are pure-Python or have pre-built wheels for common platforms.
 > No system-level C build tools are required.
