@@ -15,6 +15,9 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/css/css.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/xml/xml.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/htmlmixed/htmlmixed.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
 
@@ -421,7 +424,7 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><div>Eagles Web IDE</div><div class="badge">Python</div><div class="badge" style="background:#f0db4f; color:#323330;">JS</div></div>
+    <div class="brand"><div>Eagles Web IDE</div><div class="badge">Python</div><div class="badge" style="background:#f0db4f; color:#323330;">JS</div><div class="badge" style="background:#e34f26; color:#fff;">HTML</div><div class="badge" style="background:#264de4; color:#fff;">CSS</div></div>
     <div class="actions">
       <button class="btn run" id="runBtn">Run ▶</button>
       <button class="btn exception-help-btn" id="exceptionHelpBtn" title="Troubleshooting Assistant" aria-label="Open troubleshooting assistant">🛠️ Help</button>
@@ -468,7 +471,7 @@
         <button class="file-action-btn" id="newFileBtn" title="Create a new file">📄 New File</button>
         <button class="file-action-btn" id="newFolderBtn" title="Create a new folder">📁 New Folder</button>
         <button class="file-action-btn" id="uploadFileBtn" title="Upload a file from your computer">⬆️ Upload</button>
-        <input type="file" id="sidebarFileInput" accept=".py,.js,.txt,.csv" style="display:none;">
+        <input type="file" id="sidebarFileInput" accept=".py,.js,.html,.css,.txt,.csv" style="display:none;">
         <button class="file-action-btn" id="refreshFilesBtn" title="Refresh file list">🔄 Refresh</button>
       </div>
       <div id="submissionScoringPanel" class="submission-scoring-panel" style="display:none;">
@@ -749,6 +752,34 @@
       <input type="text" id="aiModelInputModal" placeholder="gemma3:4b">
       <label for="assistantPromptInputModal">AI Assistant Preprompt:</label>
       <textarea id="assistantPromptInputModal" placeholder="You are a helpful Python tutor..." style="width:100%; height:80px; padding:8px; background:#1a1a1a; color:#fff; border:1px solid #2b2b2b; border-radius:6px; font-family:monospace; resize:vertical;"></textarea>
+
+      <h4 style="margin-top:20px; color:var(--columbia-blue); font-size:14px;">HTML Runtime / WebView</h4>
+      <label style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+        <input type="checkbox" id="htmlRuntimeEnabledModal" style="accent-color:#c62828">
+        Enable HTML runtime support
+      </label>
+      <label for="htmlRuntimeTimeoutModal">HTML runtime timeout (seconds):</label>
+      <input type="number" id="htmlRuntimeTimeoutModal" min="1" max="600" step="1" placeholder="30">
+      <label style="display:flex; align-items:center; gap:8px; margin-top:8px;">
+        <input type="checkbox" id="htmlAllowExternalModal" style="accent-color:#c62828">
+        Allow external internet access
+      </label>
+      <label style="display:flex; align-items:center; gap:8px; margin-top:8px;">
+        <input type="checkbox" id="htmlAllowPopupsModal" style="accent-color:#c62828">
+        Allow popup windows
+      </label>
+      <label style="display:flex; align-items:center; gap:8px; margin-top:8px;">
+        <input type="checkbox" id="htmlAllowNavigationModal" style="accent-color:#c62828">
+        Allow navigation away from generated project
+      </label>
+      <label for="htmlMaxFpsModal">Max FPS cap:</label>
+      <input type="number" id="htmlMaxFpsModal" min="1" max="120" step="1" placeholder="30">
+      <label for="htmlMemoryLimitModal">Memory limit (MB):</label>
+      <input type="number" id="htmlMemoryLimitModal" min="32" max="2048" step="1" placeholder="128">
+      <label for="htmlMaxDomNodesModal">Max DOM node count:</label>
+      <input type="number" id="htmlMaxDomNodesModal" min="100" max="200000" step="100" placeholder="3000">
+      <label for="htmlMaxPopupSpawnModal">Max popup spawn count:</label>
+      <input type="number" id="htmlMaxPopupSpawnModal" min="0" max="20" step="1" placeholder="2">
       
       <h4 style="margin-top:20px; color:var(--columbia-blue); font-size:14px;">Student Registration</h4>
       <label style="display:flex; align-items:center; gap:8px;">
@@ -1279,19 +1310,28 @@ print("Hello " + name)
     let errorLineMarkers = []; // Track error line highlights
     let waitingForUserInput = false; // Track if we're waiting for user input
     let _inTraceback = false; // Track if we're currently inside a Python traceback block
+    let htmlRuntimeWindow = null;
+    let htmlRuntimeId = '';
     const LANGUAGE_INFO = {
       python: { mode: 'python', label: 'Python', highlight: 'python' },
-      javascript: { mode: 'javascript', label: 'JavaScript', highlight: 'javascript' }
+      javascript: { mode: 'javascript', label: 'JavaScript', highlight: 'javascript' },
+      html: { mode: 'htmlmixed', label: 'HTML', highlight: 'xml' },
+      css: { mode: 'css', label: 'CSS', highlight: 'css' }
     };
 
     function getLanguageInfoForFileName(fileName) {
       const lower = String(fileName || '').trim().toLowerCase();
-      return lower.endsWith('.js') ? LANGUAGE_INFO.javascript : LANGUAGE_INFO.python;
+      if (lower.endsWith('.js')) return LANGUAGE_INFO.javascript;
+      if (lower.endsWith('.html') || lower.endsWith('.htm')) return LANGUAGE_INFO.html;
+      if (lower.endsWith('.css')) return LANGUAGE_INFO.css;
+      return LANGUAGE_INFO.python;
     }
 
     function getActiveLanguageInfo() {
       const mode = String(window.eagleEditor?.getOption?.('mode') || '').toLowerCase();
       if (mode.includes('javascript')) return LANGUAGE_INFO.javascript;
+      if (mode.includes('html')) return LANGUAGE_INFO.html;
+      if (mode.includes('css')) return LANGUAGE_INFO.css;
       return getLanguageInfoForFileName(currentOpenFile?.name || '');
     }
 
@@ -1654,6 +1694,137 @@ print("Hello " + name)
       appendOut('[Socket.IO library not loaded - IDE functionality limited]\n');
     }
 
+    function isHtmlRuntimeFile(name) {
+      const lower = String(name || '').trim().toLowerCase();
+      return lower.endsWith('.html') || lower.endsWith('.htm');
+    }
+
+    async function cleanupHtmlRuntimeSession(runtimeId = htmlRuntimeId) {
+      const rid = String(runtimeId || '').trim();
+      if (!rid) return;
+      try {
+        await fetch('/api/html-runtime/cleanup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ runtime_id: rid })
+        });
+      } catch {}
+      if (rid === htmlRuntimeId) htmlRuntimeId = '';
+    }
+
+    function closeHtmlRuntimeWindow() {
+      try {
+        if (htmlRuntimeWindow && !htmlRuntimeWindow.closed) {
+          htmlRuntimeWindow.close();
+        }
+      } catch {}
+      htmlRuntimeWindow = null;
+      cleanupHtmlRuntimeSession();
+    }
+
+    function openHtmlRuntimePopup(runtimeData) {
+      if (!runtimeData?.runtime_id || !runtimeData?.view_url) {
+        appendOut('[HTML Runtime] Invalid runtime response\n');
+        return;
+      }
+
+      closeHtmlRuntimeWindow();
+      htmlRuntimeId = runtimeData.runtime_id;
+      const popup = window.open('', `eagle-html-runtime-${runtimeData.runtime_id}`, 'popup=yes,width=1100,height=760');
+      if (!popup) {
+        appendOut('[HTML Runtime] Popup blocked by browser.\n');
+        cleanupHtmlRuntimeSession(runtimeData.runtime_id);
+        return;
+      }
+      htmlRuntimeWindow = popup;
+
+      const timeoutSeconds = Number(runtimeData.timeout_seconds || 30);
+      const allowPopups = !!runtimeData.allow_popups;
+      const title = `HTML WebView • ${currentOpenFile?.name || 'index.html'}`;
+      const iframeSandbox = ['allow-scripts', 'allow-same-origin'];
+      if (allowPopups) iframeSandbox.push('allow-popups');
+      const popupDoc = popup.document;
+      popupDoc.open();
+      popupDoc.write(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>${title.replace(/</g, '&lt;')}</title>
+  <style>
+    body{margin:0;font-family:Inter,Arial,sans-serif;background:#121212;color:#eaeaea;display:flex;flex-direction:column;height:100vh}
+    .hdr{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#1f1f1f;border-bottom:1px solid #333}
+    .hdr strong{font-size:14px}
+    .hdr button{border:0;border-radius:8px;padding:6px 10px;background:#c62828;color:#fff;cursor:pointer;font-weight:700}
+    .runtime-msg{font-size:12px;opacity:.85}
+    #runtimeFrame{flex:1;width:100%;border:0;background:#fff}
+  </style>
+</head>
+<body>
+  <div class="hdr">
+    <div><strong>${title.replace(/</g, '&lt;')}</strong><div class="runtime-msg" id="runtimeMsg">Running...</div></div>
+    <button id="runtimeExitBtn">Exit ✕</button>
+  </div>
+  <iframe id="runtimeFrame" sandbox="${iframeSandbox.join(' ')}" src="${runtimeData.view_url}"></iframe>
+  <script>
+    const runtimeId = ${JSON.stringify(runtimeData.runtime_id)};
+    const timeoutMs = ${Math.max(1000, Math.floor(timeoutSeconds * 1000))};
+    let stopped = false;
+    const frame = document.getElementById('runtimeFrame');
+    const msgEl = document.getElementById('runtimeMsg');
+    const sendToOpener = (payload) => { try { window.opener && window.opener.postMessage(payload, '*'); } catch {} };
+    const setMsg = (text) => { if (msgEl) msgEl.textContent = text; };
+    const cleanupRuntime = () => {
+      try {
+        navigator.sendBeacon('/api/html-runtime/cleanup', new Blob([JSON.stringify({ runtime_id: runtimeId })], { type: 'application/json' }));
+      } catch {
+        fetch('/api/html-runtime/cleanup', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ runtime_id: runtimeId }) }).catch(() => {});
+      }
+    };
+    const terminate = (reason) => {
+      if (stopped) return;
+      stopped = true;
+      frame.src = 'about:blank';
+      setMsg(reason || 'Execution stopped.');
+      sendToOpener({ type:'eagle-html-runtime-log', level:'warn', message: reason || 'Execution stopped.' });
+    };
+    document.getElementById('runtimeExitBtn').addEventListener('click', () => window.close());
+    window.addEventListener('beforeunload', cleanupRuntime);
+    const timeoutHandle = setTimeout(() => terminate('Execution time limit reached.'), timeoutMs);
+    window.addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (!data.__eagleHtmlRuntime) return;
+      if (data.type === 'limit') {
+        terminate('Execution time limit reached.');
+      } else if (data.type === 'error') {
+        const details = data.message || 'JavaScript runtime error';
+        sendToOpener({ type:'eagle-html-runtime-log', level:'error', message: details });
+      } else if (data.type === 'console' && data.level === 'error') {
+        sendToOpener({ type:'eagle-html-runtime-log', level:'error', message: data.message || 'console.error' });
+      } else if (data.type === 'status') {
+        sendToOpener({ type:'eagle-html-runtime-log', level:'warn', message: data.message || 'Runtime status' });
+      }
+    });
+    frame.addEventListener('load', () => {
+      if (!stopped) setMsg('Running...');
+    });
+    frame.addEventListener('error', () => terminate('Execution stopped due to iframe load error.'));
+    window.addEventListener('unload', () => clearTimeout(timeoutHandle));
+  </script>
+</body>
+</html>`);
+      popupDoc.close();
+      appendOut('[HTML Runtime] WebView opened.\n');
+    }
+
+    window.addEventListener('message', (event) => {
+      const payload = event.data || {};
+      if (payload.type !== 'eagle-html-runtime-log') return;
+      const lvl = String(payload.level || 'info').toUpperCase();
+      const msg = String(payload.message || '').trim();
+      if (!msg) return;
+      appendOut(`[HTML ${lvl}] ${msg}\n`);
+    });
+
     document.getElementById('runBtn').addEventListener('click', async () => {
       // Auto-expand sidebar to show output
       const collapsed = document.body.classList.contains('right-collapsed');
@@ -1682,6 +1853,28 @@ print("Hello " + name)
           appendOut(`[Warning: could not save "${currentOpenFile.name}" before running: ${err}]\n`);
         }
       }
+      if (isHtmlRuntimeFile(currentOpenFile?.name || '')) {
+        if (!currentOpenFile?.path) {
+          appendOut('[HTML Runtime] Open an HTML file first.\n');
+          return;
+        }
+        try {
+          const res = await fetch('/api/html-runtime/start', {
+            method: 'POST',
+            headers: fileJsonHeaders(),
+            body: JSON.stringify({ file_path: currentOpenFile.path })
+          });
+          const j = await res.json().catch(() => ({}));
+          if (!j?.ok) {
+            appendOut(`[HTML Runtime Error] ${j?.error || 'Failed to start HTML runtime'}\n`);
+            return;
+          }
+          openHtmlRuntimePopup(j);
+        } catch (err) {
+          appendOut('[HTML Runtime Error] Network error while starting HTML runtime.\n');
+        }
+        return;
+      }
       appendOut('[Sending code]\n');
       if (socket) {
         socket.emit('run_code', { code: editor.getValue(), user_token: USER_TOKEN || '', admin_token: ADMIN_TOKEN || '', file_path: currentOpenFile ? currentOpenFile.path : '' });
@@ -1703,6 +1896,7 @@ print("Hello " + name)
       if (e.target === exceptionHelpModal) closeExceptionHelpModal();
     });
     document.getElementById('stopBtn').addEventListener('click', () => {
+      closeHtmlRuntimeWindow();
       if (socket) {
         socket.emit('stop', {});
       }
@@ -2277,6 +2471,17 @@ print("Hello " + name)
       document.getElementById('aiModelInputModal').value = currentConfig?.ai_model || 'gemma3:4b';
       document.getElementById('assistantPromptInputModal').value = currentConfig?.ai_assistant_preprompt || '';
 
+      // HTML runtime settings
+      document.getElementById('htmlRuntimeEnabledModal').checked = currentConfig?.html_runtime_enabled !== false;
+      document.getElementById('htmlRuntimeTimeoutModal').value = Number(currentConfig?.html_runtime_timeout_seconds || 30);
+      document.getElementById('htmlAllowExternalModal').checked = !!currentConfig?.html_runtime_allow_external_internet;
+      document.getElementById('htmlAllowPopupsModal').checked = !!currentConfig?.html_runtime_allow_popups;
+      document.getElementById('htmlAllowNavigationModal').checked = !!currentConfig?.html_runtime_allow_navigation;
+      document.getElementById('htmlMaxFpsModal').value = Number(currentConfig?.html_runtime_max_fps || 30);
+      document.getElementById('htmlMemoryLimitModal').value = Number(currentConfig?.html_runtime_memory_limit_mb || 128);
+      document.getElementById('htmlMaxDomNodesModal').value = Number(currentConfig?.html_runtime_max_dom_nodes || 3000);
+      document.getElementById('htmlMaxPopupSpawnModal').value = Number(currentConfig?.html_runtime_max_popups || 2);
+
       // Registration setting
       document.getElementById('registrationEnabledModal').checked = currentConfig?.registration_enabled !== false;
 
@@ -2302,6 +2507,17 @@ print("Hello " + name)
       const ai_ollama_url = document.getElementById('aiUrlInputModal').value.trim();
       const ai_model = document.getElementById('aiModelInputModal').value.trim();
       const ai_assistant_preprompt = document.getElementById('assistantPromptInputModal').value.trim();
+
+      // HTML runtime settings
+      const html_runtime_enabled = document.getElementById('htmlRuntimeEnabledModal').checked;
+      const html_runtime_timeout_seconds = parseInt(document.getElementById('htmlRuntimeTimeoutModal').value, 10) || 30;
+      const html_runtime_allow_external_internet = document.getElementById('htmlAllowExternalModal').checked;
+      const html_runtime_allow_popups = document.getElementById('htmlAllowPopupsModal').checked;
+      const html_runtime_allow_navigation = document.getElementById('htmlAllowNavigationModal').checked;
+      const html_runtime_max_fps = parseInt(document.getElementById('htmlMaxFpsModal').value, 10) || 30;
+      const html_runtime_memory_limit_mb = parseInt(document.getElementById('htmlMemoryLimitModal').value, 10) || 128;
+      const html_runtime_max_dom_nodes = parseInt(document.getElementById('htmlMaxDomNodesModal').value, 10) || 3000;
+      const html_runtime_max_popups = parseInt(document.getElementById('htmlMaxPopupSpawnModal').value, 10) || 2;
       
       // Save all settings at once
       await saveConfig({ 
@@ -2312,7 +2528,16 @@ print("Hello " + name)
         ai_explainer_enabled, 
         ai_ollama_url, 
         ai_model, 
-        ai_assistant_preprompt 
+        ai_assistant_preprompt,
+        html_runtime_enabled,
+        html_runtime_timeout_seconds,
+        html_runtime_allow_external_internet,
+        html_runtime_allow_popups,
+        html_runtime_allow_navigation,
+        html_runtime_max_fps,
+        html_runtime_memory_limit_mb,
+        html_runtime_max_dom_nodes,
+        html_runtime_max_popups
       });
       
       applyConfig(currentConfig);
@@ -2547,7 +2772,12 @@ print("Hello " + name)
           arrow.textContent = '▶';
           row.appendChild(arrow);
         } else {
-          icon.textContent = item.name.endsWith('.py') ? '🐍' : item.name.endsWith('.js') ? '⚡' : item.name.endsWith('.csv') ? '📊' : '📄';
+          icon.textContent =
+            item.name.endsWith('.py') ? '🐍' :
+            item.name.endsWith('.js') ? '⚡' :
+            item.name.endsWith('.html') ? '🌐' :
+            item.name.endsWith('.css') ? '🎨' :
+            item.name.endsWith('.csv') ? '📊' : '📄';
         }
 
         row.appendChild(icon);
@@ -2791,7 +3021,7 @@ print("Hello " + name)
     }
 
     document.getElementById('newFileBtn').addEventListener('click', async () => {
-      let name = prompt('New file name (e.g. main.py or script.js):');
+      let name = prompt('New file name (e.g. main.py, script.js, index.html, styles.css):');
       if (!name) return;
       name = name.trim();
       // Auto-add .py extension if no extension is provided
