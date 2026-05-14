@@ -1569,10 +1569,10 @@ print("Hello " + name)
       const showOnlyNotes = isGuest || isStudentNoClass;
       if (tTeacher) tTeacher.style.display = showOnlyNotes ? 'none' : '';
       if (tAssignment) tAssignment.style.display = showOnlyNotes ? 'none' : '';
-      if (tExplain) tExplain.style.display = (showOnlyNotes ? false : effectiveAiEnabled) ? '' : 'none';
-      if (tChal) tChal.style.display = (showOnlyNotes ? false : effectiveAiEnabled) ? '' : 'none';
-      if (tAssist) tAssist.style.display = (showOnlyNotes ? false : effectiveAiEnabled) ? '' : 'none';
-      if (tWiki) tWiki.style.display = (showOnlyNotes ? false : ((ADMIN_TOKEN || !!classCtx) && (ADMIN_TOKEN || wikiEnabledForClass))) ? '' : 'none';
+      if (tExplain) tExplain.style.display = (!showOnlyNotes && effectiveAiEnabled) ? '' : 'none';
+      if (tChal) tChal.style.display = (!showOnlyNotes && effectiveAiEnabled) ? '' : 'none';
+      if (tAssist) tAssist.style.display = (!showOnlyNotes && effectiveAiEnabled) ? '' : 'none';
+      if (tWiki) tWiki.style.display = (!showOnlyNotes && ((ADMIN_TOKEN || !!classCtx) && (ADMIN_TOKEN || wikiEnabledForClass))) ? '' : 'none';
       const classJoinNotice = document.getElementById('classJoinNotice');
       if (classJoinNotice) classJoinNotice.style.display = isStudentNoClass ? '' : 'none';
       const lessonLocal = document.getElementById('lessonLocal');
@@ -2929,6 +2929,9 @@ print("Hello " + name)
         wrap.innerHTML = '<div style="color:#888; font-size:12px;">No classes yet.</div>';
         return;
       }
+      const aiToggleTemplate = (cls) => canShowAiToggle
+        ? `<label style="font-size:12px;"><input type="checkbox" class="cls-ai" data-class="${escapeHtml(cls.id)}" ${cls.settings?.ai_enabled ? 'checked' : ''}> AI enabled</label>`
+        : '';
       wrap.innerHTML = teacherClasses.map(cls => `
         <div style="border:1px solid var(--theme-border-mid); border-radius:8px; padding:10px; margin-bottom:10px;">
           <div style="display:flex; justify-content:space-between; gap:8px; align-items:center;">
@@ -2936,7 +2939,7 @@ print("Hello " + name)
             <button class="btn secondary select-class-btn" data-class="${escapeHtml(cls.id)}" style="font-size:11px; padding:3px 8px;">Use Class</button>
           </div>
           <div style="margin-top:8px; display:flex; gap:10px; flex-wrap:wrap;">
-            ${canShowAiToggle ? `<label style="font-size:12px;"><input type="checkbox" class="cls-ai" data-class="${escapeHtml(cls.id)}" ${cls.settings?.ai_enabled ? 'checked' : ''}> AI enabled</label>` : ''}
+            ${aiToggleTemplate(cls)}
             <label style="font-size:12px;"><input type="checkbox" class="cls-wiki" data-class="${escapeHtml(cls.id)}" ${cls.settings?.wiki_enabled ? 'checked' : ''}> Wiki enabled</label>
             <button class="btn secondary save-class-settings-btn" data-class="${escapeHtml(cls.id)}" style="font-size:11px; padding:3px 8px;">Save Settings</button>
           </div>
