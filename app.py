@@ -310,7 +310,11 @@ def _sanitize_email_for_path(email: str) -> str:
     """Convert email to safe directory name"""
     safe = email.replace("@", "_at_").replace(".", "_dot_")
     safe = re.sub(r"[^a-zA-Z0-9_-]", "", safe)
-    return safe[:64]  # limit length
+    safe = safe[:64]  # limit length
+    if safe:
+        return safe
+    digest = hashlib.sha256(email.encode("utf-8")).hexdigest()[:16]
+    return f"user_{digest}"
 
 def _load_users() -> dict:
     with _users_lock:
@@ -483,13 +487,23 @@ def _get_user_dir(email: str) -> Path:
     return USER_FILES_DIR / _sanitize_email_for_path(email)
 
 
-def _seed_example_files(user_dir: Path) -> None:
+def _seed_example_files(email: str) -> None:
     """Create starter Examples files for newly-created accounts."""
     try:
-        examples_dir = user_dir / EXAMPLES_DIR_NAME
+        safe_component = _sanitize_email_for_path(email)
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", safe_component):
+            return
+        user_dir = _validate_user_path(USER_FILES_DIR, safe_component)
+        if not user_dir:
+            return
+        examples_dir = _validate_user_path(USER_FILES_DIR, f"{safe_component}/{EXAMPLES_DIR_NAME}")
+        if not examples_dir:
+            return
         examples_dir.mkdir(parents=True, exist_ok=True)
         for file_name, content in EXAMPLE_FILES.items():
-            target = examples_dir / file_name
+            target = _validate_user_path(USER_FILES_DIR, f"{safe_component}/{EXAMPLES_DIR_NAME}/{file_name}")
+            if not target:
+                continue
             if not target.exists():
                 target.write_text(content, encoding="utf-8")
     except Exception:
@@ -775,7 +789,7 @@ def auth_register():
     # Create user directory
     user_dir = _get_user_dir(email)
     user_dir.mkdir(parents=True, exist_ok=True)
-    _seed_example_files(user_dir)
+    _seed_example_files(email)
     
     # Issue token
     token = uuid.uuid4().hex
@@ -810,7 +824,7 @@ def auth_login():
     # Ensure user directory exists
     user_dir = _get_user_dir(email)
     user_dir.mkdir(parents=True, exist_ok=True)
-    _seed_example_files(user_dir)
+    _seed_example_files(email)
     
     _record_user_sign_in(email)
     token = uuid.uuid4().hex
@@ -1290,9 +1304,6 @@ def admin_create_teacher():
         "enabled": True,
     })
     _save_users(users_data)
-    teacher_dir = _get_user_dir(email)
-    teacher_dir.mkdir(parents=True, exist_ok=True)
-    _seed_example_files(teacher_dir)
     return jsonify(ok=True)
 
 @app.post("/api/admin/users/reset-password")
@@ -2444,7 +2455,9 @@ def _safe_open(file, mode="r", *args, **kwargs):
         p = _os.path.realpath(str(file))
         if _os.path.commonpath([p, _ALLOWED_DIR]) != _ALLOWED_DIR:
             raise PermissionError(f"Access to {{file!r}} is not allowed in this environment")
-    except (TypeError, ValueError):
+    except TypeError:
+        return _real_open(file, mode, *args, **kwargs)
+    except ValueError:
         raise PermissionError(f"Access to {{file!r}} is not allowed in this environment")
     return _real_open(file, mode, *args, **kwargs)
 builtins.open = _safe_open
