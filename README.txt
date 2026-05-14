@@ -1,8 +1,9 @@
 ================================================================================
-                            EAGLE WEB IDE (Python + JavaScript)
+                     EAGLE WEB IDE (Python + JavaScript + HTML + CSS)
 ================================================================================
 
-A browser-based IDE with real-time code execution for Python and JavaScript,
+A browser-based IDE with real-time code execution for Python, JavaScript, and
+browser-based HTML/CSS projects,
 AI-powered features, assignment management, and interactive challenges for
 educational environments.
 
@@ -168,23 +169,44 @@ For production use, consider:
 ================================================================================
 
 Students can:
-1. Write Python or JavaScript code in the editor
+1. Write Python, JavaScript, HTML, or CSS code in the editor
 2. Run code with the "Run ▶" button
 3. Stop execution with "Stop ⏹"
-4. Create, save, and run .py and .js files
-5. Import/export .py, .js, or .txt files
+4. Create, save, and run .py, .js, and .html files
+5. Import/export .py, .js, .html, .css, or .txt files
 6. Adjust font size with the slider
 7. View output in the terminal panel
 8. Provide input when programs use input()
 9. View lessons and notes in the sidebar
 
 Features:
-- Syntax highlighting for Python and JavaScript
+- Syntax highlighting for Python, JavaScript, HTML, and CSS
 - Auto-indentation
 - Line numbers
 - Error highlighting
 - Real-time code execution (30 second timeout)
 - Interactive input support (input() works in both Python and JavaScript)
+
+--------------------------------------------------
+HTML/CSS WEBVIEW RUNTIME
+--------------------------------------------------
+- Create and edit .html and .css files in the file browser
+- Click Run on an .html file to open a popup WebView window
+- HTML output renders live with linked CSS/JS from the project folder
+- Runtime auto-stops at the configured timeout (default 30 seconds)
+- JavaScript runtime errors are mirrored to the shell panel
+- Popup includes a header and Exit button, and auto-cleans on close
+
+Admin HTML runtime config keys:
+- "html_runtime_enabled": true/false
+- "html_runtime_timeout_seconds": 30
+- "html_runtime_allow_external_internet": true/false
+- "html_runtime_allow_popups": true/false
+- "html_runtime_allow_navigation": true/false
+- "html_runtime_max_fps": 30
+- "html_runtime_memory_limit_mb": 128
+- "html_runtime_max_dom_nodes": 3000
+- "html_runtime_max_popups": 2
 
 --------------------------------------------------
 JAVASCRIPT SUPPORT
