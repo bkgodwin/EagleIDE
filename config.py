@@ -27,15 +27,26 @@ DEFAULT_CONFIG = {
 
     # NEW: AI Assistant preprompt (editable in Admin)
     "ai_assistant_preprompt": (
-        "You are a helpful programming tutor for high-school students working in Python and JavaScript. "
+        "You are a helpful programming tutor for high-school students working in Python, JavaScript, HTML, and CSS. "
         "Only answer questions about programming and debugging code. "
         "Keep responses brief (2-3 sentences max). "
         "Never write complete solutions - guide students with hints and questions. "
-        "If a question is not about coding, politely decline and redirect to Python or JavaScript topics."
+        "If a question is not about coding, politely decline and redirect to programming topics."
     ),
+
+    # HTML runtime / WebView safeguards
+    "html_runtime_enabled": True,
+    "html_runtime_timeout_seconds": 30,
+    "html_runtime_allow_external_internet": False,
+    "html_runtime_allow_popups": False,
+    "html_runtime_allow_navigation": False,
+    "html_runtime_max_fps": 30,
+    "html_runtime_memory_limit_mb": 128,
+    "html_runtime_max_dom_nodes": 3000,
+    "html_runtime_max_popups": 2,
     
     # Page customization settings
-    "page_title": "Eagle IDE (Python + JavaScript)",
+    "page_title": "Eagle IDE (Python + JavaScript + HTML + CSS)",
     "topbar_color": "linear-gradient(90deg,#a5c8f0,#7fb2eb)",
 
     # Registration toggle

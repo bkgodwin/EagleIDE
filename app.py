@@ -2,6 +2,7 @@
 import eventlet
 eventlet.monkey_patch()
 
+import atexit
 import csv
 import hashlib
 import heapq
@@ -44,10 +45,17 @@ IDLE_TIMEOUT = 10.0        # reserved, if you later want idle detection
 MAX_OUTPUT_BYTES = 500_000  # 500 KB max stdout before killing the process
 MAX_ASSISTANT_CODE_CHARS = 12_000
 
+# HTML runtime defaults/safeguards
+HTML_RUNTIME_DEFAULT_TIMEOUT = 30
+HTML_RUNTIME_DEFAULT_MAX_FPS = 30
+HTML_RUNTIME_DEFAULT_MEMORY_MB = 128
+HTML_RUNTIME_DEFAULT_MAX_DOM_NODES = 3000
+HTML_RUNTIME_DEFAULT_MAX_POPUPS = 2
+
 # File count limits
 MAX_FILES_PER_FOLDER = 20
 MAX_FILES_PER_ACCOUNT = 100
-ALLOWED_EXTENSIONS = {".py", ".js", ".txt", ".csv"}
+ALLOWED_EXTENSIONS = {".py", ".js", ".html", ".css", ".txt", ".csv"}
 
 os.makedirs(SANDBOX_DIR, exist_ok=True)
 os.makedirs(ASSIGNMENTS_DIR, exist_ok=True)
@@ -76,12 +84,21 @@ except Exception:
         "ai_ollama_url": "http://127.0.0.1:11434",
         "ai_model": "gemma3:4b",
         "ai_assistant_preprompt": (
-            "You are a helpful programming tutor for high-school students working in Python and JavaScript. "
+            "You are a helpful programming tutor for high-school students working in Python, JavaScript, HTML, and CSS. "
             "Only answer questions about programming and debugging code. "
             "Keep explanations short, accurate, and step-by-step. If a question is not about coding, "
-            "politely decline and redirect to Python or JavaScript topics."
+            "politely decline and redirect to programming topics."
         ),
-        "page_title": "Eagle IDE (Python + JavaScript)",
+        "html_runtime_enabled": True,
+        "html_runtime_timeout_seconds": HTML_RUNTIME_DEFAULT_TIMEOUT,
+        "html_runtime_allow_external_internet": False,
+        "html_runtime_allow_popups": False,
+        "html_runtime_allow_navigation": False,
+        "html_runtime_max_fps": HTML_RUNTIME_DEFAULT_MAX_FPS,
+        "html_runtime_memory_limit_mb": HTML_RUNTIME_DEFAULT_MEMORY_MB,
+        "html_runtime_max_dom_nodes": HTML_RUNTIME_DEFAULT_MAX_DOM_NODES,
+        "html_runtime_max_popups": HTML_RUNTIME_DEFAULT_MAX_POPUPS,
+        "page_title": "Eagle IDE (Python + JavaScript + HTML + CSS)",
         "topbar_color": "linear-gradient(90deg,#a5c8f0,#7fb2eb)",
         "registration_enabled": True,
     }
@@ -140,9 +157,72 @@ def _update_config(partial: Dict[str, Any]) -> Dict[str, Any]:
 CONFIG = _load_config()
 print(f"Configuration loaded successfully with {len(CONFIG)} settings")
 
+
+def _cfg_bool(cfg: Dict[str, Any], key: str, default: bool) -> bool:
+    return bool(cfg.get(key, default))
+
+
+def _cfg_int(cfg: Dict[str, Any], key: str, default: int, minimum: int, maximum: int) -> int:
+    raw = cfg.get(key, default)
+    try:
+        val = int(raw)
+    except Exception:
+        val = default
+    return max(minimum, min(maximum, val))
+
 def _require_admin(req) -> bool:
     token = req.headers.get("X-Admin-Token", "").strip()
     return token in _admin_tokens
+
+
+_html_runtime_lock = threading.Lock()
+_html_runtime_sessions: Dict[str, Dict[str, Any]] = {}
+
+
+def _delete_path_quietly(path: Path) -> None:
+    try:
+        resolved = path.resolve()
+        sandbox_root = SANDBOX_DIR.resolve()
+        common = os.path.commonpath([str(resolved), str(sandbox_root)])
+        if common != str(sandbox_root):
+            return
+        if not resolved.name.startswith("html_runtime_"):
+            return
+        if resolved.exists():
+            shutil.rmtree(resolved, ignore_errors=True)
+    except Exception:
+        pass
+
+
+def _cleanup_expired_html_runtime_sessions(force: bool = False) -> None:
+    now = time.time()
+    to_remove: list[tuple[str, Path]] = []
+    with _html_runtime_lock:
+        for runtime_id, session in list(_html_runtime_sessions.items()):
+            expires_at = float(session.get("expires_at", 0))
+            if force or expires_at <= now:
+                runtime_dir = Path(session.get("runtime_dir", ""))
+                to_remove.append((runtime_id, runtime_dir))
+                _html_runtime_sessions.pop(runtime_id, None)
+    for _, runtime_dir in to_remove:
+        _delete_path_quietly(runtime_dir)
+
+
+def _remove_html_runtime_session(runtime_id: str) -> None:
+    runtime_dir = None
+    with _html_runtime_lock:
+        session = _html_runtime_sessions.pop(runtime_id, None)
+        if session:
+            runtime_dir = Path(session.get("runtime_dir", ""))
+    if runtime_dir:
+        _delete_path_quietly(runtime_dir)
+
+
+atexit.register(lambda: _cleanup_expired_html_runtime_sessions(force=True))
+
+
+def _is_html_file(path: Path) -> bool:
+    return path.suffix.lower() in {".html", ".htm"}
 
 # -------------------------
 # User account management
@@ -503,7 +583,7 @@ def files_list():
                         "type": "folder",
                         "children": build_tree(entry, base)
                     })
-                elif entry.is_file() and entry.suffix in ALLOWED_EXTENSIONS:
+                elif entry.is_file() and entry.suffix.lower() in ALLOWED_EXTENSIONS:
                     items.append({
                         "name": entry.name,
                         "path": rel,
@@ -766,7 +846,14 @@ def files_download():
         return jsonify(ok=False, error="File type not allowed"), 400
 
     ext = target.suffix.lower()
-    mimetypes_map = {".py": "text/x-python", ".js": "text/javascript", ".txt": "text/plain", ".csv": "text/csv"}
+    mimetypes_map = {
+        ".py": "text/x-python",
+        ".js": "text/javascript",
+        ".html": "text/html",
+        ".css": "text/css",
+        ".txt": "text/plain",
+        ".csv": "text/csv",
+    }
     mimetype = mimetypes_map.get(ext, "text/plain")
 
     try:
@@ -1013,17 +1100,33 @@ def call_ollama_generate(ollama_url: str, model: str, prompt: str, timeout: floa
 def _normalize_language_hint(language: Any, file_name: str = "") -> str:
     raw = str(language or "").strip().lower()
     file_name = (file_name or "").strip().lower()
+    if raw in {"html", "htm", "htmlmixed", "xml"} or file_name.endswith(".html") or file_name.endswith(".htm"):
+        return "html"
+    if raw in {"css"} or file_name.endswith(".css"):
+        return "css"
     if raw in {"js", "javascript", "node", "nodejs"} or file_name.endswith(".js"):
         return "javascript"
     return "python"
 
 
 def _language_label(language: str) -> str:
-    return "JavaScript" if language == "javascript" else "Python"
+    if language == "javascript":
+        return "JavaScript"
+    if language == "html":
+        return "HTML"
+    if language == "css":
+        return "CSS"
+    return "Python"
 
 
 def _language_best_practices(language: str) -> str:
-    return "Does it follow JavaScript best practices?" if language == "javascript" else "Does it follow Python best practices?"
+    if language == "javascript":
+        return "Does it follow JavaScript best practices?"
+    if language == "html":
+        return "Does it follow HTML best practices?"
+    if language == "css":
+        return "Does it follow CSS best practices?"
+    return "Does it follow Python best practices?"
 
 # -------------------------
 # Explain endpoint
@@ -1355,6 +1458,302 @@ def assistant_chat():
 @app.get("/")
 def root():
     return send_from_directory(BASE_DIR, "index.html")
+
+
+def _html_runtime_js_bridge(cfg: Dict[str, Any]) -> str:
+    bridge_cfg = {
+        "allow_external_internet": _cfg_bool(cfg, "html_runtime_allow_external_internet", False),
+        "allow_navigation": _cfg_bool(cfg, "html_runtime_allow_navigation", False),
+        "allow_popups": _cfg_bool(cfg, "html_runtime_allow_popups", False),
+        "max_fps": _cfg_int(cfg, "html_runtime_max_fps", HTML_RUNTIME_DEFAULT_MAX_FPS, 1, 120),
+        "memory_limit_mb": _cfg_int(cfg, "html_runtime_memory_limit_mb", HTML_RUNTIME_DEFAULT_MEMORY_MB, 32, 2048),
+        "max_dom_nodes": _cfg_int(cfg, "html_runtime_max_dom_nodes", HTML_RUNTIME_DEFAULT_MAX_DOM_NODES, 100, 200000),
+        "max_popups": _cfg_int(cfg, "html_runtime_max_popups", HTML_RUNTIME_DEFAULT_MAX_POPUPS, 0, 20),
+    }
+    config_json = json.dumps(bridge_cfg, ensure_ascii=False)
+    return f"""
+<script>
+(function(){{
+  const CFG = {config_json};
+  const TAG = "__eagleHtmlRuntime";
+  const send = (type, payload = {{}}) => {{
+    try {{ parent.postMessage({{ [TAG]: true, type, ...payload }}, "*"); }} catch {{}}
+  }};
+
+  const stringify = (value) => {{
+    if (typeof value === "string") return value;
+    try {{ return JSON.stringify(value); }} catch {{ return String(value); }}
+  }};
+
+  ["log","warn","error","info"].forEach((level) => {{
+    const original = console[level];
+    console[level] = function(...args){{
+      send("console", {{ level, message: args.map(stringify).join(" ") }});
+      return original.apply(console, args);
+    }};
+  }});
+
+  window.addEventListener("error", (event) => {{
+    send("error", {{
+      message: event?.message || "JavaScript error",
+      source: event?.filename || "",
+      line: event?.lineno || 0,
+      column: event?.colno || 0,
+      stack: event?.error?.stack || ""
+    }});
+  }});
+
+  window.addEventListener("unhandledrejection", (event) => {{
+    send("error", {{ message: "Unhandled promise rejection: " + stringify(event?.reason) }});
+  }});
+
+  if (!CFG.allow_navigation) {{
+    const blocked = () => send("status", {{ message: "Navigation blocked by admin settings." }});
+    const guardNavigation = (url) => {{
+      const raw = String(url || "").trim();
+      if (!raw) return true;
+      if (raw.startsWith("#")) return true;
+      try {{
+        const parsed = new URL(raw, window.location.href);
+        if (parsed.origin !== window.location.origin || parsed.pathname !== window.location.pathname) {{
+          blocked();
+          return false;
+        }}
+      }} catch {{}}
+      return true;
+    }};
+    document.addEventListener("click", (event) => {{
+      const anchor = event.target && event.target.closest ? event.target.closest("a[href]") : null;
+      if (!anchor) return;
+      if (!guardNavigation(anchor.getAttribute("href"))) {{
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+    }}, true);
+    try {{
+      const locAssign = window.location.assign.bind(window.location);
+      const locReplace = window.location.replace.bind(window.location);
+      window.location.assign = (url) => {{
+        if (!guardNavigation(url)) return;
+        locAssign(url);
+      }};
+      window.location.replace = (url) => {{
+        if (!guardNavigation(url)) return;
+        locReplace(url);
+      }};
+    }} catch {{}}
+  }}
+
+  if (!CFG.allow_external_internet) {{
+    const isAllowedUrl = (rawUrl) => {{
+      try {{
+        const parsed = new URL(String(rawUrl || ""), window.location.href);
+        return parsed.origin === window.location.origin;
+      }} catch {{
+        return true;
+      }}
+    }};
+    const deny = (kind, rawUrl) => {{
+      const urlText = String(rawUrl || "");
+      send("error", {{ message: "Blocked " + kind + " request: " + urlText }});
+      throw new Error("External internet access is disabled by admin settings.");
+    }};
+
+    const originalFetch = window.fetch;
+    window.fetch = function(resource, init) {{
+      const target = (typeof resource === "string") ? resource : (resource && resource.url ? resource.url : "");
+      if (!isAllowedUrl(target)) return Promise.reject(deny("fetch", target));
+      return originalFetch.call(this, resource, init);
+    }};
+
+    const originalOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function(method, url, ...rest) {{
+      if (!isAllowedUrl(url)) deny("xhr", url);
+      return originalOpen.call(this, method, url, ...rest);
+    }};
+
+    const OriginalWebSocket = window.WebSocket;
+    window.WebSocket = function(url, protocols) {{
+      if (!isAllowedUrl(url)) deny("websocket", url);
+      return protocols !== undefined ? new OriginalWebSocket(url, protocols) : new OriginalWebSocket(url);
+    }};
+
+    const OriginalEventSource = window.EventSource;
+    if (OriginalEventSource) {{
+      window.EventSource = function(url, config) {{
+        if (!isAllowedUrl(url)) deny("eventsource", url);
+        return config !== undefined ? new OriginalEventSource(url, config) : new OriginalEventSource(url);
+      }};
+    }}
+  }}
+
+  const fpsCap = Math.max(1, Number(CFG.max_fps) || 30);
+  const frameInterval = 1000 / fpsCap;
+  const originalRaf = window.requestAnimationFrame.bind(window);
+  let lastFrame = 0;
+  window.requestAnimationFrame = (callback) => originalRaf((timestamp) => {{
+    if ((timestamp - lastFrame) >= frameInterval) {{
+      lastFrame = timestamp;
+      callback(timestamp);
+    }}
+  }});
+
+  if (Number(CFG.max_dom_nodes) > 0) {{
+    const maxNodes = Number(CFG.max_dom_nodes);
+    setInterval(() => {{
+      const count = document.getElementsByTagName("*").length;
+      if (count > maxNodes) {{
+        send("limit", {{ message: "Execution time limit reached." }});
+        throw new Error("DOM node limit reached.");
+      }}
+    }}, 500);
+  }}
+
+  if (Number(CFG.max_popups) >= 0) {{
+    const maxPopups = Number(CFG.max_popups);
+    let opened = 0;
+    const originalOpen = window.open ? window.open.bind(window) : null;
+    window.open = function(...args) {{
+      if (!CFG.allow_popups) {{
+        send("error", {{ message: "Popup blocked by admin settings." }});
+        return null;
+      }}
+      if (opened >= maxPopups) {{
+        send("error", {{ message: "Popup limit reached." }});
+        return null;
+      }}
+      opened += 1;
+      return originalOpen ? originalOpen(...args) : null;
+    }};
+  }}
+
+  if (Number(CFG.memory_limit_mb) > 0 && performance && performance.memory) {{
+    const maxMemory = Number(CFG.memory_limit_mb);
+    setInterval(() => {{
+      const usedMb = Number(performance.memory.usedJSHeapSize || 0) / (1024 * 1024);
+      if (usedMb > maxMemory) {{
+        send("limit", {{ message: "Execution time limit reached." }});
+        throw new Error("Memory limit reached.");
+      }}
+    }}, 1000);
+  }}
+
+  send("ready", {{ message: "HTML runtime ready." }});
+}})();
+</script>
+""".strip()
+
+
+@app.post("/api/html-runtime/start")
+def start_html_runtime():
+    cfg = _load_config()
+    if not _cfg_bool(cfg, "html_runtime_enabled", True):
+        return jsonify(ok=False, error="HTML runtime is disabled by admin settings."), 403
+
+    user = _require_user_for_files(request)
+    if not user:
+        return jsonify(ok=False, error="Authentication required"), 401
+
+    data = request.get_json(silent=True) or {}
+    file_path = (data.get("file_path") or "").strip()
+    if not file_path:
+        return jsonify(ok=False, error="file_path is required"), 400
+
+    user_dir = _get_user_dir(user["email"])
+    target = _validate_user_path(user_dir, file_path)
+    if not target or not target.exists() or not target.is_file():
+        return jsonify(ok=False, error="HTML file not found"), 404
+    if not _is_html_file(target):
+        return jsonify(ok=False, error="Only .html files can use HTML runtime"), 400
+
+    runtime_id = uuid.uuid4().hex
+    runtime_dir = SANDBOX_DIR / f"html_runtime_{runtime_id}"
+    source_root = user_dir.resolve()
+    entry_path = str(target.resolve().relative_to(source_root)).replace("\\", "/")
+    runtime_resolved = runtime_dir.resolve()
+    sandbox_root = SANDBOX_DIR.resolve()
+    if os.path.commonpath([str(runtime_resolved), str(sandbox_root)]) != str(sandbox_root):
+        return jsonify(ok=False, error="Invalid runtime directory"), 500
+    try:
+        shutil.copytree(source_root, runtime_resolved, dirs_exist_ok=True, symlinks=False, ignore_dangling_symlinks=True)
+    except Exception:
+        _delete_path_quietly(runtime_dir)
+        return jsonify(ok=False, error="Could not prepare HTML runtime environment"), 500
+
+    timeout_seconds = _cfg_int(cfg, "html_runtime_timeout_seconds", HTML_RUNTIME_DEFAULT_TIMEOUT, 1, 600)
+    session_ttl_seconds = timeout_seconds + 120
+    _cleanup_expired_html_runtime_sessions()
+    with _html_runtime_lock:
+        _html_runtime_sessions[runtime_id] = {
+            "runtime_dir": str(runtime_resolved),
+            "entry_file": entry_path,
+            "expires_at": time.time() + session_ttl_seconds,
+        }
+
+    return jsonify(
+        ok=True,
+        runtime_id=runtime_id,
+        view_url=f"/api/html-runtime/view/{runtime_id}/{entry_path}",
+        timeout_seconds=timeout_seconds,
+        allow_external_internet=_cfg_bool(cfg, "html_runtime_allow_external_internet", False),
+        allow_popups=_cfg_bool(cfg, "html_runtime_allow_popups", False),
+        allow_navigation=_cfg_bool(cfg, "html_runtime_allow_navigation", False),
+        max_fps=_cfg_int(cfg, "html_runtime_max_fps", HTML_RUNTIME_DEFAULT_MAX_FPS, 1, 120),
+        memory_limit_mb=_cfg_int(cfg, "html_runtime_memory_limit_mb", HTML_RUNTIME_DEFAULT_MEMORY_MB, 32, 2048),
+        max_dom_nodes=_cfg_int(cfg, "html_runtime_max_dom_nodes", HTML_RUNTIME_DEFAULT_MAX_DOM_NODES, 100, 200000),
+        max_popups=_cfg_int(cfg, "html_runtime_max_popups", HTML_RUNTIME_DEFAULT_MAX_POPUPS, 0, 20),
+    )
+
+
+@app.post("/api/html-runtime/cleanup")
+def cleanup_html_runtime():
+    data = request.get_json(silent=True) or {}
+    runtime_id = str(data.get("runtime_id") or "").strip()
+    if runtime_id:
+        _remove_html_runtime_session(runtime_id)
+    return jsonify(ok=True)
+
+
+@app.get("/api/html-runtime/view/<runtime_id>/<path:asset_path>")
+def view_html_runtime_asset(runtime_id: str, asset_path: str):
+    _cleanup_expired_html_runtime_sessions()
+    with _html_runtime_lock:
+        session = _html_runtime_sessions.get(runtime_id)
+    if not session:
+        return jsonify(ok=False, error="Runtime session not found or expired"), 404
+
+    runtime_root = Path(session.get("runtime_dir", ""))
+    target = _validate_user_path(runtime_root, asset_path)
+    if not target or not target.exists() or not target.is_file():
+        return jsonify(ok=False, error="Runtime asset not found"), 404
+
+    ext = target.suffix.lower()
+    if ext == ".html":
+        cfg = _load_config()
+        try:
+            html = target.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            return jsonify(ok=False, error="Could not load HTML asset"), 500
+        bridge = _html_runtime_js_bridge(cfg)
+        if "</head>" in html:
+            html = html.replace("</head>", bridge + "\n</head>", 1)
+        elif re.search(r"<body[^>]*>", html, flags=re.IGNORECASE):
+            html = re.sub(r"(<body[^>]*>)", r"\1\n" + bridge + "\n", html, count=1, flags=re.IGNORECASE)
+        else:
+            html = bridge + "\n" + html
+        response = app.response_class(html, mimetype="text/html")
+        if not _cfg_bool(cfg, "html_runtime_allow_external_internet", False):
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; "
+                "img-src 'self' data: blob:; "
+                "font-src 'self' data:; "
+                "connect-src 'self'; "
+                "media-src 'self' data: blob:; "
+                "frame-src 'self'; "
+                "child-src 'self'"
+            )
+        return response
+    return send_file(str(target))
 
 # -------------------------
 # Execution sandbox
