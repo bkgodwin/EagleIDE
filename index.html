@@ -108,10 +108,12 @@
 
     *{box-sizing:border-box}
     body{ margin:0; background:var(--theme-bg); color:var(--theme-text); font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Arial; background-image:var(--theme-bg-image); background-attachment:fixed; background-size:cover; background-position:center; background-repeat:no-repeat; }
-    header.topbar{ display:flex; align-items:center; justify-content:space-between; padding:10px 16px; background:var(--theme-topbar); color:var(--theme-topbar-txt); font-weight:700; letter-spacing:.3px; backdrop-filter:blur(4px); position:relative; z-index:100; }
-    header .brand{ display:flex; gap:12px; align-items:center }
+    header.topbar{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 14px; background:var(--theme-topbar); color:var(--theme-topbar-txt); font-weight:700; letter-spacing:.3px; backdrop-filter:blur(4px); position:relative; z-index:100; }
+    header .brand{ display:flex; gap:8px; align-items:center; min-width:0; }
+    header .brand > div:first-child{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:280px; }
     header .brand .badge{ background:var(--eagle-red); color:#fff; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:800; letter-spacing:.5px; text-transform:uppercase }
-    header .actions{ display:flex; gap:8px; align-items:center }
+    header .actions{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+    .control-group{ display:flex; align-items:center; gap:6px; padding:4px 6px; border:1px solid var(--theme-border-mid); border-radius:10px; background:rgba(0,0,0,.08); }
 
     .btn{ border:0; border-radius:10px; padding:8px 14px; font-weight:700; cursor:pointer; background:var(--theme-btn); color:var(--theme-text); box-shadow:0 2px 8px rgba(0,0,0,.2); transition:transform .05s, box-shadow .2s, background .2s; font-size:14px; line-height:1; display:inline-flex; align-items:center; gap:6px; }
     .btn:hover{ transform:translateY(-1px); background:var(--theme-btn-hover) }
@@ -196,8 +198,8 @@
 
     .notes-toolbar, .lesson-toolbar{ display:none; gap:6px; padding:8px; border-bottom:1px solid var(--theme-border-mid); background:var(--theme-tab-bg) }
     .ai-toolbar{ display:none; gap:6px; padding:8px; border-bottom:1px solid var(--theme-border-mid); background:var(--theme-tab-bg) }
-    body.admin-mode .notes-toolbar{ display:flex }
-    body.admin-mode .lesson-toolbar{ display:flex }
+    body.admin-owner .notes-toolbar{ display:flex }
+    body.admin-owner .lesson-toolbar{ display:flex }
     
 
     #notesView, #lessonLocal, #aiOutput, #challengeOutput, #assistantChat { padding:12px; height:100%; overflow:auto; }
@@ -300,19 +302,10 @@
     .guest-badge{ background:var(--theme-secondary); color:var(--theme-text-dim); padding:4px 10px; border-radius:999px; font-size:12px; font-weight:600; }
     .user-chip{ background:#1a3a5c; color:var(--columbia-blue); padding:4px 10px; border-radius:999px; font-size:12px; font-weight:600; }
 
-    /* Login dropdown */
-    .login-dropdown-wrap{ position:relative; }
-    .login-dropdown{ position:absolute; right:0; top:calc(100% + 6px); background:var(--theme-panel); border:1px solid var(--theme-border); border-radius:10px; min-width:160px; box-shadow:0 8px 32px rgba(0,0,0,.5); z-index:9999; padding:6px 0; display:none; backdrop-filter:blur(4px); }
-    .login-dropdown.open{ display:block; }
-    .login-dropdown button{ width:100%; background:none; border:0; color:var(--theme-text); text-align:left; padding:8px 16px; cursor:pointer; font-size:13px; }
-    .login-dropdown button:hover{ background:var(--theme-secondary); }
-
-    /* Login modal tabs */
-    .login-tabs{ display:flex; border-bottom:1px solid var(--theme-border-mid); margin-bottom:16px; }
-    .login-tab{ flex:1; padding:8px; background:none; border:0; border-bottom:3px solid transparent; color:var(--theme-text-dim); cursor:pointer; font-weight:600; font-size:14px; }
-    .login-tab.active{ color:var(--columbia-blue); border-bottom-color:var(--columbia-blue); }
-    .login-pane{ display:none; }
-    .login-pane.active{ display:block; }
+    body.guest-mode #rightStackPanel{ display:none !important; }
+    body.guest-mode .vsplitter{ display:none !important; }
+    body.guest-mode #rightstack{ grid-template-rows: 1fr !important; }
+    body.guest-mode #shellPanel{ grid-row:1 / 2 !important; }
 
     /* Users table in admin settings */
     .users-table{ width:100%; border-collapse:collapse; font-size:13px; margin-top:8px; }
@@ -424,20 +417,26 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><div>Eagles Web IDE</div><div class="badge">Python</div><div class="badge" style="background:#f0db4f; color:#323330;">JS</div><div class="badge" style="background:#e34f26; color:#fff;">HTML</div><div class="badge" style="background:#264de4; color:#fff;">CSS</div></div>
+    <div class="brand"><div>Eagles Web IDE</div><div class="badge">Classroom IDE</div></div>
     <div class="actions">
       <button class="btn run" id="runBtn">Run ▶</button>
       <button class="btn exception-help-btn" id="exceptionHelpBtn" title="Troubleshooting Assistant" aria-label="Open troubleshooting assistant">🛠️ Help</button>
       <button class="btn stop" id="stopBtn">Stop ⏹</button>
-
+      <div class="control-group">
+        <span style="font-size:12px; opacity:.85;">Mode</span>
+        <select id="languageSelector" style="background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; padding:4px 8px;">
+          <option value="auto">Auto</option>
+          <option value="python">Python</option>
+          <option value="javascript">JavaScript</option>
+          <option value="html">HTML</option>
+        </select>
+      </div>
       <button class="btn secondary" id="themeToggleBtn" title="Toggle light/dark mode">🌙 Dark</button>
-
-      <div class="btn secondary" style="gap:8px; padding:6px 10px;">
+      <div class="control-group">
         <span style="font-weight:800;">A</span>
         <input id="fontRange" type="range" min="12" max="40" value="14" step="1" style="width:120px;">
         <span id="fontVal" style="min-width:2ch; text-align:center;">14</span>
       </div>
-
       <button class="btn secondary" id="guidesBtn" title="Show/Hide indent guides">Guides: On</button>
       <button class="btn secondary" id="autocompleteBtn" title="Toggle autocomplete">Autocomplete: On</button>
       <button class="btn secondary" id="toggleSidebarBtn" title="Toggle right sidebar">Hide Sidebar ◀</button>
@@ -448,14 +447,7 @@
       <span class="guest-badge" id="guestBadge">Guest</span>
       <span class="user-chip" id="userChip" style="display:none;"></span>
       <button class="btn secondary" id="toggleFileSidebarBtn" title="Toggle file browser" style="display:none;">📁 Files</button>
-      <div class="login-dropdown-wrap" id="loginDropdownWrap">
-        <button class="btn admin" id="loginBtn" title="Login">Login</button>
-        <div class="login-dropdown" id="loginDropdown">
-          <button id="dropStudentLoginBtn">Student Login</button>
-          <button id="dropTeacherLoginBtn">Teacher Login</button>
-          <button id="dropAdminLoginBtn">Admin Login</button>
-        </div>
-      </div>
+      <button class="btn admin" id="loginBtn" title="Login">Sign In</button>
       <button class="btn secondary" id="streamingToggleBtn" title="Toggle code streaming to students" style="display:none;">📡 Streaming: On</button>
       <button class="btn admin" id="adminSettingsBtn" title="Admin Settings" style="display:none;">⚙</button>
     </div>
@@ -561,6 +553,7 @@
           <div class="content">
             <!-- Notes -->
             <div class="tab-pane active" id="notesTab">
+              <div id="classJoinNotice" class="account-notice" style="display:none; margin:12px;">Join a class to see more resources!</div>
               <div id="notesView" contenteditable="false"></div>
               <textarea id="notesEdit" style="display:none; width:100%; height:100%; padding:12px; background:var(--theme-input-bg); color:var(--theme-text); border:none; font-family:monospace;"></textarea>
             </div>
@@ -694,43 +687,22 @@
   <!-- Unified Login Modal -->
   <div id="loginModal" class="modal" style="display:none;">
     <div class="modal-content" style="max-width:420px;">
-      <h3 id="loginModalTitle">Login</h3>
-      <div class="login-tabs">
-        <button class="login-tab active" id="tabStudentBtn" onclick="switchLoginTab('student')">Student</button>
-        <button class="login-tab" id="tabAdminBtn" onclick="switchLoginTab('admin')">Admin</button>
+      <h3 id="loginModalTitle">Sign In</h3>
+      <label for="authEmailInput">Email:</label>
+      <input type="email" id="authEmailInput" placeholder="you@example.com" autocomplete="username">
+      <label for="authPasswordInput">Password:</label>
+      <input type="password" id="authPasswordInput" placeholder="Password" autocomplete="current-password">
+      <div id="registerSection" style="display:none;">
+        <label for="regName">Name:</label>
+        <input type="text" id="regName" placeholder="Your full name">
       </div>
-
-      <!-- Student pane -->
-      <div class="login-pane active" id="paneStudent">
-        <div id="studentRegisterSection" style="display:none;">
-          <label>Name:</label>
-          <input type="text" id="regName" placeholder="Your full name">
-        </div>
-        <label>Email:</label>
-        <input type="email" id="studentEmail" placeholder="you@example.com" autocomplete="username">
-        <label>Password:</label>
-        <input type="password" id="studentPassword" placeholder="Password" autocomplete="current-password">
-        <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
-          <button class="btn secondary" id="toggleRegisterBtn" onclick="toggleStudentRegister()" style="font-size:12px; padding:4px 10px;">Create Account</button>
-          <span id="studentAuthError" style="color:#ef5350; font-size:12px;"></span>
-        </div>
-        <div class="modal-actions">
-          <button class="btn secondary" id="studentCancelBtn">Cancel</button>
-          <button class="btn run" id="studentLoginBtn">Login</button>
-        </div>
+      <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+        <button class="btn secondary" id="toggleRegisterBtn" style="font-size:12px; padding:4px 10px;">Create Student Account</button>
+        <span id="authError" style="color:#ef5350; font-size:12px;"></span>
       </div>
-
-      <!-- Admin pane -->
-      <div class="login-pane" id="paneAdmin">
-        <label>Admin Email:</label>
-        <input type="email" id="adminEmailInput" placeholder="admin@eagleide.local" autocomplete="username">
-        <label>Password:</label>
-        <input type="password" id="adminPasswordInput" placeholder="Enter admin password" autocomplete="current-password">
-        <span id="adminAuthError" style="color:#ef5350; font-size:12px; display:block; margin-top:6px;"></span>
-        <div class="modal-actions">
-          <button class="btn secondary" id="adminCancelBtn">Cancel</button>
-          <button class="btn run" id="adminLoginBtn">Login</button>
-        </div>
+      <div class="modal-actions">
+        <button class="btn secondary" id="loginCancelBtn">Cancel</button>
+        <button class="btn run" id="loginSubmitBtn">Sign In</button>
       </div>
     </div>
   </div>
@@ -740,6 +712,7 @@
     <div class="modal-content" style="max-width:700px;">
       <h3>Admin Settings</h3>
       
+      <div id="siteWideSettingsSection">
       <h4 style="margin-top:20px; color:var(--columbia-blue); font-size:14px;">Page Settings</h4>
       <label for="pageTitleInput">Page Title:</label>
       <input type="text" id="pageTitleInput" placeholder="Eagles Web IDE (Python)">
@@ -817,6 +790,7 @@
         <table class="users-table"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Class</th><th>Registered</th><th>Last Sign In</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody id="usersTableBody"></tbody>
         </table>
+      </div>
       </div>
 
       <h4 style="margin-top:20px; color:var(--columbia-blue); font-size:14px;">Teacher Class Management</h4>
@@ -1340,6 +1314,7 @@ print("Hello " + name)
     let currentTeacherClassId = null;
     let studentClassData = null;
     let currentOpenFile = null; // { path, name } of open file in sidebar
+    let registerMode = false;
     let currentConfig = null;
     let mySid = null;
     let lastTeacherCodeSnapshot = '';
@@ -1363,7 +1338,18 @@ print("Hello " + name)
       return LANGUAGE_INFO.python;
     }
 
+    function getManualLanguageInfo() {
+      const sel = document.getElementById('languageSelector');
+      const val = String(sel?.value || 'auto').toLowerCase();
+      if (val === 'python') return LANGUAGE_INFO.python;
+      if (val === 'javascript') return LANGUAGE_INFO.javascript;
+      if (val === 'html') return LANGUAGE_INFO.html;
+      return null;
+    }
+
     function getActiveLanguageInfo() {
+      const manual = getManualLanguageInfo();
+      if (manual) return manual;
       const mode = String(window.eagleEditor?.getOption?.('mode') || '').toLowerCase();
       if (mode.includes('javascript')) return LANGUAGE_INFO.javascript;
       if (mode.includes('html')) return LANGUAGE_INFO.html;
@@ -1377,7 +1363,7 @@ print("Hello " + name)
     }
 
     function syncEditorLanguage(fileName = currentOpenFile?.name || '') {
-      const info = getLanguageInfoForFileName(fileName);
+      const info = getManualLanguageInfo() || getLanguageInfoForFileName(fileName);
       try { window.eagleEditor?.setOption('mode', info.mode); } catch {}
       try { teacherEditor?.setOption('mode', info.mode); } catch {}
       const editorHeader = document.querySelector('#editorPanel header');
@@ -1568,28 +1554,44 @@ print("Hello " + name)
 
     function applyClassTabVisibility() {
       const classCtx = getCurrentClassContext();
+      const isGuest = !USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN;
+      const isStudentNoClass = !!USER_TOKEN && !!currentUser && !classCtx;
       const aiEnabledForClass = !!classCtx?.settings?.ai_enabled;
       const wikiEnabledForClass = !!classCtx?.settings?.wiki_enabled;
       const tExplain = document.getElementById('aiTabBtn');
       const tChal = document.getElementById('aiChallengeTabBtn');
       const tAssist = document.getElementById('assistantTabBtn');
       const tWiki = document.getElementById('lessonTabBtn');
+      const tTeacher = document.getElementById('teacherTabBtn');
+      const tAssignment = document.getElementById('assignmentTabBtn');
       const aiMasterEnabled = !!currentConfig?.ai_explainer_enabled;
       const effectiveAiEnabled = aiMasterEnabled && (ADMIN_TOKEN || aiEnabledForClass);
-      if (tExplain) tExplain.style.display = effectiveAiEnabled ? '' : 'none';
-      if (tChal) tChal.style.display = effectiveAiEnabled ? '' : 'none';
-      if (tAssist) tAssist.style.display = effectiveAiEnabled ? '' : 'none';
-      if (tWiki) tWiki.style.display = (ADMIN_TOKEN || !!classCtx) && (ADMIN_TOKEN || wikiEnabledForClass) ? '' : 'none';
+      const showOnlyNotes = isGuest || isStudentNoClass;
+      if (tTeacher) tTeacher.style.display = showOnlyNotes ? 'none' : '';
+      if (tAssignment) tAssignment.style.display = showOnlyNotes ? 'none' : '';
+      if (tExplain) tExplain.style.display = (showOnlyNotes ? false : effectiveAiEnabled) ? '' : 'none';
+      if (tChal) tChal.style.display = (showOnlyNotes ? false : effectiveAiEnabled) ? '' : 'none';
+      if (tAssist) tAssist.style.display = (showOnlyNotes ? false : effectiveAiEnabled) ? '' : 'none';
+      if (tWiki) tWiki.style.display = (showOnlyNotes ? false : ((ADMIN_TOKEN || !!classCtx) && (ADMIN_TOKEN || wikiEnabledForClass))) ? '' : 'none';
+      const classJoinNotice = document.getElementById('classJoinNotice');
+      if (classJoinNotice) classJoinNotice.style.display = isStudentNoClass ? '' : 'none';
       const lessonLocal = document.getElementById('lessonLocal');
       if (classCtx?.settings?.wiki_html) {
         lessonLocal.innerHTML = classCtx.settings.wiki_html;
         lessonLocal.style.display = 'block';
         document.getElementById('lessonFrame').style.display = 'none';
+      } else if (classCtx?.settings?.wiki_url) {
+        lessonLocal.style.display = 'none';
+        const lessonFrame = document.getElementById('lessonFrame');
+        lessonFrame.style.display = 'block';
+        lessonFrame.src = classCtx.settings.wiki_url;
       }
       if (studentClassData && !studentClassData.settings?.wiki_enabled) {
         const activeWiki = document.querySelector('.tab-btn.active[data-tab="lessonTab"]');
         if (activeWiki) document.getElementById('notesTabBtn').click();
       }
+      const hiddenActiveTab = [...document.querySelectorAll('.tab-btn.active')].find(btn => getComputedStyle(btn).display === 'none');
+      if (hiddenActiveTab) document.getElementById('notesTabBtn')?.click();
     }
 
     function renderClassSelector() {
@@ -2030,7 +2032,14 @@ print("Hello " + name)
       }
       appendOut('[Sending code]\n');
       if (socket) {
-        socket.emit('run_code', { code: editor.getValue(), user_token: USER_TOKEN || '', teacher_token: TEACHER_TOKEN || '', admin_token: ADMIN_TOKEN || '', file_path: currentOpenFile ? currentOpenFile.path : '' });
+        socket.emit('run_code', {
+          code: editor.getValue(),
+          language: getActiveLanguageInfo().mode,
+          user_token: USER_TOKEN || '',
+          teacher_token: TEACHER_TOKEN || '',
+          admin_token: ADMIN_TOKEN || '',
+          file_path: currentOpenFile ? currentOpenFile.path : ''
+        });
       } else {
         appendOut('[Error: Cannot run code - Socket.IO not available]\n');
       }
@@ -2247,6 +2256,7 @@ print("Hello " + name)
       fontRange.addEventListener('input', (e) => applyFontSize(e.target.value));
       guidesBtn.addEventListener('click', () => applyGuides(!guidesEnabled));
       autocompleteBtn.addEventListener('click', () => applyAutocomplete(!autocompleteEnabled));
+      document.getElementById('languageSelector')?.addEventListener('change', () => syncEditorLanguage());
       syncEditorLanguage();
     })();
 
@@ -2345,35 +2355,23 @@ print("Hello " + name)
     })();
 
     // ---- Login UI ----
-    let loginRoleMode = 'student';
-    function switchLoginTab(tab) {
-      document.getElementById('paneStudent').classList.toggle('active', tab === 'student');
-      document.getElementById('paneAdmin').classList.toggle('active', tab === 'admin');
-      document.getElementById('tabStudentBtn').classList.toggle('active', tab === 'student');
-      document.getElementById('tabAdminBtn').classList.toggle('active', tab === 'admin');
-      document.getElementById('loginModalTitle').textContent = tab === 'student' ? (loginRoleMode === 'teacher' ? 'Teacher Login' : 'Student Login') : 'Admin Login';
-    }
-
-    function toggleStudentRegister() {
-      const reg = document.getElementById('studentRegisterSection');
+    function updateLoginModeUI() {
+      const reg = document.getElementById('registerSection');
       const btn = document.getElementById('toggleRegisterBtn');
-      const loginBtn = document.getElementById('studentLoginBtn');
-      const isReg = reg.style.display === 'none' || reg.style.display === '';
-      reg.style.display = isReg ? 'block' : 'none';
-      btn.textContent = isReg ? 'Back to Login' : 'Create Account';
-      loginBtn.textContent = isReg ? 'Register' : 'Login';
-      document.getElementById('studentAuthError').textContent = '';
+      const submit = document.getElementById('loginSubmitBtn');
+      const title = document.getElementById('loginModalTitle');
+      if (reg) reg.style.display = registerMode ? 'block' : 'none';
+      if (btn) btn.textContent = registerMode ? 'Back to Sign In' : 'Create Student Account';
+      if (submit) submit.textContent = registerMode ? 'Create Account' : 'Sign In';
+      if (title) title.textContent = registerMode ? 'Create Student Account' : 'Sign In';
+      const err = document.getElementById('authError');
+      if (err) err.textContent = '';
     }
 
-    function openLoginModal(tab = 'student') {
-      switchLoginTab(tab);
+    function openLoginModal() {
+      registerMode = false;
+      updateLoginModeUI();
       document.getElementById('loginModal').style.display = 'flex';
-      if (tab === 'student') {
-        document.getElementById('studentRegisterSection').style.display = 'none';
-        document.getElementById('toggleRegisterBtn').textContent = 'Create Account';
-        document.getElementById('studentLoginBtn').textContent = 'Login';
-        document.getElementById('toggleRegisterBtn').style.display = loginRoleMode === 'teacher' ? 'none' : '';
-      }
     }
 
     function closeLoginModal() {
@@ -2384,11 +2382,13 @@ print("Hello " + name)
       const guestBadge = document.getElementById('guestBadge');
       const userChip = document.getElementById('userChip');
       const toggleFileSidebarBtn = document.getElementById('toggleFileSidebarBtn');
+      const toggleSidebarBtn = document.getElementById('toggleSidebarBtn');
       const loginBtn = document.getElementById('loginBtn');
-      const loginDropdown = document.getElementById('loginDropdown');
       const adminSettingsBtn = document.getElementById('adminSettingsBtn');
       const streamingToggleBtn = document.getElementById('streamingToggleBtn');
       const isLoggedIn = !!(currentUser || currentTeacher || ADMIN_TOKEN);
+      document.body.classList.toggle('guest-mode', !isLoggedIn);
+      document.body.classList.toggle('admin-owner', !!ADMIN_TOKEN);
       // Update guest badge, user chip, and file browser button
       guestBadge.style.display = isLoggedIn ? 'none' : '';
       if (currentUser) {
@@ -2408,16 +2408,17 @@ print("Hello " + name)
         toggleFileSidebarBtn.style.display = 'none';
         if (!isLoggedIn) hideFileBrowser();
       }
+      if (toggleSidebarBtn) toggleSidebarBtn.style.display = isLoggedIn ? '' : 'none';
       // Toggle login/logout button
       if (isLoggedIn) {
-        loginBtn.textContent = 'Logout';
+        loginBtn.textContent = 'Sign Out';
         loginBtn.title = 'Log out';
-        loginDropdown.classList.remove('open');
       } else {
-        loginBtn.textContent = 'Login';
-        loginBtn.title = 'Login';
+        loginBtn.textContent = 'Sign In';
+        loginBtn.title = 'Sign in';
       }
       adminSettingsBtn.style.display = (ADMIN_TOKEN || TEACHER_TOKEN) ? '' : 'none';
+      adminSettingsBtn.title = ADMIN_TOKEN ? 'Admin Settings' : (TEACHER_TOKEN ? 'Class Settings' : 'Settings');
       streamingToggleBtn.style.display = (ADMIN_TOKEN || TEACHER_TOKEN) ? '' : 'none';
       updateEditorOverlay();
       renderClassSelector();
@@ -2437,7 +2438,67 @@ print("Hello " + name)
       }
     }
 
-    // Login button: show dropdown when not logged in, log out when logged in
+    async function applyAuthLoginPayload(j) {
+      if (j.role === 'teacher') {
+        TEACHER_TOKEN = j.token;
+        currentTeacher = j.user;
+        USER_TOKEN = null;
+        currentUser = null;
+        ADMIN_TOKEN = null;
+        document.body.classList.add('admin-mode');
+        await loadTeacherClasses();
+        renderClassSelector();
+        if (currentTeacherClassId) startTeacherBroadcast();
+      } else {
+        USER_TOKEN = j.token;
+        currentUser = j.user;
+        TEACHER_TOKEN = null;
+        currentTeacher = null;
+        ADMIN_TOKEN = null;
+        document.body.classList.remove('admin-mode');
+        await loadStudentClassData();
+      }
+      closeLoginModal();
+      updateAuthUI();
+      showFileBrowser();
+    }
+
+    async function tryUnifiedSignIn(email, password) {
+      const authRes = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      const authJson = await authRes.json().catch(() => ({}));
+      if (authJson?.ok) {
+        await applyAuthLoginPayload(authJson);
+        return true;
+      }
+      const adminRes = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      const adminJson = await adminRes.json().catch(() => ({}));
+      if (adminJson?.ok) {
+        ADMIN_TOKEN = adminJson.token;
+        USER_TOKEN = null;
+        TEACHER_TOKEN = null;
+        currentTeacher = null;
+        currentUser = null;
+        document.body.classList.add('admin-mode');
+        closeLoginModal();
+        document.getElementById('streamingToggleBtn').textContent = '📡 Streaming: On';
+        document.getElementById('streamingToggleBtn').classList.remove('stop');
+        startTeacherBroadcast();
+        updateAuthUI();
+        showFileBrowser();
+        return true;
+      }
+      return false;
+    }
+
+    // Login button: open unified login modal or log out when already authenticated
     document.getElementById('loginBtn').addEventListener('click', async () => {
       const isLoggedIn = !!(currentUser || currentTeacher || ADMIN_TOKEN);
       if (isLoggedIn) {
@@ -2480,116 +2541,48 @@ print("Hello " + name)
         }
         updateAuthUI();
       } else {
-        const dd = document.getElementById('loginDropdown');
-        dd.classList.toggle('open');
+        openLoginModal();
       }
     });
-    document.addEventListener('click', (e) => {
-      const wrap = document.querySelector('.login-dropdown-wrap');
-      if (wrap && !wrap.contains(e.target)) {
-        document.getElementById('loginDropdown').classList.remove('open');
-      }
+    document.getElementById('toggleRegisterBtn').addEventListener('click', () => {
+      registerMode = !registerMode;
+      updateLoginModeUI();
     });
-
-    document.getElementById('dropStudentLoginBtn').addEventListener('click', () => {
-      document.getElementById('loginDropdown').classList.remove('open');
-      loginRoleMode = 'student';
-      openLoginModal('student');
-    });
-    document.getElementById('dropTeacherLoginBtn').addEventListener('click', () => {
-      document.getElementById('loginDropdown').classList.remove('open');
-      loginRoleMode = 'teacher';
-      openLoginModal('student');
-    });
-    document.getElementById('dropAdminLoginBtn').addEventListener('click', () => {
-      document.getElementById('loginDropdown').classList.remove('open');
-      loginRoleMode = 'student';
-      openLoginModal('admin');
-    });
-
-    // Student login/register
-    document.getElementById('studentCancelBtn').addEventListener('click', closeLoginModal);
-    document.getElementById('studentLoginBtn').addEventListener('click', async () => {
-      const errEl = document.getElementById('studentAuthError');
+    document.getElementById('loginCancelBtn').addEventListener('click', closeLoginModal);
+    document.getElementById('loginSubmitBtn').addEventListener('click', async () => {
+      const errEl = document.getElementById('authError');
       errEl.textContent = '';
-      const isRegister = document.getElementById('studentLoginBtn').textContent === 'Register';
-      if (loginRoleMode === 'teacher' && isRegister) { errEl.textContent = 'Teacher accounts are created by admin only.'; return; }
-      const email = document.getElementById('studentEmail').value.trim();
-      const password = document.getElementById('studentPassword').value;
+      const email = document.getElementById('authEmailInput').value.trim();
+      const password = document.getElementById('authPasswordInput').value;
       if (!email || !password) { errEl.textContent = 'Email and password required.'; return; }
-      if (isRegister) {
+      if (registerMode) {
         const name = document.getElementById('regName').value.trim();
         if (!name) { errEl.textContent = 'Name is required.'; return; }
-        const res = await fetch('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, name }) });
+        const res = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password, name })
+        });
         const j = await res.json().catch(() => ({}));
-        if (j?.ok) {
-          USER_TOKEN = j.token;
-          currentUser = j.user;
-          closeLoginModal();
-          updateAuthUI();
-          showFileBrowser();
-        } else { errEl.textContent = j.error || 'Registration failed'; }
-      } else {
-        const res = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
-        const j = await res.json().catch(() => ({}));
-        if (j?.ok) {
-          if (j.role === 'teacher') {
-            TEACHER_TOKEN = j.token;
-            currentTeacher = j.user;
-            USER_TOKEN = null;
-            currentUser = null;
-            document.body.classList.add('admin-mode');
-            document.getElementById('adminSettingsBtn').style.display = '';
-            document.getElementById('streamingToggleBtn').style.display = '';
-            await loadTeacherClasses();
-            renderClassSelector();
-            if (currentTeacherClassId) startTeacherBroadcast();
-          } else {
-            USER_TOKEN = j.token;
-            currentUser = j.user;
-            TEACHER_TOKEN = null;
-            currentTeacher = null;
-            await loadStudentClassData();
-          }
-          closeLoginModal();
-          updateAuthUI();
-          showFileBrowser();
-        } else { errEl.textContent = j.error || 'Login failed'; }
-      }
-    });
-
-    // Admin login modal
-    document.getElementById('adminCancelBtn').addEventListener('click', closeLoginModal);
-    document.getElementById('adminLoginBtn').addEventListener('click', async () => {
-      const errEl = document.getElementById('adminAuthError');
-      errEl.textContent = '';
-      const email = document.getElementById('adminEmailInput').value.trim();
-      const pw = document.getElementById('adminPasswordInput').value;
-      if (!email || !pw) { errEl.textContent = 'Email and password required.'; return; }
-      const res = await fetch('/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: pw }) });
-      const j = await res.json().catch(() => ({}));
-      if (j?.ok) {
-        ADMIN_TOKEN = j.token;
-        USER_TOKEN = null;
+        if (!j?.ok) { errEl.textContent = j.error || 'Registration failed'; return; }
+        USER_TOKEN = j.token;
+        currentUser = j.user;
         TEACHER_TOKEN = null;
+        ADMIN_TOKEN = null;
         currentTeacher = null;
-        document.body.classList.add('admin-mode');
+        document.body.classList.remove('admin-mode');
         closeLoginModal();
-        document.getElementById('adminSettingsBtn').style.display = '';
-        document.getElementById('streamingToggleBtn').style.display = '';
-        document.getElementById('streamingToggleBtn').textContent = '📡 Streaming: On';
-        document.getElementById('streamingToggleBtn').classList.remove('stop');
-        startTeacherBroadcast();
         updateAuthUI();
         showFileBrowser();
-      } else { errEl.textContent = j.error || 'Invalid credentials'; }
+        return;
+      }
+      const ok = await tryUnifiedSignIn(email, password);
+      if (!ok) errEl.textContent = 'Invalid email or password';
     });
-    document.getElementById('adminPasswordInput').addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') document.getElementById('adminLoginBtn').click();
+    document.getElementById('authPasswordInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') document.getElementById('loginSubmitBtn').click();
     });
-    document.getElementById('studentPassword').addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') document.getElementById('studentLoginBtn').click();
-    });
+    updateAuthUI();
 
     // Teacher Code Broadcasting (Admin only)
     // Broadcast teacher code updates at minimum 2x per second (every 500ms)
@@ -2670,6 +2663,9 @@ print("Hello " + name)
     document.getElementById('adminSettingsBtn').addEventListener('click', () => {
       document.getElementById('adminSettingsModal').style.display = 'flex';
       const isTeacherMode = !!TEACHER_TOKEN && !ADMIN_TOKEN;
+      const siteWideSettingsSection = document.getElementById('siteWideSettingsSection');
+      const settingsSaveBtn = document.getElementById('settingsSaveBtn');
+      const modalTitle = document.querySelector('#adminSettingsModal .modal-content h3');
       
       // Page settings
       document.getElementById('pageTitleInput').value = currentConfig?.page_title || 'Eagles Web IDE (Python)';
@@ -2701,17 +2697,13 @@ print("Hello " + name)
 
       // Load users
       if (isTeacherMode) {
-        document.getElementById('usersTableWrap').style.display = 'none';
-        document.getElementById('teacherCreatePanel').style.display = 'none';
-        document.getElementById('saveRegistrationBtn').style.display = 'none';
-        document.getElementById('refreshUsersBtn').style.display = 'none';
-        document.getElementById('settingsSaveBtn').style.display = 'none';
+        if (modalTitle) modalTitle.textContent = 'Class Settings';
+        if (siteWideSettingsSection) siteWideSettingsSection.style.display = 'none';
+        if (settingsSaveBtn) settingsSaveBtn.style.display = 'none';
       } else {
-        document.getElementById('usersTableWrap').style.display = '';
-        document.getElementById('teacherCreatePanel').style.display = '';
-        document.getElementById('saveRegistrationBtn').style.display = '';
-        document.getElementById('refreshUsersBtn').style.display = '';
-        document.getElementById('settingsSaveBtn').style.display = '';
+        if (modalTitle) modalTitle.textContent = 'Admin Settings';
+        if (siteWideSettingsSection) siteWideSettingsSection.style.display = '';
+        if (settingsSaveBtn) settingsSaveBtn.style.display = '';
         loadAdminUsers();
       }
       if (TEACHER_TOKEN) {
@@ -2932,6 +2924,7 @@ print("Hello " + name)
     function renderTeacherClassManagement() {
       const wrap = document.getElementById('teacherClassList');
       if (!wrap) return;
+      const canShowAiToggle = !!currentConfig?.ai_explainer_enabled;
       if (!teacherClasses.length) {
         wrap.innerHTML = '<div style="color:#888; font-size:12px;">No classes yet.</div>';
         return;
@@ -2943,10 +2936,11 @@ print("Hello " + name)
             <button class="btn secondary select-class-btn" data-class="${escapeHtml(cls.id)}" style="font-size:11px; padding:3px 8px;">Use Class</button>
           </div>
           <div style="margin-top:8px; display:flex; gap:10px; flex-wrap:wrap;">
-            <label style="font-size:12px;"><input type="checkbox" class="cls-ai" data-class="${escapeHtml(cls.id)}" ${cls.settings?.ai_enabled ? 'checked' : ''}> AI enabled</label>
+            ${canShowAiToggle ? `<label style="font-size:12px;"><input type="checkbox" class="cls-ai" data-class="${escapeHtml(cls.id)}" ${cls.settings?.ai_enabled ? 'checked' : ''}> AI enabled</label>` : ''}
             <label style="font-size:12px;"><input type="checkbox" class="cls-wiki" data-class="${escapeHtml(cls.id)}" ${cls.settings?.wiki_enabled ? 'checked' : ''}> Wiki enabled</label>
             <button class="btn secondary save-class-settings-btn" data-class="${escapeHtml(cls.id)}" style="font-size:11px; padding:3px 8px;">Save Settings</button>
           </div>
+          <input type="text" class="cls-wiki-url" data-class="${escapeHtml(cls.id)}" value="${escapeHtml(cls.settings?.wiki_url || '')}" placeholder="Class wiki URL (optional)" style="width:100%; margin-top:8px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;">
           <textarea class="cls-wiki-html" data-class="${escapeHtml(cls.id)}" placeholder="Class wiki HTML" style="width:100%; margin-top:8px; min-height:80px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; padding:8px;">${escapeHtml(cls.settings?.wiki_html || '')}</textarea>
           <div style="margin-top:8px; font-size:12px; color:#888;">Students: ${cls.students?.length || 0}</div>
           <div>
@@ -2962,13 +2956,16 @@ print("Hello " + name)
       }));
       wrap.querySelectorAll('.save-class-settings-btn').forEach(btn => btn.addEventListener('click', async () => {
         const classId = btn.dataset.class;
-        const ai = wrap.querySelector(`.cls-ai[data-class="${CSS.escape(classId)}"]`)?.checked;
+        const ai = canShowAiToggle ? wrap.querySelector(`.cls-ai[data-class="${CSS.escape(classId)}"]`)?.checked : undefined;
         const wiki = wrap.querySelector(`.cls-wiki[data-class="${CSS.escape(classId)}"]`)?.checked;
+        const wikiUrl = wrap.querySelector(`.cls-wiki-url[data-class="${CSS.escape(classId)}"]`)?.value || '';
         const wikiHtml = wrap.querySelector(`.cls-wiki-html[data-class="${CSS.escape(classId)}"]`)?.value || '';
+        const settingsPayload = { wiki_enabled: !!wiki, wiki_url: wikiUrl.trim(), wiki_html: wikiHtml };
+        if (canShowAiToggle) settingsPayload.ai_enabled = !!ai;
         const res = await fetch('/api/teacher/classes/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Teacher-Token': TEACHER_TOKEN },
-          body: JSON.stringify({ classId, settings: { ai_enabled: !!ai, wiki_enabled: !!wiki, wiki_html: wikiHtml } })
+          body: JSON.stringify({ classId, settings: settingsPayload })
         });
         const j = await res.json().catch(() => ({}));
         if (!j?.ok) return alert(j?.error || 'Failed to save class settings');
