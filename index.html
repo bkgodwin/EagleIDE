@@ -441,6 +441,10 @@
       <button class="btn secondary" id="guidesBtn" title="Show/Hide indent guides">Guides: On</button>
       <button class="btn secondary" id="autocompleteBtn" title="Toggle autocomplete">Autocomplete: On</button>
       <button class="btn secondary" id="toggleSidebarBtn" title="Toggle right sidebar">Hide Sidebar ◀</button>
+      <div id="classSelectorWrap" style="display:none; align-items:center; gap:6px; background:var(--theme-tab-bg); border:1px solid var(--theme-border); border-radius:10px; padding:4px 8px;">
+        <span style="font-size:12px; opacity:.85;">Class</span>
+        <select id="classSelector" style="background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; padding:4px 8px;"></select>
+      </div>
       <span class="guest-badge" id="guestBadge">Guest</span>
       <span class="user-chip" id="userChip" style="display:none;"></span>
       <button class="btn secondary" id="toggleFileSidebarBtn" title="Toggle file browser" style="display:none;">📁 Files</button>
@@ -448,6 +452,7 @@
         <button class="btn admin" id="loginBtn" title="Login">Login</button>
         <div class="login-dropdown" id="loginDropdown">
           <button id="dropStudentLoginBtn">Student Login</button>
+          <button id="dropTeacherLoginBtn">Teacher Login</button>
           <button id="dropAdminLoginBtn">Admin Login</button>
         </div>
       </div>
@@ -653,6 +658,14 @@
 
               <div id="assignmentStudentView" style="padding:12px;">
                 <div id="studentAccountNotice" class="account-notice">Sign in with a student account to submit assignment files and view your scores.</div>
+                <div id="joinClassPanel" style="display:none; margin:12px 0; padding:12px; border:1px solid var(--theme-border-mid); border-radius:10px; background:var(--theme-input-bg);">
+                  <div style="font-weight:700; margin-bottom:8px; color:var(--columbia-blue);">Join Class</div>
+                  <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                    <input type="text" id="joinClassCodeInput" maxlength="6" placeholder="Enter 6-character code" aria-label="Join class code" style="padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; text-transform:uppercase;">
+                    <button class="btn run" id="joinClassBtn">Join Class</button>
+                  </div>
+                  <div id="joinClassStatus" style="font-size:12px; margin-top:8px;"></div>
+                </div>
                 <h3 style="color:var(--columbia-blue); margin-top:0;">Active Assignments</h3>
                 <div id="studentAssignmentList"></div>
 
@@ -791,10 +804,28 @@
       <h4 style="margin-top:20px; color:var(--columbia-blue); font-size:14px;">Student Accounts
         <button class="btn secondary" id="refreshUsersBtn" style="margin-left:10px; font-size:11px; padding:3px 8px;">↻ Refresh</button>
       </h4>
+      <div id="teacherCreatePanel" style="margin:10px 0 16px; padding:10px; border:1px solid var(--theme-border-mid); border-radius:8px; background:var(--theme-input-bg);">
+        <div style="font-weight:700; margin-bottom:8px; color:var(--columbia-blue);">Create Teacher Account</div>
+        <div style="display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap:8px;">
+          <input type="text" id="newTeacherName" placeholder="Teacher name">
+          <input type="email" id="newTeacherEmail" placeholder="teacher@example.com">
+          <input type="password" id="newTeacherPassword" placeholder="Temporary password">
+          <button class="btn run" id="createTeacherBtn" style="white-space:nowrap;">Add Teacher</button>
+        </div>
+      </div>
       <div id="usersTableWrap" style="max-height:220px; overflow-y:auto; margin-top:8px;">
-        <table class="users-table"><thead><tr><th>Name</th><th>Email</th><th>Registered</th><th>Last Sign In</th><th>Status</th><th>Actions</th></tr></thead>
+        <table class="users-table"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Class</th><th>Registered</th><th>Last Sign In</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody id="usersTableBody"></tbody>
         </table>
+      </div>
+
+      <h4 style="margin-top:20px; color:var(--columbia-blue); font-size:14px;">Teacher Class Management</h4>
+      <div id="teacherClassMgmt" style="padding:10px; border:1px solid var(--theme-border-mid); border-radius:8px; background:var(--theme-input-bg);">
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+          <input type="text" id="newClassNameInput" placeholder="New class name">
+          <button class="btn run" id="createClassBtn">Create Class</button>
+        </div>
+        <div id="teacherClassList"></div>
       </div>
 
       <div class="modal-actions" style="margin-top:20px;">
@@ -1301,8 +1332,13 @@ print("Hello " + name)
   <script>
     const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let ADMIN_TOKEN = null;
+    let TEACHER_TOKEN = null;
     let USER_TOKEN = null;
     let currentUser = null;   // { email, name }
+    let currentTeacher = null;
+    let teacherClasses = [];
+    let currentTeacherClassId = null;
+    let studentClassData = null;
     let currentOpenFile = null; // { path, name } of open file in sidebar
     let currentConfig = null;
     let mySid = null;
@@ -1473,11 +1509,107 @@ print("Hello " + name)
     // --- File auth helpers ---
     function fileAuthHeaders() {
       if (USER_TOKEN) return { 'X-User-Token': USER_TOKEN };
+      if (TEACHER_TOKEN) return { 'X-Teacher-Token': TEACHER_TOKEN };
       if (ADMIN_TOKEN) return { 'X-Admin-Token': ADMIN_TOKEN };
       return {};
     }
     function fileJsonHeaders() {
       return { 'Content-Type': 'application/json', ...fileAuthHeaders() };
+    }
+    function assignmentManagerHeaders() {
+      if (ADMIN_TOKEN) return { 'X-Admin-Token': ADMIN_TOKEN };
+      if (TEACHER_TOKEN) return { 'X-Teacher-Token': TEACHER_TOKEN };
+      return {};
+    }
+
+    function emitJoinClassRoom(role, token, classId) {
+      if (!socket || !role || !token || !classId) return;
+      socket.emit('join_class_room', { role, token, class_id: classId });
+    }
+
+    function emitLeaveClassRoom(classId) {
+      if (!socket || !classId) return;
+      socket.emit('leave_class_room', { class_id: classId });
+    }
+
+    async function loadStudentClassData() {
+      if (!USER_TOKEN) { studentClassData = null; return null; }
+      try {
+        const res = await fetch('/api/classes/current', { headers: { 'X-User-Token': USER_TOKEN } });
+        const j = await res.json().catch(() => ({}));
+        studentClassData = j?.classData || null;
+        if (currentUser) currentUser.class_id = studentClassData?.id || null;
+        if (studentClassData?.id) emitJoinClassRoom('student', USER_TOKEN, studentClassData.id);
+      } catch {
+        studentClassData = null;
+      }
+      return studentClassData;
+    }
+
+    async function loadTeacherClasses() {
+      if (!TEACHER_TOKEN) { teacherClasses = []; return []; }
+      try {
+        const res = await fetch('/api/teacher/classes', { headers: { 'X-Teacher-Token': TEACHER_TOKEN } });
+        const j = await res.json().catch(() => ({}));
+        teacherClasses = j?.classes || [];
+        if (!currentTeacherClassId || !teacherClasses.some(c => c.id === currentTeacherClassId)) {
+          currentTeacherClassId = teacherClasses[0]?.id || null;
+        }
+      } catch {
+        teacherClasses = [];
+      }
+      return teacherClasses;
+    }
+
+    function getCurrentClassContext() {
+      if (TEACHER_TOKEN) return teacherClasses.find(c => c.id === currentTeacherClassId) || null;
+      return studentClassData || null;
+    }
+
+    function applyClassTabVisibility() {
+      const classCtx = getCurrentClassContext();
+      const aiEnabledForClass = !!classCtx?.settings?.ai_enabled;
+      const wikiEnabledForClass = !!classCtx?.settings?.wiki_enabled;
+      const tExplain = document.getElementById('aiTabBtn');
+      const tChal = document.getElementById('aiChallengeTabBtn');
+      const tAssist = document.getElementById('assistantTabBtn');
+      const tWiki = document.getElementById('lessonTabBtn');
+      const aiMasterEnabled = !!currentConfig?.ai_explainer_enabled;
+      const effectiveAiEnabled = aiMasterEnabled && (ADMIN_TOKEN || aiEnabledForClass);
+      if (tExplain) tExplain.style.display = effectiveAiEnabled ? '' : 'none';
+      if (tChal) tChal.style.display = effectiveAiEnabled ? '' : 'none';
+      if (tAssist) tAssist.style.display = effectiveAiEnabled ? '' : 'none';
+      if (tWiki) tWiki.style.display = (ADMIN_TOKEN || !!classCtx) && (ADMIN_TOKEN || wikiEnabledForClass) ? '' : 'none';
+      const lessonLocal = document.getElementById('lessonLocal');
+      if (classCtx?.settings?.wiki_html) {
+        lessonLocal.innerHTML = classCtx.settings.wiki_html;
+        lessonLocal.style.display = 'block';
+        document.getElementById('lessonFrame').style.display = 'none';
+      }
+      if (studentClassData && !studentClassData.settings?.wiki_enabled) {
+        const activeWiki = document.querySelector('.tab-btn.active[data-tab="lessonTab"]');
+        if (activeWiki) document.getElementById('notesTabBtn').click();
+      }
+    }
+
+    function renderClassSelector() {
+      const wrap = document.getElementById('classSelectorWrap');
+      const select = document.getElementById('classSelector');
+      const classCtx = getCurrentClassContext();
+      if (TEACHER_TOKEN && teacherClasses.length) {
+        wrap.style.display = 'inline-flex';
+        select.innerHTML = teacherClasses.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)} (${escapeHtml(c.join_code)})</option>`).join('');
+        select.value = currentTeacherClassId || teacherClasses[0].id;
+      } else if (studentClassData) {
+        wrap.style.display = 'inline-flex';
+        select.innerHTML = `<option value="${escapeHtml(studentClassData.id)}">${escapeHtml(studentClassData.name)}</option>`;
+        select.value = studentClassData.id;
+      } else {
+        wrap.style.display = 'none';
+        select.innerHTML = '';
+      }
+      if (TEACHER_TOKEN && classCtx?.id) emitJoinClassRoom('teacher', TEACHER_TOKEN, classCtx.id);
+      applyClassTabVisibility();
     }
 
     // Append a single line (no embedded newlines) to the shell output with correct coloring.
@@ -1667,14 +1799,15 @@ print("Hello " + name)
           appendOut('[Process finished]\n');
           // Refresh file browser so files created by the program appear immediately
           const sidebar = document.getElementById('fileSidebar');
-          if ((USER_TOKEN || ADMIN_TOKEN) && sidebar && sidebar.style.display !== 'none') {
+          if ((USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN) && sidebar && sidebar.style.display !== 'none') {
             loadFileTree();
           }
         });
         
         // Listen for teacher code updates
         socket.on('teacher_code', (msg) => {
-          if (teacherEditor && msg && typeof msg.code === 'string') {
+          const selectedClassId = getCurrentClassContext()?.id;
+          if (teacherEditor && msg && typeof msg.code === 'string' && msg.class_id && msg.class_id === selectedClassId) {
             if (lastTeacherCodeSnapshot === msg.code) return;
             teacherEditor.setValue(msg.code);
             lastTeacherCodeSnapshot = msg.code;
@@ -1686,6 +1819,14 @@ print("Hello " + name)
             }
           }
         });
+        socket.on('class_membership_revoked', async () => {
+          if (!USER_TOKEN || !currentUser) return;
+          studentClassData = null;
+          currentUser.class_id = null;
+          alert('You were removed from your class by your teacher.');
+          renderClassSelector();
+          await loadAssignments();
+        });
       } catch (e) {
         console.error('Socket.IO initialization failed:', e);
         appendOut('[Socket.IO unavailable - IDE functionality limited]\n');
@@ -1693,6 +1834,18 @@ print("Hello " + name)
     } else {
       appendOut('[Socket.IO library not loaded - IDE functionality limited]\n');
     }
+
+    document.getElementById('classSelector')?.addEventListener('change', (e) => {
+      const nextId = e.target.value;
+      if (TEACHER_TOKEN) {
+        if (currentTeacherClassId && currentTeacherClassId !== nextId) emitLeaveClassRoom(currentTeacherClassId);
+        currentTeacherClassId = nextId || null;
+        if (currentTeacherClassId) emitJoinClassRoom('teacher', TEACHER_TOKEN, currentTeacherClassId);
+        if (!teacherBroadcastInterval && currentTeacherClassId) startTeacherBroadcast();
+      }
+      applyClassTabVisibility();
+      loadAssignments();
+    });
 
     function isHtmlRuntimeFile(name) {
       const lower = String(name || '').trim().toLowerCase();
@@ -1846,7 +1999,7 @@ print("Hello " + name)
       hideExceptionHelpButton();
       closeExceptionHelpModal();
       // Save current file before running
-      if (currentOpenFile && (USER_TOKEN || ADMIN_TOKEN)) {
+      if (currentOpenFile && (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN)) {
         try {
           await saveCurrentFile();
         } catch (err) {
@@ -1877,7 +2030,7 @@ print("Hello " + name)
       }
       appendOut('[Sending code]\n');
       if (socket) {
-        socket.emit('run_code', { code: editor.getValue(), user_token: USER_TOKEN || '', admin_token: ADMIN_TOKEN || '', file_path: currentOpenFile ? currentOpenFile.path : '' });
+        socket.emit('run_code', { code: editor.getValue(), user_token: USER_TOKEN || '', teacher_token: TEACHER_TOKEN || '', admin_token: ADMIN_TOKEN || '', file_path: currentOpenFile ? currentOpenFile.path : '' });
       } else {
         appendOut('[Error: Cannot run code - Socket.IO not available]\n');
       }
@@ -2016,10 +2169,12 @@ print("Hello " + name)
       if (tChal) tChal.style.display = enabled ? '' : 'none';
       if (tAssist) tAssist.style.display = enabled ? '' : 'none';
 
-      document.getElementById('aiEnabled')?.setAttribute('checked', enabled ? 'checked' : '');
+      const aiEnabledBox = document.getElementById('aiEnabled');
+      if (aiEnabledBox) aiEnabledBox.checked = enabled;
       const u = document.getElementById('aiUrlInput'); if (u) u.value = cfg.ai_ollama_url || '';
       const m = document.getElementById('aiModelInput'); if (m) m.value = cfg.ai_model || 'gemma3:4b';
       const ap = document.getElementById('assistantPromptInput'); if (ap) ap.value = cfg.ai_assistant_preprompt || '';
+      applyClassTabVisibility();
     }
     async function saveConfig(partial){
       const headers = {'Content-Type':'application/json'};
@@ -2190,12 +2345,13 @@ print("Hello " + name)
     })();
 
     // ---- Login UI ----
+    let loginRoleMode = 'student';
     function switchLoginTab(tab) {
       document.getElementById('paneStudent').classList.toggle('active', tab === 'student');
       document.getElementById('paneAdmin').classList.toggle('active', tab === 'admin');
       document.getElementById('tabStudentBtn').classList.toggle('active', tab === 'student');
       document.getElementById('tabAdminBtn').classList.toggle('active', tab === 'admin');
-      document.getElementById('loginModalTitle').textContent = tab === 'student' ? 'Student Login' : 'Admin Login';
+      document.getElementById('loginModalTitle').textContent = tab === 'student' ? (loginRoleMode === 'teacher' ? 'Teacher Login' : 'Student Login') : 'Admin Login';
     }
 
     function toggleStudentRegister() {
@@ -2216,6 +2372,7 @@ print("Hello " + name)
         document.getElementById('studentRegisterSection').style.display = 'none';
         document.getElementById('toggleRegisterBtn').textContent = 'Create Account';
         document.getElementById('studentLoginBtn').textContent = 'Login';
+        document.getElementById('toggleRegisterBtn').style.display = loginRoleMode === 'teacher' ? 'none' : '';
       }
     }
 
@@ -2229,12 +2386,18 @@ print("Hello " + name)
       const toggleFileSidebarBtn = document.getElementById('toggleFileSidebarBtn');
       const loginBtn = document.getElementById('loginBtn');
       const loginDropdown = document.getElementById('loginDropdown');
-      const isLoggedIn = !!(currentUser || ADMIN_TOKEN);
+      const adminSettingsBtn = document.getElementById('adminSettingsBtn');
+      const streamingToggleBtn = document.getElementById('streamingToggleBtn');
+      const isLoggedIn = !!(currentUser || currentTeacher || ADMIN_TOKEN);
       // Update guest badge, user chip, and file browser button
       guestBadge.style.display = isLoggedIn ? 'none' : '';
       if (currentUser) {
         userChip.style.display = '';
         userChip.textContent = currentUser.name || currentUser.email;
+        toggleFileSidebarBtn.style.display = '';
+      } else if (currentTeacher) {
+        userChip.style.display = '';
+        userChip.textContent = `Teacher: ${currentTeacher.name || currentTeacher.email}`;
         toggleFileSidebarBtn.style.display = '';
       } else if (ADMIN_TOKEN) {
         // Admin also gets access to the file browser
@@ -2254,14 +2417,17 @@ print("Hello " + name)
         loginBtn.textContent = 'Login';
         loginBtn.title = 'Login';
       }
+      adminSettingsBtn.style.display = (ADMIN_TOKEN || TEACHER_TOKEN) ? '' : 'none';
+      streamingToggleBtn.style.display = (ADMIN_TOKEN || TEACHER_TOKEN) ? '' : 'none';
       updateEditorOverlay();
+      renderClassSelector();
       if (typeof window.afterAuthUiUpdate === "function") window.afterAuthUiUpdate();
     }
 
     // Show/hide an "no file selected" overlay on the editor when signed in but no file open
     function updateEditorOverlay() {
       const editorPanel = document.getElementById('editorPanel');
-      const isLoggedIn = !!(currentUser || ADMIN_TOKEN);
+      const isLoggedIn = !!(currentUser || currentTeacher || ADMIN_TOKEN);
       if (isLoggedIn && !currentOpenFile) {
         editorPanel.classList.add('editor-disabled');
         if (window.eagleEditor) window.eagleEditor.setOption('readOnly', true);
@@ -2273,7 +2439,7 @@ print("Hello " + name)
 
     // Login button: show dropdown when not logged in, log out when logged in
     document.getElementById('loginBtn').addEventListener('click', async () => {
-      const isLoggedIn = !!(currentUser || ADMIN_TOKEN);
+      const isLoggedIn = !!(currentUser || currentTeacher || ADMIN_TOKEN);
       if (isLoggedIn) {
         // Perform logout directly
         if (USER_TOKEN) {
@@ -2285,6 +2451,19 @@ print("Hello " + name)
           editor.setValue('');
           if (typeof updateActiveFileName === 'function') updateActiveFileName();
           hideFileBrowser();
+        }
+        if (TEACHER_TOKEN) {
+          await fetch('/api/auth/logout', { method: 'POST', headers: { 'X-Teacher-Token': TEACHER_TOKEN } }).catch(() => {});
+          TEACHER_TOKEN = null;
+          currentTeacher = null;
+          teacherClasses = [];
+          currentTeacherClassId = null;
+          document.body.classList.remove('admin-mode');
+          currentOpenFile = null;
+          editor.setValue('');
+          if (typeof updateActiveFileName === 'function') updateActiveFileName();
+          hideFileBrowser();
+          stopTeacherBroadcast();
         }
         if (ADMIN_TOKEN) {
           ADMIN_TOKEN = null;
@@ -2314,10 +2493,17 @@ print("Hello " + name)
 
     document.getElementById('dropStudentLoginBtn').addEventListener('click', () => {
       document.getElementById('loginDropdown').classList.remove('open');
+      loginRoleMode = 'student';
+      openLoginModal('student');
+    });
+    document.getElementById('dropTeacherLoginBtn').addEventListener('click', () => {
+      document.getElementById('loginDropdown').classList.remove('open');
+      loginRoleMode = 'teacher';
       openLoginModal('student');
     });
     document.getElementById('dropAdminLoginBtn').addEventListener('click', () => {
       document.getElementById('loginDropdown').classList.remove('open');
+      loginRoleMode = 'student';
       openLoginModal('admin');
     });
 
@@ -2327,6 +2513,7 @@ print("Hello " + name)
       const errEl = document.getElementById('studentAuthError');
       errEl.textContent = '';
       const isRegister = document.getElementById('studentLoginBtn').textContent === 'Register';
+      if (loginRoleMode === 'teacher' && isRegister) { errEl.textContent = 'Teacher accounts are created by admin only.'; return; }
       const email = document.getElementById('studentEmail').value.trim();
       const password = document.getElementById('studentPassword').value;
       if (!email || !password) { errEl.textContent = 'Email and password required.'; return; }
@@ -2346,8 +2533,24 @@ print("Hello " + name)
         const res = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
         const j = await res.json().catch(() => ({}));
         if (j?.ok) {
-          USER_TOKEN = j.token;
-          currentUser = j.user;
+          if (j.role === 'teacher') {
+            TEACHER_TOKEN = j.token;
+            currentTeacher = j.user;
+            USER_TOKEN = null;
+            currentUser = null;
+            document.body.classList.add('admin-mode');
+            document.getElementById('adminSettingsBtn').style.display = '';
+            document.getElementById('streamingToggleBtn').style.display = '';
+            await loadTeacherClasses();
+            renderClassSelector();
+            if (currentTeacherClassId) startTeacherBroadcast();
+          } else {
+            USER_TOKEN = j.token;
+            currentUser = j.user;
+            TEACHER_TOKEN = null;
+            currentTeacher = null;
+            await loadStudentClassData();
+          }
           closeLoginModal();
           updateAuthUI();
           showFileBrowser();
@@ -2367,6 +2570,9 @@ print("Hello " + name)
       const j = await res.json().catch(() => ({}));
       if (j?.ok) {
         ADMIN_TOKEN = j.token;
+        USER_TOKEN = null;
+        TEACHER_TOKEN = null;
+        currentTeacher = null;
         document.body.classList.add('admin-mode');
         closeLoginModal();
         document.getElementById('adminSettingsBtn').style.display = '';
@@ -2392,6 +2598,8 @@ print("Hello " + name)
     
     function startTeacherBroadcast() {
       if (teacherBroadcastInterval) return;
+      const classId = getCurrentClassContext()?.id;
+      if (!classId) return;
       
       // Update teacher editor immediately with current code
        if (teacherEditor) {
@@ -2403,7 +2611,10 @@ print("Hello " + name)
        }
       
       teacherBroadcastInterval = setInterval(() => {
-        if (!ADMIN_TOKEN) return;
+        const token = ADMIN_TOKEN || TEACHER_TOKEN;
+        const role = ADMIN_TOKEN ? 'admin' : (TEACHER_TOKEN ? 'teacher' : '');
+        const activeClassId = getCurrentClassContext()?.id;
+        if (!token || !activeClassId) return;
         
         const currentCode = editor.getValue();
         if (currentCode !== lastBroadcastedCode) {
@@ -2416,7 +2627,9 @@ print("Hello " + name)
           // Broadcast to other clients if socket available
           if (socket) {
             socket.emit('teacher_code_update', {
-              token: ADMIN_TOKEN,
+              token,
+              role,
+              class_id: activeClassId,
               code: currentCode
             });
           }
@@ -2449,13 +2662,14 @@ print("Hello " + name)
     });
     
     // Start broadcasting if already logged in (on page refresh)
-    if (ADMIN_TOKEN) {
+    if (ADMIN_TOKEN || TEACHER_TOKEN) {
       startTeacherBroadcast();
     }
 
     // Admin settings modal handlers
     document.getElementById('adminSettingsBtn').addEventListener('click', () => {
       document.getElementById('adminSettingsModal').style.display = 'flex';
+      const isTeacherMode = !!TEACHER_TOKEN && !ADMIN_TOKEN;
       
       // Page settings
       document.getElementById('pageTitleInput').value = currentConfig?.page_title || 'Eagles Web IDE (Python)';
@@ -2486,7 +2700,27 @@ print("Hello " + name)
       document.getElementById('registrationEnabledModal').checked = currentConfig?.registration_enabled !== false;
 
       // Load users
-      loadAdminUsers();
+      if (isTeacherMode) {
+        document.getElementById('usersTableWrap').style.display = 'none';
+        document.getElementById('teacherCreatePanel').style.display = 'none';
+        document.getElementById('saveRegistrationBtn').style.display = 'none';
+        document.getElementById('refreshUsersBtn').style.display = 'none';
+        document.getElementById('settingsSaveBtn').style.display = 'none';
+      } else {
+        document.getElementById('usersTableWrap').style.display = '';
+        document.getElementById('teacherCreatePanel').style.display = '';
+        document.getElementById('saveRegistrationBtn').style.display = '';
+        document.getElementById('refreshUsersBtn').style.display = '';
+        document.getElementById('settingsSaveBtn').style.display = '';
+        loadAdminUsers();
+      }
+      if (TEACHER_TOKEN) {
+        document.getElementById('teacherClassMgmt').style.display = '';
+        loadTeacherClasses().then(() => renderTeacherClassManagement());
+      } else {
+        document.getElementById('teacherClassMgmt').style.display = 'none';
+        document.getElementById('teacherClassList').innerHTML = '<div style="color:#888; font-size:12px;">Teacher login required.</div>';
+      }
     });
 
     document.getElementById('settingsCancelBtn').addEventListener('click', () => {
@@ -2560,6 +2794,24 @@ print("Hello " + name)
     });
 
     document.getElementById('refreshUsersBtn').addEventListener('click', loadAdminUsers);
+    document.getElementById('createTeacherBtn').addEventListener('click', createTeacherAccount);
+    document.getElementById('createClassBtn').addEventListener('click', async () => {
+      if (!TEACHER_TOKEN) return alert('Teacher login required.');
+      const name = document.getElementById('newClassNameInput').value.trim();
+      if (!name) return alert('Class name is required.');
+      const res = await fetch('/api/teacher/classes/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Teacher-Token': TEACHER_TOKEN },
+        body: JSON.stringify({ name })
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!j?.ok) return alert(j?.error || 'Failed to create class');
+      document.getElementById('newClassNameInput').value = '';
+      await loadTeacherClasses();
+      renderTeacherClassManagement();
+      renderClassSelector();
+      await loadAssignments();
+    });
 
     async function loadAdminUsers() {
       if (!ADMIN_TOKEN) return;
@@ -2567,12 +2819,12 @@ print("Hello " + name)
       const j = await res.json().catch(() => ({}));
       const tbody = document.getElementById('usersTableBody');
       tbody.innerHTML = '';
-      if (!j.ok) { tbody.innerHTML = '<tr><td colspan="6" style="color:#ef5350;">Failed to load users</td></tr>'; return; }
-      if (!j.users.length) { tbody.innerHTML = '<tr><td colspan="6" style="color:#888;">No students registered yet.</td></tr>'; return; }
+      if (!j.ok) { tbody.innerHTML = '<tr><td colspan="8" style="color:#ef5350;">Failed to load users</td></tr>'; return; }
+      if (!j.users.length) { tbody.innerHTML = '<tr><td colspan="8" style="color:#888;">No users registered yet.</td></tr>'; return; }
       j.users.forEach(u => {
         const tr = document.createElement('tr');
         if (!u.enabled) tr.className = 'disabled-row';
-        tr.innerHTML = `<td>${escapeHtml(u.name || '')}</td><td>${escapeHtml(u.email)}</td><td>${escapeHtml(u.created_at || '')}</td><td>${escapeHtml(u.last_sign_in || '—')}</td><td>${u.enabled ? '✅ Active' : '🔒 Disabled'}</td>
+        tr.innerHTML = `<td>${escapeHtml(u.name || '')}</td><td>${escapeHtml(u.email)}</td><td>${escapeHtml(u.role || 'student')}</td><td>${escapeHtml(u.class_name || '—')}</td><td>${escapeHtml(u.created_at || '')}</td><td>${escapeHtml(u.last_sign_in || '—')}</td><td>${u.enabled ? '✅ Active' : '🔒 Disabled'}</td>
           <td style="display:flex;gap:4px;flex-wrap:wrap;">
             <button class="btn secondary" data-action="reset" style="font-size:11px;padding:2px 6px;">Reset PW</button>
             <button class="btn secondary" data-action="toggle" data-enable="${!u.enabled}" style="font-size:11px;padding:2px 6px;">${u.enabled ? 'Disable' : 'Enable'}</button>
@@ -2648,6 +2900,116 @@ print("Hello " + name)
       else alert(j.error || 'Failed');
     }
 
+    async function createTeacherAccount() {
+      if (!ADMIN_TOKEN) return;
+      const name = document.getElementById('newTeacherName').value.trim();
+      const email = document.getElementById('newTeacherEmail').value.trim();
+      const password = document.getElementById('newTeacherPassword').value.trim();
+      if (!name || !email || !password) return alert('Teacher name, email, and password are required.');
+      const res = await fetch('/api/admin/teachers/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+        body: JSON.stringify({ name, email, password })
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!j?.ok) return alert(j?.error || 'Failed to create teacher account');
+      document.getElementById('newTeacherName').value = '';
+      document.getElementById('newTeacherEmail').value = '';
+      document.getElementById('newTeacherPassword').value = '';
+      loadAdminUsers();
+      alert('Teacher account created.');
+    }
+
+    function teacherStudentActionsHtml(classId, student) {
+      return `
+        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
+          <button class="btn secondary cls-reset-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}" style="font-size:11px; padding:3px 8px;">Reset PW</button>
+          <button class="btn secondary cls-toggle-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}" data-enable="${!student.enabled}" style="font-size:11px; padding:3px 8px;">${student.enabled ? 'Lock' : 'Unlock'}</button>
+          <button class="btn stop cls-remove-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}" style="font-size:11px; padding:3px 8px;">Remove</button>
+        </div>`;
+    }
+
+    function renderTeacherClassManagement() {
+      const wrap = document.getElementById('teacherClassList');
+      if (!wrap) return;
+      if (!teacherClasses.length) {
+        wrap.innerHTML = '<div style="color:#888; font-size:12px;">No classes yet.</div>';
+        return;
+      }
+      wrap.innerHTML = teacherClasses.map(cls => `
+        <div style="border:1px solid var(--theme-border-mid); border-radius:8px; padding:10px; margin-bottom:10px;">
+          <div style="display:flex; justify-content:space-between; gap:8px; align-items:center;">
+            <div><strong>${escapeHtml(cls.name)}</strong> <span style="font-size:12px; color:#888;">Join code: ${escapeHtml(cls.join_code)}</span></div>
+            <button class="btn secondary select-class-btn" data-class="${escapeHtml(cls.id)}" style="font-size:11px; padding:3px 8px;">Use Class</button>
+          </div>
+          <div style="margin-top:8px; display:flex; gap:10px; flex-wrap:wrap;">
+            <label style="font-size:12px;"><input type="checkbox" class="cls-ai" data-class="${escapeHtml(cls.id)}" ${cls.settings?.ai_enabled ? 'checked' : ''}> AI enabled</label>
+            <label style="font-size:12px;"><input type="checkbox" class="cls-wiki" data-class="${escapeHtml(cls.id)}" ${cls.settings?.wiki_enabled ? 'checked' : ''}> Wiki enabled</label>
+            <button class="btn secondary save-class-settings-btn" data-class="${escapeHtml(cls.id)}" style="font-size:11px; padding:3px 8px;">Save Settings</button>
+          </div>
+          <textarea class="cls-wiki-html" data-class="${escapeHtml(cls.id)}" placeholder="Class wiki HTML" style="width:100%; margin-top:8px; min-height:80px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; padding:8px;">${escapeHtml(cls.settings?.wiki_html || '')}</textarea>
+          <div style="margin-top:8px; font-size:12px; color:#888;">Students: ${cls.students?.length || 0}</div>
+          <div>
+            ${(cls.students || []).map(student => `<div style="margin-top:6px; padding:6px; border:1px solid var(--theme-border-mid); border-radius:6px;">${escapeHtml(student.name || student.email)} (${escapeHtml(student.email)}) ${teacherStudentActionsHtml(cls.id, student)}</div>`).join('') || '<div style="color:#888; font-size:12px;">No students enrolled.</div>'}
+          </div>
+        </div>
+      `).join('');
+
+      wrap.querySelectorAll('.select-class-btn').forEach(btn => btn.addEventListener('click', () => {
+        currentTeacherClassId = btn.dataset.class;
+        renderClassSelector();
+        loadAssignments();
+      }));
+      wrap.querySelectorAll('.save-class-settings-btn').forEach(btn => btn.addEventListener('click', async () => {
+        const classId = btn.dataset.class;
+        const ai = wrap.querySelector(`.cls-ai[data-class="${CSS.escape(classId)}"]`)?.checked;
+        const wiki = wrap.querySelector(`.cls-wiki[data-class="${CSS.escape(classId)}"]`)?.checked;
+        const wikiHtml = wrap.querySelector(`.cls-wiki-html[data-class="${CSS.escape(classId)}"]`)?.value || '';
+        const res = await fetch('/api/teacher/classes/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Teacher-Token': TEACHER_TOKEN },
+          body: JSON.stringify({ classId, settings: { ai_enabled: !!ai, wiki_enabled: !!wiki, wiki_html: wikiHtml } })
+        });
+        const j = await res.json().catch(() => ({}));
+        if (!j?.ok) return alert(j?.error || 'Failed to save class settings');
+        await loadTeacherClasses();
+        renderTeacherClassManagement();
+        renderClassSelector();
+      }));
+      wrap.querySelectorAll('.cls-remove-btn').forEach(btn => btn.addEventListener('click', async () => {
+        const res = await fetch('/api/teacher/classes/remove-student', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Teacher-Token': TEACHER_TOKEN },
+          body: JSON.stringify({ classId: btn.dataset.class, studentEmail: btn.dataset.email })
+        });
+        const j = await res.json().catch(() => ({}));
+        if (!j?.ok) return alert(j?.error || 'Failed to remove student');
+        await loadTeacherClasses();
+        renderTeacherClassManagement();
+      }));
+      wrap.querySelectorAll('.cls-reset-btn').forEach(btn => btn.addEventListener('click', async () => {
+        const res = await fetch('/api/teacher/students/reset-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Teacher-Token': TEACHER_TOKEN },
+          body: JSON.stringify({ email: btn.dataset.email })
+        });
+        const j = await res.json().catch(() => ({}));
+        if (!j?.ok) return alert(j?.error || 'Failed to reset password');
+        alert(`Temporary password for ${btn.dataset.email}: ${j.temp_password}`);
+      }));
+      wrap.querySelectorAll('.cls-toggle-btn').forEach(btn => btn.addEventListener('click', async () => {
+        const res = await fetch('/api/teacher/students/toggle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Teacher-Token': TEACHER_TOKEN },
+          body: JSON.stringify({ email: btn.dataset.email, enabled: btn.dataset.enable === 'true' })
+        });
+        const j = await res.json().catch(() => ({}));
+        if (!j?.ok) return alert(j?.error || 'Failed to update student account');
+        await loadTeacherClasses();
+        renderTeacherClassManagement();
+      }));
+    }
+
     // ---- File Browser ----
     let _currentFolderPath = ''; // '' = root
     let _allFileTree = [];       // full flat tree from server
@@ -2694,7 +3056,7 @@ print("Hello " + name)
     }
 
     async function loadFileTree() {
-      if (!USER_TOKEN && !ADMIN_TOKEN) return;
+      if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return;
       const res = await fetch('/api/files/list', { headers: fileAuthHeaders() });
       const j = await res.json().catch(() => ({}));
       const treeEl = document.getElementById('fileTree');
@@ -2845,7 +3207,7 @@ print("Hello " + name)
     }
 
     async function moveItem(srcPath, destFolderPath) {
-      if (!USER_TOKEN && !ADMIN_TOKEN) return;
+      if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return;
       const res = await fetch('/api/files/move', {
         method: 'POST',
         headers: fileJsonHeaders(),
@@ -2863,7 +3225,7 @@ print("Hello " + name)
     // Save the currently open file (if any).
     // Returns true on success (or if nothing to save), false on error.
     async function saveCurrentFile() {
-      if (!currentOpenFile || (!USER_TOKEN && !ADMIN_TOKEN)) return true;
+      if (!currentOpenFile || (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN)) return true;
       const code = editor.getValue();
       try {
         const res = await fetch('/api/files/write', {
@@ -2889,7 +3251,7 @@ print("Hello " + name)
     // Autosave: save current file 1.5 s after the last edit
     let _autosaveTimer = null;
     function scheduleAutosave() {
-      if (!currentOpenFile || (!USER_TOKEN && !ADMIN_TOKEN)) return;
+      if (!currentOpenFile || (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN)) return;
       if (_autosaveTimer) clearTimeout(_autosaveTimer);
       _autosaveTimer = setTimeout(async () => {
         _autosaveTimer = null;
@@ -2912,7 +3274,7 @@ print("Hello " + name)
     }
 
     async function openFile(item) {
-      if (!USER_TOKEN && !ADMIN_TOKEN) return;
+      if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return;
       // Save the currently open file before switching
       await saveCurrentFile();
       const res = await fetch('/api/files/read?path=' + encodeURIComponent(item.path), { headers: fileAuthHeaders() });
@@ -3524,12 +3886,14 @@ print("Hello " + name)
 
     async function loadAssignments() {
       try {
-        const headers = ADMIN_TOKEN ? { 'X-Admin-Token': ADMIN_TOKEN } : {};
+        const headers = ADMIN_TOKEN
+          ? { 'X-Admin-Token': ADMIN_TOKEN }
+          : (TEACHER_TOKEN ? { 'X-Teacher-Token': TEACHER_TOKEN } : (USER_TOKEN ? { 'X-User-Token': USER_TOKEN } : {}));
         const resp = await fetch('/api/assignments', { headers });
         const data = await resp.json().catch(() => ({}));
         if (!data.ok) return;
         currentAssignments = data.assignments || [];
-        isAdmin = data.isAdmin || false;
+        isAdmin = data.canManage || data.isAdmin || false;
         if (isAdmin && currentAssignments.length) {
           if (!currentAdminAssignmentName || !getAssignmentByName(currentAdminAssignmentName)) {
             currentAdminAssignmentName = currentAssignments[0].name;
@@ -3585,7 +3949,7 @@ print("Hello " + name)
           <h4>${escapeHtml(a.name)}</h4>
           <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
           <div class="meta">
-            Max Score: ${a.maxScore} · ${a.active ? 'Unlocked' : 'Locked'} · ${(a.submissions || []).length} submission(s)
+            Max Score: ${a.maxScore} · ${a.active ? 'Unlocked' : 'Locked'} · Class: ${escapeHtml(a.targetClassName || 'All')} · ${(a.submissions || []).length} submission(s)
           </div>
           <div class="assignment-actions">
             <button class="btn secondary select-assignment-btn" data-name="${escapeHtml(a.name)}">Scores</button>
@@ -3614,7 +3978,7 @@ print("Hello " + name)
       detail.innerHTML = `
         <h4>${escapeHtml(assignment.name)}</h4>
         <div class="meta" style="margin-bottom:12px; white-space:pre-wrap;">${escapeHtml(assignment.task || '(No task description)')}</div>
-        <div class="meta" style="margin-bottom:12px;">Max score ${assignment.maxScore}${assignment.quiz?.totalPoints ? ` · Quiz ${assignment.quiz.totalPoints} pts` : ''}</div>
+        <div class="meta" style="margin-bottom:12px;">Max score ${assignment.maxScore}${assignment.quiz?.totalPoints ? ` · Quiz ${assignment.quiz.totalPoints} pts` : ''} · Class ${escapeHtml(assignment.targetClassName || 'All')}</div>
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
           <button class="btn secondary" id="downloadScoresBtn">Download CSV</button>
         </div>
@@ -3643,11 +4007,16 @@ print("Hello " + name)
       const activeList = document.getElementById('studentAssignmentList');
       const pastList = document.getElementById('studentPastAssignmentList');
       const notice = document.getElementById('studentAccountNotice');
+      const joinPanel = document.getElementById('joinClassPanel');
       const files = flattenFiles(_allFileTree || []);
       const canSubmit = !!USER_TOKEN && !!currentUser;
+      const joinedClass = !!studentClassData;
       notice.textContent = canSubmit
-        ? `Signed in as ${currentUser.name || currentUser.email}. Choose a file from your account when you submit an assignment.`
+        ? (joinedClass
+          ? `Signed in as ${currentUser.name || currentUser.email}. Class: ${studentClassData.name}. Choose a file from your account when you submit an assignment.`
+          : `Signed in as ${currentUser.name || currentUser.email}. Join a class with a code to view class assignments.`)
         : 'Sign in with a student account to submit assignment files and view your scores.';
+      if (joinPanel) joinPanel.style.display = canSubmit && !joinedClass ? '' : 'none';
 
       const activeAssignments = currentAssignments.filter(a => a.active);
       const pastAssignments = currentAssignments.filter(a => !a.active);
@@ -3661,8 +4030,8 @@ print("Hello " + name)
             <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
             <div class="meta">Max Score: ${a.maxScore}${a.quiz?.questions?.length ? ` · Questions: ${a.quiz.questions.length}` : ''}</div>
             <div class="assignment-actions">
-              <button class="btn run submit-assignment-btn" data-name="${escapeHtml(a.name)}" ${canSubmit && files.length ? '' : 'disabled'}>Submit File</button>
-              ${a.quiz?.questions?.length ? `<button class="btn secondary open-questions-btn" data-name="${escapeHtml(a.name)}" ${canSubmit ? '' : 'disabled'}>Questions (${a.quiz.questions.length})</button>` : ''}
+               <button class="btn run submit-assignment-btn" data-name="${escapeHtml(a.name)}" ${canSubmit && joinedClass && files.length ? '' : 'disabled'}>Submit File</button>
+               ${a.quiz?.questions?.length ? `<button class="btn secondary open-questions-btn" data-name="${escapeHtml(a.name)}" ${canSubmit && joinedClass ? '' : 'disabled'}>Questions (${a.quiz.questions.length})</button>` : ''}
             </div>
           </div>
         `).join('');
@@ -3731,6 +4100,41 @@ print("Hello " + name)
       };
     }
 
+    document.getElementById('joinClassBtn').addEventListener('click', async () => {
+      if (!USER_TOKEN || !currentUser) return;
+      const status = document.getElementById('joinClassStatus');
+      const code = (document.getElementById('joinClassCodeInput').value || '').trim().toUpperCase();
+      if (!code || code.length !== 6) {
+        status.textContent = 'Enter a valid 6-character code.';
+        status.style.color = '#ef5350';
+        return;
+      }
+      status.textContent = 'Joining class…';
+      status.style.color = '';
+      try {
+        const res = await fetch('/api/classes/join', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
+          body: JSON.stringify({ joinCode: code })
+        });
+        const j = await res.json().catch(() => ({}));
+        if (!j?.ok) {
+          status.textContent = j?.error || 'Failed to join class.';
+          status.style.color = '#ef5350';
+          return;
+        }
+        studentClassData = j.classData || null;
+        if (studentClassData?.id) emitJoinClassRoom('student', USER_TOKEN, studentClassData.id);
+        status.textContent = `Joined ${studentClassData?.name || 'class'} successfully.`;
+        status.style.color = '#4caf50';
+        renderClassSelector();
+        await loadAssignments();
+      } catch {
+        status.textContent = 'Network error.';
+        status.style.color = '#ef5350';
+      }
+    });
+
     document.getElementById('newAssignmentBtn').addEventListener('click', () => showAssignmentModal());
 
     function showAssignmentModal(existingAssignment = null) {
@@ -3745,6 +4149,11 @@ print("Hello " + name)
           <textarea id="modalAssignmentTask" placeholder="Describe what students need to do...">${escapeHtml(existingAssignment?.task || '')}</textarea>
           <label>Max Score (Code)</label>
           <input type="number" id="modalAssignmentMaxScore" value="${existingAssignment?.maxScore || 100}" min="1" />
+          ${TEACHER_TOKEN ? `
+          <label>Class</label>
+          <select id="modalAssignmentClassId" style="width:100%; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;">
+            ${teacherClasses.map(c => `<option value="${escapeHtml(c.id)}" ${(existingAssignment?.targetClassId || currentTeacherClassId) === c.id ? 'selected' : ''}>${escapeHtml(c.name)} (${escapeHtml(c.join_code)})</option>`).join('')}
+          </select>` : ''}
           <div style="margin-top:20px; padding-top:20px; border-top:1px solid #333;">
             <h4 style="color:var(--columbia-blue); margin:0 0 12px;">Quiz (Optional)</h4>
             <div id="quizBuilder">
@@ -3797,13 +4206,14 @@ print("Hello " + name)
           : document.getElementById('modalAssignmentName').value.trim();
         const task = document.getElementById('modalAssignmentTask').value.trim();
         const maxScore = parseInt(document.getElementById('modalAssignmentMaxScore').value, 10) || 100;
+        const classId = document.getElementById('modalAssignmentClassId')?.value || (TEACHER_TOKEN ? currentTeacherClassId : null);
         if (!name) { alert('Please enter an assignment name.'); return; }
-        const payload = { name, task, maxScore, quiz: buildQuizPayload(quizQuestions) };
+        const payload = { name, task, maxScore, classId, quiz: buildQuizPayload(quizQuestions) };
         const url = existingAssignment ? '/api/assignments/update' : '/api/assignments/create';
         try {
           const resp = await fetch(url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+            headers: { 'Content-Type': 'application/json', ...assignmentManagerHeaders() },
             body: JSON.stringify(payload)
           });
           const data = await resp.json().catch(() => ({}));
@@ -3902,7 +4312,7 @@ print("Hello " + name)
       try {
         const resp = await fetch('/api/assignments/update', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+          headers: { 'Content-Type': 'application/json', ...assignmentManagerHeaders() },
           body: JSON.stringify({ name, active })
         });
         const data = await resp.json().catch(() => ({}));
@@ -3919,7 +4329,7 @@ print("Hello " + name)
       try {
         const resp = await fetch('/api/assignments/delete', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+          headers: { 'Content-Type': 'application/json', ...assignmentManagerHeaders() },
           body: JSON.stringify({ name })
         });
         const data = await resp.json().catch(() => ({}));
@@ -4136,7 +4546,7 @@ print("Hello " + name)
       try {
         const response = await fetch('/api/assignments/score', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+          headers: { 'Content-Type': 'application/json', ...assignmentManagerHeaders() },
           body: JSON.stringify({ assignmentName, studentEmail: email, score: parsedScore })
         });
         const result = await response.json().catch(() => ({}));
@@ -4168,7 +4578,7 @@ print("Hello " + name)
       try {
         const response = await fetch('/api/assignments/grade-ai', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+          headers: { 'Content-Type': 'application/json', ...assignmentManagerHeaders() },
           body: JSON.stringify(buildAiContext({
             assignmentName: assignment.name,
             studentEmail: submission.email,
@@ -4194,7 +4604,7 @@ print("Hello " + name)
     async function downloadCSV(assignmentName) {
       const url = `/api/assignments/${encodeURIComponent(assignmentName)}/csv`;
       try {
-        const resp = await fetch(url, { headers: { 'X-Admin-Token': ADMIN_TOKEN } });
+        const resp = await fetch(url, { headers: assignmentManagerHeaders() });
         if (!resp.ok) { alert('Failed to download CSV'); return; }
         const blob = await resp.blob();
         const blobUrl = URL.createObjectURL(blob);
@@ -4211,11 +4621,17 @@ print("Hello " + name)
     }
 
     window.afterAuthUiUpdate = async () => {
+      if (USER_TOKEN) await loadStudentClassData();
+      if (TEACHER_TOKEN) await loadTeacherClasses();
+      renderClassSelector();
       refreshChallengeAuthState();
       await loadAssignments();
     };
 
     (async () => {
+      if (USER_TOKEN) await loadStudentClassData();
+      if (TEACHER_TOKEN) await loadTeacherClasses();
+      renderClassSelector();
       await loadAssignments();
       refreshChallengeAuthState();
     })();

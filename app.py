@@ -8,11 +8,13 @@ import hashlib
 import heapq
 import hmac
 import json
+import getpass
 import os
 import random
 import re
 import secrets
 import shutil
+import string
 import subprocess
 import sys
 import threading
@@ -22,10 +24,11 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 from flask import Flask, send_from_directory, send_file, request, jsonify
-from flask_socketio import SocketIO, emit
+from flask_socketio import SocketIO, emit, join_room, leave_room
 import requests
 import bcrypt
 from collections import defaultdict
+from cryptography.fernet import Fernet, InvalidToken
 
 # -------------------------
 # Paths & constants
@@ -62,6 +65,8 @@ os.makedirs(ASSIGNMENTS_DIR, exist_ok=True)
 
 USERS_FILE = BASE_DIR / "users.json"
 USER_FILES_DIR = BASE_DIR / "user_files"
+CLASSES_FILE = BASE_DIR / "classes.json"
+ADMIN_KEY_FILE = BASE_DIR / ".admin_key"
 os.makedirs(USER_FILES_DIR, exist_ok=True)
 
 # -------------------------
@@ -157,6 +162,65 @@ def _update_config(partial: Dict[str, Any]) -> Dict[str, Any]:
 CONFIG = _load_config()
 print(f"Configuration loaded successfully with {len(CONFIG)} settings")
 
+ADMIN_ACCOUNT_EMAIL = ADMIN_EMAIL
+ADMIN_ACCOUNT_PASSWORD = DEFAULT_ADMIN_PASSWORD
+
+
+def _load_or_create_admin_key() -> bytes:
+    if ADMIN_KEY_FILE.exists():
+        return ADMIN_KEY_FILE.read_bytes()
+    key = Fernet.generate_key()
+    ADMIN_KEY_FILE.write_bytes(key)
+    try:
+        os.chmod(ADMIN_KEY_FILE, 0o600)
+    except Exception:
+        pass
+    return key
+
+
+def _admin_cipher() -> Fernet:
+    return Fernet(_load_or_create_admin_key())
+
+
+def _encrypt_admin_password(password: str) -> str:
+    return _admin_cipher().encrypt(password.encode("utf-8")).decode("utf-8")
+
+
+def _decrypt_admin_password(token: str) -> str:
+    return _admin_cipher().decrypt(token.encode("utf-8")).decode("utf-8")
+
+
+def _bootstrap_admin_credentials() -> None:
+    global ADMIN_ACCOUNT_EMAIL, ADMIN_ACCOUNT_PASSWORD
+    cfg = _load_config()
+    stored_email = str(cfg.get("admin_email", "")).strip()
+    stored_encrypted_pw = str(cfg.get("admin_password_encrypted", "")).strip()
+    if stored_email and stored_encrypted_pw:
+        try:
+            ADMIN_ACCOUNT_EMAIL = stored_email
+            ADMIN_ACCOUNT_PASSWORD = _decrypt_admin_password(stored_encrypted_pw)
+            return
+        except (InvalidToken, Exception):
+            print("Warning: Stored admin credentials could not be decrypted. Re-prompting setup.")
+    print("\nFirst-time admin setup is required.\n")
+    max_attempts = 10
+    for _ in range(max_attempts):
+        entered_email = input("Enter admin email: ").strip()
+        entered_password = getpass.getpass("Enter admin password: ").strip()
+        if entered_email and entered_password:
+            ADMIN_ACCOUNT_EMAIL = entered_email
+            ADMIN_ACCOUNT_PASSWORD = entered_password
+            _update_config({
+                "admin_email": entered_email,
+                "admin_password_encrypted": _encrypt_admin_password(entered_password),
+            })
+            return
+        print("Admin email and password are required. They cannot be blank.\n")
+    raise RuntimeError("Admin credential setup failed after maximum attempts")
+
+
+_bootstrap_admin_credentials()
+
 
 def _cfg_bool(cfg: Dict[str, Any], key: str, default: bool) -> bool:
     return bool(cfg.get(key, default))
@@ -229,7 +293,9 @@ def _is_html_file(path: Path) -> bool:
 # -------------------------
 _users_lock = threading.Lock()
 _student_tokens: Dict[str, dict] = {}  # token -> user info dict
+_teacher_tokens: Dict[str, dict] = {}  # token -> teacher info dict
 _reg_rate_limit: dict = defaultdict(list)  # ip -> list of timestamps
+_classes_lock = threading.Lock()
 
 def _sanitize_email_for_path(email: str) -> str:
     """Convert email to safe directory name"""
@@ -241,13 +307,31 @@ def _load_users() -> dict:
     with _users_lock:
         if USERS_FILE.exists():
             try:
-                return json.loads(USERS_FILE.read_text(encoding="utf-8"))
+                return _normalize_users_data(json.loads(USERS_FILE.read_text(encoding="utf-8")))
             except Exception:
                 pass
         return {"users": []}
 
+
+def _normalize_user_record(user: dict) -> dict:
+    normalized = dict(user or {})
+    role = str(normalized.get("role") or "student").strip().lower()
+    if role not in {"student", "teacher"}:
+        role = "student"
+    normalized["role"] = role
+    normalized["class_id"] = normalized.get("class_id") or None
+    normalized.setdefault("enabled", True)
+    return normalized
+
+
+def _normalize_users_data(data: dict) -> dict:
+    users = [_normalize_user_record(u) for u in (data or {}).get("users", []) if isinstance(u, dict)]
+    return {"users": users}
+
+
 def _save_users(data: dict) -> None:
     with _users_lock:
+        data = _normalize_users_data(data)
         tmp = USERS_FILE.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(USERS_FILE)
@@ -256,8 +340,81 @@ def _find_user(email: str) -> Optional[dict]:
     data = _load_users()
     for u in data.get("users", []):
         if u.get("email", "").lower() == email.lower():
-            return u
+            return _normalize_user_record(u)
     return None
+
+
+def _load_classes() -> dict:
+    with _classes_lock:
+        if CLASSES_FILE.exists():
+            try:
+                data = json.loads(CLASSES_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                data = {}
+        else:
+            data = {}
+        classes = []
+        for c in data.get("classes", []):
+            if not isinstance(c, dict):
+                continue
+            settings = c.get("settings") or {}
+            students = list(dict.fromkeys([str(s).strip().lower() for s in c.get("students", []) if str(s).strip()]))
+            classes.append({
+                "id": str(c.get("id") or uuid.uuid4().hex),
+                "name": str(c.get("name") or "Class").strip()[:120] or "Class",
+                "teacher_email": str(c.get("teacher_email") or "").strip().lower(),
+                "join_code": str(c.get("join_code") or "").strip().upper(),
+                "settings": {
+                    "ai_enabled": bool(settings.get("ai_enabled", True)),
+                    "wiki_enabled": bool(settings.get("wiki_enabled", True)),
+                    "wiki_html": str(settings.get("wiki_html") or ""),
+                },
+                "students": students,
+                "created_at": c.get("created_at") or _current_timestamp(),
+            })
+        return {"classes": classes}
+
+
+def _save_classes(data: dict) -> None:
+    with _classes_lock:
+        tmp = CLASSES_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(CLASSES_FILE)
+
+
+def _find_class_by_code(join_code: str) -> Optional[dict]:
+    code = str(join_code or "").strip().upper()
+    if not code:
+        return None
+    for c in _load_classes().get("classes", []):
+        if str(c.get("join_code", "")).upper() == code:
+            return c
+    return None
+
+
+def _find_class_by_id(class_id: str) -> Optional[dict]:
+    cid = str(class_id or "").strip()
+    if not cid:
+        return None
+    for c in _load_classes().get("classes", []):
+        if c.get("id") == cid:
+            return c
+    return None
+
+
+def _generate_join_code(existing_codes: set[str]) -> str:
+    alphabet = string.ascii_uppercase + string.digits
+    max_attempts = 5000
+    for _ in range(max_attempts):
+        code = "".join(secrets.choice(alphabet) for _ in range(6))
+        if code not in existing_codes:
+            return code
+    raise RuntimeError("Could not generate unique class join code")
+
+
+def _require_teacher(req) -> Optional[dict]:
+    token = req.headers.get("X-Teacher-Token", "").strip()
+    return _teacher_tokens.get(token)
 
 def _current_timestamp() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
@@ -297,20 +454,20 @@ def _prepend_submission_timestamp(content: str, submitted_at: str, student_name:
         return f"{name_header}\n{time_header}\n{content}"
     return f"{name_header}\n{time_header}"
 
-def _write_assignment_submission_copy(assignment_name: str, student_name: str, source_name: str, content: str) -> str:
-    admin_dir = _get_user_dir(ADMIN_EMAIL)
-    admin_dir.mkdir(parents=True, exist_ok=True)
-    assignment_dir = _validate_user_path(admin_dir, _sanitize_storage_component(assignment_name, fallback="Assignment"))
+def _write_assignment_submission_copy(owner_email: str, assignment_name: str, student_name: str, source_name: str, content: str) -> str:
+    owner_dir = _get_user_dir(owner_email)
+    owner_dir.mkdir(parents=True, exist_ok=True)
+    assignment_dir = _validate_user_path(owner_dir, _sanitize_storage_component(assignment_name, fallback="Assignment"))
     if not assignment_dir:
         raise ValueError("Invalid assignment storage path")
     assignment_dir.mkdir(parents=True, exist_ok=True)
     suffix = Path(source_name).suffix.lower() or ".py"
     filename = _sanitize_storage_component(student_name, fallback="Student") + suffix
-    target = _validate_user_path(admin_dir, str((assignment_dir / filename).relative_to(admin_dir.resolve())))
+    target = _validate_user_path(owner_dir, str((assignment_dir / filename).relative_to(owner_dir.resolve())))
     if not target:
         raise ValueError("Invalid submission file path")
     target.write_text(content, encoding="utf-8")
-    return str(target.relative_to(admin_dir))
+    return str(target.relative_to(owner_dir))
 
 def _get_user_dir(email: str) -> Path:
     return USER_FILES_DIR / _sanitize_email_for_path(email)
@@ -320,13 +477,16 @@ def _require_user(req) -> Optional[dict]:
     return _student_tokens.get(token)
 
 def _require_user_for_files(req) -> Optional[dict]:
-    """Allow either a student or the admin to access file routes."""
+    """Allow a student, teacher, or the admin to access file routes."""
     user = _require_user(req)
     if user:
         return user
+    teacher = _require_teacher(req)
+    if teacher:
+        return teacher
     admin_token = req.headers.get("X-Admin-Token", "").strip()
     if admin_token and admin_token in _admin_tokens:
-        return {"email": ADMIN_EMAIL, "name": "Admin"}
+        return {"email": ADMIN_ACCOUNT_EMAIL, "name": "Admin", "role": "admin"}
     return None
 
 def _get_user_storage_used(user_dir: Path) -> int:
@@ -410,6 +570,84 @@ def _validate_user_path(user_dir: Path, path_str: str) -> Optional[Path]:
     except Exception:
         return None
 
+
+def _assignment_actor(req) -> Optional[dict]:
+    if _require_admin(req):
+        return {"role": "admin", "email": ADMIN_ACCOUNT_EMAIL}
+    teacher = _require_teacher(req)
+    if teacher:
+        return {"role": "teacher", "email": (teacher.get("email") or "").strip().lower()}
+    return None
+
+
+def _get_teacher_classes(teacher_email: str) -> list[dict]:
+    email = (teacher_email or "").strip().lower()
+    return [c for c in _load_classes().get("classes", []) if (c.get("teacher_email") or "").lower() == email]
+
+
+def _class_for_student(email: str) -> Optional[dict]:
+    normalized = (email or "").strip().lower()
+    for c in _load_classes().get("classes", []):
+        if normalized in [s.lower() for s in c.get("students", [])]:
+            return c
+    return None
+
+
+def _student_in_teacher_class(teacher_email: str, student_email: str) -> Optional[dict]:
+    t_email = (teacher_email or "").strip().lower()
+    s_email = (student_email or "").strip().lower()
+    for c in _load_classes().get("classes", []):
+        if (c.get("teacher_email") or "").lower() == t_email and s_email in [s.lower() for s in c.get("students", [])]:
+            return c
+    return None
+
+
+def _revoke_student_class_rooms(student_email: str, class_id: Optional[str] = None) -> None:
+    target_email = (student_email or "").strip().lower()
+    target_class = (class_id or "").strip()
+    for sid, info in list(_socket_sid_info.items()):
+        if info.get("role") != "student" or (info.get("email") or "").lower() != target_email:
+            continue
+        rooms = list(_socket_sid_rooms.get(sid, set()))
+        for joined_class_id in rooms:
+            if target_class and joined_class_id != target_class:
+                continue
+            room_name = f"class_{joined_class_id}"
+            try:
+                leave_room(room_name, sid=sid)
+                _socket_sid_rooms.setdefault(sid, set()).discard(joined_class_id)
+                socketio.emit("class_membership_revoked", {"class_id": joined_class_id}, to=sid)
+            except Exception as exc:
+                print(f"Warning: failed to remove sid {sid} from class room {room_name}: {exc}")
+
+
+def _effective_ai_enabled(req, payload: Optional[dict] = None) -> tuple[bool, Optional[str]]:
+    cfg = _load_config()
+    if not cfg.get("ai_explainer_enabled", False):
+        return False, "AI features disabled by admin"
+    user = _require_user(req)
+    if user:
+        class_id = user.get("class_id") or (_find_user(user.get("email", "")) or {}).get("class_id")
+        if not class_id:
+            return False, "Join a class to use AI features"
+        cls = _find_class_by_id(class_id)
+        if not cls:
+            return False, "Class not found"
+        if not (cls.get("settings") or {}).get("ai_enabled", True):
+            return False, "AI features disabled for your class"
+        return True, None
+    teacher = _require_teacher(req)
+    if teacher:
+        class_id = str((payload or {}).get("classId") or "").strip()
+        if class_id:
+            cls = _find_class_by_id(class_id)
+            if not cls or (cls.get("teacher_email") or "").lower() != (teacher.get("email") or "").lower():
+                return False, "Invalid class selected"
+            if not (cls.get("settings") or {}).get("ai_enabled", True):
+                return False, "AI features disabled for this class"
+        return True, None
+    return True, None
+
 # -------------------------
 # Admin & Config routes
 # -------------------------
@@ -419,8 +657,8 @@ def admin_login():
     email = str(data.get("email", "")).strip()
     pw = str(data.get("password", ""))
     # Constant-time comparison to prevent timing attacks
-    email_ok = hmac.compare_digest(email.lower(), ADMIN_EMAIL.lower())
-    pw_ok = hmac.compare_digest(pw, DEFAULT_ADMIN_PASSWORD)
+    email_ok = hmac.compare_digest(email.lower(), ADMIN_ACCOUNT_EMAIL.lower())
+    pw_ok = hmac.compare_digest(pw, ADMIN_ACCOUNT_PASSWORD)
     if email_ok and pw_ok:
         token = uuid.uuid4().hex
         _admin_tokens.add(token)
@@ -429,7 +667,10 @@ def admin_login():
 
 @app.get("/api/config")
 def get_config():
-    return jsonify(ok=True, data=_load_config())
+    cfg = _load_config()
+    sanitized = dict(cfg)
+    sanitized.pop("admin_password_encrypted", None)
+    return jsonify(ok=True, data=sanitized)
 
 @app.post("/api/config/save")
 def save_config():
@@ -437,7 +678,11 @@ def save_config():
         return jsonify(ok=False, error="Admin token required"), 401
     data = request.get_json(silent=True) or {}
     partial = data.get("data", {})
+    if isinstance(partial, dict):
+        partial.pop("admin_password_encrypted", None)
+        partial.pop("admin_email", None)
     new_cfg = _update_config(partial)
+    new_cfg.pop("admin_password_encrypted", None)
     return jsonify(ok=True, data=new_cfg)
 
 # -------------------------
@@ -492,6 +737,8 @@ def auth_register():
         "email": email,
         "password_hash": password_hash,
         "name": name,
+        "role": "student",
+        "class_id": None,
         "created_at": timestamp,
         "last_sign_in": timestamp,
         "enabled": True
@@ -508,7 +755,7 @@ def auth_register():
     
     # Issue token
     token = uuid.uuid4().hex
-    user_info = {"email": email, "name": name}
+    user_info = {"email": email, "name": name, "role": "student", "class_id": None}
     _student_tokens[token] = user_info
     
     return jsonify(ok=True, token=token, user=user_info)
@@ -542,19 +789,28 @@ def auth_login():
     
     _record_user_sign_in(email)
     token = uuid.uuid4().hex
-    user_info = {"email": email, "name": user.get("name", "")}
+    role = user.get("role", "student")
+    if role == "teacher":
+        user_info = {"email": email, "name": user.get("name", ""), "role": "teacher"}
+        _teacher_tokens[token] = user_info
+        return jsonify(ok=True, token=token, user=user_info, role="teacher")
+    user_info = {"email": email, "name": user.get("name", ""), "role": "student", "class_id": user.get("class_id")}
     _student_tokens[token] = user_info
-    return jsonify(ok=True, token=token, user=user_info)
+    return jsonify(ok=True, token=token, user=user_info, role="student")
 
 @app.post("/api/auth/logout")
 def auth_logout():
     token = request.headers.get("X-User-Token", "").strip()
+    teacher_token = request.headers.get("X-Teacher-Token", "").strip()
     _student_tokens.pop(token, None)
+    _teacher_tokens.pop(teacher_token, None)
     return jsonify(ok=True)
 
 @app.get("/api/auth/me")
 def auth_me():
     user = _require_user(request)
+    if not user:
+        user = _require_teacher(request)
     if not user:
         return jsonify(ok=False, error="Not authenticated"), 401
     return jsonify(ok=True, user=user)
@@ -963,17 +1219,54 @@ def admin_list_users():
     if not _require_admin(request):
         return jsonify(ok=False, error="Admin token required"), 401
     data = _load_users()
+    classes = {c.get("id"): c for c in _load_classes().get("classes", [])}
     users = []
     for u in data.get("users", []):
+        class_id = u.get("class_id")
+        class_name = (classes.get(class_id) or {}).get("name") if class_id else None
         users.append({
             "email": u.get("email"),
             "name": u.get("name"),
+            "role": u.get("role", "student"),
+            "class_id": class_id,
+            "class_name": class_name,
             "created_at": u.get("created_at"),
             "last_sign_in": u.get("last_sign_in", ""),
             "enabled": u.get("enabled", True)
         })
     users.sort(key=lambda user: ((user.get("name") or "").lower(), (user.get("email") or "").lower()))
     return jsonify(ok=True, users=users)
+
+
+@app.post("/api/admin/teachers/create")
+def admin_create_teacher():
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    name = (data.get("name") or "").strip()
+    password = (data.get("password") or "").strip()
+    if not email or not name or not password:
+        return jsonify(ok=False, error="Name, email, and password are required"), 400
+    if len(password) < 8:
+        return jsonify(ok=False, error="Password must be at least 8 characters"), 400
+    if _find_user(email):
+        return jsonify(ok=False, error="Email already registered"), 409
+    users_data = _load_users()
+    timestamp = _current_timestamp()
+    users_data["users"].append({
+        "email": email,
+        "password_hash": bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8"),
+        "name": name[:100],
+        "role": "teacher",
+        "class_id": None,
+        "created_at": timestamp,
+        "last_sign_in": "",
+        "enabled": True,
+    })
+    _save_users(users_data)
+    _get_user_dir(email).mkdir(parents=True, exist_ok=True)
+    return jsonify(ok=True)
 
 @app.post("/api/admin/users/reset-password")
 def admin_reset_password():
@@ -1004,6 +1297,9 @@ def admin_reset_password():
     for token, info in list(_student_tokens.items()):
         if info.get("email", "").lower() == email:
             del _student_tokens[token]
+    for token, info in list(_teacher_tokens.items()):
+        if info.get("email", "").lower() == email:
+            del _teacher_tokens[token]
     
     return jsonify(ok=True, temp_password=new_password)
 
@@ -1017,6 +1313,7 @@ def admin_delete_user():
         return jsonify(ok=False, error="Email required"), 400
     
     users_data = _load_users()
+    deleted_user = next((u for u in users_data.get("users", []) if (u.get("email") or "").lower() == email), None)
     before = len(users_data.get("users", []))
     users_data["users"] = [u for u in users_data.get("users", []) if u.get("email", "").lower() != email]
     if len(users_data["users"]) == before:
@@ -1028,6 +1325,25 @@ def admin_delete_user():
     for token, info in list(_student_tokens.items()):
         if info.get("email", "").lower() == email:
             del _student_tokens[token]
+    for token, info in list(_teacher_tokens.items()):
+        if info.get("email", "").lower() == email:
+            del _teacher_tokens[token]
+
+    classes_data = _load_classes()
+    changed_classes = False
+    for c in classes_data.get("classes", []):
+        before_students = len(c.get("students", []))
+        c["students"] = [s for s in c.get("students", []) if s.lower() != email]
+        if len(c["students"]) != before_students:
+            changed_classes = True
+    if deleted_user and deleted_user.get("role") == "teacher":
+        before_count = len(classes_data.get("classes", []))
+        classes_data["classes"] = [c for c in classes_data.get("classes", []) if (c.get("teacher_email") or "").lower() != email]
+        changed_classes = changed_classes or len(classes_data["classes"]) != before_count
+    if changed_classes:
+        _save_classes(classes_data)
+    if deleted_user and deleted_user.get("role") == "student":
+        _revoke_student_class_rooms(email)
     
     # Delete user files
     user_dir = _get_user_dir(email)
@@ -1067,6 +1383,9 @@ def admin_toggle_user():
         for token, info in list(_student_tokens.items()):
             if info.get("email", "").lower() == email:
                 del _student_tokens[token]
+        for token, info in list(_teacher_tokens.items()):
+            if info.get("email", "").lower() == email:
+                del _teacher_tokens[token]
     
     return jsonify(ok=True)
 
@@ -1078,6 +1397,242 @@ def admin_toggle_registration():
     enabled = data.get("enabled", True)
     _update_config({"registration_enabled": bool(enabled)})
     return jsonify(ok=True, registration_enabled=bool(enabled))
+
+
+@app.get("/api/classes/current")
+def get_current_class():
+    user = _require_user(request)
+    if not user:
+        return jsonify(ok=True, classData=None)
+    class_id = user.get("class_id")
+    if not class_id:
+        user_obj = _find_user(user.get("email", ""))
+        class_id = (user_obj or {}).get("class_id")
+        user["class_id"] = class_id
+    cls = _find_class_by_id(class_id) if class_id else None
+    if not cls:
+        return jsonify(ok=True, classData=None)
+    return jsonify(ok=True, classData={
+        "id": cls.get("id"),
+        "name": cls.get("name"),
+        "settings": cls.get("settings", {}),
+        "teacher_email": cls.get("teacher_email"),
+    })
+
+
+@app.post("/api/classes/join")
+def join_class():
+    user = _require_user(request)
+    if not user:
+        return jsonify(ok=False, error="Student login required"), 401
+    join_code = (request.get_json(silent=True) or {}).get("joinCode", "")
+    target = _find_class_by_code(join_code)
+    if not target:
+        return jsonify(ok=False, error="Invalid join code"), 404
+    users_data = _load_users()
+    target_email = (user.get("email") or "").strip().lower()
+    student = next((u for u in users_data.get("users", []) if (u.get("email") or "").lower() == target_email), None)
+    if not student:
+        return jsonify(ok=False, error="Student not found"), 404
+    if student.get("role") != "student":
+        return jsonify(ok=False, error="Only student accounts can join classes"), 400
+    if student.get("class_id"):
+        return jsonify(ok=False, error="You are already in a class"), 409
+    classes_data = _load_classes()
+    joined = None
+    for c in classes_data.get("classes", []):
+        if c.get("id") == target.get("id"):
+            students = c.setdefault("students", [])
+            if target_email not in students:
+                students.append(target_email)
+            joined = c
+            break
+    if not joined:
+        return jsonify(ok=False, error="Class not found"), 404
+    student["class_id"] = joined.get("id")
+    _save_users(users_data)
+    _save_classes(classes_data)
+    user["class_id"] = joined.get("id")
+    return jsonify(ok=True, classData={
+        "id": joined.get("id"),
+        "name": joined.get("name"),
+        "settings": joined.get("settings", {}),
+    })
+
+
+@app.get("/api/teacher/classes")
+def teacher_list_classes():
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    teacher_email = (teacher.get("email") or "").strip().lower()
+    classes = _get_teacher_classes(teacher_email)
+    users_by_email = {u.get("email", "").lower(): u for u in _load_users().get("users", [])}
+    result = []
+    for c in classes:
+        students = []
+        for student_email in c.get("students", []):
+            student_user = users_by_email.get(student_email.lower(), {})
+            students.append({
+                "email": student_email,
+                "name": student_user.get("name") or student_email,
+                "enabled": student_user.get("enabled", True),
+            })
+        result.append({
+            "id": c.get("id"),
+            "name": c.get("name"),
+            "join_code": c.get("join_code"),
+            "settings": c.get("settings", {}),
+            "students": sorted(students, key=lambda s: ((s.get("name") or "").lower(), (s.get("email") or "").lower()))
+        })
+    return jsonify(ok=True, classes=result)
+
+
+@app.post("/api/teacher/classes/create")
+def teacher_create_class():
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify(ok=False, error="Class name required"), 400
+    classes_data = _load_classes()
+    existing_codes = {str(c.get("join_code", "")).upper() for c in classes_data.get("classes", [])}
+    class_row = {
+        "id": uuid.uuid4().hex,
+        "name": _sanitize_storage_component(name, fallback="Class", max_length=120),
+        "teacher_email": (teacher.get("email") or "").strip().lower(),
+        "join_code": _generate_join_code(existing_codes),
+        "settings": {
+            "ai_enabled": True,
+            "wiki_enabled": True,
+            "wiki_html": "",
+        },
+        "students": [],
+        "created_at": _current_timestamp(),
+    }
+    classes_data.setdefault("classes", []).append(class_row)
+    _save_classes(classes_data)
+    return jsonify(ok=True, classData=class_row)
+
+
+@app.post("/api/teacher/classes/settings")
+def teacher_update_class_settings():
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    data = request.get_json(silent=True) or {}
+    class_id = (data.get("classId") or "").strip()
+    settings = data.get("settings") or {}
+    classes_data = _load_classes()
+    teacher_email = (teacher.get("email") or "").strip().lower()
+    target = None
+    for c in classes_data.get("classes", []):
+        if c.get("id") == class_id and (c.get("teacher_email") or "").lower() == teacher_email:
+            current = c.setdefault("settings", {})
+            if "ai_enabled" in settings:
+                current["ai_enabled"] = bool(settings.get("ai_enabled"))
+            if "wiki_enabled" in settings:
+                current["wiki_enabled"] = bool(settings.get("wiki_enabled"))
+            if "wiki_html" in settings:
+                current["wiki_html"] = str(settings.get("wiki_html") or "")
+            target = c
+            break
+    if not target:
+        return jsonify(ok=False, error="Class not found"), 404
+    _save_classes(classes_data)
+    return jsonify(ok=True, classData=target)
+
+
+@app.post("/api/teacher/classes/remove-student")
+def teacher_remove_student():
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    data = request.get_json(silent=True) or {}
+    class_id = (data.get("classId") or "").strip()
+    student_email = (data.get("studentEmail") or "").strip().lower()
+    if not class_id or not student_email:
+        return jsonify(ok=False, error="classId and studentEmail are required"), 400
+    classes_data = _load_classes()
+    teacher_email = (teacher.get("email") or "").strip().lower()
+    found = False
+    for c in classes_data.get("classes", []):
+        if c.get("id") == class_id and (c.get("teacher_email") or "").lower() == teacher_email:
+            c["students"] = [s for s in c.get("students", []) if s.lower() != student_email]
+            found = True
+            break
+    if not found:
+        return jsonify(ok=False, error="Class not found"), 404
+    users_data = _load_users()
+    for u in users_data.get("users", []):
+        if (u.get("email") or "").lower() == student_email:
+            u["class_id"] = None
+            break
+    _save_classes(classes_data)
+    _save_users(users_data)
+    for token, info in list(_student_tokens.items()):
+        if (info.get("email") or "").lower() == student_email:
+            del _student_tokens[token]
+    _revoke_student_class_rooms(student_email, class_id)
+    return jsonify(ok=True)
+
+
+@app.post("/api/teacher/students/reset-password")
+def teacher_reset_password():
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    email = ((request.get_json(silent=True) or {}).get("email") or "").strip().lower()
+    if not email:
+        return jsonify(ok=False, error="Email required"), 400
+    if not _student_in_teacher_class(teacher.get("email", ""), email):
+        return jsonify(ok=False, error="Student is not in one of your classes"), 403
+    new_password = secrets.token_urlsafe(16)
+    users_data = _load_users()
+    found = False
+    for u in users_data.get("users", []):
+        if (u.get("email") or "").lower() == email and u.get("role") == "student":
+            u["password_hash"] = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+            found = True
+            break
+    if not found:
+        return jsonify(ok=False, error="Student not found"), 404
+    _save_users(users_data)
+    for token, info in list(_student_tokens.items()):
+        if (info.get("email") or "").lower() == email:
+            del _student_tokens[token]
+    return jsonify(ok=True, temp_password=new_password)
+
+
+@app.post("/api/teacher/students/toggle")
+def teacher_toggle_student():
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    enabled = bool(data.get("enabled", True))
+    if not email:
+        return jsonify(ok=False, error="Email required"), 400
+    if not _student_in_teacher_class(teacher.get("email", ""), email):
+        return jsonify(ok=False, error="Student is not in one of your classes"), 403
+    users_data = _load_users()
+    found = False
+    for u in users_data.get("users", []):
+        if (u.get("email") or "").lower() == email and u.get("role") == "student":
+            u["enabled"] = enabled
+            found = True
+            break
+    if not found:
+        return jsonify(ok=False, error="Student not found"), 404
+    _save_users(users_data)
+    if not enabled:
+        for token, info in list(_student_tokens.items()):
+            if (info.get("email") or "").lower() == email:
+                del _student_tokens[token]
+    return jsonify(ok=True)
 
 # -------------------------
 # Ollama helpers (AI)
@@ -1133,11 +1688,11 @@ def _language_best_practices(language: str) -> str:
 # -------------------------
 @app.post("/api/explain")
 def api_explain():
-    cfg = _load_config()
-    if not cfg.get("ai_explainer_enabled", False):
-        return jsonify(ok=False, error="AI features disabled by admin"), 403
-
     data = request.get_json(silent=True) or {}
+    allowed, error = _effective_ai_enabled(request, data)
+    if not allowed:
+        return jsonify(ok=False, error=error or "AI unavailable"), 403
+    cfg = _load_config()
     code = data.get("code", "")
     file_name = (data.get("fileName") or data.get("file_name") or "").strip()
     language = _normalize_language_hint(data.get("language"), file_name)
@@ -1248,7 +1803,7 @@ def _build_challenge_leaderboard() -> list[dict]:
     leaderboard = []
     for user in _load_users().get("users", []):
         email = (user.get("email") or "").strip().lower()
-        if not email or email == ADMIN_EMAIL.lower():
+        if not email or email == ADMIN_ACCOUNT_EMAIL.lower():
             continue
         student_entry = students.get(email, {})
         challenges = student_entry.get("challenges", {})
@@ -1282,11 +1837,12 @@ def challenge_score():
     if not user:
         return jsonify(ok=False, error="Student login required"), 401
 
-    cfg = _load_config()
-    if not cfg.get("ai_explainer_enabled", False):
-        return jsonify(ok=False, error="AI features disabled by admin"), 403
-
     data = request.get_json(silent=True) or {}
+    cfg = _load_config()
+    allowed, error = _effective_ai_enabled(request, data)
+    if not allowed:
+        return jsonify(ok=False, error=error or "AI unavailable"), 403
+
     code = data.get("code", "")
     challenge_text = data.get("challenge", "")
     try:
@@ -1397,11 +1953,11 @@ def _prune_assistant_sessions(now: float) -> None:
 
 @app.post("/api/assistant/chat")
 def assistant_chat():
-    cfg = _load_config()
-    if not cfg.get("ai_explainer_enabled", False):
-        return jsonify(ok=False, error="AI features disabled by admin"), 403
-
     data = request.get_json(silent=True) or {}
+    allowed, error = _effective_ai_enabled(request, data)
+    if not allowed:
+        return jsonify(ok=False, error=error or "AI unavailable"), 403
+    cfg = _load_config()
     sid = (request.headers.get("X-SID") or data.get("sid") or "").strip()
     msgs = data.get("messages", [])  # [{role: 'user'|'assistant', content: '...'}, ...]
     file_name = (data.get("fileName") or data.get("file_name") or "").strip()
@@ -1986,6 +2542,8 @@ exec(_user_code, {{}})
 
 _runners: Dict[str, "Runner | JsRunner"] = {}
 _runner_lock = threading.Lock()
+_socket_sid_info: Dict[str, dict] = {}
+_socket_sid_rooms: Dict[str, set] = {}
 
 NODE_EXECUTABLE = shutil.which("node") or "node"
 
@@ -2217,6 +2775,7 @@ def _get_js_runner(sid: str) -> JsRunner:
 # -------------------------
 @socketio.on("connect")
 def on_connect():
+    _socket_sid_rooms[request.sid] = set()
     emit("connected", {"sid": request.sid})
 
 @socketio.on("disconnect")
@@ -2227,11 +2786,14 @@ def on_disconnect():
             r.stop()
         except Exception:
             pass
+    _socket_sid_info.pop(request.sid, None)
+    _socket_sid_rooms.pop(request.sid, None)
 
 @socketio.on("run_code")
 def on_run_code(payload):
     code = (payload or {}).get("code", "")
     user_token = (payload or {}).get("user_token", "")
+    teacher_token = (payload or {}).get("teacher_token", "")
     admin_token = (payload or {}).get("admin_token", "")
     file_path = (payload or {}).get("file_path", "")  # relative path of the open file
     run_dir = None
@@ -2247,8 +2809,19 @@ def on_run_code(payload):
                     run_dir = file_abs.parent
             if not run_dir:
                 run_dir = user_root_dir
+    elif teacher_token:
+        teacher_info = _teacher_tokens.get(teacher_token)
+        if teacher_info:
+            teacher_root_dir = _get_user_dir(teacher_info["email"])
+            teacher_root_dir.mkdir(parents=True, exist_ok=True)
+            if file_path:
+                file_abs = _validate_user_path(teacher_root_dir, file_path)
+                if file_abs and file_abs.exists():
+                    run_dir = file_abs.parent
+            if not run_dir:
+                run_dir = teacher_root_dir
     elif admin_token and admin_token in _admin_tokens:
-        admin_root_dir = _get_user_dir(ADMIN_EMAIL)
+        admin_root_dir = _get_user_dir(ADMIN_ACCOUNT_EMAIL)
         admin_root_dir.mkdir(parents=True, exist_ok=True)
         if file_path:
             file_abs = _validate_user_path(admin_root_dir, file_path)
@@ -2292,13 +2865,60 @@ def on_stop(_=None):
 
 @socketio.on("teacher_code_update")
 def on_teacher_code_update(payload):
-    """Broadcast teacher code to all connected students (admin only)"""
+    """Broadcast teacher code updates to a class room (admin/teacher only)."""
     token = (payload or {}).get("token", "")
-    if token not in _admin_tokens:
+    class_id = str((payload or {}).get("class_id") or "").strip()
+    role = str((payload or {}).get("role") or "").strip().lower()
+    if not class_id:
         return
+    if role == "teacher":
+        if token not in _teacher_tokens:
+            return
+    else:
+        if token not in _admin_tokens:
+            return
     code = (payload or {}).get("code", "")
-    # Broadcast to all clients except the sender
-    emit("teacher_code", {"code": code}, broadcast=True, include_self=False)
+    emit("teacher_code", {"code": code, "class_id": class_id}, to=f"class_{class_id}", include_self=False)
+
+
+@socketio.on("join_class_room")
+def on_join_class_room(payload):
+    class_id = str((payload or {}).get("class_id") or "").strip()
+    role = str((payload or {}).get("role") or "").strip().lower()
+    token = str((payload or {}).get("token") or "").strip()
+    if not class_id or not token:
+        return
+    if role == "student":
+        student = _student_tokens.get(token)
+        if not student:
+            return
+        student_class = student.get("class_id") or (_find_user(student.get("email", "")) or {}).get("class_id")
+        if student_class != class_id:
+            return
+        _socket_sid_info[request.sid] = {"role": "student", "email": (student.get("email") or "").strip().lower()}
+    elif role == "teacher":
+        teacher = _teacher_tokens.get(token)
+        cls = _find_class_by_id(class_id)
+        if not teacher or not cls or (cls.get("teacher_email") or "").lower() != (teacher.get("email") or "").lower():
+            return
+        _socket_sid_info[request.sid] = {"role": "teacher", "email": (teacher.get("email") or "").strip().lower()}
+    elif role == "admin":
+        if token not in _admin_tokens:
+            return
+        _socket_sid_info[request.sid] = {"role": "admin", "email": ADMIN_ACCOUNT_EMAIL.lower()}
+    else:
+        return
+    join_room(f"class_{class_id}")
+    _socket_sid_rooms.setdefault(request.sid, set()).add(class_id)
+
+
+@socketio.on("leave_class_room")
+def on_leave_class_room(payload):
+    class_id = str((payload or {}).get("class_id") or "").strip()
+    if not class_id:
+        return
+    leave_room(f"class_{class_id}")
+    _socket_sid_rooms.setdefault(request.sid, set()).discard(class_id)
 
 # -------------------------
 # Assignment system
@@ -2355,23 +2975,40 @@ def _list_assignments() -> list:
 @app.get("/api/assignments")
 def get_assignments():
     """Get all assignments"""
-    is_admin = _require_admin(request)
+    actor = _assignment_actor(request)
+    is_admin = bool(actor and actor.get("role") == "admin")
+    is_teacher = bool(actor and actor.get("role") == "teacher")
+    teacher_email = (actor or {}).get("email", "")
     all_assignments = _list_assignments()
     
     if is_admin:
         # Admins see all assignments with submissions
-        return jsonify(ok=True, assignments=all_assignments, isAdmin=True)
-    else:
-        # Students see all assignments (both active and past) but without submissions data
-        for a in all_assignments:
-            a.pop("submissions", None)
-        return jsonify(ok=True, assignments=all_assignments, isAdmin=False)
+        return jsonify(ok=True, assignments=all_assignments, isAdmin=True, isTeacher=False, canManage=True)
+    if is_teacher:
+        teacher_assignments = [a for a in all_assignments if (a.get("createdByEmail") or "").lower() == teacher_email.lower()]
+        return jsonify(ok=True, assignments=teacher_assignments, isAdmin=False, isTeacher=True, canManage=True)
+
+    user = _require_user(request)
+    class_id = (user or {}).get("class_id")
+    if not class_id and user:
+        class_id = (_find_user(user.get("email", "")) or {}).get("class_id")
+        user["class_id"] = class_id
+    visible_assignments = []
+    for a in all_assignments:
+        target_class = a.get("targetClassId")
+        if target_class and target_class != class_id:
+            continue
+        assignment_copy = dict(a)
+        assignment_copy.pop("submissions", None)
+        visible_assignments.append(assignment_copy)
+    return jsonify(ok=True, assignments=visible_assignments, isAdmin=False, isTeacher=False, canManage=False)
 
 @app.post("/api/assignments/create")
 def create_assignment():
-    """Create a new assignment (admin only)"""
-    if not _require_admin(request):
-        return jsonify(ok=False, error="Admin token required"), 401
+    """Create a new assignment (admin or teacher)."""
+    actor = _assignment_actor(request)
+    if not actor:
+        return jsonify(ok=False, error="Admin or teacher token required"), 401
     
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
@@ -2385,12 +3022,29 @@ def create_assignment():
     if _load_assignment(name):
         return jsonify(ok=False, error="Assignment with this name already exists"), 400
     
+    target_class_id = (data.get("classId") or "").strip() or None
+    target_class_name = None
+    if actor.get("role") == "teacher":
+        if not target_class_id:
+            return jsonify(ok=False, error="Teachers must select a class"), 400
+        teacher_class = _find_class_by_id(target_class_id)
+        if not teacher_class or (teacher_class.get("teacher_email") or "").lower() != actor.get("email", "").lower():
+            return jsonify(ok=False, error="Invalid class"), 403
+        target_class_name = teacher_class.get("name")
+    elif target_class_id:
+        admin_target = _find_class_by_id(target_class_id)
+        target_class_name = (admin_target or {}).get("name")
+
     assignment = {
         "name": name,
         "task": task,
         "maxScore": max_score,
         "active": False,
         "quiz": data.get("quiz") or None,
+        "targetClassId": target_class_id,
+        "targetClassName": target_class_name,
+        "createdByEmail": actor.get("email"),
+        "createdByRole": actor.get("role"),
         "submissions": []
     }
     
@@ -2400,9 +3054,10 @@ def create_assignment():
 
 @app.post("/api/assignments/update")
 def update_assignment():
-    """Update an assignment (admin only)"""
-    if not _require_admin(request):
-        return jsonify(ok=False, error="Admin token required"), 401
+    """Update an assignment (admin or teacher owner)."""
+    actor = _assignment_actor(request)
+    if not actor:
+        return jsonify(ok=False, error="Admin or teacher token required"), 401
     
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
@@ -2413,6 +3068,8 @@ def update_assignment():
     assignment = _load_assignment(name)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
+    if actor.get("role") == "teacher" and (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+        return jsonify(ok=False, error="You can only edit your own assignments"), 403
     
     # Update fields
     if "task" in data:
@@ -2423,6 +3080,20 @@ def update_assignment():
         assignment["active"] = data["active"]
     if "quiz" in data:
         assignment["quiz"] = data["quiz"]
+    if "classId" in data:
+        class_id = (data.get("classId") or "").strip() or None
+        class_name = None
+        if actor.get("role") == "teacher":
+            if not class_id:
+                return jsonify(ok=False, error="Teachers must select a class"), 400
+            cls = _find_class_by_id(class_id)
+            if not cls or (cls.get("teacher_email") or "").lower() != actor.get("email", "").lower():
+                return jsonify(ok=False, error="Invalid class"), 403
+            class_name = cls.get("name")
+        elif class_id:
+            class_name = ((_find_class_by_id(class_id) or {}).get("name"))
+        assignment["targetClassId"] = class_id
+        assignment["targetClassName"] = class_name
     
     if _save_assignment(assignment):
         return jsonify(ok=True, assignment=assignment)
@@ -2430,9 +3101,10 @@ def update_assignment():
 
 @app.post("/api/assignments/delete")
 def delete_assignment():
-    """Delete an assignment (admin only)"""
-    if not _require_admin(request):
-        return jsonify(ok=False, error="Admin token required"), 401
+    """Delete an assignment (admin or teacher owner)."""
+    actor = _assignment_actor(request)
+    if not actor:
+        return jsonify(ok=False, error="Admin or teacher token required"), 401
     
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
@@ -2440,19 +3112,26 @@ def delete_assignment():
     if not name:
         return jsonify(ok=False, error="Assignment name required"), 400
     
+    assignment_data = _load_assignment(name)
+    if not assignment_data:
+        return jsonify(ok=False, error="Assignment not found"), 404
+    if actor.get("role") == "teacher" and (assignment_data.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+        return jsonify(ok=False, error="You can only delete your own assignments"), 403
+
     with _assignment_lock:
         path = _get_assignment_path(name)
         if not path.exists():
             return jsonify(ok=False, error="Assignment not found"), 404
         try:
             path.unlink()
-            admin_root = _get_user_dir(ADMIN_EMAIL)
-            admin_assignment_dir = _validate_user_path(admin_root, _sanitize_storage_component(name, fallback="Assignment"))
-            if admin_assignment_dir and admin_assignment_dir.exists():
+            owner_email = (assignment_data.get("createdByEmail") or ADMIN_ACCOUNT_EMAIL).strip().lower()
+            owner_root = _get_user_dir(owner_email)
+            owner_assignment_dir = _validate_user_path(owner_root, _sanitize_storage_component(name, fallback="Assignment"))
+            if owner_assignment_dir and owner_assignment_dir.exists():
                 try:
-                    shutil.rmtree(admin_assignment_dir)
+                    shutil.rmtree(owner_assignment_dir)
                 except Exception as cleanup_error:
-                    print(f"Warning: failed to remove admin assignment folder for {name}: {cleanup_error}")
+                    print(f"Warning: failed to remove assignment folder for {name}: {cleanup_error}")
             return jsonify(ok=True)
         except Exception as e:
             print(f"Error deleting assignment {name}: {e}")
@@ -2497,8 +3176,14 @@ def submit_assignment():
 
     submitted_at = _current_timestamp()
     submitted_code = _prepend_submission_timestamp(original_code, submitted_at, student_name)
+    target_class_id = assignment.get("targetClassId")
+    student_class_id = user.get("class_id") or (_find_user(student_email) or {}).get("class_id")
+    if target_class_id and target_class_id != student_class_id:
+        return jsonify(ok=False, error="This assignment is not assigned to your class"), 403
+
+    owner_email = (assignment.get("createdByEmail") or ADMIN_ACCOUNT_EMAIL).strip().lower()
     try:
-        admin_file_path = _write_assignment_submission_copy(assignment_name, student_name, source_file.name, submitted_code)
+        admin_file_path = _write_assignment_submission_copy(owner_email, assignment_name, student_name, source_file.name, submitted_code)
     except Exception as exc:
         print(f"Error copying assignment submission for {assignment_name}: {exc}")
         return jsonify(ok=False, error="Could not copy submission to admin workspace"), 500
@@ -2558,9 +3243,10 @@ def submit_assignment():
 
 @app.post("/api/assignments/score")
 def score_submission():
-    """Set a score for a student submission (admin only)"""
-    if not _require_admin(request):
-        return jsonify(ok=False, error="Admin token required"), 401
+    """Set a score for a student submission (admin or assignment owner)."""
+    actor = _assignment_actor(request)
+    if not actor:
+        return jsonify(ok=False, error="Admin or teacher token required"), 401
     
     data = request.get_json(silent=True) or {}
     assignment_name = (data.get("assignmentName") or "").strip()
@@ -2573,6 +3259,8 @@ def score_submission():
     assignment = _load_assignment(assignment_name)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
+    if actor.get("role") == "teacher" and (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+        return jsonify(ok=False, error="You can only score your own assignments"), 403
     
     submissions = assignment.get("submissions", [])
     found = False
@@ -2600,13 +3288,15 @@ def score_submission():
 
 @app.post("/api/assignments/grade-ai")
 def grade_assignment_ai():
-    """Grade a student submission using AI (admin only)"""
-    if not _require_admin(request):
-        return jsonify(ok=False, error="Admin token required"), 401
+    """Grade a student submission using AI (admin or assignment owner)."""
+    actor = _assignment_actor(request)
+    if not actor:
+        return jsonify(ok=False, error="Admin or teacher token required"), 401
     
     cfg = _load_config()
-    if not cfg.get("ai_explainer_enabled", False):
-        return jsonify(ok=False, error="AI features disabled by admin"), 403
+    allowed, error = _effective_ai_enabled(request, request.get_json(silent=True) or {})
+    if not allowed:
+        return jsonify(ok=False, error=error or "AI unavailable"), 403
     
     data = request.get_json(silent=True) or {}
     assignment_name = (data.get("assignmentName") or "").strip()
@@ -2678,6 +3368,8 @@ def grade_assignment_ai():
     assignment = _load_assignment(assignment_name)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
+    if actor.get("role") == "teacher" and (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+        return jsonify(ok=False, error="You can only grade your own assignments"), 403
     
     submissions = assignment.get("submissions", [])
     found = False
@@ -2705,13 +3397,16 @@ def grade_assignment_ai():
 
 @app.get("/api/assignments/<assignment_name>/csv")
 def download_assignment_csv(assignment_name: str):
-    """Download CSV of student scores (admin only)"""
-    if not _require_admin(request):
-        return jsonify(ok=False, error="Admin token required"), 401
+    """Download CSV of student scores (admin or assignment owner)."""
+    actor = _assignment_actor(request)
+    if not actor:
+        return jsonify(ok=False, error="Admin or teacher token required"), 401
     
     assignment = _load_assignment(assignment_name)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
+    if actor.get("role") == "teacher" and (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+        return jsonify(ok=False, error="You can only export your own assignments"), 403
     
     from flask import Response
     import io
@@ -2766,8 +3461,12 @@ def get_student_scores():
         return jsonify(ok=False, error="Authentication required"), 401
 
     all_assignments = _list_assignments()
+    class_id = (_find_user(email) or {}).get("class_id") if email else None
     student_scores = []
     for assignment in all_assignments:
+        target_class_id = assignment.get("targetClassId")
+        if target_class_id and class_id and target_class_id != class_id and not is_admin:
+            continue
         submissions = assignment.get("submissions", [])
         for sub in submissions:
             if sub.get("email", "").lower() != email:
@@ -2810,6 +3509,11 @@ def get_quiz(assignment_name: str):
     # Return quiz without correct answers for students (unless admin)
     is_admin = _require_admin(request)
     if not is_admin:
+        user = _require_user(request)
+        class_id = (user or {}).get("class_id") or (_find_user((user or {}).get("email", "")) or {}).get("class_id")
+        target_class_id = assignment.get("targetClassId")
+        if target_class_id and target_class_id != class_id:
+            return jsonify(ok=False, error="Quiz not assigned to your class"), 403
         # Remove correct answers from multiple choice questions for students
         import copy
         quiz_copy = copy.deepcopy(quiz)
@@ -2841,6 +3545,10 @@ def submit_quiz():
         return jsonify(ok=False, error="Assignment not found"), 404
     if not assignment.get("active", False):
         return jsonify(ok=False, error="Assignment is not active"), 403
+    target_class_id = assignment.get("targetClassId")
+    student_class_id = (user.get("class_id") or (_find_user(student_email) or {}).get("class_id"))
+    if target_class_id and target_class_id != student_class_id:
+        return jsonify(ok=False, error="Quiz not assigned to your class"), 403
 
     quiz = assignment.get("quiz")
     if not quiz:
@@ -2903,13 +3611,15 @@ def submit_quiz():
 
 @app.post("/api/quiz/grade-written")
 def grade_written_response():
-    """Grade a written response using AI (admin only)"""
-    if not _require_admin(request):
-        return jsonify(ok=False, error="Admin token required"), 401
+    """Grade a written response using AI (admin or assignment owner)."""
+    actor = _assignment_actor(request)
+    if not actor:
+        return jsonify(ok=False, error="Admin or teacher token required"), 401
     
     cfg = _load_config()
-    if not cfg.get("ai_explainer_enabled", False):
-        return jsonify(ok=False, error="AI features disabled by admin"), 403
+    allowed, error = _effective_ai_enabled(request, request.get_json(silent=True) or {})
+    if not allowed:
+        return jsonify(ok=False, error=error or "AI unavailable"), 403
     
     data = request.get_json(silent=True) or {}
     assignment_name = (data.get("assignmentName") or "").strip()
@@ -2972,6 +3682,8 @@ def grade_written_response():
     assignment = _load_assignment(assignment_name)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
+    if actor.get("role") == "teacher" and (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+        return jsonify(ok=False, error="You can only grade your own assignments"), 403
     
     submissions = assignment.get("submissions", [])
     found = False
@@ -3004,9 +3716,10 @@ def grade_written_response():
 
 @app.post("/api/quiz/override-score")
 def override_quiz_score():
-    """Override quiz question score manually (admin only)"""
-    if not _require_admin(request):
-        return jsonify(ok=False, error="Admin token required"), 401
+    """Override quiz question score manually (admin or assignment owner)."""
+    actor = _assignment_actor(request)
+    if not actor:
+        return jsonify(ok=False, error="Admin or teacher token required"), 401
     
     data = request.get_json(silent=True) or {}
     assignment_name = (data.get("assignmentName") or "").strip()
@@ -3020,6 +3733,8 @@ def override_quiz_score():
     assignment = _load_assignment(assignment_name)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
+    if actor.get("role") == "teacher" and (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+        return jsonify(ok=False, error="You can only edit scores for your own assignments"), 403
     
     submissions = assignment.get("submissions", [])
     found = False
