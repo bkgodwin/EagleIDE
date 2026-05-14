@@ -6,3 +6,4 @@ flask-socketio   # WebSocket / Socket.IO support (real-time code output)
 eventlet         # Async networking library required by flask-socketio async_mode="eventlet"
 requests         # HTTP client used for Ollama AI API calls
 bcrypt           # Password hashing for student and admin accounts
+cryptography==46.0.5  # Fernet encryption for stored admin credentials
