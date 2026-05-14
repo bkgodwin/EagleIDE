@@ -89,6 +89,7 @@ ADMIN CREDENTIALS (ENCRYPTED ON FIRST START)
 --------------------------------------------------
 On first startup, the server prompts for admin email/password in the terminal.
 Both are persisted to `config.txt`, and the password is encrypted at rest.
+Admin email is stored in plaintext for login lookup; password is encrypted.
 If either value is blank or unreadable, the server prompts again on next start.
 
 --------------------------------------------------
