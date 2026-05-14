@@ -61,6 +61,13 @@ HTML_RUNTIME_DEFAULT_MAX_POPUPS = 2
 MAX_FILES_PER_FOLDER = 20
 MAX_FILES_PER_ACCOUNT = 100
 ALLOWED_EXTENSIONS = {".py", ".js", ".html", ".css", ".txt", ".csv"}
+EXAMPLES_DIR_NAME = "Examples"
+EXAMPLE_FILES: dict[str, str] = {
+    "hello.py": 'print("Hello from EagleIDE!")\nname = input("What is your name? ")\nprint(f"Welcome, {name}!")\n',
+    "hello.js": 'const name = input("What is your name? ");\nconsole.log(`Hello from EagleIDE, ${name}!`);\n',
+    "index.html": '<!doctype html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1">\n  <title>EagleIDE Example</title>\n  <link rel="stylesheet" href="styles.css">\n</head>\n<body>\n  <main class="card">\n    <h1>EagleIDE HTML Example</h1>\n    <p>Edit this file and <strong>Run</strong> it to see live changes.</p>\n  </main>\n</body>\n</html>\n',
+    "styles.css": "body {\n  font-family: Arial, sans-serif;\n  background: #f2f6ff;\n  color: #102a43;\n  margin: 0;\n  min-height: 100vh;\n  display: grid;\n  place-items: center;\n}\n\n.card {\n  background: white;\n  border: 2px solid #7fb2eb;\n  border-radius: 12px;\n  padding: 20px;\n  max-width: 420px;\n  box-shadow: 0 8px 24px rgba(16, 42, 67, 0.12);\n}\n",
+}
 
 os.makedirs(SANDBOX_DIR, exist_ok=True)
 os.makedirs(ASSIGNMENTS_DIR, exist_ok=True)
@@ -475,6 +482,19 @@ def _write_assignment_submission_copy(owner_email: str, assignment_name: str, st
 def _get_user_dir(email: str) -> Path:
     return USER_FILES_DIR / _sanitize_email_for_path(email)
 
+
+def _seed_example_files(user_dir: Path) -> None:
+    """Create starter Examples files for newly-created accounts."""
+    try:
+        examples_dir = user_dir / EXAMPLES_DIR_NAME
+        examples_dir.mkdir(parents=True, exist_ok=True)
+        for file_name, content in EXAMPLE_FILES.items():
+            target = examples_dir / file_name
+            if not target.exists():
+                target.write_text(content, encoding="utf-8")
+    except Exception:
+        pass
+
 def _require_user(req) -> Optional[dict]:
     token = req.headers.get("X-User-Token", "").strip()
     return _student_tokens.get(token)
@@ -755,6 +775,7 @@ def auth_register():
     # Create user directory
     user_dir = _get_user_dir(email)
     user_dir.mkdir(parents=True, exist_ok=True)
+    _seed_example_files(user_dir)
     
     # Issue token
     token = uuid.uuid4().hex
@@ -789,6 +810,7 @@ def auth_login():
     # Ensure user directory exists
     user_dir = _get_user_dir(email)
     user_dir.mkdir(parents=True, exist_ok=True)
+    _seed_example_files(user_dir)
     
     _record_user_sign_in(email)
     token = uuid.uuid4().hex
@@ -1268,7 +1290,9 @@ def admin_create_teacher():
         "enabled": True,
     })
     _save_users(users_data)
-    _get_user_dir(email).mkdir(parents=True, exist_ok=True)
+    teacher_dir = _get_user_dir(email)
+    teacher_dir.mkdir(parents=True, exist_ok=True)
+    _seed_example_files(teacher_dir)
     return jsonify(ok=True)
 
 @app.post("/api/admin/users/reset-password")
@@ -1612,6 +1636,40 @@ def teacher_reset_password():
         if (info.get("email") or "").lower() == email:
             del _student_tokens[token]
     return jsonify(ok=True, temp_password=new_password)
+
+
+@app.post("/api/teacher/change-password")
+def teacher_change_password():
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    data = request.get_json(silent=True) or {}
+    current_password = str(data.get("currentPassword") or "")
+    new_password = str(data.get("newPassword") or "")
+    if not current_password or not new_password:
+        return jsonify(ok=False, error="Current and new password are required"), 400
+    if len(new_password) < 8:
+        return jsonify(ok=False, error="New password must be at least 8 characters"), 400
+    email = (teacher.get("email") or "").strip().lower()
+    users_data = _load_users()
+    teacher_record = next(
+        (u for u in users_data.get("users", []) if (u.get("email") or "").lower() == email and u.get("role") == "teacher"),
+        None
+    )
+    if not teacher_record:
+        return jsonify(ok=False, error="Teacher account not found"), 404
+    try:
+        current_ok = bcrypt.checkpw(current_password.encode("utf-8"), teacher_record["password_hash"].encode("utf-8"))
+    except Exception:
+        current_ok = False
+    if not current_ok:
+        return jsonify(ok=False, error="Current password is incorrect"), 403
+    teacher_record["password_hash"] = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    _save_users(users_data)
+    for token, info in list(_teacher_tokens.items()):
+        if (info.get("email") or "").lower() == email and token != request.headers.get("X-Teacher-Token", "").strip():
+            del _teacher_tokens[token]
+    return jsonify(ok=True)
 
 
 @app.post("/api/teacher/students/toggle")
@@ -2330,7 +2388,7 @@ class Runner:
         self.stop_evt = threading.Event()
         self.started_at = 0.0
 
-    def start(self, code: str, user_dir: Optional[Path] = None):
+    def start(self, code: str, user_dir: Optional[Path] = None, allowed_root: Optional[Path] = None):
         if self.proc:
             self.stop()
 
@@ -2355,6 +2413,8 @@ class Runner:
         # Escape backslashes in the path for Windows compatibility
         runner_py_escaped = str(runner_py).replace("\\", "\\\\")
         cwd_escaped = cwd.replace("\\", "\\\\")
+        allowed_root_dir = str(allowed_root) if (allowed_root and allowed_root.exists()) else cwd
+        allowed_root_escaped = allowed_root_dir.replace("\\", "\\\\")
 
         wrapper_code = f'''import sys
 import builtins
@@ -2365,7 +2425,7 @@ with open(r"{runner_py_escaped}", "r", encoding="utf-8") as _f:
     _user_code = _f.read()
 
 # ---- Security sandbox ----
-_ALLOWED_DIR = _os.path.realpath(r"{cwd_escaped}")
+_ALLOWED_DIR = _os.path.realpath(r"{allowed_root_escaped}")
 
 # Apply resource limits (POSIX/Linux only – silently ignored elsewhere)
 try:
@@ -2385,7 +2445,7 @@ def _safe_open(file, mode="r", *args, **kwargs):
         if _os.path.commonpath([p, _ALLOWED_DIR]) != _ALLOWED_DIR:
             raise PermissionError(f"Access to {{file!r}} is not allowed in this environment")
     except (TypeError, ValueError):
-        pass  # non-string file argument (e.g. integer fd) — let the OS decide
+        raise PermissionError(f"Access to {{file!r}} is not allowed in this environment")
     return _real_open(file, mode, *args, **kwargs)
 builtins.open = _safe_open
 
@@ -2834,10 +2894,12 @@ def on_run_code(payload):
     admin_token = (payload or {}).get("admin_token", "")
     file_path = (payload or {}).get("file_path", "")  # relative path of the open file
     run_dir = None
+    allowed_root_dir = None
     if user_token:
         user_info = _student_tokens.get(user_token)
         if user_info:
             user_root_dir = _get_user_dir(user_info["email"])
+            allowed_root_dir = user_root_dir
             # Use the directory containing the open file as CWD so relative
             # file operations in user code work from that folder.
             if file_path:
@@ -2851,6 +2913,7 @@ def on_run_code(payload):
         if teacher_info:
             teacher_root_dir = _get_user_dir(teacher_info["email"])
             teacher_root_dir.mkdir(parents=True, exist_ok=True)
+            allowed_root_dir = teacher_root_dir
             if file_path:
                 file_abs = _validate_user_path(teacher_root_dir, file_path)
                 if file_abs and file_abs.exists():
@@ -2860,6 +2923,7 @@ def on_run_code(payload):
     elif admin_token and admin_token in _admin_tokens:
         admin_root_dir = _get_user_dir(ADMIN_ACCOUNT_EMAIL)
         admin_root_dir.mkdir(parents=True, exist_ok=True)
+        allowed_root_dir = admin_root_dir
         if file_path:
             file_abs = _validate_user_path(admin_root_dir, file_path)
             if file_abs and file_abs.exists():
@@ -2875,7 +2939,10 @@ def on_run_code(payload):
     else:
         r = _get_runner(request.sid)
     try:
-        r.start(code, user_dir=run_dir)
+        if isinstance(r, JsRunner):
+            r.start(code, user_dir=run_dir)
+        else:
+            r.start(code, user_dir=run_dir, allowed_root=allowed_root_dir)
         emit("run_ack", {"ok": True})
     except Exception as e:
         emit("output", {"data": f"[Error starting process] {e}\n"})

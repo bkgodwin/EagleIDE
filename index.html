@@ -111,7 +111,6 @@
     header.topbar{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 14px; background:var(--theme-topbar); color:var(--theme-topbar-txt); font-weight:700; letter-spacing:.3px; backdrop-filter:blur(4px); position:relative; z-index:100; }
     header .brand{ display:flex; gap:8px; align-items:center; min-width:0; }
     header .brand > div:first-child{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:280px; }
-    header .brand .badge{ background:var(--eagle-red); color:#fff; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:800; letter-spacing:.5px; text-transform:uppercase }
     header .actions{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
     .control-group{ display:flex; align-items:center; gap:6px; padding:4px 6px; border:1px solid var(--theme-border-mid); border-radius:10px; background:rgba(0,0,0,.08); }
 
@@ -196,10 +195,9 @@
     .tab-pane{ display:none; height:100% }
     .tab-pane.active{ display:block }
 
-    .notes-toolbar, .lesson-toolbar{ display:none; gap:6px; padding:8px; border-bottom:1px solid var(--theme-border-mid); background:var(--theme-tab-bg) }
+    .notes-toolbar{ display:none; gap:6px; padding:8px; border-bottom:1px solid var(--theme-border-mid); background:var(--theme-tab-bg) }
     .ai-toolbar{ display:none; gap:6px; padding:8px; border-bottom:1px solid var(--theme-border-mid); background:var(--theme-tab-bg) }
     body.admin-owner .notes-toolbar{ display:flex }
-    body.admin-owner .lesson-toolbar{ display:flex }
     
 
     #notesView, #lessonLocal, #aiOutput, #challengeOutput, #assistantChat { padding:12px; height:100%; overflow:auto; }
@@ -300,7 +298,39 @@
 
     /* Guest badge */
     .guest-badge{ background:var(--theme-secondary); color:var(--theme-text-dim); padding:4px 10px; border-radius:999px; font-size:12px; font-weight:600; }
-    .user-chip{ background:#1a3a5c; color:var(--columbia-blue); padding:4px 10px; border-radius:999px; font-size:12px; font-weight:600; }
+    .edge-toggle{
+      position:fixed;
+      top:calc(60px + 40vh);
+      transform:translateY(-50%);
+      z-index:250;
+      width:28px;
+      height:64px;
+      border:1px solid var(--theme-border-mid);
+      background:var(--theme-panel-hdr);
+      color:var(--theme-text);
+      font-size:16px;
+      border-radius:10px;
+      cursor:pointer;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      backdrop-filter:blur(4px);
+    }
+    #leftEdgeToggleBtn{ left:6px; }
+    #rightEdgeToggleBtn{ right:6px; }
+    .csv-editor{ height:100%; overflow:auto; padding:10px; background:var(--theme-output-bg); }
+    .csv-editor.hidden{ display:none; }
+    .csv-editor table{ width:100%; border-collapse:collapse; font-size:13px; }
+    .csv-editor td, .csv-editor th{ border:1px solid var(--theme-border-mid); padding:0; min-width:90px; }
+    .csv-editor input{
+      width:100%;
+      border:0;
+      padding:8px;
+      background:var(--theme-input-bg);
+      color:var(--theme-text);
+      font:inherit;
+      outline:none;
+    }
 
     body.guest-mode #rightStackPanel{ display:none !important; }
     body.guest-mode .vsplitter{ display:none !important; }
@@ -417,12 +447,12 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><div>Eagles Web IDE</div><div class="badge">Classroom IDE</div></div>
+    <div class="brand"><div>EagleIDE</div></div>
     <div class="actions">
       <button class="btn run" id="runBtn">Run ▶</button>
       <button class="btn exception-help-btn" id="exceptionHelpBtn" title="Troubleshooting Assistant" aria-label="Open troubleshooting assistant">🛠️ Help</button>
-      <button class="btn stop" id="stopBtn">Stop ⏹</button>
-      <div class="control-group">
+      <button class="btn run" id="topJoinClassBtn" style="display:none;">Join Class</button>
+      <div class="control-group" id="modeSelectorWrap">
         <span style="font-size:12px; opacity:.85;">Mode</span>
         <select id="languageSelector" style="background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; padding:4px 8px;">
           <option value="auto">Auto</option>
@@ -431,7 +461,7 @@
           <option value="html">HTML</option>
         </select>
       </div>
-      <button class="btn secondary" id="themeToggleBtn" title="Toggle light/dark mode">🌙 Dark</button>
+      <button class="btn secondary" id="themeToggleBtn" title="Toggle light/dark mode">🌙</button>
       <div class="control-group">
         <span style="font-weight:800;">A</span>
         <input id="fontRange" type="range" min="12" max="40" value="14" step="1" style="width:120px;">
@@ -439,26 +469,24 @@
       </div>
       <button class="btn secondary" id="guidesBtn" title="Show/Hide indent guides">Guides: On</button>
       <button class="btn secondary" id="autocompleteBtn" title="Toggle autocomplete">Autocomplete: On</button>
-      <button class="btn secondary" id="toggleSidebarBtn" title="Toggle right sidebar">Hide Sidebar ◀</button>
       <div id="classSelectorWrap" style="display:none; align-items:center; gap:6px; background:var(--theme-tab-bg); border:1px solid var(--theme-border); border-radius:10px; padding:4px 8px;">
         <span style="font-size:12px; opacity:.85;">Class</span>
         <select id="classSelector" style="background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; padding:4px 8px;"></select>
       </div>
       <span class="guest-badge" id="guestBadge">Guest</span>
-      <span class="user-chip" id="userChip" style="display:none;"></span>
-      <button class="btn secondary" id="toggleFileSidebarBtn" title="Toggle file browser" style="display:none;">📁 Files</button>
       <button class="btn admin" id="loginBtn" title="Login">Sign In</button>
       <button class="btn secondary" id="streamingToggleBtn" title="Toggle code streaming to students" style="display:none;">📡 Streaming: On</button>
       <button class="btn admin" id="adminSettingsBtn" title="Admin Settings" style="display:none;">⚙</button>
     </div>
   </header>
+  <button class="edge-toggle" id="leftEdgeToggleBtn" title="Show file sidebar" style="display:none;">▶</button>
+  <button class="edge-toggle" id="rightEdgeToggleBtn" title="Hide resources sidebar" style="display:none;">◀</button>
 
   <div class="outer no-sidebar" id="outer">
     <!-- File Browser Sidebar (hidden by default) -->
     <aside class="file-sidebar" id="fileSidebar" style="display:none;">
       <div class="file-sidebar-header">
         <span style="font-weight:700;">📁 My Files</span>
-        <button class="btn secondary" id="closeSidebarBtn" style="padding:4px 10px; font-size:13px;" title="Close file browser">✕ Close</button>
       </div>
       <div class="file-sidebar-breadcrumb" id="fileBreadcrumb">
         <span class="crumb" data-path="">🏠 Home</span>
@@ -490,7 +518,10 @@
         <h3>Editor: <span id="activeFileName" style="color:#a5c8f0; font-weight:400;"></span></h3>
         <button class="btn secondary" id="clearErrorsBtn" style="display:none; font-size:12px; padding:4px 8px;">Clear Error Highlights</button>
       </header>
-      <div class="content"><textarea id="editor"></textarea></div>
+      <div class="content">
+        <textarea id="editor"></textarea>
+        <div id="csvEditor" class="csv-editor hidden"></div>
+      </div>
     </section>
 
     <!-- Vertical splitter -->
@@ -523,11 +554,6 @@
           <div class="notes-toolbar">
             <button class="btn secondary" id="notesEditBtn">Edit Notes</button>
             <button class="btn run" id="notesSaveBtn">Save Notes</button>
-          </div>
-
-          <div class="lesson-toolbar">
-            <button class="btn secondary" id="lessonEditBtn">Edit Wiki Content</button>
-            <button class="btn run" id="lessonSaveBtn">Save Wiki</button>
           </div>
 
           <div class="ai-toolbar">
@@ -800,6 +826,14 @@
           <button class="btn run" id="createClassBtn">Create Class</button>
         </div>
         <div id="teacherClassList"></div>
+      </div>
+
+      <div id="teacherPasswordSection" style="display:none; margin-top:20px; padding:10px; border:1px solid var(--theme-border-mid); border-radius:8px; background:var(--theme-input-bg);">
+        <h4 style="margin:0 0 8px; color:var(--columbia-blue); font-size:14px;">Change Password</h4>
+        <input type="password" id="teacherCurrentPassword" placeholder="Current password" style="margin-bottom:8px;">
+        <input type="password" id="teacherNewPassword" placeholder="New password (8+ chars)" style="margin-bottom:8px;">
+        <button class="btn run" id="teacherChangePasswordBtn">Update Password</button>
+        <div id="teacherPasswordStatus" style="font-size:12px; margin-top:8px;"></div>
       </div>
 
       <div class="modal-actions" style="margin-top:20px;">
@@ -1317,12 +1351,17 @@ print("Hello " + name)
     let registerMode = false;
     let currentConfig = null;
     let mySid = null;
+    let isProgramRunning = false;
+    let csvEditorActive = false;
+    let csvEditorRows = [];
+    let csvAutosaveTimer = null;
     let lastTeacherCodeSnapshot = '';
     let errorLineMarkers = []; // Track error line highlights
     let waitingForUserInput = false; // Track if we're waiting for user input
     let _inTraceback = false; // Track if we're currently inside a Python traceback block
     let htmlRuntimeWindow = null;
     let htmlRuntimeId = '';
+    let htmlRuntimeCloseMonitor = null;
     const LANGUAGE_INFO = {
       python: { mode: 'python', label: 'Python', highlight: 'python' },
       javascript: { mode: 'javascript', label: 'JavaScript', highlight: 'javascript' },
@@ -1340,6 +1379,8 @@ print("Hello " + name)
 
     function getManualLanguageInfo() {
       const sel = document.getElementById('languageSelector');
+      const isLoggedIn = !!(currentUser || currentTeacher || ADMIN_TOKEN);
+      if (isLoggedIn) return null;
       const val = String(sel?.value || 'auto').toLowerCase();
       if (val === 'python') return LANGUAGE_INFO.python;
       if (val === 'javascript') return LANGUAGE_INFO.javascript;
@@ -1371,6 +1412,96 @@ print("Hello " + name)
         editorHeader.setAttribute('aria-label', `Code editor with ${info.label} syntax highlighting`);
       }
       return info;
+    }
+
+    function parseCsvContent(text) {
+      const src = String(text || '');
+      const rows = [];
+      let row = [];
+      let cell = '';
+      let inQuotes = false;
+      for (let i = 0; i < src.length; i++) {
+        const ch = src[i];
+        const next = src[i + 1];
+        if (ch === '"') {
+          if (inQuotes && next === '"') {
+            cell += '"';
+            i += 1;
+          } else {
+            inQuotes = !inQuotes;
+          }
+        } else if (ch === ',' && !inQuotes) {
+          row.push(cell);
+          cell = '';
+        } else if ((ch === '\n' || ch === '\r') && !inQuotes) {
+          if (ch === '\r' && next === '\n') i += 1;
+          row.push(cell);
+          rows.push(row);
+          row = [];
+          cell = '';
+        } else {
+          cell += ch;
+        }
+      }
+      row.push(cell);
+      if (row.length > 1 || row[0] !== '' || rows.length === 0) rows.push(row);
+      return rows;
+    }
+
+    function stringifyCsvRows(rows) {
+      const escapeCell = (value) => {
+        const text = String(value ?? '');
+        if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+        return text;
+      };
+      return (rows || []).map(r => (r || []).map(escapeCell).join(',')).join('\n');
+    }
+
+    function scheduleCsvAutosave() {
+      if (!csvEditorActive || !currentOpenFile) return;
+      if (csvAutosaveTimer) clearTimeout(csvAutosaveTimer);
+      csvAutosaveTimer = setTimeout(() => { saveCurrentFile(); }, 1200);
+    }
+
+    function renderCsvEditor() {
+      const wrap = document.getElementById('csvEditor');
+      if (!wrap) return;
+      const maxCols = Math.max(1, ...csvEditorRows.map(r => r.length), 8);
+      const header = `<tr>${Array.from({ length: maxCols }, (_, i) => `<th>${String.fromCharCode(65 + (i % 26))}${i >= 26 ? Math.floor(i / 26) : ''}</th>`).join('')}</tr>`;
+      const bodyRows = csvEditorRows.map((row, rIdx) => (
+        `<tr>${Array.from({ length: maxCols }, (_, cIdx) => `<td><input data-r="${rIdx}" data-c="${cIdx}" value="${escapeHtml((row || [])[cIdx] || '')}"></td>`).join('')}</tr>`
+      )).join('');
+      wrap.innerHTML = `<table><thead>${header}</thead><tbody>${bodyRows || `<tr>${Array.from({ length: maxCols }, (_, cIdx) => `<td><input data-r="0" data-c="${cIdx}" value=""></td>`).join('')}</tr>`}</tbody></table>`;
+      wrap.querySelectorAll('input[data-r][data-c]').forEach(input => {
+        input.addEventListener('input', (e) => {
+          const r = Number(e.target.dataset.r);
+          const c = Number(e.target.dataset.c);
+          if (!csvEditorRows[r]) csvEditorRows[r] = [];
+          csvEditorRows[r][c] = e.target.value;
+          scheduleCsvAutosave();
+        });
+      });
+    }
+
+    function setCsvMode(enabled, content = '') {
+      const csvWrap = document.getElementById('csvEditor');
+      const cmWrap = document.querySelector('#editorPanel .CodeMirror');
+      const ta = document.getElementById('editor');
+      csvEditorActive = !!enabled;
+      if (csvEditorActive) {
+        csvEditorRows = parseCsvContent(content);
+        renderCsvEditor();
+        if (csvWrap) csvWrap.classList.remove('hidden');
+        if (cmWrap) cmWrap.style.display = 'none';
+        if (ta) ta.style.display = 'none';
+      } else {
+        if (csvWrap) {
+          csvWrap.classList.add('hidden');
+          csvWrap.innerHTML = '';
+        }
+        if (cmWrap) cmWrap.style.display = '';
+        if (ta) ta.style.display = '';
+      }
     }
 
     function buildAiContext(extra = {}) {
@@ -1576,15 +1707,23 @@ print("Hello " + name)
       const classJoinNotice = document.getElementById('classJoinNotice');
       if (classJoinNotice) classJoinNotice.style.display = isStudentNoClass ? '' : 'none';
       const lessonLocal = document.getElementById('lessonLocal');
+      const lessonFrame = document.getElementById('lessonFrame');
       if (classCtx?.settings?.wiki_html) {
         lessonLocal.innerHTML = classCtx.settings.wiki_html;
         lessonLocal.style.display = 'block';
-        document.getElementById('lessonFrame').style.display = 'none';
+        lessonFrame.style.display = 'none';
       } else if (classCtx?.settings?.wiki_url) {
         lessonLocal.style.display = 'none';
-        const lessonFrame = document.getElementById('lessonFrame');
         lessonFrame.style.display = 'block';
         lessonFrame.src = classCtx.settings.wiki_url;
+      } else if (currentConfig?.lesson_use_local) {
+        lessonFrame.style.display = 'none';
+        lessonLocal.style.display = 'block';
+        lessonLocal.innerHTML = currentConfig?.lesson_html || '<p>(No local lesson content yet)</p>';
+      } else {
+        lessonLocal.style.display = 'none';
+        lessonFrame.style.display = 'block';
+        lessonFrame.src = currentConfig?.lesson_url || '';
       }
       if (studentClassData && !studentClassData.settings?.wiki_enabled) {
         const activeWiki = document.querySelector('.tab-btn.active[data-tab="lessonTab"]');
@@ -1793,6 +1932,7 @@ print("Hello " + name)
         socket.on('finished', () => {
           _inTraceback = false; // Reset traceback state when process finishes
           waitingForUserInput = false;
+          setRunButtonState(false);
           if (exceptionInCurrentRun) {
             showExceptionHelpButton();
           } else {
@@ -1827,6 +1967,7 @@ print("Hello " + name)
           currentUser.class_id = null;
           alert('You were removed from your class by your teacher.');
           renderClassSelector();
+          updateAuthUI();
           await loadAssignments();
         });
       } catch (e) {
@@ -1868,6 +2009,10 @@ print("Hello " + name)
     }
 
     function closeHtmlRuntimeWindow() {
+      if (htmlRuntimeCloseMonitor) {
+        clearInterval(htmlRuntimeCloseMonitor);
+        htmlRuntimeCloseMonitor = null;
+      }
       try {
         if (htmlRuntimeWindow && !htmlRuntimeWindow.closed) {
           htmlRuntimeWindow.close();
@@ -1877,9 +2022,26 @@ print("Hello " + name)
       cleanupHtmlRuntimeSession();
     }
 
+    function setRunButtonState(running) {
+      isProgramRunning = !!running;
+      const runBtn = document.getElementById('runBtn');
+      if (!runBtn) return;
+      runBtn.textContent = isProgramRunning ? 'Stop ⏹' : 'Run ▶';
+      runBtn.classList.toggle('stop', isProgramRunning);
+      runBtn.classList.toggle('run', !isProgramRunning);
+      runBtn.title = isProgramRunning ? 'Stop current program' : 'Run current program';
+    }
+
+    function stopCurrentRun() {
+      closeHtmlRuntimeWindow();
+      if (socket) socket.emit('stop', {});
+      setRunButtonState(false);
+    }
+
     function openHtmlRuntimePopup(runtimeData) {
       if (!runtimeData?.runtime_id || !runtimeData?.view_url) {
         appendOut('[HTML Runtime] Invalid runtime response\n');
+        setRunButtonState(false);
         return;
       }
 
@@ -1889,9 +2051,20 @@ print("Hello " + name)
       if (!popup) {
         appendOut('[HTML Runtime] Popup blocked by browser.\n');
         cleanupHtmlRuntimeSession(runtimeData.runtime_id);
+        setRunButtonState(false);
         return;
       }
       htmlRuntimeWindow = popup;
+      if (htmlRuntimeCloseMonitor) clearInterval(htmlRuntimeCloseMonitor);
+      htmlRuntimeCloseMonitor = setInterval(() => {
+        if (!htmlRuntimeWindow || htmlRuntimeWindow.closed) {
+          clearInterval(htmlRuntimeCloseMonitor);
+          htmlRuntimeCloseMonitor = null;
+          htmlRuntimeWindow = null;
+          cleanupHtmlRuntimeSession();
+          setRunButtonState(false);
+        }
+      }, 400);
 
       const timeoutSeconds = Number(runtimeData.timeout_seconds || 30);
       const allowPopups = !!runtimeData.allow_popups;
@@ -1981,10 +2154,14 @@ print("Hello " + name)
     });
 
     document.getElementById('runBtn').addEventListener('click', async () => {
+      if (isProgramRunning) {
+        stopCurrentRun();
+        return;
+      }
       // Auto-expand sidebar to show output
       const collapsed = document.body.classList.contains('right-collapsed');
       if (collapsed) {
-        document.getElementById('toggleSidebarBtn').click();
+        document.getElementById('rightEdgeToggleBtn')?.click();
       }
       // Auto-show shell if hidden
       const shellHidden = document.body.classList.contains('shell-hidden');
@@ -2008,6 +2185,10 @@ print("Hello " + name)
           appendOut(`[Warning: could not save "${currentOpenFile.name}" before running: ${err}]\n`);
         }
       }
+      if (csvEditorActive) {
+        appendOut('[Run skipped: CSV files use spreadsheet editing only.]\n');
+        return;
+      }
       if (isHtmlRuntimeFile(currentOpenFile?.name || '')) {
         if (!currentOpenFile?.path) {
           appendOut('[HTML Runtime] Open an HTML file first.\n');
@@ -2024,13 +2205,16 @@ print("Hello " + name)
             appendOut(`[HTML Runtime Error] ${j?.error || 'Failed to start HTML runtime'}\n`);
             return;
           }
+          setRunButtonState(true);
           openHtmlRuntimePopup(j);
         } catch (err) {
           appendOut('[HTML Runtime Error] Network error while starting HTML runtime.\n');
+          setRunButtonState(false);
         }
         return;
       }
       appendOut('[Sending code]\n');
+      setRunButtonState(true);
       if (socket) {
         socket.emit('run_code', {
           code: editor.getValue(),
@@ -2042,6 +2226,7 @@ print("Hello " + name)
         });
       } else {
         appendOut('[Error: Cannot run code - Socket.IO not available]\n');
+        setRunButtonState(false);
       }
     });
     exceptionHelpBtn?.addEventListener('click', async () => {
@@ -2057,12 +2242,7 @@ print("Hello " + name)
     exceptionHelpModal?.addEventListener('click', (e) => {
       if (e.target === exceptionHelpModal) closeExceptionHelpModal();
     });
-    document.getElementById('stopBtn').addEventListener('click', () => {
-      closeHtmlRuntimeWindow();
-      if (socket) {
-        socket.emit('stop', {});
-      }
-    });
+    setRunButtonState(false);
     function sendInput(){ 
       const v = stdinEl.value ?? ""; 
       if (socket) {
@@ -2091,11 +2271,11 @@ print("Hello " + name)
         if (isLight) {
           document.body.classList.add('light-mode');
           document.documentElement.style.setProperty('--theme-bg-image', 'url(/api/background)');
-          btn.textContent = '☀️ Light';
+          btn.textContent = '☀️';
         } else {
           document.body.classList.remove('light-mode');
           document.documentElement.style.setProperty('--theme-bg-image', 'url(/api/background_dark)');
-          btn.textContent = '🌙 Dark';
+          btn.textContent = '🌙';
         }
         // Clear any inline backgroundImage so the CSS variable takes effect
         document.body.style.backgroundImage = '';
@@ -2267,8 +2447,10 @@ print("Hello " + name)
       const rightstack = document.getElementById('rightstack');
       const hsplitter = document.getElementById('hsplitter');
       const vsplitter = document.getElementById('vsplitter');
-      const toggleSidebarBtn = document.getElementById('toggleSidebarBtn');
+      const rightEdgeToggleBtn = document.getElementById('rightEdgeToggleBtn');
+      const leftEdgeToggleBtn = document.getElementById('leftEdgeToggleBtn');
       const RIGHT_COLLAPSE_KEY = 'eagleide-right-collapsed';
+      const LEFT_COLLAPSE_KEY = 'eagleide-left-collapsed';
       const LEFT_WIDTH_KEY = 'eagleide-left-width';
       const SHELL_SIZE_KEY = 'eagleide-shell-size';
 
@@ -2292,20 +2474,34 @@ print("Hello " + name)
 
       function applyRightSidebarState(collapsed, persist = true) {
         document.body.classList.toggle('right-collapsed', collapsed);
-        if (toggleSidebarBtn) {
-          toggleSidebarBtn.textContent = collapsed ? 'Show Sidebar ▶' : 'Hide Sidebar ◀';
-          toggleSidebarBtn.title = collapsed ? 'Show right sidebar' : 'Hide right sidebar';
-          toggleSidebarBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        if (rightEdgeToggleBtn) {
+          rightEdgeToggleBtn.textContent = collapsed ? '◀' : '▶';
+          rightEdgeToggleBtn.title = collapsed ? 'Show resources sidebar' : 'Hide resources sidebar';
+          rightEdgeToggleBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
         }
         if (persist) {
           try { localStorage.setItem(RIGHT_COLLAPSE_KEY, collapsed ? '1' : '0'); } catch {}
         }
       }
 
-      if (toggleSidebarBtn) {
-        toggleSidebarBtn.addEventListener('click', () => {
+      if (rightEdgeToggleBtn) {
+        rightEdgeToggleBtn.addEventListener('click', () => {
           const collapsed = !document.body.classList.contains('right-collapsed');
           applyRightSidebarState(collapsed);
+        });
+      }
+
+      if (leftEdgeToggleBtn) {
+        leftEdgeToggleBtn.addEventListener('click', () => {
+          if (document.body.classList.contains('left-collapsed')) {
+            showFileBrowser();
+            document.body.classList.remove('left-collapsed');
+            try { localStorage.setItem(LEFT_COLLAPSE_KEY, '0'); } catch {}
+          } else {
+            hideFileBrowser();
+            document.body.classList.add('left-collapsed');
+            try { localStorage.setItem(LEFT_COLLAPSE_KEY, '1'); } catch {}
+          }
         });
       }
 
@@ -2315,6 +2511,10 @@ print("Hello " + name)
         const storedShell = parseFloat(localStorage.getItem(SHELL_SIZE_KEY) || '');
         if (Number.isFinite(storedShell)) setShellSize(storedShell, false);
         applyRightSidebarState(localStorage.getItem(RIGHT_COLLAPSE_KEY) === '1', false);
+        if (localStorage.getItem(LEFT_COLLAPSE_KEY) === '1') {
+          hideFileBrowser();
+          document.body.classList.add('left-collapsed');
+        }
       } catch {
         applyRightSidebarState(false, false);
       }
@@ -2380,39 +2580,30 @@ print("Hello " + name)
 
     function updateAuthUI() {
       const guestBadge = document.getElementById('guestBadge');
-      const userChip = document.getElementById('userChip');
-      const toggleFileSidebarBtn = document.getElementById('toggleFileSidebarBtn');
-      const toggleSidebarBtn = document.getElementById('toggleSidebarBtn');
+      const leftEdgeToggleBtn = document.getElementById('leftEdgeToggleBtn');
+      const rightEdgeToggleBtn = document.getElementById('rightEdgeToggleBtn');
       const loginBtn = document.getElementById('loginBtn');
       const adminSettingsBtn = document.getElementById('adminSettingsBtn');
       const streamingToggleBtn = document.getElementById('streamingToggleBtn');
+      const modeWrap = document.getElementById('modeSelectorWrap');
+      const topJoinClassBtn = document.getElementById('topJoinClassBtn');
       const isLoggedIn = !!(currentUser || currentTeacher || ADMIN_TOKEN);
       document.body.classList.toggle('guest-mode', !isLoggedIn);
       document.body.classList.toggle('admin-owner', !!ADMIN_TOKEN);
-      // Update guest badge, user chip, and file browser button
       guestBadge.style.display = isLoggedIn ? 'none' : '';
-      if (currentUser) {
-        userChip.style.display = '';
-        userChip.textContent = currentUser.name || currentUser.email;
-        toggleFileSidebarBtn.style.display = '';
-      } else if (currentTeacher) {
-        userChip.style.display = '';
-        userChip.textContent = `Teacher: ${currentTeacher.name || currentTeacher.email}`;
-        toggleFileSidebarBtn.style.display = '';
-      } else if (ADMIN_TOKEN) {
-        // Admin also gets access to the file browser
-        toggleFileSidebarBtn.style.display = '';
-        userChip.style.display = 'none';
-      } else {
-        userChip.style.display = 'none';
-        toggleFileSidebarBtn.style.display = 'none';
-        if (!isLoggedIn) hideFileBrowser();
+      if (modeWrap) modeWrap.style.display = isLoggedIn ? 'none' : 'inline-flex';
+      if (leftEdgeToggleBtn) leftEdgeToggleBtn.style.display = isLoggedIn ? 'flex' : 'none';
+      if (rightEdgeToggleBtn) rightEdgeToggleBtn.style.display = isLoggedIn ? 'flex' : 'none';
+      if (!isLoggedIn) {
+        hideFileBrowser();
+        document.body.classList.add('left-collapsed');
       }
-      if (toggleSidebarBtn) toggleSidebarBtn.style.display = isLoggedIn ? '' : 'none';
+      if (topJoinClassBtn) topJoinClassBtn.style.display = (currentUser && !studentClassData) ? '' : 'none';
       // Toggle login/logout button
       if (isLoggedIn) {
         loginBtn.textContent = 'Sign Out';
-        loginBtn.title = 'Log out';
+        const accountName = (currentUser?.name || currentTeacher?.name || currentUser?.email || currentTeacher?.email || 'Admin').trim();
+        loginBtn.title = `Sign out (${accountName})`;
       } else {
         loginBtn.textContent = 'Sign In';
         loginBtn.title = 'Sign in';
@@ -2509,6 +2700,8 @@ print("Hello " + name)
           currentUser = null;
           currentOpenFile = null;
           // Clear editor and reset to blank state
+          setRunButtonState(false);
+          setCsvMode(false);
           editor.setValue('');
           if (typeof updateActiveFileName === 'function') updateActiveFileName();
           hideFileBrowser();
@@ -2521,6 +2714,8 @@ print("Hello " + name)
           currentTeacherClassId = null;
           document.body.classList.remove('admin-mode');
           currentOpenFile = null;
+          setRunButtonState(false);
+          setCsvMode(false);
           editor.setValue('');
           if (typeof updateActiveFileName === 'function') updateActiveFileName();
           hideFileBrowser();
@@ -2529,7 +2724,8 @@ print("Hello " + name)
         if (ADMIN_TOKEN) {
           ADMIN_TOKEN = null;
           document.body.classList.remove('admin-mode');
-          setEditable(false);
+          setRunButtonState(false);
+          setCsvMode(false);
           document.getElementById('adminSettingsBtn').style.display = 'none';
           document.getElementById('streamingToggleBtn').style.display = 'none';
           currentOpenFile = null;
@@ -2708,9 +2904,14 @@ print("Hello " + name)
       }
       if (TEACHER_TOKEN) {
         document.getElementById('teacherClassMgmt').style.display = '';
+        document.getElementById('teacherPasswordSection').style.display = '';
+        document.getElementById('teacherPasswordStatus').textContent = '';
+        document.getElementById('teacherCurrentPassword').value = '';
+        document.getElementById('teacherNewPassword').value = '';
         loadTeacherClasses().then(() => renderTeacherClassManagement());
       } else {
         document.getElementById('teacherClassMgmt').style.display = 'none';
+        document.getElementById('teacherPasswordSection').style.display = 'none';
         document.getElementById('teacherClassList').innerHTML = '<div style="color:#888; font-size:12px;">Teacher login required.</div>';
       }
     });
@@ -2803,6 +3004,40 @@ print("Hello " + name)
       renderTeacherClassManagement();
       renderClassSelector();
       await loadAssignments();
+    });
+
+    document.getElementById('teacherChangePasswordBtn').addEventListener('click', async () => {
+      if (!TEACHER_TOKEN) return;
+      const currentPassword = document.getElementById('teacherCurrentPassword').value;
+      const newPassword = document.getElementById('teacherNewPassword').value;
+      const statusEl = document.getElementById('teacherPasswordStatus');
+      statusEl.textContent = '';
+      statusEl.style.color = '';
+      if (!currentPassword || !newPassword) {
+        statusEl.textContent = 'Enter current and new password.';
+        statusEl.style.color = '#ef5350';
+        return;
+      }
+      try {
+        const res = await fetch('/api/teacher/change-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Teacher-Token': TEACHER_TOKEN },
+          body: JSON.stringify({ currentPassword, newPassword })
+        });
+        const j = await res.json().catch(() => ({}));
+        if (!j?.ok) {
+          statusEl.textContent = j?.error || 'Could not update password.';
+          statusEl.style.color = '#ef5350';
+          return;
+        }
+        document.getElementById('teacherCurrentPassword').value = '';
+        document.getElementById('teacherNewPassword').value = '';
+        statusEl.textContent = 'Password updated.';
+        statusEl.style.color = '#4caf50';
+      } catch {
+        statusEl.textContent = 'Network error.';
+        statusEl.style.color = '#ef5350';
+      }
     });
 
     async function loadAdminUsers() {
@@ -3017,26 +3252,31 @@ print("Hello " + name)
     function showFileBrowser() {
       const outer = document.getElementById('outer');
       const sidebar = document.getElementById('fileSidebar');
+      const leftEdgeToggleBtn = document.getElementById('leftEdgeToggleBtn');
       outer.classList.remove('no-sidebar');
       outer.style.setProperty('--sidebar-width', '220px');
       sidebar.style.display = 'flex';
+      document.body.classList.remove('left-collapsed');
+      if (leftEdgeToggleBtn) {
+        leftEdgeToggleBtn.textContent = '◀';
+        leftEdgeToggleBtn.title = 'Hide file sidebar';
+      }
       loadFileTree();
     }
 
     function hideFileBrowser() {
       const outer = document.getElementById('outer');
       const sidebar = document.getElementById('fileSidebar');
+      const leftEdgeToggleBtn = document.getElementById('leftEdgeToggleBtn');
       outer.classList.add('no-sidebar');
       outer.style.removeProperty('--sidebar-width');
       sidebar.style.display = 'none';
+      document.body.classList.add('left-collapsed');
+      if (leftEdgeToggleBtn) {
+        leftEdgeToggleBtn.textContent = '▶';
+        leftEdgeToggleBtn.title = 'Show file sidebar';
+      }
     }
-
-    document.getElementById('toggleFileSidebarBtn').addEventListener('click', () => {
-      const sidebar = document.getElementById('fileSidebar');
-      if (sidebar.style.display === 'none') showFileBrowser();
-      else hideFileBrowser();
-    });
-    document.getElementById('closeSidebarBtn').addEventListener('click', hideFileBrowser);
 
     function _findItemByPath(items, path) {
       for (const item of items) {
@@ -3226,12 +3466,12 @@ print("Hello " + name)
     // Returns true on success (or if nothing to save), false on error.
     async function saveCurrentFile() {
       if (!currentOpenFile || (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN)) return true;
-      const code = editor.getValue();
+      const content = csvEditorActive ? stringifyCsvRows(csvEditorRows) : editor.getValue();
       try {
         const res = await fetch('/api/files/write', {
           method: 'POST',
           headers: fileJsonHeaders(),
-          body: JSON.stringify({ path: currentOpenFile.path, content: code })
+          body: JSON.stringify({ path: currentOpenFile.path, content })
         });
         if (!res.ok) return false;
         const j = await res.json().catch(() => ({}));
@@ -3245,12 +3485,13 @@ print("Hello " + name)
     function updateActiveFileName() {
       const el = document.getElementById('activeFileName');
       if (el) el.textContent = currentOpenFile ? currentOpenFile.name : '';
-      syncEditorLanguage();
+      if (!csvEditorActive) syncEditorLanguage();
     }
 
     // Autosave: save current file 1.5 s after the last edit
     let _autosaveTimer = null;
     function scheduleAutosave() {
+      if (csvEditorActive) return;
       if (!currentOpenFile || (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN)) return;
       if (_autosaveTimer) clearTimeout(_autosaveTimer);
       _autosaveTimer = setTimeout(async () => {
@@ -3281,7 +3522,14 @@ print("Hello " + name)
       const j = await res.json().catch(() => ({}));
       if (!j.ok) { alert(j.error || 'Cannot open file'); return; }
       currentOpenFile = { path: item.path, name: item.name };
-      editor.setValue(j.content || '');
+      const isCsv = String(item.name || '').toLowerCase().endsWith('.csv');
+      if (isCsv) {
+        setCsvMode(true, j.content || '');
+        editor.setValue('');
+      } else {
+        setCsvMode(false);
+        editor.setValue(j.content || '');
+      }
       updateActiveFileName();
       updateEditorOverlay();
       loadFileTree();
@@ -3353,6 +3601,7 @@ print("Hello " + name)
       if (j.ok) {
         if (currentOpenFile?.path === item.path) {
           currentOpenFile = { path: j.new_path, name: newName };
+          if (!String(newName).toLowerCase().endsWith('.csv') && csvEditorActive) setCsvMode(false);
           updateActiveFileName();
         }
         loadFileTree();
@@ -3370,6 +3619,7 @@ print("Hello " + name)
       if (j.ok) {
         if (currentOpenFile?.path === item.path) {
           currentOpenFile = null;
+          setCsvMode(false);
           editor.setValue('');
           updateActiveFileName();
           updateEditorOverlay();
@@ -3434,12 +3684,7 @@ print("Hello " + name)
 
     document.getElementById('refreshFilesBtn').addEventListener('click', loadFileTree);
 
-    function setEditable(on){
-      document.getElementById('notesView').setAttribute('contenteditable', on ? 'true' : 'false');
-      document.getElementById('lessonLocal').setAttribute('contenteditable', on ? 'true' : 'false');
-    }
-
-    // Notes/Lesson controls (admin)
+    // Notes controls (admin)
     document.getElementById('notesEditBtn').addEventListener('click', () => {
       const notesView = document.getElementById('notesView');
       const notesEdit = document.getElementById('notesEdit');
@@ -3464,15 +3709,6 @@ print("Hello " + name)
       notesEdit.style.display = 'none';
       notesView.style.display = 'block';
     });
-    document.getElementById('lessonEditBtn').addEventListener('click', () => setEditable(true));
-    document.getElementById('lessonSaveBtn').addEventListener('click', async () => {
-      if (!ADMIN_TOKEN) return alert('Enter Admin Mode first.');
-      const lesson_html = document.getElementById('lessonLocal').innerHTML;
-      await saveConfig({lesson_html});
-      setEditable(false);
-      alert('Wiki content saved!');
-    });
-
     // AI toolbar controls (admin)
     document.getElementById('aiSaveBtn').addEventListener('click', async () => {
       if (!ADMIN_TOKEN) return alert('Enter Admin Mode first.');
@@ -4128,10 +4364,20 @@ print("Hello " + name)
         status.textContent = `Joined ${studentClassData?.name || 'class'} successfully.`;
         status.style.color = '#4caf50';
         renderClassSelector();
+        updateAuthUI();
         await loadAssignments();
       } catch {
         status.textContent = 'Network error.';
         status.style.color = '#ef5350';
+      }
+    });
+
+    document.getElementById('topJoinClassBtn')?.addEventListener('click', () => {
+      document.getElementById('assignmentTabBtn')?.click();
+      const input = document.getElementById('joinClassCodeInput');
+      if (input) {
+        input.focus();
+        input.select();
       }
     });
 
