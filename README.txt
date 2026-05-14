@@ -118,7 +118,7 @@ PAGE CUSTOMIZATION
 --------------------------------------------------
 "page_title": "Eagle IDE (Python)"
 "topbar_color": "linear-gradient(90deg,#a5c8f0,#7fb2eb)"
-"notes_html": "&lt;h2&gt;Welcome&lt;/h2&gt;..."       # Notes panel content
+"notes_html": "&lt;h2&gt;Welcome&lt;/h2&gt;..."       # Home panel content (admin instructions/updates)
 
 --------------------------------------------------
 AI ASSISTANT BEHAVIOR
@@ -178,7 +178,7 @@ Students can:
 6. Adjust font size with the slider
 7. View output in the terminal panel
 8. Provide input when programs use input()
-9. View lessons and notes in the sidebar
+9. View lessons and Home content in the sidebar
 
 Features:
 - Syntax highlighting for Python, JavaScript, HTML, and CSS
@@ -260,20 +260,21 @@ AI ASSISTANT (TUTOR)
 --------------------------------------------------
 FOR STUDENTS
 --------------------------------------------------
-1. View active assignments in Assignments tab
+1. View assignments in the Assignments tab only after joining a class
 2. Join a class from the Assignments tab using the 6-character class code (once joined, students cannot self-leave)
 2. Click assignment to view details
 3. Sign in with your student account
 4. Choose one of your saved files to submit
-5. The selected file is copied to the admin account's assignment folder and renamed to the student's name, with a submission comment at the top that includes student name and timestamp
+5. The selected file is copied to the assignment owner's assignment folder and renamed to the student's name, with a submission comment at the top that includes student name and timestamp
 6. Resubmissions replace your previous file for that assignment
 
 --------------------------------------------------
-FOR TEACHERS/ADMINS
+FOR TEACHERS
 --------------------------------------------------
-1. Login to admin panel
+1. Login with a teacher account
 2. Teachers create classes and receive random 6-character join codes
-3. Teachers manage class membership (remove students, lock/unlock, reset passwords)
+3. Teachers manage class membership (remove students, lock/unlock, reset passwords) and can delete classes
+4. Deleting a class unassigns all enrolled students so they can join a new class
 2. Create new assignments with:
    - Assignment name
    - Task description
@@ -281,7 +282,7 @@ FOR TEACHERS/ADMINS
    - Target class
 3. Lock/unlock assignments
 4. Edit or delete assignments from the assignment manager
-5. Open submitted files directly from the admin workspace
+5. Open submitted files directly from the assignment owner workspace
 6. Grade from the left sidebar with auto-saving score changes or AI grading
 7. Review alphabetized score tables and download scores as CSV
 
@@ -294,15 +295,12 @@ Access: Click "Admin" button, login with password
 --------------------------------------------------
 CAPABILITIES
 --------------------------------------------------
-- Edit notes and lesson content
+- Edit Home and lesson content
 - Configure AI settings
 - Customize page appearance
-- Create teacher accounts (admin)
-- Manage teacher classes and class settings (teacher)
-- Create/manage assignments
-- View all submissions
-- Grade student work
-- Export grades to CSV
+- Create teacher accounts (admin-only)
+- Manage teacher classes and class settings (teacher-only)
+- Create/manage assignments, view submissions, grade, and export assignment scores (teacher-only)
 - Manage challenges
 - View student account last sign-in timestamps
 
@@ -441,4 +439,4 @@ For classroom or multi-user deployment:
 
 For support or issues: https://github.com/bkgodwin/EagleIDE
 
-Last Updated: 2026-05-13
+Last Updated: 2026-05-14
