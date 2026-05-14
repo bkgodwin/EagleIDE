@@ -609,8 +609,6 @@ def _validate_user_path(user_dir: Path, path_str: str) -> Optional[Path]:
 
 
 def _assignment_actor(req) -> Optional[dict]:
-    if _require_admin(req):
-        return {"role": "admin", "email": ADMIN_ACCOUNT_EMAIL}
     teacher = _require_teacher(req)
     if teacher:
         return {"role": "teacher", "email": (teacher.get("email") or "").strip().lower()}
@@ -1620,6 +1618,44 @@ def teacher_remove_student():
             del _student_tokens[token]
     _revoke_student_class_rooms(student_email, class_id)
     return jsonify(ok=True)
+
+
+@app.post("/api/teacher/classes/delete")
+def teacher_delete_class():
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    data = request.get_json(silent=True) or {}
+    class_id = (data.get("classId") or "").strip()
+    if not class_id:
+        return jsonify(ok=False, error="classId is required"), 400
+    teacher_email = (teacher.get("email") or "").strip().lower()
+    classes_data = _load_classes()
+    target_class = None
+    remaining_classes = []
+    for cls in classes_data.get("classes", []):
+        if cls.get("id") == class_id and (cls.get("teacher_email") or "").lower() == teacher_email:
+            target_class = cls
+            continue
+        remaining_classes.append(cls)
+    if not target_class:
+        return jsonify(ok=False, error="Class not found"), 404
+    student_emails = [str(email).strip().lower() for email in target_class.get("students", []) if str(email).strip()]
+    users_data = _load_users()
+    for user in users_data.get("users", []):
+        if (user.get("role") or "").lower() != "student":
+            continue
+        if (user.get("email") or "").strip().lower() in student_emails:
+            user["class_id"] = None
+    classes_data["classes"] = remaining_classes
+    _save_classes(classes_data)
+    _save_users(users_data)
+    for token, info in list(_student_tokens.items()):
+        if (info.get("email") or "").strip().lower() in student_emails:
+            info["class_id"] = None
+    for student_email in student_emails:
+        _revoke_student_class_rooms(student_email, class_id)
+    return jsonify(ok=True, deletedClassId=class_id, unassignedStudents=len(student_emails))
 
 
 @app.post("/api/teacher/students/reset-password")
@@ -3096,28 +3132,30 @@ def _list_assignments() -> list:
 @app.get("/api/assignments")
 def get_assignments():
     """Get all assignments"""
+    if _require_admin(request):
+        return jsonify(ok=False, error="Admins cannot access assignments"), 403
     actor = _assignment_actor(request)
-    is_admin = bool(actor and actor.get("role") == "admin")
     is_teacher = bool(actor and actor.get("role") == "teacher")
     teacher_email = (actor or {}).get("email", "")
     all_assignments = _list_assignments()
     
-    if is_admin:
-        # Admins see all assignments with submissions
-        return jsonify(ok=True, assignments=all_assignments, isAdmin=True, isTeacher=False, canManage=True)
     if is_teacher:
         teacher_assignments = [a for a in all_assignments if (a.get("createdByEmail") or "").lower() == teacher_email.lower()]
         return jsonify(ok=True, assignments=teacher_assignments, isAdmin=False, isTeacher=True, canManage=True)
 
     user = _require_user(request)
+    if not user:
+        return jsonify(ok=True, assignments=[], isAdmin=False, isTeacher=False, canManage=False)
     class_id = (user or {}).get("class_id")
     if not class_id and user:
         class_id = (_find_user(user.get("email", "")) or {}).get("class_id")
         user["class_id"] = class_id
+    if not class_id:
+        return jsonify(ok=True, assignments=[], isAdmin=False, isTeacher=False, canManage=False)
     visible_assignments = []
     for a in all_assignments:
         target_class = a.get("targetClassId")
-        if target_class and target_class != class_id:
+        if not target_class or target_class != class_id:
             continue
         assignment_copy = dict(a)
         assignment_copy.pop("submissions", None)
@@ -3126,10 +3164,10 @@ def get_assignments():
 
 @app.post("/api/assignments/create")
 def create_assignment():
-    """Create a new assignment (admin or teacher)."""
+    """Create a new assignment (teacher only)."""
     actor = _assignment_actor(request)
     if not actor:
-        return jsonify(ok=False, error="Admin or teacher token required"), 401
+        return jsonify(ok=False, error="Teacher token required"), 401
     
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
@@ -3152,10 +3190,6 @@ def create_assignment():
         if not teacher_class or (teacher_class.get("teacher_email") or "").lower() != actor.get("email", "").lower():
             return jsonify(ok=False, error="Invalid class"), 403
         target_class_name = teacher_class.get("name")
-    elif target_class_id:
-        admin_target = _find_class_by_id(target_class_id)
-        target_class_name = (admin_target or {}).get("name")
-
     assignment = {
         "name": name,
         "task": task,
@@ -3175,10 +3209,10 @@ def create_assignment():
 
 @app.post("/api/assignments/update")
 def update_assignment():
-    """Update an assignment (admin or teacher owner)."""
+    """Update an assignment (teacher owner)."""
     actor = _assignment_actor(request)
     if not actor:
-        return jsonify(ok=False, error="Admin or teacher token required"), 401
+        return jsonify(ok=False, error="Teacher token required"), 401
     
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
@@ -3211,8 +3245,6 @@ def update_assignment():
             if not cls or (cls.get("teacher_email") or "").lower() != actor.get("email", "").lower():
                 return jsonify(ok=False, error="Invalid class"), 403
             class_name = cls.get("name")
-        elif class_id:
-            class_name = ((_find_class_by_id(class_id) or {}).get("name"))
         assignment["targetClassId"] = class_id
         assignment["targetClassName"] = class_name
     
@@ -3222,10 +3254,10 @@ def update_assignment():
 
 @app.post("/api/assignments/delete")
 def delete_assignment():
-    """Delete an assignment (admin or teacher owner)."""
+    """Delete an assignment (teacher owner)."""
     actor = _assignment_actor(request)
     if not actor:
-        return jsonify(ok=False, error="Admin or teacher token required"), 401
+        return jsonify(ok=False, error="Teacher token required"), 401
     
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
@@ -3245,7 +3277,9 @@ def delete_assignment():
             return jsonify(ok=False, error="Assignment not found"), 404
         try:
             path.unlink()
-            owner_email = (assignment_data.get("createdByEmail") or ADMIN_ACCOUNT_EMAIL).strip().lower()
+            owner_email = (assignment_data.get("createdByEmail") or "").strip().lower()
+            if not owner_email:
+                owner_email = (actor.get("email") or "").strip().lower()
             owner_root = _get_user_dir(owner_email)
             owner_assignment_dir = _validate_user_path(owner_root, _sanitize_storage_component(name, fallback="Assignment"))
             if owner_assignment_dir and owner_assignment_dir.exists():
@@ -3299,15 +3333,17 @@ def submit_assignment():
     submitted_code = _prepend_submission_timestamp(original_code, submitted_at, student_name)
     target_class_id = assignment.get("targetClassId")
     student_class_id = user.get("class_id") or (_find_user(student_email) or {}).get("class_id")
-    if target_class_id and target_class_id != student_class_id:
+    if not target_class_id or target_class_id != student_class_id:
         return jsonify(ok=False, error="This assignment is not assigned to your class"), 403
 
-    owner_email = (assignment.get("createdByEmail") or ADMIN_ACCOUNT_EMAIL).strip().lower()
+    owner_email = (assignment.get("createdByEmail") or "").strip().lower()
+    if not owner_email:
+        return jsonify(ok=False, error="Assignment owner not found"), 500
     try:
         admin_file_path = _write_assignment_submission_copy(owner_email, assignment_name, student_name, source_file.name, submitted_code)
     except Exception as exc:
         print(f"Error copying assignment submission for {assignment_name}: {exc}")
-        return jsonify(ok=False, error="Could not copy submission to admin workspace"), 500
+        return jsonify(ok=False, error="Could not copy submission to assignment owner workspace"), 500
     submitted_filename = Path(admin_file_path).name
 
     submission = {
@@ -3364,10 +3400,10 @@ def submit_assignment():
 
 @app.post("/api/assignments/score")
 def score_submission():
-    """Set a score for a student submission (admin or assignment owner)."""
+    """Set a score for a student submission (assignment owner teacher only)."""
     actor = _assignment_actor(request)
     if not actor:
-        return jsonify(ok=False, error="Admin or teacher token required"), 401
+        return jsonify(ok=False, error="Teacher token required"), 401
     
     data = request.get_json(silent=True) or {}
     assignment_name = (data.get("assignmentName") or "").strip()
@@ -3409,10 +3445,10 @@ def score_submission():
 
 @app.post("/api/assignments/grade-ai")
 def grade_assignment_ai():
-    """Grade a student submission using AI (admin or assignment owner)."""
+    """Grade a student submission using AI (assignment owner teacher only)."""
     actor = _assignment_actor(request)
     if not actor:
-        return jsonify(ok=False, error="Admin or teacher token required"), 401
+        return jsonify(ok=False, error="Teacher token required"), 401
     
     cfg = _load_config()
     allowed, error = _effective_ai_enabled(request, request.get_json(silent=True) or {})
@@ -3518,10 +3554,10 @@ def grade_assignment_ai():
 
 @app.get("/api/assignments/<assignment_name>/csv")
 def download_assignment_csv(assignment_name: str):
-    """Download CSV of student scores (admin or assignment owner)."""
+    """Download CSV of student scores (assignment owner teacher only)."""
     actor = _assignment_actor(request)
     if not actor:
-        return jsonify(ok=False, error="Admin or teacher token required"), 401
+        return jsonify(ok=False, error="Teacher token required"), 401
     
     assignment = _load_assignment(assignment_name)
     if not assignment:
@@ -3570,23 +3606,20 @@ def download_assignment_csv(assignment_name: str):
 
 @app.post("/api/assignments/student-scores")
 def get_student_scores():
-    """Get scores for the logged-in student, or for a specific student when requested by an admin."""
+    """Get scores for the logged-in student."""
     user = _require_user(request)
-    is_admin = _require_admin(request)
-    data = request.get_json(silent=True) or {}
     email = (user or {}).get("email", "")
-    if is_admin and data.get("email"):
-        email = (data.get("email") or "").strip().lower()
-
     if not email:
         return jsonify(ok=False, error="Authentication required"), 401
 
     all_assignments = _list_assignments()
     class_id = (_find_user(email) or {}).get("class_id") if email else None
+    if not class_id:
+        return jsonify(ok=True, scores=[])
     student_scores = []
     for assignment in all_assignments:
         target_class_id = assignment.get("targetClassId")
-        if target_class_id and class_id and target_class_id != class_id and not is_admin:
+        if not target_class_id or target_class_id != class_id:
             continue
         submissions = assignment.get("submissions", [])
         for sub in submissions:
@@ -3627,23 +3660,20 @@ def get_quiz(assignment_name: str):
     if not quiz:
         return jsonify(ok=False, error="No quiz for this assignment"), 404
     
-    # Return quiz without correct answers for students (unless admin)
-    is_admin = _require_admin(request)
-    if not is_admin:
-        user = _require_user(request)
-        class_id = (user or {}).get("class_id") or (_find_user((user or {}).get("email", "")) or {}).get("class_id")
-        target_class_id = assignment.get("targetClassId")
-        if target_class_id and target_class_id != class_id:
-            return jsonify(ok=False, error="Quiz not assigned to your class"), 403
-        # Remove correct answers from multiple choice questions for students
-        import copy
-        quiz_copy = copy.deepcopy(quiz)
-        for question in quiz_copy.get("questions", []):
-            if question.get("type") == "multiple_choice":
-                question.pop("correctAnswer", None)
-        return jsonify(ok=True, quiz=quiz_copy)
-    
-    return jsonify(ok=True, quiz=quiz)
+    user = _require_user(request)
+    if not user:
+        return jsonify(ok=False, error="Student login required"), 401
+    class_id = (user or {}).get("class_id") or (_find_user((user or {}).get("email", "")) or {}).get("class_id")
+    target_class_id = assignment.get("targetClassId")
+    if not target_class_id or target_class_id != class_id:
+        return jsonify(ok=False, error="Quiz not assigned to your class"), 403
+    # Remove correct answers from multiple choice questions for students
+    import copy
+    quiz_copy = copy.deepcopy(quiz)
+    for question in quiz_copy.get("questions", []):
+        if question.get("type") == "multiple_choice":
+            question.pop("correctAnswer", None)
+    return jsonify(ok=True, quiz=quiz_copy)
 
 @app.post("/api/quiz/submit")
 def submit_quiz():
@@ -3668,7 +3698,7 @@ def submit_quiz():
         return jsonify(ok=False, error="Assignment is not active"), 403
     target_class_id = assignment.get("targetClassId")
     student_class_id = (user.get("class_id") or (_find_user(student_email) or {}).get("class_id"))
-    if target_class_id and target_class_id != student_class_id:
+    if not target_class_id or target_class_id != student_class_id:
         return jsonify(ok=False, error="Quiz not assigned to your class"), 403
 
     quiz = assignment.get("quiz")
@@ -3732,10 +3762,10 @@ def submit_quiz():
 
 @app.post("/api/quiz/grade-written")
 def grade_written_response():
-    """Grade a written response using AI (admin or assignment owner)."""
+    """Grade a written response using AI (assignment owner teacher only)."""
     actor = _assignment_actor(request)
     if not actor:
-        return jsonify(ok=False, error="Admin or teacher token required"), 401
+        return jsonify(ok=False, error="Teacher token required"), 401
     
     cfg = _load_config()
     allowed, error = _effective_ai_enabled(request, request.get_json(silent=True) or {})
@@ -3837,10 +3867,10 @@ def grade_written_response():
 
 @app.post("/api/quiz/override-score")
 def override_quiz_score():
-    """Override quiz question score manually (admin or assignment owner)."""
+    """Override quiz question score manually (assignment owner teacher only)."""
     actor = _assignment_actor(request)
     if not actor:
-        return jsonify(ok=False, error="Admin or teacher token required"), 401
+        return jsonify(ok=False, error="Teacher token required"), 401
     
     data = request.get_json(silent=True) or {}
     assignment_name = (data.get("assignmentName") or "").strip()
