@@ -85,15 +85,11 @@ The server should start on http://0.0.0.0:8000
 Configuration is managed through config.py. Key settings include:
 
 --------------------------------------------------
-ADMIN PASSWORD (CRITICAL - CHANGE THIS!)
+ADMIN CREDENTIALS (ENCRYPTED ON FIRST START)
 --------------------------------------------------
-DEFAULT_ADMIN_PASSWORD = "password"
-
-⚠️ WARNING: Change this immediately before deployment!
-This password protects admin functions including:
-- Assignment management
-- Configuration changes
-- Student submission access
+On first startup, the server prompts for admin email/password in the terminal.
+Both are persisted to `config.txt`, and the password is encrypted at rest.
+If either value is blank or unreadable, the server prompts again on next start.
 
 --------------------------------------------------
 AI/OLLAMA CONFIGURATION
@@ -264,6 +260,7 @@ AI ASSISTANT (TUTOR)
 FOR STUDENTS
 --------------------------------------------------
 1. View active assignments in Assignments tab
+2. Join a class from the Assignments tab using the 6-character class code (once joined, students cannot self-leave)
 2. Click assignment to view details
 3. Sign in with your student account
 4. Choose one of your saved files to submit
@@ -274,10 +271,13 @@ FOR STUDENTS
 FOR TEACHERS/ADMINS
 --------------------------------------------------
 1. Login to admin panel
+2. Teachers create classes and receive random 6-character join codes
+3. Teachers manage class membership (remove students, lock/unlock, reset passwords)
 2. Create new assignments with:
    - Assignment name
    - Task description
    - Maximum score
+   - Target class
 3. Lock/unlock assignments
 4. Edit or delete assignments from the assignment manager
 5. Open submitted files directly from the admin workspace
@@ -296,6 +296,8 @@ CAPABILITIES
 - Edit notes and lesson content
 - Configure AI settings
 - Customize page appearance
+- Create teacher accounts (admin)
+- Manage teacher classes and class settings (teacher)
 - Create/manage assignments
 - View all submissions
 - Grade student work
