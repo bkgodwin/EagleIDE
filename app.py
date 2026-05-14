@@ -220,6 +220,10 @@ def _remove_html_runtime_session(runtime_id: str) -> None:
 
 atexit.register(lambda: _cleanup_expired_html_runtime_sessions(force=True))
 
+
+def _is_html_file(path: Path) -> bool:
+    return path.suffix.lower() in {".html", ".htm"}
+
 # -------------------------
 # User account management
 # -------------------------
@@ -1659,14 +1663,19 @@ def start_html_runtime():
     target = _validate_user_path(user_dir, file_path)
     if not target or not target.exists() or not target.is_file():
         return jsonify(ok=False, error="HTML file not found"), 404
-    if target.suffix.lower() != ".html":
+    if not _is_html_file(target):
         return jsonify(ok=False, error="Only .html files can use HTML runtime"), 400
 
     runtime_id = uuid.uuid4().hex
     runtime_dir = SANDBOX_DIR / f"html_runtime_{runtime_id}"
-    source_root = target.parent
+    source_root = user_dir.resolve()
+    entry_path = str(target.resolve().relative_to(source_root)).replace("\\", "/")
+    runtime_resolved = runtime_dir.resolve()
+    sandbox_root = SANDBOX_DIR.resolve()
+    if os.path.commonpath([str(runtime_resolved), str(sandbox_root)]) != str(sandbox_root):
+        return jsonify(ok=False, error="Invalid runtime directory"), 500
     try:
-        shutil.copytree(source_root, runtime_dir, dirs_exist_ok=True)
+        shutil.copytree(source_root, runtime_resolved, dirs_exist_ok=True, symlinks=False, ignore_dangling_symlinks=True)
     except Exception:
         _delete_path_quietly(runtime_dir)
         return jsonify(ok=False, error="Could not prepare HTML runtime environment"), 500
@@ -1676,15 +1685,15 @@ def start_html_runtime():
     _cleanup_expired_html_runtime_sessions()
     with _html_runtime_lock:
         _html_runtime_sessions[runtime_id] = {
-            "runtime_dir": str(runtime_dir),
-            "entry_file": target.name,
+            "runtime_dir": str(runtime_resolved),
+            "entry_file": entry_path,
             "expires_at": time.time() + session_ttl_seconds,
         }
 
     return jsonify(
         ok=True,
         runtime_id=runtime_id,
-        view_url=f"/api/html-runtime/view/{runtime_id}/{target.name}",
+        view_url=f"/api/html-runtime/view/{runtime_id}/{entry_path}",
         timeout_seconds=timeout_seconds,
         allow_external_internet=_cfg_bool(cfg, "html_runtime_allow_external_internet", False),
         allow_popups=_cfg_bool(cfg, "html_runtime_allow_popups", False),
