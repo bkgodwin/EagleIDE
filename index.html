@@ -540,6 +540,152 @@
       #rightColumn{ grid-column:1 !important; grid-row:auto }
       #fileSidebar{ grid-column:1 !important; grid-row:auto; height:30vh; }
     }
+
+    /* ── Teacher Dashboard ── */
+    .teacher-dash-modal .modal-content {
+      width: 98vw;
+      max-width: 1800px;
+      height: 96vh;
+      max-height: 96vh;
+      padding: 0;
+      display: flex;
+      flex-direction: row;
+      overflow: hidden;
+      border-radius: 16px;
+    }
+    .teacher-dash-sidebar {
+      width: 220px;
+      flex-shrink: 0;
+      background: var(--theme-panel-hdr);
+      border-right: 1px solid var(--theme-border-mid);
+      display: flex;
+      flex-direction: column;
+      padding: 0;
+      overflow: hidden;
+    }
+    .teacher-dash-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 20px 16px 16px;
+      border-bottom: 1px solid var(--theme-border-mid);
+      flex-shrink: 0;
+    }
+    .teacher-dash-eagle { font-size: 28px; line-height: 1; }
+    .teacher-dash-brand-title { font-weight: 800; font-size: 15px; color: var(--columbia-blue); letter-spacing: .4px; }
+    .teacher-dash-brand-sub { font-size: 11px; color: var(--theme-text-dim); letter-spacing: .5px; text-transform: uppercase; margin-top: 2px; }
+    .teacher-dash-nav {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 12px 10px;
+      overflow-y: auto;
+    }
+    .teacher-dash-navbtn {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 10px 12px;
+      border: none;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--theme-text-dim);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s, color .15s;
+      text-align: left;
+    }
+    .teacher-dash-navbtn:hover { background: rgba(165,200,240,.12); color: var(--theme-text); }
+    .teacher-dash-navbtn.active { background: rgba(165,200,240,.18); color: var(--columbia-blue); }
+    .teacher-dash-navbtn .navbtn-icon { font-size: 16px; width: 22px; text-align: center; flex-shrink: 0; }
+    .teacher-dash-close-area {
+      padding: 12px 10px;
+      border-top: 1px solid var(--theme-border-mid);
+      flex-shrink: 0;
+    }
+    .teacher-dash-main {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: var(--theme-bg);
+    }
+    .teacher-dash-view {
+      display: none;
+      flex-direction: column;
+      height: 100%;
+      overflow: hidden;
+    }
+    .teacher-dash-view.active { display: flex; }
+    .teacher-dash-view-hdr {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 16px 20px 14px;
+      border-bottom: 1px solid var(--theme-border-mid);
+      background: var(--theme-panel-hdr);
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+    .teacher-dash-view-title { margin: 0; font-size: 18px; color: var(--columbia-blue); font-weight: 800; letter-spacing: .2px; }
+    .teacher-dash-view-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .teacher-dash-scroll { flex: 1; overflow-y: auto; padding: 20px; }
+    .teacher-dash-class-card {
+      background: var(--theme-input-bg);
+      border: 1px solid var(--theme-border-mid);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 14px;
+      transition: border-color .2s;
+    }
+    .teacher-dash-class-card:hover { border-color: var(--columbia-blue); }
+    .teacher-dash-class-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .teacher-dash-class-name { font-size: 15px; font-weight: 700; color: var(--theme-text); }
+    .teacher-dash-class-code { font-size: 12px; color: var(--theme-text-dim); margin-top: 2px; }
+    .teacher-dash-student-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border: 1px solid var(--theme-border-mid);
+      border-radius: 8px;
+      margin-bottom: 6px;
+      background: var(--theme-output-bg);
+      flex-wrap: wrap;
+    }
+    .teacher-dash-student-name { flex: 1; font-size: 13px; color: var(--theme-text); min-width: 120px; }
+    .teacher-dash-student-email { font-size: 11px; color: var(--theme-text-dim); }
+
+    /* Student assignment card inline score badge */
+    .assignment-score-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      margin-top: 6px;
+    }
+    .assignment-score-badge.scored { background: #1a3a1a; color: #66bb6a; border: 1px solid #2e7d32; }
+    .assignment-score-badge.submitted { background: #1a2a3a; color: #64b5f6; border: 1px solid #1565c0; }
+    .assignment-score-badge.pending { background: #2a2a1a; color: #ffb74d; border: 1px solid #f57c00; }
+
+    /* Mastery tabs refinement */
+    .mastery-tabs { display: flex; gap: 6px; margin: 12px 0 10px; flex-wrap: wrap; }
+    .mastery-tabs .mastery-tab-btn { font-size: 12px; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--theme-border-mid); background: var(--theme-secondary); color: var(--theme-text); }
+    .mastery-tabs .mastery-tab-btn.active { background: var(--columbia-blue); color: #0b2540; border-color: var(--columbia-blue); }
   </style>
 </head>
 <body>
@@ -573,6 +719,7 @@
       <span class="guest-badge" id="guestBadge">Guest</span>
       <button class="btn admin" id="loginBtn" title="Login">Sign In</button>
       <button class="btn secondary" id="streamingToggleBtn" title="Toggle code streaming to students" style="display:none;">📡 Streaming: On</button>
+      <button class="btn admin" id="teacherDashboardBtn" title="Teacher Dashboard" style="display:none;">📋 Dashboard</button>
       <button class="btn admin" id="adminUsersBtn" title="User Management" style="display:none;">👥 Users</button>
       <button class="btn admin" id="serverHealthBtn" title="Server Health" style="display:none;">🖥️ Server Health</button>
       <button class="btn admin" id="adminSettingsBtn" title="Admin Settings" style="display:none;">⚙</button>
@@ -683,13 +830,12 @@
               <textarea id="notesEdit" style="display:none; width:100%; height:100%; padding:12px; background:var(--theme-input-bg); color:var(--theme-text); border:none; font-family:monospace;"></textarea>
             </div>
 
-            <!-- Teacher -->
+            <!-- Teacher (code view now available in the Teacher Dashboard) -->
             <div class="tab-pane" id="teacherTab">
-              <div style="padding:12px; display:flex; gap:10px; align-items:center; border-bottom:1px solid var(--theme-border-mid); background:var(--theme-tab-bg);">
-                <button class="btn secondary" id="teacherPasteBtn">Paste to Editor (Will clear Editor!)</button>
-                <span id="teacherStatus" style="opacity:.8; color:var(--columbia-blue);">Teacher Code View</span>
+              <div style="padding:20px; color:var(--theme-text-dim); font-size:14px;">
+                <p style="margin:0;">Teacher Code Broadcast has moved to the <strong style="color:var(--columbia-blue);">Teacher Dashboard</strong>.</p>
+                <p style="margin:10px 0 0;">Click <strong>📋 Dashboard</strong> in the toolbar to access it.</p>
               </div>
-              <div id="teacherEditorWrapper" style="height:calc(100% - 50px);"></div>
             </div>
 
             <!-- Wiki -->
@@ -753,24 +899,16 @@
 
             <!-- Assignment -->
             <div class="tab-pane" id="assignmentTab">
-              <!-- Submissions sidebar (admin only) -->
+              <!-- Submissions sidebar (admin only, used when teacher opens a submission) -->
               <div id="submissionsSidebar" style="display:none;"></div>
 
-              <div id="studentScoreLookup" style="display:none; padding:12px;">
-                <h4 style="margin:0 0 10px; color:var(--columbia-blue); font-size:14px;">Your Scores</h4>
-                <div id="studentScoreResults"></div>
-              </div>
-
-              <div id="assignmentAdminView" style="display:none; padding:12px;">
-                <div style="display:flex; gap:10px; align-items:center; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid var(--theme-border-mid);">
-                  <button class="btn run" id="newAssignmentBtn">New Assignment</button>
-                  <span id="assignmentStatus" style="opacity:.8;"></span>
-                </div>
-                <div class="assignment-admin-layout">
-                  <div id="assignmentList"></div>
-                  <div id="assignmentDetailPanel" class="assignment-detail-panel">
-                    <p style="color:#888; margin:0;">Select an assignment to review scores and open submissions.</p>
-                  </div>
+              <!-- Teacher/Admin notice -->
+              <div id="assignmentTeacherNotice" style="display:none; padding:16px;">
+                <div style="padding:16px; background:var(--theme-input-bg); border:1px solid var(--theme-border-mid); border-radius:12px; text-align:center;">
+                  <div style="font-size:20px; margin-bottom:8px;">📋</div>
+                  <div style="font-weight:700; color:var(--columbia-blue); margin-bottom:6px;">Assignments &amp; Grades</div>
+                  <div style="color:var(--theme-text-dim); font-size:13px; margin-bottom:14px;">Manage assignments, view submissions, and grade students from the Teacher Dashboard.</div>
+                  <button class="btn run" id="openDashAssignmentsBtn">Open Teacher Dashboard</button>
                 </div>
               </div>
 
@@ -795,6 +933,133 @@
           </div>
         </section>
       </div>
+    </div>
+  </div>
+
+  <!-- Teacher Dashboard Modal -->
+  <div id="teacherDashboardModal" class="modal teacher-dash-modal" style="display:none;">
+    <div class="modal-content">
+      <!-- Left Sidebar Navigation -->
+      <aside class="teacher-dash-sidebar">
+        <div class="teacher-dash-brand">
+          <span class="teacher-dash-eagle">🦅</span>
+          <div>
+            <div class="teacher-dash-brand-title">Teacher</div>
+            <div class="teacher-dash-brand-sub">Dashboard</div>
+          </div>
+        </div>
+        <nav class="teacher-dash-nav">
+          <button class="teacher-dash-navbtn active" data-view="dash-classes">
+            <span class="navbtn-icon">📚</span><span>Classes</span>
+          </button>
+          <button class="teacher-dash-navbtn" data-view="dash-assignments">
+            <span class="navbtn-icon">📝</span><span>Assignments</span>
+          </button>
+          <button class="teacher-dash-navbtn" data-view="dash-reports">
+            <span class="navbtn-icon">📊</span><span>Reports</span>
+          </button>
+          <button class="teacher-dash-navbtn" data-view="dash-code">
+            <span class="navbtn-icon">💻</span><span>Teacher Code</span>
+          </button>
+          <button class="teacher-dash-navbtn" data-view="dash-account">
+            <span class="navbtn-icon">⚙️</span><span>Account</span>
+          </button>
+        </nav>
+        <div class="teacher-dash-close-area">
+          <button class="btn secondary" id="teacherDashCloseBtn" style="width:100%;">✕ Close</button>
+        </div>
+      </aside>
+
+      <!-- Main Content Area -->
+      <main class="teacher-dash-main">
+
+        <!-- Classes View -->
+        <div class="teacher-dash-view active" id="dash-classes">
+          <div class="teacher-dash-view-hdr">
+            <h2 class="teacher-dash-view-title">Class Management</h2>
+            <div class="teacher-dash-view-actions">
+              <input type="text" id="newClassNameInput" placeholder="New class name" style="padding:8px 12px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; font-size:13px;">
+              <button class="btn run" id="createClassBtn">+ Create Class</button>
+            </div>
+          </div>
+          <div class="teacher-dash-scroll">
+            <div id="teacherClassList"></div>
+          </div>
+        </div>
+
+        <!-- Assignments View -->
+        <div class="teacher-dash-view" id="dash-assignments">
+          <div class="teacher-dash-view-hdr">
+            <h2 class="teacher-dash-view-title">Assignments</h2>
+            <div class="teacher-dash-view-actions">
+              <button class="btn run" id="newAssignmentBtn">+ New Assignment</button>
+              <span id="assignmentStatus" style="opacity:.8; font-size:13px;"></span>
+            </div>
+          </div>
+          <div class="teacher-dash-scroll">
+            <div class="assignment-admin-layout">
+              <div id="assignmentList"></div>
+              <div id="assignmentDetailPanel" class="assignment-detail-panel">
+                <p style="color:#888; margin:0;">Select an assignment to review scores and open submissions.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Reports View -->
+        <div class="teacher-dash-view" id="dash-reports">
+          <div class="teacher-dash-view-hdr">
+            <h2 class="teacher-dash-view-title">Class Reports</h2>
+            <div class="teacher-dash-view-actions">
+              <label style="font-size:12px; color:var(--theme-text-dim);">Class</label>
+              <select id="teacherReportsClassSelect" style="min-width:220px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;"></select>
+            </div>
+          </div>
+          <div class="teacher-dash-scroll">
+            <div class="mastery-tabs">
+              <button class="mastery-tab-btn active" data-pane="class-roster-pane">Roster View</button>
+              <button class="mastery-tab-btn" data-pane="score-overview-pane">Score Overview</button>
+              <button class="mastery-tab-btn" data-pane="skills-mastery-pane">Skills Mastery</button>
+            </div>
+            <div id="class-roster-pane" class="mastery-pane active"></div>
+            <div id="score-overview-pane" class="mastery-pane"></div>
+            <div id="skills-mastery-pane" class="mastery-pane"></div>
+          </div>
+        </div>
+
+        <!-- Teacher Code View -->
+        <div class="teacher-dash-view" id="dash-code">
+          <div class="teacher-dash-view-hdr">
+            <h2 class="teacher-dash-view-title">Teacher Code Broadcast</h2>
+            <div class="teacher-dash-view-actions">
+              <button class="btn secondary" id="teacherPasteBtn">Paste to Editor (Will clear Editor!)</button>
+              <span id="teacherStatus" style="opacity:.8; color:var(--columbia-blue);">Teacher Code View</span>
+            </div>
+          </div>
+          <div id="teacherEditorWrapper" style="flex:1; min-height:0; padding:0 0 4px;"></div>
+        </div>
+
+        <!-- Account View -->
+        <div class="teacher-dash-view" id="dash-account">
+          <div class="teacher-dash-view-hdr">
+            <h2 class="teacher-dash-view-title">Account Settings</h2>
+          </div>
+          <div class="teacher-dash-scroll">
+            <div style="max-width:480px;">
+              <div id="teacherPasswordSection">
+                <h4 style="margin:0 0 16px; color:var(--columbia-blue); font-size:15px;">Change Password</h4>
+                <label style="display:block; margin-bottom:4px; font-weight:600; font-size:13px;">Current Password</label>
+                <input type="password" id="teacherCurrentPassword" placeholder="Current password" style="width:100%; padding:10px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; margin-bottom:12px;">
+                <label style="display:block; margin-bottom:4px; font-weight:600; font-size:13px;">New Password</label>
+                <input type="password" id="teacherNewPassword" placeholder="New password (8+ chars)" style="width:100%; padding:10px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; margin-bottom:16px;">
+                <button class="btn run" id="teacherChangePasswordBtn">Update Password</button>
+                <div id="teacherPasswordStatus" style="font-size:12px; margin-top:10px; color:var(--theme-text-dim);"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </main>
     </div>
   </div>
 
@@ -994,23 +1259,6 @@
           <tbody id="usersTableBody"></tbody>
         </table>
       </div>
-      </div>
-
-      <h4 style="margin-top:20px; color:var(--columbia-blue); font-size:14px;">Teacher Class Management</h4>
-      <div id="teacherClassMgmt" style="padding:10px; border:1px solid var(--theme-border-mid); border-radius:8px; background:var(--theme-input-bg);">
-        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
-          <input type="text" id="newClassNameInput" placeholder="New class name">
-          <button class="btn run" id="createClassBtn">Create Class</button>
-        </div>
-        <div id="teacherClassList"></div>
-      </div>
-
-      <div id="teacherPasswordSection" style="display:none; margin-top:20px; padding:10px; border:1px solid var(--theme-border-mid); border-radius:8px; background:var(--theme-input-bg);">
-        <h4 style="margin:0 0 8px; color:var(--columbia-blue); font-size:14px;">Change Password</h4>
-        <input type="password" id="teacherCurrentPassword" placeholder="Current password" style="margin-bottom:8px;">
-        <input type="password" id="teacherNewPassword" placeholder="New password (8+ chars)" style="margin-bottom:8px;">
-        <button class="btn run" id="teacherChangePasswordBtn">Update Password</button>
-        <div id="teacherPasswordStatus" style="font-size:12px; margin-top:8px;"></div>
       </div>
 
       <div class="modal-actions" style="margin-top:20px;">
@@ -1889,7 +2137,7 @@ print("Hello " + name)
       const effectiveAiEnabled = aiMasterEnabled && (ADMIN_TOKEN || aiEnabledForClass);
       const showOnlyNotes = isGuest || isStudentNoClass;
       const canSeeAssignments = !!TEACHER_TOKEN || (!!USER_TOKEN && !!classCtx);
-      if (tTeacher) tTeacher.style.display = showOnlyNotes ? 'none' : '';
+      if (tTeacher) tTeacher.style.display = (showOnlyNotes || !TEACHER_TOKEN) ? 'none' : '';
       if (tAssignment) tAssignment.style.display = canSeeAssignments ? '' : 'none';
       if (tExplain) tExplain.style.display = (!showOnlyNotes && effectiveAiEnabled) ? '' : 'none';
       if (tChal) tChal.style.display = (!showOnlyNotes && effectiveAiEnabled) ? '' : 'none';
@@ -2811,8 +3059,10 @@ print("Hello " + name)
         loginBtn.textContent = 'Sign In';
         loginBtn.title = 'Sign in';
       }
-      adminSettingsBtn.style.display = (ADMIN_TOKEN || TEACHER_TOKEN) ? '' : 'none';
-      adminSettingsBtn.title = ADMIN_TOKEN ? 'Admin Settings' : (TEACHER_TOKEN ? 'Class Settings' : 'Settings');
+      adminSettingsBtn.style.display = ADMIN_TOKEN ? '' : 'none';
+      adminSettingsBtn.title = 'Admin Settings';
+      const teacherDashboardBtn = document.getElementById('teacherDashboardBtn');
+      if (teacherDashboardBtn) teacherDashboardBtn.style.display = TEACHER_TOKEN ? '' : 'none';
       if (adminUsersBtn) adminUsersBtn.style.display = ADMIN_TOKEN ? '' : 'none';
       if (serverHealthBtn) serverHealthBtn.style.display = ADMIN_TOKEN ? '' : 'none';
       streamingToggleBtn.style.display = (ADMIN_TOKEN || TEACHER_TOKEN) ? '' : 'none';
@@ -2985,6 +3235,8 @@ print("Hello " + name)
           if (typeof updateActiveFileName === 'function') updateActiveFileName();
           hideFileBrowser();
           stopTeacherBroadcast();
+          document.getElementById('teacherDashboardModal').style.display = 'none';
+          teacherDashListenersAttached = false;
         }
         if (ADMIN_TOKEN) {
           ADMIN_TOKEN = null;
@@ -3128,8 +3380,8 @@ print("Hello " + name)
 
     // Admin settings modal handlers
     document.getElementById('adminSettingsBtn').addEventListener('click', () => {
+      if (!ADMIN_TOKEN) return;
       document.getElementById('adminSettingsModal').style.display = 'flex';
-      const isTeacherMode = !!TEACHER_TOKEN && !ADMIN_TOKEN;
       const siteWideSettingsSection = document.getElementById('siteWideSettingsSection');
       const settingsSaveBtn = document.getElementById('settingsSaveBtn');
       const modalTitle = document.querySelector('#adminSettingsModal .modal-content h3');
@@ -3162,34 +3414,99 @@ print("Hello " + name)
       // Registration setting
       document.getElementById('registrationEnabledModal').checked = currentConfig?.registration_enabled !== false;
 
-      // Load users
-      if (isTeacherMode) {
-        if (modalTitle) modalTitle.textContent = 'Class Settings';
-        if (siteWideSettingsSection) siteWideSettingsSection.style.display = 'none';
-        if (settingsSaveBtn) settingsSaveBtn.style.display = 'none';
-      } else {
-        if (modalTitle) modalTitle.textContent = 'Admin Settings';
-        if (siteWideSettingsSection) siteWideSettingsSection.style.display = '';
-        if (settingsSaveBtn) settingsSaveBtn.style.display = '';
-        loadAdminUsers();
-      }
-      if (TEACHER_TOKEN) {
-        document.getElementById('teacherClassMgmt').style.display = '';
-        document.getElementById('teacherPasswordSection').style.display = '';
-        document.getElementById('teacherPasswordStatus').textContent = '';
-        document.getElementById('teacherCurrentPassword').value = '';
-        document.getElementById('teacherNewPassword').value = '';
-        loadTeacherClasses().then(() => renderTeacherClassManagement());
-      } else {
-        document.getElementById('teacherClassMgmt').style.display = 'none';
-        document.getElementById('teacherPasswordSection').style.display = 'none';
-        document.getElementById('teacherClassList').innerHTML = '<div style="color:#888; font-size:12px;">Teacher login required.</div>';
-      }
+      if (modalTitle) modalTitle.textContent = 'Admin Settings';
+      if (siteWideSettingsSection) siteWideSettingsSection.style.display = '';
+      if (settingsSaveBtn) settingsSaveBtn.style.display = '';
+      loadAdminUsers();
     });
 
     document.getElementById('settingsCancelBtn').addEventListener('click', () => {
       document.getElementById('adminSettingsModal').style.display = 'none';
     });
+
+    // ── Teacher Dashboard ──────────────────────────────────────────
+    let teacherDashListenersAttached = false;
+
+    function openTeacherDashboard(view) {
+      const modal = document.getElementById('teacherDashboardModal');
+      if (!modal) return;
+      modal.style.display = 'flex';
+      if (!teacherDashListenersAttached) {
+        teacherDashListenersAttached = true;
+
+        // Close button
+        document.getElementById('teacherDashCloseBtn')?.addEventListener('click', () => {
+          modal.style.display = 'none';
+        });
+        modal.addEventListener('click', (e) => {
+          if (e.target === modal) modal.style.display = 'none';
+        });
+
+        // Sidebar nav tab switching
+        modal.querySelectorAll('.teacher-dash-navbtn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            modal.querySelectorAll('.teacher-dash-navbtn').forEach(b => b.classList.toggle('active', b === btn));
+            modal.querySelectorAll('.teacher-dash-view').forEach(v => v.classList.toggle('active', v.id === btn.dataset.view));
+            if (btn.dataset.view === 'dash-code') {
+              teacherEditor?.refresh?.();
+            }
+            if (btn.dataset.view === 'dash-reports') {
+              populateTeacherReportsClassSelect();
+              renderClassReports().catch(() => {});
+            }
+          });
+        });
+
+        // Reports – mastery tab buttons
+        modal.querySelectorAll('#dash-reports .mastery-tab-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            modal.querySelectorAll('#dash-reports .mastery-tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+            modal.querySelectorAll('#dash-reports .mastery-pane').forEach(p => p.classList.remove('active'));
+            const pane = document.getElementById(btn.dataset.pane);
+            if (pane) pane.classList.add('active');
+          });
+        });
+
+        // Reports – class selector change
+        document.getElementById('teacherReportsClassSelect')?.addEventListener('change', async (e) => {
+          currentTeacherClassId = e.target.value || null;
+          renderClassSelector();
+          await renderClassReports();
+        });
+      }
+
+      // Switch to requested view
+      if (view) {
+        const viewEl = document.getElementById(view);
+        const navBtn = modal.querySelector(`.teacher-dash-navbtn[data-view="${view}"]`);
+        if (viewEl && navBtn) {
+          modal.querySelectorAll('.teacher-dash-navbtn').forEach(b => b.classList.toggle('active', b === navBtn));
+          modal.querySelectorAll('.teacher-dash-view').forEach(v => v.classList.toggle('active', v === viewEl));
+        }
+      }
+
+      // Initialize data
+      loadTeacherClasses().then(() => {
+        renderTeacherClassManagement();
+        populateTeacherReportsClassSelect();
+        renderAdminAssignments();
+      });
+      document.getElementById('teacherPasswordStatus').textContent = '';
+      document.getElementById('teacherCurrentPassword').value = '';
+      document.getElementById('teacherNewPassword').value = '';
+      teacherEditor?.refresh?.();
+    }
+
+    function populateTeacherReportsClassSelect() {
+      const sel = document.getElementById('teacherReportsClassSelect');
+      if (!sel) return;
+      sel.innerHTML = teacherClasses.map(c => `<option value="${escapeHtml(c.id)}" ${c.id === currentTeacherClassId ? 'selected' : ''}>${escapeHtml(c.name)} (${escapeHtml(c.join_code)})</option>`).join('');
+    }
+
+    document.getElementById('teacherDashboardBtn')?.addEventListener('click', () => {
+      openTeacherDashboard('dash-classes');
+    });
+
 
     document.getElementById('settingsSaveBtn').addEventListener('click', async () => {
       // Page settings
@@ -3710,66 +4027,51 @@ print("Hello " + name)
       if (!wrap) return;
       const canShowAiToggle = !!currentConfig?.ai_explainer_enabled;
       if (!teacherClasses.length) {
-        wrap.innerHTML = '<div style="color:#888; font-size:12px;">No classes yet.</div>';
+        wrap.innerHTML = '<div style="color:#888; font-size:12px; padding:8px 0;">No classes yet. Create one above to get started.</div>';
         return;
       }
       const aiToggleTemplate = (cls) => canShowAiToggle
         ? `<label style="font-size:12px;"><input type="checkbox" class="cls-ai" data-class="${escapeHtml(cls.id)}" ${cls.settings?.ai_enabled ? 'checked' : ''}> AI enabled</label>`
         : '';
       wrap.innerHTML = teacherClasses.map(cls => `
-        <div style="border:1px solid var(--theme-border-mid); border-radius:8px; padding:10px; margin-bottom:10px;">
-          <div style="display:flex; justify-content:space-between; gap:8px; align-items:center;">
-            <div><strong>${escapeHtml(cls.name)}</strong> <span style="font-size:12px; color:#888;">Join code: ${escapeHtml(cls.join_code)}</span></div>
-            <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
-              <button class="btn secondary select-class-btn" data-class="${escapeHtml(cls.id)}" style="font-size:11px; padding:3px 8px;">Use Class</button>
-              <button class="btn stop delete-class-btn" data-class="${escapeHtml(cls.id)}" data-name="${escapeHtml(cls.name)}" style="font-size:11px; padding:3px 8px;">Delete Class</button>
+        <div class="teacher-dash-class-card">
+          <div class="teacher-dash-class-card-header">
+            <div>
+              <div class="teacher-dash-class-name">${escapeHtml(cls.name)}</div>
+              <div class="teacher-dash-class-code">Join code: <strong>${escapeHtml(cls.join_code)}</strong> · ${cls.students?.length || 0} student(s)</div>
+            </div>
+            <div style="display:flex; gap:6px; flex-wrap:wrap;">
+              <button class="btn secondary select-class-btn" data-class="${escapeHtml(cls.id)}" style="font-size:12px;">Use Class</button>
+              <button class="btn stop delete-class-btn" data-class="${escapeHtml(cls.id)}" data-name="${escapeHtml(cls.name)}" style="font-size:12px;">Delete</button>
             </div>
           </div>
-          <div style="margin-top:8px; display:flex; gap:10px; flex-wrap:wrap;">
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
             ${aiToggleTemplate(cls)}
             <label style="font-size:12px;"><input type="checkbox" class="cls-wiki" data-class="${escapeHtml(cls.id)}" ${cls.settings?.wiki_enabled ? 'checked' : ''}> Wiki enabled</label>
-            <button class="btn secondary save-class-settings-btn" data-class="${escapeHtml(cls.id)}" style="font-size:11px; padding:3px 8px;">Save Settings</button>
+            <button class="btn secondary save-class-settings-btn" data-class="${escapeHtml(cls.id)}" style="font-size:12px;">Save Settings</button>
           </div>
-          <div style="margin-top:8px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px;">
+          <div style="display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-bottom:10px;">
             <div>
-              <label style="font-size:12px; margin:0 0 4px;">AI Grading Rigor: <span class="cls-rigor-label" data-class="${escapeHtml(cls.id)}">${rigorLevelLabel(cls.settings?.ai_grading_rigor || 5)}</span> (${cls.settings?.ai_grading_rigor || 5}/10)</label>
+              <label style="font-size:12px; margin:0 0 4px; display:block;">AI Grading Rigor: <span class="cls-rigor-label" data-class="${escapeHtml(cls.id)}">${rigorLevelLabel(cls.settings?.ai_grading_rigor || 5)}</span> (${cls.settings?.ai_grading_rigor || 5}/10)</label>
               <input type="range" min="1" max="10" value="${cls.settings?.ai_grading_rigor || 5}" class="cls-rigor" data-class="${escapeHtml(cls.id)}" style="width:100%;">
             </div>
             <div>
-              <label style="font-size:12px; margin:0 0 4px;">Skill Tags (comma separated, order controls roster display)</label>
-              <input type="text" class="cls-skill-tags" data-class="${escapeHtml(cls.id)}" value="${escapeHtml((cls.settings?.skill_tags || []).join(', '))}" placeholder="loops, python, arrays">
+              <label style="font-size:12px; margin:0 0 4px; display:block;">Skill Tags (comma separated)</label>
+              <input type="text" class="cls-skill-tags" data-class="${escapeHtml(cls.id)}" value="${escapeHtml((cls.settings?.skill_tags || []).join(', '))}" placeholder="loops, python, arrays" style="width:100%; padding:6px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:6px; font-size:12px;">
             </div>
           </div>
-          <input type="text" class="cls-wiki-url" data-class="${escapeHtml(cls.id)}" value="${escapeHtml(cls.settings?.wiki_url || '')}" placeholder="Class wiki URL (optional)" style="width:100%; margin-top:8px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;">
-          <textarea class="cls-wiki-html" data-class="${escapeHtml(cls.id)}" placeholder="Class wiki HTML" style="width:100%; margin-top:8px; min-height:80px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; padding:8px;">${escapeHtml(cls.settings?.wiki_html || '')}</textarea>
-          <div style="margin-top:8px; font-size:12px; color:#888;">Students: ${cls.students?.length || 0}</div>
-          <div>
-            ${(cls.students || []).map(student => `<div style="margin-top:6px; padding:6px; border:1px solid var(--theme-border-mid); border-radius:6px;">${escapeHtml(student.name || student.email)} (${escapeHtml(student.email)}) ${teacherStudentActionsHtml(cls.id, student)}</div>`).join('') || '<div style="color:#888; font-size:12px;">No students enrolled.</div>'}
-          </div>
+          <input type="text" class="cls-wiki-url" data-class="${escapeHtml(cls.id)}" value="${escapeHtml(cls.settings?.wiki_url || '')}" placeholder="Class wiki URL (optional)" style="width:100%; margin-bottom:8px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; font-size:12px;">
+          <textarea class="cls-wiki-html" data-class="${escapeHtml(cls.id)}" placeholder="Class wiki HTML" style="width:100%; margin-bottom:8px; min-height:70px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; padding:8px; font-size:12px;">${escapeHtml(cls.settings?.wiki_html || '')}</textarea>
+          <div style="font-size:13px; font-weight:600; color:var(--columbia-blue); margin-bottom:6px;">Students</div>
+          ${(cls.students || []).map(student => `
+            <div class="teacher-dash-student-row">
+              <span class="teacher-dash-student-name">${escapeHtml(student.name || student.email)}</span>
+              <span class="teacher-dash-student-email">${escapeHtml(student.email)}</span>
+              ${teacherStudentActionsHtml(cls.id, student)}
+            </div>
+          `).join('') || '<div style="color:#888; font-size:12px;">No students enrolled.</div>'}
         </div>
       `).join('');
-      wrap.innerHTML += `
-        <div id="teacherReportsShell" class="teacher-reports-shell">
-          <div class="teacher-reports-header">
-            <h4 style="margin:0; color:var(--columbia-blue);">Class Reports</h4>
-            <button class="btn secondary" id="teacherReportsExitBtn">Exit</button>
-          </div>
-          <div class="teacher-reports-controls">
-            <label style="font-size:12px; margin:0;">Class</label>
-            <select id="teacherReportsClassSelect" style="min-width:260px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;">
-              ${teacherClasses.map(c => `<option value="${escapeHtml(c.id)}" ${c.id === currentTeacherClassId ? 'selected' : ''}>${escapeHtml(c.name)} (${escapeHtml(c.join_code)})</option>`).join('')}
-            </select>
-          </div>
-          <div class="mastery-tabs">
-            <button class="btn secondary mastery-tab-btn active" data-pane="class-roster-pane">Roster View</button>
-            <button class="btn secondary mastery-tab-btn" data-pane="score-overview-pane">Score Overview</button>
-            <button class="btn secondary mastery-tab-btn" data-pane="skills-mastery-pane">Skills Mastery</button>
-          </div>
-          <div id="class-roster-pane" class="mastery-pane active"></div>
-          <div id="score-overview-pane" class="mastery-pane"></div>
-          <div id="skills-mastery-pane" class="mastery-pane"></div>
-        </div>
-      `;
 
       wrap.querySelectorAll('.select-class-btn').forEach(btn => btn.addEventListener('click', () => {
         currentTeacherClassId = btn.dataset.class;
@@ -3852,21 +4154,6 @@ print("Hello " + name)
         await loadTeacherClasses();
         renderTeacherClassManagement();
       }));
-      wrap.querySelectorAll('.mastery-tab-btn').forEach(btn => btn.addEventListener('click', async () => {
-        wrap.querySelectorAll('.mastery-tab-btn').forEach(b => b.classList.toggle('active', b === btn));
-        wrap.querySelectorAll('.mastery-pane').forEach(p => p.classList.remove('active'));
-        const pane = wrap.querySelector(`#${btn.dataset.pane}`);
-        if (pane) pane.classList.add('active');
-      }));
-      wrap.querySelector('#teacherReportsClassSelect')?.addEventListener('change', async (e) => {
-        currentTeacherClassId = e.target.value || null;
-        renderClassSelector();
-        await renderClassReports();
-      });
-      wrap.querySelector('#teacherReportsExitBtn')?.addEventListener('click', () => {
-        document.getElementById('assignmentTabBtn')?.click();
-      });
-      renderClassReports().catch(() => {});
     }
 
     async function renderClassReports() {
@@ -5043,7 +5330,6 @@ print("Hello " + name)
           currentAdminAssignmentName = null;
         }
         renderAssignments();
-        if (!isAdmin) await loadStudentScores();
         if (activeSubmissionContext && isAdmin) {
           const { assignment, submission } = getSubmissionForAssignment(activeSubmissionContext.assignmentName, activeSubmissionContext.studentEmail);
           if (assignment && submission) {
@@ -5068,18 +5354,15 @@ print("Hello " + name)
     }
 
     function renderAssignments() {
-      const adminView = document.getElementById('assignmentAdminView');
       const studentView = document.getElementById('assignmentStudentView');
-      const scoreLookup = document.getElementById('studentScoreLookup');
+      const teacherNotice = document.getElementById('assignmentTeacherNotice');
       if (isAdmin) {
-        adminView.style.display = 'block';
-        studentView.style.display = 'none';
-        scoreLookup.style.display = 'none';
+        if (studentView) studentView.style.display = 'none';
+        if (teacherNotice) teacherNotice.style.display = '';
         renderAdminAssignments();
       } else {
-        adminView.style.display = 'none';
-        studentView.style.display = 'block';
-        scoreLookup.style.display = 'block';
+        if (studentView) studentView.style.display = 'block';
+        if (teacherNotice) teacherNotice.style.display = 'none';
         renderStudentAssignments();
       }
     }
@@ -5179,6 +5462,19 @@ print("Hello " + name)
       const activeAssignments = currentAssignments.filter(a => a.active);
       const pastAssignments = currentAssignments.filter(a => !a.active);
 
+      function scoreBadge(a) {
+        const s = a.studentSubmissionSummary;
+        if (!s) return '';
+        const total = s.totalScore ?? s.codeScore ?? null;
+        if (total !== null && total !== undefined) {
+          return `<div><span class="assignment-score-badge scored">✓ Score: ${total} / ${a.maxScore}</span></div>`;
+        }
+        if (s.submittedAt) {
+          return `<div><span class="assignment-score-badge pending">⏳ Submitted – awaiting grade</span></div>`;
+        }
+        return '';
+      }
+
       if (!activeAssignments.length) {
         activeList.innerHTML = '<p style="color:#888;">No active assignments.</p>';
       } else {
@@ -5186,15 +5482,16 @@ print("Hello " + name)
           <div class="assignment-card">
             <h4>${escapeHtml(a.name)}</h4>
             <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
-            <div class="meta">Max Score: ${a.maxScore}${a.quiz?.questions?.length ? ` · Questions: ${a.quiz.questions.length}` : ''}${a.quizSettings?.maxSubmissions > 0 ? ` · Quiz Attempts: ${a.quizSettings.maxSubmissions}` : ''}</div>
+            <div class="meta">Max Score: ${a.maxScore}${a.quiz?.questions?.length ? ` · ${a.quiz.questions.length} question(s)` : ''}${a.quizSettings?.maxSubmissions > 0 ? ` · ${a.quizSettings.maxSubmissions} quiz attempt(s)` : ''}</div>
+            ${scoreBadge(a)}
             ${(a.skillTags || []).length ? `<div class="skill-tags">${(a.skillTags || []).map(tag => `<span class="skill-chip">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
             <div class="assignment-actions">
-                <button class="btn run submit-assignment-btn" data-name="${escapeHtml(a.name)}" ${canSubmit && joinedClass && files.length ? '' : 'disabled'}>Submit File</button>
-                ${a.quiz?.questions?.length ? `<button class="btn secondary open-questions-btn" data-name="${escapeHtml(a.name)}" ${canSubmit && joinedClass ? '' : 'disabled'}>Questions (${a.quiz.questions.length})</button>` : ''}
-                ${hasSubmissionSummary(a.studentSubmissionSummary) ? `<button class="btn secondary view-score-report-btn" data-name="${escapeHtml(a.name)}" ${canSubmit ? '' : 'disabled'}>View Score Report</button>` : ''}
-             </div>
-           </div>
-         `).join('');
+              <button class="btn run submit-assignment-btn" data-name="${escapeHtml(a.name)}" ${canSubmit && joinedClass && files.length ? '' : 'disabled'}>Submit File</button>
+              ${a.quiz?.questions?.length ? `<button class="btn secondary open-questions-btn" data-name="${escapeHtml(a.name)}" ${canSubmit && joinedClass ? '' : 'disabled'}>Questions (${a.quiz.questions.length})</button>` : ''}
+              ${hasSubmissionSummary(a.studentSubmissionSummary) ? `<button class="btn secondary view-score-report-btn" data-name="${escapeHtml(a.name)}" ${canSubmit ? '' : 'disabled'}>Score Report</button>` : ''}
+            </div>
+          </div>
+        `).join('');
         activeList.querySelectorAll('.submit-assignment-btn').forEach(btn => btn.addEventListener('click', () => showAssignmentSubmitModal(btn.dataset.name)));
         activeList.querySelectorAll('.open-questions-btn').forEach(btn => btn.addEventListener('click', () => openQuestions(btn.dataset.name)));
         activeList.querySelectorAll('.view-score-report-btn').forEach(btn => btn.addEventListener('click', () => openStudentScoreReport(btn.dataset.name)));
@@ -5204,13 +5501,13 @@ print("Hello " + name)
         pastList.innerHTML = '<p style="color:#888;">No past assignments.</p>';
       } else {
         pastList.innerHTML = pastAssignments.map(a => `
-          <div class="assignment-card" style="opacity:0.8;">
+          <div class="assignment-card" style="opacity:0.85;">
             <h4>${escapeHtml(a.name)} <span style="color:#888; font-size:12px; font-weight:normal;">(Locked)</span></h4>
             <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
-            <div class="meta">Max Score: ${a.maxScore}</div>
+            ${scoreBadge(a)}
             ${(a.skillTags || []).length ? `<div class="skill-tags">${(a.skillTags || []).map(tag => `<span class="skill-chip">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
             <div class="assignment-actions">
-              ${hasSubmissionSummary(a.studentSubmissionSummary) ? `<button class="btn secondary view-score-report-btn" data-name="${escapeHtml(a.name)}" ${canSubmit ? '' : 'disabled'}>View Score Report</button>` : ''}
+              ${hasSubmissionSummary(a.studentSubmissionSummary) ? `<button class="btn secondary view-score-report-btn" data-name="${escapeHtml(a.name)}" ${canSubmit ? '' : 'disabled'}>Score Report</button>` : ''}
             </div>
           </div>
         `).join('');
@@ -5316,6 +5613,7 @@ print("Hello " + name)
     });
 
     document.getElementById('newAssignmentBtn').addEventListener('click', () => showAssignmentModal());
+    document.getElementById('openDashAssignmentsBtn')?.addEventListener('click', () => openTeacherDashboard('dash-assignments'));
 
     function showAssignmentModal(existingAssignment = null) {
       const effectiveClassId = existingAssignment?.targetClassId || currentTeacherClassId;
