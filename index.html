@@ -3943,7 +3943,8 @@ print("Hello " + name)
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${(currentMasteryData.class?.name || 'class').replace(/\s+/g, '_')}_skill_mastery.csv`;
+      const safeName = String(currentMasteryData.class?.name || 'class').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '');
+      a.download = `${safeName || 'class'}_skill_mastery.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -5540,7 +5541,7 @@ print("Hello " + name)
             <p style="color:#aaa; font-size:14px; margin:10px 0 20px;">Submitting as <strong style="color:#eee;">${escapeHtml(currentUser.name || currentUser.email)}</strong>. You must submit to exit this window.</p>
             <div class="quiz-lock-note">
               ${maxSubmissions > 0 ? `Attempts used: ${submissionCount}/${maxSubmissions}. Remaining: ${Math.max(0, maxSubmissions - submissionCount)}.` : 'Unlimited resubmissions are enabled for this assignment.'}
-              <div class="no-exit-text">Closing the browser tab/window records a submission attempt with current answers.</div>
+              <div class="no-exit-text">Closing the browser tab/window will record a submission attempt with your current answers.</div>
             </div>
             <div id="questionsContainer" style="margin:20px 0;">
               ${questions.map((q, idx) => (q.type === 'multiple_choice' || q.type === 'multiple_choice_code') ? `

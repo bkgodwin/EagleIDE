@@ -3630,18 +3630,42 @@ def _score_with_rigor(base_score: int, max_points: int, rigor: int) -> int:
     return max(0, min(max_points, adjusted))
 
 
+def _sanitize_ai_feedback_text(text: str) -> str:
+    raw = str(text or "")
+    lines = []
+    for line in raw.splitlines():
+        l = line.strip()
+        if l.startswith("Traceback (most recent call last):"):
+            continue
+        if re.match(r'^\s*File ".*", line \d+', line):
+            continue
+        if re.match(r'^[A-Za-z_][\w.]*Error:', l):
+            continue
+        lines.append(line)
+    cleaned = "\n".join(lines).strip()
+    return cleaned[:12000]
+
+
 _assignment_lock = threading.Lock()
 
 def _get_assignment_path(name: str) -> Path:
     """Get the path to an assignment's JSON file"""
-    # Sanitize name to prevent directory traversal
-    safe_name = "".join(c for c in name if c.isalnum() or c in (' ', '-', '_')).strip()
-    return ASSIGNMENTS_DIR / f"{safe_name}.json"
+    safe_name = _sanitize_storage_component(name, fallback="", max_length=120).strip()
+    if not safe_name:
+        raise ValueError("Invalid assignment name")
+    path = (ASSIGNMENTS_DIR / f"{safe_name}.json").resolve()
+    assignments_root = ASSIGNMENTS_DIR.resolve()
+    if os.path.commonpath([str(path), str(assignments_root)]) != str(assignments_root):
+        raise ValueError("Invalid assignment path")
+    return path
 
 def _load_assignment(name: str) -> Optional[Dict[str, Any]]:
     """Load an assignment by name"""
     with _assignment_lock:
-        path = _get_assignment_path(name)
+        try:
+            path = _get_assignment_path(name)
+        except ValueError:
+            return None
         if not path.exists():
             return None
         try:
@@ -3656,7 +3680,10 @@ def _save_assignment(assignment: Dict[str, Any]) -> bool:
         name = assignment.get("name", "").strip()
         if not name:
             return False
-        path = _get_assignment_path(name)
+        try:
+            path = _get_assignment_path(name)
+        except ValueError:
+            return False
         try:
             assignment = _normalize_assignment_schema(assignment)
             path.write_text(json.dumps(assignment, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -3829,7 +3856,10 @@ def delete_assignment():
         return jsonify(ok=False, error="You can only delete your own assignments"), 403
 
     with _assignment_lock:
-        path = _get_assignment_path(name)
+        try:
+            path = _get_assignment_path(name)
+        except ValueError:
+            return jsonify(ok=False, error="Invalid assignment name"), 400
         if not path.exists():
             return jsonify(ok=False, error="Assignment not found"), 404
         try:
@@ -4704,8 +4734,8 @@ def teacher_class_mastery_feedback(class_id: str):
     )
     res = call_ollama_generate(cfg.get("ai_ollama_url", ""), cfg.get("ai_model", "gemma3:4b"), prompt, timeout=45.0)
     if not res.get("ok"):
-        return jsonify(ok=False, error=res.get("error", "AI error"))
-    return jsonify(ok=True, feedback=(res.get("text") or "").strip())
+        return jsonify(ok=False, error="AI service unavailable"), 502
+    return jsonify(ok=True, feedback=_sanitize_ai_feedback_text(res.get("text") or ""))
 
 # -------------------------
 # Admin server health
