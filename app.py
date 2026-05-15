@@ -129,6 +129,14 @@ socketio = SocketIO(
     engineio_logger=False
 )
 
+@app.after_request
+def _add_security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "geolocation=(), camera=(), microphone=()")
+    return response
+
 # Suppress noisy werkzeug HTTP request logs when not in debug mode
 if not DEBUG_MODE:
     import logging as _logging
@@ -304,6 +312,7 @@ _users_lock = threading.Lock()
 _student_tokens: Dict[str, dict] = {}  # token -> user info dict
 _teacher_tokens: Dict[str, dict] = {}  # token -> teacher info dict
 _reg_rate_limit: dict = defaultdict(list)  # ip -> list of timestamps
+_login_rate_limit: dict = defaultdict(list)  # ip -> list of timestamps
 _classes_lock = threading.Lock()
 
 def _sanitize_email_for_path(email: str) -> str:
@@ -437,13 +446,15 @@ def _sanitize_storage_component(value: str, fallback: str = "item", max_length: 
     cleaned = re.sub(r"[^A-Za-z0-9 _-]", "", (value or "").strip()).strip(" ")
     return cleaned[:max_length] or fallback
 
-def _record_user_sign_in(email: str) -> Optional[str]:
+def _record_user_sign_in(email: str, ip: str = "") -> Optional[str]:
     users_data = _load_users()
     timestamp = _current_timestamp()
     changed = False
     for user in users_data.get("users", []):
         if user.get("email", "").lower() == email.lower():
             user["last_sign_in"] = timestamp
+            if ip:
+                user["last_ip"] = ip
             changed = True
             break
     if changed:
@@ -688,6 +699,14 @@ def _effective_ai_enabled(req, payload: Optional[dict] = None) -> tuple[bool, Op
 # -------------------------
 @app.post("/api/admin/login")
 def admin_login():
+    # Rate limiting: max 10 admin login attempts per 15 minutes per IP
+    ip = request.remote_addr or "unknown"
+    now = time.time()
+    _login_rate_limit[ip] = [t for t in _login_rate_limit[ip] if now - t < 900]
+    if len(_login_rate_limit[ip]) >= 10:
+        return jsonify(ok=False, error="Too many login attempts. Please wait and try again."), 429
+    _login_rate_limit[ip].append(now)
+
     data = request.get_json(silent=True) or {}
     email = str(data.get("email", "")).strip()
     pw = str(data.get("password", ""))
@@ -798,6 +817,18 @@ def auth_register():
 
 @app.post("/api/auth/login")
 def auth_login():
+    # Rate limiting: max 20 login attempts per 15 minutes per IP
+    ip = request.remote_addr or "unknown"
+    now = time.time()
+    _login_rate_limit[ip] = [t for t in _login_rate_limit[ip] if now - t < 900]
+    if len(_login_rate_limit[ip]) >= 20:
+        return jsonify(ok=False, error="Too many login attempts. Please wait and try again."), 429
+    _login_rate_limit[ip].append(now)
+    if random.random() < 0.05:
+        stale = [k for k, v in list(_login_rate_limit.items()) if not v]
+        for k in stale:
+            _login_rate_limit.pop(k, None)
+
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
     password = (data.get("password") or "")
@@ -824,7 +855,7 @@ def auth_login():
     user_dir.mkdir(parents=True, exist_ok=True)
     _seed_example_files(email)
     
-    _record_user_sign_in(email)
+    _record_user_sign_in(email, ip=ip)
     token = uuid.uuid4().hex
     role = user.get("role", "student")
     if role == "teacher":
@@ -1261,15 +1292,22 @@ def admin_list_users():
     for u in data.get("users", []):
         class_id = u.get("class_id")
         class_name = (classes.get(class_id) or {}).get("name") if class_id else None
+        email = u.get("email", "")
+        user_dir = _get_user_dir(email)
+        storage_bytes = _get_user_storage_used(user_dir)
+        file_count = _count_all_files_for_user(user_dir)
         users.append({
-            "email": u.get("email"),
+            "email": email,
             "name": u.get("name"),
             "role": u.get("role", "student"),
             "class_id": class_id,
             "class_name": class_name,
             "created_at": u.get("created_at"),
             "last_sign_in": u.get("last_sign_in", ""),
-            "enabled": u.get("enabled", True)
+            "last_ip": u.get("last_ip", ""),
+            "enabled": u.get("enabled", True),
+            "storage_bytes": storage_bytes,
+            "file_count": file_count,
         })
     users.sort(key=lambda user: ((user.get("name") or "").lower(), (user.get("email") or "").lower()))
     return jsonify(ok=True, users=users)
@@ -1347,48 +1385,8 @@ def admin_delete_user():
     email = (data.get("email") or "").strip().lower()
     if not email:
         return jsonify(ok=False, error="Email required"), 400
-    
-    users_data = _load_users()
-    deleted_user = next((u for u in users_data.get("users", []) if (u.get("email") or "").lower() == email), None)
-    before = len(users_data.get("users", []))
-    users_data["users"] = [u for u in users_data.get("users", []) if u.get("email", "").lower() != email]
-    if len(users_data["users"]) == before:
+    if not _delete_user_by_email(email):
         return jsonify(ok=False, error="User not found"), 404
-    
-    _save_users(users_data)
-    
-    # Invalidate tokens
-    for token, info in list(_student_tokens.items()):
-        if info.get("email", "").lower() == email:
-            del _student_tokens[token]
-    for token, info in list(_teacher_tokens.items()):
-        if info.get("email", "").lower() == email:
-            del _teacher_tokens[token]
-
-    classes_data = _load_classes()
-    changed_classes = False
-    for c in classes_data.get("classes", []):
-        before_students = len(c.get("students", []))
-        c["students"] = [s for s in c.get("students", []) if s.lower() != email]
-        if len(c["students"]) != before_students:
-            changed_classes = True
-    if deleted_user and deleted_user.get("role") == "teacher":
-        before_count = len(classes_data.get("classes", []))
-        classes_data["classes"] = [c for c in classes_data.get("classes", []) if (c.get("teacher_email") or "").lower() != email]
-        changed_classes = changed_classes or len(classes_data["classes"]) != before_count
-    if changed_classes:
-        _save_classes(classes_data)
-    if deleted_user and deleted_user.get("role") == "student":
-        _revoke_student_class_rooms(email)
-    
-    # Delete user files
-    user_dir = _get_user_dir(email)
-    if user_dir.exists():
-        try:
-            shutil.rmtree(user_dir)
-        except Exception as exc:
-            print(f"Warning: failed to delete user directory for {email}: {type(exc).__name__}")
-    
     return jsonify(ok=True)
 
 @app.post("/api/admin/users/toggle")
@@ -1424,6 +1422,173 @@ def admin_toggle_user():
                 del _teacher_tokens[token]
     
     return jsonify(ok=True)
+
+@app.post("/api/admin/users/clear-files")
+def admin_clear_user_files():
+    """Delete all stored files for a user account without viewing the content."""
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    if not email:
+        return jsonify(ok=False, error="Email required"), 400
+    if not _find_user(email):
+        return jsonify(ok=False, error="User not found"), 404
+    user_dir = _get_user_dir(email).resolve()
+    # Ensure path is strictly within USER_FILES_DIR to prevent any traversal
+    try:
+        user_dir.relative_to(USER_FILES_DIR.resolve())
+    except ValueError:
+        return jsonify(ok=False, error="Invalid user path"), 400
+    if user_dir.exists():
+        try:
+            shutil.rmtree(user_dir)
+            user_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            return jsonify(ok=False, error=f"Failed to clear files: {type(exc).__name__}"), 500
+    return jsonify(ok=True)
+
+
+def _delete_user_by_email(email: str) -> bool:
+    """Remove a user record, invalidate tokens, clean up class memberships and files.
+    Returns True if the user was found and deleted, False otherwise."""
+    users_data = _load_users()
+    deleted_user = next(
+        (u for u in users_data.get("users", []) if (u.get("email") or "").lower() == email),
+        None,
+    )
+    before = len(users_data.get("users", []))
+    users_data["users"] = [u for u in users_data.get("users", []) if u.get("email", "").lower() != email]
+    if len(users_data["users"]) == before:
+        return False
+    _save_users(users_data)
+    for token, info in list(_student_tokens.items()):
+        if info.get("email", "").lower() == email:
+            del _student_tokens[token]
+    for token, info in list(_teacher_tokens.items()):
+        if info.get("email", "").lower() == email:
+            del _teacher_tokens[token]
+    classes_data = _load_classes()
+    changed_classes = False
+    for c in classes_data.get("classes", []):
+        before_students = len(c.get("students", []))
+        c["students"] = [s for s in c.get("students", []) if s.lower() != email]
+        if len(c["students"]) != before_students:
+            changed_classes = True
+    if deleted_user and deleted_user.get("role") == "teacher":
+        before_count = len(classes_data.get("classes", []))
+        classes_data["classes"] = [
+            c for c in classes_data.get("classes", [])
+            if (c.get("teacher_email") or "").lower() != email
+        ]
+        changed_classes = changed_classes or len(classes_data["classes"]) != before_count
+    if changed_classes:
+        _save_classes(classes_data)
+    if deleted_user and deleted_user.get("role") == "student":
+        _revoke_student_class_rooms(email)
+    user_dir = _get_user_dir(email).resolve()
+    # Ensure path is strictly within USER_FILES_DIR to prevent any traversal
+    try:
+        user_dir.relative_to(USER_FILES_DIR.resolve())
+    except ValueError:
+        print(f"Warning: _delete_user_by_email path containment check failed for {email}")
+        return False
+    if user_dir.exists():
+        try:
+            shutil.rmtree(user_dir)
+        except Exception as exc:
+            print(f"Warning: failed to delete user directory for {email}: {type(exc).__name__}")
+    return True
+
+
+@app.post("/api/admin/users/bulk-delete")
+def admin_bulk_delete_users():
+    """Delete multiple user accounts and all their data."""
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    data = request.get_json(silent=True) or {}
+    emails = data.get("emails") or []
+    if not isinstance(emails, list) or not emails:
+        return jsonify(ok=False, error="emails list required"), 400
+    deleted = []
+    not_found = []
+    for raw in emails:
+        email = (str(raw) or "").strip().lower()
+        if not email:
+            continue
+        if _delete_user_by_email(email):
+            deleted.append(email)
+        else:
+            not_found.append(email)
+    return jsonify(ok=True, deleted=deleted, not_found=not_found)
+
+
+@app.post("/api/admin/users/bulk-toggle")
+def admin_bulk_toggle_users():
+    """Enable or disable multiple user accounts."""
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    data = request.get_json(silent=True) or {}
+    emails = data.get("emails") or []
+    enabled = bool(data.get("enabled", True))
+    if not isinstance(emails, list) or not emails:
+        return jsonify(ok=False, error="emails list required"), 400
+    users_data = _load_users()
+    updated = []
+    for raw in emails:
+        email = (str(raw) or "").strip().lower()
+        if not email:
+            continue
+        for u in users_data.get("users", []):
+            if u.get("email", "").lower() == email:
+                u["enabled"] = enabled
+                updated.append(email)
+                break
+    _save_users(users_data)
+    if not enabled:
+        for email in updated:
+            for token, info in list(_student_tokens.items()):
+                if info.get("email", "").lower() == email:
+                    del _student_tokens[token]
+            for token, info in list(_teacher_tokens.items()):
+                if info.get("email", "").lower() == email:
+                    del _teacher_tokens[token]
+    return jsonify(ok=True, updated=updated)
+
+
+@app.post("/api/admin/users/bulk-clear-files")
+def admin_bulk_clear_files():
+    """Delete all stored files for multiple user accounts without viewing the content."""
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    data = request.get_json(silent=True) or {}
+    emails = data.get("emails") or []
+    if not isinstance(emails, list) or not emails:
+        return jsonify(ok=False, error="emails list required"), 400
+    cleared = []
+    errors = []
+    for raw in emails:
+        email = (str(raw) or "").strip().lower()
+        if not email or not _find_user(email):
+            continue
+        user_dir = _get_user_dir(email).resolve()
+        # Ensure path is strictly within USER_FILES_DIR to prevent any traversal
+        try:
+            user_dir.relative_to(USER_FILES_DIR.resolve())
+        except ValueError:
+            errors.append(email)
+            continue
+        if user_dir.exists():
+            try:
+                shutil.rmtree(user_dir)
+                user_dir.mkdir(parents=True, exist_ok=True)
+                cleared.append(email)
+            except Exception:
+                errors.append(email)
+        else:
+            cleared.append(email)
+    return jsonify(ok=True, cleared=cleared, errors=errors)
+
 
 @app.post("/api/admin/registration")
 def admin_toggle_registration():
