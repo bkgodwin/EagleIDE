@@ -2095,6 +2095,26 @@ def teacher_delete_class():
     return jsonify(ok=True, deletedClassId=class_id, unassignedStudents=len(student_emails))
 
 
+@app.get("/api/teacher/classes/<class_id>/active-students")
+def teacher_active_students(class_id: str):
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    cls = _find_class_by_id(class_id)
+    if not cls or (cls.get("teacher_email") or "").lower() != (teacher.get("email") or "").lower():
+        return jsonify(ok=False, error="Class not found"), 404
+    active_emails = set()
+    for sid, info in _socket_sid_info.items():
+        if (info or {}).get("role") != "student":
+            continue
+        if class_id not in (_socket_sid_rooms.get(sid) or set()):
+            continue
+        email = (info.get("email") or "").strip().lower()
+        if email:
+            active_emails.add(email)
+    return jsonify(ok=True, classId=class_id, activeStudents=sorted(active_emails))
+
+
 @app.post("/api/teacher/students/reset-password")
 def teacher_reset_password():
     teacher = _require_teacher(request)
@@ -3528,6 +3548,7 @@ def _normalize_skill_tags(raw_tags) -> list[str]:
 
 def _normalize_assignment_schema(assignment: dict) -> dict:
     normalized = dict(assignment or {})
+    normalized["allowFileSubmission"] = bool(normalized.get("allowFileSubmission", True))
     normalized["skillTags"] = _normalize_skill_tags(normalized.get("skillTags") or [])
     quiz = normalized.get("quiz")
     if isinstance(quiz, dict):
@@ -3588,7 +3609,7 @@ def _normalize_assignment_schema(assignment: dict) -> dict:
 
 
 def _assignment_total_max_score(assignment: dict) -> int:
-    max_score = int(assignment.get("maxScore") or 0)
+    max_score = int(assignment.get("maxScore") or 0) if assignment.get("allowFileSubmission", True) else 0
     quiz_total = int(((assignment.get("quiz") or {}).get("totalPoints")) or 0)
     return max(0, max_score + quiz_total)
 
@@ -3790,6 +3811,7 @@ def create_assignment():
         "name": name,
         "task": task,
         "maxScore": max_score,
+        "allowFileSubmission": bool(data.get("allowFileSubmission", True)),
         "active": False,
         "quiz": data.get("quiz") or None,
         "quizSettings": data.get("quizSettings") or {"maxSubmissions": 0},
@@ -3829,6 +3851,8 @@ def update_assignment():
         assignment["task"] = data["task"]
     if "maxScore" in data:
         assignment["maxScore"] = data["maxScore"]
+    if "allowFileSubmission" in data:
+        assignment["allowFileSubmission"] = bool(data.get("allowFileSubmission"))
     if "active" in data:
         assignment["active"] = data["active"]
     if "quiz" in data:
@@ -3853,6 +3877,53 @@ def update_assignment():
     if _save_assignment(assignment):
         return jsonify(ok=True, assignment=assignment)
     return jsonify(ok=False, error="Failed to save assignment"), 500
+
+
+@app.post("/api/assignments/copy-to-class")
+def copy_assignment_to_class():
+    actor = _assignment_actor(request)
+    if not actor:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    data = request.get_json(silent=True) or {}
+    source_name = (data.get("assignmentName") or "").strip()
+    target_class_id = (data.get("targetClassId") or "").strip()
+    new_name = (data.get("newName") or "").strip()
+    if not source_name or not target_class_id:
+        return jsonify(ok=False, error="assignmentName and targetClassId required"), 400
+    source = _load_assignment(source_name)
+    if not source:
+        return jsonify(ok=False, error="Assignment not found"), 404
+    if actor.get("role") == "teacher" and (source.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+        return jsonify(ok=False, error="You can only copy your own assignments"), 403
+    if actor.get("role") == "teacher":
+        target_class = _find_class_by_id(target_class_id)
+        if not target_class or (target_class.get("teacher_email") or "").lower() != actor.get("email", "").lower():
+            return jsonify(ok=False, error="Invalid target class"), 403
+    else:
+        target_class = _find_class_by_id(target_class_id)
+        if not target_class:
+            return jsonify(ok=False, error="Target class not found"), 404
+    copy_name = new_name or f"{source_name} ({target_class.get('name', 'Copy')})"
+    if _load_assignment(copy_name):
+        return jsonify(ok=False, error="Assignment name already exists"), 409
+    new_assignment = {
+        "name": copy_name,
+        "task": source.get("task") or "",
+        "maxScore": source.get("maxScore", 100),
+        "allowFileSubmission": bool(source.get("allowFileSubmission", True)),
+        "active": False,
+        "quiz": copy.deepcopy(source.get("quiz") or None),
+        "quizSettings": copy.deepcopy(source.get("quizSettings") or {"maxSubmissions": 0}),
+        "skillTags": _normalize_skill_tags(source.get("skillTags") or []),
+        "targetClassId": target_class_id,
+        "targetClassName": target_class.get("name"),
+        "createdByEmail": source.get("createdByEmail") or actor.get("email"),
+        "createdByRole": source.get("createdByRole") or actor.get("role"),
+        "submissions": [],
+    }
+    if _save_assignment(new_assignment):
+        return jsonify(ok=True, assignment=new_assignment)
+    return jsonify(ok=False, error="Failed to copy assignment"), 500
 
 @app.post("/api/assignments/delete")
 def delete_assignment():
@@ -3909,52 +3980,60 @@ def submit_assignment():
     file_path = (data.get("filePath") or "").strip()
     quiz_responses = data.get("quizResponses", [])
 
-    if not assignment_name or not file_path:
-        return jsonify(ok=False, error="Assignment name and file path required"), 400
+    if not assignment_name:
+        return jsonify(ok=False, error="Assignment name required"), 400
 
     assignment = _load_assignment(assignment_name)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
     if not assignment.get("active", False):
         return jsonify(ok=False, error="Assignment is not active"), 403
+    allow_file_submission = bool(assignment.get("allowFileSubmission", True))
 
     student_email = (user.get("email") or "").strip().lower()
     student_name = user.get("name") or student_email
-    student_dir = _get_user_dir(student_email)
-    source_file = _validate_user_path(student_dir, file_path)
-    if not source_file or not source_file.exists() or not source_file.is_file():
-        return jsonify(ok=False, error="Selected file not found"), 404
-
-    try:
-        original_code = source_file.read_text(encoding="utf-8")
-    except Exception:
-        return jsonify(ok=False, error="Could not read selected file"), 500
+    source_file = None
+    original_code = ""
+    if allow_file_submission:
+        if not file_path:
+            return jsonify(ok=False, error="File path required for this assignment"), 400
+        student_dir = _get_user_dir(student_email)
+        source_file = _validate_user_path(student_dir, file_path)
+        if not source_file or not source_file.exists() or not source_file.is_file():
+            return jsonify(ok=False, error="Selected file not found"), 404
+        try:
+            original_code = source_file.read_text(encoding="utf-8")
+        except Exception:
+            return jsonify(ok=False, error="Could not read selected file"), 500
 
     submissions = assignment.get("submissions", [])
     existing_idx = next((i for i, sub in enumerate(submissions) if sub.get("email", "").lower() == student_email), None)
     previous = submissions[existing_idx] if existing_idx is not None else {}
 
     submitted_at = _current_timestamp()
-    submitted_code = _prepend_submission_timestamp(original_code, submitted_at, student_name)
+    submitted_code = _prepend_submission_timestamp(original_code, submitted_at, student_name) if allow_file_submission else ""
     target_class_id = assignment.get("targetClassId")
     student_class_id = user.get("class_id") or (_find_user(student_email) or {}).get("class_id")
     if not target_class_id or target_class_id != student_class_id:
         return jsonify(ok=False, error="This assignment is not assigned to your class"), 403
 
-    owner_email = (assignment.get("createdByEmail") or "").strip().lower()
-    if not owner_email:
-        return jsonify(ok=False, error="Assignment owner not found"), 500
-    try:
-        admin_file_path = _write_assignment_submission_copy(owner_email, assignment_name, student_name, source_file.name, submitted_code)
-    except Exception as exc:
-        print(f"Error copying assignment submission for {assignment_name}: {exc}")
-        return jsonify(ok=False, error="Could not copy submission to assignment owner workspace"), 500
-    submitted_filename = Path(admin_file_path).name
+    admin_file_path = ""
+    submitted_filename = ""
+    if allow_file_submission:
+        owner_email = (assignment.get("createdByEmail") or "").strip().lower()
+        if not owner_email:
+            return jsonify(ok=False, error="Assignment owner not found"), 500
+        try:
+            admin_file_path = _write_assignment_submission_copy(owner_email, assignment_name, student_name, source_file.name, submitted_code)
+        except Exception as exc:
+            print(f"Error copying assignment submission for {assignment_name}: {exc}")
+            return jsonify(ok=False, error="Could not copy submission to assignment owner workspace"), 500
+        submitted_filename = Path(admin_file_path).name
 
     submission = {
         "name": student_name,
         "email": student_email,
-        "sourceFilePath": file_path,
+        "sourceFilePath": file_path if allow_file_submission else "",
         "submittedFileName": submitted_filename,
         "adminFilePath": admin_file_path,
         "code": submitted_code,
@@ -4023,6 +4102,8 @@ def score_submission():
         return jsonify(ok=False, error="Assignment not found"), 404
     if actor.get("role") == "teacher" and (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
         return jsonify(ok=False, error="You can only score your own assignments"), 403
+    if not assignment.get("allowFileSubmission", True):
+        return jsonify(ok=False, error="Code scoring is disabled for this assignment"), 400
     
     submissions = assignment.get("submissions", [])
     found = False
@@ -4145,6 +4226,8 @@ def grade_assignment_ai():
         return jsonify(ok=False, error="Assignment not found"), 404
     if actor.get("role") == "teacher" and (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
         return jsonify(ok=False, error="You can only grade your own assignments"), 403
+    if not assignment.get("allowFileSubmission", True):
+        return jsonify(ok=False, error="Code scoring is disabled for this assignment"), 400
     
     submissions = assignment.get("submissions", [])
     found = False
@@ -4194,8 +4277,10 @@ def download_assignment_csv(assignment_name: str):
     has_new_format = any("codeScore" in sub or "quizScore" in sub for sub in submissions)
     
     if has_new_format:
-        writer.writerow(["Name", "Email", "Submitted File", "Assignment", "Code Score", "Quiz Score", "Total Score", "Submission Date"])
+        writer.writerow(["Name", "Email", "Submitted File", "Assignment", "Code Score", "Quiz Score", "Total Score", "Score %", "Submission Date"])
+        assignment_total = _assignment_total_max_score(assignment)
         for sub in _sorted_assignment_submissions(submissions):
+            pct = _score_percent(sub.get("totalScore"), assignment_total)
             writer.writerow([
                 sub.get("name", ""),
                 sub.get("email", ""),
@@ -4204,6 +4289,7 @@ def download_assignment_csv(assignment_name: str):
                 sub.get("codeScore", ""),
                 sub.get("quizScore", ""),
                 sub.get("totalScore", ""),
+                "" if pct is None else round(pct, 2),
                 sub.get("submittedAt", "")
             ])
     else:
@@ -4247,6 +4333,7 @@ def get_student_scores():
                 student_scores.append({
                     "assignmentName": assignment.get("name", ""),
                     "maxScore": assignment.get("maxScore", 100),
+                    "maxTotal": _assignment_total_max_score(assignment),
                     "codeScore": sub.get("codeScore"),
                     "quizScore": sub.get("quizScore"),
                     "totalScore": sub.get("totalScore"),
@@ -4258,6 +4345,7 @@ def get_student_scores():
                 student_scores.append({
                     "assignmentName": assignment.get("name", ""),
                     "maxScore": assignment.get("maxScore", 100),
+                    "maxTotal": _assignment_total_max_score(assignment),
                     "score": sub.get("score"),
                     "submittedAt": sub.get("submittedAt", ""),
                     "active": assignment.get("active", False)
@@ -4812,6 +4900,8 @@ def teacher_class_mastery_feedback(class_id: str):
         f"Class: {report.get('class', {}).get('name', 'Class')}\n"
         f"Rigor target: {_rigor_label(rigor)} (level {rigor}/10)\n"
         "Important: analyze score percentages only; do not use or mention any color-band labels or tier names.\n"
+        "Output rules: do not add any intro sentence, conclusion paragraph, or follow-up questions.\n"
+        "Start immediately with section headings and only the requested feedback content.\n"
         "The dataset contains assignment percentages and skill percentages per student.\n"
         "Analyze this mastery dataset and return concise teacher-facing feedback with sections:\n"
         "1) Strengths\n2) Weaknesses\n3) Targeted interventions\n4) Whole-class next steps\n"
@@ -4824,6 +4914,34 @@ def teacher_class_mastery_feedback(class_id: str):
     if not res.get("ok"):
         return jsonify(ok=False, error="AI service unavailable"), 502
     return jsonify(ok=True, feedback=_sanitize_ai_feedback_text(res.get("text") or ""))
+
+
+@app.post("/api/teacher/classes/<class_id>/mastery-feedback/save")
+def teacher_save_class_mastery_feedback(class_id: str):
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    cls = _find_class_by_id(class_id)
+    if not cls or (cls.get("teacher_email") or "").lower() != (teacher.get("email") or "").lower():
+        return jsonify(ok=False, error="Class not found"), 404
+    payload = request.get_json(silent=True) or {}
+    feedback = _sanitize_ai_feedback_text(payload.get("feedback") or "")
+    if not feedback.strip():
+        return jsonify(ok=False, error="Feedback text required"), 400
+    teacher_root = _get_user_dir((teacher.get("email") or "").strip().lower())
+    reports_dir = _validate_user_path(teacher_root, "Reports")
+    if not reports_dir:
+        return jsonify(ok=False, error="Invalid reports directory"), 400
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    class_name = _sanitize_storage_component(cls.get("name") or "Class", fallback="Class", max_length=80)
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    filename = f"{class_name}_mastery_feedback_{timestamp}.txt"
+    out_file = _validate_user_path(teacher_root, f"Reports/{filename}")
+    if not out_file:
+        return jsonify(ok=False, error="Invalid file path"), 400
+    out_file.write_text(feedback + "\n", encoding="utf-8")
+    rel_path = str(out_file.relative_to(teacher_root)).replace("\\", "/")
+    return jsonify(ok=True, path=rel_path, fileName=filename)
 
 # -------------------------
 # Admin server health
