@@ -363,6 +363,17 @@
     .admin-users-stats-table .selected-row td{ background:rgba(165,200,240,0.14); }
     .stat-storage{ color:#a5c8f0; font-size:11px; }
     .stat-ip{ font-family:monospace; font-size:11px; color:var(--theme-text-dim); }
+    .server-health-grid{ display:grid; gap:10px; grid-template-columns: repeat(4, minmax(120px, 1fr)); margin-bottom:12px; }
+    .server-health-card{ border:1px solid var(--theme-border-mid); border-radius:10px; padding:10px; background:var(--theme-input-bg); }
+    .server-health-card .label{ font-size:11px; color:var(--theme-text-dim); }
+    .server-health-card .value{ font-size:16px; color:var(--columbia-blue); font-weight:700; margin-top:4px; }
+    .server-health-panel{ border:1px solid var(--theme-border-mid); border-radius:10px; padding:10px; background:var(--theme-input-bg); margin-bottom:10px; }
+    .server-health-panel h4{ margin:0 0 8px; color:var(--columbia-blue); font-size:13px; }
+    .server-health-log{ background:var(--theme-output-bg); border:1px solid var(--theme-border-mid); border-radius:8px; padding:10px; max-height:180px; overflow:auto; font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Courier New",monospace; white-space:pre-wrap; }
+    .server-health-feed{ max-height:220px; overflow:auto; display:flex; flex-direction:column; gap:8px; }
+    .server-health-alert{ border:1px solid var(--theme-border-mid); border-radius:8px; padding:8px; background:var(--theme-output-bg); }
+    .server-health-alert .meta{ font-size:11px; color:var(--theme-text-dim); margin-bottom:4px; }
+    .server-health-alert.critical{ border-color:#c62828; }
 
     /* Context menu */
     .ctx-menu{ position:fixed; background:var(--theme-panel); border:1px solid var(--theme-border); border-radius:8px; padding:4px 0; min-width:140px; z-index:9999; box-shadow:0 4px 20px rgba(0,0,0,.5); backdrop-filter:blur(4px); }
@@ -498,6 +509,7 @@
       <button class="btn admin" id="loginBtn" title="Login">Sign In</button>
       <button class="btn secondary" id="streamingToggleBtn" title="Toggle code streaming to students" style="display:none;">📡 Streaming: On</button>
       <button class="btn admin" id="adminUsersBtn" title="User Management" style="display:none;">👥 Users</button>
+      <button class="btn admin" id="serverHealthBtn" title="Server Health" style="display:none;">🖥️ Server Health</button>
       <button class="btn admin" id="adminSettingsBtn" title="Admin Settings" style="display:none;">⚙</button>
     </div>
   </header>
@@ -797,6 +809,38 @@
 
       <div class="modal-actions" style="margin-top:16px;">
         <button class="btn secondary" id="adminUsersCloseBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Server Health Modal -->
+  <div id="serverHealthModal" class="modal" style="display:none;">
+    <div class="modal-content" style="max-width:980px;">
+      <h3>Server Health</h3>
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+        <button class="btn secondary" id="serverHealthRefreshBtn" style="font-size:12px; padding:6px 12px;">↻ Refresh</button>
+        <span id="serverHealthUpdatedAt" style="font-size:12px; color:var(--theme-text-dim);"></span>
+      </div>
+      <div class="server-health-grid">
+        <div class="server-health-card"><div class="label">Uptime</div><div class="value" id="serverHealthUptime">—</div></div>
+        <div class="server-health-card"><div class="label">CPU</div><div class="value" id="serverHealthCpu">—</div></div>
+        <div class="server-health-card"><div class="label">Memory</div><div class="value" id="serverHealthMemory">—</div></div>
+        <div class="server-health-card"><div class="label">Storage</div><div class="value" id="serverHealthStorage">—</div></div>
+      </div>
+      <div class="server-health-panel">
+        <h4>Sign-ins</h4>
+        <div id="serverHealthSignins">Last 24 hours: — | Last 7 days: — | Last 30 days: —</div>
+      </div>
+      <div class="server-health-panel">
+        <h4>Critical Events Feed</h4>
+        <div class="server-health-feed" id="serverHealthFeed"></div>
+      </div>
+      <div class="server-health-panel">
+        <h4>Server Log (tail)</h4>
+        <div class="server-health-log" id="serverHealthLog"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn secondary" id="serverHealthCloseBtn">Close</button>
       </div>
     </div>
   </div>
@@ -1578,7 +1622,7 @@ print("Hello " + name)
           csvWrap.innerHTML = '';
         }
         if (cmWrap) cmWrap.style.display = '';
-        if (ta) ta.style.display = '';
+        if (ta) ta.style.display = cmWrap ? 'none' : '';
         syncEditorLanguage();
       }
     }
@@ -2674,6 +2718,7 @@ print("Hello " + name)
       const loginBtn = document.getElementById('loginBtn');
       const adminSettingsBtn = document.getElementById('adminSettingsBtn');
       const adminUsersBtn = document.getElementById('adminUsersBtn');
+      const serverHealthBtn = document.getElementById('serverHealthBtn');
       const streamingToggleBtn = document.getElementById('streamingToggleBtn');
       const modeWrap = document.getElementById('modeSelectorWrap');
       const topJoinClassBtn = document.getElementById('topJoinClassBtn');
@@ -2701,10 +2746,71 @@ print("Hello " + name)
       adminSettingsBtn.style.display = (ADMIN_TOKEN || TEACHER_TOKEN) ? '' : 'none';
       adminSettingsBtn.title = ADMIN_TOKEN ? 'Admin Settings' : (TEACHER_TOKEN ? 'Class Settings' : 'Settings');
       if (adminUsersBtn) adminUsersBtn.style.display = ADMIN_TOKEN ? '' : 'none';
+      if (serverHealthBtn) serverHealthBtn.style.display = ADMIN_TOKEN ? '' : 'none';
       streamingToggleBtn.style.display = (ADMIN_TOKEN || TEACHER_TOKEN) ? '' : 'none';
       updateEditorOverlay();
       renderClassSelector();
       if (typeof window.afterAuthUiUpdate === "function") window.afterAuthUiUpdate();
+    }
+
+    function formatDuration(totalSeconds) {
+      const s = Math.max(0, Number(totalSeconds) || 0);
+      const days = Math.floor(s / 86400);
+      const hours = Math.floor((s % 86400) / 3600);
+      const mins = Math.floor((s % 3600) / 60);
+      if (days > 0) return `${days}d ${hours}h ${mins}m`;
+      if (hours > 0) return `${hours}h ${mins}m`;
+      return `${mins}m`;
+    }
+
+    function renderServerHealthFeed(alerts) {
+      const feed = document.getElementById('serverHealthFeed');
+      if (!feed) return;
+      const items = Array.isArray(alerts) ? alerts : [];
+      if (!items.length) {
+        feed.innerHTML = '<div style="color:#888; font-size:12px;">No server events recorded yet.</div>';
+        return;
+      }
+      feed.innerHTML = '';
+      items.forEach(item => {
+        const row = document.createElement('div');
+        row.className = `server-health-alert${String(item?.level || '').toLowerCase() === 'critical' ? ' critical' : ''}`;
+        const details = item?.details && typeof item.details === 'object'
+          ? Object.entries(item.details).filter(([key, value]) => key && value !== null && value !== undefined && String(value) !== '')
+          : [];
+        const detailsText = details.length ? ' • ' + details.map(([k, v]) => `${k}: ${v}`).join(' | ') : '';
+        row.innerHTML = `
+          <div class="meta">${escapeHtml(item?.timestamp || '—')} • ${escapeHtml(String(item?.type || 'event'))} • ${escapeHtml(String(item?.level || 'info').toUpperCase())}</div>
+          <div>${escapeHtml(item?.message || '')}${escapeHtml(detailsText)}</div>
+        `;
+        feed.appendChild(row);
+      });
+    }
+
+    async function loadServerHealth() {
+      if (!ADMIN_TOKEN) return;
+      const res = await fetch('/api/admin/server-health', { headers: { 'X-Admin-Token': ADMIN_TOKEN } });
+      const j = await res.json().catch(() => ({}));
+      if (!j?.ok) {
+        alert(j?.error || 'Failed to load server health');
+        return;
+      }
+      const d = j.data || {};
+      const formatResourceUsage = (percent, usedBytes, totalBytes) =>
+        `${Number(percent || 0).toFixed(1)}% (${_formatBytes(usedBytes || 0)} / ${_formatBytes(totalBytes || 0)})`;
+      const cpu = Number(d.cpu_percent || 0).toFixed(1) + '%';
+      const memory = formatResourceUsage(d.memory?.percent, d.memory?.used_bytes, d.memory?.total_bytes);
+      const storage = formatResourceUsage(d.storage?.percent, d.storage?.used_bytes, d.storage?.total_bytes);
+      document.getElementById('serverHealthUptime').textContent = formatDuration(d.uptime_seconds || 0);
+      document.getElementById('serverHealthCpu').textContent = cpu;
+      document.getElementById('serverHealthMemory').textContent = memory;
+      document.getElementById('serverHealthStorage').textContent = storage;
+      document.getElementById('serverHealthSignins').textContent =
+        `Last 24 hours: ${Number(d.sign_ins?.last_24_hours || 0)} | Last 7 days: ${Number(d.sign_ins?.last_7_days || 0)} | Last 30 days: ${Number(d.sign_ins?.last_30_days || 0)}`;
+      document.getElementById('serverHealthLog').textContent = (d.server_log_tail || []).join('\n') || 'No server logs yet.';
+      document.getElementById('serverHealthUpdatedAt').textContent =
+        `Updated: ${new Date().toLocaleString()} • Started: ${d.started_at || '—'}`;
+      renderServerHealthFeed(d.alerts || []);
     }
 
     // Show/hide an "no file selected" overlay on the editor when signed in but no file open
@@ -2821,7 +2927,10 @@ print("Hello " + name)
           document.getElementById('streamingToggleBtn').style.display = 'none';
           const adminUsersBtn = document.getElementById('adminUsersBtn');
           if (adminUsersBtn) adminUsersBtn.style.display = 'none';
+          const serverHealthBtn = document.getElementById('serverHealthBtn');
+          if (serverHealthBtn) serverHealthBtn.style.display = 'none';
           document.getElementById('adminUsersModal').style.display = 'none';
+          document.getElementById('serverHealthModal').style.display = 'none';
           currentOpenFile = null;
           hideFileBrowser();
           stopTeacherBroadcast();
@@ -3437,6 +3546,14 @@ print("Hello " + name)
       document.getElementById('adminUsersModal').style.display = 'none';
     });
     document.getElementById('adminUsersRefreshBtn')?.addEventListener('click', loadAdminUsersModal);
+    document.getElementById('serverHealthBtn')?.addEventListener('click', () => {
+      document.getElementById('serverHealthModal').style.display = 'flex';
+      loadServerHealth();
+    });
+    document.getElementById('serverHealthCloseBtn')?.addEventListener('click', () => {
+      document.getElementById('serverHealthModal').style.display = 'none';
+    });
+    document.getElementById('serverHealthRefreshBtn')?.addEventListener('click', loadServerHealth);
 
     document.getElementById('adminSelectAllChk')?.addEventListener('change', (e) => {
       const checked = e.target.checked;
