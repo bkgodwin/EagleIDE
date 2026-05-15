@@ -9,6 +9,7 @@ import heapq
 import hmac
 import ipaddress
 import json
+import copy
 import getpass
 import os
 import random
@@ -3738,6 +3739,22 @@ def get_assignments():
             continue
         assignment_copy = dict(a)
         assignment_copy.pop("submissions", None)
+        quiz_copy = copy.deepcopy(assignment_copy.get("quiz") or None)
+        if quiz_copy:
+            for question in quiz_copy.get("questions", []) or []:
+                if isinstance(question, dict):
+                    question.pop("correctAnswer", None)
+        assignment_copy["quiz"] = quiz_copy
+        student_submission = next(
+            (s for s in (a.get("submissions") or []) if (s.get("email") or "").lower() == (user.get("email") or "").lower()),
+            None,
+        )
+        assignment_copy["studentSubmissionSummary"] = {
+            "submittedAt": (student_submission or {}).get("submittedAt"),
+            "codeScore": (student_submission or {}).get("codeScore"),
+            "quizScore": (student_submission or {}).get("quizScore"),
+            "totalScore": (student_submission or {}).get("totalScore"),
+        } if student_submission else None
         visible_assignments.append(assignment_copy)
     return jsonify(ok=True, assignments=visible_assignments, isAdmin=False, isTeacher=False, canManage=False)
 
@@ -4269,7 +4286,6 @@ def get_quiz(assignment_name: str):
     if not target_class_id or target_class_id != class_id:
         return jsonify(ok=False, error="Quiz not assigned to your class"), 403
     # Remove correct answers from multiple choice questions for students
-    import copy
     quiz_copy = copy.deepcopy(quiz)
     submission_count = 0
     for sub in assignment.get("submissions", []):
@@ -4399,6 +4415,54 @@ def submit_quiz():
             maxSubmissions=max_submissions,
         )
     return jsonify(ok=False, error="Failed to save quiz submission"), 500
+
+@app.get("/api/quiz/report/<assignment_name>")
+def get_student_quiz_report(assignment_name: str):
+    user = _require_user(request)
+    if not user:
+        return jsonify(ok=False, error="Student login required"), 401
+    assignment = _load_assignment(assignment_name)
+    if not assignment:
+        return jsonify(ok=False, error="Assignment not found"), 404
+    student_email = (user.get("email") or "").strip().lower()
+    class_id = (user.get("class_id") or (_find_user(student_email) or {}).get("class_id"))
+    target_class_id = assignment.get("targetClassId")
+    if not target_class_id or target_class_id != class_id:
+        return jsonify(ok=False, error="Report unavailable for this class"), 403
+    submission = next((s for s in (assignment.get("submissions") or []) if (s.get("email") or "").lower() == student_email), None)
+    if not submission:
+        return jsonify(ok=False, error="No submission report found yet"), 404
+
+    assignment_max_total = _assignment_total_max_score(assignment)
+    quiz_max = int(((assignment.get("quiz") or {}).get("totalPoints")) or 0)
+    total_score = submission.get("totalScore")
+    if total_score is None and submission.get("score") is not None:
+        total_score = submission.get("score")
+    assignment_percent = _score_percent(total_score, assignment_max_total)
+
+    skill_tags = _normalize_skill_tags(assignment.get("skillTags") or [])
+    report = _build_class_mastery_report(target_class_id, (assignment.get("createdByEmail") or "").lower()) if target_class_id else None
+    student_row = None
+    for row in (report or {}).get("students", []):
+        if (row.get("email") or "").lower() == student_email:
+            student_row = row
+            break
+    resolved_skill_scores = {}
+    for tag in skill_tags:
+        row_score = ((student_row or {}).get("skillScores") or {}).get(tag)
+        resolved_skill_scores[tag] = row_score if row_score is not None else assignment_percent
+
+    return jsonify(ok=True, report={
+        "assignmentName": assignment.get("name", assignment_name),
+        "submittedAt": submission.get("submittedAt"),
+        "codeScore": submission.get("codeScore"),
+        "quizScore": submission.get("quizScore"),
+        "quizMax": quiz_max,
+        "totalScore": total_score,
+        "maxTotal": assignment_max_total,
+        "assignmentPercent": assignment_percent,
+        "skillScores": resolved_skill_scores,
+    })
 
 @app.post("/api/quiz/grade-written")
 def grade_written_response():
@@ -4722,16 +4786,39 @@ def teacher_class_mastery_feedback(class_id: str):
     cls = _find_class_by_id(class_id) or {}
     rigor = int(((cls.get("settings") or {}).get("ai_grading_rigor")) or 5)
     selected_tag = str(payload.get("tag") or "").strip()
+    scope = str(payload.get("scope") or "all").strip().lower()
+    if scope not in {"all", "tag"}:
+        scope = "all"
+    focus_tag = selected_tag if (scope == "tag" and selected_tag) else ""
+    students = []
+    for student in report.get("students", []):
+        students.append({
+            "name": student.get("name") or student.get("email") or "",
+            "assignmentScores": {
+                key: (value or {}).get("percent")
+                for key, value in ((student.get("assignmentScores") or {}).items())
+            },
+            "skillScores": student.get("skillScores") or {},
+        })
+    dataset = {
+        "class": report.get("class") or {},
+        "assignments": report.get("assignments") or [],
+        "skillTags": report.get("skillTags") or [],
+        "students": students,
+    }
     cfg = _load_config()
     prompt = (
         "You are an experienced K-12 CS instructional coach.\n"
         f"Class: {report.get('class', {}).get('name', 'Class')}\n"
         f"Rigor target: {_rigor_label(rigor)} (level {rigor}/10)\n"
+        "Important: analyze score percentages only; do not use or mention any color-band labels or tier names.\n"
+        "The dataset contains assignment percentages and skill percentages per student.\n"
         "Analyze this mastery dataset and return concise teacher-facing feedback with sections:\n"
         "1) Strengths\n2) Weaknesses\n3) Targeted interventions\n4) Whole-class next steps\n"
         "5) Assessment adjustments\n"
-        f"Focus tag (if provided): {selected_tag or 'None'}\n\n"
-        f"Dataset JSON:\n{json.dumps(report, ensure_ascii=False)}"
+        f"Feedback scope: {'Specific skill' if focus_tag else 'All skills'}\n"
+        f"Focus tag (if provided): {focus_tag or 'None'}\n\n"
+        f"Dataset JSON:\n{json.dumps(dataset, ensure_ascii=False)}"
     )
     res = call_ollama_generate(cfg.get("ai_ollama_url", ""), cfg.get("ai_model", "gemma3:4b"), prompt, timeout=45.0)
     if not res.get("ok"):
