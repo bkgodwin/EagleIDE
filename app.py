@@ -395,6 +395,18 @@ def _load_classes() -> dict:
             if not isinstance(c, dict):
                 continue
             settings = c.get("settings") or {}
+            raw_skill_tags = settings.get("skill_tags")
+            skill_tags = []
+            if isinstance(raw_skill_tags, list):
+                for tag in raw_skill_tags:
+                    cleaned = re.sub(r"\s+", " ", str(tag or "").strip())
+                    if cleaned and cleaned not in skill_tags:
+                        skill_tags.append(cleaned[:80])
+            try:
+                ai_rigor = int(settings.get("ai_grading_rigor", 5))
+            except Exception:
+                ai_rigor = 5
+            ai_rigor = max(1, min(10, ai_rigor))
             students = list(dict.fromkeys([str(s).strip().lower() for s in c.get("students", []) if str(s).strip()]))
             classes.append({
                 "id": str(c.get("id") or uuid.uuid4().hex),
@@ -406,6 +418,8 @@ def _load_classes() -> dict:
                     "wiki_enabled": bool(settings.get("wiki_enabled", True)),
                     "wiki_url": str(settings.get("wiki_url") or ""),
                     "wiki_html": str(settings.get("wiki_html") or ""),
+                    "ai_grading_rigor": ai_rigor,
+                    "skill_tags": skill_tags,
                 },
                 "students": students,
                 "created_at": c.get("created_at") or _current_timestamp(),
@@ -1953,6 +1967,8 @@ def teacher_create_class():
             "wiki_enabled": True,
             "wiki_url": "",
             "wiki_html": "",
+            "ai_grading_rigor": 5,
+            "skill_tags": [],
         },
         "students": [],
         "created_at": _current_timestamp(),
@@ -1986,6 +2002,18 @@ def teacher_update_class_settings():
                 current["wiki_url"] = str(settings.get("wiki_url") or "")[:1000]
             if "wiki_html" in settings:
                 current["wiki_html"] = str(settings.get("wiki_html") or "")
+            if "ai_grading_rigor" in settings:
+                try:
+                    current["ai_grading_rigor"] = max(1, min(10, int(settings.get("ai_grading_rigor"))))
+                except Exception:
+                    current["ai_grading_rigor"] = 5
+            if "skill_tags" in settings:
+                next_tags = []
+                for tag in (settings.get("skill_tags") or []):
+                    cleaned = re.sub(r"\s+", " ", str(tag or "").strip())
+                    if cleaned and cleaned not in next_tags:
+                        next_tags.append(cleaned[:80])
+                current["skill_tags"] = next_tags
             target = c
             break
     if not target:
@@ -3488,22 +3516,161 @@ def on_leave_class_room(payload):
 # -------------------------
 # Assignment system
 # -------------------------
+def _normalize_skill_tags(raw_tags) -> list[str]:
+    tags: list[str] = []
+    for tag in (raw_tags or []):
+        cleaned = re.sub(r"\s+", " ", str(tag or "").strip())
+        if cleaned and cleaned not in tags:
+            tags.append(cleaned[:80])
+    return tags
+
+
+def _normalize_assignment_schema(assignment: dict) -> dict:
+    normalized = dict(assignment or {})
+    normalized["skillTags"] = _normalize_skill_tags(normalized.get("skillTags") or [])
+    quiz = normalized.get("quiz")
+    if isinstance(quiz, dict):
+        questions = []
+        for q in (quiz.get("questions") or []):
+            if not isinstance(q, dict):
+                continue
+            qn = dict(q)
+            q_type = str(qn.get("type") or "written").strip()
+            if q_type not in {"multiple_choice", "written", "multiple_choice_code", "written_code"}:
+                q_type = "written"
+            qn["type"] = q_type
+            qn["question"] = str(qn.get("question") or "").strip()
+            try:
+                qn["points"] = max(0, int(qn.get("points", 0)))
+            except Exception:
+                qn["points"] = 0
+            if q_type in {"multiple_choice", "multiple_choice_code"}:
+                options = [str(opt or "").strip() for opt in (qn.get("options") or [])]
+                options = [opt for opt in options if opt]
+                qn["options"] = options
+                try:
+                    answer_idx = int(qn.get("correctAnswer", 0))
+                except Exception:
+                    answer_idx = 0
+                if options:
+                    answer_idx = max(0, min(len(options) - 1, answer_idx))
+                qn["correctAnswer"] = answer_idx
+            if q_type in {"multiple_choice_code", "written_code"}:
+                qn["codeSnippet"] = str(qn.get("codeSnippet") or "")
+                code_lang = str(qn.get("codeLanguage") or "python").strip().lower()
+                if code_lang not in {"python", "javascript", "html"}:
+                    code_lang = "python"
+                qn["codeLanguage"] = code_lang
+            questions.append(qn)
+        quiz["questions"] = questions
+        quiz["totalPoints"] = sum(max(0, int(q.get("points") or 0)) for q in questions)
+        normalized["quiz"] = quiz
+    quiz_settings = normalized.get("quizSettings") or {}
+    try:
+        max_submissions = int(quiz_settings.get("maxSubmissions", 0))
+    except Exception:
+        max_submissions = 0
+    quiz_settings["maxSubmissions"] = max(0, min(100, max_submissions))
+    normalized["quizSettings"] = quiz_settings
+    submissions = []
+    for sub in (normalized.get("submissions") or []):
+        if not isinstance(sub, dict):
+            continue
+        sub_n = dict(sub)
+        try:
+            sub_n["quizSubmissionCount"] = max(0, int(sub_n.get("quizSubmissionCount", 0)))
+        except Exception:
+            sub_n["quizSubmissionCount"] = 0
+        submissions.append(sub_n)
+    normalized["submissions"] = submissions
+    return normalized
+
+
+def _assignment_total_max_score(assignment: dict) -> int:
+    max_score = int(assignment.get("maxScore") or 0)
+    quiz_total = int(((assignment.get("quiz") or {}).get("totalPoints")) or 0)
+    return max(0, max_score + quiz_total)
+
+
+def _score_percent(score: Optional[float], max_score: Optional[float]) -> Optional[float]:
+    if score is None or max_score is None:
+        return None
+    try:
+        s = float(score)
+        m = float(max_score)
+    except Exception:
+        return None
+    if m <= 0:
+        return None
+    return max(0.0, min(100.0, (s / m) * 100.0))
+
+
+def _rigor_label(rigor: int) -> str:
+    labels = {
+        1: "Elementary",
+        2: "Elementary",
+        3: "Middle School",
+        4: "Middle School",
+        5: "High School",
+        6: "High School",
+        7: "Honors",
+        8: "AP/Advanced",
+        9: "College Prep",
+        10: "College",
+    }
+    return labels.get(max(1, min(10, int(rigor))), "High School")
+
+
+def _score_with_rigor(base_score: int, max_points: int, rigor: int) -> int:
+    if max_points <= 0:
+        return 0
+    rigor = max(1, min(10, int(rigor)))
+    penalty_ratio = (rigor - 1) / 45.0  # 0.0 -> 0.2
+    adjusted = int(round(base_score * (1.0 - penalty_ratio)))
+    return max(0, min(max_points, adjusted))
+
+
+def _sanitize_ai_feedback_text(text: str) -> str:
+    raw = str(text or "")
+    lines = []
+    for line in raw.splitlines():
+        l = line.strip()
+        if l.startswith("Traceback (most recent call last):"):
+            continue
+        if re.match(r'^\s*File ".*", line \d+', line):
+            continue
+        if re.match(r'^[A-Za-z_][\w.]*Error:', l):
+            continue
+        lines.append(line)
+    cleaned = "\n".join(lines).strip()
+    return cleaned[:12000]
+
+
 _assignment_lock = threading.Lock()
 
 def _get_assignment_path(name: str) -> Path:
     """Get the path to an assignment's JSON file"""
-    # Sanitize name to prevent directory traversal
-    safe_name = "".join(c for c in name if c.isalnum() or c in (' ', '-', '_')).strip()
-    return ASSIGNMENTS_DIR / f"{safe_name}.json"
+    raw_name = str(name or "").strip()
+    safe_name = _sanitize_storage_component(raw_name, fallback="", max_length=120).strip()
+    if not safe_name or raw_name != safe_name or not re.fullmatch(r"[A-Za-z0-9 _-]{1,120}", safe_name):
+        raise ValueError("Invalid assignment name")
+    path = (ASSIGNMENTS_DIR / f"{safe_name}.json").resolve()
+    assignments_root = ASSIGNMENTS_DIR.resolve()
+    if os.path.commonpath([str(path), str(assignments_root)]) != str(assignments_root):
+        raise ValueError("Invalid assignment path")
+    return path
 
 def _load_assignment(name: str) -> Optional[Dict[str, Any]]:
     """Load an assignment by name"""
     with _assignment_lock:
-        path = _get_assignment_path(name)
+        try:
+            path = _get_assignment_path(name)
+        except ValueError:
+            return None
         if not path.exists():
             return None
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            return _normalize_assignment_schema(json.loads(path.read_text(encoding="utf-8")))
         except Exception as e:
             print(f"Error loading assignment {name}: {e}")
             return None
@@ -3514,8 +3681,12 @@ def _save_assignment(assignment: Dict[str, Any]) -> bool:
         name = assignment.get("name", "").strip()
         if not name:
             return False
-        path = _get_assignment_path(name)
         try:
+            path = _get_assignment_path(name)
+        except ValueError:
+            return False
+        try:
+            assignment = _normalize_assignment_schema(assignment)
             path.write_text(json.dumps(assignment, ensure_ascii=False, indent=2), encoding="utf-8")
             return True
         except Exception as e:
@@ -3532,7 +3703,7 @@ def _list_assignments() -> list:
             if path.suffix == ".json":
                 try:
                     data = json.loads(path.read_text(encoding="utf-8"))
-                    assignments.append(data)
+                    assignments.append(_normalize_assignment_schema(data))
                 except Exception as e:
                     print(f"Error loading assignment {path.name}: {e}")
         return sorted(assignments, key=lambda a: a.get("name", ""))
@@ -3604,6 +3775,8 @@ def create_assignment():
         "maxScore": max_score,
         "active": False,
         "quiz": data.get("quiz") or None,
+        "quizSettings": data.get("quizSettings") or {"maxSubmissions": 0},
+        "skillTags": _normalize_skill_tags(data.get("skillTags") or []),
         "targetClassId": target_class_id,
         "targetClassName": target_class_name,
         "createdByEmail": actor.get("email"),
@@ -3643,6 +3816,10 @@ def update_assignment():
         assignment["active"] = data["active"]
     if "quiz" in data:
         assignment["quiz"] = data["quiz"]
+    if "quizSettings" in data:
+        assignment["quizSettings"] = data.get("quizSettings") or {}
+    if "skillTags" in data:
+        assignment["skillTags"] = _normalize_skill_tags(data.get("skillTags") or [])
     if "classId" in data:
         class_id = (data.get("classId") or "").strip() or None
         class_name = None
@@ -3680,7 +3857,10 @@ def delete_assignment():
         return jsonify(ok=False, error="You can only delete your own assignments"), 403
 
     with _assignment_lock:
-        path = _get_assignment_path(name)
+        try:
+            path = _get_assignment_path(name)
+        except ValueError:
+            return jsonify(ok=False, error="Invalid assignment name"), 400
         if not path.exists():
             return jsonify(ok=False, error="Assignment not found"), 404
         try:
@@ -3776,7 +3956,7 @@ def submit_assignment():
             question = next((q for q in quiz.get("questions", []) if q.get("id") == question_id), None)
             if not question:
                 continue
-            if question.get("type") == "multiple_choice":
+            if question.get("type") in {"multiple_choice", "multiple_choice_code"}:
                 if response.get("answer") == question.get("correctAnswer"):
                     response["isCorrect"] = True
                     response["pointsEarned"] = question.get("points", 0)
@@ -3886,6 +4066,8 @@ def grade_assignment_ai():
     prompt = (
         "Grade the following student's {language} code submission strictly from 0 to {max_score}.\n"
         "Return ONLY the integer score, with no additional words or explanation.\n\n"
+        "Class rigor target: {rigor_label} (level {rigor}/10).\n"
+        "At higher rigor levels, apply stricter expectations for correctness, robustness, and code quality.\n\n"
         "Assignment Task:\n{task}\n\n"
         "Student Code:\n{code}\n\n"
         "Grading Criteria:\n"
@@ -3897,10 +4079,21 @@ def grade_assignment_ai():
     ).format(
         language=language_label,
         best_practices=_language_best_practices(language),
+        rigor_label="High School",
+        rigor=5,
         max_score=max_score,
         task=task,
         code=code,
     )
+    assignment = _load_assignment(assignment_name)
+    if assignment:
+        class_id = assignment.get("targetClassId")
+        cls = _find_class_by_id(class_id) if class_id else None
+        rigor = int(((cls or {}).get("settings") or {}).get("ai_grading_rigor", 5))
+        rigor = max(1, min(10, rigor))
+        prompt = prompt.replace("Class rigor target: High School (level 5/10).", f"Class rigor target: {_rigor_label(rigor)} (level {rigor}/10).")
+    else:
+        rigor = 5
     
     res = call_ollama_generate(cfg.get("ai_ollama_url", ""), cfg.get("ai_model", "gemma3:4b"), prompt, timeout=30.0)
     if not res.get("ok"):
@@ -3926,11 +4119,11 @@ def grade_assignment_ai():
     if score is None:
         return jsonify(ok=False, error=f"AI returned invalid score: {raw!r}")
     
-    # Ensure score is within valid range
+    # Ensure score is within valid range and apply rigor scaling
     score = max(0, min(max_score, score))
+    score = _score_with_rigor(score, int(max_score), rigor)
     
     # Save the score
-    assignment = _load_assignment(assignment_name)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
     if actor.get("role") == "teacher" and (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
@@ -4078,10 +4271,26 @@ def get_quiz(assignment_name: str):
     # Remove correct answers from multiple choice questions for students
     import copy
     quiz_copy = copy.deepcopy(quiz)
+    submission_count = 0
+    for sub in assignment.get("submissions", []):
+        if (sub.get("email") or "").lower() == ((user.get("email") or "").strip().lower()):
+            try:
+                submission_count = max(0, int(sub.get("quizSubmissionCount", 0)))
+            except Exception:
+                submission_count = 0
+            break
     for question in quiz_copy.get("questions", []):
-        if question.get("type") == "multiple_choice":
+        if question.get("type") in {"multiple_choice", "multiple_choice_code"}:
             question.pop("correctAnswer", None)
-    return jsonify(ok=True, quiz=quiz_copy)
+    max_submissions = int(((assignment.get("quizSettings") or {}).get("maxSubmissions")) or 0)
+    remaining = None if max_submissions <= 0 else max(0, max_submissions - submission_count)
+    return jsonify(
+        ok=True,
+        quiz=quiz_copy,
+        quizSettings={"maxSubmissions": max_submissions},
+        submissionCount=submission_count,
+        remainingSubmissions=remaining,
+    )
 
 @app.post("/api/quiz/submit")
 def submit_quiz():
@@ -4093,6 +4302,7 @@ def submit_quiz():
     data = request.get_json(silent=True) or {}
     assignment_name = (data.get("assignmentName") or "").strip()
     quiz_responses = data.get("quizResponses", [])
+    closed_by_student = bool(data.get("closedByStudent"))
     student_email = (user.get("email") or "").strip().lower()
     student_name = user.get("name") or student_email
 
@@ -4119,7 +4329,7 @@ def submit_quiz():
         question = next((q for q in quiz.get("questions", []) if q.get("id") == question_id), None)
         if not question:
             continue
-        if question.get("type") == "multiple_choice":
+        if question.get("type") in {"multiple_choice", "multiple_choice_code"}:
             if response.get("answer") == question.get("correctAnswer"):
                 response["isCorrect"] = True
                 response["pointsEarned"] = question.get("points", 0)
@@ -4138,6 +4348,15 @@ def submit_quiz():
         if sub.get("email", "").lower() == student_email:
             existing_idx = i
             break
+    max_submissions = int(((assignment.get("quizSettings") or {}).get("maxSubmissions")) or 0)
+    current_count = 0
+    if existing_idx is not None:
+        try:
+            current_count = max(0, int(submissions[existing_idx].get("quizSubmissionCount", 0)))
+        except Exception:
+            current_count = 0
+    if max_submissions > 0 and current_count >= max_submissions:
+        return jsonify(ok=False, error="Maximum quiz submissions reached"), 403
 
     if existing_idx is not None:
         existing = submissions[existing_idx]
@@ -4145,6 +4364,8 @@ def submit_quiz():
         existing["email"] = student_email
         existing["quizResponses"] = quiz_responses
         existing["quizScore"] = quiz_score
+        existing["quizSubmissionCount"] = current_count + 1
+        existing["quizLastSubmittedByClose"] = closed_by_student
         code_score = existing.get("codeScore") or 0
         existing["totalScore"] = code_score + quiz_score if existing.get("codeScore") is not None else quiz_score
         existing["submittedAt"] = existing.get("submittedAt") or _current_timestamp()
@@ -4160,12 +4381,23 @@ def submit_quiz():
             "codeScore": None,
             "quizResponses": quiz_responses,
             "quizScore": quiz_score,
+            "quizSubmissionCount": 1,
+            "quizLastSubmittedByClose": closed_by_student,
             "totalScore": quiz_score,
         })
 
     assignment["submissions"] = submissions
     if _save_assignment(assignment):
-        return jsonify(ok=True, message="Quiz submitted successfully", quizScore=quiz_score)
+        next_count = (current_count + 1) if max_submissions > 0 else None
+        remaining = None if max_submissions <= 0 else max(0, max_submissions - (current_count + 1))
+        return jsonify(
+            ok=True,
+            message="Quiz submitted successfully",
+            quizScore=quiz_score,
+            submissionCount=(current_count + 1),
+            remainingSubmissions=remaining,
+            maxSubmissions=max_submissions,
+        )
     return jsonify(ok=False, error="Failed to save quiz submission"), 500
 
 @app.post("/api/quiz/grade-written")
@@ -4191,16 +4423,41 @@ def grade_written_response():
     if not assignment_name or not student_email or not question_id:
         return jsonify(ok=False, error="Missing required fields"), 400
     
+    assignment = _load_assignment(assignment_name)
+    if not assignment:
+        return jsonify(ok=False, error="Assignment not found"), 404
+    if actor.get("role") == "teacher" and (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+        return jsonify(ok=False, error="You can only grade your own assignments"), 403
+    question = next((q for q in ((assignment.get("quiz") or {}).get("questions") or []) if q.get("id") == question_id), {}) or {}
+    if not question_text:
+        question_text = str(question.get("question") or "")
+    code_snippet = str(question.get("codeSnippet") or "")
+    code_language = str(question.get("codeLanguage") or "python")
+    class_id = assignment.get("targetClassId")
+    cls = _find_class_by_id(class_id) if class_id else None
+    rigor = int(((cls or {}).get("settings") or {}).get("ai_grading_rigor", 5))
+    rigor = max(1, min(10, rigor))
+    rigor_text = f"{_rigor_label(rigor)} (level {rigor}/10)"
+
     # Build prompt for AI grading
+    code_context = (
+        f"\n\nCode Context ({code_language}):\n{code_snippet}\n"
+        if code_snippet else
+        ""
+    )
     prompt = (
         f"Grade the following student's written response to a question strictly from 0 to {max_points}.\n"
         f"Return ONLY the integer score, with no additional words or explanation.\n\n"
+        f"Class rigor target: {rigor_text}.\n"
+        f"At higher rigor, expect stronger precision, depth, and technical correctness.\n\n"
         f"Question: {question_text}\n\n"
+        f"{code_context}"
         f"Student Answer: {answer}\n\n"
         f"Grading Criteria:\n"
         f"- Is the answer accurate and complete?\n"
         f"- Does it demonstrate understanding of the concept?\n"
-        f"- Is it well-explained?\n\n"
+        f"- Is it well-explained?\n"
+        f"- Apply rigor expectations for this class level.\n\n"
         f"Score (0-{max_points}):"
     )
     
@@ -4234,16 +4491,11 @@ def grade_written_response():
     if score is None:
         return jsonify(ok=False, error=f"AI returned invalid score: {raw!r}")
     
-    # Ensure score is within valid range
+    # Ensure score is within valid range and apply rigor scaling
     score = max(0, min(max_points, score))
+    score = _score_with_rigor(score, int(max_points), rigor)
     
     # Update the submission
-    assignment = _load_assignment(assignment_name)
-    if not assignment:
-        return jsonify(ok=False, error="Assignment not found"), 404
-    if actor.get("role") == "teacher" and (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
-        return jsonify(ok=False, error="You can only grade your own assignments"), 403
-    
     submissions = assignment.get("submissions", [])
     found = False
     for sub in submissions:
@@ -4325,6 +4577,166 @@ def override_quiz_score():
     if _save_assignment(assignment):
         return jsonify(ok=True)
     return jsonify(ok=False, error="Failed to save score"), 500
+
+
+@app.post("/api/quiz/reset-counter")
+def reset_quiz_submission_counter():
+    actor = _assignment_actor(request)
+    if not actor:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    data = request.get_json(silent=True) or {}
+    assignment_name = (data.get("assignmentName") or "").strip()
+    student_email = (data.get("studentEmail") or "").strip().lower()
+    if not assignment_name or not student_email:
+        return jsonify(ok=False, error="assignmentName and studentEmail required"), 400
+    assignment = _load_assignment(assignment_name)
+    if not assignment:
+        return jsonify(ok=False, error="Assignment not found"), 404
+    if actor.get("role") == "teacher" and (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+        return jsonify(ok=False, error="You can only edit your own assignments"), 403
+    found = False
+    for sub in assignment.get("submissions", []):
+        if (sub.get("email") or "").lower() == student_email:
+            sub["quizSubmissionCount"] = 0
+            sub["quizLastSubmittedByClose"] = False
+            found = True
+            break
+    if not found:
+        return jsonify(ok=False, error="Submission not found"), 404
+    if _save_assignment(assignment):
+        return jsonify(ok=True)
+    return jsonify(ok=False, error="Failed to save assignment"), 500
+
+
+def _mastery_bucket(score: Optional[float]) -> str:
+    if score is None:
+        return "untested"
+    if score < 70:
+        return "red"
+    if score < 80:
+        return "bronze"
+    if score < 90:
+        return "silver"
+    return "gold"
+
+
+def _build_class_mastery_report(class_id: str, teacher_email: str) -> Optional[dict]:
+    cls = _find_class_by_id(class_id)
+    if not cls:
+        return None
+    if (cls.get("teacher_email") or "").lower() != (teacher_email or "").lower():
+        return None
+    users_by_email = {u.get("email", "").lower(): u for u in _load_users().get("users", [])}
+    assignments = [a for a in _list_assignments() if (a.get("targetClassId") or "") == class_id]
+    assignment_rows = []
+    for a in assignments:
+        assignment_rows.append({
+            "name": a.get("name", ""),
+            "maxTotal": _assignment_total_max_score(a),
+            "skillTags": _normalize_skill_tags(a.get("skillTags") or []),
+        })
+    tag_order = _normalize_skill_tags((cls.get("settings") or {}).get("skill_tags") or [])
+    if not tag_order:
+        discovered = []
+        for a in assignment_rows:
+            for tag in a.get("skillTags", []):
+                if tag not in discovered:
+                    discovered.append(tag)
+        tag_order = discovered
+
+    student_rows = []
+    for email in cls.get("students", []):
+        u = users_by_email.get((email or "").lower(), {})
+        name = u.get("name") or email
+        per_assignment = {}
+        for assignment in assignments:
+            sub = next((s for s in (assignment.get("submissions") or []) if (s.get("email") or "").lower() == (email or "").lower()), None)
+            percent = None
+            total_score = None
+            if sub:
+                total_score = sub.get("totalScore")
+                if total_score is None and sub.get("score") is not None:
+                    total_score = sub.get("score")
+                percent = _score_percent(total_score, _assignment_total_max_score(assignment))
+            per_assignment[assignment.get("name", "")] = {
+                "percent": percent,
+                "totalScore": total_score,
+            }
+        skill_scores = {}
+        for tag in tag_order:
+            related_names = [a.get("name", "") for a in assignment_rows if tag in (a.get("skillTags") or [])]
+            vals = []
+            for assignment_name in related_names:
+                row = per_assignment.get(assignment_name) or {}
+                if row.get("percent") is not None:
+                    vals.append(float(row["percent"]))
+            skill_scores[tag] = round(sum(vals) / len(vals), 2) if vals else None
+        student_rows.append({
+            "email": email,
+            "name": name,
+            "assignmentScores": per_assignment,
+            "skillScores": skill_scores,
+        })
+
+    analytics = {"tags": {}, "summary": {"red": 0, "bronze": 0, "silver": 0, "gold": 0}}
+    for tag in tag_order:
+        counts = {"red": 0, "bronze": 0, "silver": 0, "gold": 0, "untested": 0}
+        for s in student_rows:
+            bucket = _mastery_bucket((s.get("skillScores") or {}).get(tag))
+            counts[bucket] += 1
+            if bucket != "untested":
+                analytics["summary"][bucket] += 1
+        analytics["tags"][tag] = counts
+    return {
+        "class": {"id": cls.get("id"), "name": cls.get("name")},
+        "assignments": assignment_rows,
+        "students": student_rows,
+        "skillTags": tag_order,
+        "analytics": analytics,
+    }
+
+
+@app.get("/api/teacher/classes/<class_id>/mastery")
+def teacher_class_mastery(class_id: str):
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    report = _build_class_mastery_report(class_id, (teacher.get("email") or "").lower())
+    if not report:
+        return jsonify(ok=False, error="Class not found"), 404
+    return jsonify(ok=True, report=report)
+
+
+@app.post("/api/teacher/classes/<class_id>/mastery-feedback")
+def teacher_class_mastery_feedback(class_id: str):
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    payload = request.get_json(silent=True) or {}
+    allowed, error = _effective_ai_enabled(request, {"classId": class_id})
+    if not allowed:
+        return jsonify(ok=False, error=error or "AI unavailable"), 403
+    report = _build_class_mastery_report(class_id, (teacher.get("email") or "").lower())
+    if not report:
+        return jsonify(ok=False, error="Class not found"), 404
+    cls = _find_class_by_id(class_id) or {}
+    rigor = int(((cls.get("settings") or {}).get("ai_grading_rigor")) or 5)
+    selected_tag = str(payload.get("tag") or "").strip()
+    cfg = _load_config()
+    prompt = (
+        "You are an experienced K-12 CS instructional coach.\n"
+        f"Class: {report.get('class', {}).get('name', 'Class')}\n"
+        f"Rigor target: {_rigor_label(rigor)} (level {rigor}/10)\n"
+        "Analyze this mastery dataset and return concise teacher-facing feedback with sections:\n"
+        "1) Strengths\n2) Weaknesses\n3) Targeted interventions\n4) Whole-class next steps\n"
+        "5) Assessment adjustments\n"
+        f"Focus tag (if provided): {selected_tag or 'None'}\n\n"
+        f"Dataset JSON:\n{json.dumps(report, ensure_ascii=False)}"
+    )
+    res = call_ollama_generate(cfg.get("ai_ollama_url", ""), cfg.get("ai_model", "gemma3:4b"), prompt, timeout=45.0)
+    if not res.get("ok"):
+        return jsonify(ok=False, error="AI service unavailable"), 502
+    return jsonify(ok=True, feedback=_sanitize_ai_feedback_text(res.get("text") or ""))
 
 # -------------------------
 # Admin server health
