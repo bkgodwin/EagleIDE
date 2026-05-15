@@ -1434,7 +1434,12 @@ def admin_clear_user_files():
         return jsonify(ok=False, error="Email required"), 400
     if not _find_user(email):
         return jsonify(ok=False, error="User not found"), 404
-    user_dir = _get_user_dir(email)
+    user_dir = _get_user_dir(email).resolve()
+    # Ensure path is strictly within USER_FILES_DIR to prevent any traversal
+    try:
+        user_dir.relative_to(USER_FILES_DIR.resolve())
+    except ValueError:
+        return jsonify(ok=False, error="Invalid user path"), 400
     if user_dir.exists():
         try:
             shutil.rmtree(user_dir)
@@ -1481,7 +1486,13 @@ def _delete_user_by_email(email: str) -> bool:
         _save_classes(classes_data)
     if deleted_user and deleted_user.get("role") == "student":
         _revoke_student_class_rooms(email)
-    user_dir = _get_user_dir(email)
+    user_dir = _get_user_dir(email).resolve()
+    # Ensure path is strictly within USER_FILES_DIR to prevent any traversal
+    try:
+        user_dir.relative_to(USER_FILES_DIR.resolve())
+    except ValueError:
+        print(f"Warning: _delete_user_by_email path containment check failed for {email}")
+        return False
     if user_dir.exists():
         try:
             shutil.rmtree(user_dir)
@@ -1560,7 +1571,13 @@ def admin_bulk_clear_files():
         email = (str(raw) or "").strip().lower()
         if not email or not _find_user(email):
             continue
-        user_dir = _get_user_dir(email)
+        user_dir = _get_user_dir(email).resolve()
+        # Ensure path is strictly within USER_FILES_DIR to prevent any traversal
+        try:
+            user_dir.relative_to(USER_FILES_DIR.resolve())
+        except ValueError:
+            errors.append(email)
+            continue
         if user_dir.exists():
             try:
                 shutil.rmtree(user_dir)
