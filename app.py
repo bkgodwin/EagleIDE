@@ -7,6 +7,7 @@ import csv
 import hashlib
 import heapq
 import hmac
+import ipaddress
 import json
 import getpass
 import os
@@ -65,6 +66,8 @@ EXAMPLES_DIR_NAME = "Examples"
 EXAMPLE_FILES: dict[str, str] = {
     "hello.py": 'print("Hello from EagleIDE!")\nname = input("What is your name? ")\nprint(f"Welcome, {name}!")\n',
     "hello.js": 'const name = input("What is your name? ");\nconsole.log(`Hello from EagleIDE, ${name}!`);\n',
+    "sample.csv": "name,score\nAva,95\nNoah,88\n",
+    "notes.txt": "Welcome to EagleIDE!\n\n- Open a file from Examples.\n- Edit the code.\n- Click Run.\n",
     "index.html": '<!doctype html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1">\n  <title>EagleIDE Example</title>\n  <link rel="stylesheet" href="styles.css">\n</head>\n<body>\n  <main class="card">\n    <h1>EagleIDE HTML Example</h1>\n    <p>Edit this file and <strong>Run</strong> it to see live changes.</p>\n  </main>\n</body>\n</html>\n',
     "styles.css": "body {\n  font-family: Arial, sans-serif;\n  background: #f2f6ff;\n  color: #102a43;\n  margin: 0;\n  min-height: 100vh;\n  display: grid;\n  place-items: center;\n}\n\n.card {\n  background: white;\n  border: 2px solid #7fb2eb;\n  border-radius: 12px;\n  padding: 20px;\n  max-width: 420px;\n  box-shadow: 0 8px 24px rgba(16, 42, 67, 0.12);\n}\n",
 }
@@ -76,6 +79,10 @@ USERS_FILE = BASE_DIR / "users.json"
 USER_FILES_DIR = BASE_DIR / "user_files"
 CLASSES_FILE = BASE_DIR / "classes.json"
 ADMIN_KEY_FILE = BASE_DIR / ".admin_key"
+SIGN_IN_EVENTS_FILE = BASE_DIR / "sign_in_events.json"
+SERVER_EVENTS_FILE = BASE_DIR / "server_events.json"
+SERVER_STATE_FILE = BASE_DIR / "server_state.json"
+APP_LOG_FILE = BASE_DIR / "server.log"
 os.makedirs(USER_FILES_DIR, exist_ok=True)
 
 # -------------------------
@@ -314,6 +321,9 @@ _teacher_tokens: Dict[str, dict] = {}  # token -> teacher info dict
 _reg_rate_limit: dict = defaultdict(list)  # ip -> list of timestamps
 _login_rate_limit: dict = defaultdict(list)  # ip -> list of timestamps
 _classes_lock = threading.Lock()
+_server_health_lock = threading.Lock()
+SERVER_START_EPOCH = time.time()
+_server_start_recorded = False
 
 def _sanitize_email_for_path(email: str) -> str:
     """Convert email to safe directory name"""
@@ -441,6 +451,196 @@ def _require_teacher(req) -> Optional[dict]:
 
 def _current_timestamp() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
+
+def _read_json_list_file(path: Path) -> list[dict]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return [entry for entry in data if isinstance(entry, dict)]
+    except Exception:
+        pass
+    return []
+
+def _write_json_list_file(path: Path, payload: list[dict]) -> None:
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+def _append_server_log(message: str, level: str = "INFO") -> None:
+    try:
+        ts = _current_timestamp()
+        APP_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with APP_LOG_FILE.open("a", encoding="utf-8") as handle:
+            handle.write(f"{ts} [{(level or 'INFO').upper()}] {message}\n")
+    except Exception:
+        pass
+
+def _append_server_event(event_type: str, message: str, level: str = "info", details: Optional[dict] = None) -> None:
+    entry = {
+        "timestamp": _current_timestamp(),
+        "ts": int(time.time()),
+        "type": str(event_type or "event"),
+        "level": str(level or "info"),
+        "message": str(message or "").strip(),
+        "details": details or {},
+    }
+    with _server_health_lock:
+        events = _read_json_list_file(SERVER_EVENTS_FILE)
+        events.append(entry)
+        events = events[-500:]
+        try:
+            _write_json_list_file(SERVER_EVENTS_FILE, events)
+        except Exception:
+            pass
+
+def _record_sign_in_event(email: str, role: str, ip: str, source: str) -> None:
+    event = {
+        "timestamp": _current_timestamp(),
+        "ts": int(time.time()),
+        "email": (email or "").strip().lower(),
+        "role": str(role or "student"),
+        "ip": str(ip or ""),
+        "source": str(source or "login"),
+    }
+    with _server_health_lock:
+        events = _read_json_list_file(SIGN_IN_EVENTS_FILE)
+        events.append(event)
+        cutoff = int(time.time()) - (90 * 24 * 3600)
+        events = [row for row in events if int(row.get("ts", 0)) >= cutoff][-10000:]
+        try:
+            _write_json_list_file(SIGN_IN_EVENTS_FILE, events)
+        except Exception:
+            pass
+    _append_server_log(
+        f"Sign-in: role={event['role']} email={event['email'] or 'admin'} ip={event['ip'] or 'unknown'} source={event['source']}",
+        "INFO",
+    )
+
+def _count_sign_ins(window_seconds: int) -> int:
+    now = int(time.time())
+    cutoff = now - max(1, int(window_seconds))
+    with _server_health_lock:
+        events = _read_json_list_file(SIGN_IN_EVENTS_FILE)
+    return sum(1 for row in events if int(row.get("ts", 0)) >= cutoff)
+
+def _parse_ip(raw: str) -> Optional[str]:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        addr = ipaddress.ip_address(text)
+        return str(addr)
+    except Exception:
+        return None
+
+def _is_public_ip(raw: str) -> bool:
+    parsed = _parse_ip(raw)
+    if not parsed:
+        return False
+    try:
+        addr = ipaddress.ip_address(parsed)
+        return not (addr.is_private or addr.is_loopback or addr.is_reserved or addr.is_multicast or addr.is_unspecified)
+    except Exception:
+        return False
+
+def _get_request_ip(req) -> str:
+    cf_ip = _parse_ip(req.headers.get("CF-Connecting-IP", ""))
+    if cf_ip:
+        return cf_ip
+    xff_raw = req.headers.get("X-Forwarded-For", "")
+    xff_candidates = [_parse_ip(part.strip()) for part in xff_raw.split(",") if part.strip()]
+    xff_candidates = [ip for ip in xff_candidates if ip]
+    for candidate in xff_candidates:
+        if _is_public_ip(candidate):
+            return candidate
+    if xff_candidates:
+        return xff_candidates[0]
+    real_ip = _parse_ip(req.headers.get("X-Real-IP", ""))
+    if real_ip:
+        return real_ip
+    remote = _parse_ip(req.remote_addr or "")
+    if remote:
+        return remote
+    return "unknown"
+
+def _parse_meminfo_bytes() -> tuple[int, int]:
+    total = 0
+    available = 0
+    try:
+        with open("/proc/meminfo", "r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("MemTotal:"):
+                    total = int(line.split()[1]) * 1024
+                elif line.startswith("MemAvailable:"):
+                    available = int(line.split()[1]) * 1024
+        if total > 0 and available >= 0:
+            used = max(0, total - available)
+            return total, used
+    except Exception:
+        pass
+    return 0, 0
+
+def _estimate_cpu_percent() -> float:
+    try:
+        load1 = float(os.getloadavg()[0])
+        cpus = max(1, os.cpu_count() or 1)
+        return round(max(0.0, min(100.0, (load1 / cpus) * 100.0)), 1)
+    except Exception:
+        return 0.0
+
+def _read_server_log_tail(max_lines: int = 200) -> list[str]:
+    try:
+        if not APP_LOG_FILE.exists():
+            return []
+        with APP_LOG_FILE.open("r", encoding="utf-8", errors="replace") as handle:
+            lines = handle.readlines()
+        return [line.rstrip("\n") for line in lines[-max(1, min(1000, int(max_lines))):]]
+    except Exception:
+        return []
+
+def _mark_server_running_state(running: bool) -> None:
+    payload = {
+        "running": bool(running),
+        "updated_at": _current_timestamp(),
+        "ts": int(time.time()),
+        "pid": os.getpid(),
+    }
+    try:
+        tmp = SERVER_STATE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(SERVER_STATE_FILE)
+    except Exception:
+        pass
+
+def _record_server_startup_event() -> None:
+    global _server_start_recorded
+    prior = {}
+    try:
+        if SERVER_STATE_FILE.exists():
+            prior = json.loads(SERVER_STATE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        prior = {}
+    if bool(prior.get("running")):
+        _append_server_event(
+            "server_crash",
+            "Previous server instance appears to have terminated unexpectedly.",
+            "critical",
+            {"previous_pid": prior.get("pid"), "last_seen": prior.get("updated_at")},
+        )
+        _append_server_log("Detected prior unclean shutdown (possible crash).", "ERROR")
+    _append_server_event("server_start", "Server started.", "info", {"pid": os.getpid()})
+    _append_server_log("Server started.", "INFO")
+    _mark_server_running_state(True)
+    _server_start_recorded = True
+
+def _record_server_stop_event() -> None:
+    if not _server_start_recorded:
+        return
+    _append_server_event("server_stop", "Server stopped.", "warning", {"pid": os.getpid()})
+    _append_server_log("Server stopped.", "WARNING")
+    _mark_server_running_state(False)
+
+atexit.register(_record_server_stop_event)
 
 def _sanitize_storage_component(value: str, fallback: str = "item", max_length: int = 100) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9 _-]", "", (value or "").strip()).strip(" ")
@@ -700,7 +900,7 @@ def _effective_ai_enabled(req, payload: Optional[dict] = None) -> tuple[bool, Op
 @app.post("/api/admin/login")
 def admin_login():
     # Rate limiting: max 10 admin login attempts per 15 minutes per IP
-    ip = request.remote_addr or "unknown"
+    ip = _get_request_ip(request)
     now = time.time()
     _login_rate_limit[ip] = [t for t in _login_rate_limit[ip] if now - t < 900]
     if len(_login_rate_limit[ip]) >= 10:
@@ -716,6 +916,7 @@ def admin_login():
     if email_ok and pw_ok:
         token = uuid.uuid4().hex
         _admin_tokens.add(token)
+        _record_sign_in_event(ADMIN_ACCOUNT_EMAIL, "admin", ip, "admin_login")
         return jsonify(ok=True, token=token)
     return jsonify(ok=False, error="Invalid email or password"), 401
 
@@ -749,7 +950,7 @@ def auth_register():
         return jsonify(ok=False, error="Registration is currently disabled"), 403
     
     # Rate limiting: max 5 registrations per hour per IP
-    ip = request.remote_addr or "unknown"
+    ip = _get_request_ip(request)
     now = time.time()
     timestamps = _reg_rate_limit[ip]
     # Clean old entries for this IP
@@ -795,6 +996,7 @@ def auth_register():
         "class_id": None,
         "created_at": timestamp,
         "last_sign_in": timestamp,
+        "last_ip": ip if ip != "unknown" else "",
         "enabled": True
     }
     
@@ -812,13 +1014,14 @@ def auth_register():
     token = uuid.uuid4().hex
     user_info = {"email": email, "name": name, "role": "student", "class_id": None}
     _student_tokens[token] = user_info
+    _record_sign_in_event(email, "student", ip, "registration")
     
     return jsonify(ok=True, token=token, user=user_info)
 
 @app.post("/api/auth/login")
 def auth_login():
     # Rate limiting: max 20 login attempts per 15 minutes per IP
-    ip = request.remote_addr or "unknown"
+    ip = _get_request_ip(request)
     now = time.time()
     _login_rate_limit[ip] = [t for t in _login_rate_limit[ip] if now - t < 900]
     if len(_login_rate_limit[ip]) >= 20:
@@ -861,9 +1064,11 @@ def auth_login():
     if role == "teacher":
         user_info = {"email": email, "name": user.get("name", ""), "role": "teacher"}
         _teacher_tokens[token] = user_info
+        _record_sign_in_event(email, "teacher", ip, "login")
         return jsonify(ok=True, token=token, user=user_info, role="teacher")
     user_info = {"email": email, "name": user.get("name", ""), "role": "student", "class_id": user.get("class_id")}
     _student_tokens[token] = user_info
+    _record_sign_in_event(email, "student", ip, "login")
     return jsonify(ok=True, token=token, user=user_info, role="student")
 
 @app.post("/api/auth/logout")
@@ -1444,8 +1649,13 @@ def admin_clear_user_files():
         try:
             shutil.rmtree(user_dir)
             user_dir.mkdir(parents=True, exist_ok=True)
+            _seed_example_files(email)
         except Exception as exc:
             return jsonify(ok=False, error=f"Failed to clear files: {type(exc).__name__}"), 500
+    else:
+        user_dir.mkdir(parents=True, exist_ok=True)
+        _seed_example_files(email)
+    _append_server_log(f"Admin cleared files for {email}; Examples restored.", "WARNING")
     return jsonify(ok=True)
 
 
@@ -1582,11 +1792,16 @@ def admin_bulk_clear_files():
             try:
                 shutil.rmtree(user_dir)
                 user_dir.mkdir(parents=True, exist_ok=True)
+                _seed_example_files(email)
                 cleared.append(email)
             except Exception:
                 errors.append(email)
         else:
+            user_dir.mkdir(parents=True, exist_ok=True)
+            _seed_example_files(email)
             cleared.append(email)
+    if cleared:
+        _append_server_log(f"Admin bulk-cleared files for {len(cleared)} account(s); Examples restored.", "WARNING")
     return jsonify(ok=True, cleared=cleared, errors=errors)
 
 
@@ -4084,6 +4299,50 @@ def override_quiz_score():
     return jsonify(ok=False, error="Failed to save score"), 500
 
 # -------------------------
+# Admin server health
+# -------------------------
+@app.get("/api/admin/server-health")
+def admin_server_health():
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    now = time.time()
+    uptime_seconds = max(0, int(now - SERVER_START_EPOCH))
+    disk = shutil.disk_usage(BASE_DIR)
+    mem_total, mem_used = _parse_meminfo_bytes()
+    mem_percent = round((mem_used / mem_total) * 100, 1) if mem_total > 0 else 0.0
+    disk_percent = round((disk.used / disk.total) * 100, 1) if disk.total > 0 else 0.0
+    with _server_health_lock:
+        event_feed = _read_json_list_file(SERVER_EVENTS_FILE)[-100:]
+    event_feed = sorted(event_feed, key=lambda e: int(e.get("ts", 0)), reverse=True)
+    return jsonify(
+        ok=True,
+        data={
+            "uptime_seconds": uptime_seconds,
+            "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(SERVER_START_EPOCH)),
+            "cpu_percent": _estimate_cpu_percent(),
+            "cpu_cores": int(os.cpu_count() or 1),
+            "memory": {
+                "total_bytes": mem_total,
+                "used_bytes": mem_used,
+                "percent": mem_percent,
+            },
+            "storage": {
+                "total_bytes": disk.total,
+                "used_bytes": disk.used,
+                "free_bytes": disk.free,
+                "percent": disk_percent,
+            },
+            "sign_ins": {
+                "last_24_hours": _count_sign_ins(24 * 3600),
+                "last_7_days": _count_sign_ins(7 * 24 * 3600),
+                "last_30_days": _count_sign_ins(30 * 24 * 3600),
+            },
+            "alerts": event_feed,
+            "server_log_tail": _read_server_log_tail(250),
+        },
+    )
+
+# -------------------------
 # Health
 # -------------------------
 @app.get("/health")
@@ -4096,9 +4355,11 @@ def health():
 if __name__ == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", str(SERVER_PORT)))
+    _record_server_startup_event()
     print(f"Async mode: {socketio.async_mode}", flush=True)
     print(f"EagleIDE server starting on http://{host}:{port}", flush=True)
     print("Press Ctrl+C to stop.", flush=True)
+    _append_server_log(f"Server listening on http://{host}:{port} (async={socketio.async_mode})", "INFO")
     _cleanup_all_user_files()
     try:
         socketio.run(app, host=host, port=port, debug=False)
