@@ -113,6 +113,14 @@
     header .brand > div:first-child{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:280px; }
     header .actions{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
     .control-group{ display:flex; align-items:center; gap:6px; padding:4px 6px; border:1px solid var(--theme-border-mid); border-radius:10px; background:rgba(0,0,0,.08); }
+    .topbar select{
+      appearance:none;
+      -webkit-appearance:none;
+      -moz-appearance:none;
+      background:var(--theme-input-bg) !important;
+      color:var(--theme-text) !important;
+      border:1px solid var(--theme-border-mid) !important;
+    }
 
     .btn{ border:0; border-radius:10px; padding:8px 14px; font-weight:700; cursor:pointer; background:var(--theme-btn); color:var(--theme-text); box-shadow:0 2px 8px rgba(0,0,0,.2); transition:transform .05s, box-shadow .2s, background .2s; font-size:14px; line-height:1; display:inline-flex; align-items:center; gap:6px; }
     .btn:hover{ transform:translateY(-1px); background:var(--theme-btn-hover) }
@@ -552,8 +560,8 @@
           </header>
 
           <div class="notes-toolbar">
-            <button class="btn secondary" id="notesEditBtn">Edit Notes</button>
-            <button class="btn run" id="notesSaveBtn">Save Notes</button>
+            <button class="btn secondary" id="notesEditBtn">Edit Home</button>
+            <button class="btn run" id="notesSaveBtn">Save Home</button>
           </div>
 
           <div class="ai-toolbar">
@@ -567,7 +575,7 @@
           </div>
 
           <div class="tabs">
-            <button class="tab-btn active" data-tab="notesTab" id="notesTabBtn">Notes</button>
+            <button class="tab-btn active" data-tab="notesTab" id="notesTabBtn">Home</button>
             <button class="tab-btn" data-tab="teacherTab" id="teacherTabBtn">Teacher</button>
             <button class="tab-btn" data-tab="lessonTab" id="lessonTabBtn">Wiki</button>
             <button class="tab-btn" data-tab="assignmentTab" id="assignmentTabBtn">Assignment</button>
@@ -577,7 +585,7 @@
           </div>
 
           <div class="content">
-            <!-- Notes -->
+            <!-- Home -->
             <div class="tab-pane active" id="notesTab">
               <div id="classJoinNotice" class="account-notice" style="display:none; margin:12px;">Join a class to see more resources!</div>
               <div id="notesView" contenteditable="false"></div>
@@ -593,7 +601,7 @@
               <div id="teacherEditorWrapper" style="height:calc(100% - 50px);"></div>
             </div>
 
-            <!-- Lesson -->
+            <!-- Wiki -->
             <div class="tab-pane" id="lessonTab">
               <div id="lessonLocal" contenteditable="false" style="display:none;"></div>
               <iframe id="lessonFrame" sandbox="allow-scripts allow-same-origin allow-popups" referrerpolicy="no-referrer"></iframe>
@@ -1645,7 +1653,6 @@ print("Hello " + name)
       return { 'Content-Type': 'application/json', ...fileAuthHeaders() };
     }
     function assignmentManagerHeaders() {
-      if (ADMIN_TOKEN) return { 'X-Admin-Token': ADMIN_TOKEN };
       if (TEACHER_TOKEN) return { 'X-Teacher-Token': TEACHER_TOKEN };
       return {};
     }
@@ -1709,8 +1716,9 @@ print("Hello " + name)
       const aiMasterEnabled = !!currentConfig?.ai_explainer_enabled;
       const effectiveAiEnabled = aiMasterEnabled && (ADMIN_TOKEN || aiEnabledForClass);
       const showOnlyNotes = isGuest || isStudentNoClass;
+      const canSeeAssignments = !!TEACHER_TOKEN || (!!USER_TOKEN && !!classCtx);
       if (tTeacher) tTeacher.style.display = showOnlyNotes ? 'none' : '';
-      if (tAssignment) tAssignment.style.display = showOnlyNotes ? 'none' : '';
+      if (tAssignment) tAssignment.style.display = canSeeAssignments ? '' : 'none';
       if (tExplain) tExplain.style.display = (!showOnlyNotes && effectiveAiEnabled) ? '' : 'none';
       if (tChal) tChal.style.display = (!showOnlyNotes && effectiveAiEnabled) ? '' : 'none';
       if (tAssist) tAssist.style.display = (!showOnlyNotes && effectiveAiEnabled) ? '' : 'none';
@@ -2335,9 +2343,19 @@ print("Hello " + name)
       if (j?.ok) { currentConfig = j.data; applyConfig(currentConfig); }
     }
 
+    function renderHomeContent(htmlContent) {
+      const view = document.getElementById('notesView');
+      if (!view) return;
+      if (window.DOMPurify) {
+        view.innerHTML = DOMPurify.sanitize(htmlContent || '');
+      } else {
+        view.innerHTML = htmlContent || '';
+      }
+    }
+
     function applyConfig(cfg){
       if (!cfg) return;
-      document.getElementById('notesView').innerHTML = cfg.notes_html || '';
+      renderHomeContent(cfg.notes_html || '');
 
       // Apply page title and top bar color
       if (cfg.page_title) {
@@ -3182,7 +3200,10 @@ print("Hello " + name)
         <div style="border:1px solid var(--theme-border-mid); border-radius:8px; padding:10px; margin-bottom:10px;">
           <div style="display:flex; justify-content:space-between; gap:8px; align-items:center;">
             <div><strong>${escapeHtml(cls.name)}</strong> <span style="font-size:12px; color:#888;">Join code: ${escapeHtml(cls.join_code)}</span></div>
-            <button class="btn secondary select-class-btn" data-class="${escapeHtml(cls.id)}" style="font-size:11px; padding:3px 8px;">Use Class</button>
+            <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
+              <button class="btn secondary select-class-btn" data-class="${escapeHtml(cls.id)}" style="font-size:11px; padding:3px 8px;">Use Class</button>
+              <button class="btn stop delete-class-btn" data-class="${escapeHtml(cls.id)}" data-name="${escapeHtml(cls.name)}" style="font-size:11px; padding:3px 8px;">Delete Class</button>
+            </div>
           </div>
           <div style="margin-top:8px; display:flex; gap:10px; flex-wrap:wrap;">
             ${aiToggleTemplate(cls)}
@@ -3202,6 +3223,22 @@ print("Hello " + name)
         currentTeacherClassId = btn.dataset.class;
         renderClassSelector();
         loadAssignments();
+      }));
+      wrap.querySelectorAll('.delete-class-btn').forEach(btn => btn.addEventListener('click', async () => {
+        const classId = btn.dataset.class;
+        const className = btn.dataset.name || 'this class';
+        if (!confirm(`Delete class "${className}"? Students in this class will become unassigned.`)) return;
+        const res = await fetch('/api/teacher/classes/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Teacher-Token': TEACHER_TOKEN },
+          body: JSON.stringify({ classId })
+        });
+        const j = await res.json().catch(() => ({}));
+        if (!j?.ok) return alert(j?.error || 'Failed to delete class');
+        await loadTeacherClasses();
+        renderTeacherClassManagement();
+        renderClassSelector();
+        await loadAssignments();
       }));
       wrap.querySelectorAll('.save-class-settings-btn').forEach(btn => btn.addEventListener('click', async () => {
         const classId = btn.dataset.class;
@@ -3695,7 +3732,7 @@ print("Hello " + name)
 
     document.getElementById('refreshFilesBtn').addEventListener('click', loadFileTree);
 
-    // Notes controls (admin)
+    // Home controls (admin)
     document.getElementById('notesEditBtn').addEventListener('click', () => {
       const notesView = document.getElementById('notesView');
       const notesEdit = document.getElementById('notesEdit');
@@ -3716,7 +3753,7 @@ print("Hello " + name)
       // Save both Markdown source and rendered HTML
       await saveConfig({notes_markdown: markdown, notes_html: html}); 
       
-      notesView.innerHTML = html;
+      renderHomeContent(html);
       notesEdit.style.display = 'none';
       notesView.style.display = 'block';
     });
@@ -4046,6 +4083,8 @@ print("Hello " + name)
     let currentAdminAssignmentName = null;
     let activeSubmissionContext = null;
     let submissionSaveTimer = null;
+    let assignmentsLoadPromise = null;
+    let assignmentsReloadQueued = false;
 
     function escapeHtml(text) {
       const div = document.createElement('div');
@@ -4120,7 +4159,7 @@ print("Hello " + name)
     }
 
     function syncSubmissionScoringForOpenFile(filePath) {
-      if (!ADMIN_TOKEN || !isAdmin) return;
+      if (!isAdmin) return;
       const { assignment, submission } = findSubmissionByAdminPath(filePath);
       if (!assignment || !submission) {
         hideSubmissionScoringPanel();
@@ -4132,13 +4171,24 @@ print("Hello " + name)
     }
 
     async function loadAssignments() {
+      if (assignmentsLoadPromise) {
+        assignmentsReloadQueued = true;
+        return assignmentsLoadPromise;
+      }
+      assignmentsLoadPromise = (async () => {
       try {
-        const headers = ADMIN_TOKEN
-          ? { 'X-Admin-Token': ADMIN_TOKEN }
-          : (TEACHER_TOKEN ? { 'X-Teacher-Token': TEACHER_TOKEN } : (USER_TOKEN ? { 'X-User-Token': USER_TOKEN } : {}));
+        const headers = TEACHER_TOKEN
+          ? { 'X-Teacher-Token': TEACHER_TOKEN }
+          : (USER_TOKEN ? { 'X-User-Token': USER_TOKEN } : {});
         const resp = await fetch('/api/assignments', { headers });
         const data = await resp.json().catch(() => ({}));
-        if (!data.ok) return;
+        if (!data.ok) {
+          currentAssignments = [];
+          isAdmin = false;
+          renderAssignments();
+          hideSubmissionScoringPanel();
+          return;
+        }
         currentAssignments = data.assignments || [];
         isAdmin = data.canManage || data.isAdmin || false;
         if (isAdmin && currentAssignments.length) {
@@ -4162,7 +4212,15 @@ print("Hello " + name)
         }
       } catch (e) {
         console.error('Failed to load assignments:', e);
+      } finally {
+        assignmentsLoadPromise = null;
+        if (assignmentsReloadQueued) {
+          assignmentsReloadQueued = false;
+          loadAssignments();
+        }
       }
+      })();
+      return assignmentsLoadPromise;
     }
 
     function renderAssignments() {
@@ -4582,7 +4640,7 @@ print("Hello " + name)
     }
 
     async function deleteAssignment(name) {
-      if (!confirm(`Delete assignment "${name}"? This removes the admin submission folder too.`)) return;
+      if (!confirm(`Delete assignment "${name}"? This removes the stored submission folder too.`)) return;
       try {
         const resp = await fetch('/api/assignments/delete', {
           method: 'POST',
@@ -4616,7 +4674,7 @@ print("Hello " + name)
       modal.innerHTML = `
         <div class="modal-content" style="max-width:520px;">
           <h3>Submit: ${escapeHtml(assignmentName)}</h3>
-          <p style="color:#888; font-size:13px;">Submitting as <strong>${escapeHtml(currentUser.name || currentUser.email)}</strong>. Pick the file from your account to copy into the admin workspace.</p>
+          <p style="color:#888; font-size:13px;">Submitting as <strong>${escapeHtml(currentUser.name || currentUser.email)}</strong>. Pick the file from your account to copy into the assignment owner workspace.</p>
           <label for="assignmentFileSelect">File to submit</label>
           <select id="assignmentFileSelect" style="width:100%; padding:10px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border); border-radius:8px;">
             ${files.map(file => `<option value="${escapeHtml(file.path)}" ${file.path === selectedPath ? 'selected' : ''}>${escapeHtml(file.path)}</option>`).join('')}
