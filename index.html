@@ -1622,7 +1622,7 @@ print("Hello " + name)
           csvWrap.innerHTML = '';
         }
         if (cmWrap) cmWrap.style.display = '';
-        if (ta) ta.style.display = 'none';
+        if (ta) ta.style.display = cmWrap ? 'none' : '';
         syncEditorLanguage();
       }
     }
@@ -2774,9 +2774,9 @@ print("Hello " + name)
       feed.innerHTML = '';
       items.forEach(item => {
         const row = document.createElement('div');
-        row.className = 'server-health-alert' + (String(item?.level || '').toLowerCase() === 'critical' ? ' critical' : '');
+        row.className = `server-health-alert${String(item?.level || '').toLowerCase() === 'critical' ? ' critical' : ''}`;
         const details = item?.details && typeof item.details === 'object'
-          ? Object.entries(item.details).filter(([_, v]) => v !== null && v !== undefined && String(v) !== '')
+          ? Object.entries(item.details).filter(([key, value]) => key && value !== null && value !== undefined && String(value) !== '')
           : [];
         const detailsText = details.length ? ' • ' + details.map(([k, v]) => `${k}: ${v}`).join(' | ') : '';
         row.innerHTML = `
@@ -2796,9 +2796,11 @@ print("Hello " + name)
         return;
       }
       const d = j.data || {};
+      const formatResourceUsage = (percent, usedBytes, totalBytes) =>
+        `${Number(percent || 0).toFixed(1)}% (${_formatBytes(usedBytes || 0)} / ${_formatBytes(totalBytes || 0)})`;
       const cpu = Number(d.cpu_percent || 0).toFixed(1) + '%';
-      const memory = `${Number(d.memory?.percent || 0).toFixed(1)}% (${_formatBytes(d.memory?.used_bytes || 0)} / ${_formatBytes(d.memory?.total_bytes || 0)})`;
-      const storage = `${Number(d.storage?.percent || 0).toFixed(1)}% (${_formatBytes(d.storage?.used_bytes || 0)} / ${_formatBytes(d.storage?.total_bytes || 0)})`;
+      const memory = formatResourceUsage(d.memory?.percent, d.memory?.used_bytes, d.memory?.total_bytes);
+      const storage = formatResourceUsage(d.storage?.percent, d.storage?.used_bytes, d.storage?.total_bytes);
       document.getElementById('serverHealthUptime').textContent = formatDuration(d.uptime_seconds || 0);
       document.getElementById('serverHealthCpu').textContent = cpu;
       document.getElementById('serverHealthMemory').textContent = memory;

@@ -28,7 +28,7 @@ from flask import Flask, send_from_directory, send_file, request, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
 import requests
 import bcrypt
-from collections import defaultdict
+from collections import defaultdict, deque
 from cryptography.fernet import Fernet, InvalidToken
 
 # -------------------------
@@ -62,6 +62,11 @@ HTML_RUNTIME_DEFAULT_MAX_POPUPS = 2
 MAX_FILES_PER_FOLDER = 20
 MAX_FILES_PER_ACCOUNT = 100
 ALLOWED_EXTENSIONS = {".py", ".js", ".html", ".css", ".txt", ".csv"}
+SIGN_IN_RETENTION_DAYS = 90
+MAX_SERVER_EVENTS = 500
+MAX_SIGN_IN_EVENTS = 10_000
+MAX_SERVER_HEALTH_ALERTS = 100
+MAX_LOG_TAIL_LINES = 1000
 EXAMPLES_DIR_NAME = "Examples"
 EXAMPLE_FILES: dict[str, str] = {
     "hello.py": 'print("Hello from EagleIDE!")\nname = input("What is your name? ")\nprint(f"Welcome, {name}!")\n',
@@ -487,7 +492,7 @@ def _append_server_event(event_type: str, message: str, level: str = "info", det
     with _server_health_lock:
         events = _read_json_list_file(SERVER_EVENTS_FILE)
         events.append(entry)
-        events = events[-500:]
+        events = events[-MAX_SERVER_EVENTS:]
         try:
             _write_json_list_file(SERVER_EVENTS_FILE, events)
         except Exception:
@@ -505,14 +510,14 @@ def _record_sign_in_event(email: str, role: str, ip: str, source: str) -> None:
     with _server_health_lock:
         events = _read_json_list_file(SIGN_IN_EVENTS_FILE)
         events.append(event)
-        cutoff = int(time.time()) - (90 * 24 * 3600)
-        events = [row for row in events if int(row.get("ts", 0)) >= cutoff][-10000:]
+        cutoff = int(time.time()) - (SIGN_IN_RETENTION_DAYS * 24 * 3600)
+        events = [row for row in events if int(row.get("ts", 0)) >= cutoff][-MAX_SIGN_IN_EVENTS:]
         try:
             _write_json_list_file(SIGN_IN_EVENTS_FILE, events)
         except Exception:
             pass
     _append_server_log(
-        f"Sign-in: role={event['role']} email={event['email'] or 'admin'} ip={event['ip'] or 'unknown'} source={event['source']}",
+        f"Sign-in: role={event['role']} email={event['email'] or 'admin'} ip={_redact_ip_for_log(event['ip'])} source={event['source']}",
         "INFO",
     )
 
@@ -533,6 +538,22 @@ def _parse_ip(raw: str) -> Optional[str]:
     except Exception:
         return None
 
+def _redact_ip_for_log(raw: str) -> str:
+    parsed = _parse_ip(raw)
+    if not parsed:
+        return "unknown"
+    try:
+        addr = ipaddress.ip_address(parsed)
+        if isinstance(addr, ipaddress.IPv4Address):
+            parts = parsed.split(".")
+            return ".".join(parts[:3] + ["x"])
+        hextets = addr.exploded.split(":")
+        if len(hextets) >= 2:
+            return ":".join(hextets[:2] + ["x", "x", "x", "x", "x", "x"])
+        return "redacted"
+    except Exception:
+        return "unknown"
+
 def _is_public_ip(raw: str) -> bool:
     parsed = _parse_ip(raw)
     if not parsed:
@@ -544,6 +565,10 @@ def _is_public_ip(raw: str) -> bool:
         return False
 
 def _get_request_ip(req) -> str:
+    remote = _parse_ip(req.remote_addr or "")
+    # Only trust forwarded/proxy headers when the direct socket appears to be local/private proxy infrastructure.
+    if not remote or _is_public_ip(remote):
+        return remote or "unknown"
     cf_ip = _parse_ip(req.headers.get("CF-Connecting-IP", ""))
     if cf_ip:
         return cf_ip
@@ -558,7 +583,6 @@ def _get_request_ip(req) -> str:
     real_ip = _parse_ip(req.headers.get("X-Real-IP", ""))
     if real_ip:
         return real_ip
-    remote = _parse_ip(req.remote_addr or "")
     if remote:
         return remote
     return "unknown"
@@ -592,9 +616,10 @@ def _read_server_log_tail(max_lines: int = 200) -> list[str]:
     try:
         if not APP_LOG_FILE.exists():
             return []
+        limit = max(1, min(MAX_LOG_TAIL_LINES, int(max_lines)))
         with APP_LOG_FILE.open("r", encoding="utf-8", errors="replace") as handle:
-            lines = handle.readlines()
-        return [line.rstrip("\n") for line in lines[-max(1, min(1000, int(max_lines))):]]
+            lines = deque(handle, maxlen=limit)
+        return [line.rstrip("\n") for line in lines]
     except Exception:
         return []
 
@@ -612,6 +637,15 @@ def _mark_server_running_state(running: bool) -> None:
     except Exception:
         pass
 
+def _pid_is_running(pid: int) -> bool:
+    try:
+        if int(pid) <= 0:
+            return False
+        os.kill(int(pid), 0)
+        return True
+    except Exception:
+        return False
+
 def _record_server_startup_event() -> None:
     global _server_start_recorded
     prior = {}
@@ -620,12 +654,14 @@ def _record_server_startup_event() -> None:
             prior = json.loads(SERVER_STATE_FILE.read_text(encoding="utf-8"))
     except Exception:
         prior = {}
-    if bool(prior.get("running")):
+    prior_running = bool(prior.get("running"))
+    prior_pid = int(prior.get("pid") or 0)
+    if prior_running and not _pid_is_running(prior_pid):
         _append_server_event(
             "server_crash",
             "Previous server instance appears to have terminated unexpectedly.",
             "critical",
-            {"previous_pid": prior.get("pid"), "last_seen": prior.get("updated_at")},
+            {"previous_pid": prior_pid, "last_seen": prior.get("updated_at")},
         )
         _append_server_log("Detected prior unclean shutdown (possible crash).", "ERROR")
     _append_server_event("server_start", "Server started.", "info", {"pid": os.getpid()})
@@ -1639,21 +1675,17 @@ def admin_clear_user_files():
         return jsonify(ok=False, error="Email required"), 400
     if not _find_user(email):
         return jsonify(ok=False, error="User not found"), 404
-    user_dir = _get_user_dir(email).resolve()
-    # Ensure path is strictly within USER_FILES_DIR to prevent any traversal
-    try:
-        user_dir.relative_to(USER_FILES_DIR.resolve())
-    except ValueError:
+    safe_component = _sanitize_email_for_path(email)
+    user_dir = _validate_user_path(USER_FILES_DIR, safe_component)
+    if not user_dir:
         return jsonify(ok=False, error="Invalid user path"), 400
     if user_dir.exists():
         try:
             shutil.rmtree(user_dir)
-            user_dir.mkdir(parents=True, exist_ok=True)
             _seed_example_files(email)
         except Exception as exc:
             return jsonify(ok=False, error=f"Failed to clear files: {type(exc).__name__}"), 500
     else:
-        user_dir.mkdir(parents=True, exist_ok=True)
         _seed_example_files(email)
     _append_server_log(f"Admin cleared files for {email}; Examples restored.", "WARNING")
     return jsonify(ok=True)
@@ -1781,23 +1813,19 @@ def admin_bulk_clear_files():
         email = (str(raw) or "").strip().lower()
         if not email or not _find_user(email):
             continue
-        user_dir = _get_user_dir(email).resolve()
-        # Ensure path is strictly within USER_FILES_DIR to prevent any traversal
-        try:
-            user_dir.relative_to(USER_FILES_DIR.resolve())
-        except ValueError:
+        safe_component = _sanitize_email_for_path(email)
+        user_dir = _validate_user_path(USER_FILES_DIR, safe_component)
+        if not user_dir:
             errors.append(email)
             continue
         if user_dir.exists():
             try:
                 shutil.rmtree(user_dir)
-                user_dir.mkdir(parents=True, exist_ok=True)
                 _seed_example_files(email)
                 cleared.append(email)
             except Exception:
                 errors.append(email)
         else:
-            user_dir.mkdir(parents=True, exist_ok=True)
             _seed_example_files(email)
             cleared.append(email)
     if cleared:
@@ -4312,8 +4340,7 @@ def admin_server_health():
     mem_percent = round((mem_used / mem_total) * 100, 1) if mem_total > 0 else 0.0
     disk_percent = round((disk.used / disk.total) * 100, 1) if disk.total > 0 else 0.0
     with _server_health_lock:
-        event_feed = _read_json_list_file(SERVER_EVENTS_FILE)[-100:]
-    event_feed = sorted(event_feed, key=lambda e: int(e.get("ts", 0)), reverse=True)
+        event_feed = list(reversed(_read_json_list_file(SERVER_EVENTS_FILE)[-MAX_SERVER_HEALTH_ALERTS:]))
     return jsonify(
         ok=True,
         data={
