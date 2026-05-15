@@ -31,6 +31,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 
   <style>
     :root{
@@ -301,6 +302,28 @@
     .scores-table th, .scores-table td{ border-bottom:1px solid var(--theme-border-mid); padding:8px 6px; text-align:left; vertical-align:top; }
     .scores-table th{ color:var(--columbia-blue); }
     .account-notice{ background:var(--theme-input-bg); border:1px solid var(--theme-border-mid); border-radius:10px; padding:14px; margin-bottom:18px; color:var(--theme-text-dim); }
+    .skill-tags{ display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+    .skill-chip{ font-size:11px; padding:3px 8px; border-radius:999px; border:1px solid var(--theme-border-mid); background:var(--theme-output-bg); color:var(--columbia-blue); }
+    .quiz-lock-note{ margin-top:10px; padding:10px; border:1px solid #7b5e00; background:#2a2107; color:#f6d27c; border-radius:8px; font-size:12px; }
+    .question-split{ display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px; align-items:stretch; }
+    .question-code-panel{ background:#0b0f14; border:1px solid var(--theme-border-mid); border-radius:10px; padding:10px; min-height:220px; max-height:420px; overflow:auto; }
+    .code-read-block{ font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; color:#d7e1ee; }
+    .code-read-line{ display:grid; grid-template-columns:42px minmax(0,1fr); gap:10px; white-space:pre; }
+    .code-read-line-num{ color:#6f8196; text-align:right; user-select:none; border-right:1px solid #233245; padding-right:8px; }
+    .code-read-line-code{ overflow-x:auto; }
+    .no-exit-text{ color:#ffb74d; font-size:12px; margin-top:8px; font-weight:600; }
+    .mastery-grid{ overflow:auto; border:1px solid var(--theme-border-mid); border-radius:8px; }
+    .mastery-grid table{ width:100%; border-collapse:collapse; font-size:12px; }
+    .mastery-grid th,.mastery-grid td{ border-bottom:1px solid var(--theme-border-mid); border-right:1px solid var(--theme-border-mid); padding:8px; text-align:left; white-space:nowrap; }
+    .mastery-grid th:last-child,.mastery-grid td:last-child{ border-right:none; }
+    .mastery-cell-red{ background:#4b1f1f; color:#ffb3b3; font-weight:700; }
+    .mastery-cell-bronze{ background:#5a3d21; color:#ffd7a3; font-weight:700; }
+    .mastery-cell-silver{ background:#37424d; color:#d8e5f3; font-weight:700; }
+    .mastery-cell-gold{ background:#5e531c; color:#ffe78a; font-weight:700; }
+    .mastery-cell-untested{ background:#222; color:#aaa; }
+    .mastery-tabs{ display:flex; gap:8px; margin:10px 0; flex-wrap:wrap; }
+    .mastery-pane{ display:none; }
+    .mastery-pane.active{ display:block; }
     .file-action-btn{ border:0; border-radius:8px; padding:8px 10px; font-weight:700; cursor:pointer; background:var(--theme-btn); color:var(--theme-text); box-shadow:0 1px 4px rgba(0,0,0,.3); transition:background .15s; font-size:12px; display:inline-flex; align-items:center; gap:5px; }
     .file-action-btn:hover{ background:var(--theme-btn-hover); }
 
@@ -1629,9 +1652,12 @@ print("Hello " + name)
 
     function buildAiContext(extra = {}) {
       const info = getActiveLanguageInfo();
+      const classCtx = getCurrentClassContext();
       return {
         language: info.mode,
         fileName: currentOpenFile?.name || '',
+        classId: classCtx?.id || '',
+        aiRigor: classCtx?.settings?.ai_grading_rigor || 5,
         ...extra
       };
     }
@@ -3662,6 +3688,16 @@ print("Hello " + name)
             <label style="font-size:12px;"><input type="checkbox" class="cls-wiki" data-class="${escapeHtml(cls.id)}" ${cls.settings?.wiki_enabled ? 'checked' : ''}> Wiki enabled</label>
             <button class="btn secondary save-class-settings-btn" data-class="${escapeHtml(cls.id)}" style="font-size:11px; padding:3px 8px;">Save Settings</button>
           </div>
+          <div style="margin-top:8px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px;">
+            <div>
+              <label style="font-size:12px; margin:0 0 4px;">AI Grading Rigor: <span class="cls-rigor-label" data-class="${escapeHtml(cls.id)}">${rigorLevelLabel(cls.settings?.ai_grading_rigor || 5)}</span> (${cls.settings?.ai_grading_rigor || 5}/10)</label>
+              <input type="range" min="1" max="10" value="${cls.settings?.ai_grading_rigor || 5}" class="cls-rigor" data-class="${escapeHtml(cls.id)}" style="width:100%;">
+            </div>
+            <div>
+              <label style="font-size:12px; margin:0 0 4px;">Skill Tags (comma separated, order controls roster display)</label>
+              <input type="text" class="cls-skill-tags" data-class="${escapeHtml(cls.id)}" value="${escapeHtml((cls.settings?.skill_tags || []).join(', '))}" placeholder="loops, python, arrays">
+            </div>
+          </div>
           <input type="text" class="cls-wiki-url" data-class="${escapeHtml(cls.id)}" value="${escapeHtml(cls.settings?.wiki_url || '')}" placeholder="Class wiki URL (optional)" style="width:100%; margin-top:8px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;">
           <textarea class="cls-wiki-html" data-class="${escapeHtml(cls.id)}" placeholder="Class wiki HTML" style="width:100%; margin-top:8px; min-height:80px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; padding:8px;">${escapeHtml(cls.settings?.wiki_html || '')}</textarea>
           <div style="margin-top:8px; font-size:12px; color:#888;">Students: ${cls.students?.length || 0}</div>
@@ -3670,11 +3706,26 @@ print("Hello " + name)
           </div>
         </div>
       `).join('');
+      wrap.innerHTML += `
+        <div style="border:1px solid var(--theme-border-mid); border-radius:8px; padding:12px; margin-top:12px;">
+          <h4 style="margin:0 0 8px; color:var(--columbia-blue);">Class Reports</h4>
+          <div style="font-size:12px; color:#888; margin-bottom:8px;">Current class: ${escapeHtml((teacherClasses.find(c => c.id === currentTeacherClassId)?.name) || 'Select a class')}</div>
+          <div class="mastery-tabs">
+            <button class="btn secondary mastery-tab-btn active" data-pane="class-roster-pane">Class Roster</button>
+            <button class="btn secondary mastery-tab-btn" data-pane="skill-mastery-pane">Student Skill Mastery</button>
+            <button class="btn secondary mastery-tab-btn" data-pane="mastery-analytics-pane">Mastery Analytics</button>
+          </div>
+          <div id="class-roster-pane" class="mastery-pane active"></div>
+          <div id="skill-mastery-pane" class="mastery-pane"></div>
+          <div id="mastery-analytics-pane" class="mastery-pane"></div>
+        </div>
+      `;
 
       wrap.querySelectorAll('.select-class-btn').forEach(btn => btn.addEventListener('click', () => {
         currentTeacherClassId = btn.dataset.class;
         renderClassSelector();
         loadAssignments();
+        renderTeacherClassManagement();
       }));
       wrap.querySelectorAll('.delete-class-btn').forEach(btn => btn.addEventListener('click', async () => {
         const classId = btn.dataset.class;
@@ -3698,7 +3749,10 @@ print("Hello " + name)
         const wiki = wrap.querySelector(`.cls-wiki[data-class="${CSS.escape(classId)}"]`)?.checked;
         const wikiUrl = wrap.querySelector(`.cls-wiki-url[data-class="${CSS.escape(classId)}"]`)?.value || '';
         const wikiHtml = wrap.querySelector(`.cls-wiki-html[data-class="${CSS.escape(classId)}"]`)?.value || '';
-        const settingsPayload = { wiki_enabled: !!wiki, wiki_url: wikiUrl.trim(), wiki_html: wikiHtml };
+        const rigor = parseInt(wrap.querySelector(`.cls-rigor[data-class="${CSS.escape(classId)}"]`)?.value || '5', 10) || 5;
+        const tagsRaw = wrap.querySelector(`.cls-skill-tags[data-class="${CSS.escape(classId)}"]`)?.value || '';
+        const tags = [...new Set(tagsRaw.split(',').map(tag => tag.trim()).filter(Boolean))];
+        const settingsPayload = { wiki_enabled: !!wiki, wiki_url: wikiUrl.trim(), wiki_html: wikiHtml, ai_grading_rigor: rigor, skill_tags: tags };
         if (canShowAiToggle) settingsPayload.ai_enabled = !!ai;
         const res = await fetch('/api/teacher/classes/settings', {
           method: 'POST',
@@ -3710,6 +3764,11 @@ print("Hello " + name)
         await loadTeacherClasses();
         renderTeacherClassManagement();
         renderClassSelector();
+      }));
+      wrap.querySelectorAll('.cls-rigor').forEach(slider => slider.addEventListener('input', () => {
+        const classId = slider.dataset.class;
+        const label = wrap.querySelector(`.cls-rigor-label[data-class="${CSS.escape(classId)}"]`);
+        if (label) label.textContent = rigorLevelLabel(slider.value);
       }));
       wrap.querySelectorAll('.cls-remove-btn').forEach(btn => btn.addEventListener('click', async () => {
         const res = await fetch('/api/teacher/classes/remove-student', {
@@ -3743,6 +3802,175 @@ print("Hello " + name)
         await loadTeacherClasses();
         renderTeacherClassManagement();
       }));
+      wrap.querySelectorAll('.mastery-tab-btn').forEach(btn => btn.addEventListener('click', async () => {
+        wrap.querySelectorAll('.mastery-tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+        wrap.querySelectorAll('.mastery-pane').forEach(p => p.classList.remove('active'));
+        const pane = wrap.querySelector(`#${btn.dataset.pane}`);
+        if (pane) pane.classList.add('active');
+      }));
+      renderClassReports().catch(() => {});
+    }
+
+    async function renderClassReports() {
+      const rosterPane = document.getElementById('class-roster-pane');
+      const skillPane = document.getElementById('skill-mastery-pane');
+      const analyticsPane = document.getElementById('mastery-analytics-pane');
+      if (!rosterPane || !skillPane || !analyticsPane) return;
+      if (!currentTeacherClassId) {
+        rosterPane.innerHTML = '<div style="color:#888;">Select a class to view reports.</div>';
+        skillPane.innerHTML = '';
+        analyticsPane.innerHTML = '';
+        return;
+      }
+      rosterPane.innerHTML = '<div style="color:#888;">Loading class report…</div>';
+      const res = await fetch(`/api/teacher/classes/${encodeURIComponent(currentTeacherClassId)}/mastery`, {
+        headers: { 'X-Teacher-Token': TEACHER_TOKEN }
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!data.ok) {
+        rosterPane.innerHTML = `<div style="color:#ef5350;">${escapeHtml(data.error || 'Failed to load class report.')}</div>`;
+        skillPane.innerHTML = '';
+        analyticsPane.innerHTML = '';
+        return;
+      }
+      currentMasteryData = data.report;
+      const assignments = currentMasteryData.assignments || [];
+      const students = currentMasteryData.students || [];
+      const tags = currentMasteryData.skillTags || [];
+      rosterPane.innerHTML = `
+        <div class="mastery-grid">
+          <table>
+            <thead>
+              <tr><th>Student</th>${assignments.map(a => `<th>${escapeHtml(a.name)}</th>`).join('')}</tr>
+            </thead>
+            <tbody>
+              ${students.map(s => `
+                <tr>
+                  <td>${escapeHtml(s.name || s.email)}</td>
+                  ${assignments.map(a => {
+                    const pct = s.assignmentScores?.[a.name]?.percent;
+                    return `<td class="${masteryBandClass(pct)}">${pct === null || pct === undefined ? 'Untested' : `${Math.round(pct)}%`}</td>`;
+                  }).join('')}
+                </tr>
+              `).join('') || '<tr><td colspan="99" style="color:#888;">No students enrolled.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      `;
+      skillPane.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px; flex-wrap:wrap;">
+          <div style="color:#888; font-size:12px;">Color bands: Red &lt;70, Bronze 70-79, Silver 80-89, Gold 90-100</div>
+          <button class="btn secondary" id="masteryExportCsvBtn">Export CSV</button>
+        </div>
+        <div class="mastery-grid">
+          <table>
+            <thead><tr><th>Student</th>${tags.map(t => `<th>${escapeHtml(t)}</th>`).join('')}</tr></thead>
+            <tbody>
+              ${students.map(s => `
+                <tr>
+                  <td>${escapeHtml(s.name || s.email)}</td>
+                  ${tags.map(t => {
+                    const score = s.skillScores?.[t];
+                    return `<td class="${masteryBandClass(score)}">${score === null || score === undefined ? 'Untested' : `${Math.round(score)}%`}</td>`;
+                  }).join('')}
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+      skillPane.querySelector('#masteryExportCsvBtn')?.addEventListener('click', exportMasteryCsv);
+      analyticsPane.innerHTML = `
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
+          <label style="margin:0;">Skill</label>
+          <select id="masteryAnalyticsTagSelect" style="min-width:220px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;">
+            ${tags.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('')}
+          </select>
+          <button class="btn secondary" id="masteryAiFeedbackBtn">AI Feedback</button>
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px;">
+          <div style="border:1px solid var(--theme-border-mid); border-radius:8px; padding:10px;">
+            <div style="font-weight:700; margin-bottom:8px; color:var(--columbia-blue);">Selected Skill Distribution</div>
+            <canvas id="masteryTagChart" height="220"></canvas>
+          </div>
+          <div style="border:1px solid var(--theme-border-mid); border-radius:8px; padding:10px;">
+            <div style="font-weight:700; margin-bottom:8px; color:var(--columbia-blue);">Overall Mastery Distribution</div>
+            <canvas id="masterySummaryChart" height="220"></canvas>
+          </div>
+        </div>
+        <div id="masteryAiFeedbackOutput" style="margin-top:10px; white-space:pre-wrap; color:#ddd;"></div>
+      `;
+      analyticsPane.querySelector('#masteryAnalyticsTagSelect')?.addEventListener('change', () => renderMasteryCharts());
+      analyticsPane.querySelector('#masteryAiFeedbackBtn')?.addEventListener('click', requestMasteryFeedback);
+      renderMasteryCharts();
+    }
+
+    function renderMasteryCharts() {
+      const tagSelect = document.getElementById('masteryAnalyticsTagSelect');
+      const selectedTag = tagSelect?.value;
+      const tagData = currentMasteryData?.analytics?.tags?.[selectedTag] || {};
+      const summary = currentMasteryData?.analytics?.summary || {};
+      const createPie = (canvasId, payload, includeUntested = true, existingChartRef = null) => {
+        const ctx = document.getElementById(canvasId)?.getContext('2d');
+        if (!ctx || !window.Chart) return existingChartRef;
+        if (existingChartRef) existingChartRef.destroy();
+        const labels = includeUntested ? ['Red', 'Bronze', 'Silver', 'Gold', 'Untested'] : ['Red', 'Bronze', 'Silver', 'Gold'];
+        const values = includeUntested
+          ? [payload.red || 0, payload.bronze || 0, payload.silver || 0, payload.gold || 0, payload.untested || 0]
+          : [payload.red || 0, payload.bronze || 0, payload.silver || 0, payload.gold || 0];
+        const colors = includeUntested ? ['#d32f2f', '#cd7f32', '#c0c0c0', '#ffd700', '#555'] : ['#d32f2f', '#cd7f32', '#c0c0c0', '#ffd700'];
+        return new Chart(ctx, { type: 'pie', data: { labels, datasets: [{ data: values, backgroundColor: colors }] }, options: { plugins: { legend: { position: 'bottom' } } } });
+      };
+      masteryTagChart = createPie('masteryTagChart', tagData, true, masteryTagChart);
+      masterySummaryChart = createPie('masterySummaryChart', summary, false, masterySummaryChart);
+    }
+
+    function exportMasteryCsv() {
+      if (!currentMasteryData) return;
+      const tags = currentMasteryData.skillTags || [];
+      const rows = [['Student', ...tags]];
+      (currentMasteryData.students || []).forEach(student => {
+        rows.push([
+          student.name || student.email || '',
+          ...tags.map(tag => {
+            const score = student.skillScores?.[tag];
+            return score === null || score === undefined ? 'Untested' : `${Math.round(score)}%`;
+          })
+        ]);
+      });
+      const csv = rows.map(row => row.map(cell => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const safeName = String(currentMasteryData.class?.name || 'class').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '');
+      a.download = `${safeName || 'class'}_skill_mastery.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 500);
+    }
+
+    async function requestMasteryFeedback() {
+      const out = document.getElementById('masteryAiFeedbackOutput');
+      const tag = document.getElementById('masteryAnalyticsTagSelect')?.value || '';
+      if (!out) return;
+      out.textContent = 'Generating AI feedback…';
+      try {
+        const res = await fetch(`/api/teacher/classes/${encodeURIComponent(currentTeacherClassId)}/mastery-feedback`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Teacher-Token': TEACHER_TOKEN },
+          body: JSON.stringify({ tag, ...buildAiContext() })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!data.ok) {
+          out.textContent = data.error || 'Failed to generate AI feedback.';
+          return;
+        }
+        out.textContent = data.feedback || '(No feedback returned.)';
+      } catch {
+        out.textContent = 'Network error while generating feedback.';
+      }
     }
 
     // ---- File Browser ----
@@ -4537,11 +4765,61 @@ print("Hello " + name)
     let submissionSaveTimer = null;
     let assignmentsLoadPromise = null;
     let assignmentsReloadQueued = false;
+    let activeQuizSession = null;
+    let currentMasteryData = null;
+    let masteryTagChart = null;
+    let masterySummaryChart = null;
 
     function escapeHtml(text) {
       const div = document.createElement('div');
       div.textContent = text ?? '';
       return div.innerHTML;
+    }
+
+    function normalizeCodeLanguage(lang) {
+      const value = String(lang || '').trim().toLowerCase();
+      if (value === 'javascript' || value === 'js') return 'javascript';
+      if (value === 'html' || value === 'xml') return 'html';
+      return 'python';
+    }
+
+    function renderCodeSnippetBlock(code, lang = 'python') {
+      const src = String(code || '');
+      const language = normalizeCodeLanguage(lang);
+      if (!src.trim()) return '<div style="color:#7e8a97; font-size:12px;">No code snippet.</div>';
+      let highlighted = escapeHtml(src);
+      try {
+        if (window.hljs) {
+          const hlLang = language === 'html' ? 'xml' : language;
+          highlighted = hljs.highlight(src, { language: hlLang }).value;
+        }
+      } catch {}
+      const lines = highlighted.split('\n');
+      return `<div class="code-read-block">${lines.map((line, idx) => `
+        <div class="code-read-line">
+          <span class="code-read-line-num">${idx + 1}</span>
+          <span class="code-read-line-code">${line || '&nbsp;'}</span>
+        </div>
+      `).join('')}</div>`;
+    }
+
+    function rigorLevelLabel(level) {
+      const v = Math.max(1, Math.min(10, parseInt(level, 10) || 5));
+      if (v <= 2) return 'Elementary';
+      if (v <= 4) return 'Middle School';
+      if (v <= 6) return 'High School';
+      if (v <= 7) return 'Honors';
+      if (v <= 8) return 'AP/Advanced';
+      if (v <= 9) return 'College Prep';
+      return 'College';
+    }
+
+    function masteryBandClass(score) {
+      if (score === null || score === undefined) return 'mastery-cell-untested';
+      if (score < 70) return 'mastery-cell-red';
+      if (score < 80) return 'mastery-cell-bronze';
+      if (score < 90) return 'mastery-cell-silver';
+      return 'mastery-cell-gold';
     }
 
     function assignmentScoreValue(submission) {
@@ -4708,6 +4986,7 @@ print("Hello " + name)
           <div class="meta">
             Max Score: ${a.maxScore} · ${a.active ? 'Unlocked' : 'Locked'} · Class: ${escapeHtml(a.targetClassName || 'All')} · ${(a.submissions || []).length} submission(s)
           </div>
+          ${(a.skillTags || []).length ? `<div class="skill-tags">${(a.skillTags || []).map(tag => `<span class="skill-chip">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
           <div class="assignment-actions">
             <button class="btn secondary select-assignment-btn" data-name="${escapeHtml(a.name)}">Scores</button>
             <button class="btn secondary edit-assignment-btn" data-name="${escapeHtml(a.name)}">Edit</button>
@@ -4735,13 +5014,14 @@ print("Hello " + name)
       detail.innerHTML = `
         <h4>${escapeHtml(assignment.name)}</h4>
         <div class="meta" style="margin-bottom:12px; white-space:pre-wrap;">${escapeHtml(assignment.task || '(No task description)')}</div>
-        <div class="meta" style="margin-bottom:12px;">Max score ${assignment.maxScore}${assignment.quiz?.totalPoints ? ` · Quiz ${assignment.quiz.totalPoints} pts` : ''} · Class ${escapeHtml(assignment.targetClassName || 'All')}</div>
+        <div class="meta" style="margin-bottom:12px;">Max score ${assignment.maxScore}${assignment.quiz?.totalPoints ? ` · Quiz ${assignment.quiz.totalPoints} pts` : ''} · Class ${escapeHtml(assignment.targetClassName || 'All')} · Quiz max submissions ${assignment.quizSettings?.maxSubmissions > 0 ? assignment.quizSettings.maxSubmissions : 'Unlimited'}</div>
+        ${(assignment.skillTags || []).length ? `<div class="skill-tags" style="margin-bottom:12px;">${(assignment.skillTags || []).map(tag => `<span class="skill-chip">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
           <button class="btn secondary" id="downloadScoresBtn">Download CSV</button>
         </div>
         <table class="scores-table">
           <thead>
-            <tr><th>Student</th><th>File</th><th>Submitted</th><th>Score</th><th></th></tr>
+            <tr><th>Student</th><th>File</th><th>Submitted</th><th>Score</th><th>Quiz Attempts</th><th></th></tr>
           </thead>
           <tbody>
             ${submissions.length ? submissions.map(sub => `
@@ -4750,14 +5030,21 @@ print("Hello " + name)
                 <td>${escapeHtml(sub.submittedFileName || '—')}</td>
                 <td>${escapeHtml(sub.submittedAt || '—')}</td>
                 <td>${assignmentScoreValue(sub) ?? '—'}</td>
-                <td><button class="btn secondary open-submission-btn" data-assignment="${escapeHtml(assignment.name)}" data-email="${escapeHtml(sub.email)}">Open</button></td>
+                <td>${sub.quizSubmissionCount ?? 0}${assignment.quizSettings?.maxSubmissions > 0 ? ` / ${assignment.quizSettings.maxSubmissions}` : ''}</td>
+                <td style="display:flex; gap:6px; flex-wrap:wrap;">
+                  <button class="btn secondary open-submission-btn" data-assignment="${escapeHtml(assignment.name)}" data-email="${escapeHtml(sub.email)}">Open</button>
+                  ${assignment.quiz?.questions?.length ? `<button class="btn secondary grade-quiz-btn" data-assignment="${escapeHtml(assignment.name)}" data-email="${escapeHtml(sub.email)}">Grade Quiz</button>` : ''}
+                  ${assignment.quiz?.questions?.length ? `<button class="btn secondary reset-quiz-counter-btn" data-assignment="${escapeHtml(assignment.name)}" data-email="${escapeHtml(sub.email)}">Reset Attempts</button>` : ''}
+                </td>
               </tr>
-            `).join('') : '<tr><td colspan="5" style="color:#888;">No submissions yet.</td></tr>'}
+            `).join('') : '<tr><td colspan="6" style="color:#888;">No submissions yet.</td></tr>'}
           </tbody>
         </table>
       `;
       detail.querySelector('#downloadScoresBtn')?.addEventListener('click', () => downloadCSV(assignment.name));
       detail.querySelectorAll('.open-submission-btn').forEach(btn => btn.addEventListener('click', () => openAssignmentSubmission(btn.dataset.assignment, btn.dataset.email)));
+      detail.querySelectorAll('.grade-quiz-btn').forEach(btn => btn.addEventListener('click', () => openQuizGradingModal(btn.dataset.assignment, btn.dataset.email)));
+      detail.querySelectorAll('.reset-quiz-counter-btn').forEach(btn => btn.addEventListener('click', () => resetQuizCounter(btn.dataset.assignment, btn.dataset.email)));
     }
 
     function renderStudentAssignments() {
@@ -4785,7 +5072,8 @@ print("Hello " + name)
           <div class="assignment-card">
             <h4>${escapeHtml(a.name)}</h4>
             <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
-            <div class="meta">Max Score: ${a.maxScore}${a.quiz?.questions?.length ? ` · Questions: ${a.quiz.questions.length}` : ''}</div>
+            <div class="meta">Max Score: ${a.maxScore}${a.quiz?.questions?.length ? ` · Questions: ${a.quiz.questions.length}` : ''}${a.quizSettings?.maxSubmissions > 0 ? ` · Quiz Attempts: ${a.quizSettings.maxSubmissions}` : ''}</div>
+            ${(a.skillTags || []).length ? `<div class="skill-tags">${(a.skillTags || []).map(tag => `<span class="skill-chip">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
             <div class="assignment-actions">
                <button class="btn run submit-assignment-btn" data-name="${escapeHtml(a.name)}" ${canSubmit && joinedClass && files.length ? '' : 'disabled'}>Submit File</button>
                ${a.quiz?.questions?.length ? `<button class="btn secondary open-questions-btn" data-name="${escapeHtml(a.name)}" ${canSubmit && joinedClass ? '' : 'disabled'}>Questions (${a.quiz.questions.length})</button>` : ''}
@@ -4804,6 +5092,7 @@ print("Hello " + name)
             <h4>${escapeHtml(a.name)} <span style="color:#888; font-size:12px; font-weight:normal;">(Locked)</span></h4>
             <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
             <div class="meta">Max Score: ${a.maxScore}</div>
+            ${(a.skillTags || []).length ? `<div class="skill-tags">${(a.skillTags || []).map(tag => `<span class="skill-chip">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
           </div>
         `).join('');
       }
@@ -4905,6 +5194,11 @@ print("Hello " + name)
     document.getElementById('newAssignmentBtn').addEventListener('click', () => showAssignmentModal());
 
     function showAssignmentModal(existingAssignment = null) {
+      const effectiveClassId = existingAssignment?.targetClassId || currentTeacherClassId;
+      const classCtx = teacherClasses.find(c => c.id === effectiveClassId) || {};
+      const classTags = classCtx?.settings?.skill_tags || [];
+      const selectedTags = existingAssignment?.skillTags || [];
+      const maxQuizSubmissions = existingAssignment?.quizSettings?.maxSubmissions ?? 0;
       const modal = document.createElement('div');
       modal.className = 'modal';
       modal.innerHTML = `
@@ -4921,6 +5215,15 @@ print("Hello " + name)
           <select id="modalAssignmentClassId" style="width:100%; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;">
             ${teacherClasses.map(c => `<option value="${escapeHtml(c.id)}" ${(existingAssignment?.targetClassId || currentTeacherClassId) === c.id ? 'selected' : ''}>${escapeHtml(c.name)} (${escapeHtml(c.join_code)})</option>`).join('')}
           </select>` : ''}
+          <label>Skill Tags (covered by this assignment)</label>
+          <select id="modalAssignmentSkillTags" multiple style="width:100%; min-height:90px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;">
+            ${classTags.map(tag => `<option value="${escapeHtml(tag)}" ${selectedTags.includes(tag) ? 'selected' : ''}>${escapeHtml(tag)}</option>`).join('')}
+          </select>
+          <div style="font-size:11px; color:#888; margin-top:4px;">Hold Ctrl/Cmd to select multiple skill tags.</div>
+          <label>Add Additional Tags (comma separated)</label>
+          <input type="text" id="modalAssignmentExtraTags" value="" placeholder="loops, arrays, debugging">
+          <label>Quiz Max Submissions (0 = unlimited)</label>
+          <input type="number" id="modalAssignmentMaxQuizSubmissions" value="${maxQuizSubmissions}" min="0" max="100" />
           <div style="margin-top:20px; padding-top:20px; border-top:1px solid #333;">
             <h4 style="color:var(--columbia-blue); margin:0 0 12px;">Quiz (Optional)</h4>
             <div id="quizBuilder">
@@ -4950,8 +5253,16 @@ print("Hello " + name)
             <div style="display:flex; justify-content:space-between; align-items:start; gap:12px;">
               <div style="flex:1;">
                 <strong style="color:var(--columbia-blue);">Question ${idx + 1}</strong>
-                <span style="color:#888; margin-left:10px;">(${q.type === 'multiple_choice' ? 'Multiple Choice' : 'Written Response'}, ${q.points} pts)</span>
+                <span style="color:#888; margin-left:10px;">(${
+                  q.type === 'multiple_choice' ? 'Multiple Choice' :
+                  q.type === 'multiple_choice_code' ? 'Multiple Choice (Code Reading)' :
+                  q.type === 'written_code' ? 'Written Response (Code Reading)' :
+                  'Written Response'
+                }, ${q.points} pts)</span>
                 <div style="color:#ddd; margin-top:8px;">${escapeHtml(q.question)}</div>
+                ${(q.type === 'multiple_choice_code' || q.type === 'written_code') ? `
+                  <div class="question-code-panel" style="margin-top:10px; max-height:180px;">${renderCodeSnippetBlock(q.codeSnippet || '', q.codeLanguage || 'python')}</div>
+                ` : ''}
               </div>
               <button class="btn-delete-question" data-idx="${idx}" style="background:#d32f2f; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:11px;">Delete</button>
             </div>
@@ -4974,8 +5285,20 @@ print("Hello " + name)
         const task = document.getElementById('modalAssignmentTask').value.trim();
         const maxScore = parseInt(document.getElementById('modalAssignmentMaxScore').value, 10) || 100;
         const classId = document.getElementById('modalAssignmentClassId')?.value || (TEACHER_TOKEN ? currentTeacherClassId : null);
+        const selectedSkillTags = [...(document.getElementById('modalAssignmentSkillTags')?.selectedOptions || [])].map(o => o.value).filter(Boolean);
+        const extraSkillTags = (document.getElementById('modalAssignmentExtraTags')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
+        const mergedSkillTags = [...new Set([...selectedSkillTags, ...extraSkillTags])];
+        const maxQuizSubmissions = Math.max(0, Math.min(100, parseInt(document.getElementById('modalAssignmentMaxQuizSubmissions')?.value, 10) || 0));
         if (!name) { alert('Please enter an assignment name.'); return; }
-        const payload = { name, task, maxScore, classId, quiz: buildQuizPayload(quizQuestions) };
+        const payload = {
+          name,
+          task,
+          maxScore,
+          classId,
+          skillTags: mergedSkillTags,
+          quizSettings: { maxSubmissions: maxQuizSubmissions },
+          quiz: buildQuizPayload(quizQuestions)
+        };
         const url = existingAssignment ? '/api/assignments/update' : '/api/assignments/create';
         try {
           const resp = await fetch(url, {
@@ -5005,6 +5328,8 @@ print("Hello " + name)
           <select id="questionType" style="width:100%; padding:8px; background:#0c0c0c; border:1px solid #333; color:#ddd; border-radius:4px; margin-bottom:12px;">
             <option value="multiple_choice">Multiple Choice</option>
             <option value="written">Written Response</option>
+            <option value="multiple_choice_code">Multiple Choice (Code Reading)</option>
+            <option value="written_code">Written Response (Code Reading)</option>
           </select>
           <label>Question Text</label>
           <textarea id="questionText" placeholder="Enter your question..." style="width:100%; min-height:80px; padding:8px; background:#0c0c0c; border:1px solid #333; color:#ddd; border-radius:4px; margin-bottom:12px; font-family:inherit;"></textarea>
@@ -5014,6 +5339,16 @@ print("Hello " + name)
             <label style="display:block; margin-bottom:8px; color:#aaa; font-weight:600;">Answer Options (select the correct answer)</label>
             <div id="optionsList" style="margin-bottom:12px;"></div>
             <button type="button" class="btn secondary" id="addOptionBtn" style="font-size:13px; padding:8px 16px;">+ Add Option</button>
+          </div>
+          <div id="codeReadingSection" style="display:none; margin-top:12px;">
+            <label>Code Language</label>
+            <select id="questionCodeLanguage" style="width:100%; padding:8px; background:#0c0c0c; border:1px solid #333; color:#ddd; border-radius:4px; margin-bottom:8px;">
+              <option value="python">Python</option>
+              <option value="javascript">JavaScript</option>
+              <option value="html">HTML</option>
+            </select>
+            <label>Code Snippet</label>
+            <textarea id="questionCodeSnippet" placeholder="Paste or type code students must read..." style="width:100%; min-height:140px; padding:8px; background:#0c0c0c; border:1px solid #333; color:#ddd; border-radius:4px; margin-bottom:12px; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;"></textarea>
           </div>
           <div class="modal-actions">
             <button class="btn secondary modal-cancel-btn-q">Cancel</button>
@@ -5045,7 +5380,11 @@ print("Hello " + name)
       }
 
       document.getElementById('addOptionBtn').addEventListener('click', () => { if (options.length < 6) { options.push(`Option ${options.length + 1}`); renderOptions(); } });
-      document.getElementById('questionType').addEventListener('change', (e) => { document.getElementById('mcOptionsSection').style.display = e.target.value === 'multiple_choice' ? 'block' : 'none'; });
+      document.getElementById('questionType').addEventListener('change', (e) => {
+        const type = e.target.value;
+        document.getElementById('mcOptionsSection').style.display = (type === 'multiple_choice' || type === 'multiple_choice_code') ? 'block' : 'none';
+        document.getElementById('codeReadingSection').style.display = (type === 'multiple_choice_code' || type === 'written_code') ? 'block' : 'none';
+      });
       renderOptions();
       questionModal.addEventListener('click', (e) => { if (e.target === questionModal) questionModal.remove(); });
       questionModal.querySelector('.modal-cancel-btn-q').addEventListener('click', () => questionModal.remove());
@@ -5055,7 +5394,7 @@ print("Hello " + name)
         const points = parseInt(document.getElementById('questionPoints').value, 10) || 10;
         if (!textValue) { alert('Please enter a question.'); return; }
         const question = { id: 'q' + Date.now() + '_' + (questionIdCounter.value++), type, question: textValue, points };
-        if (type === 'multiple_choice') {
+        if (type === 'multiple_choice' || type === 'multiple_choice_code') {
           const validOptions = options.filter(opt => opt.trim() !== '');
           if (validOptions.length < 2) { alert('Please add at least 2 non-empty options.'); return; }
           let validCorrectAnswer = 0;
@@ -5068,6 +5407,12 @@ print("Hello " + name)
           }
           question.options = validOptions;
           question.correctAnswer = validCorrectAnswer;
+        }
+        if (type === 'multiple_choice_code' || type === 'written_code') {
+          const snippet = (document.getElementById('questionCodeSnippet').value || '').trim();
+          if (!snippet) { alert('Code-reading questions require a code snippet.'); return; }
+          question.codeLanguage = document.getElementById('questionCodeLanguage').value || 'python';
+          question.codeSnippet = snippet;
         }
         quizQuestions.push(question);
         questionModal.remove();
@@ -5173,69 +5518,137 @@ print("Hello " + name)
         return;
       }
       try {
-        const resp = await fetch(`/api/quiz/${encodeURIComponent(assignmentName)}`);
+        const resp = await fetch(`/api/quiz/${encodeURIComponent(assignmentName)}`, {
+          headers: { 'X-User-Token': USER_TOKEN }
+        });
         const data = await resp.json().catch(() => ({}));
         if (!data.ok) { alert(data.error || 'Failed to load questions'); return; }
         const quiz = data.quiz || {};
+        const quizSettings = data.quizSettings || {};
         const questions = quiz.questions || [];
         if (!questions.length) { alert('This assignment has no questions.'); return; }
+        const maxSubmissions = parseInt(quizSettings.maxSubmissions, 10) || 0;
+        const submissionCount = parseInt(data.submissionCount, 10) || 0;
+        if (maxSubmissions > 0 && submissionCount >= maxSubmissions) {
+          alert('You have reached the maximum number of quiz submissions for this assignment.');
+          return;
+        }
         const modal = document.createElement('div');
         modal.className = 'modal';
         modal.innerHTML = `
           <div class="modal-content" style="max-width:900px; max-height:90vh; overflow-y:auto; padding:30px;">
             <h3 style="margin-top:0; color:var(--columbia-blue);">Assignment Questions: ${escapeHtml(assignmentName)}</h3>
-            <p style="color:#aaa; font-size:14px; margin:10px 0 20px;">Submitting as <strong style="color:#eee;">${escapeHtml(currentUser.name || currentUser.email)}</strong>. You can resubmit answers until the assignment is locked.</p>
+            <p style="color:#aaa; font-size:14px; margin:10px 0 20px;">Submitting as <strong style="color:#eee;">${escapeHtml(currentUser.name || currentUser.email)}</strong>. You must submit to exit this window.</p>
+            <div class="quiz-lock-note">
+              ${maxSubmissions > 0 ? `Attempts used: ${submissionCount}/${maxSubmissions}. Remaining: ${Math.max(0, maxSubmissions - submissionCount)}.` : 'Unlimited resubmissions are enabled for this assignment.'}
+              <div class="no-exit-text">Closing the browser tab/window will record a submission attempt with your current answers.</div>
+            </div>
             <div id="questionsContainer" style="margin:20px 0;">
-              ${questions.map((q, idx) => q.type === 'multiple_choice' ? `
+              ${questions.map((q, idx) => (q.type === 'multiple_choice' || q.type === 'multiple_choice_code') ? `
                 <div class="question-block" style="margin-bottom:30px; padding:24px; background:#0d0d0d; border:1px solid #444; border-radius:10px;">
                   <div style="color:var(--columbia-blue); font-weight:700; margin-bottom:14px; font-size:16px;">Question ${idx + 1} <span style="color:#888; font-weight:400; font-size:14px;">(${q.points || 0} points)</span></div>
-                  <div style="color:#eee; margin-bottom:18px; font-size:15px; line-height:1.6;">${escapeHtml(q.question)}</div>
-                  ${(q.options || []).map((opt, optIdx) => `
-                    <label style="display:flex; align-items:center; gap:12px; margin:10px 0; padding:12px; background:#1a1a1a; border:1px solid #333; border-radius:8px; cursor:pointer;">
-                      <input type="radio" name="question_${q.id}" value="${optIdx}">
-                      <span>${escapeHtml(opt)}</span>
-                    </label>
-                  `).join('')}
+                  ${q.type === 'multiple_choice_code' ? `
+                    <div class="question-split">
+                      <div class="question-code-panel">${renderCodeSnippetBlock(q.codeSnippet || '', q.codeLanguage || 'python')}</div>
+                      <div>
+                        <div style="color:#eee; margin-bottom:18px; font-size:15px; line-height:1.6;">${escapeHtml(q.question)}</div>
+                        ${(q.options || []).map((opt, optIdx) => `
+                          <label style="display:flex; align-items:center; gap:12px; margin:10px 0; padding:12px; background:#1a1a1a; border:1px solid #333; border-radius:8px; cursor:pointer;">
+                            <input type="radio" name="question_${q.id}" value="${optIdx}">
+                            <span>${escapeHtml(opt)}</span>
+                          </label>
+                        `).join('')}
+                      </div>
+                    </div>
+                  ` : `
+                    <div style="color:#eee; margin-bottom:18px; font-size:15px; line-height:1.6;">${escapeHtml(q.question)}</div>
+                    ${(q.options || []).map((opt, optIdx) => `
+                      <label style="display:flex; align-items:center; gap:12px; margin:10px 0; padding:12px; background:#1a1a1a; border:1px solid #333; border-radius:8px; cursor:pointer;">
+                        <input type="radio" name="question_${q.id}" value="${optIdx}">
+                        <span>${escapeHtml(opt)}</span>
+                      </label>
+                    `).join('')}
+                  `}
                 </div>
               ` : `
                 <div class="question-block" style="margin-bottom:30px; padding:24px; background:#0d0d0d; border:1px solid #444; border-radius:10px;">
                   <div style="color:var(--columbia-blue); font-weight:700; margin-bottom:14px; font-size:16px;">Question ${idx + 1} <span style="color:#888; font-weight:400; font-size:14px;">(${q.points || 0} points)</span></div>
-                  <div style="color:#eee; margin-bottom:18px; font-size:15px; line-height:1.6;">${escapeHtml(q.question)}</div>
-                  <textarea id="written_answer_${q.id}" placeholder="Type your answer here..." style="width:100%; min-height:140px; padding:14px; background:#1a1a1a; border:2px solid #444; border-radius:8px; color:#eee; font-family:inherit; resize:vertical; font-size:15px; line-height:1.5;"></textarea>
+                  ${q.type === 'written_code' ? `
+                    <div class="question-split">
+                      <div class="question-code-panel">${renderCodeSnippetBlock(q.codeSnippet || '', q.codeLanguage || 'python')}</div>
+                      <div>
+                        <div style="color:#eee; margin-bottom:18px; font-size:15px; line-height:1.6;">${escapeHtml(q.question)}</div>
+                        <textarea id="written_answer_${q.id}" placeholder="Type your answer here..." style="width:100%; min-height:160px; padding:14px; background:#1a1a1a; border:2px solid #444; border-radius:8px; color:#eee; font-family:inherit; resize:vertical; font-size:15px; line-height:1.5;"></textarea>
+                      </div>
+                    </div>
+                  ` : `
+                    <div style="color:#eee; margin-bottom:18px; font-size:15px; line-height:1.6;">${escapeHtml(q.question)}</div>
+                    <textarea id="written_answer_${q.id}" placeholder="Type your answer here..." style="width:100%; min-height:140px; padding:14px; background:#1a1a1a; border:2px solid #444; border-radius:8px; color:#eee; font-family:inherit; resize:vertical; font-size:15px; line-height:1.5;"></textarea>
+                  `}
                 </div>
               `).join('')}
             </div>
             <div class="modal-actions" style="display:flex; gap:12px; justify-content:flex-end; margin-top:30px; padding-top:20px; border-top:1px solid #333;">
-              <button class="btn secondary modal-cancel-btn">Cancel</button>
               <button class="btn run modal-submit-questions-btn">Submit Answers</button>
             </div>
           </div>
         `;
         document.body.appendChild(modal);
-        const escapeHandler = (e) => { if (e.key === 'Escape') { modal.remove(); document.removeEventListener('keydown', escapeHandler); } };
-        document.addEventListener('keydown', escapeHandler);
-        modal.addEventListener('click', (e) => { if (e.target === modal) { modal.remove(); document.removeEventListener('keydown', escapeHandler); } });
-        modal.querySelector('.modal-cancel-btn').addEventListener('click', () => { modal.remove(); document.removeEventListener('keydown', escapeHandler); });
-        modal.querySelector('.modal-submit-questions-btn').addEventListener('click', async () => submitQuestionAnswers(assignmentName, questions, modal, escapeHandler));
+        activeQuizSession = { assignmentName, questions, modal, submitted: false };
+        modal.querySelectorAll('textarea[id^="written_answer_"]').forEach(textarea => {
+          textarea.addEventListener('paste', (e) => e.preventDefault());
+        });
+        const autoSubmitOnClose = () => {
+          if (!activeQuizSession || activeQuizSession.submitted) return;
+          const payload = buildQuizResponsesFromModal(questions, modal, true);
+          fetch('/api/quiz/submit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
+            body: JSON.stringify({ assignmentName, quizResponses: payload.responses, closedByStudent: true }),
+            keepalive: true
+          }).catch(() => {});
+        };
+        activeQuizSession.autoSubmitOnClose = autoSubmitOnClose;
+        window.addEventListener('beforeunload', autoSubmitOnClose);
+        modal.querySelector('.modal-submit-questions-btn').addEventListener('click', async () => {
+          await submitQuestionAnswers(assignmentName, questions, modal);
+          if (activeQuizSession?.submitted) {
+            window.removeEventListener('beforeunload', autoSubmitOnClose);
+            activeQuizSession = null;
+          }
+        });
       } catch (error) {
         alert('Network error loading questions');
       }
     }
 
-    async function submitQuestionAnswers(assignmentName, questions, modal, escapeHandler) {
+    function buildQuizResponsesFromModal(questions, modal, allowPartial = false) {
       const quizResponses = [];
       const missing = [];
       questions.forEach((q, idx) => {
-        if (q.type === 'multiple_choice') {
+        if (q.type === 'multiple_choice' || q.type === 'multiple_choice_code') {
           const selected = modal.querySelector(`input[name="question_${q.id}"]:checked`);
           if (!selected) { missing.push(idx + 1); return; }
-          quizResponses.push({ questionId: q.id, answer: parseInt(selected.value, 10), questionType: 'multiple_choice' });
+          quizResponses.push({ questionId: q.id, answer: parseInt(selected.value, 10), questionType: q.type });
         } else {
           const value = modal.querySelector(`#written_answer_${q.id}`)?.value?.trim() || '';
           if (!value) { missing.push(idx + 1); return; }
-          quizResponses.push({ questionId: q.id, answer: value, questionType: 'written' });
+          quizResponses.push({ questionId: q.id, answer: value, questionType: q.type });
         }
       });
+      if (allowPartial && missing.length) {
+        questions.forEach((q) => {
+          if (quizResponses.some(r => r.questionId === q.id)) return;
+          quizResponses.push({ questionId: q.id, answer: (q.type.includes('multiple_choice') ? null : ''), questionType: q.type });
+        });
+      }
+      return { responses: quizResponses, missing };
+    }
+
+    async function submitQuestionAnswers(assignmentName, questions, modal) {
+      const built = buildQuizResponsesFromModal(questions, modal, false);
+      const quizResponses = built.responses;
+      const missing = built.missing;
       if (missing.length) {
         alert(`Please answer all questions before submitting. Missing: ${missing.join(', ')}`);
         return;
@@ -5244,12 +5657,12 @@ print("Hello " + name)
         const submitResp = await fetch('/api/quiz/submit', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
-          body: JSON.stringify({ assignmentName, quizResponses })
+          body: JSON.stringify({ assignmentName, quizResponses, closedByStudent: false })
         });
         const submitData = await submitResp.json().catch(() => ({}));
         if (!submitData.ok) { alert(submitData.error || 'Failed to submit answers'); return; }
+        if (activeQuizSession) activeQuizSession.submitted = true;
         modal.remove();
-        document.removeEventListener('keydown', escapeHandler);
         alert('Your answers were submitted successfully.');
         await loadAssignments();
       } catch (error) {
@@ -5270,6 +5683,130 @@ print("Hello " + name)
       }
       populateSubmissionScoringPanel(assignment, submission);
       renderAdminAssignments();
+    }
+
+    async function resetQuizCounter(assignmentName, email) {
+      if (!confirm('Reset this student\'s quiz submission counter?')) return;
+      try {
+        const resp = await fetch('/api/quiz/reset-counter', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...assignmentManagerHeaders() },
+          body: JSON.stringify({ assignmentName, studentEmail: email })
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!data.ok) {
+          alert(data.error || 'Failed to reset submission counter');
+          return;
+        }
+        await loadAssignments();
+      } catch {
+        alert('Network error');
+      }
+    }
+
+    function openQuizGradingModal(assignmentName, studentEmail) {
+      const { assignment, submission } = getSubmissionForAssignment(assignmentName, studentEmail);
+      if (!assignment || !submission) return;
+      const questionsById = new Map((assignment.quiz?.questions || []).map(q => [q.id, q]));
+      const quizResponses = submission.quizResponses || [];
+      const modal = document.createElement('div');
+      modal.className = 'modal';
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width:1100px; max-height:90vh; overflow:auto;">
+          <h3>Grade Quiz Responses</h3>
+          <div style="margin-bottom:10px; color:#aaa;">${escapeHtml(assignment.name)} · ${escapeHtml(submission.name || submission.email || studentEmail)}</div>
+          <div id="quizGradeBody">
+            ${quizResponses.map((resp, idx) => {
+              const q = questionsById.get(resp.questionId) || {};
+              const isWritten = (q.type === 'written' || q.type === 'written_code');
+              const maxPts = q.points || 0;
+              const answer = resp.answer ?? '';
+              return `
+                <div style="border:1px solid var(--theme-border-mid); border-radius:8px; padding:12px; margin-bottom:12px;">
+                  <div style="font-weight:700; color:var(--columbia-blue); margin-bottom:6px;">Question ${idx + 1} (${maxPts} pts)</div>
+                  ${q.type === 'written_code' || q.type === 'multiple_choice_code' ? `<div class="question-code-panel" style="margin-bottom:10px; max-height:220px;">${renderCodeSnippetBlock(q.codeSnippet || '', q.codeLanguage || 'python')}</div>` : ''}
+                  <div style="margin-bottom:8px; color:#ddd;">${escapeHtml(q.question || 'Question')}</div>
+                  <div style="margin-bottom:8px;"><strong>Student Answer:</strong> ${isWritten ? `<div style="margin-top:6px; padding:8px; background:#111; border:1px solid #333; border-radius:6px; white-space:pre-wrap;">${escapeHtml(answer)}</div>` : escapeHtml(String(answer))}</div>
+                  <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                    <label style="margin:0;">Score</label>
+                    <input type="number" class="quiz-manual-score" data-question-id="${escapeHtml(resp.questionId)}" data-max="${maxPts}" value="${resp.manualScore ?? resp.pointsEarned ?? ''}" min="0" max="${maxPts}" style="width:120px;">
+                    ${isWritten ? `<button class="btn secondary quiz-ai-grade-btn" data-question-id="${escapeHtml(resp.questionId)}">AI Grade</button>` : ''}
+                    <span class="quiz-score-save-status" data-question-id="${escapeHtml(resp.questionId)}" style="font-size:12px; color:#888;"></span>
+                  </div>
+                </div>
+              `;
+            }).join('') || '<div style="color:#888;">No responses submitted yet.</div>'}
+          </div>
+          <div class="modal-actions">
+            <button class="btn secondary modal-close-quiz-grade">Close</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      const saveManual = async (questionId, value, statusEl) => {
+        const max = parseInt(modal.querySelector(`.quiz-manual-score[data-question-id="${CSS.escape(questionId)}"]`)?.dataset.max || '0', 10);
+        const parsed = value === '' ? null : Math.max(0, Math.min(max, parseInt(value, 10)));
+        if (value !== '' && Number.isNaN(parsed)) {
+          statusEl.textContent = 'Invalid score';
+          return;
+        }
+        statusEl.textContent = 'Saving…';
+        const resp = await fetch('/api/quiz/override-score', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...assignmentManagerHeaders() },
+          body: JSON.stringify({ assignmentName, studentEmail, questionId, manualScore: parsed })
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!data.ok) {
+          statusEl.textContent = data.error || 'Save failed';
+          return;
+        }
+        statusEl.textContent = 'Saved';
+        await loadAssignments();
+      };
+      modal.querySelectorAll('.quiz-manual-score').forEach(input => {
+        let timer = null;
+        input.addEventListener('input', () => {
+          const questionId = input.dataset.questionId;
+          const statusEl = modal.querySelector(`.quiz-score-save-status[data-question-id="${CSS.escape(questionId)}"]`);
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(() => saveManual(questionId, input.value, statusEl), 450);
+        });
+      });
+      modal.querySelectorAll('.quiz-ai-grade-btn').forEach(btn => btn.addEventListener('click', async () => {
+        const questionId = btn.dataset.questionId;
+        const statusEl = modal.querySelector(`.quiz-score-save-status[data-question-id="${CSS.escape(questionId)}"]`);
+        const q = questionsById.get(questionId) || {};
+        const resp = quizResponses.find(r => r.questionId === questionId) || {};
+        statusEl.textContent = 'AI grading…';
+        try {
+          const response = await fetch('/api/quiz/grade-written', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...assignmentManagerHeaders() },
+            body: JSON.stringify(buildAiContext({
+              assignmentName,
+              studentEmail,
+              questionId,
+              answer: resp.answer || '',
+              questionText: q.question || '',
+              maxPoints: q.points || 0
+            }))
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!data.ok) {
+            statusEl.textContent = data.error || 'AI grading failed';
+            return;
+          }
+          const input = modal.querySelector(`.quiz-manual-score[data-question-id="${CSS.escape(questionId)}"]`);
+          if (input) input.value = String(data.aiScore ?? '');
+          statusEl.textContent = 'AI score saved';
+          await loadAssignments();
+        } catch {
+          statusEl.textContent = 'Network error';
+        }
+      }));
+      modal.querySelector('.modal-close-quiz-grade')?.addEventListener('click', () => modal.remove());
+      modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
     }
 
     function populateSubmissionScoringPanel(assignment, submission) {
