@@ -679,7 +679,6 @@
       margin-top: 6px;
     }
     .assignment-score-badge.scored { background: #1a3a1a; color: #66bb6a; border: 1px solid #2e7d32; }
-    .assignment-score-badge.submitted { background: #1a2a3a; color: #64b5f6; border: 1px solid #1565c0; }
     .assignment-score-badge.pending { background: #2a2a1a; color: #ffb74d; border: 1px solid #f57c00; }
 
     /* Mastery tabs refinement */
@@ -5466,7 +5465,7 @@ print("Hello " + name)
         const s = a.studentSubmissionSummary;
         if (!s) return '';
         const total = s.totalScore ?? s.codeScore ?? null;
-        if (total !== null && total !== undefined) {
+        if (total != null) {
           return `<div><span class="assignment-score-badge scored">✓ Score: ${total} / ${a.maxScore}</span></div>`;
         }
         if (s.submittedAt) {
