@@ -3,9 +3,9 @@
 ================================================================================
 
 A browser-based IDE with real-time code execution for Python, JavaScript, and
-browser-based HTML/CSS projects,
-AI-powered features, assignment management, and interactive challenges for
-educational environments.
+browser-based HTML/CSS projects, AI-powered features, assignment management,
+interactive challenges, and a full user management suite for educational
+environments. Designed for public-facing classroom deployment.
 
 ================================================================================
                               TABLE OF CONTENTS
@@ -19,10 +19,12 @@ educational environments.
 6. AI Features
 7. Assignment System
 8. Admin Panel
-9. File Structure
-10. Important Notes
-11. Troubleshooting
-12. Network Deployment
+9. User Management
+10. Security Architecture
+11. File Structure
+12. Important Notes
+13. Troubleshooting
+14. Network Deployment
 
 ================================================================================
                            1. SYSTEM REQUIREMENTS
@@ -88,9 +90,10 @@ Configuration is managed through config.py. Key settings include:
 ADMIN CREDENTIALS (ENCRYPTED ON FIRST START)
 --------------------------------------------------
 On first startup, the server prompts for admin email/password in the terminal.
-Both are persisted to `config.txt`, and the password is encrypted at rest.
-Admin email is stored in plaintext for login lookup; password is encrypted.
-If either value is blank or unreadable, the server prompts again on next start.
+Both are persisted to config.txt, and the password is encrypted at rest using
+Fernet symmetric encryption. Admin email is stored in plaintext for login lookup;
+password is Fernet-encrypted. If either value is blank or unreadable, the server
+prompts again on next start.
 
 --------------------------------------------------
 AI/OLLAMA CONFIGURATION
@@ -111,14 +114,14 @@ LESSON CONFIGURATION
 --------------------------------------------------
 "lesson_url": "https://..."          # External lesson URL
 "lesson_use_local": False            # Use local HTML instead of URL
-"lesson_html": "&lt;p&gt;...&lt;/p&gt;"           # Local lesson content (if enabled)
+"lesson_html": "<p>...</p>"          # Local lesson content (if enabled)
 
 --------------------------------------------------
 PAGE CUSTOMIZATION
 --------------------------------------------------
 "page_title": "Eagle IDE (Python)"
 "topbar_color": "linear-gradient(90deg,#a5c8f0,#7fb2eb)"
-"notes_html": "&lt;h2&gt;Welcome&lt;/h2&gt;..."       # Home panel content (admin instructions/updates)
+"notes_html": "<h2>Welcome</h2>..."   # Home panel content (admin instructions)
 
 --------------------------------------------------
 AI ASSISTANT BEHAVIOR
@@ -161,8 +164,8 @@ PRODUCTION DEPLOYMENT
 For production use, consider:
 1. Using a production WSGI server (gunicorn, waitress)
 2. Setting up reverse proxy (nginx, Apache)
-3. Enabling HTTPS
-4. Changing the admin password
+3. Enabling HTTPS via reverse proxy (Let's Encrypt / Certbot)
+4. Setting a strong admin password on first startup
 5. Restricting network access as needed
 
 ================================================================================
@@ -182,11 +185,13 @@ Students can:
 
 Features:
 - Syntax highlighting for Python, JavaScript, HTML, and CSS
+- Intelligent autocomplete (keywords, builtins, defined symbols)
 - Auto-indentation
 - Line numbers
 - Error highlighting
 - Real-time code execution (30 second timeout)
 - Interactive input support (input() works in both Python and JavaScript)
+- Drag-and-drop file organization
 
 --------------------------------------------------
 HTML/CSS WEBVIEW RUNTIME
@@ -220,7 +225,6 @@ JAVASCRIPT SUPPORT
 - Output (console.log, console.error, etc.) appears in the shell
 - All shell input features work the same as with Python
 - JavaScript files are identified by the ⚡ icon in the file browser
-- The "JS" badge in the top bar confirms JavaScript compatibility
 
 ================================================================================
                             6. AI FEATURES
@@ -243,7 +247,7 @@ CODING CHALLENGES
 - Get random challenge from challenges.csv
 - Submit solution for AI grading while signed in
 - Each account keeps one latest score per challenge
-- Leaderboard totals all challenge scores for every account (including 0-point accounts)
+- Leaderboard totals all challenge scores for every account
 
 --------------------------------------------------
 AI ASSISTANT (TUTOR)
@@ -261,62 +265,219 @@ AI ASSISTANT (TUTOR)
 FOR STUDENTS
 --------------------------------------------------
 1. View assignments in the Assignments tab only after joining a class
-2. Join a class from the Assignments tab using the 6-character class code (once joined, students cannot self-leave)
-2. Click assignment to view details
-3. Sign in with your student account
-4. Choose one of your saved files to submit
-5. The selected file is copied to the assignment owner's assignment folder and renamed to the student's name, with a submission comment at the top that includes student name and timestamp
-6. Resubmissions replace your previous file for that assignment
+2. Join a class from the Assignments tab using the 6-character class code
+   (once joined, students cannot self-leave)
+3. Click assignment to view details
+4. Sign in with your student account
+5. Choose one of your saved files to submit
+6. The selected file is copied to the assignment owner's assignment folder and
+   renamed to the student's name, with a submission comment at the top that
+   includes student name and timestamp
+7. Resubmissions replace your previous file for that assignment
 
 --------------------------------------------------
 FOR TEACHERS
 --------------------------------------------------
-1. Login with a teacher account
+1. Login with a teacher account (created by admin)
 2. Teachers create classes and receive random 6-character join codes
-3. Teachers manage class membership (remove students, lock/unlock, reset passwords) and can delete classes
+3. Teachers manage class membership (remove students, lock/unlock, reset
+   passwords) and can delete classes
 4. Deleting a class unassigns all enrolled students so they can join a new class
-2. Create new assignments with:
+5. Create new assignments with:
    - Assignment name
    - Task description
    - Maximum score
    - Target class
-3. Lock/unlock assignments
-4. Edit or delete assignments from the assignment manager
-5. Open submitted files directly from the assignment owner workspace
-6. Grade from the left sidebar with auto-saving score changes or AI grading
-7. Review alphabetized score tables and download scores as CSV
+6. Lock/unlock assignments
+7. Edit or delete assignments from the assignment manager
+8. Open submitted files directly from the assignment owner workspace
+9. Grade from the left sidebar with auto-saving score changes or AI grading
+10. Review alphabetized score tables and download scores as CSV
 
 ================================================================================
                             8. ADMIN PANEL
 ================================================================================
 
-Access: Click "Admin" button, login with password
+Access: Click the "⚙" button in the top bar and sign in with admin credentials.
 
 --------------------------------------------------
-CAPABILITIES
+ADMIN SETTINGS (⚙ button)
 --------------------------------------------------
-- Edit Home and lesson content
-- Configure AI settings
-- Customize page appearance
-- Create teacher accounts (admin-only)
-- Manage teacher classes and class settings (teacher-only)
-- Create/manage assignments, view submissions, grade, and export assignment scores (teacher-only)
-- Manage challenges
-- View student account last sign-in timestamps
+- Edit page title and top bar color
+- Configure AI settings (Ollama URL, model, assistant preprompt)
+- Enable/disable AI features globally
+- Configure HTML runtime settings
+- Enable/disable student self-registration
+- Create teacher accounts
+- View student list with registration and last-sign-in timestamps
+
+--------------------------------------------------
+USER MANAGEMENT (👥 Users button, admin only)
+--------------------------------------------------
+See Section 9 (User Management) for full details.
 
 --------------------------------------------------
 IMPORTANT
 --------------------------------------------------
-Admin sessions are temporary and cleared on server restart.
-Always keep your admin password secure.
+Admin sessions are temporary (token stored in memory) and cleared on server
+restart. Always keep your admin password secure. Admin credentials (email +
+encrypted password) are stored in config.txt.
 
 ================================================================================
-                          9. FILE STRUCTURE
+                           9. USER MANAGEMENT
+================================================================================
+
+Access: Click the "👥 Users" button in the top bar (visible only when signed
+in as admin).
+
+--------------------------------------------------
+OVERVIEW
+--------------------------------------------------
+The User Management panel provides the admin with full control over all student
+and teacher accounts. Admin cannot view the contents of user files from this
+panel — all file operations are performed blindly to protect user privacy.
+
+--------------------------------------------------
+PER-USER STATISTICS
+--------------------------------------------------
+Each user row displays:
+- Name and email address
+- Role (student / teacher)
+- Enrolled class (if applicable)
+- Account creation date
+- Last sign-in timestamp
+- Last known IP address (recorded at each login)
+- Storage used (total bytes / KB / MB)
+- Total file count
+- Account status (Active / Disabled)
+
+--------------------------------------------------
+BULK OPERATIONS
+--------------------------------------------------
+Select multiple users with checkboxes (or use "Select All") to perform:
+
+  Enable Selected    - Re-activate disabled accounts
+  Disable Selected   - Prevent selected accounts from signing in without
+                       deleting any data; active sessions are revoked
+  Clear Files        - Permanently delete ALL stored files for selected
+                       accounts; the accounts themselves remain active
+  Delete Selected    - Permanently delete the account record AND all files
+                       for each selected user; this cannot be undone
+
+--------------------------------------------------
+SINGLE-USER ACTIONS
+--------------------------------------------------
+Each row has individual action buttons:
+- Reset PW   - Generate a temporary random password (shown only to admin)
+- Disable / Enable - Toggle account lock status
+- Files      - Clear all stored files for that account
+- Delete     - Permanently delete the account and all its files
+
+--------------------------------------------------
+DELETION BEHAVIOR
+--------------------------------------------------
+When a user is deleted:
+- Their account record is removed from users.json
+- All active login tokens are invalidated
+- They are removed from any enrolled class
+- If a teacher, all their classes are deleted
+- All files in their user directory are permanently deleted
+- New accounts registered with the same email start completely fresh
+
+--------------------------------------------------
+PRIVACY NOTE
+--------------------------------------------------
+Admins cannot browse or read the content of user files from any admin panel.
+The clear-files action deletes files without exposing their content. This design
+ensures user data remains private while giving admins the administrative control
+they need.
+
+================================================================================
+                         10. SECURITY ARCHITECTURE
+================================================================================
+
+--------------------------------------------------
+AUTHENTICATION
+--------------------------------------------------
+- Student/teacher passwords hashed with bcrypt (cost factor >= 12)
+- Admin password encrypted at rest with Fernet symmetric encryption
+- Admin credentials compared using HMAC constant-time comparison to prevent
+  timing-based enumeration
+- All session tokens are 128-bit random hex strings (uuid4)
+- Tokens are ephemeral — server restart invalidates all sessions
+
+--------------------------------------------------
+RATE LIMITING
+--------------------------------------------------
+- Student/teacher login: max 20 attempts per 15 minutes per IP
+- Admin login: max 10 attempts per 15 minutes per IP
+- Registration: max 5 accounts per hour per IP
+
+--------------------------------------------------
+CODE EXECUTION SANDBOX
+--------------------------------------------------
+Python:
+- Code runs in an isolated subprocess with a clean environment
+- Blocked modules: subprocess, multiprocessing, socket, socketserver,
+  ftplib, http, urllib, xmlrpc, smtplib, imaplib, poplib, ssl, asyncio,
+  ctypes, cffi, mmap
+- File I/O restricted to user's own directory via patched open()
+- Dangerous os-level calls (fork, exec, system, popen) blocked
+- Resource limits: 256 MB virtual memory, 64 open file descriptors (Linux)
+- Wall-clock timeout enforced per execution
+- Output capped at a maximum byte limit to prevent flooding
+
+JavaScript:
+- Code runs in a Node.js subprocess
+- Network operations are available in Node (consider network isolation)
+- Standard execution timeout applies
+
+--------------------------------------------------
+API SECURITY
+--------------------------------------------------
+- Every API route requires appropriate token in request headers
+  (X-Admin-Token, X-Teacher-Token, or X-User-Token)
+- Path traversal prevented on all file operations via _validate_user_path()
+- User files are strictly isolated -- users can only access their own files
+- All HTML rendered from user data uses DOMPurify sanitization
+- Text rendered in the DOM uses textContent / escapeHtml() (no innerHTML
+  with raw user data)
+
+--------------------------------------------------
+HTTP SECURITY HEADERS
+--------------------------------------------------
+All HTTP responses include:
+- X-Content-Type-Options: nosniff
+- X-Frame-Options: SAMEORIGIN
+- Referrer-Policy: strict-origin-when-cross-origin
+- Permissions-Policy: geolocation=(), camera=(), microphone=()
+
+--------------------------------------------------
+STORAGE LIMITS
+--------------------------------------------------
+- Per-user storage cap (configurable in config.py, default 10 MB)
+- Per-account file count limit (default 100 files)
+- Per-folder file count limit (default 20 files)
+
+--------------------------------------------------
+SECURITY RECOMMENDATIONS FOR PRODUCTION
+--------------------------------------------------
+1. Run behind a TLS-terminating reverse proxy (nginx + Let's Encrypt)
+2. Set a strong, unique admin password at first startup
+3. Restrict the HOST to 127.0.0.1 and proxy through nginx/Apache
+4. Isolate the server process (Docker, systemd sandboxing, or similar)
+5. Keep Python and Node.js updated
+6. Regularly review access logs for suspicious patterns
+7. For JavaScript execution: network-isolate the server if students
+   could abuse Node.js network APIs
+
+================================================================================
+                          11. FILE STRUCTURE
 ================================================================================
 
 Core Files:
   app.py              - Main Flask application server
-  config.py           - Configuration settings
+  config.py           - Configuration settings and defaults
   index.html          - Single-page web interface
   challenges.csv      - Coding challenge bank
   requirements.txt    - Python dependencies
@@ -324,41 +485,44 @@ Core Files:
 
 Auto-Generated Directories:
   sandboxes/          - Temporary code execution folders
-  assignments/        - Assignment JSON files  
-  
+  assignments/        - Assignment JSON files
+  user_files/         - Per-user file storage (one subdirectory per account)
+
 Auto-Generated Files:
   config.txt          - Runtime configuration (persisted)
-  users.json          - Student account records
+  users.json          - User account records (passwords bcrypt-hashed)
+  classes.json        - Class records and enrollment data
   challenge_scores.json - Per-account challenge score tracker
+  .admin_key          - Fernet key for admin password encryption (keep secure)
 
 ================================================================================
-                          10. IMPORTANT NOTES
+                          12. IMPORTANT NOTES
 ================================================================================
 
-⚠️ SECURITY
+WARNING: SECURITY
 --------------------------------------------------
-- Change DEFAULT_ADMIN_PASSWORD before deployment
-- Server executes arbitrary Python and JavaScript code - use in trusted environments
-- Python code runs in a sandboxed subprocess with import and filesystem restrictions
-- JavaScript code runs via Node.js; it has access to the Node.js standard library
-  (consider network isolation for student use)
-- 30 second execution timeout prevents infinite loops
-- Consider network isolation for student use
+- Set a strong admin password at first startup
+- Python code runs in a sandboxed subprocess with import and filesystem
+  restrictions; JavaScript runs via Node.js (less sandboxed)
+- Execution timeouts prevent infinite loops
+- For public internet exposure: always use HTTPS via a reverse proxy
+- The .admin_key file must be kept secure; losing it requires re-running
+  first-time setup
 
-⚠️ OLLAMA CONFIGURATION
+WARNING: OLLAMA CONFIGURATION
 --------------------------------------------------
 If Ollama is on the SAME machine:
   "ai_ollama_url": "http://127.0.0.1:11434"
 
 If Ollama is on a DIFFERENT machine:
-  "ai_ollama_url": "http://&lt;ollama-server-ip&gt;:11434"
+  "ai_ollama_url": "http://<ollama-server-ip>:11434"
   Example: "http://192.168.0.105:11434"
 
 Make sure Ollama is running and the model is downloaded:
   ollama serve
   ollama pull gemma3:4b
 
-⚠️ CHALLENGES.CSV FORMAT
+WARNING: CHALLENGES.CSV FORMAT
 --------------------------------------------------
 File must have columns: difficulty,points,text
 Example:
@@ -367,7 +531,7 @@ Example:
   2,10,Create a loop that prints even numbers from 1 to 20
 
 ================================================================================
-                          11. TROUBLESHOOTING
+                          13. TROUBLESHOOTING
 ================================================================================
 
 Problem: JavaScript files won't run
@@ -384,11 +548,16 @@ Solution:
 - Type your input and press Send or Enter
 - Do NOT use readline or process.stdin directly; use input() instead
 
+Problem: Browser trying to autofill the shell input with saved passwords
+Solution:
+- This is prevented by autocomplete="off" on the shell input field
+- If autofill still appears, dismiss it; it will not affect code execution
+
 Problem: Server won't start
 Solution: Check if port 8000 is already in use, try different port
 
 Problem: AI features not working
-Solution: 
+Solution:
 - Verify Ollama is running: ollama serve
 - Check Ollama URL in config.py
 - Verify model is installed: ollama list
@@ -402,9 +571,17 @@ Solution:
 
 Problem: Can't login to admin
 Solution:
-- Verify password in config.py
-- Check for typos
-- Server restart clears admin tokens
+- Verify admin credentials set during first-time setup
+- Server restart clears admin tokens (re-login required)
+- If credentials were lost, delete config.txt and .admin_key — server
+  will prompt for new credentials on next start (WARNING: this resets
+  the encrypted admin password)
+
+Problem: Getting "Too many login attempts" error
+Solution:
+- Wait 15 minutes for the rate limit window to expire
+- This limit applies per IP: up to 20 student/teacher attempts or 10
+  admin attempts per 15-minute window
 
 Problem: Input() not working
 Solution:
@@ -413,7 +590,7 @@ Solution:
 - Check terminal panel is visible
 
 ================================================================================
-                        12. NETWORK DEPLOYMENT
+                        14. NETWORK DEPLOYMENT
 ================================================================================
 
 For classroom or multi-user deployment:
@@ -426,7 +603,7 @@ For classroom or multi-user deployment:
    HOST=0.0.0.0 PORT=8000 python app.py
 
 3. Students access via:
-   http://&lt;server-ip&gt;:8000
+   http://<server-ip>:8000
    Example: http://192.168.1.100:8000
 
 4. Configure firewall to allow port 8000
@@ -435,8 +612,13 @@ For classroom or multi-user deployment:
    - Update ai_ollama_url in config.py
    - Ensure Ollama server is accessible on network
 
+6. For HTTPS (strongly recommended for internet-facing deployments):
+   - Run a reverse proxy (nginx, Apache, Caddy)
+   - Obtain a TLS certificate (Let's Encrypt / Certbot)
+   - Proxy HTTPS traffic to localhost:8000
+
 ================================================================================
 
 For support or issues: https://github.com/bkgodwin/EagleIDE
 
-Last Updated: 2026-05-14
+Last Updated: 2026-05-15
