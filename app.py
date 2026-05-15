@@ -3650,8 +3650,9 @@ _assignment_lock = threading.Lock()
 
 def _get_assignment_path(name: str) -> Path:
     """Get the path to an assignment's JSON file"""
-    safe_name = _sanitize_storage_component(name, fallback="", max_length=120).strip()
-    if not safe_name:
+    raw_name = str(name or "").strip()
+    safe_name = _sanitize_storage_component(raw_name, fallback="", max_length=120).strip()
+    if not safe_name or raw_name != safe_name or not re.fullmatch(r"[A-Za-z0-9 _-]{1,120}", safe_name):
         raise ValueError("Invalid assignment name")
     path = (ASSIGNMENTS_DIR / f"{safe_name}.json").resolve()
     assignments_root = ASSIGNMENTS_DIR.resolve()
