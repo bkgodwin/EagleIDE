@@ -351,6 +351,19 @@
     .users-table th{ color:var(--columbia-blue); }
     .users-table .disabled-row{ opacity:.5; }
 
+    /* Admin Users Management Modal */
+    #adminUsersModal .modal-content{ max-width:980px; }
+    .admin-users-toolbar{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--theme-border-mid); }
+    .admin-users-toolbar input[type=text]{ flex:1; min-width:180px; padding:7px 10px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; font-size:13px; }
+    .admin-users-stats-table{ width:100%; border-collapse:collapse; font-size:12px; }
+    .admin-users-stats-table th{ color:var(--columbia-blue); padding:5px 8px; border-bottom:2px solid var(--theme-border-mid); text-align:left; white-space:nowrap; position:sticky; top:0; background:var(--theme-panel); z-index:1; }
+    .admin-users-stats-table td{ padding:5px 8px; border-bottom:1px solid var(--theme-border-mid); color:var(--theme-text); vertical-align:middle; }
+    .admin-users-stats-table tr:hover td{ background:rgba(165,200,240,0.07); }
+    .admin-users-stats-table .disabled-row td{ opacity:.5; }
+    .admin-users-stats-table .selected-row td{ background:rgba(165,200,240,0.14); }
+    .stat-storage{ color:#a5c8f0; font-size:11px; }
+    .stat-ip{ font-family:monospace; font-size:11px; color:var(--theme-text-dim); }
+
     /* Context menu */
     .ctx-menu{ position:fixed; background:var(--theme-panel); border:1px solid var(--theme-border); border-radius:8px; padding:4px 0; min-width:140px; z-index:9999; box-shadow:0 4px 20px rgba(0,0,0,.5); backdrop-filter:blur(4px); }
     .ctx-menu button{ width:100%; background:none; border:0; color:var(--theme-text); text-align:left; padding:6px 14px; cursor:pointer; font-size:13px; }
@@ -484,6 +497,7 @@
       <span class="guest-badge" id="guestBadge">Guest</span>
       <button class="btn admin" id="loginBtn" title="Login">Sign In</button>
       <button class="btn secondary" id="streamingToggleBtn" title="Toggle code streaming to students" style="display:none;">📡 Streaming: On</button>
+      <button class="btn admin" id="adminUsersBtn" title="User Management" style="display:none;">👥 Users</button>
       <button class="btn admin" id="adminSettingsBtn" title="Admin Settings" style="display:none;">⚙</button>
     </div>
   </header>
@@ -527,7 +541,7 @@
         <button class="btn secondary" id="clearErrorsBtn" style="display:none; font-size:12px; padding:4px 8px;">Clear Error Highlights</button>
       </header>
       <div class="content">
-        <textarea id="editor"></textarea>
+        <textarea id="editor" style="display:none; resize:none;"></textarea>
         <div id="csvEditor" class="csv-editor hidden"></div>
       </div>
     </section>
@@ -545,7 +559,7 @@
           </header>
           <div class="content"><div id="output"></div></div>
           <div class="shell-input-bar">
-            <input id="stdin" placeholder="Type input() here and press Enter…"/>
+            <input id="stdin" placeholder="Type input() here and press Enter…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" name="ide-shell-input"/>
             <button class="btn secondary" id="sendBtn">Send ↵</button>
           </div>
         </section>
@@ -737,6 +751,52 @@
       <div class="modal-actions">
         <button class="btn secondary" id="loginCancelBtn">Cancel</button>
         <button class="btn run" id="loginSubmitBtn">Sign In</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Admin Users Management Modal -->
+  <div id="adminUsersModal" class="modal" style="display:none;">
+    <div class="modal-content" style="max-width:980px;">
+      <h3>User Management</h3>
+      <p style="color:var(--theme-text-dim); font-size:12px; margin-top:-8px; margin-bottom:12px;">Admin view — file contents are never displayed here. Deletions are permanent.</p>
+
+      <div class="admin-users-toolbar">
+        <input type="text" id="adminUsersSearch" placeholder="🔍 Search by name or email…" oninput="filterAdminUsersTable()">
+        <button class="btn secondary" id="adminUsersRefreshBtn" style="font-size:12px; padding:6px 12px;">↻ Refresh</button>
+        <span id="adminUsersSelCount" style="font-size:12px; color:var(--theme-text-dim); white-space:nowrap;">0 selected</span>
+        <button class="btn secondary" id="adminBulkEnableBtn" style="font-size:12px; padding:6px 12px; display:none;">✅ Enable Selected</button>
+        <button class="btn secondary" id="adminBulkDisableBtn" style="font-size:12px; padding:6px 12px; display:none;">🔒 Disable Selected</button>
+        <button class="btn secondary" id="adminBulkClearFilesBtn" style="font-size:12px; padding:6px 12px; display:none;">🗑 Clear Files</button>
+        <button class="btn secondary" id="adminBulkDeleteBtn" style="font-size:12px; padding:6px 12px; color:#ef5350; display:none;">⛔ Delete Selected</button>
+      </div>
+
+      <div style="max-height:60vh; overflow-y:auto; border:1px solid var(--theme-border-mid); border-radius:8px;">
+        <table class="admin-users-stats-table" id="adminUsersStatsTable">
+          <thead>
+            <tr>
+              <th><input type="checkbox" id="adminSelectAllChk" title="Select all"></th>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Class</th>
+              <th>Registered</th>
+              <th>Last Sign In</th>
+              <th>Last IP</th>
+              <th>Storage</th>
+              <th>Files</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="adminUsersStatsBody"></tbody>
+        </table>
+      </div>
+
+      <div id="adminUsersSummary" style="margin-top:8px; font-size:12px; color:var(--theme-text-dim);"></div>
+
+      <div class="modal-actions" style="margin-top:16px;">
+        <button class="btn secondary" id="adminUsersCloseBtn">Close</button>
       </div>
     </div>
   </div>
@@ -2613,6 +2673,7 @@ print("Hello " + name)
       const rightEdgeToggleBtn = document.getElementById('rightEdgeToggleBtn');
       const loginBtn = document.getElementById('loginBtn');
       const adminSettingsBtn = document.getElementById('adminSettingsBtn');
+      const adminUsersBtn = document.getElementById('adminUsersBtn');
       const streamingToggleBtn = document.getElementById('streamingToggleBtn');
       const modeWrap = document.getElementById('modeSelectorWrap');
       const topJoinClassBtn = document.getElementById('topJoinClassBtn');
@@ -2639,6 +2700,7 @@ print("Hello " + name)
       }
       adminSettingsBtn.style.display = (ADMIN_TOKEN || TEACHER_TOKEN) ? '' : 'none';
       adminSettingsBtn.title = ADMIN_TOKEN ? 'Admin Settings' : (TEACHER_TOKEN ? 'Class Settings' : 'Settings');
+      if (adminUsersBtn) adminUsersBtn.style.display = ADMIN_TOKEN ? '' : 'none';
       streamingToggleBtn.style.display = (ADMIN_TOKEN || TEACHER_TOKEN) ? '' : 'none';
       updateEditorOverlay();
       renderClassSelector();
@@ -2757,6 +2819,9 @@ print("Hello " + name)
           setCsvMode(false);
           document.getElementById('adminSettingsBtn').style.display = 'none';
           document.getElementById('streamingToggleBtn').style.display = 'none';
+          const adminUsersBtn = document.getElementById('adminUsersBtn');
+          if (adminUsersBtn) adminUsersBtn.style.display = 'none';
+          document.getElementById('adminUsersModal').style.display = 'none';
           currentOpenFile = null;
           hideFileBrowser();
           stopTeacherBroadcast();
@@ -3175,6 +3240,276 @@ print("Hello " + name)
       loadAdminUsers();
       alert('Teacher account created.');
     }
+
+    // ---- Admin Users Management Modal ----
+    let _adminUsersData = [];
+    let _adminSelectedEmails = new Set();
+
+    function _formatBytes(bytes) {
+      if (bytes == null || isNaN(bytes)) return '—';
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+    }
+
+    function _updateAdminBulkButtons() {
+      const count = _adminSelectedEmails.size;
+      const selCountEl = document.getElementById('adminUsersSelCount');
+      if (selCountEl) selCountEl.textContent = count === 0 ? '0 selected' : `${count} selected`;
+      const show = count > 0;
+      ['adminBulkEnableBtn','adminBulkDisableBtn','adminBulkClearFilesBtn','adminBulkDeleteBtn'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = show ? '' : 'none';
+      });
+    }
+
+    function filterAdminUsersTable() {
+      const q = (document.getElementById('adminUsersSearch')?.value || '').toLowerCase();
+      const rows = document.querySelectorAll('#adminUsersStatsBody tr[data-email]');
+      let vis = 0;
+      rows.forEach(tr => {
+        const email = (tr.dataset.email || '').toLowerCase();
+        const name = (tr.dataset.name || '').toLowerCase();
+        const match = !q || email.includes(q) || name.includes(q);
+        tr.style.display = match ? '' : 'none';
+        if (match) vis++;
+      });
+      const summary = document.getElementById('adminUsersSummary');
+      if (summary) summary.textContent = `Showing ${vis} of ${_adminUsersData.length} users`;
+    }
+
+    async function loadAdminUsersModal() {
+      if (!ADMIN_TOKEN) return;
+      const tbody = document.getElementById('adminUsersStatsBody');
+      if (tbody) tbody.innerHTML = '<tr><td colspan="12" style="text-align:center; padding:16px; color:#888;">Loading…</td></tr>';
+      const res = await fetch('/api/admin/users', { headers: { 'X-Admin-Token': ADMIN_TOKEN } });
+      const j = await res.json().catch(() => ({}));
+      if (!j?.ok) {
+        if (tbody) tbody.innerHTML = '<tr><td colspan="12" style="color:#ef5350; padding:8px;">Failed to load users</td></tr>';
+        return;
+      }
+      _adminUsersData = j.users || [];
+      _adminSelectedEmails.clear();
+      _updateAdminBulkButtons();
+
+      if (!tbody) return;
+      if (!_adminUsersData.length) {
+        tbody.innerHTML = '<tr><td colspan="12" style="color:#888; padding:12px;">No users registered yet.</td></tr>';
+        const summary = document.getElementById('adminUsersSummary');
+        if (summary) summary.textContent = '0 users';
+        return;
+      }
+
+      tbody.innerHTML = '';
+      _adminUsersData.forEach(u => {
+        const tr = document.createElement('tr');
+        tr.dataset.email = u.email || '';
+        tr.dataset.name = u.name || '';
+        if (!u.enabled) tr.classList.add('disabled-row');
+        if (_adminSelectedEmails.has(u.email)) tr.classList.add('selected-row');
+
+        const chkTd = document.createElement('td');
+        const chk = document.createElement('input');
+        chk.type = 'checkbox';
+        chk.checked = _adminSelectedEmails.has(u.email);
+        chk.addEventListener('change', () => {
+          if (chk.checked) {
+            _adminSelectedEmails.add(u.email);
+            tr.classList.add('selected-row');
+          } else {
+            _adminSelectedEmails.delete(u.email);
+            tr.classList.remove('selected-row');
+          }
+          _updateAdminBulkButtons();
+          const selectAllChk = document.getElementById('adminSelectAllChk');
+          if (selectAllChk) {
+            const visRows = [...document.querySelectorAll('#adminUsersStatsBody tr[data-email]')].filter(r => r.style.display !== 'none');
+            selectAllChk.checked = visRows.length > 0 && visRows.every(r => _adminSelectedEmails.has(r.dataset.email));
+            selectAllChk.indeterminate = !selectAllChk.checked && _adminSelectedEmails.size > 0;
+          }
+        });
+        chkTd.appendChild(chk);
+        tr.appendChild(chkTd);
+
+        const cells = [
+          escapeHtml(u.name || ''),
+          escapeHtml(u.email || ''),
+          `<span style="text-transform:capitalize;">${escapeHtml(u.role || 'student')}</span>`,
+          escapeHtml(u.class_name || '—'),
+          escapeHtml(u.created_at || '—'),
+          escapeHtml(u.last_sign_in || '—'),
+          `<span class="stat-ip">${escapeHtml(u.last_ip || '—')}</span>`,
+          `<span class="stat-storage">${_formatBytes(u.storage_bytes)}</span>`,
+          String(u.file_count ?? 0),
+          u.enabled ? '✅ Active' : '🔒 Disabled',
+        ];
+        cells.forEach(html => {
+          const td = document.createElement('td');
+          td.innerHTML = html;
+          tr.appendChild(td);
+        });
+
+        // Actions cell
+        const actTd = document.createElement('td');
+        actTd.style.cssText = 'white-space:nowrap;';
+        const resetBtn = document.createElement('button');
+        resetBtn.className = 'btn secondary';
+        resetBtn.style.cssText = 'font-size:10px;padding:2px 5px;margin:1px;';
+        resetBtn.textContent = 'Reset PW';
+        resetBtn.addEventListener('click', () => adminResetPassword(u.email));
+
+        const toggleBtn = document.createElement('button');
+        toggleBtn.className = 'btn secondary';
+        toggleBtn.style.cssText = 'font-size:10px;padding:2px 5px;margin:1px;';
+        toggleBtn.textContent = u.enabled ? 'Disable' : 'Enable';
+        toggleBtn.addEventListener('click', () => adminToggleUserAndReload(u.email, !u.enabled));
+
+        const clearBtn = document.createElement('button');
+        clearBtn.className = 'btn secondary';
+        clearBtn.style.cssText = 'font-size:10px;padding:2px 5px;margin:1px;';
+        clearBtn.title = 'Delete all files for this user without viewing them';
+        clearBtn.textContent = '🗑 Files';
+        clearBtn.addEventListener('click', () => adminClearUserFiles(u.email));
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'btn secondary';
+        delBtn.style.cssText = 'font-size:10px;padding:2px 5px;margin:1px;color:#ef5350;';
+        delBtn.textContent = 'Delete';
+        delBtn.addEventListener('click', () => adminDeleteUserAndReload(u.email));
+
+        actTd.append(resetBtn, toggleBtn, clearBtn, delBtn);
+        tr.appendChild(actTd);
+        tbody.appendChild(tr);
+      });
+
+      const summary = document.getElementById('adminUsersSummary');
+      if (summary) summary.textContent = `${_adminUsersData.length} user(s) total`;
+      filterAdminUsersTable();
+
+      const selectAllChk = document.getElementById('adminSelectAllChk');
+      if (selectAllChk) {
+        selectAllChk.checked = false;
+        selectAllChk.indeterminate = false;
+      }
+    }
+
+    async function adminToggleUserAndReload(email, enable) {
+      const res = await fetch('/api/admin/users/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+        body: JSON.stringify({ email, enabled: enable })
+      });
+      const j = await res.json().catch(() => ({}));
+      if (j?.ok) await loadAdminUsersModal();
+      else alert(j?.error || 'Failed');
+    }
+
+    async function adminClearUserFiles(email) {
+      if (!confirm(`Delete ALL files for ${email}? This cannot be undone. The account itself will remain.`)) return;
+      const res = await fetch('/api/admin/users/clear-files', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+        body: JSON.stringify({ email })
+      });
+      const j = await res.json().catch(() => ({}));
+      if (j?.ok) { await loadAdminUsersModal(); alert('Files cleared.'); }
+      else alert(j?.error || 'Failed');
+    }
+
+    async function adminDeleteUserAndReload(email) {
+      if (!confirm(`Permanently delete ${email} and ALL their files? This cannot be undone.`)) return;
+      const res = await fetch('/api/admin/users/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+        body: JSON.stringify({ email })
+      });
+      const j = await res.json().catch(() => ({}));
+      if (j?.ok) { _adminSelectedEmails.delete(email); await loadAdminUsersModal(); }
+      else alert(j?.error || 'Failed');
+    }
+
+    // Wire up admin users modal buttons
+    document.getElementById('adminUsersBtn')?.addEventListener('click', () => {
+      document.getElementById('adminUsersModal').style.display = 'flex';
+      loadAdminUsersModal();
+    });
+    document.getElementById('adminUsersCloseBtn')?.addEventListener('click', () => {
+      document.getElementById('adminUsersModal').style.display = 'none';
+    });
+    document.getElementById('adminUsersRefreshBtn')?.addEventListener('click', loadAdminUsersModal);
+
+    document.getElementById('adminSelectAllChk')?.addEventListener('change', (e) => {
+      const checked = e.target.checked;
+      const rows = [...document.querySelectorAll('#adminUsersStatsBody tr[data-email]')].filter(r => r.style.display !== 'none');
+      rows.forEach(tr => {
+        const chk = tr.querySelector('input[type=checkbox]');
+        if (chk) chk.checked = checked;
+        if (checked) {
+          _adminSelectedEmails.add(tr.dataset.email);
+          tr.classList.add('selected-row');
+        } else {
+          _adminSelectedEmails.delete(tr.dataset.email);
+          tr.classList.remove('selected-row');
+        }
+      });
+      _updateAdminBulkButtons();
+    });
+
+    document.getElementById('adminBulkEnableBtn')?.addEventListener('click', async () => {
+      const emails = [..._adminSelectedEmails];
+      if (!emails.length) return;
+      if (!confirm(`Enable ${emails.length} account(s)?`)) return;
+      const res = await fetch('/api/admin/users/bulk-toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+        body: JSON.stringify({ emails, enabled: true })
+      });
+      const j = await res.json().catch(() => ({}));
+      if (j?.ok) { _adminSelectedEmails.clear(); await loadAdminUsersModal(); }
+      else alert(j?.error || 'Failed');
+    });
+
+    document.getElementById('adminBulkDisableBtn')?.addEventListener('click', async () => {
+      const emails = [..._adminSelectedEmails];
+      if (!emails.length) return;
+      if (!confirm(`Disable ${emails.length} account(s)?`)) return;
+      const res = await fetch('/api/admin/users/bulk-toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+        body: JSON.stringify({ emails, enabled: false })
+      });
+      const j = await res.json().catch(() => ({}));
+      if (j?.ok) { _adminSelectedEmails.clear(); await loadAdminUsersModal(); }
+      else alert(j?.error || 'Failed');
+    });
+
+    document.getElementById('adminBulkClearFilesBtn')?.addEventListener('click', async () => {
+      const emails = [..._adminSelectedEmails];
+      if (!emails.length) return;
+      if (!confirm(`Delete ALL files for ${emails.length} selected account(s)? Accounts remain active. This cannot be undone.`)) return;
+      const res = await fetch('/api/admin/users/bulk-clear-files', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+        body: JSON.stringify({ emails })
+      });
+      const j = await res.json().catch(() => ({}));
+      if (j?.ok) { _adminSelectedEmails.clear(); await loadAdminUsersModal(); alert(`Files cleared for ${j.cleared?.length ?? 0} account(s).`); }
+      else alert(j?.error || 'Failed');
+    });
+
+    document.getElementById('adminBulkDeleteBtn')?.addEventListener('click', async () => {
+      const emails = [..._adminSelectedEmails];
+      if (!emails.length) return;
+      if (!confirm(`Permanently DELETE ${emails.length} account(s) and ALL their files? This cannot be undone.`)) return;
+      const res = await fetch('/api/admin/users/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+        body: JSON.stringify({ emails })
+      });
+      const j = await res.json().catch(() => ({}));
+      if (j?.ok) { _adminSelectedEmails.clear(); await loadAdminUsersModal(); }
+      else alert(j?.error || 'Failed');
+    });
 
     function teacherStudentActionsHtml(classId, student) {
       return `
