@@ -305,7 +305,7 @@
     .skill-tags{ display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
     .skill-chip{ font-size:11px; padding:3px 8px; border-radius:999px; border:1px solid var(--theme-border-mid); background:var(--theme-output-bg); color:var(--columbia-blue); }
     .quiz-lock-note{ margin-top:10px; padding:10px; border:1px solid #7b5e00; background:#2a2107; color:#f6d27c; border-radius:8px; font-size:12px; }
-    .question-split{ display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px; align-items:stretch; }
+    .question-split{ display:grid; grid-template-columns:minmax(340px,1.15fr) minmax(340px,1fr); gap:20px; align-items:start; }
     .question-code-panel{ background:#0b0f14; border:1px solid var(--theme-border-mid); border-radius:10px; padding:10px; min-height:220px; max-height:420px; overflow:auto; }
     .code-read-block{ font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; color:#d7e1ee; }
     .code-read-line{ display:grid; grid-template-columns:42px minmax(0,1fr); gap:10px; white-space:pre; }
@@ -324,6 +324,48 @@
     .mastery-tabs{ display:flex; gap:8px; margin:10px 0; flex-wrap:wrap; }
     .mastery-pane{ display:none; }
     .mastery-pane.active{ display:block; }
+    .workspace-modal .modal-content{
+      width:min(1500px, 96vw);
+      max-width:96vw;
+      max-height:94vh;
+      min-height:72vh;
+      overflow:auto;
+      padding:22px;
+    }
+    .workspace-modal-header{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:10px;
+      border-bottom:1px solid var(--theme-border-mid);
+      padding-bottom:10px;
+      margin-bottom:12px;
+      position:sticky;
+      top:0;
+      background:var(--theme-panel);
+      z-index:2;
+    }
+    .workspace-modal-body{
+      display:grid;
+      grid-template-columns:minmax(0,1fr);
+      gap:14px;
+    }
+    .teacher-reports-shell{ border:1px solid var(--theme-border-mid); border-radius:10px; padding:12px; margin-top:12px; }
+    .teacher-reports-header{ display:flex; gap:8px; justify-content:space-between; align-items:center; flex-wrap:wrap; margin-bottom:8px; }
+    .teacher-reports-controls{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .teacher-split-layout{ display:grid; grid-template-columns:minmax(260px, 340px) minmax(0,1fr); gap:14px; align-items:start; }
+    .teacher-panel-card{ border:1px solid var(--theme-border-mid); border-radius:10px; padding:10px; background:var(--theme-input-bg); }
+    .teacher-panel-card h4{ margin:0 0 8px; color:var(--columbia-blue); }
+    .student-list-compact{ max-height:440px; overflow:auto; display:grid; gap:8px; }
+    .student-list-compact > div{ border:1px solid var(--theme-border-mid); border-radius:8px; padding:8px; background:var(--theme-output-bg); }
+    .mastery-skills-layout{ display:grid; grid-template-columns:minmax(280px, 360px) minmax(0,1fr); gap:14px; align-items:start; }
+    .score-report-list{ display:grid; gap:10px; margin-top:10px; }
+    .score-report-item{ border:1px solid var(--theme-border-mid); border-radius:8px; background:var(--theme-input-bg); padding:10px; }
+    .score-report-item strong{ color:var(--columbia-blue); }
+    @media (max-width: 1200px){
+      .question-split{ grid-template-columns:minmax(0,1fr); }
+      .teacher-split-layout, .mastery-skills-layout{ grid-template-columns:minmax(0,1fr); }
+    }
     .file-action-btn{ border:0; border-radius:8px; padding:8px 10px; font-weight:700; cursor:pointer; background:var(--theme-btn); color:var(--theme-text); box-shadow:0 1px 4px rgba(0,0,0,.3); transition:background .15s; font-size:12px; display:inline-flex; align-items:center; gap:5px; }
     .file-action-btn:hover{ background:var(--theme-btn-hover); }
 
@@ -3707,17 +3749,25 @@ print("Hello " + name)
         </div>
       `).join('');
       wrap.innerHTML += `
-        <div style="border:1px solid var(--theme-border-mid); border-radius:8px; padding:12px; margin-top:12px;">
-          <h4 style="margin:0 0 8px; color:var(--columbia-blue);">Class Reports</h4>
-          <div style="font-size:12px; color:#888; margin-bottom:8px;">Current class: ${escapeHtml((teacherClasses.find(c => c.id === currentTeacherClassId)?.name) || 'Select a class')}</div>
+        <div id="teacherReportsShell" class="teacher-reports-shell">
+          <div class="teacher-reports-header">
+            <h4 style="margin:0; color:var(--columbia-blue);">Class Reports</h4>
+            <button class="btn secondary" id="teacherReportsExitBtn">Exit</button>
+          </div>
+          <div class="teacher-reports-controls">
+            <label style="font-size:12px; margin:0;">Class</label>
+            <select id="teacherReportsClassSelect" style="min-width:260px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;">
+              ${teacherClasses.map(c => `<option value="${escapeHtml(c.id)}" ${c.id === currentTeacherClassId ? 'selected' : ''}>${escapeHtml(c.name)} (${escapeHtml(c.join_code)})</option>`).join('')}
+            </select>
+          </div>
           <div class="mastery-tabs">
-            <button class="btn secondary mastery-tab-btn active" data-pane="class-roster-pane">Class Roster</button>
-            <button class="btn secondary mastery-tab-btn" data-pane="skill-mastery-pane">Student Skill Mastery</button>
-            <button class="btn secondary mastery-tab-btn" data-pane="mastery-analytics-pane">Mastery Analytics</button>
+            <button class="btn secondary mastery-tab-btn active" data-pane="class-roster-pane">Roster View</button>
+            <button class="btn secondary mastery-tab-btn" data-pane="score-overview-pane">Score Overview</button>
+            <button class="btn secondary mastery-tab-btn" data-pane="skills-mastery-pane">Skills Mastery</button>
           </div>
           <div id="class-roster-pane" class="mastery-pane active"></div>
-          <div id="skill-mastery-pane" class="mastery-pane"></div>
-          <div id="mastery-analytics-pane" class="mastery-pane"></div>
+          <div id="score-overview-pane" class="mastery-pane"></div>
+          <div id="skills-mastery-pane" class="mastery-pane"></div>
         </div>
       `;
 
@@ -3808,18 +3858,26 @@ print("Hello " + name)
         const pane = wrap.querySelector(`#${btn.dataset.pane}`);
         if (pane) pane.classList.add('active');
       }));
+      wrap.querySelector('#teacherReportsClassSelect')?.addEventListener('change', async (e) => {
+        currentTeacherClassId = e.target.value || null;
+        renderClassSelector();
+        await renderClassReports();
+      });
+      wrap.querySelector('#teacherReportsExitBtn')?.addEventListener('click', () => {
+        document.getElementById('assignmentTabBtn')?.click();
+      });
       renderClassReports().catch(() => {});
     }
 
     async function renderClassReports() {
       const rosterPane = document.getElementById('class-roster-pane');
-      const skillPane = document.getElementById('skill-mastery-pane');
-      const analyticsPane = document.getElementById('mastery-analytics-pane');
-      if (!rosterPane || !skillPane || !analyticsPane) return;
+      const scorePane = document.getElementById('score-overview-pane');
+      const skillsPane = document.getElementById('skills-mastery-pane');
+      if (!rosterPane || !scorePane || !skillsPane) return;
       if (!currentTeacherClassId) {
         rosterPane.innerHTML = '<div style="color:#888;">Select a class to view reports.</div>';
-        skillPane.innerHTML = '';
-        analyticsPane.innerHTML = '';
+        scorePane.innerHTML = '';
+        skillsPane.innerHTML = '';
         return;
       }
       rosterPane.innerHTML = '<div style="color:#888;">Loading class report…</div>';
@@ -3829,48 +3887,54 @@ print("Hello " + name)
       const data = await res.json().catch(() => ({}));
       if (!data.ok) {
         rosterPane.innerHTML = `<div style="color:#ef5350;">${escapeHtml(data.error || 'Failed to load class report.')}</div>`;
-        skillPane.innerHTML = '';
-        analyticsPane.innerHTML = '';
+        scorePane.innerHTML = '';
+        skillsPane.innerHTML = '';
         return;
       }
       currentMasteryData = data.report;
       const assignments = currentMasteryData.assignments || [];
       const students = currentMasteryData.students || [];
       const tags = currentMasteryData.skillTags || [];
+      const classMeta = currentMasteryData.class || {};
+      const classSettings = (teacherClasses.find(c => c.id === classMeta.id)?.settings) || {};
+
       rosterPane.innerHTML = `
+        <div class="teacher-split-layout">
+          <div class="teacher-panel-card">
+            <h4>Class Snapshot</h4>
+            <div style="font-size:12px; color:#bbb; margin-bottom:8px;">${escapeHtml(classMeta.name || 'Class')}</div>
+            <div style="font-size:12px; color:#aaa; margin-bottom:6px;">AI enabled: ${classSettings.ai_enabled ? 'Yes' : 'No'}</div>
+            <div style="font-size:12px; color:#aaa; margin-bottom:6px;">Wiki enabled: ${classSettings.wiki_enabled ? 'Yes' : 'No'}</div>
+            <div style="font-size:12px; color:#aaa;">Skill tags: ${escapeHtml((classSettings.skill_tags || []).join(', ') || 'None')}</div>
+          </div>
+          <div class="teacher-panel-card">
+            <h4>Student Roster</h4>
+            <div class="student-list-compact">
+              ${students.map(s => `
+                <div>
+                  <div style="font-weight:700;">${escapeHtml(s.name || s.email)}</div>
+                  <div style="font-size:12px; color:#888;">${escapeHtml(s.email || '')}</div>
+                </div>
+              `).join('') || '<div style="color:#888;">No students enrolled.</div>'}
+            </div>
+          </div>
+        </div>
+      `;
+
+      scorePane.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px; flex-wrap:wrap;">
+          <div style="font-size:12px; color:#888;">Students and assignment score percentages for selected class.</div>
+          <button class="btn secondary" id="masteryExportCsvBtn">Export CSV</button>
+        </div>
         <div class="mastery-grid">
           <table>
-            <thead>
-              <tr><th>Student</th>${assignments.map(a => `<th>${escapeHtml(a.name)}</th>`).join('')}</tr>
-            </thead>
+            <thead><tr><th>Student</th>${assignments.map(a => `<th>${escapeHtml(a.name)}</th>`).join('')}</tr></thead>
             <tbody>
               ${students.map(s => `
                 <tr>
                   <td>${escapeHtml(s.name || s.email)}</td>
                   ${assignments.map(a => {
-                    const pct = s.assignmentScores?.[a.name]?.percent;
-                    return `<td class="${masteryBandClass(pct)}">${pct === null || pct === undefined ? 'Untested' : `${Math.round(pct)}%`}</td>`;
-                  }).join('')}
-                </tr>
-              `).join('') || '<tr><td colspan="99" style="color:#888;">No students enrolled.</td></tr>'}
-            </tbody>
-          </table>
-        </div>
-      `;
-      skillPane.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px; flex-wrap:wrap;">
-          <div style="color:#888; font-size:12px;">Color bands: Red &lt;70, Bronze 70-79, Silver 80-89, Gold 90-100</div>
-          <button class="btn secondary" id="masteryExportCsvBtn">Export CSV</button>
-        </div>
-        <div class="mastery-grid">
-          <table>
-            <thead><tr><th>Student</th>${tags.map(t => `<th>${escapeHtml(t)}</th>`).join('')}</tr></thead>
-            <tbody>
-              ${students.map(s => `
-                <tr>
-                  <td>${escapeHtml(s.name || s.email)}</td>
-                  ${tags.map(t => {
-                    const score = s.skillScores?.[t];
+                    const score = s.assignmentScores?.[a.name]?.percent;
                     return `<td class="${masteryBandClass(score)}">${score === null || score === undefined ? 'Untested' : `${Math.round(score)}%`}</td>`;
                   }).join('')}
                 </tr>
@@ -3879,29 +3943,68 @@ print("Hello " + name)
           </table>
         </div>
       `;
-      skillPane.querySelector('#masteryExportCsvBtn')?.addEventListener('click', exportMasteryCsv);
-      analyticsPane.innerHTML = `
-        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
-          <label style="margin:0;">Skill</label>
-          <select id="masteryAnalyticsTagSelect" style="min-width:220px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;">
-            ${tags.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('')}
-          </select>
-          <button class="btn secondary" id="masteryAiFeedbackBtn">AI Feedback</button>
-        </div>
-        <div style="display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px;">
-          <div style="border:1px solid var(--theme-border-mid); border-radius:8px; padding:10px;">
-            <div style="font-weight:700; margin-bottom:8px; color:var(--columbia-blue);">Selected Skill Distribution</div>
-            <canvas id="masteryTagChart" height="220"></canvas>
+      scorePane.querySelector('#masteryExportCsvBtn')?.addEventListener('click', exportMasteryCsv);
+
+      skillsPane.innerHTML = `
+        <div class="mastery-skills-layout">
+          <div>
+            <div class="teacher-panel-card">
+              <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
+                <label style="margin:0;">Skill</label>
+                <select id="masteryAnalyticsTagSelect" style="min-width:220px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;">
+                  ${tags.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('')}
+                </select>
+              </div>
+              <div style="font-weight:700; margin-bottom:8px; color:var(--columbia-blue);">Selected Skill Distribution</div>
+              <canvas id="masteryTagChart" height="220"></canvas>
+            </div>
+            <div class="teacher-panel-card" style="margin-top:10px;">
+              <div style="font-weight:700; margin-bottom:8px; color:var(--columbia-blue);">Overall Distribution</div>
+              <canvas id="masterySummaryChart" height="220"></canvas>
+            </div>
           </div>
-          <div style="border:1px solid var(--theme-border-mid); border-radius:8px; padding:10px;">
-            <div style="font-weight:700; margin-bottom:8px; color:var(--columbia-blue);">Overall Mastery Distribution</div>
-            <canvas id="masterySummaryChart" height="220"></canvas>
+          <div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
+              <label style="margin:0;">Feedback Scope</label>
+              <select id="masteryFeedbackScopeSelect" style="min-width:180px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;">
+                <option value="all">All skills</option>
+                <option value="tag">Specific skill</option>
+              </select>
+              <button class="btn secondary" id="masteryAiFeedbackBtn">AI Feedback</button>
+              <button class="btn secondary" id="masteryAiFeedbackCopyBtn">Copy Feedback</button>
+            </div>
+            <div class="mastery-grid">
+              <table>
+                <thead><tr><th>Student</th>${tags.map(t => `<th>${escapeHtml(t)}</th>`).join('')}</tr></thead>
+                <tbody>
+                  ${students.map(s => `
+                    <tr>
+                      <td>${escapeHtml(s.name || s.email)}</td>
+                      ${tags.map(t => {
+                        const score = s.skillScores?.[t];
+                        return `<td class="${masteryBandClass(score)}">${score === null || score === undefined ? 'Untested' : `${Math.round(score)}%`}</td>`;
+                      }).join('')}
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+            <div id="masteryAiFeedbackOutput" style="margin-top:10px; color:#ddd; border:1px solid var(--theme-border-mid); border-radius:8px; background:var(--theme-input-bg); padding:12px; min-height:110px;"></div>
           </div>
         </div>
-        <div id="masteryAiFeedbackOutput" style="margin-top:10px; white-space:pre-wrap; color:#ddd;"></div>
       `;
-      analyticsPane.querySelector('#masteryAnalyticsTagSelect')?.addEventListener('change', () => renderMasteryCharts());
-      analyticsPane.querySelector('#masteryAiFeedbackBtn')?.addEventListener('click', requestMasteryFeedback);
+      skillsPane.querySelector('#masteryAnalyticsTagSelect')?.addEventListener('change', () => renderMasteryCharts());
+      skillsPane.querySelector('#masteryFeedbackScopeSelect')?.addEventListener('change', () => {
+        const scope = skillsPane.querySelector('#masteryFeedbackScopeSelect')?.value || 'all';
+        const tagSelect = skillsPane.querySelector('#masteryAnalyticsTagSelect');
+        if (tagSelect) tagSelect.disabled = scope !== 'tag';
+      });
+      skillsPane.querySelector('#masteryAiFeedbackBtn')?.addEventListener('click', requestMasteryFeedback);
+      skillsPane.querySelector('#masteryAiFeedbackCopyBtn')?.addEventListener('click', async () => {
+        const text = document.getElementById('masteryAiFeedbackOutput')?.innerText || '';
+        if (!text.trim()) return;
+        try { await navigator.clipboard.writeText(text); } catch {}
+      });
       renderMasteryCharts();
     }
 
@@ -3954,20 +4057,21 @@ print("Hello " + name)
     async function requestMasteryFeedback() {
       const out = document.getElementById('masteryAiFeedbackOutput');
       const tag = document.getElementById('masteryAnalyticsTagSelect')?.value || '';
+      const scope = document.getElementById('masteryFeedbackScopeSelect')?.value || 'all';
       if (!out) return;
       out.textContent = 'Generating AI feedback…';
       try {
         const res = await fetch(`/api/teacher/classes/${encodeURIComponent(currentTeacherClassId)}/mastery-feedback`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Teacher-Token': TEACHER_TOKEN },
-          body: JSON.stringify({ tag, ...buildAiContext() })
+          body: JSON.stringify({ scope, tag, ...buildAiContext() })
         });
         const data = await res.json().catch(() => ({}));
         if (!data.ok) {
           out.textContent = data.error || 'Failed to generate AI feedback.';
           return;
         }
-        out.textContent = data.feedback || '(No feedback returned.)';
+        renderMarkdownTo(out, data.feedback || '(No feedback returned.)', 'python');
       } catch {
         out.textContent = 'Network error while generating feedback.';
       }
@@ -4830,6 +4934,16 @@ print("Hello " + name)
       return null;
     }
 
+    function hasSubmissionSummary(summary) {
+      if (!summary) return false;
+      return !!(
+        summary.submittedAt ||
+        summary.totalScore !== null && summary.totalScore !== undefined ||
+        summary.codeScore !== null && summary.codeScore !== undefined ||
+        summary.quizScore !== null && summary.quizScore !== undefined
+      );
+    }
+
     function flattenFiles(items, output = []) {
       (items || []).forEach(item => {
         if (item.type === 'file') output.push(item);
@@ -5075,13 +5189,15 @@ print("Hello " + name)
             <div class="meta">Max Score: ${a.maxScore}${a.quiz?.questions?.length ? ` · Questions: ${a.quiz.questions.length}` : ''}${a.quizSettings?.maxSubmissions > 0 ? ` · Quiz Attempts: ${a.quizSettings.maxSubmissions}` : ''}</div>
             ${(a.skillTags || []).length ? `<div class="skill-tags">${(a.skillTags || []).map(tag => `<span class="skill-chip">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
             <div class="assignment-actions">
-               <button class="btn run submit-assignment-btn" data-name="${escapeHtml(a.name)}" ${canSubmit && joinedClass && files.length ? '' : 'disabled'}>Submit File</button>
-               ${a.quiz?.questions?.length ? `<button class="btn secondary open-questions-btn" data-name="${escapeHtml(a.name)}" ${canSubmit && joinedClass ? '' : 'disabled'}>Questions (${a.quiz.questions.length})</button>` : ''}
-            </div>
-          </div>
-        `).join('');
+                <button class="btn run submit-assignment-btn" data-name="${escapeHtml(a.name)}" ${canSubmit && joinedClass && files.length ? '' : 'disabled'}>Submit File</button>
+                ${a.quiz?.questions?.length ? `<button class="btn secondary open-questions-btn" data-name="${escapeHtml(a.name)}" ${canSubmit && joinedClass ? '' : 'disabled'}>Questions (${a.quiz.questions.length})</button>` : ''}
+                ${hasSubmissionSummary(a.studentSubmissionSummary) ? `<button class="btn secondary view-score-report-btn" data-name="${escapeHtml(a.name)}" ${canSubmit ? '' : 'disabled'}>View Score Report</button>` : ''}
+             </div>
+           </div>
+         `).join('');
         activeList.querySelectorAll('.submit-assignment-btn').forEach(btn => btn.addEventListener('click', () => showAssignmentSubmitModal(btn.dataset.name)));
         activeList.querySelectorAll('.open-questions-btn').forEach(btn => btn.addEventListener('click', () => openQuestions(btn.dataset.name)));
+        activeList.querySelectorAll('.view-score-report-btn').forEach(btn => btn.addEventListener('click', () => openStudentScoreReport(btn.dataset.name)));
       }
 
       if (!pastAssignments.length) {
@@ -5093,8 +5209,12 @@ print("Hello " + name)
             <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
             <div class="meta">Max Score: ${a.maxScore}</div>
             ${(a.skillTags || []).length ? `<div class="skill-tags">${(a.skillTags || []).map(tag => `<span class="skill-chip">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
+            <div class="assignment-actions">
+              ${hasSubmissionSummary(a.studentSubmissionSummary) ? `<button class="btn secondary view-score-report-btn" data-name="${escapeHtml(a.name)}" ${canSubmit ? '' : 'disabled'}>View Score Report</button>` : ''}
+            </div>
           </div>
         `).join('');
+        pastList.querySelectorAll('.view-score-report-btn').forEach(btn => btn.addEventListener('click', () => openStudentScoreReport(btn.dataset.name)));
       }
     }
 
@@ -5124,6 +5244,9 @@ print("Hello " + name)
               ${score.quizScore !== null && score.quizScore !== undefined ? ` · Quiz ${score.quizScore}` : ''}
             </div>
             <div style="color:#666; font-size:11px; margin-top:4px;">${escapeHtml(score.submittedFileName || 'No code file yet')} · ${escapeHtml(score.submittedAt || 'Not submitted')}</div>
+            <div style="margin-top:8px;">
+              <button class="btn secondary view-score-report-btn" data-name="${escapeHtml(score.assignmentName)}" ${score.submittedAt ? '' : 'disabled'}>View Score Report</button>
+            </div>
           </div>
         `;
         const activeScores = result.scores.filter(s => s.active);
@@ -5132,6 +5255,7 @@ print("Hello " + name)
         if (activeScores.length) html += '<div style="margin-bottom:16px;"><h5 style="color:var(--columbia-blue); margin:8px 0;">Active Assignments</h5>' + activeScores.map(score => renderCard(score, false)).join('') + '</div>';
         if (pastScores.length) html += '<div><h5 style="color:var(--columbia-blue); margin:8px 0;">Past Assignments</h5>' + pastScores.map(score => renderCard(score, true)).join('') + '</div>';
         resultsDiv.innerHTML = html || '<p style="color:#888; font-size:12px;">No submissions yet.</p>';
+        resultsDiv.querySelectorAll('.view-score-report-btn').forEach(btn => btn.addEventListener('click', () => openStudentScoreReport(btn.dataset.name)));
       } catch (error) {
         console.error('Error loading scores:', error);
         resultsDiv.innerHTML = '<p style="color:#ff5555; font-size:12px;">Error loading scores. Please try again.</p>';
@@ -5200,10 +5324,14 @@ print("Hello " + name)
       const selectedTags = existingAssignment?.skillTags || [];
       const maxQuizSubmissions = existingAssignment?.quizSettings?.maxSubmissions ?? 0;
       const modal = document.createElement('div');
-      modal.className = 'modal';
+      modal.className = 'modal workspace-modal';
       modal.innerHTML = `
-        <div class="modal-content" style="max-width:800px; max-height:80vh; overflow-y:auto;">
-          <h3>${existingAssignment ? 'Edit Assignment' : 'New Assignment'}</h3>
+        <div class="modal-content">
+          <div class="workspace-modal-header">
+            <h3 style="margin:0;">${existingAssignment ? 'Edit Assignment' : 'New Assignment'}</h3>
+            <button class="btn secondary modal-exit-btn">Exit</button>
+          </div>
+          <div class="workspace-modal-body">
           <label>Assignment Name</label>
           <input type="text" id="modalAssignmentName" value="${escapeHtml(existingAssignment?.name || '')}" ${existingAssignment ? 'disabled' : ''} placeholder="e.g., Loops Practice 1" />
           <label>Task Description</label>
@@ -5228,12 +5356,15 @@ print("Hello " + name)
             <h4 style="color:var(--columbia-blue); margin:0 0 12px;">Quiz (Optional)</h4>
             <div id="quizBuilder">
               <div id="quizQuestionsList"></div>
-              <button type="button" class="btn secondary" id="addQuestionBtn" style="margin-top:10px;">+ Add Question</button>
+              <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+                <button type="button" class="btn secondary" id="addQuestionBtn">+ Add Question</button>
+                <button type="button" class="btn secondary" id="viewQuizAsStudentBtn">View as Student</button>
+              </div>
             </div>
           </div>
           <div class="modal-actions" style="margin-top:20px;">
-            <button class="btn secondary modal-cancel-btn">Cancel</button>
             <button class="btn run modal-save-btn">${existingAssignment ? 'Save Changes' : 'Create Assignment'}</button>
+          </div>
           </div>
         </div>
       `;
@@ -5275,9 +5406,12 @@ print("Hello " + name)
       }
 
       document.getElementById('addQuestionBtn').addEventListener('click', () => showAddQuestionModal(quizQuestions, renderQuizQuestions, questionIdCounter));
+      document.getElementById('viewQuizAsStudentBtn')?.addEventListener('click', () => {
+        const assignmentName = existingAssignment?.name || (document.getElementById('modalAssignmentName')?.value || 'Untitled Assignment');
+        showTeacherQuizPreviewModal(assignmentName, quizQuestions);
+      });
       renderQuizQuestions();
-      modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
-      modal.querySelector('.modal-cancel-btn').addEventListener('click', () => modal.remove());
+      modal.querySelector('.modal-exit-btn')?.addEventListener('click', () => modal.remove());
       modal.querySelector('.modal-save-btn').addEventListener('click', async () => {
         const name = existingAssignment
           ? existingAssignment.name
@@ -5320,10 +5454,14 @@ print("Hello " + name)
 
     function showAddQuestionModal(quizQuestions, renderCallback, questionIdCounter) {
       const questionModal = document.createElement('div');
-      questionModal.className = 'modal';
+      questionModal.className = 'modal workspace-modal';
       questionModal.innerHTML = `
-        <div class="modal-content" style="max-width:700px; max-height:85vh; overflow-y:auto; padding:20px;">
-          <h3>Add Question</h3>
+        <div class="modal-content">
+          <div class="workspace-modal-header">
+            <h3 style="margin:0;">Add Question</h3>
+            <button class="btn secondary modal-exit-btn-q">Exit</button>
+          </div>
+          <div class="workspace-modal-body">
           <label>Question Type</label>
           <select id="questionType" style="width:100%; padding:8px; background:#0c0c0c; border:1px solid #333; color:#ddd; border-radius:4px; margin-bottom:12px;">
             <option value="multiple_choice">Multiple Choice</option>
@@ -5351,8 +5489,8 @@ print("Hello " + name)
             <textarea id="questionCodeSnippet" placeholder="Paste or type code students must read..." style="width:100%; min-height:140px; padding:8px; background:#0c0c0c; border:1px solid #333; color:#ddd; border-radius:4px; margin-bottom:12px; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;"></textarea>
           </div>
           <div class="modal-actions">
-            <button class="btn secondary modal-cancel-btn-q">Cancel</button>
             <button class="btn run modal-add-btn-q">Add Question</button>
+          </div>
           </div>
         </div>
       `;
@@ -5386,8 +5524,7 @@ print("Hello " + name)
         document.getElementById('codeReadingSection').style.display = (type === 'multiple_choice_code' || type === 'written_code') ? 'block' : 'none';
       });
       renderOptions();
-      questionModal.addEventListener('click', (e) => { if (e.target === questionModal) questionModal.remove(); });
-      questionModal.querySelector('.modal-cancel-btn-q').addEventListener('click', () => questionModal.remove());
+      questionModal.querySelector('.modal-exit-btn-q')?.addEventListener('click', () => questionModal.remove());
       questionModal.querySelector('.modal-add-btn-q').addEventListener('click', () => {
         const type = document.getElementById('questionType').value;
         const textValue = document.getElementById('questionText').value.trim();
@@ -5417,6 +5554,72 @@ print("Hello " + name)
         quizQuestions.push(question);
         questionModal.remove();
         renderCallback();
+      });
+    }
+
+    function showTeacherQuizPreviewModal(assignmentName, quizQuestions) {
+      if (!Array.isArray(quizQuestions) || !quizQuestions.length) {
+        alert('Add at least one quiz question first.');
+        return;
+      }
+      const previewModal = document.createElement('div');
+      previewModal.className = 'modal workspace-modal';
+      const totalPoints = quizQuestions.reduce((sum, q) => sum + (parseInt(q.points, 10) || 0), 0);
+      previewModal.innerHTML = `
+        <div class="modal-content">
+          <div class="workspace-modal-header">
+            <h3 style="margin:0;">View as Student: ${escapeHtml(assignmentName || 'Assignment')}</h3>
+            <button class="btn secondary preview-exit-btn">Exit</button>
+          </div>
+          <div class="workspace-modal-body">
+            <div style="font-size:12px; color:#aaa;">Preview mode only. Responses and scores are not saved.</div>
+            <div id="previewQuestionsContainer" style="margin:12px 0;">
+              ${quizQuestions.map((q, idx) => (q.type === 'multiple_choice' || q.type === 'multiple_choice_code') ? `
+                <div class="question-block" style="margin-bottom:24px; padding:20px; background:#0d0d0d; border:1px solid #444; border-radius:10px;">
+                  <div style="color:var(--columbia-blue); font-weight:700; margin-bottom:12px;">Question ${idx + 1} (${q.points || 0} pts)</div>
+                  ${q.type === 'multiple_choice_code' ? `<div class="question-split"><div class="question-code-panel">${renderCodeSnippetBlock(q.codeSnippet || '', q.codeLanguage || 'python')}</div><div>` : ''}
+                  <div style="color:#eee; margin-bottom:14px; font-size:15px; line-height:1.6;">${escapeHtml(q.question || '')}</div>
+                  ${(q.options || []).map((opt, optIdx) => `
+                    <label style="display:flex; align-items:center; gap:12px; margin:8px 0; padding:10px; background:#1a1a1a; border:1px solid #333; border-radius:8px; cursor:pointer;">
+                      <input type="radio" name="preview_question_${q.id}" value="${optIdx}">
+                      <span>${escapeHtml(opt)}</span>
+                    </label>
+                  `).join('')}
+                  ${q.type === 'multiple_choice_code' ? '</div></div>' : ''}
+                </div>
+              ` : `
+                <div class="question-block" style="margin-bottom:24px; padding:20px; background:#0d0d0d; border:1px solid #444; border-radius:10px;">
+                  <div style="color:var(--columbia-blue); font-weight:700; margin-bottom:12px;">Question ${idx + 1} (${q.points || 0} pts)</div>
+                  ${q.type === 'written_code' ? `<div class="question-split"><div class="question-code-panel">${renderCodeSnippetBlock(q.codeSnippet || '', q.codeLanguage || 'python')}</div><div>` : ''}
+                  <div style="color:#eee; margin-bottom:12px; font-size:15px; line-height:1.6;">${escapeHtml(q.question || '')}</div>
+                  <textarea id="preview_written_answer_${q.id}" placeholder="Type your answer here..." style="width:100%; min-height:140px; padding:14px; background:#1a1a1a; border:2px solid #444; border-radius:8px; color:#eee; font-family:inherit; resize:vertical; font-size:15px; line-height:1.5;"></textarea>
+                  ${q.type === 'written_code' ? '</div></div>' : ''}
+                </div>
+              `).join('')}
+            </div>
+            <div class="modal-actions" style="display:flex; gap:10px; justify-content:flex-end;">
+              <button class="btn run preview-submit-btn">Submit Preview</button>
+            </div>
+            <div id="previewResultBox" style="margin-top:10px; font-size:14px; color:#ddd;"></div>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(previewModal);
+      previewModal.querySelector('.preview-exit-btn')?.addEventListener('click', () => previewModal.remove());
+      previewModal.querySelector('.preview-submit-btn')?.addEventListener('click', () => {
+        let score = 0;
+        quizQuestions.forEach((q) => {
+          if (q.type === 'multiple_choice' || q.type === 'multiple_choice_code') {
+            const selected = previewModal.querySelector(`input[name="preview_question_${q.id}"]:checked`);
+            if (selected && parseInt(selected.value, 10) === q.correctAnswer) {
+              score += parseInt(q.points, 10) || 0;
+            }
+          }
+        });
+        const result = previewModal.querySelector('#previewResultBox');
+        if (result) {
+          result.innerHTML = `<strong>Preview Score:</strong> ${score} / ${totalPoints} <span style="color:#888;">(written-response questions are shown but not auto-scored in preview)</span>`;
+        }
       });
     }
 
@@ -5534,9 +5737,9 @@ print("Hello " + name)
           return;
         }
         const modal = document.createElement('div');
-        modal.className = 'modal';
+        modal.className = 'modal workspace-modal';
         modal.innerHTML = `
-          <div class="modal-content" style="max-width:900px; max-height:90vh; overflow-y:auto; padding:30px;">
+          <div class="modal-content">
             <h3 style="margin-top:0; color:var(--columbia-blue);">Assignment Questions: ${escapeHtml(assignmentName)}</h3>
             <p style="color:#aaa; font-size:14px; margin:10px 0 20px;">Submitting as <strong style="color:#eee;">${escapeHtml(currentUser.name || currentUser.email)}</strong>. You must submit to exit this window.</p>
             <div class="quiz-lock-note">
@@ -5552,22 +5755,26 @@ print("Hello " + name)
                       <div class="question-code-panel">${renderCodeSnippetBlock(q.codeSnippet || '', q.codeLanguage || 'python')}</div>
                       <div>
                         <div style="color:#eee; margin-bottom:18px; font-size:15px; line-height:1.6;">${escapeHtml(q.question)}</div>
+                        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:10px;">
                         ${(q.options || []).map((opt, optIdx) => `
                           <label style="display:flex; align-items:center; gap:12px; margin:10px 0; padding:12px; background:#1a1a1a; border:1px solid #333; border-radius:8px; cursor:pointer;">
                             <input type="radio" name="question_${q.id}" value="${optIdx}">
                             <span>${escapeHtml(opt)}</span>
                           </label>
                         `).join('')}
+                        </div>
                       </div>
                     </div>
                   ` : `
                     <div style="color:#eee; margin-bottom:18px; font-size:15px; line-height:1.6;">${escapeHtml(q.question)}</div>
+                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:10px;">
                     ${(q.options || []).map((opt, optIdx) => `
                       <label style="display:flex; align-items:center; gap:12px; margin:10px 0; padding:12px; background:#1a1a1a; border:1px solid #333; border-radius:8px; cursor:pointer;">
                         <input type="radio" name="question_${q.id}" value="${optIdx}">
                         <span>${escapeHtml(opt)}</span>
                       </label>
                     `).join('')}
+                    </div>
                   `}
                 </div>
               ` : `
@@ -5664,9 +5871,59 @@ print("Hello " + name)
         if (activeQuizSession) activeQuizSession.submitted = true;
         modal.remove();
         alert('Your answers were submitted successfully.');
+        await openStudentScoreReport(assignmentName);
         await loadAssignments();
       } catch (error) {
         alert('Network error submitting answers');
+      }
+    }
+
+    async function openStudentScoreReport(assignmentName) {
+      if (!USER_TOKEN || !currentUser) return;
+      const modal = document.createElement('div');
+      modal.className = 'modal';
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width:760px;">
+          <h3>Score Report</h3>
+          <div id="studentScoreReportBody" style="color:#aaa;">Loading report…</div>
+          <div class="modal-actions">
+            <button class="btn secondary score-report-close-btn">Close</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      modal.querySelector('.score-report-close-btn')?.addEventListener('click', () => modal.remove());
+      modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+      try {
+        const resp = await fetch(`/api/quiz/report/${encodeURIComponent(assignmentName)}`, {
+          headers: { 'X-User-Token': USER_TOKEN }
+        });
+        const data = await resp.json().catch(() => ({}));
+        const body = modal.querySelector('#studentScoreReportBody');
+        if (!body) return;
+        if (!data.ok) {
+          body.textContent = data.error || 'Unable to load score report.';
+          return;
+        }
+        const report = data.report || {};
+        const tags = report.skillScores || {};
+        body.innerHTML = `
+          <div style="font-size:13px; margin-bottom:6px;"><strong>Assignment:</strong> ${escapeHtml(report.assignmentName || assignmentName)}</div>
+          <div style="font-size:13px; margin-bottom:6px;"><strong>Submitted:</strong> ${escapeHtml(report.submittedAt || '—')}</div>
+          <div style="font-size:13px; margin-bottom:10px;"><strong>Total Score:</strong> ${report.totalScore ?? '—'} / ${report.maxTotal ?? '—'}</div>
+          <div style="font-size:12px; color:#888; margin-bottom:10px;">This report shows score and skill-tag achievement only. Correct answers are never shown.</div>
+          <div class="score-report-list">
+            ${Object.keys(tags).map(tag => `
+              <div class="score-report-item">
+                <strong>${escapeHtml(tag)}</strong>
+                <div style="margin-top:4px; color:#ddd;">Achievement: ${tags[tag] === null || tags[tag] === undefined ? 'Untested' : `${Math.round(tags[tag])}%`}</div>
+              </div>
+            `).join('') || '<div style="color:#888;">No skill tags configured for this assignment.</div>'}
+          </div>
+        `;
+      } catch {
+        const body = modal.querySelector('#studentScoreReportBody');
+        if (body) body.textContent = 'Network error loading report.';
       }
     }
 
