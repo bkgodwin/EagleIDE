@@ -312,9 +312,11 @@
     .code-read-line-num{ color:#6f8196; text-align:right; user-select:none; border-right:1px solid #233245; padding-right:8px; }
     .code-read-line-code{ overflow-x:auto; }
     .no-exit-text{ color:#ffb74d; font-size:12px; margin-top:8px; font-weight:600; }
-    .mastery-grid{ overflow:auto; border:1px solid var(--theme-border-mid); border-radius:8px; }
-    .mastery-grid table{ width:100%; border-collapse:collapse; font-size:12px; }
+    .mastery-grid{ overflow-x:auto; overflow-y:auto; border:1px solid var(--theme-border-mid); border-radius:8px; }
+    .mastery-grid table{ width:auto; min-width:100%; border-collapse:collapse; font-size:12px; }
     .mastery-grid th,.mastery-grid td{ border-bottom:1px solid var(--theme-border-mid); border-right:1px solid var(--theme-border-mid); padding:8px; text-align:left; white-space:nowrap; }
+    .mastery-grid th:first-child,.mastery-grid td:first-child{ min-width:160px; max-width:200px; position:sticky; left:0; background:var(--theme-panel); z-index:1; }
+    .mastery-grid th:not(:first-child),.mastery-grid td:not(:first-child){ min-width:110px; width:110px; max-width:110px; }
     .mastery-grid th:last-child,.mastery-grid td:last-child{ border-right:none; }
     .mastery-cell-red{ background:#4b1f1f; color:#ffb3b3; font-weight:700; }
     .mastery-cell-bronze{ background:#5a3d21; color:#ffd7a3; font-weight:700; }
@@ -673,6 +675,10 @@
     .teacher-roster-row-offline {
       background: var(--theme-output-bg);
       border-color: var(--theme-border-mid);
+    }
+    .teacher-roster-row-in-assignment {
+      background: rgba(198, 40, 40, 0.25);
+      border-color: #ef5350;
     }
 
     /* Student assignment card inline score badge */
@@ -1733,6 +1739,7 @@ print("Hello " + name)
     let currentTeacherClassId = null;
     let activeAssignmentsClassId = null;
     let activeStudentsByClass = {};
+    let inQuizStudentsByClass = {};
     let teacherDashboardRosterPoll = null;
     let studentClassData = null;
     let currentOpenFile = null; // { path, name } of open file in sidebar
@@ -3551,10 +3558,40 @@ print("Hello " + name)
         const data = await res.json().catch(() => ({}));
         if (!data?.ok) return;
         activeStudentsByClass[classKey] = new Set((data.activeStudents || []).map(e => String(e || '').toLowerCase()));
-        if (document.querySelector('#dash-reports.teacher-dash-view.active')) {
-          renderClassReports().catch(() => {});
-        }
+        inQuizStudentsByClass[classKey] = new Set((data.inQuizStudents || []).map(e => String(e || '').toLowerCase()));
+        updateRosterCells(classKey);
       } catch {}
+    }
+
+    function updateRosterCells(classId) {
+      const classKey = classId || currentTeacherClassId;
+      if (!classKey || !currentMasteryData) return;
+      const rosterPane = document.getElementById('class-roster-pane');
+      if (!rosterPane) return;
+      const students = currentMasteryData.students || [];
+      const activeStudents = activeStudentsByClass[classKey] || new Set();
+      const inQuizStudents = inQuizStudentsByClass[classKey] || new Set();
+      // Build a map of email -> element once to avoid repeated DOM queries
+      const emailToEl = new Map();
+      rosterPane.querySelectorAll('[data-roster-email]').forEach(el => {
+        emailToEl.set(el.dataset.rosterEmail, el);
+      });
+      students.forEach(s => {
+        const email = (s.email || '').toLowerCase();
+        const el = emailToEl.get(email);
+        if (!el) return;
+        const isInQuiz = inQuizStudents.has(email);
+        const isOnline = activeStudents.has(email);
+        // Remove all state classes first, then apply exactly one
+        el.classList.remove('teacher-roster-row-in-assignment', 'teacher-roster-row-online', 'teacher-roster-row-offline');
+        if (isInQuiz) {
+          el.classList.add('teacher-roster-row-in-assignment');
+        } else if (isOnline) {
+          el.classList.add('teacher-roster-row-online');
+        } else {
+          el.classList.add('teacher-roster-row-offline');
+        }
+      });
     }
 
     document.getElementById('teacherDashboardBtn')?.addEventListener('click', () => {
@@ -4249,6 +4286,7 @@ print("Hello " + name)
       const classMeta = currentMasteryData.class || {};
       const classSettings = (teacherClasses.find(c => c.id === classMeta.id)?.settings) || {};
       const activeStudents = activeStudentsByClass[currentTeacherClassId] || new Set();
+      const inQuizStudents = inQuizStudentsByClass[currentTeacherClassId] || new Set();
 
       rosterPane.innerHTML = `
         <div class="teacher-split-layout">
@@ -4262,12 +4300,17 @@ print("Hello " + name)
           <div class="teacher-panel-card">
             <h4>Student Roster</h4>
             <div class="student-list-compact">
-              ${students.map(s => `
-                <div class="${activeStudents.has((s.email || '').toLowerCase()) ? 'teacher-roster-row-online' : 'teacher-roster-row-offline'}" style="border:1px solid; border-radius:8px; padding:8px;">
+              ${students.map(s => {
+                const email = (s.email || '').toLowerCase();
+                const isInQuiz = inQuizStudents.has(email);
+                const isOnline = activeStudents.has(email);
+                const rowClass = isInQuiz ? 'teacher-roster-row-in-assignment' : (isOnline ? 'teacher-roster-row-online' : 'teacher-roster-row-offline');
+                return `
+                <div class="${rowClass}" data-roster-email="${escapeHtml(email)}" style="border:1px solid; border-radius:8px; padding:8px;">
                   <div style="font-weight:700;">${escapeHtml(s.name || s.email)}</div>
                   <div style="font-size:12px; color:var(--theme-text-dim);">${escapeHtml(s.email || '')}</div>
-                </div>
-              `).join('') || '<div style="color:#888;">No students enrolled.</div>'}
+                </div>`;
+              }).join('') || '<div style="color:#888;">No students enrolled.</div>'}
             </div>
           </div>
         </div>
@@ -6286,12 +6329,14 @@ print("Hello " + name)
           </div>
         `;
         document.body.appendChild(modal);
+        if (socket) socket.emit('quiz_open', { assignmentName });
         activeQuizSession = { assignmentName, questions, modal, submitted: false };
         modal.querySelectorAll('textarea[id^="written_answer_"]').forEach(textarea => {
           textarea.addEventListener('paste', (e) => e.preventDefault());
         });
         const autoSubmitOnClose = () => {
           if (!activeQuizSession || activeQuizSession.submitted) return;
+          if (socket) socket.emit('quiz_close', { assignmentName });
           const payload = buildQuizResponsesFromModal(questions, modal, true);
           fetch('/api/quiz/submit', {
             method: 'POST',
@@ -6354,6 +6399,7 @@ print("Hello " + name)
         const submitData = await submitResp.json().catch(() => ({}));
         if (!submitData.ok) { alert(submitData.error || 'Failed to submit answers'); return; }
         if (activeQuizSession) activeQuizSession.submitted = true;
+        if (socket) socket.emit('quiz_close', { assignmentName });
         modal.remove();
         alert('Your answers were submitted successfully.');
         await openStudentScoreReport(assignmentName);
