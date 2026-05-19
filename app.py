@@ -2104,6 +2104,7 @@ def teacher_active_students(class_id: str):
     if not cls or (cls.get("teacher_email") or "").lower() != (teacher.get("email") or "").lower():
         return jsonify(ok=False, error="Class not found"), 404
     active_emails = set()
+    in_quiz_emails = set()
     for sid, info in _socket_sid_info.items():
         if (info or {}).get("role") != "student":
             continue
@@ -2112,7 +2113,9 @@ def teacher_active_students(class_id: str):
         email = (info.get("email") or "").strip().lower()
         if email:
             active_emails.add(email)
-    return jsonify(ok=True, classId=class_id, activeStudents=sorted(active_emails))
+            if info.get("in_quiz"):
+                in_quiz_emails.add(email)
+    return jsonify(ok=True, classId=class_id, activeStudents=sorted(active_emails), inQuizStudents=sorted(in_quiz_emails))
 
 
 @app.post("/api/teacher/students/reset-password")
@@ -3509,7 +3512,7 @@ def on_join_class_room(payload):
         student_class = student.get("class_id") or (_find_user(student.get("email", "")) or {}).get("class_id")
         if student_class != class_id:
             return
-        _socket_sid_info[request.sid] = {"role": "student", "email": (student.get("email") or "").strip().lower()}
+        _socket_sid_info[request.sid] = {"role": "student", "email": (student.get("email") or "").strip().lower(), "in_quiz": False}
     elif role == "teacher":
         teacher = _teacher_tokens.get(token)
         cls = _find_class_by_id(class_id)
@@ -3533,6 +3536,20 @@ def on_leave_class_room(payload):
         return
     leave_room(f"class_{class_id}")
     _socket_sid_rooms.setdefault(request.sid, set()).discard(class_id)
+
+
+@socketio.on("quiz_open")
+def on_quiz_open(payload):
+    info = _socket_sid_info.get(request.sid)
+    if info and info.get("role") == "student":
+        info["in_quiz"] = True
+
+
+@socketio.on("quiz_close")
+def on_quiz_close(payload):
+    info = _socket_sid_info.get(request.sid)
+    if info and info.get("role") == "student":
+        info["in_quiz"] = False
 
 # -------------------------
 # Assignment system
