@@ -666,6 +666,14 @@
     }
     .teacher-dash-student-name { flex: 1; font-size: 13px; color: var(--theme-text); min-width: 120px; }
     .teacher-dash-student-email { font-size: 11px; color: var(--theme-text-dim); }
+    .teacher-roster-row-online {
+      background: rgba(56, 142, 60, 0.25);
+      border-color: #4caf50;
+    }
+    .teacher-roster-row-offline {
+      background: var(--theme-output-bg);
+      border-color: var(--theme-border-mid);
+    }
 
     /* Student assignment card inline score badge */
     .assignment-score-badge {
@@ -749,7 +757,7 @@
         <div id="submissionScoringMeta" class="submission-scoring-meta"></div>
         <div id="submissionQuizSummary" class="submission-scoring-meta" style="display:none;"></div>
         <div class="submission-scoring-row">
-          <label for="submissionScoreInput" style="font-size:12px; color:var(--theme-text-dim);">Score</label>
+          <label for="submissionScoreInput" style="font-size:12px; color:var(--theme-text-dim);">Code Score</label>
           <input type="number" id="submissionScoreInput" min="0" step="1" />
           <button class="btn secondary" id="submissionAiGradeBtn" style="display:none;">AI Grade</button>
         </div>
@@ -829,11 +837,11 @@
               <textarea id="notesEdit" style="display:none; width:100%; height:100%; padding:12px; background:var(--theme-input-bg); color:var(--theme-text); border:none; font-family:monospace;"></textarea>
             </div>
 
-            <!-- Teacher (code view now available in the Teacher Dashboard) -->
+            <!-- Teacher -->
             <div class="tab-pane" id="teacherTab">
               <div style="padding:20px; color:var(--theme-text-dim); font-size:14px;">
-                <p style="margin:0;">Teacher Code Broadcast has moved to the <strong style="color:var(--columbia-blue);">Teacher Dashboard</strong>.</p>
-                <p style="margin:10px 0 0;">Click <strong>📋 Dashboard</strong> in the toolbar to access it.</p>
+                <p style="margin:0;">Teacher code now streams directly from the regular editor space.</p>
+                <p style="margin:10px 0 0;">Use your main editor and class selector to broadcast live code updates.</p>
               </div>
             </div>
 
@@ -948,17 +956,14 @@
           </div>
         </div>
         <nav class="teacher-dash-nav">
-          <button class="teacher-dash-navbtn active" data-view="dash-classes">
+          <button class="teacher-dash-navbtn active" data-view="dash-reports">
+            <span class="navbtn-icon">📊</span><span>Reports</span>
+          </button>
+          <button class="teacher-dash-navbtn" data-view="dash-classes">
             <span class="navbtn-icon">📚</span><span>Classes</span>
           </button>
           <button class="teacher-dash-navbtn" data-view="dash-assignments">
             <span class="navbtn-icon">📝</span><span>Assignments</span>
-          </button>
-          <button class="teacher-dash-navbtn" data-view="dash-reports">
-            <span class="navbtn-icon">📊</span><span>Reports</span>
-          </button>
-          <button class="teacher-dash-navbtn" data-view="dash-code">
-            <span class="navbtn-icon">💻</span><span>Teacher Code</span>
           </button>
           <button class="teacher-dash-navbtn" data-view="dash-account">
             <span class="navbtn-icon">⚙️</span><span>Account</span>
@@ -973,7 +978,7 @@
       <main class="teacher-dash-main">
 
         <!-- Classes View -->
-        <div class="teacher-dash-view active" id="dash-classes">
+        <div class="teacher-dash-view" id="dash-classes">
           <div class="teacher-dash-view-hdr">
             <h2 class="teacher-dash-view-title">Class Management</h2>
             <div class="teacher-dash-view-actions">
@@ -982,6 +987,10 @@
             </div>
           </div>
           <div class="teacher-dash-scroll">
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+              <label for="teacherClassesActiveSelect" style="font-size:12px; color:var(--theme-text-dim);">Active class</label>
+              <select id="teacherClassesActiveSelect" style="min-width:280px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;"></select>
+            </div>
             <div id="teacherClassList"></div>
           </div>
         </div>
@@ -991,6 +1000,8 @@
           <div class="teacher-dash-view-hdr">
             <h2 class="teacher-dash-view-title">Assignments</h2>
             <div class="teacher-dash-view-actions">
+              <label for="teacherAssignmentsClassSelect" style="font-size:12px; color:var(--theme-text-dim);">Class</label>
+              <select id="teacherAssignmentsClassSelect" style="min-width:220px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;"></select>
               <button class="btn run" id="newAssignmentBtn">+ New Assignment</button>
               <span id="assignmentStatus" style="opacity:.8; font-size:13px;"></span>
             </div>
@@ -1006,7 +1017,7 @@
         </div>
 
         <!-- Reports View -->
-        <div class="teacher-dash-view" id="dash-reports">
+        <div class="teacher-dash-view active" id="dash-reports">
           <div class="teacher-dash-view-hdr">
             <h2 class="teacher-dash-view-title">Class Reports</h2>
             <div class="teacher-dash-view-actions">
@@ -1024,18 +1035,6 @@
             <div id="score-overview-pane" class="mastery-pane"></div>
             <div id="skills-mastery-pane" class="mastery-pane"></div>
           </div>
-        </div>
-
-        <!-- Teacher Code View -->
-        <div class="teacher-dash-view" id="dash-code">
-          <div class="teacher-dash-view-hdr">
-            <h2 class="teacher-dash-view-title">Teacher Code Broadcast</h2>
-            <div class="teacher-dash-view-actions">
-              <button class="btn secondary" id="teacherPasteBtn">Paste to Editor (Will clear Editor!)</button>
-              <span id="teacherStatus" style="opacity:.8; color:var(--columbia-blue);">Teacher Code View</span>
-            </div>
-          </div>
-          <div id="teacherEditorWrapper" style="flex:1; min-height:0; padding:0 0 4px;"></div>
         </div>
 
         <!-- Account View -->
@@ -1326,47 +1325,9 @@
     }
     const editor = initEditor();
 
-    // Initialize Teacher Tab CodeMirror Editor
+    // Teacher code streaming state
     let teacherEditor = null;
     const TEACHER_CODE_KEY = 'eagleide-teacher-code';
-    
-    function initTeacherEditor() {
-      const wrapper = document.getElementById('teacherEditorWrapper');
-      if (!wrapper || !window.CodeMirror) return;
-      
-      const textarea = document.createElement('textarea');
-      wrapper.appendChild(textarea);
-      
-      teacherEditor = CodeMirror.fromTextArea(textarea, {
-        mode: "python",
-        theme: (function(){ try { return localStorage.getItem('ide-theme') === 'light' ? 'default' : 'monokai'; } catch { return 'monokai'; } })(),
-        lineNumbers: true,
-        readOnly: true,
-        indentUnit: 4,
-        tabSize: 4,
-        indentWithTabs: true,
-        viewportMargin: 10
-      });
-      
-      // Load last saved teacher code from localStorage
-      try {
-        const savedCode = localStorage.getItem(TEACHER_CODE_KEY);
-        if (savedCode) {
-          teacherEditor.setValue(savedCode);
-          lastTeacherCodeSnapshot = savedCode;
-        }
-      } catch (e) {
-        console.warn('Failed to load teacher code:', e);
-      }
-      if (typeof syncEditorLanguage === 'function') syncEditorLanguage();
-    }
-    
-    // Initialize teacher editor when DOM is ready
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', initTeacherEditor);
-    } else {
-      initTeacherEditor();
-    }
 
     // Eagle IDE Custom Completion Engine
     (function() {
@@ -1770,6 +1731,9 @@ print("Hello " + name)
     let currentTeacher = null;
     let teacherClasses = [];
     let currentTeacherClassId = null;
+    let activeAssignmentsClassId = null;
+    let activeStudentsByClass = {};
+    let teacherDashboardRosterPoll = null;
     let studentClassData = null;
     let currentOpenFile = null; // { path, name } of open file in sidebar
     let registerMode = false;
@@ -2101,13 +2065,16 @@ print("Hello " + name)
     }
 
     async function loadTeacherClasses() {
-      if (!TEACHER_TOKEN) { teacherClasses = []; return []; }
+      if (!TEACHER_TOKEN) { teacherClasses = []; currentTeacherClassId = null; activeAssignmentsClassId = null; return []; }
       try {
         const res = await fetch('/api/teacher/classes', { headers: { 'X-Teacher-Token': TEACHER_TOKEN } });
         const j = await res.json().catch(() => ({}));
         teacherClasses = j?.classes || [];
         if (!currentTeacherClassId || !teacherClasses.some(c => c.id === currentTeacherClassId)) {
           currentTeacherClassId = teacherClasses[0]?.id || null;
+        }
+        if (!activeAssignmentsClassId || !teacherClasses.some(c => c.id === activeAssignmentsClassId)) {
+          activeAssignmentsClassId = currentTeacherClassId;
         }
       } catch {
         teacherClasses = [];
@@ -2387,9 +2354,11 @@ print("Hello " + name)
         // Listen for teacher code updates
         socket.on('teacher_code', (msg) => {
           const selectedClassId = getCurrentClassContext()?.id;
-          if (teacherEditor && msg && typeof msg.code === 'string' && msg.class_id && msg.class_id === selectedClassId) {
+          if (msg && typeof msg.code === 'string' && msg.class_id && msg.class_id === selectedClassId) {
             if (lastTeacherCodeSnapshot === msg.code) return;
-            teacherEditor.setValue(msg.code);
+            if (USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) {
+              editor.setValue(msg.code);
+            }
             lastTeacherCodeSnapshot = msg.code;
             // Save to localStorage
             try {
@@ -2421,8 +2390,13 @@ print("Hello " + name)
       if (TEACHER_TOKEN) {
         if (currentTeacherClassId && currentTeacherClassId !== nextId) emitLeaveClassRoom(currentTeacherClassId);
         currentTeacherClassId = nextId || null;
+        activeAssignmentsClassId = currentTeacherClassId;
+        syncTeacherDashboardClassSelectors();
         if (currentTeacherClassId) emitJoinClassRoom('teacher', TEACHER_TOKEN, currentTeacherClassId);
         if (!teacherBroadcastInterval && currentTeacherClassId) startTeacherBroadcast();
+        refreshActiveStudentsForClass(currentTeacherClassId);
+        renderTeacherClassManagement();
+        renderClassReports().catch(() => {});
       }
       applyClassTabVisibility();
       loadAssignments();
@@ -2730,18 +2704,6 @@ print("Hello " + name)
       applyTheme();
       btn.addEventListener('click', () => { isLight = !isLight; applyTheme(); });
     })();
-
-    // Teacher Tab: Auto Paste button
-    document.getElementById('teacherPasteBtn').addEventListener('click', () => {
-      if (teacherEditor) {
-        const teacherCode = teacherEditor.getValue();
-        if (teacherCode) {
-          editor.setValue(teacherCode);
-          // Switch to the editor/code area (optionally you could keep them on teacher tab)
-          // User can see the code was pasted successfully
-        }
-      }
-    });
 
     // Tabs switching (refresh leaderboard when opening Challenge)
     document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -3236,6 +3198,7 @@ print("Hello " + name)
           stopTeacherBroadcast();
           document.getElementById('teacherDashboardModal').style.display = 'none';
           teacherDashListenersAttached = false;
+          stopTeacherDashboardRosterPolling();
         }
         if (ADMIN_TOKEN) {
           ADMIN_TOKEN = null;
@@ -3302,7 +3265,7 @@ print("Hello " + name)
     });
     updateAuthUI();
 
-    // Teacher Code Broadcasting (Admin only)
+    // Teacher Code Broadcasting
     // Broadcast teacher code updates at minimum 2x per second (every 500ms)
     let teacherBroadcastInterval = null;
     let lastBroadcastedCode = '';
@@ -3311,15 +3274,10 @@ print("Hello " + name)
       if (teacherBroadcastInterval) return;
       const classId = getCurrentClassContext()?.id;
       if (!classId) return;
-      
-      // Update teacher editor immediately with current code
-       if (teacherEditor) {
-         const initialCode = editor.getValue();
-         teacherEditor.setValue(initialCode);
-         lastTeacherCodeSnapshot = initialCode;
-         lastBroadcastedCode = initialCode;
-         try { localStorage.setItem(TEACHER_CODE_KEY, initialCode); } catch(e) {}
-       }
+      const initialCode = editor.getValue();
+      lastTeacherCodeSnapshot = initialCode;
+      lastBroadcastedCode = initialCode;
+      try { localStorage.setItem(TEACHER_CODE_KEY, initialCode); } catch(e) {}
       
       teacherBroadcastInterval = setInterval(() => {
         const token = ADMIN_TOKEN || TEACHER_TOKEN;
@@ -3329,12 +3287,8 @@ print("Hello " + name)
         
         const currentCode = editor.getValue();
         if (currentCode !== lastBroadcastedCode) {
-          // Always update local teacher editor view
-          if (teacherEditor) {
-            teacherEditor.setValue(currentCode);
-            lastTeacherCodeSnapshot = currentCode;
-            try { localStorage.setItem(TEACHER_CODE_KEY, currentCode); } catch(e) {}
-          }
+          lastTeacherCodeSnapshot = currentCode;
+          try { localStorage.setItem(TEACHER_CODE_KEY, currentCode); } catch(e) {}
           // Broadcast to other clients if socket available
           if (socket) {
             socket.emit('teacher_code_update', {
@@ -3426,6 +3380,32 @@ print("Hello " + name)
     // ── Teacher Dashboard ──────────────────────────────────────────
     let teacherDashListenersAttached = false;
 
+    function activateReportsRosterPane() {
+      const modal = document.getElementById('teacherDashboardModal');
+      if (!modal) return;
+      modal.querySelectorAll('#dash-reports .mastery-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.pane === 'class-roster-pane'));
+      modal.querySelectorAll('#dash-reports .mastery-pane').forEach(p => p.classList.toggle('active', p.id === 'class-roster-pane'));
+    }
+
+    function stopTeacherDashboardRosterPolling() {
+      if (teacherDashboardRosterPoll) {
+        clearInterval(teacherDashboardRosterPoll);
+        teacherDashboardRosterPoll = null;
+      }
+    }
+
+    function startTeacherDashboardRosterPolling() {
+      stopTeacherDashboardRosterPolling();
+      teacherDashboardRosterPoll = setInterval(async () => {
+        const modal = document.getElementById('teacherDashboardModal');
+        if (!modal || modal.style.display === 'none') return;
+        if (!TEACHER_TOKEN || !currentTeacherClassId) return;
+        const reportsActive = modal.querySelector('.teacher-dash-view.active')?.id === 'dash-reports';
+        if (!reportsActive) return;
+        await refreshActiveStudentsForClass(currentTeacherClassId);
+      }, 2000);
+    }
+
     function openTeacherDashboard(view) {
       const modal = document.getElementById('teacherDashboardModal');
       if (!modal) return;
@@ -3436,21 +3416,24 @@ print("Hello " + name)
         // Close button
         document.getElementById('teacherDashCloseBtn')?.addEventListener('click', () => {
           modal.style.display = 'none';
+          stopTeacherDashboardRosterPolling();
         });
         modal.addEventListener('click', (e) => {
-          if (e.target === modal) modal.style.display = 'none';
+          if (e.target === modal) {
+            modal.style.display = 'none';
+            stopTeacherDashboardRosterPolling();
+          }
         });
 
         // Sidebar nav tab switching
         modal.querySelectorAll('.teacher-dash-navbtn').forEach(btn => {
-          btn.addEventListener('click', () => {
+          btn.addEventListener('click', async () => {
             modal.querySelectorAll('.teacher-dash-navbtn').forEach(b => b.classList.toggle('active', b === btn));
             modal.querySelectorAll('.teacher-dash-view').forEach(v => v.classList.toggle('active', v.id === btn.dataset.view));
-            if (btn.dataset.view === 'dash-code') {
-              teacherEditor?.refresh?.();
-            }
             if (btn.dataset.view === 'dash-reports') {
+              activateReportsRosterPane();
               populateTeacherReportsClassSelect();
+              await refreshActiveStudentsForClass(currentTeacherClassId);
               renderClassReports().catch(() => {});
             }
           });
@@ -3470,14 +3453,34 @@ print("Hello " + name)
         document.getElementById('teacherReportsClassSelect')?.addEventListener('change', async (e) => {
           currentTeacherClassId = e.target.value || null;
           renderClassSelector();
+          syncTeacherDashboardClassSelectors();
+          await refreshActiveStudentsForClass(currentTeacherClassId);
+          await renderClassReports();
+        });
+        document.getElementById('teacherAssignmentsClassSelect')?.addEventListener('change', async (e) => {
+          activeAssignmentsClassId = e.target.value || null;
+          currentTeacherClassId = activeAssignmentsClassId;
+          renderClassSelector();
+          syncTeacherDashboardClassSelectors();
+          await refreshActiveStudentsForClass(currentTeacherClassId);
+          renderAdminAssignments();
+        });
+        document.getElementById('teacherClassesActiveSelect')?.addEventListener('change', async (e) => {
+          currentTeacherClassId = e.target.value || null;
+          renderClassSelector();
+          syncTeacherDashboardClassSelectors();
+          await refreshActiveStudentsForClass(currentTeacherClassId);
+          renderTeacherClassManagement();
+          renderAdminAssignments();
           await renderClassReports();
         });
       }
 
       // Switch to requested view
-      if (view) {
-        const viewEl = document.getElementById(view);
-        const navBtn = modal.querySelector(`.teacher-dash-navbtn[data-view="${view}"]`);
+      const targetView = view || 'dash-reports';
+      if (targetView) {
+        const viewEl = document.getElementById(targetView);
+        const navBtn = modal.querySelector(`.teacher-dash-navbtn[data-view="${targetView}"]`);
         if (viewEl && navBtn) {
           modal.querySelectorAll('.teacher-dash-navbtn').forEach(b => b.classList.toggle('active', b === navBtn));
           modal.querySelectorAll('.teacher-dash-view').forEach(v => v.classList.toggle('active', v === viewEl));
@@ -3485,15 +3488,21 @@ print("Hello " + name)
       }
 
       // Initialize data
-      loadTeacherClasses().then(() => {
+      loadTeacherClasses().then(async () => {
         renderTeacherClassManagement();
         populateTeacherReportsClassSelect();
+        populateTeacherAssignmentsClassSelect();
+        syncTeacherDashboardClassSelectors();
+        await refreshActiveStudentsForClass(currentTeacherClassId);
+        activateReportsRosterPane();
+        renderClassReports().catch(() => {});
+        await loadAssignments();
         renderAdminAssignments();
       });
+      startTeacherDashboardRosterPolling();
       document.getElementById('teacherPasswordStatus').textContent = '';
       document.getElementById('teacherCurrentPassword').value = '';
       document.getElementById('teacherNewPassword').value = '';
-      teacherEditor?.refresh?.();
     }
 
     function populateTeacherReportsClassSelect() {
@@ -3502,8 +3511,54 @@ print("Hello " + name)
       sel.innerHTML = teacherClasses.map(c => `<option value="${escapeHtml(c.id)}" ${c.id === currentTeacherClassId ? 'selected' : ''}>${escapeHtml(c.name)} (${escapeHtml(c.join_code)})</option>`).join('');
     }
 
+    function populateTeacherAssignmentsClassSelect() {
+      const sel = document.getElementById('teacherAssignmentsClassSelect');
+      if (!sel) return;
+      if (!teacherClasses.length) {
+        sel.innerHTML = '';
+        activeAssignmentsClassId = null;
+        return;
+      }
+      sel.innerHTML = teacherClasses.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)} (${escapeHtml(c.join_code)})</option>`).join('');
+      if (!activeAssignmentsClassId || !teacherClasses.some(c => c.id === activeAssignmentsClassId)) {
+        activeAssignmentsClassId = currentTeacherClassId || teacherClasses[0]?.id || null;
+      }
+      if (activeAssignmentsClassId) sel.value = activeAssignmentsClassId;
+    }
+
+    function syncTeacherDashboardClassSelectors() {
+      if (!currentTeacherClassId || !teacherClasses.some(c => c.id === currentTeacherClassId)) {
+        currentTeacherClassId = teacherClasses[0]?.id || null;
+      }
+      if (!activeAssignmentsClassId || !teacherClasses.some(c => c.id === activeAssignmentsClassId)) {
+        activeAssignmentsClassId = currentTeacherClassId;
+      }
+      const reportSel = document.getElementById('teacherReportsClassSelect');
+      if (reportSel && currentTeacherClassId) reportSel.value = currentTeacherClassId;
+      const classesSel = document.getElementById('teacherClassesActiveSelect');
+      if (classesSel && currentTeacherClassId) classesSel.value = currentTeacherClassId;
+      const assignmentSel = document.getElementById('teacherAssignmentsClassSelect');
+      if (assignmentSel && activeAssignmentsClassId) assignmentSel.value = activeAssignmentsClassId;
+    }
+
+    async function refreshActiveStudentsForClass(classId) {
+      const classKey = classId || currentTeacherClassId;
+      if (!TEACHER_TOKEN || !classKey) return;
+      try {
+        const res = await fetch(`/api/teacher/classes/${encodeURIComponent(classKey)}/active-students`, {
+          headers: { 'X-Teacher-Token': TEACHER_TOKEN }
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!data?.ok) return;
+        activeStudentsByClass[classKey] = new Set((data.activeStudents || []).map(e => String(e || '').toLowerCase()));
+        if (document.querySelector('#dash-reports.teacher-dash-view.active')) {
+          renderClassReports().catch(() => {});
+        }
+      } catch {}
+    }
+
     document.getElementById('teacherDashboardBtn')?.addEventListener('click', () => {
-      openTeacherDashboard('dash-classes');
+      openTeacherDashboard('dash-reports');
     });
 
 
@@ -3588,8 +3643,13 @@ print("Hello " + name)
       if (!j?.ok) return alert(j?.error || 'Failed to create class');
       document.getElementById('newClassNameInput').value = '';
       await loadTeacherClasses();
+      populateTeacherReportsClassSelect();
+      populateTeacherAssignmentsClassSelect();
+      syncTeacherDashboardClassSelectors();
       renderTeacherClassManagement();
       renderClassSelector();
+      await refreshActiveStudentsForClass(currentTeacherClassId);
+      await renderClassReports();
       await loadAssignments();
     });
 
@@ -4023,61 +4083,62 @@ print("Hello " + name)
 
     function renderTeacherClassManagement() {
       const wrap = document.getElementById('teacherClassList');
+      const activeSelect = document.getElementById('teacherClassesActiveSelect');
       if (!wrap) return;
       const canShowAiToggle = !!currentConfig?.ai_explainer_enabled;
       if (!teacherClasses.length) {
+        if (activeSelect) activeSelect.innerHTML = '';
         wrap.innerHTML = '<div style="color:#888; font-size:12px; padding:8px 0;">No classes yet. Create one above to get started.</div>';
         return;
       }
+      if (activeSelect) {
+        activeSelect.innerHTML = teacherClasses.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)} (${escapeHtml(c.join_code)})</option>`).join('');
+      }
+      const selectedClassId = currentTeacherClassId || teacherClasses[0]?.id;
+      const activeClass = teacherClasses.find(c => c.id === selectedClassId) || teacherClasses[0];
+      currentTeacherClassId = activeClass?.id || null;
+      syncTeacherDashboardClassSelectors();
       const aiToggleTemplate = (cls) => canShowAiToggle
         ? `<label style="font-size:12px;"><input type="checkbox" class="cls-ai" data-class="${escapeHtml(cls.id)}" ${cls.settings?.ai_enabled ? 'checked' : ''}> AI enabled</label>`
         : '';
-      wrap.innerHTML = teacherClasses.map(cls => `
+      wrap.innerHTML = activeClass ? `
         <div class="teacher-dash-class-card">
           <div class="teacher-dash-class-card-header">
             <div>
-              <div class="teacher-dash-class-name">${escapeHtml(cls.name)}</div>
-              <div class="teacher-dash-class-code">Join code: <strong>${escapeHtml(cls.join_code)}</strong> · ${cls.students?.length || 0} student(s)</div>
+              <div class="teacher-dash-class-name">${escapeHtml(activeClass.name)}</div>
+              <div class="teacher-dash-class-code">Join code: <strong>${escapeHtml(activeClass.join_code)}</strong> · ${activeClass.students?.length || 0} student(s)</div>
             </div>
             <div style="display:flex; gap:6px; flex-wrap:wrap;">
-              <button class="btn secondary select-class-btn" data-class="${escapeHtml(cls.id)}" style="font-size:12px;">Use Class</button>
-              <button class="btn stop delete-class-btn" data-class="${escapeHtml(cls.id)}" data-name="${escapeHtml(cls.name)}" style="font-size:12px;">Delete</button>
+              <button class="btn stop delete-class-btn" data-class="${escapeHtml(activeClass.id)}" data-name="${escapeHtml(activeClass.name)}" style="font-size:12px;">Delete</button>
             </div>
           </div>
           <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
-            ${aiToggleTemplate(cls)}
-            <label style="font-size:12px;"><input type="checkbox" class="cls-wiki" data-class="${escapeHtml(cls.id)}" ${cls.settings?.wiki_enabled ? 'checked' : ''}> Wiki enabled</label>
-            <button class="btn secondary save-class-settings-btn" data-class="${escapeHtml(cls.id)}" style="font-size:12px;">Save Settings</button>
+            ${aiToggleTemplate(activeClass)}
+            <label style="font-size:12px;"><input type="checkbox" class="cls-wiki" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.wiki_enabled ? 'checked' : ''}> Wiki enabled</label>
+            <button class="btn secondary save-class-settings-btn" data-class="${escapeHtml(activeClass.id)}" style="font-size:12px;">Save Settings</button>
           </div>
           <div style="display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-bottom:10px;">
             <div>
-              <label style="font-size:12px; margin:0 0 4px; display:block;">AI Grading Rigor: <span class="cls-rigor-label" data-class="${escapeHtml(cls.id)}">${rigorLevelLabel(cls.settings?.ai_grading_rigor || 5)}</span> (${cls.settings?.ai_grading_rigor || 5}/10)</label>
-              <input type="range" min="1" max="10" value="${cls.settings?.ai_grading_rigor || 5}" class="cls-rigor" data-class="${escapeHtml(cls.id)}" style="width:100%;">
+              <label style="font-size:12px; margin:0 0 4px; display:block;">AI Grading Rigor: <span class="cls-rigor-label" data-class="${escapeHtml(activeClass.id)}">${rigorLevelLabel(activeClass.settings?.ai_grading_rigor || 5)}</span> (${activeClass.settings?.ai_grading_rigor || 5}/10)</label>
+              <input type="range" min="1" max="10" value="${activeClass.settings?.ai_grading_rigor || 5}" class="cls-rigor" data-class="${escapeHtml(activeClass.id)}" style="width:100%;">
             </div>
             <div>
               <label style="font-size:12px; margin:0 0 4px; display:block;">Skill Tags (comma separated)</label>
-              <input type="text" class="cls-skill-tags" data-class="${escapeHtml(cls.id)}" value="${escapeHtml((cls.settings?.skill_tags || []).join(', '))}" placeholder="loops, python, arrays" style="width:100%; padding:6px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:6px; font-size:12px;">
+              <input type="text" class="cls-skill-tags" data-class="${escapeHtml(activeClass.id)}" value="${escapeHtml((activeClass.settings?.skill_tags || []).join(', '))}" placeholder="loops, python, arrays" style="width:100%; padding:6px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:6px; font-size:12px;">
             </div>
           </div>
-          <input type="text" class="cls-wiki-url" data-class="${escapeHtml(cls.id)}" value="${escapeHtml(cls.settings?.wiki_url || '')}" placeholder="Class wiki URL (optional)" style="width:100%; margin-bottom:8px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; font-size:12px;">
-          <textarea class="cls-wiki-html" data-class="${escapeHtml(cls.id)}" placeholder="Class wiki HTML" style="width:100%; margin-bottom:8px; min-height:70px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; padding:8px; font-size:12px;">${escapeHtml(cls.settings?.wiki_html || '')}</textarea>
+          <input type="text" class="cls-wiki-url" data-class="${escapeHtml(activeClass.id)}" value="${escapeHtml(activeClass.settings?.wiki_url || '')}" placeholder="Class wiki URL (optional)" style="width:100%; margin-bottom:8px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; font-size:12px;">
+          <textarea class="cls-wiki-html" data-class="${escapeHtml(activeClass.id)}" placeholder="Class wiki HTML" style="width:100%; margin-bottom:8px; min-height:70px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; padding:8px; font-size:12px;">${escapeHtml(activeClass.settings?.wiki_html || '')}</textarea>
           <div style="font-size:13px; font-weight:600; color:var(--columbia-blue); margin-bottom:6px;">Students</div>
-          ${(cls.students || []).map(student => `
+          ${(activeClass.students || []).map(student => `
             <div class="teacher-dash-student-row">
               <span class="teacher-dash-student-name">${escapeHtml(student.name || student.email)}</span>
               <span class="teacher-dash-student-email">${escapeHtml(student.email)}</span>
-              ${teacherStudentActionsHtml(cls.id, student)}
+              ${teacherStudentActionsHtml(activeClass.id, student)}
             </div>
           `).join('') || '<div style="color:#888; font-size:12px;">No students enrolled.</div>'}
         </div>
-      `).join('');
-
-      wrap.querySelectorAll('.select-class-btn').forEach(btn => btn.addEventListener('click', () => {
-        currentTeacherClassId = btn.dataset.class;
-        renderClassSelector();
-        loadAssignments();
-        renderTeacherClassManagement();
-      }));
+      ` : '';
       wrap.querySelectorAll('.delete-class-btn').forEach(btn => btn.addEventListener('click', async () => {
         const classId = btn.dataset.class;
         const className = btn.dataset.name || 'this class';
@@ -4090,6 +4151,7 @@ print("Hello " + name)
         const j = await res.json().catch(() => ({}));
         if (!j?.ok) return alert(j?.error || 'Failed to delete class');
         await loadTeacherClasses();
+        syncTeacherDashboardClassSelectors();
         renderTeacherClassManagement();
         renderClassSelector();
         await loadAssignments();
@@ -4113,6 +4175,7 @@ print("Hello " + name)
         const j = await res.json().catch(() => ({}));
         if (!j?.ok) return alert(j?.error || 'Failed to save class settings');
         await loadTeacherClasses();
+        syncTeacherDashboardClassSelectors();
         renderTeacherClassManagement();
         renderClassSelector();
       }));
@@ -4130,6 +4193,7 @@ print("Hello " + name)
         const j = await res.json().catch(() => ({}));
         if (!j?.ok) return alert(j?.error || 'Failed to remove student');
         await loadTeacherClasses();
+        syncTeacherDashboardClassSelectors();
         renderTeacherClassManagement();
       }));
       wrap.querySelectorAll('.cls-reset-btn').forEach(btn => btn.addEventListener('click', async () => {
@@ -4151,6 +4215,7 @@ print("Hello " + name)
         const j = await res.json().catch(() => ({}));
         if (!j?.ok) return alert(j?.error || 'Failed to update student account');
         await loadTeacherClasses();
+        syncTeacherDashboardClassSelectors();
         renderTeacherClassManagement();
       }));
     }
@@ -4183,23 +4248,24 @@ print("Hello " + name)
       const tags = currentMasteryData.skillTags || [];
       const classMeta = currentMasteryData.class || {};
       const classSettings = (teacherClasses.find(c => c.id === classMeta.id)?.settings) || {};
+      const activeStudents = activeStudentsByClass[currentTeacherClassId] || new Set();
 
       rosterPane.innerHTML = `
         <div class="teacher-split-layout">
           <div class="teacher-panel-card">
             <h4>Class Snapshot</h4>
-            <div style="font-size:12px; color:#bbb; margin-bottom:8px;">${escapeHtml(classMeta.name || 'Class')}</div>
-            <div style="font-size:12px; color:#aaa; margin-bottom:6px;">AI enabled: ${classSettings.ai_enabled ? 'Yes' : 'No'}</div>
-            <div style="font-size:12px; color:#aaa; margin-bottom:6px;">Wiki enabled: ${classSettings.wiki_enabled ? 'Yes' : 'No'}</div>
-            <div style="font-size:12px; color:#aaa;">Skill tags: ${escapeHtml((classSettings.skill_tags || []).join(', ') || 'None')}</div>
+            <div style="font-size:12px; color:var(--theme-text); margin-bottom:8px;">${escapeHtml(classMeta.name || 'Class')}</div>
+            <div style="font-size:12px; color:var(--theme-text); margin-bottom:6px;">AI enabled: ${classSettings.ai_enabled ? 'Yes' : 'No'}</div>
+            <div style="font-size:12px; color:var(--theme-text); margin-bottom:6px;">Wiki enabled: ${classSettings.wiki_enabled ? 'Yes' : 'No'}</div>
+            <div style="font-size:12px; color:var(--theme-text);">Skill tags: ${escapeHtml((classSettings.skill_tags || []).join(', ') || 'None')}</div>
           </div>
           <div class="teacher-panel-card">
             <h4>Student Roster</h4>
             <div class="student-list-compact">
               ${students.map(s => `
-                <div>
+                <div class="${activeStudents.has((s.email || '').toLowerCase()) ? 'teacher-roster-row-online' : 'teacher-roster-row-offline'}" style="border:1px solid; border-radius:8px; padding:8px;">
                   <div style="font-weight:700;">${escapeHtml(s.name || s.email)}</div>
-                  <div style="font-size:12px; color:#888;">${escapeHtml(s.email || '')}</div>
+                  <div style="font-size:12px; color:var(--theme-text-dim);">${escapeHtml(s.email || '')}</div>
                 </div>
               `).join('') || '<div style="color:#888;">No students enrolled.</div>'}
             </div>
@@ -4209,7 +4275,7 @@ print("Hello " + name)
 
       scorePane.innerHTML = `
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px; flex-wrap:wrap;">
-          <div style="font-size:12px; color:#888;">Students and assignment score percentages for selected class.</div>
+          <div style="font-size:12px; color:var(--theme-text);">Students and assignment score percentages for selected class.</div>
           <button class="btn secondary" id="masteryExportCsvBtn">Export CSV</button>
         </div>
         <div class="mastery-grid">
@@ -4258,6 +4324,7 @@ print("Hello " + name)
               </select>
               <button class="btn secondary" id="masteryAiFeedbackBtn">AI Feedback</button>
               <button class="btn secondary" id="masteryAiFeedbackCopyBtn">Copy Feedback</button>
+              <button class="btn secondary" id="masteryAiFeedbackSaveBtn">Save to Reports</button>
             </div>
             <div class="mastery-grid">
               <table>
@@ -4291,6 +4358,7 @@ print("Hello " + name)
         if (!text.trim()) return;
         try { await navigator.clipboard.writeText(text); } catch {}
       });
+      skillsPane.querySelector('#masteryAiFeedbackSaveBtn')?.addEventListener('click', saveMasteryFeedbackToReportFile);
       renderMasteryCharts();
     }
 
@@ -4308,7 +4376,18 @@ print("Hello " + name)
           ? [payload.red || 0, payload.bronze || 0, payload.silver || 0, payload.gold || 0, payload.untested || 0]
           : [payload.red || 0, payload.bronze || 0, payload.silver || 0, payload.gold || 0];
         const colors = includeUntested ? ['#d32f2f', '#cd7f32', '#c0c0c0', '#ffd700', '#555'] : ['#d32f2f', '#cd7f32', '#c0c0c0', '#ffd700'];
-        return new Chart(ctx, { type: 'pie', data: { labels, datasets: [{ data: values, backgroundColor: colors }] }, options: { plugins: { legend: { position: 'bottom' } } } });
+        return new Chart(ctx, {
+          type: 'pie',
+          data: { labels, datasets: [{ data: values, backgroundColor: colors }] },
+          options: {
+            plugins: {
+              legend: {
+                position: 'bottom',
+                labels: { color: '#f5f5f5' }
+              }
+            }
+          }
+        });
       };
       masteryTagChart = createPie('masteryTagChart', tagData, true, masteryTagChart);
       masterySummaryChart = createPie('masterySummaryChart', summary, false, masterySummaryChart);
@@ -4360,6 +4439,31 @@ print("Hello " + name)
         renderMarkdownTo(out, data.feedback || '(No feedback returned.)', 'python');
       } catch {
         out.textContent = 'Network error while generating feedback.';
+      }
+    }
+
+    async function saveMasteryFeedbackToReportFile() {
+      const out = document.getElementById('masteryAiFeedbackOutput');
+      const text = out?.innerText || '';
+      if (!text.trim()) {
+        alert('Generate feedback first.');
+        return;
+      }
+      try {
+        const res = await fetch(`/api/teacher/classes/${encodeURIComponent(currentTeacherClassId)}/mastery-feedback/save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Teacher-Token': TEACHER_TOKEN },
+          body: JSON.stringify({ feedback: text, ...buildAiContext() })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!data.ok) {
+          alert(data.error || 'Failed to save feedback report.');
+          return;
+        }
+        alert(`Saved to ${data.path || data.fileName || 'Reports folder'}.`);
+        loadFileTree();
+      } catch {
+        alert('Network error while saving feedback.');
       }
     }
 
@@ -5220,6 +5324,21 @@ print("Hello " + name)
       return null;
     }
 
+    function assignmentTotalMaxScore(assignment) {
+      if (!assignment) return 0;
+      const codeMax = assignment.allowFileSubmission === false ? 0 : (parseInt(assignment.maxScore, 10) || 0);
+      const quizMax = parseInt(assignment.quiz?.totalPoints, 10) || 0;
+      return Math.max(0, codeMax + quizMax);
+    }
+
+    function assignmentPercentValue(submission, assignment) {
+      const total = assignmentScoreValue(submission);
+      const max = assignmentTotalMaxScore(assignment);
+      if (total === null || total === undefined || !max) return null;
+      const pct = Math.max(0, Math.min(100, (Number(total) / Number(max)) * 100));
+      return `${Math.round(pct)}%`;
+    }
+
     function hasSubmissionSummary(summary) {
       if (!summary) return false;
       return !!(
@@ -5321,6 +5440,10 @@ print("Hello " + name)
         }
         currentAssignments = data.assignments || [];
         isAdmin = data.canManage || data.isAdmin || false;
+        if (isAdmin) {
+          populateTeacherAssignmentsClassSelect();
+          syncTeacherDashboardClassSelectors();
+        }
         if (isAdmin && currentAssignments.length) {
           if (!currentAdminAssignmentName || !getAssignmentByName(currentAdminAssignmentName)) {
             currentAdminAssignmentName = currentAssignments[0].name;
@@ -5369,20 +5492,32 @@ print("Hello " + name)
     function renderAdminAssignments() {
       const list = document.getElementById('assignmentList');
       const detail = document.getElementById('assignmentDetailPanel');
-      if (!currentAssignments.length) {
+      const activeClassId = activeAssignmentsClassId || currentTeacherClassId;
+      const classAssignments = (currentAssignments || []).filter(a => !activeClassId || a.targetClassId === activeClassId);
+      if (!classAssignments.length) {
         list.innerHTML = '<p style="color:#888;">No assignments yet. Create one to get started.</p>';
-        detail.innerHTML = '<p style="color:#888; margin:0;">Create an assignment to review submissions here.</p>';
+        detail.innerHTML = '<p style="color:#888; margin:0;">No assignments for the selected class.</p>';
         return;
       }
 
-      list.innerHTML = currentAssignments.map(a => `
+      if (!currentAdminAssignmentName || !classAssignments.some(a => a.name === currentAdminAssignmentName)) {
+        currentAdminAssignmentName = classAssignments[0]?.name || null;
+      }
+      list.innerHTML = classAssignments.map(a => `
         <div class="assignment-card" style="border-color:${currentAdminAssignmentName === a.name ? 'var(--columbia-blue)' : 'var(--theme-border-mid)'};">
           <h4>${escapeHtml(a.name)}</h4>
           <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
           <div class="meta">
-            Max Score: ${a.maxScore} · ${a.active ? 'Unlocked' : 'Locked'} · Class: ${escapeHtml(a.targetClassName || 'All')} · ${(a.submissions || []).length} submission(s)
+            Max Score: ${(a.allowFileSubmission === false ? 0 : (a.maxScore || 0)) + (a.quiz?.totalPoints || 0)} (${a.allowFileSubmission === false ? 'Quiz only' : `Code ${a.maxScore || 0}${a.quiz?.totalPoints ? ` + Quiz ${a.quiz.totalPoints}` : ''}`}) · ${a.active ? 'Unlocked' : 'Locked'} · Class: ${escapeHtml(a.targetClassName || 'All')} · ${(a.submissions || []).length} submission(s)
           </div>
           ${(a.skillTags || []).length ? `<div class="skill-tags">${(a.skillTags || []).map(tag => `<span class="skill-chip">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
+          <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:8px;">
+            <select class="copy-assignment-class-select" data-name="${escapeHtml(a.name)}" style="padding:6px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:6px;">
+              <option value="">Copy to class…</option>
+              ${teacherClasses.filter(c => c.id !== a.targetClassId).map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('')}
+            </select>
+            <button class="btn secondary copy-assignment-btn" data-name="${escapeHtml(a.name)}">Copy Test</button>
+          </div>
           <div class="assignment-actions">
             <button class="btn secondary select-assignment-btn" data-name="${escapeHtml(a.name)}">Scores</button>
             <button class="btn secondary edit-assignment-btn" data-name="${escapeHtml(a.name)}">Edit</button>
@@ -5399,6 +5534,7 @@ print("Hello " + name)
       list.querySelectorAll('.edit-assignment-btn').forEach(btn => btn.addEventListener('click', () => showAssignmentModal(getAssignmentByName(btn.dataset.name))));
       list.querySelectorAll('.lock-assignment-btn').forEach(btn => btn.addEventListener('click', () => toggleAssignmentActive(btn.dataset.name, btn.dataset.active !== 'true')));
       list.querySelectorAll('.delete-assignment-btn').forEach(btn => btn.addEventListener('click', () => deleteAssignment(btn.dataset.name)));
+      list.querySelectorAll('.copy-assignment-btn').forEach(btn => btn.addEventListener('click', () => copyAssignmentToClass(btn.dataset.name)));
 
       const assignment = getAssignmentByName(currentAdminAssignmentName);
       if (!assignment) {
@@ -5410,14 +5546,14 @@ print("Hello " + name)
       detail.innerHTML = `
         <h4>${escapeHtml(assignment.name)}</h4>
         <div class="meta" style="margin-bottom:12px; white-space:pre-wrap;">${escapeHtml(assignment.task || '(No task description)')}</div>
-        <div class="meta" style="margin-bottom:12px;">Max score ${assignment.maxScore}${assignment.quiz?.totalPoints ? ` · Quiz ${assignment.quiz.totalPoints} pts` : ''} · Class ${escapeHtml(assignment.targetClassName || 'All')} · Quiz max submissions ${assignment.quizSettings?.maxSubmissions > 0 ? assignment.quizSettings.maxSubmissions : 'Unlimited'}</div>
+        <div class="meta" style="margin-bottom:12px;">Max score ${(assignment.allowFileSubmission === false ? 0 : (assignment.maxScore || 0)) + (assignment.quiz?.totalPoints || 0)}${assignment.allowFileSubmission === false ? ' (Quiz only)' : ''}${assignment.quiz?.totalPoints ? ` · Quiz ${assignment.quiz.totalPoints} pts` : ''} · Class ${escapeHtml(assignment.targetClassName || 'All')} · Quiz max submissions ${assignment.quizSettings?.maxSubmissions > 0 ? assignment.quizSettings.maxSubmissions : 'Unlimited'}</div>
         ${(assignment.skillTags || []).length ? `<div class="skill-tags" style="margin-bottom:12px;">${(assignment.skillTags || []).map(tag => `<span class="skill-chip">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
           <button class="btn secondary" id="downloadScoresBtn">Download CSV</button>
         </div>
         <table class="scores-table">
           <thead>
-            <tr><th>Student</th><th>File</th><th>Submitted</th><th>Score</th><th>Quiz Attempts</th><th></th></tr>
+            <tr><th>Student</th><th>File</th><th>Submitted</th><th>Code Score</th><th>Quiz Score</th><th>Total</th><th>% Score</th><th>Quiz Attempts</th><th></th></tr>
           </thead>
           <tbody>
             ${submissions.length ? submissions.map(sub => `
@@ -5425,15 +5561,18 @@ print("Hello " + name)
                 <td>${escapeHtml(sub.name || sub.email || 'Unknown')}</td>
                 <td>${escapeHtml(sub.submittedFileName || '—')}</td>
                 <td>${escapeHtml(sub.submittedAt || '—')}</td>
+                <td>${sub.codeScore ?? sub.score ?? '—'}</td>
+                <td>${sub.quizScore ?? '—'}</td>
                 <td>${assignmentScoreValue(sub) ?? '—'}</td>
+                <td>${assignmentPercentValue(sub, assignment) ?? '—'}</td>
                 <td>${sub.quizSubmissionCount ?? 0}${assignment.quizSettings?.maxSubmissions > 0 ? ` / ${assignment.quizSettings.maxSubmissions}` : ''}</td>
                 <td style="display:flex; gap:6px; flex-wrap:wrap;">
-                  <button class="btn secondary open-submission-btn" data-assignment="${escapeHtml(assignment.name)}" data-email="${escapeHtml(sub.email)}">Open</button>
+                  ${assignment.allowFileSubmission === false ? '' : `<button class="btn secondary open-submission-btn" data-assignment="${escapeHtml(assignment.name)}" data-email="${escapeHtml(sub.email)}">Open</button>`}
                   ${assignment.quiz?.questions?.length ? `<button class="btn secondary grade-quiz-btn" data-assignment="${escapeHtml(assignment.name)}" data-email="${escapeHtml(sub.email)}">Grade Quiz</button>` : ''}
                   ${assignment.quiz?.questions?.length ? `<button class="btn secondary reset-quiz-counter-btn" data-assignment="${escapeHtml(assignment.name)}" data-email="${escapeHtml(sub.email)}">Reset Attempts</button>` : ''}
                 </td>
               </tr>
-            `).join('') : '<tr><td colspan="6" style="color:#888;">No submissions yet.</td></tr>'}
+            `).join('') : '<tr><td colspan="9" style="color:#888;">No submissions yet.</td></tr>'}
           </tbody>
         </table>
       `;
@@ -5465,8 +5604,9 @@ print("Hello " + name)
         const s = a.studentSubmissionSummary;
         if (!s) return '';
         const total = s.totalScore ?? s.codeScore ?? null;
+        const maxTotal = assignmentTotalMaxScore(a);
         if (total != null) {
-          return `<div><span class="assignment-score-badge scored">✓ Score: ${total} / ${a.maxScore}</span></div>`;
+          return `<div><span class="assignment-score-badge scored">✓ Score: ${total} / ${maxTotal || a.maxScore}</span></div>`;
         }
         if (s.submittedAt) {
           return `<div><span class="assignment-score-badge pending">⏳ Submitted – awaiting grade</span></div>`;
@@ -5481,11 +5621,11 @@ print("Hello " + name)
           <div class="assignment-card">
             <h4>${escapeHtml(a.name)}</h4>
             <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
-            <div class="meta">Max Score: ${a.maxScore}${a.quiz?.questions?.length ? ` · ${a.quiz.questions.length} question(s)` : ''}${a.quizSettings?.maxSubmissions > 0 ? ` · ${a.quizSettings.maxSubmissions} quiz attempt(s)` : ''}</div>
+            <div class="meta">Max Score: ${assignmentTotalMaxScore(a)}${a.allowFileSubmission === false ? ' (Quiz only)' : ''}${a.quiz?.questions?.length ? ` · ${a.quiz.questions.length} question(s)` : ''}${a.quizSettings?.maxSubmissions > 0 ? ` · ${a.quizSettings.maxSubmissions} quiz attempt(s)` : ''}</div>
             ${scoreBadge(a)}
             ${(a.skillTags || []).length ? `<div class="skill-tags">${(a.skillTags || []).map(tag => `<span class="skill-chip">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
             <div class="assignment-actions">
-              <button class="btn run submit-assignment-btn" data-name="${escapeHtml(a.name)}" ${canSubmit && joinedClass && files.length ? '' : 'disabled'}>Submit File</button>
+              ${a.allowFileSubmission === false ? '' : `<button class="btn run submit-assignment-btn" data-name="${escapeHtml(a.name)}" ${canSubmit && joinedClass && files.length ? '' : 'disabled'}>Submit File</button>`}
               ${a.quiz?.questions?.length ? `<button class="btn secondary open-questions-btn" data-name="${escapeHtml(a.name)}" ${canSubmit && joinedClass ? '' : 'disabled'}>Questions (${a.quiz.questions.length})</button>` : ''}
               ${hasSubmissionSummary(a.studentSubmissionSummary) ? `<button class="btn secondary view-score-report-btn" data-name="${escapeHtml(a.name)}" ${canSubmit ? '' : 'disabled'}>Score Report</button>` : ''}
             </div>
@@ -5536,7 +5676,7 @@ print("Hello " + name)
           <div class="score-result-item" ${closed ? 'style="opacity:0.85;"' : ''}>
             <div class="assignment-name">${escapeHtml(score.assignmentName)}${closed ? ' <span style="color:#888; font-size:11px;">(Locked)</span>' : ''}</div>
             <div class="assignment-score">
-              Score: ${score.totalScore ?? score.codeScore ?? score.score ?? '—'} / ${score.maxScore}
+              Score: ${score.totalScore ?? score.codeScore ?? score.score ?? '—'} / ${score.maxTotal ?? score.maxScore}
               ${score.quizScore !== null && score.quizScore !== undefined ? ` · Quiz ${score.quizScore}` : ''}
             </div>
             <div style="color:#666; font-size:11px; margin-top:4px;">${escapeHtml(score.submittedFileName || 'No code file yet')} · ${escapeHtml(score.submittedAt || 'Not submitted')}</div>
@@ -5615,7 +5755,7 @@ print("Hello " + name)
     document.getElementById('openDashAssignmentsBtn')?.addEventListener('click', () => openTeacherDashboard('dash-assignments'));
 
     function showAssignmentModal(existingAssignment = null) {
-      const effectiveClassId = existingAssignment?.targetClassId || currentTeacherClassId;
+      const effectiveClassId = existingAssignment?.targetClassId || activeAssignmentsClassId || currentTeacherClassId;
       const classCtx = teacherClasses.find(c => c.id === effectiveClassId) || {};
       const classTags = classCtx?.settings?.skill_tags || [];
       const selectedTags = existingAssignment?.skillTags || [];
@@ -5635,10 +5775,14 @@ print("Hello " + name)
           <textarea id="modalAssignmentTask" placeholder="Describe what students need to do...">${escapeHtml(existingAssignment?.task || '')}</textarea>
           <label>Max Score (Code)</label>
           <input type="number" id="modalAssignmentMaxScore" value="${existingAssignment?.maxScore || 100}" min="1" />
+          <label style="display:flex; align-items:center; gap:8px; margin-top:8px;">
+            <input type="checkbox" id="modalAssignmentAllowFileSubmission" ${existingAssignment?.allowFileSubmission === false ? '' : 'checked'}>
+            Enable file submissions
+          </label>
           ${TEACHER_TOKEN ? `
           <label>Class</label>
           <select id="modalAssignmentClassId" style="width:100%; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;">
-            ${teacherClasses.map(c => `<option value="${escapeHtml(c.id)}" ${(existingAssignment?.targetClassId || currentTeacherClassId) === c.id ? 'selected' : ''}>${escapeHtml(c.name)} (${escapeHtml(c.join_code)})</option>`).join('')}
+            ${teacherClasses.map(c => `<option value="${escapeHtml(c.id)}" ${effectiveClassId === c.id ? 'selected' : ''}>${escapeHtml(c.name)} (${escapeHtml(c.join_code)})</option>`).join('')}
           </select>` : ''}
           <label>Skill Tags (covered by this assignment)</label>
           <select id="modalAssignmentSkillTags" multiple style="width:100%; min-height:90px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;">
@@ -5715,6 +5859,7 @@ print("Hello " + name)
           : document.getElementById('modalAssignmentName').value.trim();
         const task = document.getElementById('modalAssignmentTask').value.trim();
         const maxScore = parseInt(document.getElementById('modalAssignmentMaxScore').value, 10) || 100;
+        const allowFileSubmission = !!document.getElementById('modalAssignmentAllowFileSubmission')?.checked;
         const classId = document.getElementById('modalAssignmentClassId')?.value || (TEACHER_TOKEN ? currentTeacherClassId : null);
         const selectedSkillTags = [...(document.getElementById('modalAssignmentSkillTags')?.selectedOptions || [])].map(o => o.value).filter(Boolean);
         const extraSkillTags = (document.getElementById('modalAssignmentExtraTags')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -5725,6 +5870,7 @@ print("Hello " + name)
           name,
           task,
           maxScore,
+          allowFileSubmission,
           classId,
           skillTags: mergedSkillTags,
           quizSettings: { maxSubmissions: maxQuizSubmissions },
@@ -5955,9 +6101,51 @@ print("Hello " + name)
       }
     }
 
+    async function copyAssignmentToClass(name) {
+      const list = document.getElementById('assignmentList');
+      const classId = list?.querySelector(`.copy-assignment-class-select[data-name="${CSS.escape(name)}"]`)?.value || '';
+      if (!classId) {
+        alert('Select a destination class first.');
+        return;
+      }
+      const source = getAssignmentByName(name);
+      const targetClass = teacherClasses.find(c => c.id === classId);
+      const defaultName = `${name} (${targetClass?.name || 'Copy'})`;
+      const newName = prompt('Name for the copied assignment:', defaultName);
+      if (newName === null) return;
+      const trimmedName = (newName || '').trim();
+      if (!trimmedName) {
+        alert('Assignment name is required.');
+        return;
+      }
+      try {
+        const resp = await fetch('/api/assignments/copy-to-class', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...assignmentManagerHeaders() },
+          body: JSON.stringify({ assignmentName: name, targetClassId: classId, newName: trimmedName })
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!data.ok) { alert(data.error || 'Failed to copy assignment'); return; }
+        currentAdminAssignmentName = trimmedName;
+        activeAssignmentsClassId = classId;
+        currentTeacherClassId = classId;
+        syncTeacherDashboardClassSelectors();
+        renderClassSelector();
+        await loadAssignments();
+        setAssignmentStatus(`Copied "${name}" to ${targetClass?.name || 'selected class'}.`);
+      } catch {
+        alert('Network error');
+      }
+    }
+
     function showAssignmentSubmitModal(assignmentName) {
       if (!USER_TOKEN || !currentUser) {
         alert('Please sign in with a student account first.');
+        return;
+      }
+      const assignment = getAssignmentByName(assignmentName);
+      if (assignment?.allowFileSubmission === false) {
+        alert('File submissions are disabled for this assignment.');
         return;
       }
       const files = flattenFiles(_allFileTree || []);
@@ -6373,6 +6561,7 @@ print("Hello " + name)
       const input = document.getElementById('submissionScoreInput');
       const aiBtn = document.getElementById('submissionAiGradeBtn');
       const maxScore = assignment.maxScore || 100;
+      const maxTotal = assignmentTotalMaxScore(assignment);
       panel.style.display = 'flex';
       title.innerHTML = `
         <span class="submission-scoring-line assignment">${escapeHtml(assignment.name || 'Assignment')}</span>
@@ -6386,10 +6575,11 @@ print("Hello " + name)
         quiz.style.display = 'none';
         quiz.textContent = '';
       }
-      input.max = String(maxScore);
+      input.max = String(assignment.allowFileSubmission === false ? 0 : maxScore);
+      input.disabled = assignment.allowFileSubmission === false;
       input.value = submission.codeScore ?? submission.score ?? '';
-      totals.textContent = `Code max ${maxScore}${submission.totalScore !== null && submission.totalScore !== undefined ? ` · Total ${submission.totalScore}` : ''}`;
-      aiBtn.style.display = currentConfig?.ai_explainer_enabled ? '' : 'none';
+      totals.textContent = `Code max ${assignment.allowFileSubmission === false ? 0 : maxScore} · Total max ${maxTotal}${submission.totalScore !== null && submission.totalScore !== undefined ? ` · Total ${submission.totalScore}` : ''}`;
+      aiBtn.style.display = (currentConfig?.ai_explainer_enabled && assignment.allowFileSubmission !== false) ? '' : 'none';
       document.getElementById('submissionScoreSaveStatus').textContent = '';
     }
 
