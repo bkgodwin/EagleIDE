@@ -3571,9 +3571,14 @@ print("Hello " + name)
       const students = currentMasteryData.students || [];
       const activeStudents = activeStudentsByClass[classKey] || new Set();
       const inQuizStudents = inQuizStudentsByClass[classKey] || new Set();
+      // Build a map of email → element once to avoid repeated DOM queries
+      const emailToEl = new Map();
+      rosterPane.querySelectorAll('[data-roster-email]').forEach(el => {
+        emailToEl.set(el.dataset.rosterEmail, el);
+      });
       students.forEach(s => {
         const email = (s.email || '').toLowerCase();
-        const el = rosterPane.querySelector(`[data-roster-email="${CSS.escape(email)}"]`);
+        const el = emailToEl.get(email);
         if (!el) return;
         const isInQuiz = inQuizStudents.has(email);
         const isOnline = activeStudents.has(email);
