@@ -3571,7 +3571,7 @@ print("Hello " + name)
       const students = currentMasteryData.students || [];
       const activeStudents = activeStudentsByClass[classKey] || new Set();
       const inQuizStudents = inQuizStudentsByClass[classKey] || new Set();
-      // Build a map of email → element once to avoid repeated DOM queries
+      // Build a map of email -> element once to avoid repeated DOM queries
       const emailToEl = new Map();
       rosterPane.querySelectorAll('[data-roster-email]').forEach(el => {
         emailToEl.set(el.dataset.rosterEmail, el);
@@ -3582,9 +3582,15 @@ print("Hello " + name)
         if (!el) return;
         const isInQuiz = inQuizStudents.has(email);
         const isOnline = activeStudents.has(email);
-        el.classList.toggle('teacher-roster-row-in-assignment', isInQuiz);
-        el.classList.toggle('teacher-roster-row-online', !isInQuiz && isOnline);
-        el.classList.toggle('teacher-roster-row-offline', !isInQuiz && !isOnline);
+        // Remove all state classes first, then apply exactly one
+        el.classList.remove('teacher-roster-row-in-assignment', 'teacher-roster-row-online', 'teacher-roster-row-offline');
+        if (isInQuiz) {
+          el.classList.add('teacher-roster-row-in-assignment');
+        } else if (isOnline) {
+          el.classList.add('teacher-roster-row-online');
+        } else {
+          el.classList.add('teacher-roster-row-offline');
+        }
       });
     }
 
@@ -6330,7 +6336,7 @@ print("Hello " + name)
         });
         const autoSubmitOnClose = () => {
           if (!activeQuizSession || activeQuizSession.submitted) return;
-          if (socket) socket.emit('quiz_close', {});
+          if (socket) socket.emit('quiz_close', { assignmentName });
           const payload = buildQuizResponsesFromModal(questions, modal, true);
           fetch('/api/quiz/submit', {
             method: 'POST',
@@ -6393,7 +6399,7 @@ print("Hello " + name)
         const submitData = await submitResp.json().catch(() => ({}));
         if (!submitData.ok) { alert(submitData.error || 'Failed to submit answers'); return; }
         if (activeQuizSession) activeQuizSession.submitted = true;
-        if (socket) socket.emit('quiz_close', {});
+        if (socket) socket.emit('quiz_close', { assignmentName });
         modal.remove();
         alert('Your answers were submitted successfully.');
         await openStudentScoreReport(assignmentName);
