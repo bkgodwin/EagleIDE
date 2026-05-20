@@ -3318,7 +3318,7 @@ print("Hello " + name)
         currentTeacher = null;
         ADMIN_TOKEN = null;
         document.body.classList.remove('admin-mode');
-        await loadStudentClassData();
+        await loadStudentClassData().catch(() => null);
       }
       closeLoginModal();
       updateAuthUI();
