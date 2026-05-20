@@ -2290,7 +2290,12 @@ print("Hello " + name)
       const effectiveAiEnabled = aiMasterEnabled && (ADMIN_TOKEN || aiEnabledForClass);
       const shouldHideAiTabs = isGuest;
       const canViewWikiContent = !!(ADMIN_TOKEN || TEACHER_TOKEN || wikiEnabledForClass);
-      const canShowWikiTab = isAuthenticatedUser && (ADMIN_TOKEN || TEACHER_TOKEN || !classCtx || wikiEnabledForClass);
+      const hasGlobalWikiContent = !!(String(currentConfig?.lesson_html || '').trim() || String(currentConfig?.lesson_url || '').trim());
+      const canShowWikiTab = isAuthenticatedUser && (
+        ADMIN_TOKEN ||
+        TEACHER_TOKEN ||
+        (classCtx ? wikiEnabledForClass : hasGlobalWikiContent)
+      );
       const canSeeAssignments = !!TEACHER_TOKEN || (!!USER_TOKEN && !!classCtx);
       if (tAssignment) tAssignment.style.display = canSeeAssignments ? '' : 'none';
       if (tExplain) tExplain.style.display = (!shouldHideAiTabs && effectiveAiEnabled) ? '' : 'none';
