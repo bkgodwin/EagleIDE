@@ -2289,12 +2289,13 @@ print("Hello " + name)
       const aiMasterEnabled = !!currentConfig?.ai_explainer_enabled;
       const effectiveAiEnabled = aiMasterEnabled && (ADMIN_TOKEN || aiEnabledForClass);
       const showOnlyNotesForGuest = isGuest;
+      const canShowWikiTab = isAuthenticatedUser && (ADMIN_TOKEN || TEACHER_TOKEN || !classCtx || wikiEnabledForClass);
       const canSeeAssignments = !!TEACHER_TOKEN || (!!USER_TOKEN && !!classCtx);
       if (tAssignment) tAssignment.style.display = canSeeAssignments ? '' : 'none';
       if (tExplain) tExplain.style.display = (!showOnlyNotesForGuest && effectiveAiEnabled) ? '' : 'none';
       if (tChal) tChal.style.display = (!showOnlyNotesForGuest && effectiveAiEnabled) ? '' : 'none';
       if (tAssist) tAssist.style.display = (!showOnlyNotesForGuest && effectiveAiEnabled) ? '' : 'none';
-      if (tWiki) tWiki.style.display = isAuthenticatedUser ? '' : 'none';
+      if (tWiki) tWiki.style.display = canShowWikiTab ? '' : 'none';
       const classJoinNotice = document.getElementById('classJoinNotice');
       if (classJoinNotice) classJoinNotice.style.display = isStudentNoClass ? '' : 'none';
       const lessonLocal = document.getElementById('lessonLocal');
@@ -4761,7 +4762,6 @@ print("Hello " + name)
 
     async function showFileBrowser() {
       if (!isAuthenticated()) return;
-      _currentFolderPath = '';
       setWorkspaceTab(WORKSPACE_TAB_FILES);
       try {
         await loadFileTree();
