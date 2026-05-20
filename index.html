@@ -3357,9 +3357,14 @@ print("Hello " + name)
         const authError = String(authJson?.error || '').trim();
         const adminError = String(adminJson?.error || '').trim();
         const generic = 'Invalid email or password';
-        const error = (authError && authError !== generic)
-          ? authError
-          : ((adminError && adminError !== generic) ? adminError : (authError || adminError || generic));
+        let error = generic;
+        if (authError && authError !== generic) {
+          error = authError;
+        } else if (adminError && adminError !== generic) {
+          error = adminError;
+        } else if (authError || adminError) {
+          error = authError || adminError;
+        }
         return { ok: false, error };
       } catch {
         return { ok: false, error: 'Network error. Please try again.' };
