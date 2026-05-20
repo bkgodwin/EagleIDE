@@ -3107,11 +3107,11 @@ print("Hello " + name)
           if (!canStart()) return;
           event.preventDefault();
           const pointerId = event.pointerId;
-          try { element.setPointerCapture(pointerId); } catch {}
+          try { element.setPointerCapture(pointerId); } catch (err) { console.debug('Pointer capture unavailable:', err); }
           const move = (moveEvent) => onMove(moveEvent);
           const up = (upEvent) => {
             if (upEvent.pointerId !== pointerId) return;
-            try { element.releasePointerCapture(pointerId); } catch {}
+            try { element.releasePointerCapture(pointerId); } catch (err) { console.debug('Pointer release unavailable:', err); }
             element.removeEventListener('pointermove', move);
             element.removeEventListener('pointerup', up);
             element.removeEventListener('pointercancel', up);
@@ -4694,27 +4694,29 @@ print("Hello " + name)
     // ---- File Browser ----
     let _currentFolderPath = ''; // '' = root
     let _allFileTree = [];       // full flat tree from server
-    let _workspaceTab = 'editor';
+    const WORKSPACE_TAB_EDITOR = 'editor';
+    const WORKSPACE_TAB_FILES = 'files';
+    let _workspaceTab = WORKSPACE_TAB_EDITOR;
 
     function setWorkspaceTab(tabName) {
       const editorTabBtn = document.getElementById('workspaceEditorTabBtn');
       const filesTabBtn = document.getElementById('workspaceFilesTabBtn');
       const editorContentStack = document.getElementById('editorContentStack');
       const title = document.getElementById('workspaceTitle');
-      _workspaceTab = tabName === 'files' ? 'files' : 'editor';
-      if (editorContentStack) editorContentStack.classList.toggle('file-browser-active', _workspaceTab === 'files');
+      _workspaceTab = tabName === WORKSPACE_TAB_FILES ? WORKSPACE_TAB_FILES : WORKSPACE_TAB_EDITOR;
+      if (editorContentStack) editorContentStack.classList.toggle('file-browser-active', _workspaceTab === WORKSPACE_TAB_FILES);
       if (editorTabBtn) {
-        const active = _workspaceTab === 'editor';
+        const active = _workspaceTab === WORKSPACE_TAB_EDITOR;
         editorTabBtn.classList.toggle('active', active);
         editorTabBtn.setAttribute('aria-selected', active ? 'true' : 'false');
       }
       if (filesTabBtn) {
-        const active = _workspaceTab === 'files';
+        const active = _workspaceTab === WORKSPACE_TAB_FILES;
         filesTabBtn.classList.toggle('active', active);
         filesTabBtn.setAttribute('aria-selected', active ? 'true' : 'false');
       }
-      if (title) title.textContent = _workspaceTab === 'files' ? 'File Browser' : 'Editor';
-      if (_workspaceTab === 'files') {
+      if (title) title.textContent = _workspaceTab === WORKSPACE_TAB_FILES ? 'File Browser' : 'Editor';
+      if (_workspaceTab === WORKSPACE_TAB_FILES) {
         loadFileTree();
       } else {
         requestAnimationFrame(() => {
@@ -4724,15 +4726,15 @@ print("Hello " + name)
       }
     }
 
-    document.getElementById('workspaceEditorTabBtn')?.addEventListener('click', () => setWorkspaceTab('editor'));
-    document.getElementById('workspaceFilesTabBtn')?.addEventListener('click', () => setWorkspaceTab('files'));
+    document.getElementById('workspaceEditorTabBtn')?.addEventListener('click', () => setWorkspaceTab(WORKSPACE_TAB_EDITOR));
+    document.getElementById('workspaceFilesTabBtn')?.addEventListener('click', () => setWorkspaceTab(WORKSPACE_TAB_FILES));
 
     function showFileBrowser() {
-      setWorkspaceTab('files');
+      setWorkspaceTab(WORKSPACE_TAB_FILES);
     }
 
     function hideFileBrowser() {
-      setWorkspaceTab('editor');
+      setWorkspaceTab(WORKSPACE_TAB_EDITOR);
     }
 
     function _findItemByPath(items, path) {
