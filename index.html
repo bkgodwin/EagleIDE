@@ -3318,7 +3318,10 @@ print("Hello " + name)
         currentTeacher = null;
         ADMIN_TOKEN = null;
         document.body.classList.remove('admin-mode');
-        await loadStudentClassData().catch(() => null);
+        await loadStudentClassData().catch((err) => {
+          console.warn('Failed to refresh student class data after login.', err);
+          return null;
+        });
       }
       closeLoginModal();
       updateAuthUI();
@@ -3462,7 +3465,10 @@ print("Hello " + name)
         ADMIN_TOKEN = null;
         currentTeacher = null;
         document.body.classList.remove('admin-mode');
-        await loadStudentClassData();
+        await loadStudentClassData().catch((err) => {
+          console.warn('Failed to refresh student class data after registration.', err);
+          return null;
+        });
         closeLoginModal();
         updateAuthUI();
         showFileBrowser();
@@ -4727,8 +4733,7 @@ print("Hello " + name)
       const editorContentStack = document.getElementById('editorContentStack');
       const title = document.getElementById('workspaceTitle');
       const isLoggedIn = isAuthenticated();
-      const targetTab = tabName === WORKSPACE_TAB_FILES && isLoggedIn ? WORKSPACE_TAB_FILES : WORKSPACE_TAB_EDITOR;
-      _workspaceTab = targetTab;
+      _workspaceTab = tabName === WORKSPACE_TAB_FILES && isLoggedIn ? WORKSPACE_TAB_FILES : WORKSPACE_TAB_EDITOR;
       if (editorContentStack) editorContentStack.classList.toggle('file-browser-active', _workspaceTab === WORKSPACE_TAB_FILES);
       if (editorTabBtn) {
         const active = _workspaceTab === WORKSPACE_TAB_EDITOR;
