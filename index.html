@@ -3320,6 +3320,7 @@ print("Hello " + name)
         document.body.classList.remove('admin-mode');
         await loadStudentClassData().catch((err) => {
           console.warn('Failed to refresh student class data after login.', err);
+          alert('Signed in, but class data failed to load. Please refresh and try again.');
           return null;
         });
       }
@@ -3467,6 +3468,7 @@ print("Hello " + name)
         document.body.classList.remove('admin-mode');
         await loadStudentClassData().catch((err) => {
           console.warn('Failed to refresh student class data after registration.', err);
+          alert('Account created, but class data failed to load. Please refresh and try again.');
           return null;
         });
         closeLoginModal();
