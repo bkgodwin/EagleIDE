@@ -2276,7 +2276,8 @@ print("Hello " + name)
 
     function applyClassTabVisibility() {
       const classCtx = getCurrentClassContext();
-      const isGuest = !USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN;
+      const isAuthenticatedUser = !!(USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN);
+      const isGuest = !isAuthenticatedUser;
       const isStudentNoClass = !!USER_TOKEN && !!currentUser && !classCtx;
       const aiEnabledForClass = !!classCtx?.settings?.ai_enabled;
       const wikiEnabledForClass = !!classCtx?.settings?.wiki_enabled;
@@ -2287,22 +2288,22 @@ print("Hello " + name)
       const tAssignment = document.getElementById('assignmentTabBtn');
       const aiMasterEnabled = !!currentConfig?.ai_explainer_enabled;
       const effectiveAiEnabled = aiMasterEnabled && (ADMIN_TOKEN || aiEnabledForClass);
-      const showOnlyNotes = isGuest || isStudentNoClass;
+      const showOnlyNotes = isGuest;
       const canSeeAssignments = !!TEACHER_TOKEN || (!!USER_TOKEN && !!classCtx);
       if (tAssignment) tAssignment.style.display = canSeeAssignments ? '' : 'none';
       if (tExplain) tExplain.style.display = (!showOnlyNotes && effectiveAiEnabled) ? '' : 'none';
       if (tChal) tChal.style.display = (!showOnlyNotes && effectiveAiEnabled) ? '' : 'none';
       if (tAssist) tAssist.style.display = (!showOnlyNotes && effectiveAiEnabled) ? '' : 'none';
-      if (tWiki) tWiki.style.display = (!showOnlyNotes && ((ADMIN_TOKEN || !!classCtx) && (ADMIN_TOKEN || wikiEnabledForClass))) ? '' : 'none';
+      if (tWiki) tWiki.style.display = isAuthenticatedUser ? '' : 'none';
       const classJoinNotice = document.getElementById('classJoinNotice');
       if (classJoinNotice) classJoinNotice.style.display = isStudentNoClass ? '' : 'none';
       const lessonLocal = document.getElementById('lessonLocal');
       const lessonFrame = document.getElementById('lessonFrame');
-      if (classCtx?.settings?.wiki_html) {
+      if (classCtx?.settings?.wiki_html && (ADMIN_TOKEN || TEACHER_TOKEN || wikiEnabledForClass)) {
         lessonLocal.innerHTML = classCtx.settings.wiki_html;
         lessonLocal.style.display = 'block';
         lessonFrame.style.display = 'none';
-      } else if (classCtx?.settings?.wiki_url) {
+      } else if (classCtx?.settings?.wiki_url && (ADMIN_TOKEN || TEACHER_TOKEN || wikiEnabledForClass)) {
         lessonLocal.style.display = 'none';
         lessonFrame.style.display = 'block';
         lessonFrame.src = classCtx.settings.wiki_url;
@@ -2314,10 +2315,6 @@ print("Hello " + name)
         lessonLocal.style.display = 'none';
         lessonFrame.style.display = 'block';
         lessonFrame.src = currentConfig?.lesson_url || '';
-      }
-      if (studentClassData && !studentClassData.settings?.wiki_enabled) {
-        const activeWiki = document.querySelector('.tab-btn.active[data-tab="lessonTab"]');
-        if (activeWiki) document.getElementById('notesTabBtn').click();
       }
       const hiddenActiveTab = [...document.querySelectorAll('.tab-btn.active')].find(btn => getComputedStyle(btn).display === 'none');
       if (hiddenActiveTab) document.getElementById('notesTabBtn')?.click();
@@ -3326,7 +3323,7 @@ print("Hello " + name)
       }
       closeLoginModal();
       updateAuthUI();
-      showFileBrowser();
+      await showFileBrowser();
     }
 
     async function tryUnifiedSignIn(email, password) {
@@ -3359,7 +3356,7 @@ print("Hello " + name)
           document.getElementById('streamingToggleBtn').classList.remove('stop');
           startTeacherBroadcast();
           updateAuthUI();
-          showFileBrowser();
+          await showFileBrowser();
           return { ok: true };
         }
         const authError = String(authJson?.error || '').trim();
@@ -3435,6 +3432,7 @@ print("Hello " + name)
           if (typeof updateActiveFileName === 'function') updateActiveFileName();
         }
         updateAuthUI();
+        window.location.reload();
       } else {
         openLoginModal();
       }
@@ -3473,7 +3471,7 @@ print("Hello " + name)
         });
         closeLoginModal();
         updateAuthUI();
-        showFileBrowser();
+        await showFileBrowser();
         return;
       }
       const signInResult = await tryUnifiedSignIn(email, password);
@@ -4761,8 +4759,15 @@ print("Hello " + name)
     document.getElementById('workspaceEditorTabBtn')?.addEventListener('click', () => setWorkspaceTab(WORKSPACE_TAB_EDITOR));
     document.getElementById('workspaceFilesTabBtn')?.addEventListener('click', () => setWorkspaceTab(WORKSPACE_TAB_FILES));
 
-    function showFileBrowser() {
+    async function showFileBrowser() {
+      if (!isAuthenticated()) return;
+      _currentFolderPath = '';
       setWorkspaceTab(WORKSPACE_TAB_FILES);
+      try {
+        await loadFileTree();
+      } catch (err) {
+        console.warn('Failed to load file tree after auth.', err);
+      }
     }
 
     function hideFileBrowser() {
