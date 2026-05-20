@@ -70,6 +70,7 @@
       --vsplitter-size: 10px;
       --shell-size: 35%;
       --left-width: 50%;
+      --teacher-pane-size: 50%;
       --splitter-hit: 8px;
 
       --cm-font-size: 14px;
@@ -406,6 +407,69 @@
       font:inherit;
       outline:none;
     }
+    .editor-content-stack{ display:grid; grid-template-rows: 1fr 0 0; height:100%; min-height:0; }
+    .student-editor-wrap{ min-height:0; overflow:hidden; }
+    .editor-stream-splitter,
+    .teacher-stream-pane{ display:none; }
+    .editor-content-stack.teacher-stream-enabled.teacher-stream-open{
+      grid-template-rows: minmax(120px, calc(100% - var(--teacher-pane-size) - var(--splitter-size))) var(--splitter-size) minmax(120px, var(--teacher-pane-size));
+    }
+    .editor-content-stack.teacher-stream-enabled.teacher-stream-open .editor-stream-splitter{
+      display:block;
+      background:linear-gradient(180deg,var(--theme-splitter-a),var(--theme-splitter-b));
+      border-top:1px solid var(--theme-border);
+      border-bottom:1px solid var(--theme-bg);
+      position:relative;
+      cursor:row-resize;
+      user-select:none;
+    }
+    .editor-content-stack.teacher-stream-enabled.teacher-stream-open .editor-stream-splitter::before{
+      content:"";
+      position:absolute;
+      left:0;
+      right:0;
+      top:calc(-1 * var(--splitter-hit));
+      height:calc(var(--splitter-size) + 2 * var(--splitter-hit));
+    }
+    .editor-content-stack.teacher-stream-enabled.teacher-stream-open .editor-stream-splitter::after{
+      content:"···";
+      position:absolute;
+      left:50%;
+      top:50%;
+      transform:translate(-50%,-50%);
+      color:var(--theme-text-dim);
+      letter-spacing:4px;
+      font-weight:900;
+      pointer-events:none;
+    }
+    .editor-content-stack.teacher-stream-enabled.teacher-stream-open .teacher-stream-pane{
+      display:block;
+      min-height:0;
+      overflow:hidden;
+      border-top:1px solid var(--theme-border-mid);
+    }
+    .teacher-stream-pane .CodeMirror{ height:100%; }
+    .teacher-pane-toggle{
+      position:fixed;
+      left:50%;
+      bottom:6px;
+      transform:translateX(-50%);
+      z-index:260;
+      width:34px;
+      height:30px;
+      border-radius:10px;
+      border:1px solid var(--theme-border-mid);
+      background:var(--theme-panel-hdr);
+      color:var(--theme-text);
+      display:none;
+      align-items:center;
+      justify-content:center;
+      cursor:pointer;
+      font-size:15px;
+      line-height:1;
+      backdrop-filter:blur(4px);
+    }
+    .teacher-pane-toggle:hover{ background:var(--theme-btn-hover); }
 
     body.guest-mode #rightStackPanel{ display:none !important; }
     body.guest-mode .vsplitter{ display:none !important; }
@@ -740,6 +804,7 @@
   </header>
   <button class="edge-toggle" id="leftEdgeToggleBtn" title="Show file sidebar" style="display:none;">▶</button>
   <button class="edge-toggle" id="rightEdgeToggleBtn" title="Hide resources sidebar" style="display:none;">◀</button>
+  <button class="teacher-pane-toggle" id="teacherPaneToggleBtn" title="Show teacher code stream" aria-expanded="false">▲</button>
 
   <div class="outer no-sidebar" id="outer">
     <!-- File Browser Sidebar (hidden by default) -->
@@ -777,9 +842,15 @@
         <h3>Editor: <span id="activeFileName" style="color:#a5c8f0; font-weight:400;"></span></h3>
         <button class="btn secondary" id="clearErrorsBtn" style="display:none; font-size:12px; padding:4px 8px;">Clear Error Highlights</button>
       </header>
-      <div class="content">
-        <textarea id="editor" style="display:none; resize:none;"></textarea>
-        <div id="csvEditor" class="csv-editor hidden"></div>
+      <div class="content editor-content-stack" id="editorContentStack">
+        <div class="student-editor-wrap">
+          <textarea id="editor" style="display:none; resize:none;"></textarea>
+          <div id="csvEditor" class="csv-editor hidden"></div>
+        </div>
+        <div class="editor-stream-splitter" id="editorStreamSplitter" role="separator" aria-orientation="horizontal" title="Drag to resize teacher stream"></div>
+        <section class="teacher-stream-pane" id="teacherStreamPane" aria-label="Teacher code stream">
+          <textarea id="teacherStreamEditor" style="display:none; resize:none;"></textarea>
+        </section>
       </div>
     </section>
 
@@ -827,7 +898,6 @@
 
           <div class="tabs">
             <button class="tab-btn active" data-tab="notesTab" id="notesTabBtn">Home</button>
-            <button class="tab-btn" data-tab="teacherTab" id="teacherTabBtn">Teacher</button>
             <button class="tab-btn" data-tab="lessonTab" id="lessonTabBtn">Wiki</button>
             <button class="tab-btn" data-tab="assignmentTab" id="assignmentTabBtn">Assignment</button>
             <button class="tab-btn" data-tab="aiTab" id="aiTabBtn" style="display:none;">AI Explain</button>
@@ -841,14 +911,6 @@
               <div id="classJoinNotice" class="account-notice" style="display:none; margin:12px;">Join a class to see more resources!</div>
               <div id="notesView" contenteditable="false"></div>
               <textarea id="notesEdit" style="display:none; width:100%; height:100%; padding:12px; background:var(--theme-input-bg); color:var(--theme-text); border:none; font-family:monospace;"></textarea>
-            </div>
-
-            <!-- Teacher -->
-            <div class="tab-pane" id="teacherTab">
-              <div style="padding:20px; color:var(--theme-text-dim); font-size:14px;">
-                <p style="margin:0;">Teacher code now streams directly from the regular editor space.</p>
-                <p style="margin:10px 0 0;">Use your main editor and class selector to broadcast live code updates.</p>
-              </div>
             </div>
 
             <!-- Wiki -->
@@ -1334,6 +1396,101 @@
     // Teacher code streaming state
     let teacherEditor = null;
     const TEACHER_CODE_KEY = 'eagleide-teacher-code';
+    const TEACHER_PANE_OPEN_KEY = 'eagleide-teacher-pane-open';
+    const TEACHER_PANE_SIZE_KEY = 'eagleide-teacher-pane-size';
+    let teacherPaneEnabled = false;
+    let teacherPaneOpen = false;
+
+    function setTeacherPaneSize(percent, persist = true) {
+      const next = Math.min(70, Math.max(25, Number(percent) || 50));
+      document.documentElement.style.setProperty('--teacher-pane-size', `${next}%`);
+      if (persist) {
+        try { localStorage.setItem(TEACHER_PANE_SIZE_KEY, String(next)); } catch {}
+      }
+    }
+
+    function initTeacherViewer() {
+      const ta = document.getElementById('teacherStreamEditor');
+      if (!ta) return null;
+      if (!window.CodeMirror) {
+        ta.style.display = 'block';
+        ta.style.width = '100%';
+        ta.style.height = '100%';
+        ta.style.background = 'var(--theme-cm-bg)';
+        ta.style.color = 'var(--text-light)';
+        ta.style.border = '0';
+        ta.style.outline = 'none';
+        ta.style.padding = '8px';
+        ta.readOnly = true;
+        try {
+          const saved = localStorage.getItem(TEACHER_CODE_KEY);
+          if (saved !== null) ta.value = saved;
+        } catch {}
+        return null;
+      }
+      if (teacherEditor) return teacherEditor;
+      let cmTheme = 'monokai';
+      try { cmTheme = localStorage.getItem('ide-theme') === 'light' ? 'default' : 'monokai'; } catch {}
+      teacherEditor = CodeMirror.fromTextArea(ta, {
+        mode: "python",
+        theme: cmTheme,
+        lineNumbers: true,
+        indentUnit: 4,
+        tabSize: 4,
+        indentWithTabs: true,
+        smartIndent: true,
+        electricChars: true,
+        autoCloseBrackets: true,
+        matchBrackets: true,
+        viewportMargin: 20,
+        readOnly: 'nocursor'
+      });
+      try {
+        const saved = localStorage.getItem(TEACHER_CODE_KEY);
+        if (saved !== null) teacherEditor.setValue(saved);
+      } catch {}
+      return teacherEditor;
+    }
+
+    function setTeacherPaneOpen(nextOpen, persist = true) {
+      teacherPaneOpen = !!nextOpen && !!teacherPaneEnabled;
+      const stack = document.getElementById('editorContentStack');
+      const btn = document.getElementById('teacherPaneToggleBtn');
+      if (stack) stack.classList.toggle('teacher-stream-open', teacherPaneOpen);
+      if (btn) {
+        btn.textContent = teacherPaneOpen ? '▼' : '▲';
+        btn.title = teacherPaneOpen ? 'Hide teacher code stream' : 'Show teacher code stream';
+        btn.setAttribute('aria-expanded', teacherPaneOpen ? 'true' : 'false');
+      }
+      if (persist) {
+        try { localStorage.setItem(TEACHER_PANE_OPEN_KEY, teacherPaneOpen ? '1' : '0'); } catch {}
+      }
+      if (teacherPaneOpen) {
+        initTeacherViewer();
+        requestAnimationFrame(() => {
+          try { window.eagleEditor?.refresh?.(); } catch {}
+          try { teacherEditor?.refresh?.(); } catch {}
+        });
+      }
+    }
+
+    function setTeacherPaneEnabled(enabled) {
+      const nextEnabled = !!enabled;
+      if (nextEnabled === teacherPaneEnabled) return;
+      teacherPaneEnabled = nextEnabled;
+      const stack = document.getElementById('editorContentStack');
+      const btn = document.getElementById('teacherPaneToggleBtn');
+      if (stack) stack.classList.toggle('teacher-stream-enabled', teacherPaneEnabled);
+      if (btn) btn.style.display = teacherPaneEnabled ? 'flex' : 'none';
+      if (!teacherPaneEnabled) {
+        setTeacherPaneOpen(false, false);
+      } else {
+        initTeacherViewer();
+        let shouldOpen = false;
+        try { shouldOpen = localStorage.getItem(TEACHER_PANE_OPEN_KEY) === '1'; } catch {}
+        setTeacherPaneOpen(shouldOpen, false);
+      }
+    }
 
     // Eagle IDE Custom Completion Engine
     (function() {
@@ -2094,6 +2251,13 @@ print("Hello " + name)
       return studentClassData || null;
     }
 
+    function updateTeacherStreamPaneVisibility() {
+      const classCtx = getCurrentClassContext();
+      const isStudentInClass = !!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && !!classCtx;
+      setTeacherPaneEnabled(isStudentInClass);
+      if (isStudentInClass) syncEditorLanguage(currentOpenFile?.name || '');
+    }
+
     function applyClassTabVisibility() {
       const classCtx = getCurrentClassContext();
       const isGuest = !USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN;
@@ -2104,13 +2268,11 @@ print("Hello " + name)
       const tChal = document.getElementById('aiChallengeTabBtn');
       const tAssist = document.getElementById('assistantTabBtn');
       const tWiki = document.getElementById('lessonTabBtn');
-      const tTeacher = document.getElementById('teacherTabBtn');
       const tAssignment = document.getElementById('assignmentTabBtn');
       const aiMasterEnabled = !!currentConfig?.ai_explainer_enabled;
       const effectiveAiEnabled = aiMasterEnabled && (ADMIN_TOKEN || aiEnabledForClass);
       const showOnlyNotes = isGuest || isStudentNoClass;
       const canSeeAssignments = !!TEACHER_TOKEN || (!!USER_TOKEN && !!classCtx);
-      if (tTeacher) tTeacher.style.display = (showOnlyNotes || !TEACHER_TOKEN) ? 'none' : '';
       if (tAssignment) tAssignment.style.display = canSeeAssignments ? '' : 'none';
       if (tExplain) tExplain.style.display = (!showOnlyNotes && effectiveAiEnabled) ? '' : 'none';
       if (tChal) tChal.style.display = (!showOnlyNotes && effectiveAiEnabled) ? '' : 'none';
@@ -2143,6 +2305,7 @@ print("Hello " + name)
       }
       const hiddenActiveTab = [...document.querySelectorAll('.tab-btn.active')].find(btn => getComputedStyle(btn).display === 'none');
       if (hiddenActiveTab) document.getElementById('notesTabBtn')?.click();
+      updateTeacherStreamPaneVisibility();
     }
 
     function renderClassSelector() {
@@ -2364,7 +2527,10 @@ print("Hello " + name)
           if (msg && typeof msg.code === 'string' && msg.class_id && msg.class_id === selectedClassId) {
             if (lastTeacherCodeSnapshot === msg.code) return;
             if (USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) {
-              editor.setValue(msg.code);
+              initTeacherViewer();
+              if (teacherEditor) teacherEditor.setValue(msg.code);
+              const ta = document.getElementById('teacherStreamEditor');
+              if (ta && !teacherEditor) ta.value = msg.code;
             }
             lastTeacherCodeSnapshot = msg.code;
             // Save to localStorage
@@ -2864,6 +3030,9 @@ print("Hello " + name)
       const rightstack = document.getElementById('rightstack');
       const hsplitter = document.getElementById('hsplitter');
       const vsplitter = document.getElementById('vsplitter');
+      const editorContentStack = document.getElementById('editorContentStack');
+      const editorStreamSplitter = document.getElementById('editorStreamSplitter');
+      const teacherPaneToggleBtn = document.getElementById('teacherPaneToggleBtn');
       const rightEdgeToggleBtn = document.getElementById('rightEdgeToggleBtn');
       const leftEdgeToggleBtn = document.getElementById('leftEdgeToggleBtn');
       const RIGHT_COLLAPSE_KEY = 'eagleide-right-collapsed';
@@ -2927,6 +3096,8 @@ print("Hello " + name)
         if (Number.isFinite(storedLeft)) setLeftWidth(storedLeft, false);
         const storedShell = parseFloat(localStorage.getItem(SHELL_SIZE_KEY) || '');
         if (Number.isFinite(storedShell)) setShellSize(storedShell, false);
+        const storedTeacherPane = parseFloat(localStorage.getItem(TEACHER_PANE_SIZE_KEY) || '');
+        if (Number.isFinite(storedTeacherPane)) setTeacherPaneSize(storedTeacherPane, false);
         applyRightSidebarState(localStorage.getItem(RIGHT_COLLAPSE_KEY) === '1', false);
         if (localStorage.getItem(LEFT_COLLAPSE_KEY) === '1') {
           hideFileBrowser();
@@ -2934,7 +3105,13 @@ print("Hello " + name)
         }
       } catch {
         applyRightSidebarState(false, false);
+        setTeacherPaneSize(50, false);
       }
+
+      teacherPaneToggleBtn?.addEventListener('click', () => {
+        if (!teacherPaneEnabled) return;
+        setTeacherPaneOpen(!teacherPaneOpen);
+      });
 
       hsplitter?.addEventListener('mousedown', (event) => {
         if (document.body.classList.contains('right-collapsed')) return;
@@ -2961,6 +3138,25 @@ print("Hello " + name)
           const relativeY = moveEvent.clientY - rect.top;
           const next = (relativeY / rect.height) * 100;
           setShellSize(next);
+        };
+        const onUp = () => {
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+
+      editorStreamSplitter?.addEventListener('mousedown', (event) => {
+        if (!teacherPaneEnabled || !teacherPaneOpen || !editorContentStack) return;
+        event.preventDefault();
+        const onMove = (moveEvent) => {
+          const rect = editorContentStack.getBoundingClientRect();
+          const relativeY = moveEvent.clientY - rect.top;
+          const bottomPercent = ((rect.height - relativeY) / rect.height) * 100;
+          setTeacherPaneSize(bottomPercent);
+          try { window.eagleEditor?.refresh?.(); } catch {}
+          try { teacherEditor?.refresh?.(); } catch {}
         };
         const onUp = () => {
           document.removeEventListener('mousemove', onMove);
