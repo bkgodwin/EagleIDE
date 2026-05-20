@@ -2288,23 +2288,24 @@ print("Hello " + name)
       const tAssignment = document.getElementById('assignmentTabBtn');
       const aiMasterEnabled = !!currentConfig?.ai_explainer_enabled;
       const effectiveAiEnabled = aiMasterEnabled && (ADMIN_TOKEN || aiEnabledForClass);
-      const showOnlyNotesForGuest = isGuest;
+      const shouldHideAiTabs = isGuest;
+      const canViewWikiContent = !!(ADMIN_TOKEN || TEACHER_TOKEN || wikiEnabledForClass);
       const canShowWikiTab = isAuthenticatedUser && (ADMIN_TOKEN || TEACHER_TOKEN || !classCtx || wikiEnabledForClass);
       const canSeeAssignments = !!TEACHER_TOKEN || (!!USER_TOKEN && !!classCtx);
       if (tAssignment) tAssignment.style.display = canSeeAssignments ? '' : 'none';
-      if (tExplain) tExplain.style.display = (!showOnlyNotesForGuest && effectiveAiEnabled) ? '' : 'none';
-      if (tChal) tChal.style.display = (!showOnlyNotesForGuest && effectiveAiEnabled) ? '' : 'none';
-      if (tAssist) tAssist.style.display = (!showOnlyNotesForGuest && effectiveAiEnabled) ? '' : 'none';
+      if (tExplain) tExplain.style.display = (!shouldHideAiTabs && effectiveAiEnabled) ? '' : 'none';
+      if (tChal) tChal.style.display = (!shouldHideAiTabs && effectiveAiEnabled) ? '' : 'none';
+      if (tAssist) tAssist.style.display = (!shouldHideAiTabs && effectiveAiEnabled) ? '' : 'none';
       if (tWiki) tWiki.style.display = canShowWikiTab ? '' : 'none';
       const classJoinNotice = document.getElementById('classJoinNotice');
       if (classJoinNotice) classJoinNotice.style.display = isStudentNoClass ? '' : 'none';
       const lessonLocal = document.getElementById('lessonLocal');
       const lessonFrame = document.getElementById('lessonFrame');
-      if (classCtx?.settings?.wiki_html && (ADMIN_TOKEN || TEACHER_TOKEN || wikiEnabledForClass)) {
+      if (classCtx?.settings?.wiki_html && canViewWikiContent) {
         lessonLocal.innerHTML = classCtx.settings.wiki_html;
         lessonLocal.style.display = 'block';
         lessonFrame.style.display = 'none';
-      } else if (classCtx?.settings?.wiki_url && (ADMIN_TOKEN || TEACHER_TOKEN || wikiEnabledForClass)) {
+      } else if (classCtx?.settings?.wiki_url && canViewWikiContent) {
         lessonLocal.style.display = 'none';
         lessonFrame.style.display = 'block';
         lessonFrame.src = classCtx.settings.wiki_url;
