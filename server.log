@@ -1,0 +1,5 @@
+2026-05-20 16:42:23 [INFO] Server started.
+2026-05-20 16:42:23 [INFO] Server listening on http://0.0.0.0:8000 (async=eventlet)
+2026-05-20 16:42:45 [INFO] Sign-in: role=admin email=admin@eagleide.local ip=127.0.0.x source=admin_login
+2026-05-20 16:42:51 [INFO] Sign-in: role=teacher email=teacher@example.com ip=127.0.0.x source=login
+2026-05-20 16:42:59 [INFO] Sign-in: role=admin email=admin@eagleide.local ip=127.0.0.x source=admin_login
