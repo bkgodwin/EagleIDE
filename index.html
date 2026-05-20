@@ -1943,13 +1943,17 @@ print("Hello " + name)
 
     function getManualLanguageInfo() {
       const sel = document.getElementById('languageSelector');
-      const isLoggedIn = !!(currentUser || currentTeacher || ADMIN_TOKEN);
+      const isLoggedIn = isAuthenticated();
       if (isLoggedIn) return getLanguageInfoForFileName(currentOpenFile?.name || '');
       const val = String(sel?.value || 'auto').toLowerCase();
       if (val === 'python') return LANGUAGE_INFO.python;
       if (val === 'javascript') return LANGUAGE_INFO.javascript;
       if (val === 'html') return LANGUAGE_INFO.html;
       return null;
+    }
+
+    function isAuthenticated() {
+      return !!(USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN || currentUser || currentTeacher);
     }
 
     function getActiveLanguageInfo() {
@@ -3191,7 +3195,7 @@ print("Hello " + name)
       const streamingToggleBtn = document.getElementById('streamingToggleBtn');
       const modeWrap = document.getElementById('modeSelectorWrap');
       const topJoinClassBtn = document.getElementById('topJoinClassBtn');
-      const isLoggedIn = !!(currentUser || currentTeacher || ADMIN_TOKEN);
+      const isLoggedIn = isAuthenticated();
       document.body.classList.toggle('guest-mode', !isLoggedIn);
       document.body.classList.toggle('admin-owner', !!ADMIN_TOKEN);
       guestBadge.style.display = isLoggedIn ? 'none' : '';
@@ -3286,7 +3290,7 @@ print("Hello " + name)
     // Show/hide an "no file selected" overlay on the editor when signed in but no file open
     function updateEditorOverlay() {
       const editorPanel = document.getElementById('editorPanel');
-      const isLoggedIn = !!(currentUser || currentTeacher || ADMIN_TOKEN);
+      const isLoggedIn = isAuthenticated();
       if (isLoggedIn && !currentOpenFile) {
         editorPanel.classList.add('editor-disabled');
         if (window.eagleEditor) window.eagleEditor.setOption('readOnly', true);
@@ -3362,8 +3366,8 @@ print("Hello " + name)
           error = authError;
         } else if (adminError && adminError !== generic) {
           error = adminError;
-        } else if (authError || adminError) {
-          error = authError || adminError;
+        } else {
+          error = authError || adminError || generic;
         }
         return { ok: false, error };
       } catch {
@@ -3373,7 +3377,7 @@ print("Hello " + name)
 
     // Login button: open unified login modal or log out when already authenticated
     document.getElementById('loginBtn').addEventListener('click', async () => {
-      const isLoggedIn = !!(currentUser || currentTeacher || ADMIN_TOKEN);
+      const isLoggedIn = isAuthenticated();
       if (isLoggedIn) {
         // Perform logout directly
         if (USER_TOKEN) {
@@ -4722,7 +4726,7 @@ print("Hello " + name)
       const filesTabBtn = document.getElementById('workspaceFilesTabBtn');
       const editorContentStack = document.getElementById('editorContentStack');
       const title = document.getElementById('workspaceTitle');
-      const isLoggedIn = !!(USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN || currentUser || currentTeacher);
+      const isLoggedIn = isAuthenticated();
       const targetTab = tabName === WORKSPACE_TAB_FILES && isLoggedIn ? WORKSPACE_TAB_FILES : WORKSPACE_TAB_EDITOR;
       _workspaceTab = targetTab;
       if (editorContentStack) editorContentStack.classList.toggle('file-browser-active', _workspaceTab === WORKSPACE_TAB_FILES);
