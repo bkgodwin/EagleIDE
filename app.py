@@ -392,7 +392,7 @@ def _upgrade_legacy_password_if_needed(email: str, password: str) -> None:
         legacy_password = u.get("password")
         if not isinstance(legacy_password, str):
             break
-        if not hmac.compare_digest(legacy_password, password):
+        if legacy_password != password:
             break
         u["password_hash"] = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
         u.pop("password", None)
@@ -412,7 +412,7 @@ def _verify_user_password(user: dict, password: str) -> bool:
         except Exception:
             pass
     legacy_password = user.get("password")
-    if isinstance(legacy_password, str) and hmac.compare_digest(legacy_password, password):
+    if isinstance(legacy_password, str) and legacy_password == password:
         _upgrade_legacy_password_if_needed(user.get("email", ""), password)
         return True
     return False

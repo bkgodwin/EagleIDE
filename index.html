@@ -1965,8 +1965,15 @@ print("Hello " + name)
       currentTeacher = null;
     }
 
+    function normalizeExclusiveAuthRole() {
+      if (USER_TOKEN) { TEACHER_TOKEN = null; ADMIN_TOKEN = null; currentTeacher = null; return; }
+      if (TEACHER_TOKEN) { USER_TOKEN = null; ADMIN_TOKEN = null; currentUser = null; return; }
+      if (ADMIN_TOKEN) { USER_TOKEN = null; TEACHER_TOKEN = null; currentUser = null; currentTeacher = null; }
+    }
+
     function saveAuthSession() {
       try {
+        normalizeExclusiveAuthRole();
         const payload = {
           adminToken: ADMIN_TOKEN || null,
           teacherToken: TEACHER_TOKEN || null,
@@ -1979,7 +1986,9 @@ print("Hello " + name)
           return;
         }
         sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(payload));
-      } catch {}
+      } catch (err) {
+        console.warn('Failed to persist auth session.', err);
+      }
     }
 
     function restoreAuthSession() {
@@ -1993,11 +2002,10 @@ print("Hello " + name)
         USER_TOKEN = typeof payload.userToken === 'string' ? payload.userToken : null;
         currentUser = payload.currentUser && typeof payload.currentUser === 'object' ? payload.currentUser : null;
         currentTeacher = payload.currentTeacher && typeof payload.currentTeacher === 'object' ? payload.currentTeacher : null;
-        if (USER_TOKEN) { TEACHER_TOKEN = null; ADMIN_TOKEN = null; currentTeacher = null; }
-        if (TEACHER_TOKEN) { USER_TOKEN = null; ADMIN_TOKEN = null; currentUser = null; }
-        if (ADMIN_TOKEN) { USER_TOKEN = null; TEACHER_TOKEN = null; currentUser = null; currentTeacher = null; }
+        normalizeExclusiveAuthRole();
         return !!(ADMIN_TOKEN || TEACHER_TOKEN || USER_TOKEN);
-      } catch {
+      } catch (err) {
+        console.warn('Failed to restore auth session.', err);
         return false;
       }
     }
@@ -2048,7 +2056,9 @@ print("Hello " + name)
           saveAuthSession();
           return true;
         }
-      } catch {}
+      } catch (err) {
+        console.warn('Failed to validate restored auth session.', err);
+      }
       clearAuthStateMemory();
       saveAuthSession();
       return false;
