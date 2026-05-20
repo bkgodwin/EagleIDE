@@ -66,12 +66,12 @@
       --theme-splitter-b: #1a1a1a;
       --theme-bg-image:   url(/api/background_dark);
 
-      --splitter-size: 8px;
-      --vsplitter-size: 10px;
+      --splitter-size: 12px;
+      --vsplitter-size: 14px;
       --shell-size: 35%;
       --left-width: 50%;
       --teacher-pane-size: 50%;
-      --splitter-hit: 8px;
+      --splitter-hit: 12px;
 
       --cm-font-size: 14px;
       --indent-ch: 4;
@@ -139,19 +139,12 @@
     }
 
     .outer{ display:grid; grid-template-columns: var(--left-width) var(--vsplitter-size) 1fr; grid-template-rows: 1fr; gap:10px; padding:10px; height:calc(100vh - 60px); min-height:400px; overflow:hidden; }
-    /* With file sidebar visible */
-    .outer:not(.no-sidebar){ grid-template-columns: var(--sidebar-width, 220px) var(--left-width) var(--vsplitter-size) 1fr; }
-    /* Default column positions (no sidebar) */
+    /* Default column positions */
     .outer.no-sidebar #editorPanel { grid-column: 1 / 2; }
     .outer.no-sidebar #hsplitter   { grid-column: 2 / 3; }
     .outer.no-sidebar #rightColumn { grid-column: 3 / 4; }
-    /* Column positions with sidebar */
-    .outer:not(.no-sidebar) #fileSidebar  { grid-column: 1 / 2; }
-    .outer:not(.no-sidebar) #editorPanel  { grid-column: 2 / 3; }
-    .outer:not(.no-sidebar) #hsplitter    { grid-column: 3 / 4; }
-    .outer:not(.no-sidebar) #rightColumn  { grid-column: 4 / 5; }
     /* All items row */
-    .outer #editorPanel, .outer #hsplitter, .outer #rightColumn, .outer #fileSidebar { grid-row: 1 / 2; }
+    .outer #editorPanel, .outer #hsplitter, .outer #rightColumn { grid-row: 1 / 2; }
     .panel{ background:var(--theme-panel); border:1px solid var(--theme-border); border-radius:14px; overflow:hidden; display:flex; flex-direction:column; min-height:0; backdrop-filter:blur(4px); }
     .panel header{ background:var(--theme-panel-hdr); color:var(--columbia-blue); padding:8px 12px; border-bottom:1px solid var(--theme-border-mid); display:flex; align-items:center; justify-content:space-between }
     .panel header h3{ margin:0; font-size:14px; color:var(--columbia-blue) }
@@ -180,6 +173,9 @@
       padding:24px; pointer-events:none; z-index:10;
       backdrop-filter:blur(2px);
     }
+    #editorPanel.editor-disabled #editorContentStack.file-browser-active::after{
+      display:none;
+    }
     body.light-mode #editorPanel.editor-disabled .content::after{
       background:rgba(240,242,246,0.80);
     }
@@ -191,11 +187,11 @@
 
     .rightstack{ display:grid; grid-template-rows: var(--shell-size) var(--splitter-size) 1fr; grid-template-columns: 1fr; height:100%; min-height:0; overflow:hidden; }
     .rightstack .panel{ min-height:0; overflow:hidden; display:flex; flex-direction:column; }
-    .vsplitter{ grid-row:2 / 3; grid-column:1; background:linear-gradient(180deg,var(--theme-splitter-a),var(--theme-splitter-b)); border-top:1px solid var(--theme-border); border-bottom:1px solid var(--theme-bg); position:relative; cursor:row-resize; user-select:none; }
+    .vsplitter{ grid-row:2 / 3; grid-column:1; background:linear-gradient(180deg,var(--theme-splitter-a),var(--theme-splitter-b)); border-top:1px solid var(--theme-border); border-bottom:1px solid var(--theme-bg); position:relative; cursor:row-resize; user-select:none; touch-action:none; }
     .vsplitter::before{ content:""; position:absolute; left:0; right:0; top:calc(-1 * var(--splitter-hit)); height:calc(var(--splitter-size) + 2 * var(--splitter-hit)); }
     .vsplitter::after{ content:"···"; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); color:var(--theme-text-dim); letter-spacing:4px; font-weight:900; pointer-events:none; }
 
-    .hsplitter{ grid-column:2 / 3; grid-row:1 / 2; background:linear-gradient(90deg,var(--theme-splitter-a),var(--theme-splitter-b)); border-left:1px solid var(--theme-border); border-right:1px solid var(--theme-bg); position:relative; cursor:col-resize; user-select:none; border-radius:12px; }
+    .hsplitter{ grid-column:2 / 3; grid-row:1 / 2; background:linear-gradient(90deg,var(--theme-splitter-a),var(--theme-splitter-b)); border-left:1px solid var(--theme-border); border-right:1px solid var(--theme-bg); position:relative; cursor:col-resize; user-select:none; border-radius:12px; touch-action:none; }
     .hsplitter::before{ content:""; position:absolute; top:0; bottom:0; left:calc(-1 * var(--splitter-hit)); width:calc(var(--vsplitter-size) + 2 * var(--splitter-hit)); }
     .hsplitter::after{ content:"⋮"; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); color:var(--theme-text-dim); font-weight:900; pointer-events:none; }
 
@@ -274,8 +270,15 @@
     .ai-grade-btn:hover{ background:#45a049; }
     .ai-grade-btn:disabled{ background:#666; cursor:not-allowed; }
     /* File Sidebar */
-    .file-sidebar{ background:var(--theme-panel); border:1px solid var(--theme-border); border-radius:14px; overflow:hidden; display:flex; flex-direction:column; min-height:0; grid-row:1; backdrop-filter:blur(4px); }
-    .file-sidebar-header{ background:var(--theme-panel-hdr); color:var(--columbia-blue); padding:8px 12px; border-bottom:1px solid var(--theme-border-mid); display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
+    .embedded-file-browser{ display:none; height:100%; min-height:0; background:var(--theme-panel); border-radius:10px; border:1px solid var(--theme-border-mid); overflow:hidden; flex-direction:column; }
+    .editor-content-stack.file-browser-active{ display:grid; grid-template-rows:1fr; }
+    .editor-content-stack.file-browser-active .student-editor-wrap,
+    .editor-content-stack.file-browser-active .editor-stream-splitter,
+    .editor-content-stack.file-browser-active .teacher-stream-pane{ display:none !important; }
+    .editor-content-stack.file-browser-active .embedded-file-browser{ display:flex; }
+    .workspace-tabs{ display:flex; gap:6px; margin-left:auto; margin-right:8px; }
+    .workspace-tab-btn{ padding:8px 12px; border-radius:8px; background:var(--theme-tab-btn); color:var(--theme-text); border:1px solid var(--theme-border); cursor:pointer; font-weight:700; }
+    .workspace-tab-btn.active{ background:var(--theme-secondary); color:var(--columbia-blue); }
     .file-tree{ flex:1; overflow:auto; padding:4px 0; font-size:13px; }
     .file-tree-item{ display:flex; align-items:center; gap:6px; padding:6px 12px; cursor:pointer; user-select:none; white-space:nowrap; border-radius:6px; margin:1px 4px; transition:background 0.1s; color:var(--theme-text); }
     .file-tree-item:hover{ background:rgba(165,200,240,0.12); }
@@ -392,7 +395,6 @@
       justify-content:center;
       backdrop-filter:blur(4px);
     }
-    #leftEdgeToggleBtn{ left:6px; }
     #rightEdgeToggleBtn{ right:6px; }
     .csv-editor{ height:100%; overflow:auto; padding:10px; background:var(--theme-output-bg); }
     .csv-editor.hidden{ display:none; }
@@ -422,6 +424,7 @@
       position:relative;
       cursor:row-resize;
       user-select:none;
+      touch-action:none;
     }
     .editor-content-stack.teacher-stream-enabled.teacher-stream-open .editor-stream-splitter::before{
       content:"";
@@ -561,9 +564,7 @@
     body.right-collapsed #hsplitter { display: none !important; }
     /* When right sidebar collapsed, only show editor (and file sidebar if present) */
     body.right-collapsed .outer.no-sidebar { grid-template-columns: 1fr !important; }
-    body.right-collapsed .outer:not(.no-sidebar) { grid-template-columns: var(--sidebar-width, 220px) 1fr !important; }
     body.right-collapsed .outer.no-sidebar #editorPanel { grid-column: 1 / 2; }
-    body.right-collapsed .outer:not(.no-sidebar) #editorPanel { grid-column: 2 / 3; }
 
     /* Shell collapse styles */
     body.shell-hidden #shellPanel { display: none !important; }
@@ -604,7 +605,18 @@
       .hsplitter{ display:none }
       #editorPanel{ height:50vh; grid-column:1 !important; grid-row:auto }
       #rightColumn{ grid-column:1 !important; grid-row:auto }
-      #fileSidebar{ grid-column:1 !important; grid-row:auto; height:30vh; }
+      .workspace-tabs{ margin-left:0; margin-right:0; }
+    }
+    @media (max-width:1366px){
+      header .actions{ gap:6px; }
+      .btn{ padding:10px 12px; }
+      .tab-btn, .workspace-tab-btn, .file-action-btn{ min-height:40px; }
+      .control-group{ padding:6px 8px; }
+      .panel header{ gap:8px; flex-wrap:wrap; align-items:center; }
+      #editorPanel header h3{ min-width:100%; }
+      .tabs{ flex-wrap:wrap; }
+      .file-tree-item{ padding-top:9px; padding-bottom:9px; }
+      .file-sidebar-breadcrumb{ font-size:13px; }
     }
 
     /* ── Teacher Dashboard ── */
@@ -802,44 +814,18 @@
       <button class="btn admin" id="adminSettingsBtn" title="Admin Settings" style="display:none;">⚙</button>
     </div>
   </header>
-  <button class="edge-toggle" id="leftEdgeToggleBtn" title="Show file sidebar" style="display:none;">▶</button>
   <button class="edge-toggle" id="rightEdgeToggleBtn" title="Hide resources sidebar" style="display:none;">◀</button>
   <button class="teacher-pane-toggle" id="teacherPaneToggleBtn" title="Show teacher code stream" aria-expanded="false">▲</button>
 
   <div class="outer no-sidebar" id="outer">
-    <!-- File Browser Sidebar (hidden by default) -->
-    <aside class="file-sidebar" id="fileSidebar" style="display:none;">
-      <div class="file-sidebar-header">
-        <span style="font-weight:700;">📁 My Files</span>
-      </div>
-      <div class="file-sidebar-breadcrumb" id="fileBreadcrumb">
-        <span class="crumb" data-path="">🏠 Home</span>
-      </div>
-      <div class="file-tree" id="fileTree"></div>
-      <div class="file-sidebar-actions">
-        <button class="file-action-btn" id="newFileBtn" title="Create a new file">📄 New File</button>
-        <button class="file-action-btn" id="newFolderBtn" title="Create a new folder">📁 New Folder</button>
-        <button class="file-action-btn" id="uploadFileBtn" title="Upload a file from your computer">⬆️ Upload</button>
-        <input type="file" id="sidebarFileInput" accept=".py,.js,.html,.css,.txt,.csv" style="display:none;">
-        <button class="file-action-btn" id="refreshFilesBtn" title="Refresh file list">🔄 Refresh</button>
-      </div>
-      <div id="submissionScoringPanel" class="submission-scoring-panel" style="display:none;">
-        <h4 id="submissionScoringTitle">Submission Scoring</h4>
-        <div id="submissionScoringMeta" class="submission-scoring-meta"></div>
-        <div id="submissionQuizSummary" class="submission-scoring-meta" style="display:none;"></div>
-        <div class="submission-scoring-row">
-          <label for="submissionScoreInput" style="font-size:12px; color:var(--theme-text-dim);">Code Score</label>
-          <input type="number" id="submissionScoreInput" min="0" step="1" />
-          <button class="btn secondary" id="submissionAiGradeBtn" style="display:none;">AI Grade</button>
-        </div>
-        <div id="submissionScoreTotals" class="submission-scoring-meta"></div>
-        <div id="submissionScoreSaveStatus" class="submission-save-status"></div>
-      </div>
-    </aside>
     <!-- Left: Editor -->
     <section class="panel" id="editorPanel">
       <header aria-label="Code editor with Python syntax highlighting">
-        <h3>Editor: <span id="activeFileName" style="color:#a5c8f0; font-weight:400;"></span></h3>
+        <h3><span id="workspaceTitle">Editor</span>: <span id="activeFileName" style="color:#a5c8f0; font-weight:400;"></span></h3>
+        <div class="workspace-tabs" role="tablist" aria-label="Workspace tabs">
+          <button class="workspace-tab-btn active" id="workspaceEditorTabBtn" data-workspace-tab="editor" role="tab" aria-selected="true">Editor</button>
+          <button class="workspace-tab-btn" id="workspaceFilesTabBtn" data-workspace-tab="files" role="tab" aria-selected="false">File Browser</button>
+        </div>
         <button class="btn secondary" id="clearErrorsBtn" style="display:none; font-size:12px; padding:4px 8px;">Clear Error Highlights</button>
       </header>
       <div class="content editor-content-stack" id="editorContentStack">
@@ -850,6 +836,31 @@
         <div class="editor-stream-splitter" id="editorStreamSplitter" role="separator" aria-orientation="horizontal" title="Drag to resize teacher stream"></div>
         <section class="teacher-stream-pane" id="teacherStreamPane" aria-label="Teacher code stream">
           <textarea id="teacherStreamEditor" style="display:none; resize:none;"></textarea>
+        </section>
+        <section class="embedded-file-browser" id="fileBrowserTabPane" aria-label="File browser tab">
+          <div class="file-sidebar-breadcrumb" id="fileBreadcrumb">
+            <span class="crumb" data-path="">🏠 Home</span>
+          </div>
+          <div class="file-tree" id="fileTree"></div>
+          <div id="submissionScoringPanel" class="submission-scoring-panel" style="display:none;">
+            <h4 id="submissionScoringTitle">Submission Scoring</h4>
+            <div id="submissionScoringMeta" class="submission-scoring-meta"></div>
+            <div id="submissionQuizSummary" class="submission-scoring-meta" style="display:none;"></div>
+            <div class="submission-scoring-row">
+              <label for="submissionScoreInput" style="font-size:12px; color:var(--theme-text-dim);">Code Score</label>
+              <input type="number" id="submissionScoreInput" min="0" step="1" />
+              <button class="btn secondary" id="submissionAiGradeBtn" style="display:none;">AI Grade</button>
+            </div>
+            <div id="submissionScoreTotals" class="submission-scoring-meta"></div>
+            <div id="submissionScoreSaveStatus" class="submission-save-status"></div>
+          </div>
+          <div class="file-sidebar-actions">
+            <button class="file-action-btn" id="newFileBtn" title="Create a new file">📄 New File</button>
+            <button class="file-action-btn" id="newFolderBtn" title="Create a new folder">📁 New Folder</button>
+            <button class="file-action-btn" id="uploadFileBtn" title="Upload a file from your computer">⬆️ Upload</button>
+            <input type="file" id="sidebarFileInput" accept=".py,.js,.html,.css,.txt,.csv" style="display:none;">
+            <button class="file-action-btn" id="refreshFilesBtn" title="Refresh file list">🔄 Refresh</button>
+          </div>
         </section>
       </div>
     </section>
@@ -2515,10 +2526,7 @@ print("Hello " + name)
           }
           appendOut('[Process finished]\n');
           // Refresh file browser so files created by the program appear immediately
-          const sidebar = document.getElementById('fileSidebar');
-          if ((USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN) && sidebar && sidebar.style.display !== 'none') {
-            loadFileTree();
-          }
+          if (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN) loadFileTree();
         });
         
         // Listen for teacher code updates
@@ -3034,9 +3042,7 @@ print("Hello " + name)
       const editorStreamSplitter = document.getElementById('editorStreamSplitter');
       const teacherPaneToggleBtn = document.getElementById('teacherPaneToggleBtn');
       const rightEdgeToggleBtn = document.getElementById('rightEdgeToggleBtn');
-      const leftEdgeToggleBtn = document.getElementById('leftEdgeToggleBtn');
       const RIGHT_COLLAPSE_KEY = 'eagleide-right-collapsed';
-      const LEFT_COLLAPSE_KEY = 'eagleide-left-collapsed';
       const LEFT_WIDTH_KEY = 'eagleide-left-width';
       const SHELL_SIZE_KEY = 'eagleide-shell-size';
 
@@ -3077,20 +3083,6 @@ print("Hello " + name)
         });
       }
 
-      if (leftEdgeToggleBtn) {
-        leftEdgeToggleBtn.addEventListener('click', () => {
-          if (document.body.classList.contains('left-collapsed')) {
-            showFileBrowser();
-            document.body.classList.remove('left-collapsed');
-            try { localStorage.setItem(LEFT_COLLAPSE_KEY, '0'); } catch {}
-          } else {
-            hideFileBrowser();
-            document.body.classList.add('left-collapsed');
-            try { localStorage.setItem(LEFT_COLLAPSE_KEY, '1'); } catch {}
-          }
-        });
-      }
-
       try {
         const storedLeft = parseFloat(localStorage.getItem(LEFT_WIDTH_KEY) || '');
         if (Number.isFinite(storedLeft)) setLeftWidth(storedLeft, false);
@@ -3099,10 +3091,6 @@ print("Hello " + name)
         const storedTeacherPane = parseFloat(localStorage.getItem(TEACHER_PANE_SIZE_KEY) || '');
         if (Number.isFinite(storedTeacherPane)) setTeacherPaneSize(storedTeacherPane, false);
         applyRightSidebarState(localStorage.getItem(RIGHT_COLLAPSE_KEY) === '1', false);
-        if (localStorage.getItem(LEFT_COLLAPSE_KEY) === '1') {
-          hideFileBrowser();
-          document.body.classList.add('left-collapsed');
-        }
       } catch {
         applyRightSidebarState(false, false);
         setTeacherPaneSize(50, false);
@@ -3113,58 +3101,58 @@ print("Hello " + name)
         setTeacherPaneOpen(!teacherPaneOpen);
       });
 
-      hsplitter?.addEventListener('mousedown', (event) => {
-        if (document.body.classList.contains('right-collapsed')) return;
-        event.preventDefault();
-        const onMove = (moveEvent) => {
+      function attachPointerDrag(element, canStart, onMove) {
+        if (!element) return;
+        element.addEventListener('pointerdown', (event) => {
+          if (!canStart()) return;
+          event.preventDefault();
+          const pointerId = event.pointerId;
+          try { element.setPointerCapture(pointerId); } catch (err) { console.debug('Pointer capture unavailable:', err); }
+          const move = (moveEvent) => onMove(moveEvent);
+          const up = (upEvent) => {
+            if (upEvent.pointerId !== pointerId) return;
+            try { element.releasePointerCapture(pointerId); } catch (err) { console.debug('Pointer release unavailable:', err); }
+            element.removeEventListener('pointermove', move);
+            element.removeEventListener('pointerup', up);
+            element.removeEventListener('pointercancel', up);
+          };
+          element.addEventListener('pointermove', move);
+          element.addEventListener('pointerup', up);
+          element.addEventListener('pointercancel', up);
+        }, { passive: false });
+      }
+
+      attachPointerDrag(hsplitter,
+        () => !document.body.classList.contains('right-collapsed'),
+        (moveEvent) => {
           const rect = outer.getBoundingClientRect();
           const relativeX = moveEvent.clientX - rect.left;
           const next = (relativeX / rect.width) * 100;
           setLeftWidth(next);
-        };
-        const onUp = () => {
-          document.removeEventListener('mousemove', onMove);
-          document.removeEventListener('mouseup', onUp);
-        };
-        document.addEventListener('mousemove', onMove);
-        document.addEventListener('mouseup', onUp);
-      });
+        }
+      );
 
-      vsplitter?.addEventListener('mousedown', (event) => {
-        if (document.body.classList.contains('shell-hidden')) return;
-        event.preventDefault();
-        const onMove = (moveEvent) => {
+      attachPointerDrag(vsplitter,
+        () => !document.body.classList.contains('shell-hidden'),
+        (moveEvent) => {
           const rect = rightstack.getBoundingClientRect();
           const relativeY = moveEvent.clientY - rect.top;
           const next = (relativeY / rect.height) * 100;
           setShellSize(next);
-        };
-        const onUp = () => {
-          document.removeEventListener('mousemove', onMove);
-          document.removeEventListener('mouseup', onUp);
-        };
-        document.addEventListener('mousemove', onMove);
-        document.addEventListener('mouseup', onUp);
-      });
+        }
+      );
 
-      editorStreamSplitter?.addEventListener('mousedown', (event) => {
-        if (!teacherPaneEnabled || !teacherPaneOpen || !editorContentStack) return;
-        event.preventDefault();
-        const onMove = (moveEvent) => {
+      attachPointerDrag(editorStreamSplitter,
+        () => !!teacherPaneEnabled && !!teacherPaneOpen && !!editorContentStack,
+        (moveEvent) => {
           const rect = editorContentStack.getBoundingClientRect();
           const relativeY = moveEvent.clientY - rect.top;
           const bottomPercent = ((rect.height - relativeY) / rect.height) * 100;
           setTeacherPaneSize(bottomPercent);
           try { window.eagleEditor?.refresh?.(); } catch {}
           try { teacherEditor?.refresh?.(); } catch {}
-        };
-        const onUp = () => {
-          document.removeEventListener('mousemove', onMove);
-          document.removeEventListener('mouseup', onUp);
-        };
-        document.addEventListener('mousemove', onMove);
-        document.addEventListener('mouseup', onUp);
-      });
+        }
+      );
     })();
 
     // ---- Login UI ----
@@ -3193,7 +3181,6 @@ print("Hello " + name)
 
     function updateAuthUI() {
       const guestBadge = document.getElementById('guestBadge');
-      const leftEdgeToggleBtn = document.getElementById('leftEdgeToggleBtn');
       const rightEdgeToggleBtn = document.getElementById('rightEdgeToggleBtn');
       const loginBtn = document.getElementById('loginBtn');
       const adminSettingsBtn = document.getElementById('adminSettingsBtn');
@@ -3207,11 +3194,9 @@ print("Hello " + name)
       document.body.classList.toggle('admin-owner', !!ADMIN_TOKEN);
       guestBadge.style.display = isLoggedIn ? 'none' : '';
       if (modeWrap) modeWrap.style.display = isLoggedIn ? 'none' : 'inline-flex';
-      if (leftEdgeToggleBtn) leftEdgeToggleBtn.style.display = isLoggedIn ? 'flex' : 'none';
       if (rightEdgeToggleBtn) rightEdgeToggleBtn.style.display = isLoggedIn ? 'flex' : 'none';
       if (!isLoggedIn) {
         hideFileBrowser();
-        document.body.classList.add('left-collapsed');
       }
       if (topJoinClassBtn) topJoinClassBtn.style.display = (currentUser && !studentClassData) ? '' : 'none';
       // Toggle login/logout button
@@ -4709,34 +4694,47 @@ print("Hello " + name)
     // ---- File Browser ----
     let _currentFolderPath = ''; // '' = root
     let _allFileTree = [];       // full flat tree from server
+    const WORKSPACE_TAB_EDITOR = 'editor';
+    const WORKSPACE_TAB_FILES = 'files';
+    let _workspaceTab = WORKSPACE_TAB_EDITOR;
+
+    function setWorkspaceTab(tabName) {
+      const editorTabBtn = document.getElementById('workspaceEditorTabBtn');
+      const filesTabBtn = document.getElementById('workspaceFilesTabBtn');
+      const editorContentStack = document.getElementById('editorContentStack');
+      const title = document.getElementById('workspaceTitle');
+      _workspaceTab = tabName === WORKSPACE_TAB_FILES ? WORKSPACE_TAB_FILES : WORKSPACE_TAB_EDITOR;
+      if (editorContentStack) editorContentStack.classList.toggle('file-browser-active', _workspaceTab === WORKSPACE_TAB_FILES);
+      if (editorTabBtn) {
+        const active = _workspaceTab === WORKSPACE_TAB_EDITOR;
+        editorTabBtn.classList.toggle('active', active);
+        editorTabBtn.setAttribute('aria-selected', active ? 'true' : 'false');
+      }
+      if (filesTabBtn) {
+        const active = _workspaceTab === WORKSPACE_TAB_FILES;
+        filesTabBtn.classList.toggle('active', active);
+        filesTabBtn.setAttribute('aria-selected', active ? 'true' : 'false');
+      }
+      if (title) title.textContent = _workspaceTab === WORKSPACE_TAB_FILES ? 'File Browser' : 'Editor';
+      if (_workspaceTab === WORKSPACE_TAB_FILES) {
+        loadFileTree();
+      } else {
+        requestAnimationFrame(() => {
+          try { window.eagleEditor?.refresh?.(); } catch {}
+          try { teacherEditor?.refresh?.(); } catch {}
+        });
+      }
+    }
+
+    document.getElementById('workspaceEditorTabBtn')?.addEventListener('click', () => setWorkspaceTab(WORKSPACE_TAB_EDITOR));
+    document.getElementById('workspaceFilesTabBtn')?.addEventListener('click', () => setWorkspaceTab(WORKSPACE_TAB_FILES));
 
     function showFileBrowser() {
-      const outer = document.getElementById('outer');
-      const sidebar = document.getElementById('fileSidebar');
-      const leftEdgeToggleBtn = document.getElementById('leftEdgeToggleBtn');
-      outer.classList.remove('no-sidebar');
-      outer.style.setProperty('--sidebar-width', '220px');
-      sidebar.style.display = 'flex';
-      document.body.classList.remove('left-collapsed');
-      if (leftEdgeToggleBtn) {
-        leftEdgeToggleBtn.textContent = '◀';
-        leftEdgeToggleBtn.title = 'Hide file sidebar';
-      }
-      loadFileTree();
+      setWorkspaceTab(WORKSPACE_TAB_FILES);
     }
 
     function hideFileBrowser() {
-      const outer = document.getElementById('outer');
-      const sidebar = document.getElementById('fileSidebar');
-      const leftEdgeToggleBtn = document.getElementById('leftEdgeToggleBtn');
-      outer.classList.add('no-sidebar');
-      outer.style.removeProperty('--sidebar-width');
-      sidebar.style.display = 'none';
-      document.body.classList.add('left-collapsed');
-      if (leftEdgeToggleBtn) {
-        leftEdgeToggleBtn.textContent = '▶';
-        leftEdgeToggleBtn.title = 'Show file sidebar';
-      }
+      setWorkspaceTab(WORKSPACE_TAB_EDITOR);
     }
 
     function _findItemByPath(items, path) {
@@ -4993,6 +4991,7 @@ print("Hello " + name)
       }
       updateActiveFileName();
       updateEditorOverlay();
+      setWorkspaceTab('editor');
       loadFileTree();
       syncSubmissionScoringForOpenFile(item.path);
     }
