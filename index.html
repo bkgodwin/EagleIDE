@@ -374,6 +374,10 @@
     .skill-list-grid{ display:grid; gap:10px; margin-top:12px; }
     .skill-card{ border:1px solid var(--theme-border-mid); border-radius:10px; background:var(--theme-input-bg); padding:10px; }
     .skill-card h4{ margin:0 0 6px; color:var(--columbia-blue); }
+    .skill-card.dragging{ opacity:0.55; }
+    .skill-card.drag-over{ border:1px dashed var(--columbia-blue); box-shadow:0 0 0 1px rgba(165,200,240,.4) inset; }
+    .skill-card-handle{ cursor:grab; user-select:none; font-size:12px; color:var(--theme-text-dim); margin-right:8px; }
+    .skill-card-handle:active{ cursor:grabbing; }
     .skill-class-pills{ display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
     @media (max-width: 1200px){
       .question-split{ grid-template-columns:minmax(0,1fr); }
@@ -835,17 +839,30 @@
     .teacher-dash-student-name { flex: 1; font-size: 13px; color: var(--theme-text); min-width: 120px; }
     .teacher-dash-student-email { font-size: 11px; color: var(--theme-text-dim); }
     .teacher-roster-row-online {
-      background: rgba(56, 142, 60, 0.25);
       border-color: #4caf50;
+      box-shadow: 0 0 0 1px rgba(76,175,80,.25) inset;
     }
     .teacher-roster-row-offline {
       background: var(--theme-output-bg);
-      border-color: var(--theme-border-mid);
+      border-color: #000;
     }
     .teacher-roster-row-in-assignment {
       background: rgba(198, 40, 40, 0.25);
       border-color: #ef5350;
     }
+    .live-indicator{
+      display:none;
+      margin-left:8px;
+      padding:2px 8px;
+      border-radius:999px;
+      background:#c62828;
+      color:#fff;
+      font-size:11px;
+      font-weight:800;
+      letter-spacing:.4px;
+      text-transform:uppercase;
+    }
+    .live-indicator.on{ display:inline-block; }
 
     /* Student assignment card inline score badge */
     .assignment-score-badge {
@@ -900,7 +917,7 @@
       </div>
       <span class="guest-badge" id="guestBadge">Guest</span>
       <button class="btn admin" id="loginBtn" title="Login">Sign In</button>
-      <button class="btn secondary" id="streamingToggleBtn" title="Toggle code streaming to students" style="display:none;">📡 Streaming: On</button>
+      <button class="btn secondary" id="streamingToggleBtn" title="Toggle code streaming to students" style="display:none;">📡 Streaming: Off</button>
       <button class="btn admin" id="teacherDashboardBtn" title="Teacher Dashboard" style="display:none;">📋 Dashboard</button>
       <button class="btn admin" id="adminUsersBtn" title="User Management" style="display:none;">👥 Users</button>
       <button class="btn admin" id="serverHealthBtn" title="Server Health" style="display:none;">🖥️ Server Health</button>
@@ -917,7 +934,7 @@
     <!-- Left: Editor -->
     <section class="panel" id="editorPanel">
       <header aria-label="Code editor with Python syntax highlighting">
-        <h3><span id="workspaceTitle">Editor</span>: <span id="activeFileName" style="color:#a5c8f0; font-weight:400;"></span></h3>
+        <h3><span id="workspaceTitle">Editor</span>: <span id="activeFileName" style="color:#a5c8f0; font-weight:400;"></span><span id="editorLiveIndicator" class="live-indicator">Live</span></h3>
         <div class="workspace-tabs" role="tablist" aria-label="Workspace tabs">
           <button class="workspace-tab-btn active" id="workspaceEditorTabBtn" data-workspace-tab="editor" role="tab" aria-selected="true">Editor</button>
           <button class="workspace-tab-btn" id="workspaceFilesTabBtn" data-workspace-tab="files" role="tab" aria-selected="false">File Browser</button>
@@ -1542,6 +1559,7 @@
     const STUDENT_CLASS_SELECTION_KEY = 'eagleide-student-class-id';
     let teacherPaneEnabled = false;
     let teacherPaneOpen = false;
+    let teacherStreamingEnabled = false;
 
     function setTeacherPaneSize(percent, persist = true) {
       const next = Math.min(70, Math.max(25, Number(percent) || 50));
@@ -2047,6 +2065,7 @@ print("Hello " + name)
     let activeAssignmentsClassId = null;
     let activeStudentsByClass = {};
     let inQuizStudentsByClass = {};
+    let lastSignInByClass = {};
     let teacherDashboardRosterPoll = null;
     let studentClasses = [];
     let studentClassData = null;
@@ -2079,6 +2098,14 @@ print("Hello " + name)
       if (lower.endsWith('.js')) return LANGUAGE_INFO.javascript;
       if (lower.endsWith('.html') || lower.endsWith('.htm')) return LANGUAGE_INFO.html;
       if (lower.endsWith('.css')) return LANGUAGE_INFO.css;
+      return LANGUAGE_INFO.python;
+    }
+
+    function getLanguageInfoForKey(key) {
+      const normalized = String(key || '').trim().toLowerCase();
+      if (normalized === 'javascript' || normalized === 'js') return LANGUAGE_INFO.javascript;
+      if (normalized === 'html' || normalized === 'htmlmixed' || normalized === 'xml') return LANGUAGE_INFO.html;
+      if (normalized === 'css') return LANGUAGE_INFO.css;
       return LANGUAGE_INFO.python;
     }
 
@@ -2508,12 +2535,27 @@ print("Hello " + name)
 
     function updateTeacherStreamToggleState() {
       const btn = document.getElementById('teacherPaneToggleBtn');
-      if (!btn) return;
       const activeClassId = getCurrentClassContext()?.id;
       const isLive = !!(activeClassId && teacherStreamLiveClasses[activeClassId]);
-      btn.classList.toggle('live', isLive);
-      const action = teacherPaneOpen ? 'Hide' : 'Show';
-      btn.title = isLive ? `${action} live teacher code stream` : `${action} teacher code stream`;
+      if (btn) {
+        btn.classList.toggle('live', isLive);
+        const action = teacherPaneOpen ? 'Hide' : 'Show';
+        btn.title = isLive ? `${action} live teacher code stream` : `${action} teacher code stream`;
+      }
+      const liveIndicator = document.getElementById('editorLiveIndicator');
+      if (liveIndicator) liveIndicator.classList.toggle('on', !!isLive && !!teacherStreamingEnabled && !!(TEACHER_TOKEN || ADMIN_TOKEN));
+    }
+
+    function updateStreamingToggleButton() {
+      const btn = document.getElementById('streamingToggleBtn');
+      if (!btn) return;
+      if (teacherStreamingEnabled) {
+        btn.textContent = '📡 Streaming: On';
+        btn.classList.remove('stop');
+      } else {
+        btn.textContent = '📡 Streaming: Off';
+        btn.classList.add('stop');
+      }
     }
 
     async function loadStudentClassData() {
@@ -2861,6 +2903,8 @@ print("Hello " + name)
             if (lastTeacherCodeSnapshot === msg.code) return;
             if (USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) {
               initTeacherViewer();
+              const modeInfo = getLanguageInfoForKey(msg.language);
+              try { teacherEditor?.setOption('mode', modeInfo.mode); } catch {}
               if (teacherEditor) teacherEditor.setValue(msg.code);
               const ta = document.getElementById('teacherStreamEditor');
               if (ta && !teacherEditor) ta.value = msg.code;
@@ -2915,7 +2959,7 @@ print("Hello " + name)
       const nextId = e.target.value;
       if (TEACHER_TOKEN) {
         if (currentTeacherClassId && currentTeacherClassId !== nextId) emitLeaveClassRoom(currentTeacherClassId);
-        if (teacherBroadcastInterval && currentTeacherClassId && currentTeacherClassId !== nextId && socket) {
+        if (teacherStreamingEnabled && currentTeacherClassId && currentTeacherClassId !== nextId && socket) {
           socket.emit('teacher_stream_status', {
             token: ADMIN_TOKEN || TEACHER_TOKEN,
             role: ADMIN_TOKEN ? 'admin' : 'teacher',
@@ -2927,7 +2971,7 @@ print("Hello " + name)
         activeAssignmentsClassId = currentTeacherClassId;
         syncTeacherDashboardClassSelectors();
         if (currentTeacherClassId) emitJoinClassRoom('teacher', TEACHER_TOKEN, currentTeacherClassId);
-        if (teacherBroadcastInterval && currentTeacherClassId && socket) {
+        if (teacherStreamingEnabled && currentTeacherClassId && socket) {
           socket.emit('teacher_stream_status', {
             token: ADMIN_TOKEN || TEACHER_TOKEN,
             role: ADMIN_TOKEN ? 'admin' : 'teacher',
@@ -2935,7 +2979,7 @@ print("Hello " + name)
             active: true
           });
         }
-        if (!teacherBroadcastInterval && currentTeacherClassId) startTeacherBroadcast();
+        if (teacherStreamingEnabled && !teacherBroadcastInterval && currentTeacherClassId) startTeacherBroadcast();
         refreshActiveStudentsForClass(currentTeacherClassId);
         renderTeacherClassManagement();
         renderClassReports().catch(() => {});
@@ -3600,6 +3644,11 @@ print("Hello " + name)
       if (adminUsersBtn) adminUsersBtn.style.display = ADMIN_TOKEN ? '' : 'none';
       if (serverHealthBtn) serverHealthBtn.style.display = ADMIN_TOKEN ? '' : 'none';
       streamingToggleBtn.style.display = (ADMIN_TOKEN || TEACHER_TOKEN) ? '' : 'none';
+      if (!ADMIN_TOKEN && !TEACHER_TOKEN) {
+        setTeacherStreamingEnabled(false);
+      } else {
+        updateStreamingToggleButton();
+      }
       updateEditorOverlay();
       renderClassSelector();
       if (typeof window.afterAuthUiUpdate === "function") window.afterAuthUiUpdate();
@@ -3691,7 +3740,7 @@ print("Hello " + name)
         document.body.classList.add('admin-mode');
         await loadTeacherClasses();
         renderClassSelector();
-        if (currentTeacherClassId) startTeacherBroadcast();
+        setTeacherStreamingEnabled(false);
       } else {
         USER_TOKEN = j.token;
         currentUser = j.user;
@@ -3739,9 +3788,7 @@ print("Hello " + name)
           currentUser = null;
           document.body.classList.add('admin-mode');
           closeLoginModal();
-          document.getElementById('streamingToggleBtn').textContent = '📡 Streaming: On';
-          document.getElementById('streamingToggleBtn').classList.remove('stop');
-          startTeacherBroadcast();
+          setTeacherStreamingEnabled(false);
           saveAuthSession();
           updateAuthUI();
           await showFileBrowser();
@@ -3786,7 +3833,7 @@ print("Hello " + name)
         hideFileBrowser();
       }
       if (TEACHER_TOKEN) {
-        stopTeacherBroadcast();
+        setTeacherStreamingEnabled(false);
         await fetch('/api/auth/logout', { method: 'POST', headers: { 'X-Teacher-Token': TEACHER_TOKEN } }).catch(() => {});
         TEACHER_TOKEN = null;
         currentTeacher = null;
@@ -3805,7 +3852,7 @@ print("Hello " + name)
         stopTeacherDashboardRosterPolling();
       }
       if (ADMIN_TOKEN) {
-        stopTeacherBroadcast();
+        setTeacherStreamingEnabled(false);
         ADMIN_TOKEN = null;
         document.body.classList.remove('admin-mode');
         teacherStreamLiveClasses = {};
@@ -3825,6 +3872,8 @@ print("Hello " + name)
         if (typeof updateActiveFileName === 'function') updateActiveFileName();
       }
       saveAuthSession();
+      updateStreamingToggleButton();
+      updateTeacherStreamToggleState();
       updateAuthUI();
       window.location.reload();
     });
@@ -3892,14 +3941,17 @@ print("Hello " + name)
     // Broadcast teacher code updates at minimum 2x per second (every 500ms)
     let teacherBroadcastInterval = null;
     let lastBroadcastedCode = '';
+    let lastBroadcastedLanguage = 'python';
     
     function startTeacherBroadcast() {
       if (teacherBroadcastInterval) return;
       const classId = getCurrentClassContext()?.id;
       if (!classId) return;
       const initialCode = editor.getValue();
+      const initialLangInfo = getActiveLanguageInfo();
       lastTeacherCodeSnapshot = initialCode;
       lastBroadcastedCode = initialCode;
+      lastBroadcastedLanguage = initialLangInfo?.highlight || 'python';
       try { localStorage.setItem(TEACHER_CODE_KEY, initialCode); } catch(e) {}
       if (socket) {
         socket.emit('teacher_stream_status', {
@@ -3907,6 +3959,13 @@ print("Hello " + name)
           role: ADMIN_TOKEN ? 'admin' : 'teacher',
           class_id: classId,
           active: true
+        });
+        socket.emit('teacher_code_update', {
+          token: ADMIN_TOKEN || TEACHER_TOKEN,
+          role: ADMIN_TOKEN ? 'admin' : 'teacher',
+          class_id: classId,
+          code: initialCode,
+          language: lastBroadcastedLanguage
         });
       }
       
@@ -3917,7 +3976,9 @@ print("Hello " + name)
         if (!token || !activeClassId) return;
         
         const currentCode = editor.getValue();
-        if (currentCode !== lastBroadcastedCode) {
+        const langInfo = getActiveLanguageInfo();
+        const language = langInfo?.highlight || 'python';
+        if (currentCode !== lastBroadcastedCode || language !== lastBroadcastedLanguage) {
           lastTeacherCodeSnapshot = currentCode;
           try { localStorage.setItem(TEACHER_CODE_KEY, currentCode); } catch(e) {}
           // Broadcast to other clients if socket available
@@ -3926,10 +3987,12 @@ print("Hello " + name)
               token,
               role,
               class_id: activeClassId,
-              code: currentCode
+              code: currentCode,
+              language
             });
           }
           lastBroadcastedCode = currentCode;
+          lastBroadcastedLanguage = language;
         }
       }, 500); // Update at least twice per second (every 500ms)
     }
@@ -3950,27 +4013,23 @@ print("Hello " + name)
       }
     }
 
+    function setTeacherStreamingEnabled(enabled) {
+      const next = !!enabled;
+      teacherStreamingEnabled = next;
+      if (next) {
+        startTeacherBroadcast();
+      } else {
+        stopTeacherBroadcast();
+      }
+      updateStreamingToggleButton();
+      updateTeacherStreamToggleState();
+    }
+
     // Streaming toggle button handler
     document.getElementById('streamingToggleBtn').addEventListener('click', () => {
-      const btn = document.getElementById('streamingToggleBtn');
-      if (teacherBroadcastInterval) {
-        // Streaming is on — turn it off
-        stopTeacherBroadcast();
-        btn.textContent = '📡 Streaming: Off';
-        btn.classList.add('stop');
-      } else {
-        // Streaming is off — turn it on
-        startTeacherBroadcast();
-        btn.textContent = '📡 Streaming: On';
-        btn.classList.remove('stop');
-      }
-      updateTeacherStreamToggleState();
+      setTeacherStreamingEnabled(!teacherStreamingEnabled);
     });
-    
-    // Start broadcasting if already logged in (on page refresh)
-    if (ADMIN_TOKEN || TEACHER_TOKEN) {
-      startTeacherBroadcast();
-    }
+    updateStreamingToggleButton();
 
     // Admin settings modal handlers
     document.getElementById('adminSettingsBtn').addEventListener('click', () => {
@@ -4035,16 +4094,29 @@ print("Hello " + name)
       }
     }
 
+    function isRosterPollingTargetActive() {
+      const modal = document.getElementById('teacherDashboardModal');
+      if (!modal || modal.style.display === 'none' || !TEACHER_TOKEN || !currentTeacherClassId) return false;
+      const reportsActive = modal.querySelector('.teacher-dash-view.active')?.id === 'dash-reports';
+      const rosterActive = modal.querySelector('#dash-reports .mastery-pane.active')?.id === 'class-roster-pane';
+      return reportsActive && rosterActive;
+    }
+
     function startTeacherDashboardRosterPolling() {
       stopTeacherDashboardRosterPolling();
+      if (!isRosterPollingTargetActive()) return;
       teacherDashboardRosterPoll = setInterval(async () => {
-        const modal = document.getElementById('teacherDashboardModal');
-        if (!modal || modal.style.display === 'none') return;
-        if (!TEACHER_TOKEN || !currentTeacherClassId) return;
-        const reportsActive = modal.querySelector('.teacher-dash-view.active')?.id === 'dash-reports';
-        if (!reportsActive) return;
+        if (!isRosterPollingTargetActive()) {
+          stopTeacherDashboardRosterPolling();
+          return;
+        }
         await refreshActiveStudentsForClass(currentTeacherClassId);
-      }, 2000);
+      }, 500);
+    }
+
+    function ensureTeacherDashboardRosterPolling() {
+      if (isRosterPollingTargetActive()) startTeacherDashboardRosterPolling();
+      else stopTeacherDashboardRosterPolling();
     }
 
     function openTeacherDashboard(view) {
@@ -4076,9 +4148,13 @@ print("Hello " + name)
               populateTeacherReportsClassSelect();
               await refreshActiveStudentsForClass(currentTeacherClassId);
               renderClassReports().catch(() => {});
+              ensureTeacherDashboardRosterPolling();
             } else if (btn.dataset.view === 'dash-skills') {
+              stopTeacherDashboardRosterPolling();
               await loadTeacherSkills();
               renderTeacherSkillsPage();
+            } else {
+              stopTeacherDashboardRosterPolling();
             }
           });
         });
@@ -4090,6 +4166,7 @@ print("Hello " + name)
             modal.querySelectorAll('#dash-reports .mastery-pane').forEach(p => p.classList.remove('active'));
             const pane = document.getElementById(btn.dataset.pane);
             if (pane) pane.classList.add('active');
+            ensureTeacherDashboardRosterPolling();
           });
         });
 
@@ -4100,6 +4177,7 @@ print("Hello " + name)
           syncTeacherDashboardClassSelectors();
           await refreshActiveStudentsForClass(currentTeacherClassId);
           await renderClassReports();
+          ensureTeacherDashboardRosterPolling();
         });
         document.getElementById('teacherAssignmentsClassSelect')?.addEventListener('change', async (e) => {
           activeAssignmentsClassId = e.target.value || null;
@@ -4108,6 +4186,7 @@ print("Hello " + name)
           syncTeacherDashboardClassSelectors();
           await refreshActiveStudentsForClass(currentTeacherClassId);
           renderAdminAssignments();
+          ensureTeacherDashboardRosterPolling();
         });
         document.getElementById('teacherClassesActiveSelect')?.addEventListener('change', async (e) => {
           currentTeacherClassId = e.target.value || null;
@@ -4117,6 +4196,7 @@ print("Hello " + name)
           renderTeacherClassManagement();
           renderAdminAssignments();
           await renderClassReports();
+          ensureTeacherDashboardRosterPolling();
         });
         document.getElementById('refreshSkillsBtn')?.addEventListener('click', async () => {
           await loadTeacherSkills();
@@ -4204,6 +4284,7 @@ print("Hello " + name)
         if (!data?.ok) return;
         activeStudentsByClass[classKey] = new Set((data.activeStudents || []).map(e => String(e || '').toLowerCase()));
         inQuizStudentsByClass[classKey] = new Set((data.inQuizStudents || []).map(e => String(e || '').toLowerCase()));
+        lastSignInByClass[classKey] = data.lastSignInByEmail || {};
         updateRosterCells(classKey);
       } catch {}
     }
@@ -4216,6 +4297,7 @@ print("Hello " + name)
       const students = currentMasteryData.students || [];
       const activeStudents = activeStudentsByClass[classKey] || new Set();
       const inQuizStudents = inQuizStudentsByClass[classKey] || new Set();
+      const lastSignInMap = lastSignInByClass[classKey] || {};
       // Build a map of email -> element once to avoid repeated DOM queries
       const emailToEl = new Map();
       rosterPane.querySelectorAll('[data-roster-email]').forEach(el => {
@@ -4235,6 +4317,16 @@ print("Hello " + name)
           el.classList.add('teacher-roster-row-online');
         } else {
           el.classList.add('teacher-roster-row-offline');
+        }
+        const lastSignInEl = el.querySelector('[data-last-sign-in]');
+        if (lastSignInEl) {
+          const raw = String(lastSignInMap[email] || '').trim();
+          let text = 'Never';
+          if (raw) {
+            const parsed = new Date(raw);
+            text = Number.isNaN(parsed.getTime()) ? raw : parsed.toLocaleString();
+          }
+          lastSignInEl.textContent = text;
         }
       });
     }
@@ -4939,6 +5031,23 @@ print("Hello " + name)
       renderSkillClassChecklist(skill.class_ids || []);
     }
 
+    async function persistTeacherSkillOrder() {
+      if (!TEACHER_TOKEN) return false;
+      const orderedSkillIds = teacherSkills.map(skill => skill.id).filter(Boolean);
+      if (!orderedSkillIds.length) return true;
+      const res = await fetch('/api/teacher/skills/reorder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Teacher-Token': TEACHER_TOKEN },
+        body: JSON.stringify({ orderedSkillIds })
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!j?.ok) {
+        alert(j?.error || 'Failed to save skill order');
+        return false;
+      }
+      return true;
+    }
+
     async function renderTeacherSkillsPage() {
       const list = document.getElementById('teacherSkillList');
       if (!list) return;
@@ -4950,8 +5059,11 @@ print("Hello " + name)
         return;
       }
       list.innerHTML = teacherSkills.map(skill => `
-        <div class="skill-card">
-          <h4>${escapeHtml(skill.name || '')}</h4>
+        <div class="skill-card" data-skill-id="${escapeHtml(skill.id)}" draggable="true">
+          <div style="display:flex; align-items:center;">
+            <span class="skill-card-handle" title="Drag to reorder">↕</span>
+            <h4 style="margin:0;">${escapeHtml(skill.name || '')}</h4>
+          </div>
           <div style="font-size:12px; color:var(--theme-text); white-space:pre-wrap;">${escapeHtml(skill.description || 'No description provided.')}</div>
           <div class="skill-class-pills">
             ${(skill.class_names || []).map(name => `<span class="skill-chip">${escapeHtml(name)}</span>`).join('') || '<span style="font-size:11px; color:var(--theme-text-dim);">Not assigned to classes</span>'}
@@ -4962,6 +5074,45 @@ print("Hello " + name)
           </div>
         </div>
       `).join('');
+      const cards = [...list.querySelectorAll('.skill-card')];
+      let draggedId = null;
+      cards.forEach(card => {
+        const skillId = card.dataset.skillId;
+        card.addEventListener('dragstart', (e) => {
+          draggedId = skillId;
+          card.classList.add('dragging');
+          if (e.dataTransfer) {
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', skillId || '');
+          }
+        });
+        card.addEventListener('dragend', () => {
+          card.classList.remove('dragging');
+          cards.forEach(c => c.classList.remove('drag-over'));
+        });
+        card.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          if (!draggedId || draggedId === skillId) return;
+          card.classList.add('drag-over');
+        });
+        card.addEventListener('dragleave', () => card.classList.remove('drag-over'));
+        card.addEventListener('drop', async (e) => {
+          e.preventDefault();
+          card.classList.remove('drag-over');
+          if (!draggedId || draggedId === skillId) return;
+          const fromIndex = teacherSkills.findIndex(s => s.id === draggedId);
+          const toIndex = teacherSkills.findIndex(s => s.id === skillId);
+          if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return;
+          const [moved] = teacherSkills.splice(fromIndex, 1);
+          teacherSkills.splice(toIndex, 0, moved);
+          const saved = await persistTeacherSkillOrder();
+          if (!saved) {
+            await loadTeacherSkills();
+          }
+          renderTeacherSkillsPage();
+          setAssignmentStatus('Skill order updated');
+        });
+      });
       list.querySelectorAll('.skill-edit-btn').forEach(btn => btn.addEventListener('click', () => editSkill(btn.dataset.id)));
       list.querySelectorAll('.skill-delete-btn').forEach(btn => btn.addEventListener('click', async () => {
         if (!confirm('Delete this skill tag?')) return;
@@ -5033,6 +5184,7 @@ print("Hello " + name)
       const classSettings = (teacherClasses.find(c => c.id === classMeta.id)?.settings) || {};
       const activeStudents = activeStudentsByClass[currentTeacherClassId] || new Set();
       const inQuizStudents = inQuizStudentsByClass[currentTeacherClassId] || new Set();
+      const lastSignInMap = lastSignInByClass[currentTeacherClassId] || {};
 
       rosterPane.innerHTML = `
         <div class="teacher-split-layout">
@@ -5051,10 +5203,18 @@ print("Hello " + name)
                 const isInQuiz = inQuizStudents.has(email);
                 const isOnline = activeStudents.has(email);
                 const rowClass = isInQuiz ? 'teacher-roster-row-in-assignment' : (isOnline ? 'teacher-roster-row-online' : 'teacher-roster-row-offline');
+                const rawLastSignIn = String(lastSignInMap[email] || '').trim();
+                const lastSignInLabel = rawLastSignIn
+                  ? (() => {
+                    const parsed = new Date(rawLastSignIn);
+                    return Number.isNaN(parsed.getTime()) ? rawLastSignIn : parsed.toLocaleString();
+                  })()
+                  : 'Never';
                 return `
                 <div class="${rowClass}" data-roster-email="${escapeHtml(email)}" style="border:1px solid; border-radius:8px; padding:8px;">
                   <div style="font-weight:700;">${escapeHtml(s.name || s.email)}</div>
                   <div style="font-size:12px; color:var(--theme-text-dim);">${escapeHtml(s.email || '')}</div>
+                  <div style="font-size:11px; color:var(--theme-text-dim); margin-top:4px;">Last Sign In: <span data-last-sign-in>${escapeHtml(lastSignInLabel)}</span></div>
                 </div>`;
               }).join('') || '<div style="color:#888;">No students enrolled.</div>'}
             </div>
@@ -5215,21 +5375,13 @@ print("Hello " + name)
           ? [payload.red || 0, payload.bronze || 0, payload.silver || 0, payload.gold || 0, payload.untested || 0]
           : [payload.red || 0, payload.bronze || 0, payload.silver || 0, payload.gold || 0];
         const colors = includeUntested ? ['#d32f2f', '#cd7f32', '#c0c0c0', '#ffd700', '#555'] : ['#d32f2f', '#cd7f32', '#c0c0c0', '#ffd700'];
-        const legendColor = getComputedStyle(document.body).getPropertyValue('--theme-text').trim() || (document.body.classList.contains('light-mode') ? '#1a2030' : '#f5f5f5');
         return new Chart(ctx, {
           type: 'pie',
           data: { labels, datasets: [{ data: values, backgroundColor: colors }] },
           options: {
             plugins: {
               legend: {
-                position: 'bottom',
-                labels: {
-                  color: legendColor,
-                  font: { size: 13, weight: '700' },
-                  padding: 16,
-                  usePointStyle: true,
-                  pointStyle: 'circle'
-                }
+                display: false
               }
             }
           }
