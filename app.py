@@ -328,6 +328,7 @@ _users_lock = threading.Lock()
 _student_tokens: Dict[str, dict] = {}  # token -> user info dict
 _teacher_tokens: Dict[str, dict] = {}  # token -> teacher info dict
 _teacher_code_snapshots: Dict[str, str] = {}
+_teacher_code_languages: Dict[str, str] = {}
 _live_teacher_stream_sids_by_class: Dict[str, set[str]] = {}
 _socket_live_class_ids: Dict[str, set[str]] = {}
 _reg_rate_limit: dict = defaultdict(list)  # ip -> list of timestamps
@@ -1025,8 +1026,10 @@ def _revoke_student_class_rooms(student_email: str, class_id: Optional[str] = No
             if target_class and joined_class_id != target_class:
                 continue
             room_name = f"class_{joined_class_id}"
+            student_room_name = f"class_{joined_class_id}_students"
             try:
                 leave_room(room_name, sid=sid)
+                leave_room(student_room_name, sid=sid)
                 _socket_sid_rooms.setdefault(sid, set()).discard(joined_class_id)
                 socketio.emit("class_membership_revoked", {"class_id": joined_class_id}, to=sid)
             except Exception as exc:
@@ -2266,10 +2269,15 @@ def teacher_list_skills():
     skills = []
     for skill in _get_teacher_skills(teacher_email):
         class_ids = [cid for cid in (skill.get("class_ids") or []) if cid in class_lookup]
+        try:
+            order_value = int(skill.get("order") or 0)
+        except Exception:
+            order_value = 0
         skills.append({
             "id": skill.get("id"),
             "name": skill.get("name"),
             "description": skill.get("description") or "",
+            "order": max(0, order_value),
             "class_ids": class_ids,
             "class_names": [class_lookup[cid] for cid in class_ids],
             "updated_at": skill.get("updated_at"),
@@ -2300,11 +2308,19 @@ def teacher_create_skill():
     for row in skills_data.get("skills", []):
         if (row.get("teacher_email") or "").lower() == teacher_email and (row.get("name") or "").lower() == name.lower():
             return jsonify(ok=False, error="Skill name already exists"), 409
+    next_order = 0
+    for row in skills_data.get("skills", []):
+        if (row.get("teacher_email") or "").lower() == teacher_email:
+            try:
+                next_order = max(next_order, int(row.get("order") or 0) + 1)
+            except Exception:
+                continue
     skill = _normalize_skill_record({
         "id": uuid.uuid4().hex,
         "teacher_email": teacher_email,
         "name": name,
         "description": description,
+        "order": next_order,
         "class_ids": class_ids,
         "created_at": _current_timestamp(),
         "updated_at": _current_timestamp(),
@@ -2378,6 +2394,30 @@ def teacher_delete_skill():
     return jsonify(ok=True)
 
 
+@app.post("/api/teacher/skills/reorder")
+def teacher_reorder_skills():
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    teacher_email = (teacher.get("email") or "").strip().lower()
+    payload = request.get_json(silent=True) or {}
+    ordered_ids = [str(v or "").strip() for v in (payload.get("orderedSkillIds") or []) if str(v or "").strip()]
+    if not ordered_ids:
+        return jsonify(ok=False, error="orderedSkillIds required"), 400
+    skills_data = _load_skills()
+    teacher_rows = [row for row in skills_data.get("skills", []) if (row.get("teacher_email") or "").lower() == teacher_email]
+    teacher_id_map = {str(row.get("id") or ""): row for row in teacher_rows}
+    if set(teacher_id_map.keys()) != set(ordered_ids):
+        return jsonify(ok=False, error="orderedSkillIds must match your current skill IDs exactly (no missing, extra, or duplicate IDs)"), 400
+    now = _current_timestamp()
+    for idx, skill_id in enumerate(ordered_ids):
+        row = teacher_id_map[skill_id]
+        row["order"] = idx
+        row["updated_at"] = now
+    _save_skills(skills_data)
+    return jsonify(ok=True)
+
+
 @app.get("/api/teacher/classes/<class_id>/active-students")
 def teacher_active_students(class_id: str):
     teacher = _require_teacher(request)
@@ -2388,6 +2428,7 @@ def teacher_active_students(class_id: str):
         return jsonify(ok=False, error="Class not found"), 404
     active_emails = set()
     in_quiz_emails = set()
+    users_by_email = {str(u.get("email") or "").strip().lower(): u for u in _load_users().get("users", [])}
     for sid, info in _socket_sid_info.items():
         if (info or {}).get("role") != "student":
             continue
@@ -2398,7 +2439,18 @@ def teacher_active_students(class_id: str):
             active_emails.add(email)
             if info.get("in_quiz"):
                 in_quiz_emails.add(email)
-    return jsonify(ok=True, classId=class_id, activeStudents=sorted(active_emails), inQuizStudents=sorted(in_quiz_emails))
+    class_students = [(s or "").strip().lower() for s in (cls.get("students") or []) if (s or "").strip()]
+    last_sign_in_by_email = {
+        email: str((users_by_email.get(email) or {}).get("last_sign_in") or "")
+        for email in class_students
+    }
+    return jsonify(
+        ok=True,
+        classId=class_id,
+        activeStudents=sorted(active_emails),
+        inQuizStudents=sorted(in_quiz_emails),
+        lastSignInByEmail=last_sign_in_by_email,
+    )
 
 
 @app.post("/api/teacher/students/reset-password")
@@ -3797,8 +3849,12 @@ def on_teacher_code_update(payload):
         if token not in _admin_tokens:
             return
     code = (payload or {}).get("code", "")
+    language = str((payload or {}).get("language") or "").strip().lower()
     _teacher_code_snapshots[class_id] = str(code if isinstance(code, str) else "")
-    emit("teacher_code", {"code": code, "class_id": class_id}, to=f"class_{class_id}", include_self=False)
+    if language:
+        _teacher_code_languages[class_id] = language
+    payload = {"code": code, "class_id": class_id, "language": _teacher_code_languages.get(class_id, language)}
+    socketio.emit("teacher_code", payload, to=f"class_{class_id}_students")
 
 
 @socketio.on("teacher_stream_status")
@@ -3854,11 +3910,17 @@ def on_join_class_room(payload):
     else:
         return
     join_room(f"class_{class_id}")
+    if role == "student":
+        join_room(f"class_{class_id}_students")
     _socket_sid_rooms.setdefault(request.sid, set()).add(class_id)
     _emit_teacher_stream_status(class_id, sid=request.sid)
     cached_code = _teacher_code_snapshots.get(class_id)
-    if _teacher_stream_active_for_class(class_id) and cached_code is not None:
-        socketio.emit("teacher_code", {"code": cached_code, "class_id": class_id}, to=request.sid)
+    if role == "student" and _teacher_stream_active_for_class(class_id) and cached_code is not None:
+        socketio.emit(
+            "teacher_code",
+            {"code": cached_code, "class_id": class_id, "language": _teacher_code_languages.get(class_id, "")},
+            to=request.sid,
+        )
 
 
 @socketio.on("leave_class_room")
@@ -3867,6 +3929,7 @@ def on_leave_class_room(payload):
     if not class_id:
         return
     leave_room(f"class_{class_id}")
+    leave_room(f"class_{class_id}_students")
     _socket_sid_rooms.setdefault(request.sid, set()).discard(class_id)
 
 
@@ -3899,12 +3962,17 @@ def _normalize_skill_name(raw_name: Any) -> str:
     return (_normalize_skill_tags([raw_name]) or [""])[0]
 
 
-def _normalize_skill_record(skill: dict) -> dict:
+def _normalize_skill_record(skill: dict, default_order: Optional[int] = None) -> dict:
     row = dict(skill or {})
     row["id"] = str(row.get("id") or uuid.uuid4().hex)
     row["teacher_email"] = str(row.get("teacher_email") or "").strip().lower()
     row["name"] = _normalize_skill_name(row.get("name"))
     row["description"] = str(row.get("description") or "").strip()[:2000]
+    try:
+        order_val = int(row.get("order"))
+    except Exception:
+        order_val = int(default_order or 0)
+    row["order"] = max(0, order_val)
     class_ids = []
     for class_id in (row.get("class_ids") or []):
         cid = str(class_id or "").strip()
@@ -3926,10 +3994,10 @@ def _load_skills() -> dict:
         else:
             data = {}
         skills = []
-        for row in (data.get("skills") or []):
+        for idx, row in enumerate(data.get("skills") or []):
             if not isinstance(row, dict):
                 continue
-            normalized = _normalize_skill_record(row)
+            normalized = _normalize_skill_record(row, default_order=idx)
             if normalized.get("name") and normalized.get("teacher_email"):
                 skills.append(normalized)
         return {"skills": skills}
@@ -3949,7 +4017,7 @@ def _get_teacher_skills(teacher_email: str) -> list[dict]:
         if (skill.get("teacher_email") or "").lower() != normalized_email:
             continue
         rows.append(skill)
-    return sorted(rows, key=lambda s: (s.get("name") or "").lower())
+    return sorted(rows, key=lambda s: (int(s.get("order") or 0), (s.get("name") or "").lower()))
 
 
 def _normalize_assignment_schema(assignment: dict) -> dict:
