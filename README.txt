@@ -417,12 +417,16 @@ RATE LIMITING
 CODE EXECUTION SANDBOX
 --------------------------------------------------
 Python:
-- Code runs in an isolated subprocess with a clean environment
-- Blocked modules: subprocess, multiprocessing, socket, socketserver,
-  ftplib, http, urllib, xmlrpc, smtplib, imaplib, poplib, ssl, asyncio,
-  ctypes, cffi, mmap
-- File I/O restricted to user's own directory via patched open()
-- Dangerous os-level calls (fork, exec, system, popen) blocked
+- Code runs in a dedicated sandbox worker process (sandbox_worker.py), separate
+  from the web server interpreter
+- User code executes in a dedicated namespace with explicit safe builtins only
+- Blocked modules include: subprocess, multiprocessing, socket, socketserver,
+  ftplib, http, urllib, xmlrpc, smtplib, imaplib, poplib, nntplib, telnetlib,
+  ssl, ctypes, cffi, mmap, inspect, resource, fcntl, pty, asyncio.subprocess
+- File I/O is boundary-checked against the user's workspace root (realpath +
+  normalized path checks to block traversal and symlink escapes)
+- os process-spawn APIs (fork/exec/spawn/system/popen) are blocked; sensitive
+  os filesystem helpers are path-guarded to the same workspace boundary
 - Resource limits: 256 MB virtual memory, 64 open file descriptors (Linux)
 - Wall-clock timeout enforced per execution
 - Output capped at a maximum byte limit to prevent flooding
@@ -477,6 +481,7 @@ SECURITY RECOMMENDATIONS FOR PRODUCTION
 
 Core Files:
   app.py              - Main Flask application server
+  sandbox_worker.py   - Isolated Python execution worker runtime
   config.py           - Configuration settings and defaults
   index.html          - Single-page web interface
   challenges.csv      - Coding challenge bank

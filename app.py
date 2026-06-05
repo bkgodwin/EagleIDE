@@ -52,6 +52,7 @@ MAX_ASSISTANT_CODE_CHARS = 12_000
 MAX_RUN_CODE_CHARS = 200_000
 MAX_STDIN_CHARS = 10_000
 MAX_SKILL_NAME_CHARS = 80
+SANDBOX_WORKER = BASE_DIR / "sandbox_worker.py"
 
 # HTML runtime defaults/safeguards
 HTML_RUNTIME_DEFAULT_TIMEOUT = 30
@@ -3356,102 +3357,10 @@ class Runner:
         # Use user_dir as cwd if provided and exists, so relative file paths work
         cwd = str(user_dir) if (user_dir and user_dir.exists()) else str(sbox)
 
-        # Create wrapper script that intercepts input() to send INPUT_TOKEN
-        # Escape backslashes in the path for Windows compatibility
-        runner_py_escaped = str(runner_py).replace("\\", "\\\\")
-        cwd_escaped = cwd.replace("\\", "\\\\")
-        allowed_root_dir = str(allowed_root) if (allowed_root and allowed_root.exists()) else cwd
-        allowed_root_escaped = allowed_root_dir.replace("\\", "\\\\")
-
-        wrapper_code = f'''import sys
-import builtins
-import os as _os
-
-# ---- Read user code BEFORE sandbox is applied ----
-with open(r"{runner_py_escaped}", "r", encoding="utf-8") as _f:
-    _user_code = _f.read()
-
-# ---- Security sandbox ----
-_ALLOWED_DIR = _os.path.realpath(r"{allowed_root_escaped}")
-
-# Apply resource limits (POSIX/Linux only – silently ignored elsewhere)
-try:
-    import resource as _resource
-    # Max virtual memory: 256 MB
-    _resource.setrlimit(_resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
-    # Max open file descriptors
-    _resource.setrlimit(_resource.RLIMIT_NOFILE, (64, 64))
-except Exception:
-    pass
-
-# Restrict open() to the allowed working directory
-_real_open = builtins.open
-def _safe_open(file, mode="r", *args, **kwargs):
-    try:
-        p = _os.path.realpath(str(file))
-        if _os.path.commonpath([p, _ALLOWED_DIR]) != _ALLOWED_DIR:
-            raise PermissionError(f"Access to {{file!r}} is not allowed in this environment")
-    except TypeError:
-        return _real_open(file, mode, *args, **kwargs)
-    except ValueError:
-        raise PermissionError(f"Access to {{file!r}} is not allowed in this environment")
-    return _real_open(file, mode, *args, **kwargs)
-builtins.open = _safe_open
-
-# Block modules that allow network access, process spawning, or privilege escalation
-_BLOCKED_MODULES = frozenset([
-    "subprocess", "multiprocessing", "socket", "socketserver",
-    "ftplib", "http", "urllib", "xmlrpc", "smtplib", "imaplib",
-    "poplib", "nntplib", "telnetlib", "ssl", "asyncio",
-    "ctypes", "cffi", "mmap",
-])
-_real_import = builtins.__import__
-def _safe_import(name, *args, **kwargs):
-    top = name.split(".")[0]
-    if top in _BLOCKED_MODULES:
-        raise ImportError(f"Module {{name!r}} is not available in this environment")
-    return _real_import(name, *args, **kwargs)
-builtins.__import__ = _safe_import
-
-# Disable dangerous os-level calls (process spawning / shell execution)
-def _blocked_call(*a, **kw):
-    raise PermissionError("This operation is not allowed in this environment")
-_os.system = _blocked_call
-_os.popen  = _blocked_call
-for _fn in ("fork", "forkpty", "execv", "execve", "execvp", "execvpe",
-            "spawnl", "spawnle", "spawnlp", "spawnlpe",
-            "spawnv", "spawnve", "spawnvp", "spawnvpe"):
-    if hasattr(_os, _fn):
-        setattr(_os, _fn, _blocked_call)
-# Block filesystem introspection/mutation helper APIs.
-for _fn in ("listdir", "scandir", "walk", "readlink", "remove", "unlink", "rmdir", "removedirs", "rename", "replace"):
-    if hasattr(_os, _fn):
-        setattr(_os, _fn, _blocked_call)
-# ---- End security sandbox ----
-
-def _ide_input(prompt=""):
-    if prompt:
-        sys.stdout.write(str(prompt))
-        sys.stdout.flush()
-    sys.stdout.write("{INPUT_TOKEN}\\n")
-    sys.stdout.flush()
-    # Wait for user input
-    line = sys.stdin.readline()
-    # Echo back the user's input WITHOUT newline
-    # (Frontend will add newline after displaying input inline with prompt)
-    user_input = line.rstrip("\\n")
-    sys.stdout.write(user_input + "\\n")
-    sys.stdout.flush()
-    return user_input
-
-builtins.input = _ide_input
-
-# Execute user code
-exec(_user_code, {{}})
-'''
+        allowed_root_dir = str(allowed_root.resolve()) if (allowed_root and allowed_root.exists()) else str(Path(cwd).resolve())
 
         self.proc = subprocess.Popen(
-            [sys.executable, "-u", "-c", wrapper_code],
+            [sys.executable, "-u", str(SANDBOX_WORKER), str(runner_py), allowed_root_dir],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
