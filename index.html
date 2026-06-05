@@ -2479,7 +2479,9 @@ print("Hello " + name)
     }
 
     function getSelectedStudentClassId() {
-      return currentStudentClassId || studentClasses[0]?.id || null;
+      const availableIds = studentClasses.map(cls => cls?.id).filter(Boolean);
+      if (currentStudentClassId && availableIds.includes(currentStudentClassId)) return currentStudentClassId;
+      return availableIds[0] || null;
     }
 
     function syncStudentClassSelection(persist = true) {
@@ -2887,8 +2889,10 @@ print("Hello " + name)
           if (!USER_TOKEN || !currentUser) return;
           const previousClasses = [...studentClasses];
           const removedClass = previousClasses.find(cls => cls?.id === msg?.class_id);
-          await loadStudentClassData().catch(() => null);
-          if (removedClass) {
+          const refreshed = await loadStudentClassData().then(() => true).catch(() => false);
+          if (!refreshed) {
+            alert('Your class access may have changed. Please refresh and sign in again if needed.');
+          } else if (removedClass) {
             alert(studentClasses.length
               ? `You were removed from ${removedClass.name}.`
               : `You were removed from ${removedClass.name}. You no longer have access to any classes.`);
