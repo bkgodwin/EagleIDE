@@ -63,6 +63,7 @@ HTML_RUNTIME_DEFAULT_MAX_POPUPS = 2
 # File count limits
 MAX_FILES_PER_FOLDER = 20
 MAX_FILES_PER_ACCOUNT = 100
+MAX_DUPLICATE_NAME_ATTEMPTS = 10_000
 ALLOWED_EXTENSIONS = {".py", ".js", ".html", ".css", ".txt", ".csv"}
 SIGN_IN_RETENTION_DAYS = 90
 MAX_SERVER_EVENTS = 500
@@ -928,6 +929,31 @@ def _count_all_files_for_user(user_dir: Path) -> int:
         return 0
     return sum(1 for f in user_dir.rglob("*") if f.is_file() and f.suffix.lower() in ALLOWED_EXTENSIONS)
 
+def _count_allowed_files_in_tree(root: Path) -> int:
+    if not root.exists():
+        return 0
+    if root.is_file():
+        return 1 if root.suffix.lower() in ALLOWED_EXTENSIONS else 0
+    return sum(1 for f in root.rglob("*") if f.is_file() and f.suffix.lower() in ALLOWED_EXTENSIONS)
+
+def _sum_file_sizes(root: Path) -> int:
+    if not root.exists():
+        return 0
+    total = 0
+    if root.is_file():
+        try:
+            return root.stat().st_size
+        except Exception:
+            return 0
+    for f in root.rglob("*"):
+        if not f.is_file():
+            continue
+        try:
+            total += f.stat().st_size
+        except Exception:
+            pass
+    return total
+
 def _enforce_file_limits(user_dir: Path) -> int:
     """Delete oldest files exceeding per-folder (20) and per-account (100) limits.
     Returns the number of files deleted."""
@@ -1668,6 +1694,68 @@ def files_move():
         return jsonify(ok=True, new_path=str(new_validated.relative_to(user_dir.resolve())))
     except Exception:
         return jsonify(ok=False, error="Could not move item"), 500
+
+@app.post("/api/files/duplicate")
+def files_duplicate():
+    user = _require_user_for_files(request)
+    if not user:
+        return jsonify(ok=False, error="Authentication required"), 401
+
+    data = request.get_json(silent=True) or {}
+    src_path = (data.get("src") or "").strip()
+    if not src_path:
+        return jsonify(ok=False, error="src path required"), 400
+
+    user_dir = _get_user_dir(user["email"])
+    src = _validate_user_path(user_dir, src_path)
+    if not src or not src.exists():
+        return jsonify(ok=False, error="Source not found"), 404
+
+    parent_dir = src.parent
+    stem = src.stem if src.is_file() else src.name
+    suffix = src.suffix if src.is_file() else ""
+    duplicate_target = None
+    for idx in range(1, MAX_DUPLICATE_NAME_ATTEMPTS + 1):
+        candidate_name = f"{stem}{idx}{suffix}"
+        candidate = parent_dir / candidate_name
+        if not candidate.exists():
+            duplicate_target = candidate
+            break
+    if not duplicate_target:
+        return jsonify(ok=False, error="Could not find available duplicate name"), 409
+
+    try:
+        rel = duplicate_target.resolve().relative_to(user_dir.resolve())
+    except ValueError:
+        return jsonify(ok=False, error="Invalid destination path"), 400
+    duplicate_validated = _validate_user_path(user_dir, str(rel))
+    if not duplicate_validated:
+        return jsonify(ok=False, error="Invalid destination path"), 400
+
+    duplicate_file_count = _count_allowed_files_in_tree(src)
+    if duplicate_file_count <= 0 and src.is_file():
+        return jsonify(ok=False, error="File type not allowed"), 400
+
+    if duplicate_file_count > 0:
+        if src.is_file() and _count_files_in_folder(parent_dir) >= MAX_FILES_PER_FOLDER:
+            return jsonify(ok=False, error=f"Folder limit reached (max {MAX_FILES_PER_FOLDER} files per folder)"), 400
+        if _count_all_files_for_user(user_dir) + duplicate_file_count > MAX_FILES_PER_ACCOUNT:
+            return jsonify(ok=False, error=f"Account limit reached (max {MAX_FILES_PER_ACCOUNT} files per account)"), 400
+
+    limit_bytes = USER_STORAGE_LIMIT_MB * 1024 * 1024
+    used = _get_user_storage_used(user_dir)
+    duplicate_bytes = _sum_file_sizes(src)
+    if used + duplicate_bytes > limit_bytes:
+        return jsonify(ok=False, error=f"Storage limit of {USER_STORAGE_LIMIT_MB}MB exceeded"), 413
+
+    try:
+        if src.is_dir():
+            shutil.copytree(src, duplicate_validated)
+        else:
+            shutil.copy2(src, duplicate_validated)
+        return jsonify(ok=True, new_path=str(duplicate_validated.relative_to(user_dir.resolve())))
+    except Exception:
+        return jsonify(ok=False, error="Could not duplicate item"), 500
 
 # -------------------------
 # Background image
