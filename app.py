@@ -3833,7 +3833,9 @@ def on_join_class_room(payload):
         student = _student_tokens.get(token)
         if not student:
             return
-        student_record = _find_user(student.get("email", "")) or student
+        student_record = _find_user(student.get("email", ""))
+        if not student_record:
+            return
         if not _user_in_class(student_record, class_id):
             return
         student["class_id"] = student_record.get("class_id")
@@ -3854,8 +3856,9 @@ def on_join_class_room(payload):
     join_room(f"class_{class_id}")
     _socket_sid_rooms.setdefault(request.sid, set()).add(class_id)
     _emit_teacher_stream_status(class_id, sid=request.sid)
-    if _teacher_stream_active_for_class(class_id) and class_id in _teacher_code_snapshots:
-        socketio.emit("teacher_code", {"code": _teacher_code_snapshots.get(class_id, ""), "class_id": class_id}, to=request.sid)
+    cached_code = _teacher_code_snapshots.get(class_id)
+    if _teacher_stream_active_for_class(class_id) and cached_code is not None:
+        socketio.emit("teacher_code", {"code": cached_code, "class_id": class_id}, to=request.sid)
 
 
 @socketio.on("leave_class_room")
