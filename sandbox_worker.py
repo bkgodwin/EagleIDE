@@ -27,6 +27,7 @@ BLOCKED_ROOT_MODULES = frozenset(
         "ctypes",
         "cffi",
         "mmap",
+        "asyncio",
         "inspect",
         "resource",
         "fcntl",
@@ -113,7 +114,7 @@ class SafeOpen:
 
     def __call__(self, file: Any, mode: str = "r", *args: Any, **kwargs: Any):
         if isinstance(file, int):
-            return self._opener(file, mode, *args, **kwargs)
+            raise PermissionError("File descriptor access is not allowed in this environment")
         normalized_path = self._normalize(file)
         self._assert_allowed(normalized_path, file)
         return self._opener(normalized_path, mode, *args, **kwargs)
@@ -222,7 +223,7 @@ def _build_safe_builtins(policy: PathPolicy) -> dict[str, Any]:
 
 def _scrub_runtime_globals(safe_builtins: dict[str, Any]) -> None:
     globals()["__builtins__"] = safe_builtins
-    for name in ("Path",):
+    for name in ("Path", "Any"):
         globals()[name] = None
 
 
