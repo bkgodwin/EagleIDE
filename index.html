@@ -32,6 +32,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 
   <style>
     :root{
@@ -114,6 +115,7 @@
     header .brand{ display:flex; gap:8px; align-items:center; min-width:0; }
     header .brand > div:first-child{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:280px; }
     header .actions{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+    .signout-slot{ margin-left:auto; display:flex; align-items:center; }
     .control-group{ display:flex; align-items:center; gap:6px; padding:4px 6px; border:1px solid var(--theme-border-mid); border-radius:10px; background:rgba(0,0,0,.08); }
     .topbar select{
       appearance:none;
@@ -368,6 +370,11 @@
     .score-report-list{ display:grid; gap:10px; margin-top:10px; }
     .score-report-item{ border:1px solid var(--theme-border-mid); border-radius:8px; background:var(--theme-input-bg); padding:10px; }
     .score-report-item strong{ color:var(--columbia-blue); }
+    .skill-description-panel{ margin-top:10px; padding:10px; border:1px solid var(--theme-border-mid); border-radius:8px; background:var(--theme-output-bg); font-size:12px; color:var(--theme-text); white-space:pre-wrap; }
+    .skill-list-grid{ display:grid; gap:10px; margin-top:12px; }
+    .skill-card{ border:1px solid var(--theme-border-mid); border-radius:10px; background:var(--theme-input-bg); padding:10px; }
+    .skill-card h4{ margin:0 0 6px; color:var(--columbia-blue); }
+    .skill-class-pills{ display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
     @media (max-width: 1200px){
       .question-split{ grid-template-columns:minmax(0,1fr); }
       .teacher-split-layout, .mastery-skills-layout{ grid-template-columns:minmax(0,1fr); }
@@ -813,6 +820,9 @@
       <button class="btn admin" id="adminUsersBtn" title="User Management" style="display:none;">👥 Users</button>
       <button class="btn admin" id="serverHealthBtn" title="Server Health" style="display:none;">🖥️ Server Health</button>
       <button class="btn admin" id="adminSettingsBtn" title="Admin Settings" style="display:none;">⚙</button>
+      <div class="signout-slot">
+        <button class="btn stop" id="signOutBtn" title="Sign out" style="display:none;">Sign Out</button>
+      </div>
     </div>
   </header>
   <button class="edge-toggle" id="rightEdgeToggleBtn" title="Hide resources sidebar" style="display:none;">◀</button>
@@ -1045,6 +1055,9 @@
           <button class="teacher-dash-navbtn" data-view="dash-assignments">
             <span class="navbtn-icon">📝</span><span>Assignments</span>
           </button>
+          <button class="teacher-dash-navbtn" data-view="dash-skills">
+            <span class="navbtn-icon">🏷️</span><span>Skills</span>
+          </button>
           <button class="teacher-dash-navbtn" data-view="dash-account">
             <span class="navbtn-icon">⚙️</span><span>Account</span>
           </button>
@@ -1091,6 +1104,37 @@
               <div id="assignmentList"></div>
               <div id="assignmentDetailPanel" class="assignment-detail-panel">
                 <p style="color:#888; margin:0;">Select an assignment to review scores and open submissions.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Skills View -->
+        <div class="teacher-dash-view" id="dash-skills">
+          <div class="teacher-dash-view-hdr">
+            <h2 class="teacher-dash-view-title">Skills</h2>
+            <div class="teacher-dash-view-actions">
+              <button class="btn secondary" id="refreshSkillsBtn">Refresh</button>
+            </div>
+          </div>
+          <div class="teacher-dash-scroll">
+            <div style="display:grid; grid-template-columns:minmax(260px, 1fr) minmax(300px, 1fr); gap:12px;">
+              <div class="teacher-panel-card">
+                <h4>Create Skill Tag</h4>
+                <label style="font-size:12px;">Skill Name</label>
+                <input type="text" id="skillNameInput" placeholder="Loops" style="width:100%; margin-bottom:8px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;">
+                <label style="font-size:12px;">Description / Standard</label>
+                <textarea id="skillDescriptionInput" placeholder="Describe the skill standard..." style="width:100%; min-height:90px; margin-bottom:8px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;"></textarea>
+                <label style="font-size:12px;">Assign to Classes</label>
+                <div id="skillClassChecklist" style="max-height:180px; overflow:auto; border:1px solid var(--theme-border-mid); border-radius:8px; padding:8px; margin-top:4px;"></div>
+                <div style="display:flex; gap:8px; margin-top:10px;">
+                  <button class="btn run" id="saveSkillBtn">Save Skill</button>
+                  <button class="btn secondary" id="clearSkillFormBtn">Clear</button>
+                </div>
+              </div>
+              <div>
+                <div style="font-size:12px; color:var(--theme-text-dim); margin-bottom:6px;">Existing skill tags</div>
+                <div id="teacherSkillList" class="skill-list-grid"></div>
               </div>
             </div>
           </div>
@@ -1906,6 +1950,8 @@ print("Hello " + name)
     let currentUser = null;   // { email, name }
     let currentTeacher = null;
     let teacherClasses = [];
+    let teacherSkills = [];
+    let editingSkillId = null;
     let currentTeacherClassId = null;
     let activeAssignmentsClassId = null;
     let activeStudentsByClass = {};
@@ -2368,6 +2414,18 @@ print("Hello " + name)
         teacherClasses = [];
       }
       return teacherClasses;
+    }
+
+    async function loadTeacherSkills() {
+      if (!TEACHER_TOKEN) { teacherSkills = []; editingSkillId = null; return []; }
+      try {
+        const res = await fetch('/api/teacher/skills', { headers: { 'X-Teacher-Token': TEACHER_TOKEN } });
+        const j = await res.json().catch(() => ({}));
+        teacherSkills = j?.skills || [];
+      } catch {
+        teacherSkills = [];
+      }
+      return teacherSkills;
     }
 
     function getCurrentClassContext() {
@@ -3300,6 +3358,7 @@ print("Hello " + name)
       const guestBadge = document.getElementById('guestBadge');
       const rightEdgeToggleBtn = document.getElementById('rightEdgeToggleBtn');
       const loginBtn = document.getElementById('loginBtn');
+      const signOutBtn = document.getElementById('signOutBtn');
       const workspaceFilesTabBtn = document.getElementById('workspaceFilesTabBtn');
       const adminSettingsBtn = document.getElementById('adminSettingsBtn');
       const adminUsersBtn = document.getElementById('adminUsersBtn');
@@ -3318,14 +3377,19 @@ print("Hello " + name)
         hideFileBrowser();
       }
       if (topJoinClassBtn) topJoinClassBtn.style.display = (currentUser && !studentClassData) ? '' : 'none';
-      // Toggle login/logout button
+      // Toggle sign-in/sign-out buttons
       if (isLoggedIn) {
-        loginBtn.textContent = 'Sign Out';
+        loginBtn.style.display = 'none';
         const accountName = (currentUser?.name || currentTeacher?.name || currentUser?.email || currentTeacher?.email || 'Admin').trim();
-        loginBtn.title = `Sign out (${accountName})`;
+        if (signOutBtn) {
+          signOutBtn.style.display = '';
+          signOutBtn.title = `Sign out (${accountName})`;
+        }
       } else {
+        loginBtn.style.display = '';
         loginBtn.textContent = 'Sign In';
         loginBtn.title = 'Sign in';
+        if (signOutBtn) signOutBtn.style.display = 'none';
       }
       adminSettingsBtn.style.display = ADMIN_TOKEN ? '' : 'none';
       adminSettingsBtn.title = 'Admin Settings';
@@ -3493,67 +3557,63 @@ print("Hello " + name)
       }
     }
 
-    // Login button: open unified login modal or log out when already authenticated
-    document.getElementById('loginBtn').addEventListener('click', async () => {
-      const isLoggedIn = isAuthenticated();
-      if (isLoggedIn) {
-        // Perform logout directly
-        if (USER_TOKEN) {
-          await fetch('/api/auth/logout', { method: 'POST', headers: { 'X-User-Token': USER_TOKEN } }).catch(() => {});
-          USER_TOKEN = null;
-          currentUser = null;
-          currentOpenFile = null;
-          // Clear editor and reset to blank state
-          setRunButtonState(false);
-          setCsvMode(false);
-          editor.setValue('');
-          if (typeof updateActiveFileName === 'function') updateActiveFileName();
-          hideFileBrowser();
-        }
-        if (TEACHER_TOKEN) {
-          await fetch('/api/auth/logout', { method: 'POST', headers: { 'X-Teacher-Token': TEACHER_TOKEN } }).catch(() => {});
-          TEACHER_TOKEN = null;
-          currentTeacher = null;
-          teacherClasses = [];
-          currentTeacherClassId = null;
-          document.body.classList.remove('admin-mode');
-          currentOpenFile = null;
-          setRunButtonState(false);
-          setCsvMode(false);
-          editor.setValue('');
-          if (typeof updateActiveFileName === 'function') updateActiveFileName();
-          hideFileBrowser();
-          stopTeacherBroadcast();
-          document.getElementById('teacherDashboardModal').style.display = 'none';
-          teacherDashListenersAttached = false;
-          stopTeacherDashboardRosterPolling();
-        }
-        if (ADMIN_TOKEN) {
-          ADMIN_TOKEN = null;
-          document.body.classList.remove('admin-mode');
-          setRunButtonState(false);
-          setCsvMode(false);
-          document.getElementById('adminSettingsBtn').style.display = 'none';
-          document.getElementById('streamingToggleBtn').style.display = 'none';
-          const adminUsersBtn = document.getElementById('adminUsersBtn');
-          if (adminUsersBtn) adminUsersBtn.style.display = 'none';
-          const serverHealthBtn = document.getElementById('serverHealthBtn');
-          if (serverHealthBtn) serverHealthBtn.style.display = 'none';
-          document.getElementById('adminUsersModal').style.display = 'none';
-          document.getElementById('serverHealthModal').style.display = 'none';
-          currentOpenFile = null;
-          hideFileBrowser();
-          stopTeacherBroadcast();
-          // Clear editor for admin logout too
-          editor.setValue('');
-          if (typeof updateActiveFileName === 'function') updateActiveFileName();
-        }
-        saveAuthSession();
-        updateAuthUI();
-        window.location.reload();
-      } else {
-        openLoginModal();
+    // Login button: open unified login modal
+    document.getElementById('loginBtn').addEventListener('click', () => openLoginModal());
+    document.getElementById('signOutBtn')?.addEventListener('click', async () => {
+      if (!isAuthenticated()) return;
+      teacherSkills = [];
+      editingSkillId = null;
+      if (USER_TOKEN) {
+        await fetch('/api/auth/logout', { method: 'POST', headers: { 'X-User-Token': USER_TOKEN } }).catch(() => {});
+        USER_TOKEN = null;
+        currentUser = null;
+        currentOpenFile = null;
+        setRunButtonState(false);
+        setCsvMode(false);
+        editor.setValue('');
+        if (typeof updateActiveFileName === 'function') updateActiveFileName();
+        hideFileBrowser();
       }
+      if (TEACHER_TOKEN) {
+        await fetch('/api/auth/logout', { method: 'POST', headers: { 'X-Teacher-Token': TEACHER_TOKEN } }).catch(() => {});
+        TEACHER_TOKEN = null;
+        currentTeacher = null;
+        teacherClasses = [];
+        currentTeacherClassId = null;
+        document.body.classList.remove('admin-mode');
+        currentOpenFile = null;
+        setRunButtonState(false);
+        setCsvMode(false);
+        editor.setValue('');
+        if (typeof updateActiveFileName === 'function') updateActiveFileName();
+        hideFileBrowser();
+        stopTeacherBroadcast();
+        document.getElementById('teacherDashboardModal').style.display = 'none';
+        teacherDashListenersAttached = false;
+        stopTeacherDashboardRosterPolling();
+      }
+      if (ADMIN_TOKEN) {
+        ADMIN_TOKEN = null;
+        document.body.classList.remove('admin-mode');
+        setRunButtonState(false);
+        setCsvMode(false);
+        document.getElementById('adminSettingsBtn').style.display = 'none';
+        document.getElementById('streamingToggleBtn').style.display = 'none';
+        const adminUsersBtn = document.getElementById('adminUsersBtn');
+        if (adminUsersBtn) adminUsersBtn.style.display = 'none';
+        const serverHealthBtn = document.getElementById('serverHealthBtn');
+        if (serverHealthBtn) serverHealthBtn.style.display = 'none';
+        document.getElementById('adminUsersModal').style.display = 'none';
+        document.getElementById('serverHealthModal').style.display = 'none';
+        currentOpenFile = null;
+        hideFileBrowser();
+        stopTeacherBroadcast();
+        editor.setValue('');
+        if (typeof updateActiveFileName === 'function') updateActiveFileName();
+      }
+      saveAuthSession();
+      updateAuthUI();
+      window.location.reload();
     });
     document.getElementById('toggleRegisterBtn').addEventListener('click', () => {
       registerMode = !registerMode;
@@ -3785,6 +3845,9 @@ print("Hello " + name)
               populateTeacherReportsClassSelect();
               await refreshActiveStudentsForClass(currentTeacherClassId);
               renderClassReports().catch(() => {});
+            } else if (btn.dataset.view === 'dash-skills') {
+              await loadTeacherSkills();
+              renderTeacherSkillsPage();
             }
           });
         });
@@ -3824,6 +3887,12 @@ print("Hello " + name)
           renderAdminAssignments();
           await renderClassReports();
         });
+        document.getElementById('refreshSkillsBtn')?.addEventListener('click', async () => {
+          await loadTeacherSkills();
+          renderTeacherSkillsPage();
+        });
+        document.getElementById('saveSkillBtn')?.addEventListener('click', saveTeacherSkillFromForm);
+        document.getElementById('clearSkillFormBtn')?.addEventListener('click', resetSkillForm);
       }
 
       // Switch to requested view
@@ -3840,6 +3909,8 @@ print("Hello " + name)
       // Initialize data
       loadTeacherClasses().then(async () => {
         renderTeacherClassManagement();
+        await loadTeacherSkills();
+        renderTeacherSkillsPage();
         populateTeacherReportsClassSelect();
         populateTeacherAssignmentsClassSelect();
         syncTeacherDashboardClassSelectors();
@@ -4497,15 +4568,9 @@ print("Hello " + name)
             <label style="font-size:12px;"><input type="checkbox" class="cls-wiki" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.wiki_enabled ? 'checked' : ''}> Wiki enabled</label>
             <button class="btn secondary save-class-settings-btn" data-class="${escapeHtml(activeClass.id)}" style="font-size:12px;">Save Settings</button>
           </div>
-          <div style="display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-bottom:10px;">
-            <div>
-              <label style="font-size:12px; margin:0 0 4px; display:block;">AI Grading Rigor: <span class="cls-rigor-label" data-class="${escapeHtml(activeClass.id)}">${rigorLevelLabel(activeClass.settings?.ai_grading_rigor || 5)}</span> (${activeClass.settings?.ai_grading_rigor || 5}/10)</label>
-              <input type="range" min="1" max="10" value="${activeClass.settings?.ai_grading_rigor || 5}" class="cls-rigor" data-class="${escapeHtml(activeClass.id)}" style="width:100%;">
-            </div>
-            <div>
-              <label style="font-size:12px; margin:0 0 4px; display:block;">Skill Tags (comma separated)</label>
-              <input type="text" class="cls-skill-tags" data-class="${escapeHtml(activeClass.id)}" value="${escapeHtml((activeClass.settings?.skill_tags || []).join(', '))}" placeholder="loops, python, arrays" style="width:100%; padding:6px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:6px; font-size:12px;">
-            </div>
+          <div style="margin-bottom:10px;">
+            <label style="font-size:12px; margin:0 0 4px; display:block;">AI Grading Rigor: <span class="cls-rigor-label" data-class="${escapeHtml(activeClass.id)}">${rigorLevelLabel(activeClass.settings?.ai_grading_rigor || 5)}</span> (${activeClass.settings?.ai_grading_rigor || 5}/10)</label>
+            <input type="range" min="1" max="10" value="${activeClass.settings?.ai_grading_rigor || 5}" class="cls-rigor" data-class="${escapeHtml(activeClass.id)}" style="width:100%;">
           </div>
           <input type="text" class="cls-wiki-url" data-class="${escapeHtml(activeClass.id)}" value="${escapeHtml(activeClass.settings?.wiki_url || '')}" placeholder="Class wiki URL (optional)" style="width:100%; margin-bottom:8px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; font-size:12px;">
           <textarea class="cls-wiki-html" data-class="${escapeHtml(activeClass.id)}" placeholder="Class wiki HTML" style="width:100%; margin-bottom:8px; min-height:70px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; padding:8px; font-size:12px;">${escapeHtml(activeClass.settings?.wiki_html || '')}</textarea>
@@ -4543,9 +4608,7 @@ print("Hello " + name)
         const wikiUrl = wrap.querySelector(`.cls-wiki-url[data-class="${CSS.escape(classId)}"]`)?.value || '';
         const wikiHtml = wrap.querySelector(`.cls-wiki-html[data-class="${CSS.escape(classId)}"]`)?.value || '';
         const rigor = parseInt(wrap.querySelector(`.cls-rigor[data-class="${CSS.escape(classId)}"]`)?.value || '5', 10) || 5;
-        const tagsRaw = wrap.querySelector(`.cls-skill-tags[data-class="${CSS.escape(classId)}"]`)?.value || '';
-        const tags = [...new Set(tagsRaw.split(',').map(tag => tag.trim()).filter(Boolean))];
-        const settingsPayload = { wiki_enabled: !!wiki, wiki_url: wikiUrl.trim(), wiki_html: wikiHtml, ai_grading_rigor: rigor, skill_tags: tags };
+        const settingsPayload = { wiki_enabled: !!wiki, wiki_url: wikiUrl.trim(), wiki_html: wikiHtml, ai_grading_rigor: rigor };
         if (canShowAiToggle) settingsPayload.ai_enabled = !!ai;
         const res = await fetch('/api/teacher/classes/settings', {
           method: 'POST',
@@ -4600,6 +4663,114 @@ print("Hello " + name)
       }));
     }
 
+    function renderSkillClassChecklist(selected = []) {
+      const wrap = document.getElementById('skillClassChecklist');
+      if (!wrap) return;
+      if (!teacherClasses.length) {
+        wrap.innerHTML = '<div style="color:#888; font-size:12px;">Create a class first.</div>';
+        return;
+      }
+      wrap.innerHTML = teacherClasses.map(c => `
+        <label style="display:flex; align-items:flex-start; gap:8px; margin-bottom:6px; font-size:12px;">
+          <input type="checkbox" class="skill-class-check" value="${escapeHtml(c.id)}" ${selected.includes(c.id) ? 'checked' : ''}>
+          <span>${escapeHtml(c.name)} <span style="color:var(--theme-text-dim);">(${escapeHtml(c.join_code)})</span></span>
+        </label>
+      `).join('');
+    }
+
+    function selectedSkillClassIds() {
+      return [...document.querySelectorAll('#skillClassChecklist .skill-class-check:checked')]
+        .map(cb => cb.value)
+        .filter(Boolean);
+    }
+
+    function resetSkillForm() {
+      editingSkillId = null;
+      const saveBtn = document.getElementById('saveSkillBtn');
+      if (saveBtn) saveBtn.textContent = 'Save Skill';
+      const nameInput = document.getElementById('skillNameInput');
+      const descInput = document.getElementById('skillDescriptionInput');
+      if (nameInput) nameInput.value = '';
+      if (descInput) descInput.value = '';
+      renderSkillClassChecklist([]);
+    }
+
+    function editSkill(skillId) {
+      const skill = teacherSkills.find(s => s.id === skillId);
+      if (!skill) return;
+      editingSkillId = skill.id;
+      const saveBtn = document.getElementById('saveSkillBtn');
+      if (saveBtn) saveBtn.textContent = 'Update Skill';
+      const nameInput = document.getElementById('skillNameInput');
+      const descInput = document.getElementById('skillDescriptionInput');
+      if (nameInput) nameInput.value = skill.name || '';
+      if (descInput) descInput.value = skill.description || '';
+      renderSkillClassChecklist(skill.class_ids || []);
+    }
+
+    async function renderTeacherSkillsPage() {
+      const list = document.getElementById('teacherSkillList');
+      if (!list) return;
+      const editingSkill = editingSkillId ? teacherSkills.find(s => s.id === editingSkillId) : null;
+      const selectedClassIds = editingSkill?.class_ids || [];
+      renderSkillClassChecklist(selectedClassIds);
+      if (!teacherSkills.length) {
+        list.innerHTML = '<div style="color:#888; font-size:12px;">No skill tags created yet.</div>';
+        return;
+      }
+      list.innerHTML = teacherSkills.map(skill => `
+        <div class="skill-card">
+          <h4>${escapeHtml(skill.name || '')}</h4>
+          <div style="font-size:12px; color:var(--theme-text); white-space:pre-wrap;">${escapeHtml(skill.description || 'No description provided.')}</div>
+          <div class="skill-class-pills">
+            ${(skill.class_names || []).map(name => `<span class="skill-chip">${escapeHtml(name)}</span>`).join('') || '<span style="font-size:11px; color:var(--theme-text-dim);">Not assigned to classes</span>'}
+          </div>
+          <div style="display:flex; gap:8px; margin-top:8px;">
+            <button class="btn secondary skill-edit-btn" data-id="${escapeHtml(skill.id)}" style="font-size:12px;">Edit</button>
+            <button class="btn stop skill-delete-btn" data-id="${escapeHtml(skill.id)}" style="font-size:12px;">Delete</button>
+          </div>
+        </div>
+      `).join('');
+      list.querySelectorAll('.skill-edit-btn').forEach(btn => btn.addEventListener('click', () => editSkill(btn.dataset.id)));
+      list.querySelectorAll('.skill-delete-btn').forEach(btn => btn.addEventListener('click', async () => {
+        if (!confirm('Delete this skill tag?')) return;
+        const res = await fetch('/api/teacher/skills/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Teacher-Token': TEACHER_TOKEN },
+          body: JSON.stringify({ skillId: btn.dataset.id })
+        });
+        const j = await res.json().catch(() => ({}));
+        if (!j?.ok) return alert(j?.error || 'Failed to delete skill');
+        await loadTeacherSkills();
+        resetSkillForm();
+        renderTeacherSkillsPage();
+      }));
+    }
+
+    async function saveTeacherSkillFromForm() {
+      if (!TEACHER_TOKEN) return;
+      const wasEditing = !!editingSkillId;
+      const name = (document.getElementById('skillNameInput')?.value || '').trim();
+      const description = (document.getElementById('skillDescriptionInput')?.value || '').trim();
+      const classIds = selectedSkillClassIds();
+      if (!name) return alert('Skill name is required.');
+      const url = editingSkillId ? '/api/teacher/skills/update' : '/api/teacher/skills/create';
+      const payload = editingSkillId
+        ? { skillId: editingSkillId, name, description, classIds }
+        : { name, description, classIds };
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Teacher-Token': TEACHER_TOKEN },
+        body: JSON.stringify(payload)
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!j?.ok) return alert(j?.error || 'Failed to save skill');
+      await loadTeacherSkills();
+      resetSkillForm();
+      renderTeacherSkillsPage();
+      setAssignmentStatus(wasEditing ? 'Skill updated' : 'Skill created');
+    }
+
     async function renderClassReports() {
       const rosterPane = document.getElementById('class-roster-pane');
       const scorePane = document.getElementById('score-overview-pane');
@@ -4626,6 +4797,7 @@ print("Hello " + name)
       const assignments = currentMasteryData.assignments || [];
       const students = currentMasteryData.students || [];
       const tags = currentMasteryData.skillTags || [];
+      const skillDescriptions = currentMasteryData.skillDescriptions || {};
       const classMeta = currentMasteryData.class || {};
       const classSettings = (teacherClasses.find(c => c.id === classMeta.id)?.settings) || {};
       const activeStudents = activeStudentsByClass[currentTeacherClassId] || new Set();
@@ -4638,7 +4810,7 @@ print("Hello " + name)
             <div style="font-size:12px; color:var(--theme-text); margin-bottom:8px;">${escapeHtml(classMeta.name || 'Class')}</div>
             <div style="font-size:12px; color:var(--theme-text); margin-bottom:6px;">AI enabled: ${classSettings.ai_enabled ? 'Yes' : 'No'}</div>
             <div style="font-size:12px; color:var(--theme-text); margin-bottom:6px;">Wiki enabled: ${classSettings.wiki_enabled ? 'Yes' : 'No'}</div>
-            <div style="font-size:12px; color:var(--theme-text);">Skill tags: ${escapeHtml((classSettings.skill_tags || []).join(', ') || 'None')}</div>
+            <div style="font-size:12px; color:var(--theme-text);">Skills tracked: ${escapeHtml(tags.join(', ') || 'None')}</div>
           </div>
           <div class="teacher-panel-card">
             <h4>Student Roster</h4>
@@ -4662,7 +4834,10 @@ print("Hello " + name)
       scorePane.innerHTML = `
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px; flex-wrap:wrap;">
           <div style="font-size:12px; color:var(--theme-text);">Students and assignment score percentages for selected class.</div>
-          <button class="btn secondary" id="masteryExportCsvBtn">Export CSV</button>
+          <div style="display:flex; gap:8px;">
+            <button class="btn secondary" id="masteryExportCsvBtn">Export CSV</button>
+            <button class="btn secondary" id="masteryAllPdfBtn">All Skills PDF</button>
+          </div>
         </div>
         <div class="mastery-grid">
           <table>
@@ -4682,6 +4857,7 @@ print("Hello " + name)
         </div>
       `;
       scorePane.querySelector('#masteryExportCsvBtn')?.addEventListener('click', exportMasteryCsv);
+      scorePane.querySelector('#masteryAllPdfBtn')?.addEventListener('click', () => openMasteryPdfReport('all'));
 
       skillsPane.innerHTML = `
         <div class="mastery-skills-layout">
@@ -4690,15 +4866,18 @@ print("Hello " + name)
               <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
                 <label style="margin:0;">Skill</label>
                 <select id="masteryAnalyticsTagSelect" style="min-width:220px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;">
-                  ${tags.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('')}
+                  ${tags.length ? tags.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('') : '<option value="">No skills</option>'}
                 </select>
+                <button class="btn secondary" id="masterySkillPdfBtn">Selected Skill PDF</button>
               </div>
+              <div id="masterySkillDescription" class="skill-description-panel"></div>
               <div style="font-weight:700; margin-bottom:8px; color:var(--columbia-blue);">Selected Skill Distribution</div>
               <canvas id="masteryTagChart" height="220"></canvas>
             </div>
             <div class="teacher-panel-card" style="margin-top:10px;">
-              <div style="font-weight:700; margin-bottom:8px; color:var(--columbia-blue);">Overall Distribution</div>
+              <div style="font-weight:700; margin-bottom:8px; color:var(--columbia-blue);">All Skills Overview (Average Mastery)</div>
               <canvas id="masterySummaryChart" height="220"></canvas>
+              <div id="masteryAverageText" style="margin-top:10px; font-size:12px; color:var(--theme-text);"></div>
             </div>
           </div>
           <div>
@@ -4733,6 +4912,7 @@ print("Hello " + name)
         </div>
       `;
       skillsPane.querySelector('#masteryAnalyticsTagSelect')?.addEventListener('change', () => renderMasteryCharts());
+      skillsPane.querySelector('#masterySkillPdfBtn')?.addEventListener('click', () => openMasteryPdfReport('tag'));
       skillsPane.querySelector('#masteryFeedbackScopeSelect')?.addEventListener('change', () => {
         const scope = skillsPane.querySelector('#masteryFeedbackScopeSelect')?.value || 'all';
         const tagSelect = skillsPane.querySelector('#masteryAnalyticsTagSelect');
@@ -4745,6 +4925,13 @@ print("Hello " + name)
         try { await navigator.clipboard.writeText(text); } catch {}
       });
       skillsPane.querySelector('#masteryAiFeedbackSaveBtn')?.addEventListener('click', saveMasteryFeedbackToReportFile);
+      const descriptionEl = skillsPane.querySelector('#masterySkillDescription');
+      if (descriptionEl) {
+        const firstTag = tags[0] || '';
+        descriptionEl.textContent = firstTag
+          ? (skillDescriptions[firstTag] || 'No description provided for this skill.')
+          : 'No skill selected.';
+      }
       renderMasteryCharts();
     }
 
@@ -4753,6 +4940,24 @@ print("Hello " + name)
       const selectedTag = tagSelect?.value;
       const tagData = currentMasteryData?.analytics?.tags?.[selectedTag] || {};
       const summary = currentMasteryData?.analytics?.summary || {};
+      const skillDescriptions = currentMasteryData?.skillDescriptions || {};
+      const descriptionEl = document.getElementById('masterySkillDescription');
+      if (descriptionEl) {
+        descriptionEl.textContent = selectedTag
+          ? (skillDescriptions[selectedTag] || 'No description provided for this skill.')
+          : 'No skill selected.';
+      }
+      const averageText = document.getElementById('masteryAverageText');
+      if (averageText) {
+        const values = [];
+        (currentMasteryData?.students || []).forEach(student => {
+          Object.values(student?.skillScores || {}).forEach(val => {
+            if (val !== null && val !== undefined) values.push(Number(val));
+          });
+        });
+        const avg = values.length ? (values.reduce((sum, n) => sum + n, 0) / values.length) : null;
+        averageText.textContent = `Average mastery across all skills: ${avg === null ? 'No scored data yet' : `${avg.toFixed(1)}%`}`;
+      }
       const createPie = (canvasId, payload, includeUntested = true, existingChartRef = null) => {
         const ctx = document.getElementById(canvasId)?.getContext('2d');
         if (!ctx || !window.Chart) return existingChartRef;
@@ -4777,6 +4982,136 @@ print("Hello " + name)
       };
       masteryTagChart = createPie('masteryTagChart', tagData, true, masteryTagChart);
       masterySummaryChart = createPie('masterySummaryChart', summary, false, masterySummaryChart);
+    }
+
+    function openMasteryPdfReport(scope = 'all') {
+      if (!currentMasteryData || !window.jspdf?.jsPDF) return;
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+      const margin = 42;
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const contentWidth = pageWidth - (margin * 2);
+      const className = currentMasteryData?.class?.name || 'Class';
+      const tag = document.getElementById('masteryAnalyticsTagSelect')?.value || '';
+      const skillDescriptions = currentMasteryData?.skillDescriptions || {};
+      const students = currentMasteryData?.students || [];
+      const addFooter = () => {
+        const totalPages = doc.getNumberOfPages();
+        for (let i = 1; i <= totalPages; i++) {
+          doc.setPage(i);
+          doc.setFontSize(9);
+          doc.setTextColor(110);
+          doc.text(`Page ${i} of ${totalPages}`, pageWidth - margin, pageHeight - 16, { align: 'right' });
+        }
+      };
+      let y = margin;
+      const lineHeight = 16;
+      const ensureSpace = (need = lineHeight) => {
+        if (y + need > pageHeight - 36) {
+          doc.addPage();
+          y = margin;
+        }
+      };
+      const addTitle = (title, subtitle = '') => {
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(20);
+        doc.setTextColor(22, 46, 82);
+        doc.text(title, margin, y);
+        y += 24;
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(11);
+        doc.setTextColor(60);
+        doc.text(`Class: ${className}`, margin, y);
+        y += 14;
+        doc.text(`Generated: ${new Date().toLocaleString()}`, margin, y);
+        if (subtitle) {
+          y += 14;
+          doc.text(subtitle, margin, y);
+        }
+        y += 16;
+      };
+      const drawChartImage = (canvasId, width = 230, height = 170) => {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+        ensureSpace(height + 10);
+        try {
+          const dataUrl = canvas.toDataURL('image/png');
+          doc.addImage(dataUrl, 'PNG', margin, y, width, height);
+          y += height + 12;
+        } catch (err) {
+          console.warn('Failed to add chart image to PDF report.', err);
+        }
+      };
+      const drawTableHeader = (headers) => {
+        ensureSpace(24);
+        doc.setFillColor(230, 238, 248);
+        doc.rect(margin, y - 12, contentWidth, 20, 'F');
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(10);
+        const colWidth = contentWidth / headers.length;
+        headers.forEach((header, i) => {
+          doc.text(header, margin + (colWidth * i) + 4, y + 2);
+        });
+        y += 16;
+      };
+      const drawTableRow = (cells) => {
+        ensureSpace(16);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(10);
+        doc.setTextColor(30);
+        const colWidth = contentWidth / cells.length;
+        cells.forEach((cell, i) => {
+          doc.text(String(cell), margin + (colWidth * i) + 4, y);
+        });
+        y += 14;
+      };
+
+      if (scope === 'tag') {
+        addTitle(`Skill Report: ${tag || 'Selected Skill'}`);
+        const description = tag ? (skillDescriptions[tag] || 'No description provided for this skill.') : 'No skill selected.';
+        doc.setFillColor(240, 245, 252);
+        doc.rect(margin, y - 10, contentWidth, 66, 'F');
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(13);
+        doc.text(tag || 'Skill', margin + 8, y + 8);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(10);
+        const descriptionLines = doc.splitTextToSize(`Description: ${description}`, contentWidth - 16);
+        doc.text(descriptionLines, margin + 8, y + 24);
+        y += 76;
+        drawChartImage('masteryTagChart', 250, 190);
+        drawTableHeader(['Student', 'Mastery Score']);
+        students.forEach(student => {
+          const score = student?.skillScores?.[tag];
+          drawTableRow([student?.name || student?.email || 'Student', score === null || score === undefined ? 'Untested' : `${Math.round(score)}%`]);
+        });
+      } else {
+        addTitle('All Skills Mastery Report', 'Includes roster and average mastery across tracked skills.');
+        const values = [];
+        students.forEach(student => {
+          Object.values(student?.skillScores || {}).forEach(v => {
+            if (v !== null && v !== undefined) values.push(Number(v));
+          });
+        });
+        const avg = values.length ? `${(values.reduce((sum, n) => sum + n, 0) / values.length).toFixed(1)}%` : 'No scored data';
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(12);
+        doc.text(`Average Mastery: ${avg}`, margin, y);
+        y += 18;
+        drawChartImage('masterySummaryChart', 250, 190);
+        drawTableHeader(['Student', 'Average Skill Mastery']);
+        students.forEach(student => {
+          const skillVals = Object.values(student?.skillScores || {}).filter(v => v !== null && v !== undefined).map(Number);
+          const score = skillVals.length ? `${(skillVals.reduce((sum, n) => sum + n, 0) / skillVals.length).toFixed(1)}%` : 'Untested';
+          drawTableRow([student?.name || student?.email || 'Student', score]);
+        });
+      }
+      addFooter();
+      const blob = doc.output('blob');
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
     }
 
     function exportMasteryCsv() {
@@ -6173,8 +6508,7 @@ print("Hello " + name)
 
     function showAssignmentModal(existingAssignment = null) {
       const effectiveClassId = existingAssignment?.targetClassId || activeAssignmentsClassId || currentTeacherClassId;
-      const classCtx = teacherClasses.find(c => c.id === effectiveClassId) || {};
-      const classTags = classCtx?.settings?.skill_tags || [];
+      const availableSkills = teacherSkills || [];
       const selectedTags = existingAssignment?.skillTags || [];
       const maxQuizSubmissions = existingAssignment?.quizSettings?.maxSubmissions ?? 0;
       const modal = document.createElement('div');
@@ -6202,12 +6536,15 @@ print("Hello " + name)
             ${teacherClasses.map(c => `<option value="${escapeHtml(c.id)}" ${effectiveClassId === c.id ? 'selected' : ''}>${escapeHtml(c.name)} (${escapeHtml(c.join_code)})</option>`).join('')}
           </select>` : ''}
           <label>Skill Tags (covered by this assignment)</label>
-          <select id="modalAssignmentSkillTags" multiple style="width:100%; min-height:90px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;">
-            ${classTags.map(tag => `<option value="${escapeHtml(tag)}" ${selectedTags.includes(tag) ? 'selected' : ''}>${escapeHtml(tag)}</option>`).join('')}
-          </select>
-          <div style="font-size:11px; color:#888; margin-top:4px;">Hold Ctrl/Cmd to select multiple skill tags.</div>
-          <label>Add Additional Tags (comma separated)</label>
-          <input type="text" id="modalAssignmentExtraTags" value="" placeholder="loops, arrays, debugging">
+          <div id="modalAssignmentSkillTags" style="border:1px solid var(--theme-border-mid); border-radius:8px; padding:8px; max-height:180px; overflow:auto;">
+            ${availableSkills.length ? availableSkills.map(skill => `
+              <label style="display:block; margin-bottom:8px; font-size:12px;">
+                <input type="checkbox" class="modal-skill-check" value="${escapeHtml(skill.name)}" ${selectedTags.includes(skill.name) ? 'checked' : ''}>
+                <strong>${escapeHtml(skill.name)}</strong>
+                <div style="color:var(--theme-text-dim); margin-left:20px;">${escapeHtml(skill.description || '')}</div>
+              </label>
+            `).join('') : '<div style="color:#888; font-size:12px;">No skills created yet. Add skills in the Skills dashboard page.</div>'}
+          </div>
           <label>Quiz Max Submissions (0 = unlimited)</label>
           <input type="number" id="modalAssignmentMaxQuizSubmissions" value="${maxQuizSubmissions}" min="0" max="100" />
           <div style="margin-top:20px; padding-top:20px; border-top:1px solid #333;">
@@ -6278,9 +6615,8 @@ print("Hello " + name)
         const maxScore = parseInt(document.getElementById('modalAssignmentMaxScore').value, 10) || 100;
         const allowFileSubmission = !!document.getElementById('modalAssignmentAllowFileSubmission')?.checked;
         const classId = document.getElementById('modalAssignmentClassId')?.value || (TEACHER_TOKEN ? currentTeacherClassId : null);
-        const selectedSkillTags = [...(document.getElementById('modalAssignmentSkillTags')?.selectedOptions || [])].map(o => o.value).filter(Boolean);
-        const extraSkillTags = (document.getElementById('modalAssignmentExtraTags')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
-        const mergedSkillTags = [...new Set([...selectedSkillTags, ...extraSkillTags])];
+        const selectedSkillTags = [...modal.querySelectorAll('.modal-skill-check:checked')].map(cb => cb.value).filter(Boolean);
+        const mergedSkillTags = [...new Set(selectedSkillTags)];
         const maxQuizSubmissions = Math.max(0, Math.min(100, parseInt(document.getElementById('modalAssignmentMaxQuizSubmissions')?.value, 10) || 0));
         if (!name) { alert('Please enter an assignment name.'); return; }
         const payload = {
