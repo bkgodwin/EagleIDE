@@ -455,10 +455,11 @@
     .editor-content-stack.teacher-stream-enabled.teacher-stream-open .teacher-stream-pane{
       display:block;
       min-height:0;
-      overflow:hidden;
+      overflow:auto;
       border-top:1px solid var(--theme-border-mid);
     }
     .teacher-stream-pane .CodeMirror{ height:100%; }
+    .teacher-stream-pane .CodeMirror-scroll{ overflow:auto !important; }
     .teacher-pane-toggle{
       position:fixed;
       left:50%;
@@ -478,8 +479,88 @@
       font-size:15px;
       line-height:1;
       backdrop-filter:blur(4px);
+      transition:background .2s ease, border-color .2s ease, color .2s ease, box-shadow .2s ease;
     }
     .teacher-pane-toggle:hover{ background:var(--theme-btn-hover); }
+    .teacher-pane-toggle.live{
+      background:rgba(198,40,40,0.18);
+      border-color:rgba(198,40,40,0.9);
+      color:#ff8c8c;
+      box-shadow:0 0 12px rgba(198,40,40,0.35);
+    }
+
+    #classSelectorWrap{
+      display:none;
+      flex-direction:column;
+      align-items:stretch;
+      gap:6px;
+      background:var(--theme-tab-bg);
+      border:1px solid var(--theme-border);
+      border-radius:10px;
+      padding:6px 8px;
+      min-width:220px;
+    }
+    .class-selector-row{
+      display:flex;
+      align-items:center;
+      gap:6px;
+    }
+    .student-class-add-btn{
+      width:100%;
+      justify-content:center;
+      font-size:12px;
+      padding:7px 10px;
+    }
+    .assignment-option-card{
+      border:1px solid var(--theme-border-mid);
+      border-radius:10px;
+      padding:10px 12px;
+      background:var(--theme-output-bg);
+      display:grid;
+      gap:6px;
+    }
+    .assignment-option-card .option-title{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      margin:0;
+      font-size:13px;
+      font-weight:700;
+      color:var(--theme-text);
+      cursor:pointer;
+    }
+    .assignment-option-card .option-title input{
+      width:auto;
+      margin:0;
+      accent-color:#c62828;
+    }
+    .assignment-option-card .option-help{
+      margin-left:30px;
+      color:var(--theme-text-dim);
+      font-size:12px;
+      line-height:1.45;
+    }
+    .chart-legend-note{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      align-items:center;
+      margin-top:10px;
+      color:var(--theme-text);
+      font-size:12px;
+    }
+    .chart-legend-note span{
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+    }
+    .chart-legend-swatch{
+      width:12px;
+      height:12px;
+      border-radius:999px;
+      display:inline-block;
+      border:1px solid rgba(255,255,255,0.18);
+    }
 
     body.guest-mode #rightStackPanel{ display:none !important; }
     body.guest-mode .vsplitter{ display:none !important; }
@@ -809,9 +890,12 @@
       </div>
       <button class="btn secondary" id="guidesBtn" title="Show/Hide indent guides">Guides: On</button>
       <button class="btn secondary" id="autocompleteBtn" title="Toggle autocomplete">Autocomplete: On</button>
-      <div id="classSelectorWrap" style="display:none; align-items:center; gap:6px; background:var(--theme-tab-bg); border:1px solid var(--theme-border); border-radius:10px; padding:4px 8px;">
-        <span style="font-size:12px; opacity:.85;">Class</span>
-        <select id="classSelector" style="background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; padding:4px 8px;"></select>
+      <div id="classSelectorWrap">
+        <div class="class-selector-row">
+          <span style="font-size:12px; opacity:.85;">Class</span>
+          <select id="classSelector" style="background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; padding:4px 8px; flex:1;"></select>
+        </div>
+        <button class="btn secondary student-class-add-btn" id="studentAddCourseBtn" style="display:none;">+ Add Course</button>
       </div>
       <span class="guest-badge" id="guestBadge">Guest</span>
       <button class="btn admin" id="loginBtn" title="Login">Sign In</button>
@@ -1012,7 +1096,7 @@
               <div id="assignmentStudentView" style="padding:12px;">
                 <div id="studentAccountNotice" class="account-notice">Sign in with a student account to submit assignment files and view your scores.</div>
                 <div id="joinClassPanel" style="display:none; margin:12px 0; padding:12px; border:1px solid var(--theme-border-mid); border-radius:10px; background:var(--theme-input-bg);">
-                  <div style="font-weight:700; margin-bottom:8px; color:var(--columbia-blue);">Join Class</div>
+                  <div id="joinClassPanelTitle" style="font-weight:700; margin-bottom:8px; color:var(--columbia-blue);">Join Class</div>
                   <div style="display:flex; gap:8px; flex-wrap:wrap;">
                     <input type="text" id="joinClassCodeInput" maxlength="6" placeholder="Enter 6-character code" aria-label="Join class code" style="padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; text-transform:uppercase;">
                     <button class="btn run" id="joinClassBtn">Join Class</button>
@@ -1454,6 +1538,7 @@
     const TEACHER_CODE_KEY = 'eagleide-teacher-code';
     const TEACHER_PANE_OPEN_KEY = 'eagleide-teacher-pane-open';
     const TEACHER_PANE_SIZE_KEY = 'eagleide-teacher-pane-size';
+    const STUDENT_CLASS_SELECTION_KEY = 'eagleide-student-class-id';
     let teacherPaneEnabled = false;
     let teacherPaneOpen = false;
 
@@ -1515,9 +1600,9 @@
       if (stack) stack.classList.toggle('teacher-stream-open', teacherPaneOpen);
       if (btn) {
         btn.textContent = teacherPaneOpen ? '▼' : '▲';
-        btn.title = teacherPaneOpen ? 'Hide teacher code stream' : 'Show teacher code stream';
         btn.setAttribute('aria-expanded', teacherPaneOpen ? 'true' : 'false');
       }
+      updateTeacherStreamToggleState();
       if (persist) {
         try { localStorage.setItem(TEACHER_PANE_OPEN_KEY, teacherPaneOpen ? '1' : '0'); } catch {}
       }
@@ -1544,8 +1629,12 @@
         initTeacherViewer();
         let shouldOpen = false;
         try { shouldOpen = localStorage.getItem(TEACHER_PANE_OPEN_KEY) === '1'; } catch {}
+        if (!shouldOpen && getCurrentClassContext()?.id && teacherStreamLiveClasses[getCurrentClassContext().id]) {
+          shouldOpen = true;
+        }
         setTeacherPaneOpen(shouldOpen, false);
       }
+      updateTeacherStreamToggleState();
     }
 
     // Eagle IDE Custom Completion Engine
@@ -1957,7 +2046,10 @@ print("Hello " + name)
     let activeStudentsByClass = {};
     let inQuizStudentsByClass = {};
     let teacherDashboardRosterPoll = null;
+    let studentClasses = [];
     let studentClassData = null;
+    let currentStudentClassId = null;
+    let teacherStreamLiveClasses = {};
     let currentOpenFile = null; // { path, name } of open file in sidebar
     let registerMode = false;
     let currentConfig = null;
@@ -2384,16 +2476,62 @@ print("Hello " + name)
       socket.emit('leave_class_room', { class_id: classId });
     }
 
+    function getSelectedStudentClassId() {
+      return currentStudentClassId || studentClasses[0]?.id || null;
+    }
+
+    function syncStudentClassSelection(persist = true) {
+      const availableIds = studentClasses.map(cls => cls.id).filter(Boolean);
+      let nextId = currentStudentClassId;
+      if (!nextId || !availableIds.includes(nextId)) {
+        try {
+          const storedId = localStorage.getItem(STUDENT_CLASS_SELECTION_KEY);
+          if (storedId && availableIds.includes(storedId)) nextId = storedId;
+        } catch {}
+      }
+      if (!nextId || !availableIds.includes(nextId)) nextId = availableIds[0] || null;
+      currentStudentClassId = nextId;
+      studentClassData = studentClasses.find(cls => cls.id === currentStudentClassId) || null;
+      if (currentUser) currentUser.class_id = studentClassData?.id || null;
+      if (persist) {
+        try {
+          if (currentStudentClassId) localStorage.setItem(STUDENT_CLASS_SELECTION_KEY, currentStudentClassId);
+          else localStorage.removeItem(STUDENT_CLASS_SELECTION_KEY);
+        } catch {}
+      }
+      return studentClassData;
+    }
+
+    function updateTeacherStreamToggleState() {
+      const btn = document.getElementById('teacherPaneToggleBtn');
+      if (!btn) return;
+      const activeClassId = getCurrentClassContext()?.id;
+      const isLive = !!(activeClassId && teacherStreamLiveClasses[activeClassId]);
+      btn.classList.toggle('live', isLive);
+      const action = teacherPaneOpen ? 'Hide' : 'Show';
+      btn.title = isLive ? `${action} live teacher code stream` : `${action} teacher code stream`;
+    }
+
     async function loadStudentClassData() {
-      if (!USER_TOKEN) { studentClassData = null; return null; }
+      if (!USER_TOKEN) {
+        studentClasses = [];
+        studentClassData = null;
+        currentStudentClassId = null;
+        return null;
+      }
       try {
         const res = await fetch('/api/classes/current', { headers: { 'X-User-Token': USER_TOKEN } });
         const j = await res.json().catch(() => ({}));
-        studentClassData = j?.classData || null;
-        if (currentUser) currentUser.class_id = studentClassData?.id || null;
-        if (studentClassData?.id) emitJoinClassRoom('student', USER_TOKEN, studentClassData.id);
+        studentClasses = Array.isArray(j?.classList) ? j.classList : [];
+        currentStudentClassId = j?.classData?.id || currentStudentClassId;
+        syncStudentClassSelection(false);
+        studentClasses.forEach(cls => {
+          if (cls?.id) emitJoinClassRoom('student', USER_TOKEN, cls.id);
+        });
       } catch {
+        studentClasses = [];
         studentClassData = null;
+        currentStudentClassId = null;
       }
       return studentClassData;
     }
@@ -2430,13 +2568,14 @@ print("Hello " + name)
 
     function getCurrentClassContext() {
       if (TEACHER_TOKEN) return teacherClasses.find(c => c.id === currentTeacherClassId) || null;
-      return studentClassData || null;
+      return studentClasses.find(c => c.id === getSelectedStudentClassId()) || studentClassData || null;
     }
 
     function updateTeacherStreamPaneVisibility() {
       const classCtx = getCurrentClassContext();
       const isStudentInClass = !!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && !!classCtx;
       setTeacherPaneEnabled(isStudentInClass);
+      updateTeacherStreamToggleState();
       if (isStudentInClass) syncEditorLanguage(currentOpenFile?.name || '');
     }
 
@@ -2497,21 +2636,28 @@ print("Hello " + name)
     function renderClassSelector() {
       const wrap = document.getElementById('classSelectorWrap');
       const select = document.getElementById('classSelector');
+      const addCourseBtn = document.getElementById('studentAddCourseBtn');
       const classCtx = getCurrentClassContext();
       if (TEACHER_TOKEN && teacherClasses.length) {
         wrap.style.display = 'inline-flex';
+        wrap.style.alignItems = 'stretch';
         select.innerHTML = teacherClasses.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)} (${escapeHtml(c.join_code)})</option>`).join('');
         select.value = currentTeacherClassId || teacherClasses[0].id;
-      } else if (studentClassData) {
+        if (addCourseBtn) addCourseBtn.style.display = 'none';
+      } else if (studentClasses.length) {
         wrap.style.display = 'inline-flex';
-        select.innerHTML = `<option value="${escapeHtml(studentClassData.id)}">${escapeHtml(studentClassData.name)}</option>`;
-        select.value = studentClassData.id;
+        wrap.style.alignItems = 'stretch';
+        select.innerHTML = studentClasses.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
+        select.value = getSelectedStudentClassId() || studentClasses[0].id;
+        if (addCourseBtn) addCourseBtn.style.display = USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN ? 'inline-flex' : 'none';
       } else {
         wrap.style.display = 'none';
         select.innerHTML = '';
+        if (addCourseBtn) addCourseBtn.style.display = 'none';
       }
       if (TEACHER_TOKEN && classCtx?.id) emitJoinClassRoom('teacher', TEACHER_TOKEN, classCtx.id);
       applyClassTabVisibility();
+      updateTeacherStreamToggleState();
     }
 
     // Append a single line (no embedded newlines) to the shell output with correct coloring.
@@ -2724,11 +2870,21 @@ print("Hello " + name)
             }
           }
         });
+        socket.on('teacher_stream_status', (msg) => {
+          if (!msg?.class_id) return;
+          teacherStreamLiveClasses[msg.class_id] = !!msg.active;
+          const selectedClassId = getCurrentClassContext()?.id;
+          if (selectedClassId === msg.class_id) {
+            updateTeacherStreamToggleState();
+            if (msg.active && teacherPaneEnabled && !teacherPaneOpen) {
+              setTeacherPaneOpen(true);
+            }
+          }
+        });
         socket.on('class_membership_revoked', async () => {
           if (!USER_TOKEN || !currentUser) return;
-          studentClassData = null;
-          currentUser.class_id = null;
-          alert('You were removed from your class by your teacher.');
+          await loadStudentClassData().catch(() => null);
+          alert('Your class access was updated by your teacher.');
           renderClassSelector();
           updateAuthUI();
           await loadAssignments();
@@ -2745,17 +2901,46 @@ print("Hello " + name)
       const nextId = e.target.value;
       if (TEACHER_TOKEN) {
         if (currentTeacherClassId && currentTeacherClassId !== nextId) emitLeaveClassRoom(currentTeacherClassId);
+        if (teacherBroadcastInterval && currentTeacherClassId && currentTeacherClassId !== nextId && socket) {
+          socket.emit('teacher_stream_status', {
+            token: ADMIN_TOKEN || TEACHER_TOKEN,
+            role: ADMIN_TOKEN ? 'admin' : 'teacher',
+            class_id: currentTeacherClassId,
+            active: false
+          });
+        }
         currentTeacherClassId = nextId || null;
         activeAssignmentsClassId = currentTeacherClassId;
         syncTeacherDashboardClassSelectors();
         if (currentTeacherClassId) emitJoinClassRoom('teacher', TEACHER_TOKEN, currentTeacherClassId);
+        if (teacherBroadcastInterval && currentTeacherClassId && socket) {
+          socket.emit('teacher_stream_status', {
+            token: ADMIN_TOKEN || TEACHER_TOKEN,
+            role: ADMIN_TOKEN ? 'admin' : 'teacher',
+            class_id: currentTeacherClassId,
+            active: true
+          });
+        }
         if (!teacherBroadcastInterval && currentTeacherClassId) startTeacherBroadcast();
         refreshActiveStudentsForClass(currentTeacherClassId);
         renderTeacherClassManagement();
         renderClassReports().catch(() => {});
+      } else if (USER_TOKEN) {
+        currentStudentClassId = nextId || null;
+        syncStudentClassSelection();
+        updateTeacherStreamPaneVisibility();
       }
       applyClassTabVisibility();
       loadAssignments();
+    });
+
+    document.getElementById('studentAddCourseBtn')?.addEventListener('click', () => {
+      document.getElementById('assignmentTabBtn')?.click();
+      const input = document.getElementById('joinClassCodeInput');
+      if (input) {
+        input.focus();
+        input.select();
+      }
     });
 
     function isHtmlRuntimeFile(name) {
@@ -3376,7 +3561,10 @@ print("Hello " + name)
       if (!isLoggedIn) {
         hideFileBrowser();
       }
-      if (topJoinClassBtn) topJoinClassBtn.style.display = (currentUser && !studentClassData) ? '' : 'none';
+      if (topJoinClassBtn) {
+        topJoinClassBtn.style.display = currentUser && !TEACHER_TOKEN && !ADMIN_TOKEN ? '' : 'none';
+        topJoinClassBtn.textContent = studentClasses.length ? 'Add Course' : 'Join Class';
+      }
       // Toggle sign-in/sign-out buttons
       if (isLoggedIn) {
         loginBtn.style.display = 'none';
@@ -3483,6 +3671,9 @@ print("Hello " + name)
         USER_TOKEN = null;
         currentUser = null;
         ADMIN_TOKEN = null;
+        studentClasses = [];
+        studentClassData = null;
+        currentStudentClassId = null;
         document.body.classList.add('admin-mode');
         await loadTeacherClasses();
         renderClassSelector();
@@ -3493,6 +3684,8 @@ print("Hello " + name)
         TEACHER_TOKEN = null;
         currentTeacher = null;
         ADMIN_TOKEN = null;
+        teacherClasses = [];
+        currentTeacherClassId = null;
         document.body.classList.remove('admin-mode');
         await loadStudentClassData().catch((err) => {
           console.warn('Failed to refresh student class data after login.', err);
@@ -3567,6 +3760,10 @@ print("Hello " + name)
         await fetch('/api/auth/logout', { method: 'POST', headers: { 'X-User-Token': USER_TOKEN } }).catch(() => {});
         USER_TOKEN = null;
         currentUser = null;
+        studentClasses = [];
+        studentClassData = null;
+        currentStudentClassId = null;
+        teacherStreamLiveClasses = {};
         currentOpenFile = null;
         setRunButtonState(false);
         setCsvMode(false);
@@ -3575,11 +3772,13 @@ print("Hello " + name)
         hideFileBrowser();
       }
       if (TEACHER_TOKEN) {
+        stopTeacherBroadcast();
         await fetch('/api/auth/logout', { method: 'POST', headers: { 'X-Teacher-Token': TEACHER_TOKEN } }).catch(() => {});
         TEACHER_TOKEN = null;
         currentTeacher = null;
         teacherClasses = [];
         currentTeacherClassId = null;
+        teacherStreamLiveClasses = {};
         document.body.classList.remove('admin-mode');
         currentOpenFile = null;
         setRunButtonState(false);
@@ -3587,14 +3786,15 @@ print("Hello " + name)
         editor.setValue('');
         if (typeof updateActiveFileName === 'function') updateActiveFileName();
         hideFileBrowser();
-        stopTeacherBroadcast();
         document.getElementById('teacherDashboardModal').style.display = 'none';
         teacherDashListenersAttached = false;
         stopTeacherDashboardRosterPolling();
       }
       if (ADMIN_TOKEN) {
+        stopTeacherBroadcast();
         ADMIN_TOKEN = null;
         document.body.classList.remove('admin-mode');
+        teacherStreamLiveClasses = {};
         setRunButtonState(false);
         setCsvMode(false);
         document.getElementById('adminSettingsBtn').style.display = 'none';
@@ -3607,7 +3807,6 @@ print("Hello " + name)
         document.getElementById('serverHealthModal').style.display = 'none';
         currentOpenFile = null;
         hideFileBrowser();
-        stopTeacherBroadcast();
         editor.setValue('');
         if (typeof updateActiveFileName === 'function') updateActiveFileName();
       }
@@ -3688,6 +3887,14 @@ print("Hello " + name)
       lastTeacherCodeSnapshot = initialCode;
       lastBroadcastedCode = initialCode;
       try { localStorage.setItem(TEACHER_CODE_KEY, initialCode); } catch(e) {}
+      if (socket) {
+        socket.emit('teacher_stream_status', {
+          token: ADMIN_TOKEN || TEACHER_TOKEN,
+          role: ADMIN_TOKEN ? 'admin' : 'teacher',
+          class_id: classId,
+          active: true
+        });
+      }
       
       teacherBroadcastInterval = setInterval(() => {
         const token = ADMIN_TOKEN || TEACHER_TOKEN;
@@ -3715,8 +3922,17 @@ print("Hello " + name)
     
     function stopTeacherBroadcast() {
       if (teacherBroadcastInterval) {
+        const activeClassId = getCurrentClassContext()?.id;
         clearInterval(teacherBroadcastInterval);
         teacherBroadcastInterval = null;
+        if (socket && activeClassId) {
+          socket.emit('teacher_stream_status', {
+            token: ADMIN_TOKEN || TEACHER_TOKEN,
+            role: ADMIN_TOKEN ? 'admin' : 'teacher',
+            class_id: activeClassId,
+            active: false
+          });
+        }
       }
     }
 
@@ -3734,6 +3950,7 @@ print("Hello " + name)
         btn.textContent = '📡 Streaming: On';
         btn.classList.remove('stop');
       }
+      updateTeacherStreamToggleState();
     });
     
     // Start broadcasting if already logged in (on page refresh)
@@ -4873,10 +5090,12 @@ print("Hello " + name)
               <div id="masterySkillDescription" class="skill-description-panel"></div>
               <div style="font-weight:700; margin-bottom:8px; color:var(--columbia-blue);">Selected Skill Distribution</div>
               <canvas id="masteryTagChart" height="220"></canvas>
+              <div class="chart-legend-note" id="masteryTagLegendNote"></div>
             </div>
             <div class="teacher-panel-card" style="margin-top:10px;">
               <div style="font-weight:700; margin-bottom:8px; color:var(--columbia-blue);">All Skills Overview (Average Mastery)</div>
               <canvas id="masterySummaryChart" height="220"></canvas>
+              <div class="chart-legend-note" id="masterySummaryLegendNote"></div>
               <div id="masteryAverageText" style="margin-top:10px; font-size:12px; color:var(--theme-text);"></div>
             </div>
           </div>
@@ -4941,6 +5160,13 @@ print("Hello " + name)
       const tagData = currentMasteryData?.analytics?.tags?.[selectedTag] || {};
       const summary = currentMasteryData?.analytics?.summary || {};
       const skillDescriptions = currentMasteryData?.skillDescriptions || {};
+      const legendItems = [
+        { label: 'Red', color: '#d32f2f' },
+        { label: 'Bronze', color: '#cd7f32' },
+        { label: 'Silver', color: '#c0c0c0' },
+        { label: 'Gold', color: '#ffd700' },
+        { label: 'Untested', color: '#555' }
+      ];
       const descriptionEl = document.getElementById('masterySkillDescription');
       if (descriptionEl) {
         descriptionEl.textContent = selectedTag
@@ -4958,6 +5184,14 @@ print("Hello " + name)
         const avg = values.length ? (values.reduce((sum, n) => sum + n, 0) / values.length) : null;
         averageText.textContent = `Average mastery across all skills: ${avg === null ? 'No scored data yet' : `${avg.toFixed(1)}%`}`;
       }
+      const setLegendNote = (elementId, includeUntested = true) => {
+        const legendEl = document.getElementById(elementId);
+        if (!legendEl) return;
+        const items = includeUntested ? legendItems : legendItems.filter(item => item.label !== 'Untested');
+        legendEl.innerHTML = items.map(item => `
+          <span><i class="chart-legend-swatch" style="background:${item.color};"></i>${item.label}</span>
+        `).join('');
+      };
       const createPie = (canvasId, payload, includeUntested = true, existingChartRef = null) => {
         const ctx = document.getElementById(canvasId)?.getContext('2d');
         if (!ctx || !window.Chart) return existingChartRef;
@@ -4967,6 +5201,7 @@ print("Hello " + name)
           ? [payload.red || 0, payload.bronze || 0, payload.silver || 0, payload.gold || 0, payload.untested || 0]
           : [payload.red || 0, payload.bronze || 0, payload.silver || 0, payload.gold || 0];
         const colors = includeUntested ? ['#d32f2f', '#cd7f32', '#c0c0c0', '#ffd700', '#555'] : ['#d32f2f', '#cd7f32', '#c0c0c0', '#ffd700'];
+        const legendColor = document.body.classList.contains('light-mode') ? '#1a2030' : '#f5f5f5';
         return new Chart(ctx, {
           type: 'pie',
           data: { labels, datasets: [{ data: values, backgroundColor: colors }] },
@@ -4974,12 +5209,20 @@ print("Hello " + name)
             plugins: {
               legend: {
                 position: 'bottom',
-                labels: { color: '#f5f5f5' }
+                labels: {
+                  color: legendColor,
+                  font: { size: 13, weight: '700' },
+                  padding: 16,
+                  usePointStyle: true,
+                  pointStyle: 'circle'
+                }
               }
             }
           }
         });
       };
+      setLegendNote('masteryTagLegendNote', true);
+      setLegendNote('masterySummaryLegendNote', false);
       masteryTagChart = createPie('masteryTagChart', tagData, true, masteryTagChart);
       masterySummaryChart = createPie('masterySummaryChart', summary, false, masterySummaryChart);
     }
@@ -4988,6 +5231,13 @@ print("Hello " + name)
       if (!currentMasteryData || !window.jspdf?.jsPDF) return;
       const { jsPDF } = window.jspdf;
       const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+      const legendItems = [
+        { label: 'Red', color: [211, 47, 47] },
+        { label: 'Bronze', color: [205, 127, 50] },
+        { label: 'Silver', color: [160, 160, 160] },
+        { label: 'Gold', color: [255, 215, 0] },
+        { label: 'Untested', color: [85, 85, 85] }
+      ];
       const margin = 42;
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
@@ -5043,6 +5293,27 @@ print("Hello " + name)
           console.warn('Failed to add chart image to PDF report.', err);
         }
       };
+      const drawLegend = (includeUntested = true) => {
+        const items = includeUntested ? legendItems : legendItems.filter(item => item.label !== 'Untested');
+        ensureSpace(22 + (Math.ceil(items.length / 2) * 16));
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(10);
+        doc.setTextColor(30);
+        doc.text('Legend', margin, y);
+        y += 12;
+        items.forEach((item, index) => {
+          const col = index % 2;
+          const row = Math.floor(index / 2);
+          const baseX = margin + (col * 170);
+          const baseY = y + (row * 16);
+          doc.setFillColor(...item.color);
+          doc.rect(baseX, baseY - 8, 10, 10, 'F');
+          doc.setTextColor(30);
+          doc.setFont('helvetica', 'normal');
+          doc.text(item.label, baseX + 16, baseY);
+        });
+        y += (Math.ceil(items.length / 2) * 16) + 8;
+      };
       const drawTableHeader = (headers) => {
         ensureSpace(24);
         doc.setFillColor(230, 238, 248);
@@ -5081,6 +5352,7 @@ print("Hello " + name)
         doc.text(descriptionLines, margin + 8, y + 24);
         y += 76;
         drawChartImage('masteryTagChart', 250, 190);
+        drawLegend(true);
         drawTableHeader(['Student', 'Mastery Score']);
         students.forEach(student => {
           const score = student?.skillScores?.[tag];
@@ -5100,6 +5372,7 @@ print("Hello " + name)
         doc.text(`Average Mastery: ${avg}`, margin, y);
         y += 18;
         drawChartImage('masterySummaryChart', 250, 190);
+        drawLegend(false);
         drawTableHeader(['Student', 'Average Skill Mastery']);
         students.forEach(student => {
           const skillVals = Object.values(student?.skillScores || {}).filter(v => v !== null && v !== undefined).map(Number);
@@ -6339,18 +6612,24 @@ print("Hello " + name)
       const pastList = document.getElementById('studentPastAssignmentList');
       const notice = document.getElementById('studentAccountNotice');
       const joinPanel = document.getElementById('joinClassPanel');
+      const joinPanelTitle = document.getElementById('joinClassPanelTitle');
+      const joinClassBtn = document.getElementById('joinClassBtn');
       const files = flattenFiles(_allFileTree || []);
       const canSubmit = !!USER_TOKEN && !!currentUser;
       const joinedClass = !!studentClassData;
+      const selectedClassId = getSelectedStudentClassId();
       notice.textContent = canSubmit
         ? (joinedClass
-          ? `Signed in as ${currentUser.name || currentUser.email}. Class: ${studentClassData.name}. Choose a file from your account when you submit an assignment.`
+          ? `Signed in as ${currentUser.name || currentUser.email}. Current course: ${studentClassData.name}. Use the class selector to switch courses or add another one.`
           : `Signed in as ${currentUser.name || currentUser.email}. Join a class with a code to view class assignments.`)
         : 'Sign in with a student account to submit assignment files and view your scores.';
-      if (joinPanel) joinPanel.style.display = canSubmit && !joinedClass ? '' : 'none';
+      if (joinPanel) joinPanel.style.display = canSubmit ? '' : 'none';
+      if (joinPanelTitle) joinPanelTitle.textContent = joinedClass ? 'Add Course' : 'Join Class';
+      if (joinClassBtn) joinClassBtn.textContent = joinedClass ? 'Add Course' : 'Join Class';
 
-      const activeAssignments = currentAssignments.filter(a => a.active);
-      const pastAssignments = currentAssignments.filter(a => !a.active);
+      const visibleAssignments = (currentAssignments || []).filter(a => !selectedClassId || a.targetClassId === selectedClassId);
+      const activeAssignments = visibleAssignments.filter(a => a.active);
+      const pastAssignments = visibleAssignments.filter(a => !a.active);
 
       function scoreBadge(a) {
         const s = a.studentSubmissionSummary;
@@ -6367,7 +6646,7 @@ print("Hello " + name)
       }
 
       if (!activeAssignments.length) {
-        activeList.innerHTML = '<p style="color:#888;">No active assignments.</p>';
+        activeList.innerHTML = `<p style="color:#888;">${joinedClass ? 'No active assignments for this class.' : 'Join a class to see active assignments.'}</p>`;
       } else {
         activeList.innerHTML = activeAssignments.map(a => `
           <div class="assignment-card">
@@ -6389,7 +6668,7 @@ print("Hello " + name)
       }
 
       if (!pastAssignments.length) {
-        pastList.innerHTML = '<p style="color:#888;">No past assignments.</p>';
+        pastList.innerHTML = `<p style="color:#888;">${joinedClass ? 'No past assignments for this class.' : 'Join a class to see previous assignments.'}</p>`;
       } else {
         pastList.innerHTML = pastAssignments.map(a => `
           <div class="assignment-card" style="opacity:0.85;">
@@ -6481,11 +6760,16 @@ print("Hello " + name)
           status.style.color = '#ef5350';
           return;
         }
-        studentClassData = j.classData || null;
-        if (studentClassData?.id) emitJoinClassRoom('student', USER_TOKEN, studentClassData.id);
-        status.textContent = `Joined ${studentClassData?.name || 'class'} successfully.`;
+        studentClasses = Array.isArray(j?.classList) ? j.classList : [];
+        currentStudentClassId = j?.classData?.id || currentStudentClassId;
+        syncStudentClassSelection();
+        studentClasses.forEach(cls => {
+          if (cls?.id) emitJoinClassRoom('student', USER_TOKEN, cls.id);
+        });
+        status.textContent = `Added ${studentClassData?.name || 'course'} successfully.`;
         status.style.color = '#4caf50';
         renderClassSelector();
+        updateTeacherStreamPaneVisibility();
         updateAuthUI();
         await loadAssignments();
       } catch {
@@ -6526,10 +6810,14 @@ print("Hello " + name)
           <textarea id="modalAssignmentTask" placeholder="Describe what students need to do...">${escapeHtml(existingAssignment?.task || '')}</textarea>
           <label>Max Score (Code)</label>
           <input type="number" id="modalAssignmentMaxScore" value="${existingAssignment?.maxScore || 100}" min="1" />
-          <label style="display:flex; align-items:center; gap:8px; margin-top:8px;">
-            <input type="checkbox" id="modalAssignmentAllowFileSubmission" ${existingAssignment?.allowFileSubmission === false ? '' : 'checked'}>
-            Enable file submissions
-          </label>
+          <label style="margin-bottom:2px;">Assignment Options</label>
+          <div class="assignment-option-card">
+            <label class="option-title">
+              <input type="checkbox" id="modalAssignmentAllowFileSubmission" ${existingAssignment?.allowFileSubmission === false ? '' : 'checked'}>
+              <span>Students upload a code file for this assignment</span>
+            </label>
+            <div class="option-help">Turn this off for quiz-only assignments so students only answer the questions below.</div>
+          </div>
           ${TEACHER_TOKEN ? `
           <label>Class</label>
           <select id="modalAssignmentClassId" style="width:100%; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;">
@@ -6538,11 +6826,13 @@ print("Hello " + name)
           <label>Skill Tags (covered by this assignment)</label>
           <div id="modalAssignmentSkillTags" style="border:1px solid var(--theme-border-mid); border-radius:8px; padding:8px; max-height:180px; overflow:auto;">
             ${availableSkills.length ? availableSkills.map(skill => `
-              <label style="display:block; margin-bottom:8px; font-size:12px;">
-                <input type="checkbox" class="modal-skill-check" value="${escapeHtml(skill.name)}" ${selectedTags.includes(skill.name) ? 'checked' : ''}>
-                <strong>${escapeHtml(skill.name)}</strong>
-                <div style="color:var(--theme-text-dim); margin-left:20px;">${escapeHtml(skill.description || '')}</div>
-              </label>
+              <div class="assignment-option-card" style="margin-bottom:8px;">
+                <label class="option-title">
+                  <input type="checkbox" class="modal-skill-check" value="${escapeHtml(skill.name)}" ${selectedTags.includes(skill.name) ? 'checked' : ''}>
+                  <strong>${escapeHtml(skill.name)}</strong>
+                </label>
+                <div class="option-help">${escapeHtml(skill.description || 'Track this skill with the assignment score.')}</div>
+              </div>
             `).join('') : '<div style="color:#888; font-size:12px;">No skills created yet. Add skills in the Skills dashboard page.</div>'}
           </div>
           <label>Quiz Max Submissions (0 = unlimited)</label>
