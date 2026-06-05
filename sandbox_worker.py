@@ -56,6 +56,7 @@ BLOCKED_OS_CALLS = (
     "spawnvp",
     "spawnvpe",
 )
+GUARDED_OS_PATH_CALLS = ("listdir", "scandir", "walk", "readlink", "remove", "unlink", "rmdir", "removedirs", "mkdir", "makedirs", "chdir")
 
 
 class PathPolicy:
@@ -65,10 +66,10 @@ class PathPolicy:
         self.allowed_root = str(Path(allowed_root).resolve())
 
     def normalize(self, target: Any) -> str:
-        target_path = Path(os.fspath(target))
-        if not target_path.is_absolute():
-            target_path = (Path.cwd() / target_path).resolve(strict=False)
-        return str(target_path.resolve(strict=False))
+        target_path = os.fspath(target)
+        if not os.path.isabs(target_path):
+            target_path = os.path.join(str(Path.cwd()), target_path)
+        return os.path.realpath(os.path.abspath(target_path))
 
     def assert_allowed(self, normalized_path: str, original: Any) -> None:
         try:
@@ -159,7 +160,7 @@ def _harden_os_module(module: Any, policy: PathPolicy) -> None:
         if hasattr(module, fn_name):
             setattr(module, fn_name, _blocked_call)
 
-    for fn_name in ("listdir", "scandir", "walk", "readlink", "remove", "unlink", "rmdir", "removedirs", "mkdir", "makedirs", "chdir"):
+    for fn_name in GUARDED_OS_PATH_CALLS:
         if hasattr(module, fn_name):
             setattr(module, fn_name, _guarded_os_path_call(policy, fn_name))
     if hasattr(module, "rename"):
@@ -181,18 +182,6 @@ def _safe_input(prompt: Any = "") -> str:
     return user_input
 
 
-def _safe_globals() -> dict[str, Any]:
-    frame = sys._getframe(1)
-    g = frame.f_globals
-    return {k: v for k, v in g.items() if k != "__builtins__"}
-
-
-def _safe_vars(obj: Any = None):
-    if obj is None:
-        return _safe_globals()
-    return _builtins.vars(obj)
-
-
 def _apply_resource_limits() -> None:
     try:
         import resource
@@ -208,8 +197,6 @@ def _build_safe_builtins(policy: PathPolicy) -> dict[str, Any]:
     safe["open"] = SafeOpen(policy)
     safe["__import__"] = SafeImport(policy)
     safe["input"] = _safe_input
-    safe["globals"] = _safe_globals
-    safe["vars"] = _safe_vars
     return safe
 
 
@@ -222,7 +209,7 @@ def main() -> int:
     try:
         user_code = code_path.read_text(encoding="utf-8", errors="replace")
     except Exception as exc:
-        print(f"Failed to read code: {exc}", file=sys.stderr)
+        print(f"Failed to read code from {code_path}: {exc}", file=sys.stderr)
         return 1
 
     policy = PathPolicy(allowed_root)
