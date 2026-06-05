@@ -285,13 +285,17 @@
     .file-tree-item{ display:flex; align-items:center; gap:6px; padding:6px 12px; cursor:pointer; user-select:none; white-space:nowrap; border-radius:6px; margin:1px 4px; transition:background 0.1s; color:var(--theme-text); }
     .file-tree-item:hover{ background:rgba(165,200,240,0.12); }
     .file-tree-item.active{ background:#1e2a3a; color:var(--columbia-blue); }
+    .file-tree-item.selected{ background:rgba(63,111,166,0.35); }
     .file-tree-item.drag-over{ background:rgba(165,200,240,0.25); border:1px dashed var(--columbia-blue); }
+    .file-select-checkbox{ width:16px; height:16px; accent-color:#c62828; cursor:pointer; flex-shrink:0; }
     .file-tree-item .icon{ font-size:16px; flex-shrink:0; }
     .file-tree-item .fname{ flex:1; overflow:hidden; text-overflow:ellipsis; }
     .file-tree-children{ padding-left:14px; }
     .file-sidebar-breadcrumb{ padding:6px 10px; font-size:12px; color:var(--theme-text-dim); background:rgba(0,0,0,0.1); border-bottom:1px solid var(--theme-border-mid); display:flex; align-items:center; gap:6px; flex-wrap:wrap; min-height:30px; }
     .file-sidebar-breadcrumb .crumb{ cursor:pointer; color:var(--columbia-blue); } .file-sidebar-breadcrumb .crumb:hover{ text-decoration:underline; }
-    .file-sidebar-actions{ padding:8px; border-top:1px solid var(--theme-border-mid); display:flex; gap:6px; flex-wrap:wrap; background:rgba(0,0,0,0.08); }
+    .file-sidebar-actions{ padding:8px; border-top:1px solid var(--theme-border-mid); display:flex; gap:8px; justify-content:space-between; align-items:center; flex-wrap:wrap; background:rgba(0,0,0,0.08); }
+    .file-sidebar-actions-left{ display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+    .file-sidebar-actions-right{ margin-left:auto; font-size:12px; color:var(--columbia-blue); font-weight:700; white-space:nowrap; }
     .submission-scoring-panel{ padding:12px; border-top:1px solid var(--theme-border-mid); background:var(--theme-output-bg); display:flex; flex-direction:column; gap:10px; }
     .submission-scoring-panel h4{ margin:0; color:var(--columbia-blue); font-size:14px; }
     .submission-scoring-line{ display:block; line-height:1.3; }
@@ -385,6 +389,8 @@
     }
     .file-action-btn{ border:0; border-radius:8px; padding:8px 10px; font-weight:700; cursor:pointer; background:var(--theme-btn); color:var(--theme-text); box-shadow:0 1px 4px rgba(0,0,0,.3); transition:background .15s; font-size:12px; display:inline-flex; align-items:center; gap:5px; }
     .file-action-btn:hover{ background:var(--theme-btn-hover); }
+    .file-action-btn.danger{ background:#5a1b1b; color:#ffb3b3; }
+    .file-action-btn.danger:hover{ background:#712626; }
 
     /* Guest badge */
     .guest-badge{ background:var(--theme-secondary); color:var(--theme-text-dim); padding:4px 10px; border-radius:999px; font-size:12px; font-weight:600; }
@@ -496,8 +502,8 @@
 
     #classSelectorWrap{
       display:none;
-      flex-direction:column;
-      align-items:stretch;
+      flex-direction:row;
+      align-items:center;
       gap:6px;
       background:var(--theme-tab-bg);
       border:1px solid var(--theme-border);
@@ -509,12 +515,6 @@
       display:flex;
       align-items:center;
       gap:6px;
-    }
-    .student-class-add-btn{
-      width:100%;
-      justify-content:center;
-      font-size:12px;
-      padding:7px 10px;
     }
     .assignment-option-card{
       border:1px solid var(--theme-border-mid);
@@ -890,7 +890,6 @@
     <div class="actions">
       <button class="btn run" id="runBtn">Run ▶</button>
       <button class="btn exception-help-btn" id="exceptionHelpBtn" title="Troubleshooting Assistant" aria-label="Open troubleshooting assistant">🛠️ Help</button>
-      <button class="btn run" id="topJoinClassBtn" style="display:none;">Join Class</button>
       <div class="control-group" id="modeSelectorWrap">
         <span style="font-size:12px; opacity:.85;">Mode</span>
         <select id="languageSelector" style="background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; padding:4px 8px;">
@@ -913,7 +912,6 @@
           <span style="font-size:12px; opacity:.85;">Class</span>
           <select id="classSelector" style="background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; padding:4px 8px; flex:1;"></select>
         </div>
-        <button class="btn secondary student-class-add-btn" id="studentAddCourseBtn" style="display:none;">+ Add Class</button>
       </div>
       <span class="guest-badge" id="guestBadge">Guest</span>
       <button class="btn admin" id="loginBtn" title="Login">Sign In</button>
@@ -968,11 +966,19 @@
             <div id="submissionScoreSaveStatus" class="submission-save-status"></div>
           </div>
           <div class="file-sidebar-actions">
-            <button class="file-action-btn" id="newFileBtn" title="Create a new file">📄 New File</button>
-            <button class="file-action-btn" id="newFolderBtn" title="Create a new folder">📁 New Folder</button>
-            <button class="file-action-btn" id="uploadFileBtn" title="Upload a file from your computer">⬆️ Upload</button>
-            <input type="file" id="sidebarFileInput" accept=".py,.js,.html,.css,.txt,.csv" style="display:none;">
-            <button class="file-action-btn" id="refreshFilesBtn" title="Refresh file list">🔄 Refresh</button>
+            <div class="file-sidebar-actions-left">
+              <button class="file-action-btn" id="newFileBtn" title="Create a new file">📄 New File</button>
+              <button class="file-action-btn" id="newFolderBtn" title="Create a new folder">📁 New Folder</button>
+              <button class="file-action-btn" id="uploadFileBtn" title="Upload a file from your computer">⬆️ Upload</button>
+              <input type="file" id="sidebarFileInput" accept=".py,.js,.html,.css,.txt,.csv" style="display:none;">
+              <button class="file-action-btn" id="refreshFilesBtn" title="Refresh file list">🔄 Refresh</button>
+              <button class="file-action-btn" id="duplicateSelectedBtn" title="Duplicate selected files and folders">📑 Duplicate</button>
+              <button class="file-action-btn danger" id="deleteSelectedBtn" title="Delete selected files and folders">🗑️ Delete</button>
+              <button class="file-action-btn" id="moveSelectedBtn" title="Move selected files and folders">📦 Move</button>
+            </div>
+            <div class="file-sidebar-actions-right">
+              <span id="fileStorageStats">Storage: —</span>
+            </div>
           </div>
         </section>
       </div>
@@ -1649,9 +1655,6 @@
         initTeacherViewer();
         let shouldOpen = false;
         try { shouldOpen = localStorage.getItem(TEACHER_PANE_OPEN_KEY) === '1'; } catch {}
-        if (!shouldOpen && getCurrentClassContext()?.id && teacherStreamLiveClasses[getCurrentClassContext().id]) {
-          shouldOpen = true;
-        }
         setTeacherPaneOpen(shouldOpen, false);
       }
       updateTeacherStreamToggleState();
@@ -2679,27 +2682,28 @@ print("Hello " + name)
       updateTeacherStreamPaneVisibility();
     }
 
+    const CLASS_SELECTOR_ADD_OPTION_VALUE = '__add_class__';
+
     function renderClassSelector() {
       const wrap = document.getElementById('classSelectorWrap');
       const select = document.getElementById('classSelector');
-      const addCourseBtn = document.getElementById('studentAddCourseBtn');
       const classCtx = getCurrentClassContext();
       if (TEACHER_TOKEN && teacherClasses.length) {
         wrap.style.display = 'inline-flex';
         wrap.style.alignItems = 'stretch';
         select.innerHTML = teacherClasses.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)} (${escapeHtml(c.join_code)})</option>`).join('');
         select.value = currentTeacherClassId || teacherClasses[0].id;
-        if (addCourseBtn) addCourseBtn.style.display = 'none';
       } else if (studentClasses.length) {
         wrap.style.display = 'inline-flex';
         wrap.style.alignItems = 'stretch';
-        select.innerHTML = studentClasses.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
+        select.innerHTML = [
+          ...studentClasses.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`),
+          `<option value="${CLASS_SELECTOR_ADD_OPTION_VALUE}">+ Add Class</option>`
+        ].join('');
         select.value = getSelectedStudentClassId() || studentClasses[0].id;
-        if (addCourseBtn) addCourseBtn.style.display = USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN ? 'inline-flex' : 'none';
       } else {
         wrap.style.display = 'none';
         select.innerHTML = '';
-        if (addCourseBtn) addCourseBtn.style.display = 'none';
       }
       if (TEACHER_TOKEN && classCtx?.id) emitJoinClassRoom('teacher', TEACHER_TOKEN, classCtx.id);
       applyClassTabVisibility();
@@ -2924,9 +2928,6 @@ print("Hello " + name)
           const selectedClassId = getCurrentClassContext()?.id;
           if (selectedClassId === msg.class_id) {
             updateTeacherStreamToggleState();
-            if (msg.active && teacherPaneEnabled && !teacherPaneOpen) {
-              setTeacherPaneOpen(true);
-            }
           }
         });
         socket.on('class_membership_revoked', async (msg) => {
@@ -2984,21 +2985,22 @@ print("Hello " + name)
         renderTeacherClassManagement();
         renderClassReports().catch(() => {});
       } else if (USER_TOKEN) {
+        if (nextId === CLASS_SELECTOR_ADD_OPTION_VALUE) {
+          document.getElementById('assignmentTabBtn')?.click();
+          const input = document.getElementById('joinClassCodeInput');
+          if (input) {
+            input.focus();
+            input.select();
+          }
+          renderClassSelector();
+          return;
+        }
         currentStudentClassId = nextId || null;
         syncStudentClassSelection();
         updateTeacherStreamPaneVisibility();
       }
       applyClassTabVisibility();
       loadAssignments();
-    });
-
-    document.getElementById('studentAddCourseBtn')?.addEventListener('click', () => {
-      document.getElementById('assignmentTabBtn')?.click();
-      const input = document.getElementById('joinClassCodeInput');
-      if (input) {
-        input.focus();
-        input.select();
-      }
     });
 
     function isHtmlRuntimeFile(name) {
@@ -3608,7 +3610,6 @@ print("Hello " + name)
       const serverHealthBtn = document.getElementById('serverHealthBtn');
       const streamingToggleBtn = document.getElementById('streamingToggleBtn');
       const modeWrap = document.getElementById('modeSelectorWrap');
-      const topJoinClassBtn = document.getElementById('topJoinClassBtn');
       const isLoggedIn = isAuthenticated();
       document.body.classList.toggle('guest-mode', !isLoggedIn);
       document.body.classList.toggle('admin-owner', !!ADMIN_TOKEN);
@@ -3618,10 +3619,6 @@ print("Hello " + name)
       if (workspaceFilesTabBtn) workspaceFilesTabBtn.style.display = isLoggedIn ? '' : 'none';
       if (!isLoggedIn) {
         hideFileBrowser();
-      }
-      if (topJoinClassBtn) {
-        topJoinClassBtn.style.display = currentUser && !TEACHER_TOKEN && !ADMIN_TOKEN ? '' : 'none';
-        topJoinClassBtn.textContent = studentClasses.length ? 'Add Class' : 'Join Class';
       }
       // Toggle sign-in/sign-out buttons
       if (isLoggedIn) {
@@ -3755,6 +3752,7 @@ print("Hello " + name)
           alert('Signed in, but class data failed to load. Please refresh the page and try again.');
           return null;
         });
+        setTeacherPaneOpen(false);
       }
       saveAuthSession();
       closeLoginModal();
@@ -3909,6 +3907,7 @@ print("Hello " + name)
           alert('Account created, but class data failed to load. Please refresh the page and try again.');
           return null;
         });
+        setTeacherPaneOpen(false);
         saveAuthSession();
         closeLoginModal();
         updateAuthUI();
@@ -5630,6 +5629,7 @@ print("Hello " + name)
     // ---- File Browser ----
     let _currentFolderPath = ''; // '' = root
     let _allFileTree = [];       // full flat tree from server
+    let _selectedFileItems = new Set();
     const WORKSPACE_TAB_EDITOR = 'editor';
     const WORKSPACE_TAB_FILES = 'files';
     let _workspaceTab = WORKSPACE_TAB_EDITOR;
@@ -5697,6 +5697,44 @@ print("Hello " + name)
       return folder ? (folder.children || []) : [];
     }
 
+    function _collectTreePaths(items, out = new Set()) {
+      for (const item of (items || [])) {
+        if (!item?.path) continue;
+        out.add(item.path);
+        if (item.type === 'folder' && Array.isArray(item.children)) _collectTreePaths(item.children, out);
+      }
+      return out;
+    }
+
+    function _getAllFolders(items, depth = 0, out = []) {
+      for (const item of (items || [])) {
+        if (item?.type !== 'folder') continue;
+        out.push({ path: item.path, name: item.name, depth });
+        if (Array.isArray(item.children)) _getAllFolders(item.children, depth + 1, out);
+      }
+      return out;
+    }
+
+    async function refreshFileStorageStats() {
+      const statsEl = document.getElementById('fileStorageStats');
+      if (!statsEl) return;
+      if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) {
+        statsEl.textContent = 'Storage: —';
+        return;
+      }
+      try {
+        const res = await fetch('/api/files/storage', { headers: fileAuthHeaders() });
+        const j = await res.json().catch(() => ({}));
+        if (!j?.ok) throw new Error(j?.error || 'Storage request failed');
+        const used = Number(j.used_bytes || 0);
+        const limit = Number(j.limit_bytes || 0);
+        const remaining = Math.max(0, limit - used);
+        statsEl.textContent = `Used ${_formatBytes(used)} • Remaining ${_formatBytes(remaining)}`;
+      } catch {
+        statsEl.textContent = 'Storage: unavailable';
+      }
+    }
+
     async function loadFileTree() {
       if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return;
       const res = await fetch('/api/files/list', { headers: fileAuthHeaders() });
@@ -5715,7 +5753,12 @@ print("Hello " + name)
         return;
       }
       _allFileTree = j.files || [];
+      const existingPaths = _collectTreePaths(_allFileTree);
+      for (const path of _selectedFileItems) {
+        if (!existingPaths.has(path)) _selectedFileItems.delete(path);
+      }
       renderCurrentFolder();
+      refreshFileStorageStats();
     }
 
     function renderCurrentFolder() {
@@ -5765,15 +5808,22 @@ print("Hello " + name)
       const ul = document.createElement('div');
       items.forEach(item => {
         const row = document.createElement('div');
-        row.className = 'file-tree-item' + (currentOpenFile?.path === item.path ? ' active' : '');
+        const isSelected = _selectedFileItems.has(item.path);
+        row.className = 'file-tree-item' + (currentOpenFile?.path === item.path ? ' active' : '') + (isSelected ? ' selected' : '');
         row.style.paddingLeft = (12 + depth * 14) + 'px';
         row.draggable = true;
         row.dataset.path = item.path;
         row.dataset.type = item.type;
         row.dataset.name = item.name;
+        row.dataset.selected = isSelected ? '1' : '0';
 
         const icon = document.createElement('span');
         icon.className = 'icon';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'file-select-checkbox';
+        checkbox.checked = isSelected;
+        checkbox.setAttribute('aria-label', `Select ${item.name}`);
         const fname = document.createElement('span');
         fname.className = 'fname';
         fname.title = item.name;
@@ -5794,8 +5844,16 @@ print("Hello " + name)
             item.name.endsWith('.csv') ? '📊' : '📄';
         }
 
+        row.appendChild(checkbox);
         row.appendChild(icon);
         row.appendChild(fname);
+
+        checkbox.addEventListener('click', (e) => e.stopPropagation());
+        checkbox.addEventListener('change', () => {
+          if (checkbox.checked) _selectedFileItems.add(item.path);
+          else _selectedFileItems.delete(item.path);
+          renderCurrentFolder();
+        });
 
         // Click: open file or enter folder
         row.addEventListener('click', (e) => {
@@ -5872,6 +5930,140 @@ print("Hello " + name)
       } else {
         alert(j.error || 'Move failed');
       }
+    }
+
+    function getSelectedTreeItems() {
+      const items = [];
+      for (const path of _selectedFileItems) {
+        const found = _findItemByPath(_allFileTree, path);
+        if (found) items.push(found);
+      }
+      return items;
+    }
+
+    async function duplicateSelectedItems() {
+      const selected = getSelectedTreeItems();
+      if (!selected.length) {
+        alert('Select at least one file or folder to duplicate.');
+        return;
+      }
+      const failures = [];
+      for (const item of selected) {
+        try {
+          const res = await fetch('/api/files/duplicate', {
+            method: 'POST',
+            headers: fileJsonHeaders(),
+            body: JSON.stringify({ src: item.path })
+          });
+          const j = await res.json().catch(() => ({}));
+          if (!j?.ok) failures.push(`${item.name}: ${j?.error || 'Duplicate failed'}`);
+        } catch {
+          failures.push(`${item.name}: Network error`);
+        }
+      }
+      await loadFileTree();
+      if (failures.length) alert(`Some items could not be duplicated:\n\n${failures.join('\n')}`);
+    }
+
+    async function deleteSelectedItems() {
+      const selected = getSelectedTreeItems();
+      if (!selected.length) {
+        alert('Select at least one file or folder to delete.');
+        return;
+      }
+      if (!confirm(`Delete ${selected.length} selected item(s)?`)) return;
+      const failures = [];
+      for (const item of selected) {
+        try {
+          const res = await fetch('/api/files/delete', {
+            method: 'DELETE',
+            headers: fileJsonHeaders(),
+            body: JSON.stringify({ path: item.path })
+          });
+          const j = await res.json().catch(() => ({}));
+          if (!j?.ok) failures.push(`${item.name}: ${j?.error || 'Delete failed'}`);
+        } catch {
+          failures.push(`${item.name}: Network error`);
+        }
+      }
+      _selectedFileItems.clear();
+      await loadFileTree();
+      if (failures.length) alert(`Some items could not be deleted:\n\n${failures.join('\n')}`);
+    }
+
+    function pickMoveDestination(folders, excludedPaths) {
+      return new Promise((resolve) => {
+        const modal = document.createElement('div');
+        modal.className = 'modal';
+        const options = folders
+          .filter(f => !excludedPaths.has(f.path))
+          .map(f => `<option value="${escapeHtml(f.path)}">${escapeHtml(`${'↳ '.repeat(Math.max(0, f.depth))}${f.path || '/'}`)}</option>`)
+          .join('');
+        modal.innerHTML = `
+          <div class="modal-content" style="max-width:560px;">
+            <h3 style="margin-top:0;">Move selected items</h3>
+            <p style="margin:0 0 10px; color:var(--theme-text-dim); font-size:13px;">Choose a destination folder.</p>
+            <select id="moveItemsTargetFolder" style="width:100%; padding:10px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;">
+              <option value="">/</option>
+              ${options}
+            </select>
+            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:12px;">
+              <button class="btn secondary" id="moveItemsCancelBtn">Cancel</button>
+              <button class="btn run" id="moveItemsConfirmBtn">Move</button>
+            </div>
+          </div>
+        `;
+        document.body.appendChild(modal);
+        const cleanup = (value) => {
+          modal.remove();
+          resolve(value);
+        };
+        modal.addEventListener('click', (e) => { if (e.target === modal) cleanup(null); });
+        modal.querySelector('#moveItemsCancelBtn')?.addEventListener('click', () => cleanup(null));
+        modal.querySelector('#moveItemsConfirmBtn')?.addEventListener('click', () => {
+          const val = modal.querySelector('#moveItemsTargetFolder')?.value ?? null;
+          cleanup(val);
+        });
+      });
+    }
+
+    async function moveSelectedItems() {
+      const selected = getSelectedTreeItems();
+      if (!selected.length) {
+        alert('Select at least one file or folder to move.');
+        return;
+      }
+      const folders = _getAllFolders(_allFileTree);
+      const selectedFolders = new Set(selected.filter(item => item.type === 'folder').map(item => item.path));
+      const destination = await pickMoveDestination(folders, selectedFolders);
+      if (destination == null) return;
+
+      const selectedPaths = selected.map(item => item.path);
+      const pathDepth = new Map(selectedPaths.map(path => [path, path.split('/').length]));
+      // Process parents before children to avoid cascading path conflicts after parent moves.
+      selectedPaths.sort((a, b) => (pathDepth.get(a) || 0) - (pathDepth.get(b) || 0));
+
+      const failures = [];
+      for (const srcPath of selectedPaths) {
+        if (destination && (srcPath === destination || destination.startsWith(srcPath + '/'))) {
+          failures.push(`${srcPath}: Cannot move a folder into itself or a subfolder.`);
+          continue;
+        }
+        try {
+          const res = await fetch('/api/files/move', {
+            method: 'POST',
+            headers: fileJsonHeaders(),
+            body: JSON.stringify({ src: srcPath, dest: destination || '' })
+          });
+          const j = await res.json().catch(() => ({}));
+          if (!j?.ok) failures.push(`${srcPath}: ${j?.error || 'Move failed'}`);
+        } catch {
+          failures.push(`${srcPath}: Network error`);
+        }
+      }
+      _selectedFileItems.clear();
+      await loadFileTree();
+      if (failures.length) alert(`Some items could not be moved:\n\n${failures.join('\n')}`);
     }
 
     // Save the currently open file (if any).
@@ -6096,6 +6288,9 @@ print("Hello " + name)
     });
 
     document.getElementById('refreshFilesBtn').addEventListener('click', loadFileTree);
+    document.getElementById('deleteSelectedBtn')?.addEventListener('click', deleteSelectedItems);
+    document.getElementById('duplicateSelectedBtn')?.addEventListener('click', duplicateSelectedItems);
+    document.getElementById('moveSelectedBtn')?.addEventListener('click', moveSelectedItems);
 
     // Home controls (admin)
     document.getElementById('notesEditBtn').addEventListener('click', () => {
@@ -6941,15 +7136,6 @@ print("Hello " + name)
       } catch {
         status.textContent = 'Network error.';
         status.style.color = '#ef5350';
-      }
-    });
-
-    document.getElementById('topJoinClassBtn')?.addEventListener('click', () => {
-      document.getElementById('assignmentTabBtn')?.click();
-      const input = document.getElementById('joinClassCodeInput');
-      if (input) {
-        input.focus();
-        input.select();
       }
     });
 
