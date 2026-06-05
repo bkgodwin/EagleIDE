@@ -3561,6 +3561,8 @@ print("Hello " + name)
     document.getElementById('loginBtn').addEventListener('click', () => openLoginModal());
     document.getElementById('signOutBtn')?.addEventListener('click', async () => {
       if (!isAuthenticated()) return;
+      teacherSkills = [];
+      editingSkillId = null;
       if (USER_TOKEN) {
         await fetch('/api/auth/logout', { method: 'POST', headers: { 'X-User-Token': USER_TOKEN } }).catch(() => {});
         USER_TOKEN = null;
@@ -3577,8 +3579,6 @@ print("Hello " + name)
         TEACHER_TOKEN = null;
         currentTeacher = null;
         teacherClasses = [];
-        teacherSkills = [];
-        editingSkillId = null;
         currentTeacherClassId = null;
         document.body.classList.remove('admin-mode');
         currentOpenFile = null;
@@ -4711,7 +4711,9 @@ print("Hello " + name)
     async function renderTeacherSkillsPage() {
       const list = document.getElementById('teacherSkillList');
       if (!list) return;
-      renderSkillClassChecklist(editingSkillId ? (teacherSkills.find(s => s.id === editingSkillId)?.class_ids || []) : []);
+      const editingSkill = editingSkillId ? teacherSkills.find(s => s.id === editingSkillId) : null;
+      const selectedClassIds = editingSkill?.class_ids || [];
+      renderSkillClassChecklist(selectedClassIds);
       if (!teacherSkills.length) {
         list.innerHTML = '<div style="color:#888; font-size:12px;">No skill tags created yet.</div>';
         return;
@@ -5037,7 +5039,9 @@ print("Hello " + name)
           const dataUrl = canvas.toDataURL('image/png');
           doc.addImage(dataUrl, 'PNG', margin, y, width, height);
           y += height + 12;
-        } catch {}
+        } catch (err) {
+          console.warn('Failed to add chart image to PDF report.', err);
+        }
       };
       const drawTableHeader = (headers) => {
         ensureSpace(24);
