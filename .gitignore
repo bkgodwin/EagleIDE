@@ -28,3 +28,9 @@ assignments/
 challenge_scores.json
 user_files/
 users.json
+classes.json
+.admin_key
+server.log
+server_events.json
+server_state.json
+sign_in_events.json
