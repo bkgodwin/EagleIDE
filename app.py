@@ -382,6 +382,42 @@ def _find_user(email: str) -> Optional[dict]:
     return None
 
 
+def _upgrade_legacy_password_if_needed(email: str, password: str) -> None:
+    """Upgrade legacy plaintext password field to bcrypt hash."""
+    users_data = _load_users()
+    changed = False
+    for u in users_data.get("users", []):
+        if (u.get("email") or "").lower() != (email or "").lower():
+            continue
+        legacy_password = u.get("password")
+        if not isinstance(legacy_password, str):
+            break
+        if legacy_password != password:
+            break
+        u["password_hash"] = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        u.pop("password", None)
+        changed = True
+        break
+    if changed:
+        _save_users(users_data)
+
+
+def _verify_user_password(user: dict, password: str) -> bool:
+    """Verify bcrypt password_hash and support legacy plaintext password values."""
+    password_hash = user.get("password_hash")
+    if isinstance(password_hash, str) and password_hash:
+        try:
+            if bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8")):
+                return True
+        except Exception:
+            pass
+    legacy_password = user.get("password")
+    if isinstance(legacy_password, str) and legacy_password == password:
+        _upgrade_legacy_password_if_needed(user.get("email", ""), password)
+        return True
+    return False
+
+
 def _load_classes() -> dict:
     with _classes_lock:
         if CLASSES_FILE.exists():
@@ -1096,10 +1132,7 @@ def auth_login():
     if not user.get("enabled", True):
         return jsonify(ok=False, error="Account is disabled"), 403
     
-    try:
-        pw_ok = bcrypt.checkpw(password.encode("utf-8"), user["password_hash"].encode("utf-8"))
-    except Exception:
-        pw_ok = False
+    pw_ok = _verify_user_password(user, password)
     
     if not pw_ok:
         return jsonify(ok=False, error="Invalid email or password"), 401
