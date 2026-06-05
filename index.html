@@ -455,7 +455,8 @@
     .editor-content-stack.teacher-stream-enabled.teacher-stream-open .teacher-stream-pane{
       display:block;
       min-height:0;
-      overflow:auto;
+      overflow-y:auto;
+      overflow-x:hidden;
       border-top:1px solid var(--theme-border-mid);
     }
     .teacher-stream-pane .CodeMirror{ height:100%; }
@@ -895,7 +896,7 @@
           <span style="font-size:12px; opacity:.85;">Class</span>
           <select id="classSelector" style="background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; padding:4px 8px; flex:1;"></select>
         </div>
-        <button class="btn secondary student-class-add-btn" id="studentAddCourseBtn" style="display:none;">+ Add Course</button>
+        <button class="btn secondary student-class-add-btn" id="studentAddCourseBtn" style="display:none;">+ Add Class</button>
       </div>
       <span class="guest-badge" id="guestBadge">Guest</span>
       <button class="btn admin" id="loginBtn" title="Login">Sign In</button>
@@ -1600,6 +1601,7 @@
       if (stack) stack.classList.toggle('teacher-stream-open', teacherPaneOpen);
       if (btn) {
         btn.textContent = teacherPaneOpen ? '▼' : '▲';
+        btn.title = teacherPaneOpen ? 'Hide teacher code stream' : 'Show teacher code stream';
         btn.setAttribute('aria-expanded', teacherPaneOpen ? 'true' : 'false');
       }
       updateTeacherStreamToggleState();
@@ -2881,10 +2883,18 @@ print("Hello " + name)
             }
           }
         });
-        socket.on('class_membership_revoked', async () => {
+        socket.on('class_membership_revoked', async (msg) => {
           if (!USER_TOKEN || !currentUser) return;
+          const previousClasses = [...studentClasses];
+          const removedClass = previousClasses.find(cls => cls?.id === msg?.class_id);
           await loadStudentClassData().catch(() => null);
-          alert('Your class access was updated by your teacher.');
+          if (removedClass) {
+            alert(studentClasses.length
+              ? `You were removed from ${removedClass.name}.`
+              : `You were removed from ${removedClass.name}. You no longer have access to any classes.`);
+          } else {
+            alert('Your class access was updated by your teacher.');
+          }
           renderClassSelector();
           updateAuthUI();
           await loadAssignments();
@@ -3563,7 +3573,7 @@ print("Hello " + name)
       }
       if (topJoinClassBtn) {
         topJoinClassBtn.style.display = currentUser && !TEACHER_TOKEN && !ADMIN_TOKEN ? '' : 'none';
-        topJoinClassBtn.textContent = studentClasses.length ? 'Add Course' : 'Join Class';
+        topJoinClassBtn.textContent = studentClasses.length ? 'Add Class' : 'Join Class';
       }
       // Toggle sign-in/sign-out buttons
       if (isLoggedIn) {
@@ -5201,7 +5211,7 @@ print("Hello " + name)
           ? [payload.red || 0, payload.bronze || 0, payload.silver || 0, payload.gold || 0, payload.untested || 0]
           : [payload.red || 0, payload.bronze || 0, payload.silver || 0, payload.gold || 0];
         const colors = includeUntested ? ['#d32f2f', '#cd7f32', '#c0c0c0', '#ffd700', '#555'] : ['#d32f2f', '#cd7f32', '#c0c0c0', '#ffd700'];
-        const legendColor = document.body.classList.contains('light-mode') ? '#1a2030' : '#f5f5f5';
+        const legendColor = getComputedStyle(document.body).getPropertyValue('--theme-text').trim() || (document.body.classList.contains('light-mode') ? '#1a2030' : '#f5f5f5');
         return new Chart(ctx, {
           type: 'pie',
           data: { labels, datasets: [{ data: values, backgroundColor: colors }] },
@@ -6620,12 +6630,12 @@ print("Hello " + name)
       const selectedClassId = getSelectedStudentClassId();
       notice.textContent = canSubmit
         ? (joinedClass
-          ? `Signed in as ${currentUser.name || currentUser.email}. Current course: ${studentClassData.name}. Use the class selector to switch courses or add another one.`
+          ? `Signed in as ${currentUser.name || currentUser.email}. Current class: ${studentClassData.name}. Use the class selector to switch classes or add another one.`
           : `Signed in as ${currentUser.name || currentUser.email}. Join a class with a code to view class assignments.`)
         : 'Sign in with a student account to submit assignment files and view your scores.';
       if (joinPanel) joinPanel.style.display = canSubmit ? '' : 'none';
-      if (joinPanelTitle) joinPanelTitle.textContent = joinedClass ? 'Add Course' : 'Join Class';
-      if (joinClassBtn) joinClassBtn.textContent = joinedClass ? 'Add Course' : 'Join Class';
+      if (joinPanelTitle) joinPanelTitle.textContent = joinedClass ? 'Add Class' : 'Join Class';
+      if (joinClassBtn) joinClassBtn.textContent = joinedClass ? 'Add Class' : 'Join Class';
 
       const visibleAssignments = (currentAssignments || []).filter(a => !selectedClassId || a.targetClassId === selectedClassId);
       const activeAssignments = visibleAssignments.filter(a => a.active);
@@ -6766,7 +6776,7 @@ print("Hello " + name)
         studentClasses.forEach(cls => {
           if (cls?.id) emitJoinClassRoom('student', USER_TOKEN, cls.id);
         });
-        status.textContent = `Added ${studentClassData?.name || 'course'} successfully.`;
+        status.textContent = `Added ${studentClassData?.name || 'class'} successfully.`;
         status.style.color = '#4caf50';
         renderClassSelector();
         updateTeacherStreamPaneVisibility();

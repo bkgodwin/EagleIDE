@@ -3854,7 +3854,7 @@ def on_join_class_room(payload):
     join_room(f"class_{class_id}")
     _socket_sid_rooms.setdefault(request.sid, set()).add(class_id)
     _emit_teacher_stream_status(class_id, sid=request.sid)
-    if class_id in _teacher_code_snapshots:
+    if _teacher_stream_active_for_class(class_id) and class_id in _teacher_code_snapshots:
         socketio.emit("teacher_code", {"code": _teacher_code_snapshots.get(class_id, ""), "class_id": class_id}, to=request.sid)
 
 
