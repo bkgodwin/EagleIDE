@@ -3357,7 +3357,7 @@ class Runner:
         # Use user_dir as cwd if provided and exists, so relative file paths work
         cwd = str(user_dir) if (user_dir and user_dir.exists()) else str(sbox)
 
-        allowed_root_dir = str(allowed_root) if (allowed_root and allowed_root.exists()) else cwd
+        allowed_root_dir = str(allowed_root.resolve()) if (allowed_root and allowed_root.exists()) else str(Path(cwd).resolve())
 
         self.proc = subprocess.Popen(
             [sys.executable, "-u", str(SANDBOX_WORKER), str(runner_py), allowed_root_dir],
