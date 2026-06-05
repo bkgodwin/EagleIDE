@@ -327,6 +327,9 @@ def _is_html_file(path: Path) -> bool:
 _users_lock = threading.Lock()
 _student_tokens: Dict[str, dict] = {}  # token -> user info dict
 _teacher_tokens: Dict[str, dict] = {}  # token -> teacher info dict
+_teacher_code_snapshots: Dict[str, str] = {}
+_live_teacher_stream_sids_by_class: Dict[str, Set[str]] = {}
+_socket_live_class_ids: Dict[str, Set[str]] = {}
 _reg_rate_limit: dict = defaultdict(list)  # ip -> list of timestamps
 _login_rate_limit: dict = defaultdict(list)  # ip -> list of timestamps
 _classes_lock = threading.Lock()
@@ -361,9 +364,81 @@ def _normalize_user_record(user: dict) -> dict:
     if role not in {"student", "teacher"}:
         role = "student"
     normalized["role"] = role
-    normalized["class_id"] = normalized.get("class_id") or None
+    class_ids = []
+    for raw_class_id in normalized.get("class_ids") or []:
+        class_id = str(raw_class_id or "").strip()
+        if class_id and class_id not in class_ids:
+            class_ids.append(class_id)
+    class_id = str(normalized.get("class_id") or "").strip() or None
+    if class_id and class_id not in class_ids:
+        class_ids.insert(0, class_id)
+    normalized["class_ids"] = class_ids
+    normalized["class_id"] = class_id or (class_ids[0] if class_ids else None)
     normalized.setdefault("enabled", True)
     return normalized
+
+
+def _get_user_class_ids(user: Optional[dict]) -> list[str]:
+    if not isinstance(user, dict):
+        return []
+    normalized = _normalize_user_record(user)
+    return list(normalized.get("class_ids") or [])
+
+
+def _user_in_class(user: Optional[dict], class_id: str) -> bool:
+    target_class_id = str(class_id or "").strip()
+    if not target_class_id:
+        return False
+    return target_class_id in _get_user_class_ids(user)
+
+
+def _set_user_classes(user: dict, class_ids: list[str], active_class_id: Optional[str] = None) -> None:
+    unique_ids = []
+    for raw_class_id in class_ids or []:
+        class_id = str(raw_class_id or "").strip()
+        if class_id and class_id not in unique_ids:
+            unique_ids.append(class_id)
+    next_active = str(active_class_id or "").strip() or None
+    if next_active and next_active not in unique_ids:
+        unique_ids.insert(0, next_active)
+    if not next_active:
+        next_active = unique_ids[0] if unique_ids else None
+    user["class_ids"] = unique_ids
+    user["class_id"] = next_active
+
+
+def _serialize_class_summary(cls: Optional[dict]) -> Optional[dict]:
+    if not cls:
+        return None
+    return {
+        "id": cls.get("id"),
+        "name": cls.get("name"),
+        "settings": cls.get("settings", {}),
+        "teacher_email": cls.get("teacher_email"),
+    }
+
+
+def _student_class_response(user: Optional[dict]) -> dict:
+    normalized_user = _normalize_user_record(user or {})
+    class_lookup = {
+        c.get("id"): c
+        for c in _load_classes().get("classes", [])
+        if c.get("id")
+    }
+    class_list = []
+    for class_id in normalized_user.get("class_ids") or []:
+        cls = class_lookup.get(class_id)
+        if cls:
+            class_list.append(_serialize_class_summary(cls))
+    active_class_id = normalized_user.get("class_id")
+    active_class = next((cls for cls in class_list if cls.get("id") == active_class_id), None)
+    if not active_class and class_list:
+        active_class = class_list[0]
+        normalized_user["class_id"] = active_class.get("id")
+    return {
+        "classData": active_class,
+        "classList": class_list,
+    }
 
 
 def _normalize_users_data(data: dict) -> dict:
@@ -958,6 +1033,40 @@ def _revoke_student_class_rooms(student_email: str, class_id: Optional[str] = No
                 print(f"Warning: failed to remove sid {sid} from class room {room_name}: {exc}")
 
 
+def _teacher_stream_active_for_class(class_id: str) -> bool:
+    return bool(_live_teacher_stream_sids_by_class.get(str(class_id or "").strip(), set()))
+
+
+def _emit_teacher_stream_status(class_id: str, sid: Optional[str] = None) -> None:
+    cid = str(class_id or "").strip()
+    if not cid:
+        return
+    payload = {"class_id": cid, "active": _teacher_stream_active_for_class(cid)}
+    if sid:
+        socketio.emit("teacher_stream_status", payload, to=sid)
+    else:
+        socketio.emit("teacher_stream_status", payload, to=f"class_{cid}")
+
+
+def _set_teacher_stream_state_for_sid(sid: str, class_id: str, active: bool) -> None:
+    cid = str(class_id or "").strip()
+    if not sid or not cid:
+        return
+    class_sids = _live_teacher_stream_sids_by_class.setdefault(cid, set())
+    sid_classes = _socket_live_class_ids.setdefault(sid, set())
+    if active:
+        class_sids.add(sid)
+        sid_classes.add(cid)
+    else:
+        class_sids.discard(sid)
+        sid_classes.discard(cid)
+        if not class_sids:
+            _live_teacher_stream_sids_by_class.pop(cid, None)
+        if not sid_classes:
+            _socket_live_class_ids.pop(sid, None)
+    _emit_teacher_stream_status(cid)
+
+
 def _effective_ai_enabled(req, payload: Optional[dict] = None) -> tuple[bool, Optional[str]]:
     cfg = _load_config()
     if not cfg.get("ai_explainer_enabled", False):
@@ -1085,6 +1194,7 @@ def auth_register():
         "name": name,
         "role": "student",
         "class_id": None,
+        "class_ids": [],
         "created_at": timestamp,
         "last_sign_in": timestamp,
         "last_ip": ip if ip != "unknown" else "",
@@ -1103,7 +1213,7 @@ def auth_register():
     
     # Issue token
     token = uuid.uuid4().hex
-    user_info = {"email": email, "name": name, "role": "student", "class_id": None}
+    user_info = {"email": email, "name": name, "role": "student", "class_id": None, "class_ids": []}
     _student_tokens[token] = user_info
     _record_sign_in_event(email, "student", ip, "registration")
     
@@ -1154,7 +1264,13 @@ def auth_login():
         _teacher_tokens[token] = user_info
         _record_sign_in_event(email, "teacher", ip, "login")
         return jsonify(ok=True, token=token, user=user_info, role="teacher")
-    user_info = {"email": email, "name": user.get("name", ""), "role": "student", "class_id": user.get("class_id")}
+    user_info = {
+        "email": email,
+        "name": user.get("name", ""),
+        "role": "student",
+        "class_id": user.get("class_id"),
+        "class_ids": _get_user_class_ids(user),
+    }
     _student_tokens[token] = user_info
     _record_sign_in_event(email, "student", ip, "login")
     return jsonify(ok=True, token=token, user=user_info, role="student")
@@ -1899,21 +2015,12 @@ def admin_toggle_registration():
 def get_current_class():
     user = _require_user(request)
     if not user:
-        return jsonify(ok=True, classData=None)
-    class_id = user.get("class_id")
-    if not class_id:
-        user_obj = _find_user(user.get("email", ""))
-        class_id = (user_obj or {}).get("class_id")
-        user["class_id"] = class_id
-    cls = _find_class_by_id(class_id) if class_id else None
-    if not cls:
-        return jsonify(ok=True, classData=None)
-    return jsonify(ok=True, classData={
-        "id": cls.get("id"),
-        "name": cls.get("name"),
-        "settings": cls.get("settings", {}),
-        "teacher_email": cls.get("teacher_email"),
-    })
+        return jsonify(ok=True, classData=None, classList=[])
+    user_obj = _find_user(user.get("email", "")) or user
+    response = _student_class_response(user_obj)
+    user["class_id"] = (response.get("classData") or {}).get("id")
+    user["class_ids"] = [cls.get("id") for cls in response.get("classList", []) if cls.get("id")]
+    return jsonify(ok=True, **response)
 
 
 @app.post("/api/classes/join")
@@ -1932,8 +2039,9 @@ def join_class():
         return jsonify(ok=False, error="Student not found"), 404
     if student.get("role") != "student":
         return jsonify(ok=False, error="Only student accounts can join classes"), 400
-    if student.get("class_id"):
-        return jsonify(ok=False, error="You are already in a class"), 409
+    existing_class_ids = _get_user_class_ids(student)
+    if target.get("id") in existing_class_ids:
+        return jsonify(ok=False, error="You have already joined this class"), 409
     classes_data = _load_classes()
     joined = None
     for c in classes_data.get("classes", []):
@@ -1945,15 +2053,13 @@ def join_class():
             break
     if not joined:
         return jsonify(ok=False, error="Class not found"), 404
-    student["class_id"] = joined.get("id")
+    next_class_ids = existing_class_ids + [joined.get("id")]
+    _set_user_classes(student, next_class_ids, joined.get("id"))
     _save_users(users_data)
     _save_classes(classes_data)
     user["class_id"] = joined.get("id")
-    return jsonify(ok=True, classData={
-        "id": joined.get("id"),
-        "name": joined.get("name"),
-        "settings": joined.get("settings", {}),
-    })
+    user["class_ids"] = next_class_ids
+    return jsonify(ok=True, **_student_class_response(student))
 
 
 @app.get("/api/teacher/classes")
@@ -2083,13 +2189,15 @@ def teacher_remove_student():
     users_data = _load_users()
     for u in users_data.get("users", []):
         if (u.get("email") or "").lower() == student_email:
-            u["class_id"] = None
+            next_class_ids = [cid for cid in _get_user_class_ids(u) if cid != class_id]
+            _set_user_classes(u, next_class_ids)
             break
     _save_classes(classes_data)
     _save_users(users_data)
-    for token, info in list(_student_tokens.items()):
+    for info in list(_student_tokens.values()):
         if (info.get("email") or "").lower() == student_email:
-            del _student_tokens[token]
+            next_class_ids = [cid for cid in _get_user_class_ids(info) if cid != class_id]
+            _set_user_classes(info, next_class_ids)
     _revoke_student_class_rooms(student_email, class_id)
     return jsonify(ok=True)
 
@@ -2120,13 +2228,15 @@ def teacher_delete_class():
         if (user.get("role") or "").lower() != "student":
             continue
         if (user.get("email") or "").strip().lower() in student_emails:
-            user["class_id"] = None
+            next_class_ids = [cid for cid in _get_user_class_ids(user) if cid != class_id]
+            _set_user_classes(user, next_class_ids)
     classes_data["classes"] = remaining_classes
     _save_classes(classes_data)
     _save_users(users_data)
-    for token, info in list(_student_tokens.items()):
+    for info in list(_student_tokens.values()):
         if (info.get("email") or "").strip().lower() in student_emails:
-            info["class_id"] = None
+            next_class_ids = [cid for cid in _get_user_class_ids(info) if cid != class_id]
+            _set_user_classes(info, next_class_ids)
     for student_email in student_emails:
         _revoke_student_class_rooms(student_email, class_id)
     skills_data = _load_skills()
@@ -3576,6 +3686,8 @@ def on_disconnect():
             r.stop()
         except Exception:
             pass
+    for class_id in list(_socket_live_class_ids.get(request.sid, set())):
+        _set_teacher_stream_state_for_sid(request.sid, class_id, False)
     _socket_sid_info.pop(request.sid, None)
     _socket_sid_rooms.pop(request.sid, None)
 
@@ -3685,7 +3797,29 @@ def on_teacher_code_update(payload):
         if token not in _admin_tokens:
             return
     code = (payload or {}).get("code", "")
+    _teacher_code_snapshots[class_id] = str(code if isinstance(code, str) else "")
     emit("teacher_code", {"code": code, "class_id": class_id}, to=f"class_{class_id}", include_self=False)
+
+
+@socketio.on("teacher_stream_status")
+def on_teacher_stream_status(payload):
+    token = str((payload or {}).get("token") or "").strip()
+    class_id = str((payload or {}).get("class_id") or "").strip()
+    role = str((payload or {}).get("role") or "").strip().lower()
+    active = bool((payload or {}).get("active"))
+    if not token or not class_id:
+        return
+    if role == "teacher":
+        teacher = _teacher_tokens.get(token)
+        cls = _find_class_by_id(class_id)
+        if not teacher or not cls or (cls.get("teacher_email") or "").lower() != (teacher.get("email") or "").lower():
+            return
+    elif role == "admin":
+        if token not in _admin_tokens:
+            return
+    else:
+        return
+    _set_teacher_stream_state_for_sid(request.sid, class_id, active)
 
 
 @socketio.on("join_class_room")
@@ -3699,9 +3833,13 @@ def on_join_class_room(payload):
         student = _student_tokens.get(token)
         if not student:
             return
-        student_class = student.get("class_id") or (_find_user(student.get("email", "")) or {}).get("class_id")
-        if student_class != class_id:
+        student_record = _find_user(student.get("email", ""))
+        if not student_record:
             return
+        if not _user_in_class(student_record, class_id):
+            return
+        student["class_id"] = student_record.get("class_id")
+        student["class_ids"] = _get_user_class_ids(student_record)
         _socket_sid_info[request.sid] = {"role": "student", "email": (student.get("email") or "").strip().lower(), "in_quiz": False}
     elif role == "teacher":
         teacher = _teacher_tokens.get(token)
@@ -3717,6 +3855,10 @@ def on_join_class_room(payload):
         return
     join_room(f"class_{class_id}")
     _socket_sid_rooms.setdefault(request.sid, set()).add(class_id)
+    _emit_teacher_stream_status(class_id, sid=request.sid)
+    cached_code = _teacher_code_snapshots.get(class_id)
+    if _teacher_stream_active_for_class(class_id) and cached_code is not None:
+        socketio.emit("teacher_code", {"code": cached_code, "class_id": class_id}, to=request.sid)
 
 
 @socketio.on("leave_class_room")
@@ -4011,16 +4153,16 @@ def get_assignments():
     user = _require_user(request)
     if not user:
         return jsonify(ok=True, assignments=[], isAdmin=False, isTeacher=False, canManage=False)
-    class_id = (user or {}).get("class_id")
-    if not class_id and user:
-        class_id = (_find_user(user.get("email", "")) or {}).get("class_id")
-        user["class_id"] = class_id
-    if not class_id:
+    user_obj = _find_user(user.get("email", "")) or user
+    class_ids = _get_user_class_ids(user_obj)
+    if not class_ids:
         return jsonify(ok=True, assignments=[], isAdmin=False, isTeacher=False, canManage=False)
+    user["class_id"] = user_obj.get("class_id")
+    user["class_ids"] = class_ids
     visible_assignments = []
     for a in all_assignments:
         target_class = a.get("targetClassId")
-        if not target_class or target_class != class_id:
+        if not target_class or target_class not in class_ids:
             continue
         assignment_copy = dict(a)
         assignment_copy.pop("submissions", None)
@@ -4277,8 +4419,7 @@ def submit_assignment():
     submitted_at = _current_timestamp()
     submitted_code = _prepend_submission_timestamp(original_code, submitted_at, student_name) if allow_file_submission else ""
     target_class_id = assignment.get("targetClassId")
-    student_class_id = user.get("class_id") or (_find_user(student_email) or {}).get("class_id")
-    if not target_class_id or target_class_id != student_class_id:
+    if not target_class_id or not _user_in_class(_find_user(student_email) or user, target_class_id):
         return jsonify(ok=False, error="This assignment is not assigned to your class"), 403
 
     admin_file_path = ""
@@ -4581,13 +4722,13 @@ def get_student_scores():
         return jsonify(ok=False, error="Authentication required"), 401
 
     all_assignments = _list_assignments()
-    class_id = (_find_user(email) or {}).get("class_id") if email else None
-    if not class_id:
+    class_ids = _get_user_class_ids(_find_user(email) or {})
+    if not class_ids:
         return jsonify(ok=True, scores=[])
     student_scores = []
     for assignment in all_assignments:
         target_class_id = assignment.get("targetClassId")
-        if not target_class_id or target_class_id != class_id:
+        if not target_class_id or target_class_id not in class_ids:
             continue
         submissions = assignment.get("submissions", [])
         for sub in submissions:
@@ -4633,9 +4774,8 @@ def get_quiz(assignment_name: str):
     user = _require_user(request)
     if not user:
         return jsonify(ok=False, error="Student login required"), 401
-    class_id = (user or {}).get("class_id") or (_find_user((user or {}).get("email", "")) or {}).get("class_id")
     target_class_id = assignment.get("targetClassId")
-    if not target_class_id or target_class_id != class_id:
+    if not target_class_id or not _user_in_class(_find_user((user or {}).get("email", "")) or user, target_class_id):
         return jsonify(ok=False, error="Quiz not assigned to your class"), 403
     # Remove correct answers from multiple choice questions for students
     quiz_copy = copy.deepcopy(quiz)
@@ -4683,8 +4823,7 @@ def submit_quiz():
     if not assignment.get("active", False):
         return jsonify(ok=False, error="Assignment is not active"), 403
     target_class_id = assignment.get("targetClassId")
-    student_class_id = (user.get("class_id") or (_find_user(student_email) or {}).get("class_id"))
-    if not target_class_id or target_class_id != student_class_id:
+    if not target_class_id or not _user_in_class(_find_user(student_email) or user, target_class_id):
         return jsonify(ok=False, error="Quiz not assigned to your class"), 403
 
     quiz = assignment.get("quiz")
@@ -4777,9 +4916,8 @@ def get_student_quiz_report(assignment_name: str):
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
     student_email = (user.get("email") or "").strip().lower()
-    class_id = (user.get("class_id") or (_find_user(student_email) or {}).get("class_id"))
     target_class_id = assignment.get("targetClassId")
-    if not target_class_id or target_class_id != class_id:
+    if not target_class_id or not _user_in_class(_find_user(student_email) or user, target_class_id):
         return jsonify(ok=False, error="Report unavailable for this class"), 403
     submission = next((s for s in (assignment.get("submissions") or []) if (s.get("email") or "").lower() == student_email), None)
     if not submission:
