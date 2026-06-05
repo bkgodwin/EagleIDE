@@ -52,8 +52,9 @@ BLOCKED_OS_CALLS = (
     "spawnve",
     "spawnvp",
     "spawnvpe",
+    "chdir",
 )
-GUARDED_OS_PATH_CALLS = ("listdir", "scandir", "walk", "readlink", "remove", "unlink", "rmdir", "removedirs", "mkdir", "makedirs", "chdir")
+GUARDED_OS_PATH_CALLS = ("listdir", "scandir", "walk", "readlink", "remove", "unlink", "rmdir", "removedirs", "mkdir", "makedirs")
 
 
 class PathPolicy:
@@ -170,7 +171,7 @@ def _make_os_hardener(policy: PathPolicy):
         return _wrapper
 
     def _harden(module: Any) -> None:
-        if getattr(module, "__eagleide_hardened__", False):
+        if getattr(module, "__sandbox_hardened__", False):
             return
         for fn_name in BLOCKED_OS_CALLS:
             if hasattr(module, fn_name):
@@ -182,7 +183,7 @@ def _make_os_hardener(policy: PathPolicy):
             setattr(module, "rename", _guarded_os_move(getattr(module, "rename")))
         if hasattr(module, "replace"):
             setattr(module, "replace", _guarded_os_move(getattr(module, "replace")))
-        setattr(module, "__eagleide_hardened__", True)
+        setattr(module, "__sandbox_hardened__", True)
 
     return _harden
 
