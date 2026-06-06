@@ -2981,7 +2981,7 @@ print("Hello " + name)
             active: true
           });
         }
-        if (teacherStreamingEnabled && !teacherBroadcastInterval && currentTeacherClassId) startTeacherBroadcast();
+        if (teacherStreamingEnabled && !teacherBroadcastActive && currentTeacherClassId) startTeacherBroadcast();
         if (teacherStreamingEnabled) scheduleTeacherBroadcastFlush(true);
         refreshActiveStudentsForClass(currentTeacherClassId);
         renderTeacherClassManagement();
@@ -3939,13 +3939,13 @@ print("Hello " + name)
     })();
 
     // Teacher Code Broadcasting
-    let teacherBroadcastInterval = null;
+    let teacherBroadcastActive = false;
     let teacherBroadcastFlushTimer = null;
     let lastBroadcastedCode = '';
     let lastBroadcastedLanguage = 'python';
     
     function flushTeacherBroadcast(force = false) {
-      if (!teacherStreamingEnabled || !teacherBroadcastInterval || document.hidden) return;
+      if (!teacherStreamingEnabled || !teacherBroadcastActive || document.hidden) return;
       const token = ADMIN_TOKEN || TEACHER_TOKEN;
       const role = ADMIN_TOKEN ? 'admin' : (TEACHER_TOKEN ? 'teacher' : '');
       const activeClassId = getCurrentClassContext()?.id;
@@ -3968,7 +3968,7 @@ print("Hello " + name)
     }
 
     function scheduleTeacherBroadcastFlush(force = false) {
-      if (!teacherStreamingEnabled || !teacherBroadcastInterval) return;
+      if (!teacherStreamingEnabled || !teacherBroadcastActive) return;
       if (teacherBroadcastFlushTimer) {
         clearTimeout(teacherBroadcastFlushTimer);
         teacherBroadcastFlushTimer = null;
@@ -3984,7 +3984,7 @@ print("Hello " + name)
     }
     
     function startTeacherBroadcast() {
-      if (teacherBroadcastInterval) return;
+      if (teacherBroadcastActive) return;
       const classId = getCurrentClassContext()?.id;
       if (!classId) return;
       const initialCode = editor.getValue();
@@ -4008,17 +4008,17 @@ print("Hello " + name)
           language: lastBroadcastedLanguage
         });
       }
-      teacherBroadcastInterval = true;
+      teacherBroadcastActive = true;
     }
     
     function stopTeacherBroadcast() {
-      if (teacherBroadcastInterval) {
+      if (teacherBroadcastActive) {
         const activeClassId = getCurrentClassContext()?.id;
         if (teacherBroadcastFlushTimer) {
           clearTimeout(teacherBroadcastFlushTimer);
           teacherBroadcastFlushTimer = null;
         }
-        teacherBroadcastInterval = null;
+        teacherBroadcastActive = false;
         if (socket && activeClassId) {
           socket.emit('teacher_stream_status', {
             token: ADMIN_TOKEN || TEACHER_TOKEN,
