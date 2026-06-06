@@ -1334,31 +1334,55 @@ def files_list():
     user_dir = _get_user_dir(user["email"])
     user_dir.mkdir(parents=True, exist_ok=True)
     
-    def build_tree(directory: Path, base: Path) -> list:
+    def build_tree(directory: Path, base: Path) -> tuple[list, int]:
         items = []
+        total_size = 0
         try:
-            for entry in sorted(directory.iterdir(), key=lambda x: (x.is_file(), x.name.lower())):
-                rel = str(entry.relative_to(base))
-                if entry.is_dir():
-                    items.append({
-                        "name": entry.name,
-                        "path": rel,
-                        "type": "folder",
-                        "children": build_tree(entry, base)
-                    })
-                elif entry.is_file() and entry.suffix.lower() in ALLOWED_EXTENSIONS:
-                    items.append({
-                        "name": entry.name,
-                        "path": rel,
-                        "type": "file",
-                        "size": entry.stat().st_size
-                    })
+            folder_entries = []
+            file_entries = []
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            folder_entries.append(entry)
+                        elif entry.is_file(follow_symlinks=False) and Path(entry.name).suffix.lower() in ALLOWED_EXTENSIONS:
+                            file_entries.append(entry)
+                    except OSError:
+                        continue
+            folder_entries.sort(key=lambda x: x.name.lower())
+            file_entries.sort(key=lambda x: x.name.lower())
+            for entry in folder_entries:
+                entry_path = Path(entry.path)
+                rel = str(entry_path.relative_to(base))
+                children, child_size = build_tree(entry_path, base)
+                total_size += child_size
+                items.append({
+                    "name": entry.name,
+                    "path": rel,
+                    "type": "folder",
+                    "children": children
+                })
+            for entry in file_entries:
+                entry_path = Path(entry.path)
+                rel = str(entry_path.relative_to(base))
+                try:
+                    size = entry.stat(follow_symlinks=False).st_size
+                except OSError:
+                    size = 0
+                total_size += size
+                items.append({
+                    "name": entry.name,
+                    "path": rel,
+                    "type": "file",
+                    "size": size
+                })
         except PermissionError:
             pass
-        return items
+        return items, total_size
     
-    tree = build_tree(user_dir, user_dir)
-    return jsonify(ok=True, files=tree)
+    tree, used_bytes = build_tree(user_dir, user_dir)
+    limit_bytes = USER_STORAGE_LIMIT_MB * 1024 * 1024
+    return jsonify(ok=True, files=tree, used_bytes=used_bytes, limit_bytes=limit_bytes)
 
 @app.post("/api/files/create")
 def files_create():
