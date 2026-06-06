@@ -1555,6 +1555,7 @@
         return { getValue: () => ta.value, setValue: (v) => { ta.value = v; } };
       }
     }
+
     const editor = initEditor();
 
     // Teacher code streaming state
@@ -2905,7 +2906,7 @@ print("Hello " + name)
           const selectedClassId = getCurrentClassContext()?.id;
           if (msg && typeof msg.code === 'string' && msg.class_id && msg.class_id === selectedClassId) {
             if (lastTeacherCodeSnapshot === msg.code) return;
-            if (USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) {
+            if (USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && teacherPaneOpen && !document.hidden) {
               initTeacherViewer();
               const modeInfo = getLanguageInfoForKey(msg.language);
               try { teacherEditor?.setOption('mode', modeInfo.mode); } catch {}
@@ -2980,7 +2981,8 @@ print("Hello " + name)
             active: true
           });
         }
-        if (teacherStreamingEnabled && !teacherBroadcastInterval && currentTeacherClassId) startTeacherBroadcast();
+        if (teacherStreamingEnabled && !teacherBroadcastActive && currentTeacherClassId) startTeacherBroadcast();
+        if (teacherStreamingEnabled) scheduleTeacherBroadcastFlush(true);
         refreshActiveStudentsForClass(currentTeacherClassId);
         renderTeacherClassManagement();
         renderClassReports().catch(() => {});
@@ -3937,13 +3939,52 @@ print("Hello " + name)
     })();
 
     // Teacher Code Broadcasting
-    // Broadcast teacher code updates at minimum 2x per second (every 500ms)
-    let teacherBroadcastInterval = null;
+    let teacherBroadcastActive = false;
+    let teacherBroadcastFlushTimer = null;
     let lastBroadcastedCode = '';
     let lastBroadcastedLanguage = 'python';
     
+    function flushTeacherBroadcast(force = false) {
+      if (!teacherStreamingEnabled || !teacherBroadcastActive || document.hidden) return;
+      const token = ADMIN_TOKEN || TEACHER_TOKEN;
+      const role = ADMIN_TOKEN ? 'admin' : (TEACHER_TOKEN ? 'teacher' : '');
+      const activeClassId = getCurrentClassContext()?.id;
+      if (!token || !role || !activeClassId || !socket) return;
+      const currentCode = editor.getValue();
+      const langInfo = getActiveLanguageInfo();
+      const language = langInfo?.highlight || 'python';
+      if (!force && currentCode === lastBroadcastedCode && language === lastBroadcastedLanguage) return;
+      lastTeacherCodeSnapshot = currentCode;
+      try { localStorage.setItem(TEACHER_CODE_KEY, currentCode); } catch(e) {}
+      socket.emit('teacher_code_update', {
+        token,
+        role,
+        class_id: activeClassId,
+        code: currentCode,
+        language
+      });
+      lastBroadcastedCode = currentCode;
+      lastBroadcastedLanguage = language;
+    }
+
+    function scheduleTeacherBroadcastFlush(force = false) {
+      if (!teacherStreamingEnabled || !teacherBroadcastActive) return;
+      if (teacherBroadcastFlushTimer) {
+        clearTimeout(teacherBroadcastFlushTimer);
+        teacherBroadcastFlushTimer = null;
+      }
+      if (force) {
+        flushTeacherBroadcast(true);
+        return;
+      }
+      teacherBroadcastFlushTimer = setTimeout(() => {
+        teacherBroadcastFlushTimer = null;
+        flushTeacherBroadcast(false);
+      }, 200);
+    }
+    
     function startTeacherBroadcast() {
-      if (teacherBroadcastInterval) return;
+      if (teacherBroadcastActive) return;
       const classId = getCurrentClassContext()?.id;
       if (!classId) return;
       const initialCode = editor.getValue();
@@ -3967,40 +4008,17 @@ print("Hello " + name)
           language: lastBroadcastedLanguage
         });
       }
-      
-      teacherBroadcastInterval = setInterval(() => {
-        const token = ADMIN_TOKEN || TEACHER_TOKEN;
-        const role = ADMIN_TOKEN ? 'admin' : (TEACHER_TOKEN ? 'teacher' : '');
-        const activeClassId = getCurrentClassContext()?.id;
-        if (!token || !activeClassId) return;
-        
-        const currentCode = editor.getValue();
-        const langInfo = getActiveLanguageInfo();
-        const language = langInfo?.highlight || 'python';
-        if (currentCode !== lastBroadcastedCode || language !== lastBroadcastedLanguage) {
-          lastTeacherCodeSnapshot = currentCode;
-          try { localStorage.setItem(TEACHER_CODE_KEY, currentCode); } catch(e) {}
-          // Broadcast to other clients if socket available
-          if (socket) {
-            socket.emit('teacher_code_update', {
-              token,
-              role,
-              class_id: activeClassId,
-              code: currentCode,
-              language
-            });
-          }
-          lastBroadcastedCode = currentCode;
-          lastBroadcastedLanguage = language;
-        }
-      }, 500); // Update at least twice per second (every 500ms)
+      teacherBroadcastActive = true;
     }
     
     function stopTeacherBroadcast() {
-      if (teacherBroadcastInterval) {
+      if (teacherBroadcastActive) {
         const activeClassId = getCurrentClassContext()?.id;
-        clearInterval(teacherBroadcastInterval);
-        teacherBroadcastInterval = null;
+        if (teacherBroadcastFlushTimer) {
+          clearTimeout(teacherBroadcastFlushTimer);
+          teacherBroadcastFlushTimer = null;
+        }
+        teacherBroadcastActive = false;
         if (socket && activeClassId) {
           socket.emit('teacher_stream_status', {
             token: ADMIN_TOKEN || TEACHER_TOKEN,
@@ -4011,6 +4029,15 @@ print("Hello " + name)
         }
       }
     }
+
+    if (window.eagleEditor) {
+      window.eagleEditor.on('change', () => scheduleTeacherBroadcastFlush(false));
+    } else {
+      document.getElementById('editor')?.addEventListener('input', () => scheduleTeacherBroadcastFlush(false));
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) scheduleTeacherBroadcastFlush(true);
+    });
 
     function setTeacherStreamingEnabled(enabled) {
       const next = !!enabled;
@@ -4095,7 +4122,7 @@ print("Hello " + name)
 
     function isRosterPollingTargetActive() {
       const modal = document.getElementById('teacherDashboardModal');
-      if (!modal || modal.style.display === 'none' || !TEACHER_TOKEN || !currentTeacherClassId) return false;
+      if (!modal || modal.style.display === 'none' || !TEACHER_TOKEN || !currentTeacherClassId || document.hidden) return false;
       const reportsActive = modal.querySelector('.teacher-dash-view.active')?.id === 'dash-reports';
       const rosterActive = modal.querySelector('#dash-reports .mastery-pane.active')?.id === 'class-roster-pane';
       return reportsActive && rosterActive;
@@ -4110,7 +4137,7 @@ print("Hello " + name)
           return;
         }
         await refreshActiveStudentsForClass(currentTeacherClassId);
-      }, 500);
+      }, 2000);
     }
 
     function ensureTeacherDashboardRosterPolling() {
@@ -4272,10 +4299,17 @@ print("Hello " + name)
       if (assignmentSel && activeAssignmentsClassId) assignmentSel.value = activeAssignmentsClassId;
     }
 
+    let activeStudentsRefreshPromise = null;
+    let activeStudentsRefreshClassId = null;
+
     async function refreshActiveStudentsForClass(classId) {
       const classKey = classId || currentTeacherClassId;
       if (!TEACHER_TOKEN || !classKey) return;
-      try {
+      if (activeStudentsRefreshPromise && activeStudentsRefreshClassId === classKey) {
+        return activeStudentsRefreshPromise;
+      }
+      activeStudentsRefreshClassId = classKey;
+      activeStudentsRefreshPromise = (async () => {
         const res = await fetch(`/api/teacher/classes/${encodeURIComponent(classKey)}/active-students`, {
           headers: { 'X-Teacher-Token': TEACHER_TOKEN }
         });
@@ -4285,7 +4319,15 @@ print("Hello " + name)
         inQuizStudentsByClass[classKey] = new Set((data.inQuizStudents || []).map(e => String(e || '').toLowerCase()));
         lastSignInByClass[classKey] = data.lastSignInByEmail || {};
         updateRosterCells(classKey);
-      } catch {}
+      })().catch(() => {});
+      try {
+        return await activeStudentsRefreshPromise;
+      } finally {
+        if (activeStudentsRefreshClassId === classKey) {
+          activeStudentsRefreshClassId = null;
+          activeStudentsRefreshPromise = null;
+        }
+      }
     }
 
     function updateRosterCells(classId) {
@@ -5715,6 +5757,15 @@ print("Hello " + name)
       return out;
     }
 
+    function setFileStorageStats(usedBytes, limitBytes) {
+      const statsEl = document.getElementById('fileStorageStats');
+      if (!statsEl) return;
+      const used = Number(usedBytes || 0);
+      const limit = Number(limitBytes || 0);
+      const remaining = Math.max(0, limit - used);
+      statsEl.textContent = `Used ${_formatBytes(used)} • Remaining ${_formatBytes(remaining)}`;
+    }
+
     async function refreshFileStorageStats() {
       const statsEl = document.getElementById('fileStorageStats');
       if (!statsEl) return;
@@ -5726,39 +5777,48 @@ print("Hello " + name)
         const res = await fetch('/api/files/storage', { headers: fileAuthHeaders() });
         const j = await res.json().catch(() => ({}));
         if (!j?.ok) throw new Error(j?.error || 'Storage request failed');
-        const used = Number(j.used_bytes || 0);
-        const limit = Number(j.limit_bytes || 0);
-        const remaining = Math.max(0, limit - used);
-        statsEl.textContent = `Used ${_formatBytes(used)} • Remaining ${_formatBytes(remaining)}`;
+        setFileStorageStats(j.used_bytes, j.limit_bytes);
       } catch {
         statsEl.textContent = 'Storage: unavailable';
       }
     }
 
+    let _fileTreeLoadPromise = null;
+
     async function loadFileTree() {
       if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return;
-      const res = await fetch('/api/files/list', { headers: fileAuthHeaders() });
-      const j = await res.json().catch(() => ({}));
       const treeEl = document.getElementById('fileTree');
+      if (!treeEl) return;
+      if (_fileTreeLoadPromise) return _fileTreeLoadPromise;
       treeEl.innerHTML = '';
-      if (!j.ok) {
-        if (res.status === 401) {
-          clearAuthStateMemory();
-          saveAuthSession();
-          updateAuthUI();
-          treeEl.innerHTML = '<div style="padding:12px;color:#ef5350;">Session expired. Please sign in again.</div>';
+      _fileTreeLoadPromise = (async () => {
+        const res = await fetch('/api/files/list', { headers: fileAuthHeaders() });
+        const j = await res.json().catch(() => ({}));
+        if (!j.ok) {
+          if (res.status === 401) {
+            clearAuthStateMemory();
+            saveAuthSession();
+            updateAuthUI();
+            treeEl.innerHTML = '<div style="padding:12px;color:#ef5350;">Session expired. Please sign in again.</div>';
+            return;
+          }
+          treeEl.innerHTML = '<div style="padding:12px;color:#ef5350;">Error loading files</div>';
           return;
         }
-        treeEl.innerHTML = '<div style="padding:12px;color:#ef5350;">Error loading files</div>';
-        return;
+        _allFileTree = j.files || [];
+        const existingPaths = _collectTreePaths(_allFileTree);
+        for (const path of _selectedFileItems) {
+          if (!existingPaths.has(path)) _selectedFileItems.delete(path);
+        }
+        renderCurrentFolder();
+        if (j.used_bytes !== undefined && j.limit_bytes !== undefined) setFileStorageStats(j.used_bytes, j.limit_bytes);
+        else refreshFileStorageStats();
+      })();
+      try {
+        await _fileTreeLoadPromise;
+      } finally {
+        _fileTreeLoadPromise = null;
       }
-      _allFileTree = j.files || [];
-      const existingPaths = _collectTreePaths(_allFileTree);
-      for (const path of _selectedFileItems) {
-        if (!existingPaths.has(path)) _selectedFileItems.delete(path);
-      }
-      renderCurrentFolder();
-      refreshFileStorageStats();
     }
 
     function renderCurrentFolder() {
@@ -6137,7 +6197,7 @@ print("Hello " + name)
       updateActiveFileName();
       updateEditorOverlay();
       setWorkspaceTab('editor');
-      loadFileTree();
+      renderCurrentFolder();
       syncSubmissionScoringForOpenFile(item.path);
     }
 
