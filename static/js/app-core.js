@@ -1044,7 +1044,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     .runtime-msg{font-size:12px;opacity:.85}
     #runtimeFrame{flex:1;width:100%;border:0;background:#fff}
   </style>
-  <link rel="stylesheet" href="/static/css/main.css">
 </head>
 <body>
   <div class="hdr">
@@ -1097,17 +1096,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     frame.addEventListener('error', () => terminate('Execution stopped due to iframe load error.'));
     window.addEventListener('unload', () => clearTimeout(timeoutHandle));
   <\/script>
-
-  <nav class="tablet-panel-nav" id="tabletPanelNav" aria-label="Panel switcher">
-    <button type="button" data-panel="editor" class="active">Editor</button>
-    <button type="button" data-panel="shell">Shell</button>
-    <button type="button" data-panel="resources">Resources</button>
-  </nav>
-  <div class="action-sheet" id="fileActionSheet" aria-hidden="true">
-    <div class="action-sheet-panel glass-surface" id="fileActionSheetPanel"></div>
-  </div>
-
-  </div><!-- .app-shell -->
 </body>
 </html>`);
       popupDoc.close();

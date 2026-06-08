@@ -19,22 +19,39 @@
     }
   }
 
-  function initToolTray() {
-    const toggle = document.getElementById('toolTrayToggle');
+  function setToolTrayCollapsed(collapsed) {
     const tray = document.getElementById('toolTray');
-    if (!toggle || !tray) return;
-    toggle.addEventListener('click', () => {
-      const collapsed = tray.classList.toggle('collapsed');
-      document.body.classList.toggle('tool-tray-collapsed', collapsed);
-      toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-      toggle.textContent = collapsed ? 'Tools ▸' : 'Tools ▾';
-    });
-    if (isTabletWidth()) {
-      tray.classList.add('collapsed');
-      document.body.classList.add('tool-tray-collapsed');
-      toggle.setAttribute('aria-expanded', 'false');
-      toggle.textContent = 'Tools ▸';
+    const btn = document.getElementById('topbarToolsBtn');
+    if (!tray) return;
+    tray.classList.toggle('collapsed', collapsed);
+    document.body.classList.toggle('tool-tray-collapsed', collapsed);
+    if (btn) {
+      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      btn.textContent = collapsed ? 'Tools ▸' : 'Tools ▾';
     }
+    try {
+      localStorage.setItem('eagleide-tool-tray-collapsed', collapsed ? '1' : '0');
+    } catch {}
+  }
+
+  function initToolTray() {
+    const btn = document.getElementById('topbarToolsBtn');
+    const tray = document.getElementById('toolTray');
+    if (!btn || !tray) return;
+
+    btn.addEventListener('click', () => {
+      setToolTrayCollapsed(!tray.classList.contains('collapsed'));
+    });
+
+    let startCollapsed = false;
+    try {
+      const saved = localStorage.getItem('eagleide-tool-tray-collapsed');
+      if (saved === '1') startCollapsed = true;
+      else if (saved === null && isTabletWidth()) startCollapsed = true;
+    } catch {
+      if (isTabletWidth()) startCollapsed = true;
+    }
+    setToolTrayCollapsed(startCollapsed);
   }
 
   function initRoleMenu() {
@@ -121,5 +138,5 @@
   });
 
   window.EagleIDE = window.EagleIDE || {};
-  window.EagleIDE.layout = { syncTabletMode, isTabletWidth };
+  window.EagleIDE.layout = { syncTabletMode, isTabletWidth, setToolTrayCollapsed };
 })();
