@@ -34,7 +34,12 @@
 
   function isStudentInClass() {
     const c = ctx();
-    return !!c.USER_TOKEN && !c.TEACHER_TOKEN && !c.ADMIN_TOKEN && !!c.getCurrentClassContext?.();
+    const role = String(c.currentUser?.role || 'student').toLowerCase();
+    return !!c.USER_TOKEN
+      && !c.TEACHER_TOKEN
+      && !c.ADMIN_TOKEN
+      && role === 'student'
+      && !!c.getCurrentClassContext?.();
   }
 
   function isTeacherView() {
@@ -56,9 +61,12 @@
   function setMenuOpen(open) {
     menuOpen = !!open;
     const menu = document.getElementById('classroomFabMenu');
-    if (!menu) return;
-    if (menuOpen) menu.removeAttribute('hidden');
-    else menu.setAttribute('hidden', '');
+    const main = document.getElementById('classroomFabMain');
+    if (menu) {
+      if (menuOpen) menu.removeAttribute('hidden');
+      else menu.setAttribute('hidden', '');
+    }
+    if (main) main.setAttribute('aria-expanded', menuOpen ? 'true' : 'false');
   }
 
   function updateFabVisibility() {
@@ -67,7 +75,7 @@
     const settings = classSettings();
     const show = isStudentInClass() && settings.raise_hand_enabled !== false;
     fab.hidden = !show;
-    if (!show) setMenuOpen(false);
+    setMenuOpen(false);
   }
 
   function updateFabState() {
