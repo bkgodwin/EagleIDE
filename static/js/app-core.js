@@ -543,7 +543,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       try {
         const res = await fetch('/api/classes/current', { headers: { 'X-User-Token': USER_TOKEN } });
         const j = await res.json().catch(() => ({}));
-        studentClasses = Array.isArray(j?.classList) ? j.classList : [];
+        studentClasses = (Array.isArray(j?.classList) ? j.classList : []).map((c) => ({
+          ...c,
+          settings: mergeClassroomSettings(c.settings),
+        }));
         currentStudentClassId = j?.classData?.id || currentStudentClassId;
         syncStudentClassSelection(false);
         studentClasses.forEach(cls => {
@@ -562,10 +565,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       try {
         const res = await fetch('/api/teacher/classes', { headers: { 'X-Teacher-Token': TEACHER_TOKEN } });
         const j = await res.json().catch(() => ({}));
-        teacherClasses = j?.classes || [];
+        teacherClasses = normalizeTeacherClasses(j?.classes || []);
         if (!currentTeacherClassId || !teacherClasses.some(c => c.id === currentTeacherClassId)) {
           currentTeacherClassId = teacherClasses[0]?.id || null;
         }
+        refreshEagleIDEContext();
+        if (currentTeacherClassId) emitJoinClassRoom('teacher', TEACHER_TOKEN, currentTeacherClassId);
+        window.ClassroomSignals?.onAuthChanged?.();
         if (!activeAssignmentsClassId || !teacherClasses.some(c => c.id === activeAssignmentsClassId)) {
           activeAssignmentsClassId = currentTeacherClassId;
         }
@@ -588,9 +594,52 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     function getCurrentClassContext() {
-      if (TEACHER_TOKEN) return teacherClasses.find(c => c.id === currentTeacherClassId) || null;
+      if (TEACHER_TOKEN) {
+        const classId = currentTeacherClassId || teacherClasses[0]?.id || null;
+        return teacherClasses.find(c => c.id === classId) || teacherClasses[0] || null;
+      }
       return studentClasses.find(c => c.id === getSelectedStudentClassId()) || studentClassData || null;
     }
+
+    function mergeClassroomSettings(settings) {
+      return {
+        raise_hand_enabled: true,
+        teacher_file_send_enabled: true,
+        student_send_to_teacher_enabled: true,
+        student_peer_sharing_enabled: false,
+        ...(settings || {}),
+      };
+    }
+
+    function normalizeTeacherClasses(classes) {
+      return (classes || []).map((c) => ({
+        ...c,
+        settings: mergeClassroomSettings(c.settings),
+      }));
+    }
+
+    function refreshEagleIDEContext() {
+      window.EagleIDE = {
+        getContext: () => ({
+          USER_TOKEN,
+          TEACHER_TOKEN,
+          ADMIN_TOKEN,
+          currentUser,
+          currentTeacher,
+          currentConfig,
+          currentTeacherClassId,
+          currentStudentClassId,
+          teacherClasses,
+          studentClasses,
+          studentClassData,
+          getCurrentClassContext,
+          loadFileTree,
+          openAuditPreview,
+          closeAuditPreview,
+        }),
+      };
+    }
+    refreshEagleIDEContext();
 
     function updateTeacherStreamPaneVisibility() {
       const classCtx = getCurrentClassContext();
@@ -948,6 +997,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         activeAssignmentsClassId = currentTeacherClassId;
         syncTeacherDashboardClassSelectors();
         if (currentTeacherClassId) emitJoinClassRoom('teacher', TEACHER_TOKEN, currentTeacherClassId);
+        refreshEagleIDEContext();
+        window.ClassroomSignals?.loadTeacherSignals?.();
         if (teacherStreamingEnabled && currentTeacherClassId && socket) {
           socket.emit('teacher_stream_status', {
             token: ADMIN_TOKEN || TEACHER_TOKEN,
@@ -1633,6 +1684,24 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       window.ClassroomSignals?.onAuthChanged?.();
       updateSendFileButtonVisibility();
       refreshEagleIDEContext();
+      if (TEACHER_TOKEN) startTeacherClassroomPolling();
+      else stopTeacherClassroomPolling();
+    }
+
+    let _teacherClassroomPoll = null;
+    function startTeacherClassroomPolling() {
+      stopTeacherClassroomPolling();
+      if (!TEACHER_TOKEN) return;
+      _teacherClassroomPoll = setInterval(() => {
+        if (!TEACHER_TOKEN || document.hidden) return;
+        window.ClassroomSignals?.loadTeacherSignals?.();
+      }, 4000);
+    }
+    function stopTeacherClassroomPolling() {
+      if (_teacherClassroomPoll) {
+        clearInterval(_teacherClassroomPoll);
+        _teacherClassroomPoll = null;
+      }
     }
 
     function formatDuration(totalSeconds) {
@@ -2168,6 +2237,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
               stopTeacherDashboardRosterPolling();
               await loadTeacherSkills();
               renderTeacherSkillsPage();
+            } else if (btn.dataset.view === 'dash-classes') {
+              stopTeacherDashboardRosterPolling();
+              renderTeacherClassManagement();
+              window.ClassroomSignals?.loadTeacherSignals?.();
             } else {
               stopTeacherDashboardRosterPolling();
             }
@@ -2235,6 +2308,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       // Initialize data
       loadTeacherClasses().then(async () => {
         renderTeacherClassManagement();
+        window.ClassroomSignals?.loadTeacherSignals?.();
         await loadTeacherSkills();
         renderTeacherSkillsPage();
         populateTeacherReportsClassSelect();
@@ -2942,14 +3016,19 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
               <button class="btn stop delete-class-btn" data-class="${escapeHtml(activeClass.id)}" data-name="${escapeHtml(activeClass.name)}" style="font-size:12px;">Delete</button>
             </div>
           </div>
-          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
-            ${aiToggleTemplate(activeClass)}
-            <label style="font-size:12px;"><input type="checkbox" class="cls-wiki" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.wiki_enabled ? 'checked' : ''}> Wiki enabled</label>
-            <label style="font-size:12px;"><input type="checkbox" class="cls-raise-hand" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.raise_hand_enabled !== false ? 'checked' : ''}> Raise hand / questions</label>
-            <label style="font-size:12px;"><input type="checkbox" class="cls-teacher-send" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.teacher_file_send_enabled !== false ? 'checked' : ''}> Teacher send files</label>
-            <label style="font-size:12px;"><input type="checkbox" class="cls-student-send" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.student_send_to_teacher_enabled !== false ? 'checked' : ''}> Student send to teacher</label>
-            <label style="font-size:12px;"><input type="checkbox" class="cls-peer-share" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.student_peer_sharing_enabled ? 'checked' : ''}> Student peer sharing</label>
-            <button class="btn secondary save-class-settings-btn" data-class="${escapeHtml(activeClass.id)}" style="font-size:12px;">Save Settings</button>
+          <div class="teacher-dash-classroom-settings">
+            <div class="teacher-dash-classroom-settings-title">Classroom features</div>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
+              ${aiToggleTemplate(activeClass)}
+              <label style="font-size:12px;"><input type="checkbox" class="cls-wiki" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.wiki_enabled ? 'checked' : ''}> Wiki enabled</label>
+            </div>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
+              <label style="font-size:12px;"><input type="checkbox" class="cls-raise-hand" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.raise_hand_enabled !== false ? 'checked' : ''}> Raise hand &amp; questions</label>
+              <label style="font-size:12px;"><input type="checkbox" class="cls-teacher-send" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.teacher_file_send_enabled !== false ? 'checked' : ''}> Teacher can send files</label>
+              <label style="font-size:12px;"><input type="checkbox" class="cls-student-send" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.student_send_to_teacher_enabled !== false ? 'checked' : ''}> Students send to teacher</label>
+              <label style="font-size:12px;"><input type="checkbox" class="cls-peer-share" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.student_peer_sharing_enabled ? 'checked' : ''}> Student peer sharing</label>
+            </div>
+            <button class="btn secondary save-class-settings-btn" data-class="${escapeHtml(activeClass.id)}" style="font-size:12px; margin-bottom:10px;">Save classroom settings</button>
           </div>
           <div style="margin-bottom:10px;">
             <label style="font-size:12px; margin:0 0 4px; display:block;">AI Grading Rigor: <span class="cls-rigor-label" data-class="${escapeHtml(activeClass.id)}">${rigorLevelLabel(activeClass.settings?.ai_grading_rigor || 5)}</span> (${activeClass.settings?.ai_grading_rigor || 5}/10)</label>
@@ -3072,7 +3151,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         renderTeacherClassManagement();
       }));
       wrap.querySelectorAll('.cls-audit-btn').forEach(btn => btn.addEventListener('click', () => {
-        window.ClassroomFiles?.openAuditModal?.(btn.dataset.class, btn.dataset.email, btn.dataset.name);
+        if (window.ClassroomFiles?.openAuditModal) {
+          window.ClassroomFiles.openAuditModal(btn.dataset.class, btn.dataset.email, btn.dataset.name);
+        } else {
+          alert('File audit is unavailable. Please hard-refresh the page (Ctrl+F5).');
+        }
       }));
       wrap.querySelectorAll('.cls-reset-examples-btn').forEach(btn => btn.addEventListener('click', () => {
         window.ClassroomFiles?.resetStudentExamples?.(btn.dataset.class, btn.dataset.email, btn.dataset.name);
@@ -4305,13 +4388,30 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       setWorkspaceTab(WORKSPACE_TAB_EDITOR);
     }
 
+    function canTeacherSendOpenFile(item) {
+      if (!item || item.type !== 'file' || !TEACHER_TOKEN) return false;
+      const classCtx = getCurrentClassContext();
+      if (!classCtx) return false;
+      return classCtx.settings?.teacher_file_send_enabled !== false;
+    }
+
+    function canSendOpenFile(item) {
+      if (window.ClassroomFiles?.canSendFile) return window.ClassroomFiles.canSendFile(item);
+      if (!item || item.type !== 'file') return false;
+      if (TEACHER_TOKEN) return canTeacherSendOpenFile(item);
+      const classCtx = getCurrentClassContext();
+      if (!classCtx || !USER_TOKEN || ADMIN_TOKEN) return false;
+      const settings = classCtx.settings || {};
+      return settings.student_send_to_teacher_enabled !== false || settings.student_peer_sharing_enabled === true;
+    }
+
     function updateSendFileButtonVisibility() {
       const btn = document.getElementById('sendFileBtn');
       if (!btn) return;
       const item = currentOpenFile && !currentOpenFile.audit
         ? { type: 'file', path: currentOpenFile.path, name: currentOpenFile.name }
         : null;
-      const show = item && window.ClassroomFiles?.canSendFile?.(item);
+      const show = item && canSendOpenFile(item);
       btn.style.display = show ? '' : 'none';
     }
 
@@ -4379,9 +4479,19 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             .catch(err => alert('Download failed: ' + err));
         };
         _ctxMenu.appendChild(dlBtn);
-        window.ClassroomFiles?.addCtxMenuItems?.(_ctxMenu, item, () => {
-          if (_ctxMenu) { _ctxMenu.remove(); _ctxMenu = null; }
-        });
+        if (window.ClassroomFiles?.addCtxMenuItems) {
+          window.ClassroomFiles.addCtxMenuItems(_ctxMenu, item, () => {
+            if (_ctxMenu) { _ctxMenu.remove(); _ctxMenu = null; }
+          });
+        } else if (canTeacherSendOpenFile(item)) {
+          const sendBtn = document.createElement('button');
+          sendBtn.textContent = '📤 Send to class…';
+          sendBtn.onclick = () => {
+            if (_ctxMenu) { _ctxMenu.remove(); _ctxMenu = null; }
+            window.ClassroomFiles?.openSendModal?.(item);
+          };
+          _ctxMenu.appendChild(sendBtn);
+        }
       }
       const renameBtn = document.createElement('button');
       renameBtn.textContent = '✏️ Rename';
@@ -6279,36 +6389,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     document.getElementById('sendFileBtn')?.addEventListener('click', () => {
       if (!currentOpenFile || currentOpenFile.audit) return;
-      window.ClassroomFiles?.openSendModal?.({
-        type: 'file',
-        path: currentOpenFile.path,
-        name: currentOpenFile.name,
-      });
+      const item = { type: 'file', path: currentOpenFile.path, name: currentOpenFile.name };
+      if (window.ClassroomFiles?.openSendModal) window.ClassroomFiles.openSendModal(item);
+      else alert('Send file is unavailable. Please refresh the page.');
     });
     document.getElementById('classroomAuditCloseBannerBtn')?.addEventListener('click', closeAuditPreview);
-
-    function refreshEagleIDEContext() {
-      window.EagleIDE = {
-        getContext: () => ({
-          USER_TOKEN,
-          TEACHER_TOKEN,
-          ADMIN_TOKEN,
-          currentUser,
-          currentTeacher,
-          currentConfig,
-          currentTeacherClassId,
-          currentStudentClassId,
-          teacherClasses,
-          studentClasses,
-          studentClassData,
-          getCurrentClassContext,
-          loadFileTree,
-          openAuditPreview,
-          closeAuditPreview,
-        }),
-      };
-    }
-    refreshEagleIDEContext();
 
     (async () => {
       if (USER_TOKEN) await loadStudentClassData();

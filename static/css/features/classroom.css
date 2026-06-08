@@ -3,7 +3,7 @@
 .classroom-fab {
   position: fixed;
   left: max(16px, env(safe-area-inset-left));
-  bottom: max(16px, env(safe-area-inset-bottom));
+  bottom: max(88px, calc(env(safe-area-inset-bottom) + 72px));
   z-index: 1200;
   display: flex;
   flex-direction: column-reverse;
@@ -55,8 +55,8 @@
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  bottom: max(12px, env(safe-area-inset-bottom));
-  z-index: 1190;
+  bottom: max(20px, env(safe-area-inset-bottom));
+  z-index: 1350;
   max-width: min(720px, calc(100vw - 24px));
   width: 100%;
   display: flex;
@@ -220,6 +220,9 @@
 }
 
 @media (max-width: 768px) {
+  .classroom-fab {
+    bottom: max(96px, calc(env(safe-area-inset-bottom) + 80px));
+  }
   .classroom-fab-main {
     width: 48px;
     height: 48px;
