@@ -32,6 +32,8 @@ import bcrypt
 from collections import defaultdict, deque
 from cryptography.fernet import Fernet, InvalidToken
 
+from classroom_features import merge_class_settings, register as register_classroom_features
+
 # -------------------------
 # Paths & constants
 # -------------------------
@@ -416,7 +418,7 @@ def _serialize_class_summary(cls: Optional[dict]) -> Optional[dict]:
     return {
         "id": cls.get("id"),
         "name": cls.get("name"),
-        "settings": cls.get("settings", {}),
+        "settings": merge_class_settings(cls.get("settings", {})),
         "teacher_email": cls.get("teacher_email"),
     }
 
@@ -2200,7 +2202,7 @@ def teacher_list_classes():
             "id": c.get("id"),
             "name": c.get("name"),
             "join_code": c.get("join_code"),
-            "settings": c.get("settings", {}),
+            "settings": merge_class_settings(c.get("settings", {})),
             "students": sorted(students, key=lambda s: ((s.get("name") or "").lower(), (s.get("email") or "").lower()))
         })
     return jsonify(ok=True, classes=result)
@@ -2222,14 +2224,14 @@ def teacher_create_class():
         "name": _sanitize_storage_component(name, fallback="Class", max_length=120),
         "teacher_email": (teacher.get("email") or "").strip().lower(),
         "join_code": _generate_join_code(existing_codes),
-        "settings": {
+        "settings": merge_class_settings({
             "ai_enabled": True,
             "wiki_enabled": True,
             "wiki_url": "",
             "wiki_html": "",
             "ai_grading_rigor": 5,
             "skill_tags": [],
-        },
+        }),
         "students": [],
         "created_at": _current_timestamp(),
     }
@@ -2274,6 +2276,14 @@ def teacher_update_class_settings():
                     if cleaned and cleaned not in next_tags:
                         next_tags.append(cleaned[:MAX_SKILL_NAME_CHARS])
                 current["skill_tags"] = next_tags
+            for classroom_key in (
+                "raise_hand_enabled",
+                "student_send_to_teacher_enabled",
+                "student_peer_sharing_enabled",
+                "teacher_file_send_enabled",
+            ):
+                if classroom_key in settings:
+                    current[classroom_key] = bool(settings.get(classroom_key))
             target = c
             break
     if not target:
@@ -5496,6 +5506,8 @@ def admin_server_health():
 @app.get("/health")
 def health():
     return jsonify(ok=True)
+
+register_classroom_features(app, socketio)
 
 # -------------------------
 # Main

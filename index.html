@@ -102,6 +102,10 @@
         <button class="btn secondary" id="clearErrorsBtn" style="display:none; font-size:12px; padding:4px 8px;">Clear Error Highlights</button>
       </header>
       <div class="content editor-content-stack" id="editorContentStack">
+        <div id="classroomAuditBanner" class="classroom-audit-banner" role="status">
+          <span id="classroomAuditBannerText">Viewing student file (read-only)</span>
+          <button type="button" class="btn secondary" id="classroomAuditCloseBannerBtn" style="font-size:12px;padding:4px 10px;">Exit audit view</button>
+        </div>
         <div class="student-editor-wrap">
           <textarea id="editor" style="display:none; resize:none;"></textarea>
           <div id="csvEditor" class="csv-editor hidden"></div>
@@ -137,6 +141,7 @@
               <button class="file-action-btn" id="duplicateSelectedBtn" title="Duplicate selected files and folders">📑 Duplicate</button>
               <button class="file-action-btn danger" id="deleteSelectedBtn" title="Delete selected files and folders">🗑️ Delete</button>
               <button class="file-action-btn" id="moveSelectedBtn" title="Move selected files and folders">📦 Move</button>
+              <button class="file-action-btn" id="sendFileBtn" title="Send open file to classmate or teacher" style="display:none;">📤 Send</button>
             </div>
             <div class="file-sidebar-actions-right">
               <span id="fileStorageStats">Storage: —</span>
@@ -562,6 +567,11 @@
         <h4>Server Log (tail)</h4>
         <div class="server-health-log" id="serverHealthLog"></div>
       </div>
+      <div class="server-health-panel" id="classroomLogPanel">
+        <h4>Classroom Activity Log</h4>
+        <button class="btn secondary" id="classroomLogRefreshBtn" style="font-size:12px; padding:4px 10px; margin-bottom:8px;">↻ Refresh</button>
+        <div class="classroom-log-feed" id="classroomLogFeed">Open as admin to view classroom events.</div>
+      </div>
       <div class="modal-actions">
         <button class="btn secondary" id="serverHealthCloseBtn">Close</button>
       </div>
@@ -670,6 +680,54 @@
     <div class="action-sheet-panel glass-surface" id="fileActionSheetPanel"></div>
   </div>
 
+  <div id="classroomFab" class="classroom-fab" hidden>
+    <button type="button" id="classroomFabMain" class="classroom-fab-main" title="Classroom help">💬</button>
+    <div id="classroomFabMenu" class="classroom-fab-menu" hidden>
+      <button type="button" id="classroomRaiseHandBtn">✋ Raise hand</button>
+      <button type="button" id="classroomAskQuestionBtn">❓ Ask question</button>
+    </div>
+  </div>
+
+  <div id="classroomTeacherStrip" class="classroom-teacher-strip" hidden></div>
+
+  <div id="classroomQuestionModal" class="modal" style="display:none;">
+    <div class="modal-content" style="max-width:480px;">
+      <h3>Ask a Question</h3>
+      <p style="font-size:12px; color:var(--theme-text-dim);">Your teacher will see this in real time (max 200 characters).</p>
+      <textarea id="classroomQuestionInput" maxlength="200" rows="4" style="width:100%; margin:10px 0; padding:10px; border-radius:8px; border:1px solid var(--theme-border-mid); background:var(--theme-input-bg); color:var(--theme-text);"></textarea>
+      <div class="modal-actions">
+        <button type="button" class="btn secondary" id="classroomQuestionCancelBtn">Cancel</button>
+        <button type="button" class="btn run" id="classroomQuestionSubmitBtn">Submit</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="classroomSendFileModal" class="modal" style="display:none;">
+    <div class="modal-content" style="max-width:520px;">
+      <h3 id="classroomSendFileTitle">Send file</h3>
+      <p style="font-size:12px; color:var(--theme-text-dim);">A copy is placed in the recipient&apos;s Shared folder.</p>
+      <div id="classroomSendRecipients" class="classroom-send-recipients"></div>
+      <div id="classroomSendPeerRow" style="display:none; margin-top:8px;">
+        <label for="classroomSendPeerSelect" style="font-size:12px;">Classmate</label>
+        <select id="classroomSendPeerSelect" style="width:100%; padding:8px; margin-top:4px; border-radius:8px; border:1px solid var(--theme-border-mid); background:var(--theme-input-bg); color:var(--theme-text);"></select>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn secondary" id="classroomSendFileCancelBtn">Cancel</button>
+        <button type="button" class="btn run" id="classroomSendFileSubmitBtn">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="classroomAuditModal" class="modal" style="display:none;">
+    <div class="modal-content" style="max-width:720px;">
+      <h3 id="classroomAuditTitle">Student files</h3>
+      <div id="classroomAuditTree"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn secondary" id="classroomAuditCloseBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
   </div><!-- .app-shell -->
 
   <script src="/static/js/app.js"></script>
@@ -679,6 +737,8 @@
   <script src="/static/js/editor-init.js"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/app-core.js"></script>
+  <script src="/static/js/classroom-signals.js"></script>
+  <script src="/static/js/classroom-files.js"></script>
 
 </body>
 </html>
