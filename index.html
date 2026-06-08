@@ -36,15 +36,18 @@
 <body>
     <div class="app-shell">
   <header class="topbar topbar-primary" id="topbarPrimary">
-    <div class="brand"><div>EagleIDE</div></div>
+    <div class="topbar-primary-left">
+      <div class="brand"><div>EagleIDE</div></div>
+      <button class="btn btn--ghost topbar-tools-btn" id="topbarToolsBtn" type="button" aria-expanded="true" aria-controls="toolTray" title="Show or hide editor tools">Tools ▾</button>
+    </div>
     <div class="topbar-primary-center">
-      <button class="btn run" id="runBtn">Run ▶</button>
+      <button class="btn run run-btn-hero" id="runBtn">Run ▶</button>
+    </div>
+    <div class="topbar-primary-actions">
       <button class="btn exception-help-btn" id="exceptionHelpBtn" title="Troubleshooting Assistant" aria-label="Open troubleshooting assistant">🛠️ Help</button>
       <span class="file-chip" id="activeFileChip"><span id="activeFileName"></span></span>
       <span id="editorLiveIndicator" class="live-indicator chip chip--live">Live</span>
       <span class="guest-badge chip" id="guestBadge">Guest</span>
-    </div>
-    <div class="topbar-primary-actions">
       <button class="btn btn--admin" id="loginBtn" title="Login">Sign In</button>
       <div class="role-menu" id="roleMenu">
         <button class="btn btn--ghost btn--icon secondary" id="roleMenuBtn" type="button" aria-haspopup="true" aria-expanded="false" title="Account menu" style="display:none;">⋯</button>
@@ -59,7 +62,6 @@
     </div>
   </header>
   <div class="tool-tray" id="toolTray">
-    <button class="btn btn--ghost tool-tray-toggle" id="toolTrayToggle" type="button" aria-expanded="true" aria-label="Toggle editor tools">Tools ▾</button>
     <div class="control-group" id="modeSelectorWrap">
       <span class="control-label">Mode</span>
       <select id="languageSelector" class="select">

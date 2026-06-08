@@ -163,9 +163,15 @@ def transform_html(html: str) -> str:
         '<div class="content"><div id="output"></div></div>\n          <button type="button" class="shell-fab" id="shellFab" title="Toggle shell" aria-label="Toggle shell">▼</button>',
     )
 
-    # Close app-shell before body end + tablet nav
+    # Close app-shell before body end + tablet nav (only the real document </body>, not strings in scripts)
     if 'id="tabletPanelNav"' not in html:
-        html = html.replace("</body>", TABLET_NAV + "\n  </div><!-- .app-shell -->\n</body>")
+        close_marker = "</body>\n</html>"
+        if close_marker in html:
+            html = html.replace(
+                close_marker,
+                TABLET_NAV + "\n  </div><!-- .app-shell -->\n</body>\n</html>",
+                1,
+            )
 
     # Extract inline scripts
     scripts = extract_scripts(html)
