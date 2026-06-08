@@ -1,5 +1,10 @@
 /* Classroom: raise hand, questions, send file, audit */
 
+.classroom-fab[hidden],
+.classroom-fab-menu[hidden] {
+  display: none !important;
+}
+
 .classroom-fab {
   position: fixed;
   left: max(16px, env(safe-area-inset-left));
