@@ -19,6 +19,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let currentStudentClassId = null;
     let teacherStreamLiveClasses = {};
     let currentOpenFile = null; // { path, name } of open file in sidebar
+    let auditPreviewActive = false;
+    let auditPreviewMeta = null;
+    let auditEditorBackup = null;
     let registerMode = false;
     let currentConfig = null;
     let mySid = null;
@@ -602,6 +605,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (tWiki) tWiki.style.display = canShowWikiTab ? '' : 'none';
       const classJoinNotice = document.getElementById('classJoinNotice');
       if (classJoinNotice) classJoinNotice.style.display = isStudentNoClass ? '' : 'none';
+      window.ClassroomSignals?.onAuthChanged?.();
+      updateSendFileButtonVisibility();
       const lessonLocal = document.getElementById('lessonLocal');
       const lessonFrame = document.getElementById('lessonFrame');
       if (classCtx?.settings?.wiki_html && canViewWikiContent) {
@@ -775,6 +780,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     if (typeof io !== 'undefined') {
       try {
         socket = io({ transports: ["websocket", "polling"], timeout: 20000 });
+        window.eagleSocket = socket;
+        window.dispatchEvent(new CustomEvent('eagle-socket-ready', { detail: { socket } }));
         socket.on('connected', (m) => {
           mySid = m?.sid || null;
           window.mySid = mySid;
@@ -1597,6 +1604,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       updateEditorOverlay();
       renderClassSelector();
       if (typeof window.afterAuthUiUpdate === "function") window.afterAuthUiUpdate();
+      window.ClassroomSignals?.onAuthChanged?.();
+      updateSendFileButtonVisibility();
+      refreshEagleIDEContext();
     }
 
     function formatDuration(totalSeconds) {
@@ -1657,12 +1667,18 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       document.getElementById('serverHealthUpdatedAt').textContent =
         `Updated: ${new Date().toLocaleString()} • Started: ${d.started_at || '—'}`;
       renderServerHealthFeed(d.alerts || []);
+      window.ClassroomFiles?.loadClassroomLog?.();
     }
 
     // Show/hide an "no file selected" overlay on the editor when signed in but no file open
     function updateEditorOverlay() {
       const editorPanel = document.getElementById('editorPanel');
       const isLoggedIn = isAuthenticated();
+      if (auditPreviewActive || currentOpenFile?.audit) {
+        editorPanel.classList.remove('editor-disabled');
+        if (window.eagleEditor) window.eagleEditor.setOption('readOnly', true);
+        return;
+      }
       if (isLoggedIn && !currentOpenFile) {
         editorPanel.classList.add('editor-disabled');
         if (window.eagleEditor) window.eagleEditor.setOption('readOnly', true);
@@ -2859,6 +2875,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     function teacherStudentActionsHtml(classId, student) {
       return `
         <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
+          <button class="btn secondary cls-audit-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}" data-name="${escapeHtml(student.name || student.email)}" style="font-size:11px; padding:3px 8px;">Browse Files</button>
+          <button class="btn secondary cls-reset-examples-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}" data-name="${escapeHtml(student.name || student.email)}" style="font-size:11px; padding:3px 8px;">Reset Examples</button>
           <button class="btn secondary cls-reset-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}" style="font-size:11px; padding:3px 8px;">Reset PW</button>
           <button class="btn secondary cls-toggle-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}" data-enable="${!student.enabled}" style="font-size:11px; padding:3px 8px;">${student.enabled ? 'Lock' : 'Unlock'}</button>
           <button class="btn stop cls-remove-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}" style="font-size:11px; padding:3px 8px;">Remove</button>
@@ -2899,6 +2917,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
             ${aiToggleTemplate(activeClass)}
             <label style="font-size:12px;"><input type="checkbox" class="cls-wiki" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.wiki_enabled ? 'checked' : ''}> Wiki enabled</label>
+            <label style="font-size:12px;"><input type="checkbox" class="cls-raise-hand" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.raise_hand_enabled !== false ? 'checked' : ''}> Raise hand / questions</label>
+            <label style="font-size:12px;"><input type="checkbox" class="cls-teacher-send" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.teacher_file_send_enabled !== false ? 'checked' : ''}> Teacher send files</label>
+            <label style="font-size:12px;"><input type="checkbox" class="cls-student-send" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.student_send_to_teacher_enabled !== false ? 'checked' : ''}> Student send to teacher</label>
+            <label style="font-size:12px;"><input type="checkbox" class="cls-peer-share" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.student_peer_sharing_enabled ? 'checked' : ''}> Student peer sharing</label>
             <button class="btn secondary save-class-settings-btn" data-class="${escapeHtml(activeClass.id)}" style="font-size:12px;">Save Settings</button>
           </div>
           <div style="margin-bottom:10px;">
@@ -2941,7 +2963,16 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const wikiUrl = wrap.querySelector(`.cls-wiki-url[data-class="${CSS.escape(classId)}"]`)?.value || '';
         const wikiHtml = wrap.querySelector(`.cls-wiki-html[data-class="${CSS.escape(classId)}"]`)?.value || '';
         const rigor = parseInt(wrap.querySelector(`.cls-rigor[data-class="${CSS.escape(classId)}"]`)?.value || '5', 10) || 5;
-        const settingsPayload = { wiki_enabled: !!wiki, wiki_url: wikiUrl.trim(), wiki_html: wikiHtml, ai_grading_rigor: rigor };
+        const settingsPayload = {
+          wiki_enabled: !!wiki,
+          wiki_url: wikiUrl.trim(),
+          wiki_html: wikiHtml,
+          ai_grading_rigor: rigor,
+          raise_hand_enabled: !!wrap.querySelector(`.cls-raise-hand[data-class="${CSS.escape(classId)}"]`)?.checked,
+          teacher_file_send_enabled: !!wrap.querySelector(`.cls-teacher-send[data-class="${CSS.escape(classId)}"]`)?.checked,
+          student_send_to_teacher_enabled: !!wrap.querySelector(`.cls-student-send[data-class="${CSS.escape(classId)}"]`)?.checked,
+          student_peer_sharing_enabled: !!wrap.querySelector(`.cls-peer-share[data-class="${CSS.escape(classId)}"]`)?.checked,
+        };
         if (canShowAiToggle) settingsPayload.ai_enabled = !!ai;
         const res = await fetch('/api/teacher/classes/settings', {
           method: 'POST',
@@ -2994,6 +3025,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         syncTeacherDashboardClassSelectors();
         renderTeacherClassManagement();
       }));
+      wrap.querySelectorAll('.cls-audit-btn').forEach(btn => btn.addEventListener('click', () => {
+        window.ClassroomFiles?.openAuditModal?.(btn.dataset.class, btn.dataset.email, btn.dataset.name);
+      }));
+      wrap.querySelectorAll('.cls-reset-examples-btn').forEach(btn => btn.addEventListener('click', () => {
+        window.ClassroomFiles?.resetStudentExamples?.(btn.dataset.class, btn.dataset.email, btn.dataset.name);
+      }));
+      window.ClassroomSignals?.loadTeacherSignals?.();
     }
 
     function renderSkillClassChecklist(selected = []) {
@@ -4114,6 +4152,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     // Save the currently open file (if any).
     // Returns true on success (or if nothing to save), false on error.
     async function saveCurrentFile() {
+      if (auditPreviewActive || currentOpenFile?.audit) return true;
       if (!currentOpenFile || (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN)) return true;
       const content = csvEditorActive ? stringifyCsvRows(csvEditorRows) : editor.getValue();
       try {
@@ -4163,8 +4202,71 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       document.getElementById('editor').addEventListener('input', scheduleAutosave);
     }
 
+    function closeAuditPreview() {
+      if (!auditPreviewActive) return;
+      auditPreviewActive = false;
+      try { editor.setOption('readOnly', false); } catch {}
+      if (auditEditorBackup) {
+        currentOpenFile = auditEditorBackup.currentOpenFile;
+        if (auditEditorBackup.csvActive) {
+          setCsvMode(true, auditEditorBackup.csvContent || '');
+          editor.setValue('');
+        } else {
+          setCsvMode(false);
+          editor.setValue(auditEditorBackup.editorContent || '');
+        }
+        auditEditorBackup = null;
+      } else {
+        currentOpenFile = null;
+        setCsvMode(false);
+        editor.setValue('');
+      }
+      auditPreviewMeta = null;
+      document.getElementById('classroomAuditBanner')?.classList.remove('active');
+      updateActiveFileName();
+      updateEditorOverlay();
+    }
+
+    async function openAuditPreview(path, content, studentEmail) {
+      if (!TEACHER_TOKEN) return;
+      if (!auditPreviewActive) {
+        await saveCurrentFile();
+        auditEditorBackup = {
+          currentOpenFile: currentOpenFile ? { ...currentOpenFile } : null,
+          editorContent: editor.getValue(),
+          csvActive: csvEditorActive,
+          csvContent: csvEditorActive ? stringifyCsvRows(csvEditorRows) : null,
+        };
+      }
+      auditPreviewActive = true;
+      auditPreviewMeta = { path, studentEmail };
+      const name = String(path || '').split('/').pop() || 'file';
+      currentOpenFile = { path, name, audit: true };
+      setCsvMode(false);
+      try { editor.setOption('readOnly', true); } catch {}
+      editor.setValue(content || '');
+      const banner = document.getElementById('classroomAuditBanner');
+      const bannerText = document.getElementById('classroomAuditBannerText');
+      if (banner) banner.classList.add('active');
+      if (bannerText) bannerText.textContent = `Audit view: ${studentEmail} — ${path} (read-only)`;
+      updateActiveFileName();
+      updateEditorOverlay();
+      setWorkspaceTab('editor');
+    }
+
+    function updateSendFileButtonVisibility() {
+      const btn = document.getElementById('sendFileBtn');
+      if (!btn) return;
+      const item = currentOpenFile && !currentOpenFile.audit
+        ? { type: 'file', path: currentOpenFile.path, name: currentOpenFile.name }
+        : null;
+      const show = item && window.ClassroomFiles?.canSendFile?.(item);
+      btn.style.display = show ? '' : 'none';
+    }
+
     async function openFile(item) {
       if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return;
+      if (auditPreviewActive) closeAuditPreview();
       // Save the currently open file before switching
       await saveCurrentFile();
       const res = await fetch('/api/files/read?path=' + encodeURIComponent(item.path), { headers: fileAuthHeaders() });
@@ -4184,6 +4286,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       setWorkspaceTab('editor');
       renderCurrentFolder();
       syncSubmissionScoringForOpenFile(item.path);
+      updateSendFileButtonVisibility();
     }
 
     // Context menu
@@ -4224,6 +4327,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             .catch(err => alert('Download failed: ' + err));
         };
         _ctxMenu.appendChild(dlBtn);
+        window.ClassroomFiles?.addCtxMenuItems?.(_ctxMenu, item, () => {
+          if (_ctxMenu) { _ctxMenu.remove(); _ctxMenu = null; }
+        });
       }
       const renameBtn = document.createElement('button');
       renameBtn.textContent = '✏️ Rename';
@@ -6118,6 +6224,39 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       refreshChallengeAuthState();
       await loadAssignments();
     };
+
+    document.getElementById('sendFileBtn')?.addEventListener('click', () => {
+      if (!currentOpenFile || currentOpenFile.audit) return;
+      window.ClassroomFiles?.openSendModal?.({
+        type: 'file',
+        path: currentOpenFile.path,
+        name: currentOpenFile.name,
+      });
+    });
+    document.getElementById('classroomAuditCloseBannerBtn')?.addEventListener('click', closeAuditPreview);
+
+    function refreshEagleIDEContext() {
+      window.EagleIDE = {
+        getContext: () => ({
+          USER_TOKEN,
+          TEACHER_TOKEN,
+          ADMIN_TOKEN,
+          currentUser,
+          currentTeacher,
+          currentConfig,
+          currentTeacherClassId,
+          currentStudentClassId,
+          teacherClasses,
+          studentClasses,
+          studentClassData,
+          getCurrentClassContext,
+          loadFileTree,
+          openAuditPreview,
+          closeAuditPreview,
+        }),
+      };
+    }
+    refreshEagleIDEContext();
 
     (async () => {
       if (USER_TOKEN) await loadStudentClassData();
