@@ -1,0 +1,126 @@
+/* EagleIDE Design Tokens — Liquid Glass */
+:root {
+  /* Brand */
+  --columbia-blue: #a5c8f0;
+  --eagle-red: #c62828;
+  --bg-dark: #1e1e1e;
+  --text-light: #eaeaea;
+  --panel-dark: #141414;
+  --panel-mid: #222;
+
+  /* Glass surface */
+  --glass-blur: 24px;
+  --glass-saturate: 180%;
+  --glass-bg: rgba(255, 255, 255, 0.06);
+  --glass-bg-elevated: rgba(255, 255, 255, 0.10);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-border-highlight: rgba(255, 255, 255, 0.22);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.24);
+  --glass-inset: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+
+  /* Spacing & radius */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --touch-min: 44px;
+  --topbar-h: 52px;
+  --tool-tray-h: 44px;
+
+  /* Semantic theme — dark (default) */
+  --theme-bg: #141414;
+  --theme-panel: var(--glass-bg);
+  --theme-panel-hdr: var(--glass-bg-elevated);
+  --theme-border: rgba(255, 255, 255, 0.14);
+  --theme-border-mid: rgba(255, 255, 255, 0.08);
+  --theme-text: #eaeaea;
+  --theme-text-dim: #aaa;
+  --theme-input-bg: rgba(0, 0, 0, 0.35);
+  --theme-btn: rgba(255, 255, 255, 0.08);
+  --theme-btn-hover: rgba(255, 255, 255, 0.14);
+  --theme-secondary: rgba(255, 255, 255, 0.12);
+  --theme-shell-bg: rgba(12, 12, 12, 0.55);
+  --theme-shell-text: #dcdcdc;
+  --theme-tab-bg: rgba(0, 0, 0, 0.25);
+  --theme-tab-btn: rgba(255, 255, 255, 0.06);
+  --theme-topbar: linear-gradient(90deg, rgba(165, 200, 240, 0.75), rgba(127, 178, 235, 0.75));
+  --theme-topbar-txt: #0b2540;
+  --theme-output-bg: rgba(8, 8, 8, 0.5);
+  --theme-cm-bg: rgba(20, 20, 20, 0.45);
+  --theme-splitter-a: rgba(255, 255, 255, 0.08);
+  --theme-splitter-b: rgba(255, 255, 255, 0.04);
+  --theme-bg-image: url(/api/background_dark);
+
+  --splitter-size: 4px;
+  --vsplitter-size: 4px;
+  --shell-size: 35%;
+  --left-width: 50%;
+  --teacher-pane-size: 50%;
+  --splitter-hit: 16px;
+
+  --cm-font-size: 14px;
+  --indent-ch: 4;
+  --indent-tabs: 4;
+
+  --transition-fast: 150ms ease-out;
+  --transition-panel: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+body.light-mode {
+  --glass-bg: rgba(255, 255, 255, 0.55);
+  --glass-bg-elevated: rgba(255, 255, 255, 0.72);
+  --glass-border: rgba(255, 255, 255, 0.65);
+  --glass-border-highlight: rgba(255, 255, 255, 0.85);
+  --glass-shadow: 0 8px 32px rgba(16, 32, 64, 0.12);
+  --glass-inset: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+
+  --theme-bg: #f0f2f5;
+  --theme-panel: var(--glass-bg);
+  --theme-panel-hdr: var(--glass-bg-elevated);
+  --theme-border: rgba(0, 0, 0, 0.1);
+  --theme-border-mid: rgba(0, 0, 0, 0.06);
+  --theme-text: #1a2030;
+  --theme-text-dim: #555;
+  --theme-input-bg: rgba(255, 255, 255, 0.85);
+  --theme-btn: rgba(255, 255, 255, 0.6);
+  --theme-btn-hover: rgba(255, 255, 255, 0.85);
+  --theme-secondary: rgba(0, 0, 0, 0.06);
+  --theme-shell-bg: rgba(240, 242, 246, 0.75);
+  --theme-shell-text: #1a2030;
+  --theme-tab-bg: rgba(255, 255, 255, 0.5);
+  --theme-tab-btn: rgba(255, 255, 255, 0.65);
+  --theme-topbar: linear-gradient(90deg, rgba(165, 200, 240, 0.88), rgba(100, 160, 230, 0.88));
+  --theme-topbar-txt: #0b2540;
+  --theme-output-bg: rgba(238, 240, 245, 0.8);
+  --theme-cm-bg: rgba(255, 255, 255, 0.7);
+  --theme-splitter-a: rgba(0, 0, 0, 0.08);
+  --theme-splitter-b: rgba(0, 0, 0, 0.04);
+  --theme-bg-image: url(/api/background);
+  --bg-dark: #f0f2f5;
+  --text-light: #1a2030;
+  --panel-dark: #f0f2f5;
+  --panel-mid: #dde3ed;
+}
+
+@media (max-width: 1200px) {
+  :root { --glass-blur: 16px; }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --glass-blur: 0px;
+    --glass-saturate: 100%;
+    --theme-panel: rgba(30, 30, 30, 0.92);
+    --theme-panel-hdr: rgba(24, 24, 24, 0.96);
+  }
+  body.light-mode {
+    --theme-panel: rgba(255, 255, 255, 0.96);
+    --theme-panel-hdr: rgba(248, 249, 252, 0.98);
+  }
+}
