@@ -1,0 +1,29 @@
+.users-table{ width:100%; border-collapse:collapse; font-size:13px; margin-top:8px; }
+    .users-table th, .users-table td{ border-bottom:1px solid var(--theme-border-mid); padding:6px 8px; text-align:left; color:var(--theme-text); }
+    .users-table th{ color:var(--columbia-blue); }
+    .users-table .disabled-row{ opacity:.5; }
+
+    /* Admin Users Management Modal */
+    .admin-users-toolbar{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--theme-border-mid); }
+    .admin-users-toolbar input[type=text]{ flex:1; min-width:180px; padding:7px 10px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; font-size:13px; }
+    .admin-users-stats-table{ width:100%; border-collapse:collapse; font-size:12px; }
+    .admin-users-stats-table th{ color:var(--columbia-blue); padding:5px 8px; border-bottom:2px solid var(--theme-border-mid); text-align:left; white-space:nowrap; position:sticky; top:0; background:var(--theme-panel); z-index:1; }
+    .admin-users-stats-table td{ padding:5px 8px; border-bottom:1px solid var(--theme-border-mid); color:var(--theme-text); vertical-align:middle; }
+    .admin-users-stats-table tr:hover td{ background:rgba(165,200,240,0.07); }
+    .admin-users-stats-table .disabled-row td{ opacity:.5; }
+    .admin-users-stats-table .selected-row td{ background:rgba(165,200,240,0.14); }
+    .stat-storage{ color:#a5c8f0; font-size:11px; }
+    .stat-ip{ font-family:monospace; font-size:11px; color:var(--theme-text-dim); }
+    .server-health-grid{ display:grid; gap:10px; grid-template-columns: repeat(4, minmax(120px, 1fr)); margin-bottom:12px; }
+    .server-health-card{ border:1px solid var(--theme-border-mid); border-radius:10px; padding:10px; background:var(--theme-input-bg); }
+    .server-health-card .label{ font-size:11px; color:var(--theme-text-dim); }
+    .server-health-card .value{ font-size:16px; color:var(--columbia-blue); font-weight:700; margin-top:4px; }
+    .server-health-panel{ border:1px solid var(--theme-border-mid); border-radius:10px; padding:10px; background:var(--theme-input-bg); margin-bottom:10px; }
+    .server-health-panel h4{ margin:0 0 8px; color:var(--columbia-blue); font-size:13px; }
+    .server-health-log{ background:var(--theme-output-bg); border:1px solid var(--theme-border-mid); border-radius:8px; padding:10px; max-height:180px; overflow:auto; font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Courier New",monospace; white-space:pre-wrap; }
+    .server-health-feed{ max-height:220px; overflow:auto; display:flex; flex-direction:column; gap:8px; }
+    .server-health-alert{ border:1px solid var(--theme-border-mid); border-radius:8px; padding:8px; background:var(--theme-output-bg); }
+    .server-health-alert .meta{ font-size:11px; color:var(--theme-text-dim); margin-bottom:4px; }
+    .server-health-alert.critical{ border-color:#c62828; }
+
+    /* Context menu */
