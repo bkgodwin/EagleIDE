@@ -1,0 +1,179 @@
+.CodeMirror{ height:100%; background:var(--theme-cm-bg); color:var(--text-light); font-size: var(--cm-font-size); line-height:1.4 }
+    .CodeMirror pre{ tab-size: var(--indent-tabs); -moz-tab-size: var(--indent-tabs) }
+    .CodeMirror pre.CodeMirror-line,
+    .CodeMirror pre.CodeMirror-line-like{
+      background-image:
+        repeating-linear-gradient(to right, rgba(165,200,240,0.18) 0, rgba(165,200,240,0.18) 1px, transparent 1px, transparent calc(var(--indent-ch) * 1ch));
+      background-attachment: local; background-repeat: repeat-y;
+    }
+    body.guides-off .CodeMirror pre.CodeMirror-line,
+    body.guides-off .CodeMirror pre.CodeMirror-line-like{ background-image:none }
+
+    /* Editor disabled overlay */
+    #editorPanel.editor-disabled .content{ position:relative; }
+    #editorPanel.editor-disabled .content::after{
+      content: "Please create a file in the file browser and select it to begin coding!";
+      position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+      background:rgba(0,0,0,0.55); color:var(--columbia-blue);
+      font-size:15px; font-weight:600; text-align:center;
+      padding:24px; pointer-events:none; z-index:10;
+      backdrop-filter:blur(2px);
+    }
+    #editorPanel.editor-disabled #editorContentStack.file-browser-active::after{
+      display:none;
+    }
+    body.light-mode #editorPanel.editor-disabled .content::after{
+      background:rgba(240,242,246,0.80);
+    }
+
+    .editor-content-stack.file-browser-active{ display:grid; grid-template-rows:1fr; }
+    .editor-content-stack.file-browser-active .student-editor-wrap,
+    .editor-content-stack.file-browser-active .editor-stream-splitter,
+    .editor-content-stack.file-browser-active .teacher-stream-pane{ display:none !important; }
+    .editor-content-stack.file-browser-active .embedded-file-browser{ display:flex; }
+    .csv-editor{ height:100%; overflow:auto; padding:10px; background:var(--theme-output-bg); }
+    .csv-editor.hidden{ display:none; }
+    .csv-editor table{ width:100%; border-collapse:collapse; font-size:13px; }
+    .csv-editor td, .csv-editor th{ border:1px solid var(--theme-border-mid); padding:0; min-width:90px; }
+    .csv-editor input{
+      width:100%;
+      border:0;
+      padding:8px;
+      background:var(--theme-input-bg);
+      color:var(--theme-text);
+      font:inherit;
+      outline:none;
+    }
+    .editor-content-stack{ display:grid; grid-template-rows: 1fr 0 0; height:100%; min-height:0; }
+    .student-editor-wrap{ min-height:0; overflow:hidden; }
+    .editor-stream-splitter,
+    .teacher-stream-pane{ display:none; }
+    .editor-content-stack.teacher-stream-enabled.teacher-stream-open{
+      grid-template-rows: minmax(120px, calc(100% - var(--teacher-pane-size) - var(--splitter-size))) var(--splitter-size) minmax(120px, var(--teacher-pane-size));
+    }
+    .editor-content-stack.teacher-stream-enabled.teacher-stream-open .editor-stream-splitter{
+      display:block;
+      background:linear-gradient(180deg,var(--theme-splitter-a),var(--theme-splitter-b));
+      border-top:1px solid var(--theme-border);
+      border-bottom:1px solid var(--theme-bg);
+      position:relative;
+      cursor:row-resize;
+      user-select:none;
+      touch-action:none;
+    }
+    .editor-content-stack.teacher-stream-enabled.teacher-stream-open .editor-stream-splitter::before{
+      content:"";
+      position:absolute;
+      left:0;
+      right:0;
+      top:calc(-1 * var(--splitter-hit));
+      height:calc(var(--splitter-size) + 2 * var(--splitter-hit));
+    }
+    .editor-content-stack.teacher-stream-enabled.teacher-stream-open .editor-stream-splitter::after{
+      content:"···";
+      position:absolute;
+      left:50%;
+      top:50%;
+      transform:translate(-50%,-50%);
+      color:var(--theme-text-dim);
+      letter-spacing:4px;
+      font-weight:900;
+      pointer-events:none;
+    }
+    .editor-content-stack.teacher-stream-enabled.teacher-stream-open .teacher-stream-pane{
+      display:block;
+      min-height:0;
+      overflow-y:auto;
+      overflow-x:hidden;
+      border-top:1px solid var(--theme-border-mid);
+    }
+    .teacher-stream-pane .CodeMirror{ height:100%; }
+    .teacher-stream-pane .CodeMirror-scroll{ overflow:auto !important; }
+    .teacher-pane-toggle{
+      position:fixed;
+      left:50%;
+      bottom:6px;
+      transform:translateX(-50%);
+      z-index:260;
+      width:34px;
+      height:30px;
+      border-radius:10px;
+      border:1px solid var(--theme-border-mid);
+      background:var(--theme-panel-hdr);
+      color:var(--theme-text);
+      display:none;
+      align-items:center;
+      justify-content:center;
+      cursor:pointer;
+      font-size:15px;
+      line-height:1;
+      backdrop-filter:blur(4px);
+      transition:background .2s ease, border-color .2s ease, color .2s ease, box-shadow .2s ease;
+    }
+    .teacher-pane-toggle:hover{ background:var(--theme-btn-hover); }
+    .teacher-pane-toggle.live{
+      background:rgba(198,40,40,0.18);
+      border-color:rgba(198,40,40,0.9);
+      color:#ff8c8c;
+      box-shadow:0 0 12px rgba(198,40,40,0.35);
+    }
+
+    #classSelectorWrap{
+      display:none;
+      flex-direction:row;
+      align-items:center;
+      gap:6px;
+      background:var(--theme-tab-bg);
+      border:1px solid var(--theme-border);
+      border-radius:10px;
+      padding:6px 8px;
+      min-width:220px;
+    }
+    .class-selector-row{
+      display:flex;
+      align-items:center;
+      gap:6px;
+    }
+    .eagle-completions {
+      position: absolute;
+      z-index: 9999;
+      background: var(--glass-bg-elevated);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-sm);
+      box-shadow: var(--glass-shadow);
+      backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+      -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+      max-height: 320px;
+      overflow-y: auto;
+      font-family: ui-monospace, Consolas, Monaco, monospace;
+      font-size: 13px;
+    }
+    .eagle-completions.hidden { display: none; }
+    .completion-item {
+      padding: 6px 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--theme-text);
+    }
+    .completion-item:hover,
+    .completion-item.selected {
+      background: rgba(165, 200, 240, 0.22);
+      color: var(--columbia-blue);
+    }
+    .completion-icon{ width:16px; height:16px; flex-shrink:0; font-size:11px; font-weight:bold; text-align:center; line-height:16px; border-radius:3px; }
+    .icon-func{ background:#b180d7; color:#fff; }
+    .icon-class{ background:#ee9d28; color:#fff; }
+    .icon-var{ background:#4fc1ff; color:#000; }
+    .icon-kw{ background:#569cd6; color:#fff; }
+    .icon-attr{ background:#9cdcfe; color:#000; }
+
+    /* Sidebar collapse styles */
+    body.right-collapsed #rightColumn { display: none !important; }
+    body.right-collapsed #hsplitter { display: none !important; }
+    /* When right sidebar collapsed, only show editor (and file sidebar if present) */
+    body.right-collapsed .outer.no-sidebar { grid-template-columns: 1fr !important; }
+    body.right-collapsed .outer.no-sidebar #editorPanel { grid-column: 1 / 2; }
+
+    /* Shell collapse styles */

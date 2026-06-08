@@ -1,0 +1,9 @@
+.quiz-lock-note{ margin-top:10px; padding:10px; border:1px solid #7b5e00; background:#2a2107; color:#f6d27c; border-radius:8px; font-size:12px; }
+    .question-split{ display:grid; grid-template-columns:minmax(340px,1.15fr) minmax(340px,1fr); gap:20px; align-items:start; }
+    .question-code-panel{ background:#0b0f14; border:1px solid var(--theme-border-mid); border-radius:10px; padding:10px; min-height:220px; max-height:420px; overflow:auto; }
+    .code-read-block{ font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; color:#d7e1ee; }
+    .code-read-line{ display:grid; grid-template-columns:42px minmax(0,1fr); gap:10px; white-space:pre; }
+    .code-read-line-num{ color:#6f8196; text-align:right; user-select:none; border-right:1px solid #233245; padding-right:8px; }
+    .code-read-line-code{ overflow-x:auto; }
+    .no-exit-text{ color:#ffb74d; font-size:12px; margin-top:8px; font-weight:600; }
+      .question-split{ grid-template-columns:minmax(0,1fr); }

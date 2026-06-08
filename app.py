@@ -138,7 +138,7 @@ except Exception:
 # -------------------------
 # App & Socket
 # -------------------------
-app = Flask(__name__, static_folder=None)
+app = Flask(__name__, static_folder="static", static_url_path="/static")
 socketio = SocketIO(
     app,
     async_mode="eventlet",
