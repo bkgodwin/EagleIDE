@@ -1,0 +1,227 @@
+/* Classroom: raise hand, questions, send file, audit */
+
+.classroom-fab {
+  position: fixed;
+  left: max(16px, env(safe-area-inset-left));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  z-index: 1200;
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.classroom-fab-main {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 1px solid var(--theme-border-mid, rgba(255, 255, 255, 0.25));
+  background: var(--glass-bg-strong, rgba(30, 45, 70, 0.85));
+  color: var(--theme-text, #e8f0ff);
+  font-size: 22px;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(12px);
+}
+
+.classroom-fab-main.raised {
+  background: linear-gradient(135deg, #f5a623, #e67e22);
+  color: #fff;
+}
+
+.classroom-fab-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 12px;
+  background: var(--glass-bg-strong, rgba(30, 45, 70, 0.92));
+  border: 1px solid var(--theme-border-mid, rgba(255, 255, 255, 0.2));
+  backdrop-filter: blur(12px);
+}
+
+.classroom-fab-menu button {
+  font-size: 13px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--theme-border-mid);
+  background: var(--theme-input-bg);
+  color: var(--theme-text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.classroom-teacher-strip {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: max(12px, env(safe-area-inset-bottom));
+  z-index: 1190;
+  max-width: min(720px, calc(100vw - 24px));
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.classroom-strip-card {
+  pointer-events: auto;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--glass-bg-strong, rgba(20, 32, 52, 0.92));
+  border: 1px solid var(--theme-border-mid);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3);
+  font-size: 13px;
+  color: var(--theme-text);
+}
+
+.classroom-strip-card.hands {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.classroom-hand-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(245, 166, 35, 0.2);
+  border: 1px solid rgba(245, 166, 35, 0.5);
+}
+
+.classroom-hand-chip button {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: none;
+  background: var(--columbia-blue, #7fb2eb);
+  color: #102a43;
+  cursor: pointer;
+}
+
+.classroom-question-card .q-meta {
+  font-size: 11px;
+  color: var(--theme-text-dim);
+  margin-bottom: 4px;
+}
+
+.classroom-question-card .q-text {
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+
+.classroom-question-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.classroom-question-actions button {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--theme-border-mid);
+  background: var(--theme-input-bg);
+  color: var(--theme-text);
+  cursor: pointer;
+}
+
+.classroom-question-actions button.primary {
+  background: var(--columbia-blue);
+  color: #102a43;
+  border-color: transparent;
+}
+
+.classroom-audit-banner {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  background: rgba(127, 178, 235, 0.15);
+  border-bottom: 1px solid var(--columbia-blue);
+  font-size: 12px;
+  color: var(--theme-text);
+}
+
+.classroom-audit-banner.active {
+  display: flex;
+}
+
+.classroom-send-recipients {
+  max-height: 200px;
+  overflow: auto;
+  border: 1px solid var(--theme-border-mid);
+  border-radius: 8px;
+  padding: 8px;
+  margin: 8px 0;
+}
+
+.classroom-send-recipients label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin-bottom: 6px;
+  cursor: pointer;
+}
+
+.classroom-audit-tree {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--theme-border-mid);
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 12px;
+}
+
+.classroom-audit-tree .audit-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.classroom-audit-tree .audit-item:hover {
+  background: rgba(127, 178, 235, 0.12);
+}
+
+.classroom-audit-tree .audit-folder {
+  font-weight: 600;
+  color: var(--columbia-blue);
+  margin-top: 6px;
+}
+
+.classroom-log-feed {
+  max-height: 280px;
+  overflow: auto;
+  font-size: 12px;
+  border: 1px solid var(--theme-border-mid);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.classroom-log-entry {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--theme-border-mid);
+}
+
+.classroom-log-entry:last-child {
+  border-bottom: none;
+}
+
+@media (max-width: 768px) {
+  .classroom-fab-main {
+    width: 48px;
+    height: 48px;
+    font-size: 20px;
+  }
+}
