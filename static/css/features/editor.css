@@ -26,7 +26,28 @@
       background:rgba(240,242,246,0.80);
     }
 
-    .editor-content-stack.file-browser-active{ display:grid; grid-template-rows:1fr; }
+    .editor-content-stack{
+      display:grid;
+      grid-template-rows: 1fr 0 0;
+      grid-template-areas: "workspace" "splitter" "teacher";
+      height:100%;
+      min-height:0;
+    }
+    .student-editor-wrap{ grid-area: workspace; }
+    .editor-stream-splitter{ grid-area: splitter; }
+    .teacher-stream-pane{ grid-area: teacher; }
+    .embedded-file-browser{
+      grid-area: workspace;
+      display:none;
+      height:100%;
+      min-height:0;
+      background:var(--theme-panel);
+      border-radius:10px;
+      border:1px solid var(--theme-border-mid);
+      overflow:hidden;
+      flex-direction:column;
+    }
+    .editor-content-stack.file-browser-active{ grid-template-rows: 1fr 0 0; }
     .editor-content-stack.file-browser-active .student-editor-wrap,
     .editor-content-stack.file-browser-active .editor-stream-splitter,
     .editor-content-stack.file-browser-active .teacher-stream-pane{ display:none !important; }
@@ -44,7 +65,11 @@
       font:inherit;
       outline:none;
     }
-    .editor-content-stack{ display:grid; grid-template-rows: 1fr 0 0; height:100%; min-height:0; }
+    #editorPanel .content.editor-content-stack{
+      flex:1;
+      min-height:0;
+      overflow:hidden;
+    }
     .student-editor-wrap{ min-height:0; overflow:hidden; }
     .editor-stream-splitter,
     .teacher-stream-pane{ display:none; }

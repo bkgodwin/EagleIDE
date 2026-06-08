@@ -2637,6 +2637,36 @@ def teacher_change_password():
     return jsonify(ok=True)
 
 
+@app.post("/api/teacher/students/update")
+def teacher_update_student():
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    name = re.sub(r"\s+", " ", str(data.get("name") or "").strip())
+    if not email:
+        return jsonify(ok=False, error="Email required"), 400
+    if not name:
+        return jsonify(ok=False, error="Name required"), 400
+    if not _student_in_teacher_class(teacher.get("email", ""), email):
+        return jsonify(ok=False, error="Student is not in one of your classes"), 403
+    users_data = _load_users()
+    found = None
+    for u in users_data.get("users", []):
+        if (u.get("email") or "").lower() == email and u.get("role") == "student":
+            u["name"] = name[:120]
+            found = u
+            break
+    if not found:
+        return jsonify(ok=False, error="Student not found"), 404
+    _save_users(users_data)
+    for token, info in list(_student_tokens.items()):
+        if (info.get("email") or "").lower() == email:
+            info["name"] = name[:120]
+    return jsonify(ok=True, student={"email": email, "name": name[:120], "enabled": found.get("enabled", True)})
+
+
 @app.post("/api/teacher/students/toggle")
 def teacher_toggle_student():
     teacher = _require_teacher(request)

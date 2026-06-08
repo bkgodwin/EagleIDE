@@ -101,11 +101,11 @@
         </div>
         <button class="btn secondary" id="clearErrorsBtn" style="display:none; font-size:12px; padding:4px 8px;">Clear Error Highlights</button>
       </header>
+      <div id="classroomAuditBanner" class="classroom-audit-banner" role="status" hidden>
+        <span id="classroomAuditBannerText">Viewing student file (read-only)</span>
+        <button type="button" class="btn secondary" id="classroomAuditCloseBannerBtn" style="font-size:12px;padding:4px 10px;">Exit audit view</button>
+      </div>
       <div class="content editor-content-stack" id="editorContentStack">
-        <div id="classroomAuditBanner" class="classroom-audit-banner" role="status">
-          <span id="classroomAuditBannerText">Viewing student file (read-only)</span>
-          <button type="button" class="btn secondary" id="classroomAuditCloseBannerBtn" style="font-size:12px;padding:4px 10px;">Exit audit view</button>
-        </div>
         <div class="student-editor-wrap">
           <textarea id="editor" style="display:none; resize:none;"></textarea>
           <div id="csvEditor" class="csv-editor hidden"></div>
