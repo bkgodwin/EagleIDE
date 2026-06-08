@@ -1036,7 +1036,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const channel = new BroadcastChannel(`eagle-html-runtime-${channelId}`);
       channel.onmessage = (event) => {
         const payload = event.data || {};
-        if (payload.type === 'eagle-html-runtime-log') {
+        if (payload.type === 'ready') {
+          if (htmlRuntimeWindow) {
+            htmlRuntimeWindow.ready = true;
+            if (htmlRuntimeWindow.pendingRuntime) {
+              htmlRuntimeWindow.channel.postMessage(htmlRuntimeWindow.pendingRuntime);
+              htmlRuntimeWindow.pendingRuntime = null;
+            }
+          }
+        } else if (payload.type === 'eagle-html-runtime-log') {
           appendHtmlRuntimeLog(payload);
         } else if (payload.type === 'closed') {
           const closedRuntimeId = String(payload.runtime_id || '');
@@ -1054,7 +1062,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         setRunButtonState(false);
         return false;
       }
-      htmlRuntimeWindow = { popup, channel, channelId };
+      htmlRuntimeWindow = { popup, channel, channelId, ready: false, pendingRuntime: null };
       appendOut('[HTML Runtime] Preparing WebView...\n');
       return true;
     }
@@ -1075,7 +1083,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         setRunButtonState(false);
         cleanupHtmlRuntimeSession(runtimeData.runtime_id);
       }, Math.max(1000, Math.floor((timeoutSeconds + 5) * 1000)));
-      notifyHtmlRuntimePopup({
+      const loadMessage = {
         type: 'load',
         runtime: {
           runtime_id: runtimeData.runtime_id,
@@ -1084,7 +1092,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           allow_popups: !!runtimeData.allow_popups,
           title
         }
-      });
+      };
+      if (htmlRuntimeWindow?.ready) {
+        notifyHtmlRuntimePopup(loadMessage);
+      } else if (htmlRuntimeWindow) {
+        htmlRuntimeWindow.pendingRuntime = loadMessage;
+      }
       appendOut('[HTML Runtime] WebView opened.\n');
     }
 
