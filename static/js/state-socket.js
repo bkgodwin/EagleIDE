@@ -953,6 +953,29 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       return lower.endsWith('.html') || lower.endsWith('.htm');
     }
 
+    function makeHtmlRuntimeChannelId() {
+      if (window.crypto?.randomUUID) return window.crypto.randomUUID().replace(/[^A-Za-z0-9_-]/g, '');
+      return `rt${Date.now()}${Math.random().toString(36).slice(2)}`.replace(/[^A-Za-z0-9_-]/g, '');
+    }
+
+    function appendHtmlRuntimeLog(payload) {
+      const lvl = String(payload.level || 'info').toUpperCase();
+      const msg = String(payload.message || '').trim();
+      if (!msg) return;
+      appendOut(`[HTML ${lvl}] ${msg}\n`);
+    }
+
+    function teardownHtmlRuntimeBroadcast() {
+      if (htmlRuntimeCloseMonitor) {
+        clearTimeout(htmlRuntimeCloseMonitor);
+        htmlRuntimeCloseMonitor = null;
+      }
+      try {
+        if (htmlRuntimeWindow?.channel) htmlRuntimeWindow.channel.close();
+      } catch {}
+      if (htmlRuntimeWindow) htmlRuntimeWindow.channel = null;
+    }
+
     async function cleanupHtmlRuntimeSession(runtimeId = htmlRuntimeId) {
       const rid = String(runtimeId || '').trim();
       if (!rid) return;
@@ -966,18 +989,25 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (rid === htmlRuntimeId) htmlRuntimeId = '';
     }
 
-    function closeHtmlRuntimeWindow() {
-      if (htmlRuntimeCloseMonitor) {
-        clearInterval(htmlRuntimeCloseMonitor);
-        htmlRuntimeCloseMonitor = null;
-      }
+    function notifyHtmlRuntimePopup(payload) {
       try {
-        if (htmlRuntimeWindow && !htmlRuntimeWindow.closed) {
+        htmlRuntimeWindow?.channel?.postMessage(payload);
+      } catch {}
+    }
+
+    function closeHtmlRuntimeWindow() {
+      const runtimeId = htmlRuntimeId;
+      notifyHtmlRuntimePopup({ type: 'stop', reason: 'Execution stopped.' });
+      try {
+        if (htmlRuntimeWindow?.popup && !htmlRuntimeWindow.popup.closed) {
+          htmlRuntimeWindow.popup.close();
+        } else if (htmlRuntimeWindow && !htmlRuntimeWindow.closed) {
           htmlRuntimeWindow.close();
         }
       } catch {}
+      teardownHtmlRuntimeBroadcast();
       htmlRuntimeWindow = null;
-      cleanupHtmlRuntimeSession();
+      cleanupHtmlRuntimeSession(runtimeId);
     }
 
     function setRunButtonState(running) {
@@ -996,109 +1026,65 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       setRunButtonState(false);
     }
 
+    function openHtmlRuntimePopupShell() {
+      closeHtmlRuntimeWindow();
+      if (!('BroadcastChannel' in window)) {
+        appendOut('[HTML Runtime] This browser does not support isolated HTML previews.\n');
+        return false;
+      }
+      const channelId = makeHtmlRuntimeChannelId();
+      const channel = new BroadcastChannel(`eagle-html-runtime-${channelId}`);
+      channel.onmessage = (event) => {
+        const payload = event.data || {};
+        if (payload.type === 'eagle-html-runtime-log') {
+          appendHtmlRuntimeLog(payload);
+        } else if (payload.type === 'closed') {
+          const closedRuntimeId = String(payload.runtime_id || '');
+          if (closedRuntimeId && closedRuntimeId === htmlRuntimeId) cleanupHtmlRuntimeSession(closedRuntimeId);
+          teardownHtmlRuntimeBroadcast();
+          htmlRuntimeWindow = null;
+          setRunButtonState(false);
+        }
+      };
+      htmlRuntimeId = '';
+      const popup = window.open(`/api/html-runtime/popup/${encodeURIComponent(channelId)}`, `eagle-html-runtime-${channelId}`, 'popup=yes,width=1100,height=760');
+      if (!popup) {
+        appendOut('[HTML Runtime] Popup blocked by browser.\n');
+        try { channel.close(); } catch {}
+        setRunButtonState(false);
+        return false;
+      }
+      htmlRuntimeWindow = { popup, channel, channelId };
+      appendOut('[HTML Runtime] Preparing WebView...\n');
+      return true;
+    }
+
     function openHtmlRuntimePopup(runtimeData) {
       if (!runtimeData?.runtime_id || !runtimeData?.view_url) {
         appendOut('[HTML Runtime] Invalid runtime response\n');
+        notifyHtmlRuntimePopup({ type: 'error', message: 'Invalid runtime response.' });
         setRunButtonState(false);
         return;
       }
 
-      closeHtmlRuntimeWindow();
       htmlRuntimeId = runtimeData.runtime_id;
-      const popup = window.open('', `eagle-html-runtime-${runtimeData.runtime_id}`, 'popup=yes,width=1100,height=760');
-      if (!popup) {
-        appendOut('[HTML Runtime] Popup blocked by browser.\n');
-        cleanupHtmlRuntimeSession(runtimeData.runtime_id);
-        setRunButtonState(false);
-        return;
-      }
-      htmlRuntimeWindow = popup;
-      if (htmlRuntimeCloseMonitor) clearInterval(htmlRuntimeCloseMonitor);
-      htmlRuntimeCloseMonitor = setInterval(() => {
-        if (!htmlRuntimeWindow || htmlRuntimeWindow.closed) {
-          clearInterval(htmlRuntimeCloseMonitor);
-          htmlRuntimeCloseMonitor = null;
-          htmlRuntimeWindow = null;
-          cleanupHtmlRuntimeSession();
-          setRunButtonState(false);
-        }
-      }, 400);
-
       const timeoutSeconds = Number(runtimeData.timeout_seconds || 30);
-      const allowPopups = !!runtimeData.allow_popups;
       const title = `HTML WebView • ${currentOpenFile?.name || 'index.html'}`;
-      const iframeSandbox = ['allow-scripts', 'allow-same-origin'];
-      if (allowPopups) iframeSandbox.push('allow-popups');
-      const popupDoc = popup.document;
-      popupDoc.open();
-      popupDoc.write(`<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>${title.replace(/</g, '&lt;')}</title>
-  <style>
-    body{margin:0;font-family:Inter,Arial,sans-serif;background:#121212;color:#eaeaea;display:flex;flex-direction:column;height:100vh}
-    .hdr{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#1f1f1f;border-bottom:1px solid #333}
-    .hdr strong{font-size:14px}
-    .hdr button{border:0;border-radius:8px;padding:6px 10px;background:#c62828;color:#fff;cursor:pointer;font-weight:700}
-    .runtime-msg{font-size:12px;opacity:.85}
-    #runtimeFrame{flex:1;width:100%;border:0;background:#fff}
-  </style>
-</head>
-<body>
-  <div class="hdr">
-    <div><strong>${title.replace(/</g, '&lt;')}</strong><div class="runtime-msg" id="runtimeMsg">Running...</div></div>
-    <button id="runtimeExitBtn">Exit ✕</button>
-  </div>
-  <iframe id="runtimeFrame" sandbox="${iframeSandbox.join(' ')}" src="${runtimeData.view_url}"></iframe>
-  <script>
-    const runtimeId = ${JSON.stringify(runtimeData.runtime_id)};
-    const timeoutMs = ${Math.max(1000, Math.floor(timeoutSeconds * 1000))};
-    let stopped = false;
-    const frame = document.getElementById('runtimeFrame');
-    const msgEl = document.getElementById('runtimeMsg');
-    const sendToOpener = (payload) => { try { window.opener && window.opener.postMessage(payload, '*'); } catch {} };
-    const setMsg = (text) => { if (msgEl) msgEl.textContent = text; };
-    const cleanupRuntime = () => {
-      try {
-        navigator.sendBeacon('/api/html-runtime/cleanup', new Blob([JSON.stringify({ runtime_id: runtimeId })], { type: 'application/json' }));
-      } catch {
-        fetch('/api/html-runtime/cleanup', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ runtime_id: runtimeId }) }).catch(() => {});
-      }
-    };
-    const terminate = (reason) => {
-      if (stopped) return;
-      stopped = true;
-      frame.src = 'about:blank';
-      setMsg(reason || 'Execution stopped.');
-      sendToOpener({ type:'eagle-html-runtime-log', level:'warn', message: reason || 'Execution stopped.' });
-    };
-    document.getElementById('runtimeExitBtn').addEventListener('click', () => window.close());
-    window.addEventListener('beforeunload', cleanupRuntime);
-    const timeoutHandle = setTimeout(() => terminate('Execution time limit reached.'), timeoutMs);
-    window.addEventListener('message', (event) => {
-      const data = event.data || {};
-      if (!data.__eagleHtmlRuntime) return;
-      if (data.type === 'limit') {
-        terminate('Execution time limit reached.');
-      } else if (data.type === 'error') {
-        const details = data.message || 'JavaScript runtime error';
-        sendToOpener({ type:'eagle-html-runtime-log', level:'error', message: details });
-      } else if (data.type === 'console' && data.level === 'error') {
-        sendToOpener({ type:'eagle-html-runtime-log', level:'error', message: data.message || 'console.error' });
-      } else if (data.type === 'status') {
-        sendToOpener({ type:'eagle-html-runtime-log', level:'warn', message: data.message || 'Runtime status' });
-      }
-    });
-    frame.addEventListener('load', () => {
-      if (!stopped) setMsg('Running...');
-    });
-    frame.addEventListener('error', () => terminate('Execution stopped due to iframe load error.'));
-    window.addEventListener('unload', () => clearTimeout(timeoutHandle));
-  <\/script>
-</body>
-</html>`);
-      popupDoc.close();
+      if (htmlRuntimeCloseMonitor) clearTimeout(htmlRuntimeCloseMonitor);
+      htmlRuntimeCloseMonitor = setTimeout(() => {
+        setRunButtonState(false);
+        cleanupHtmlRuntimeSession(runtimeData.runtime_id);
+      }, Math.max(1000, Math.floor((timeoutSeconds + 5) * 1000)));
+      notifyHtmlRuntimePopup({
+        type: 'load',
+        runtime: {
+          runtime_id: runtimeData.runtime_id,
+          view_url: runtimeData.view_url,
+          timeout_seconds: timeoutSeconds,
+          allow_popups: !!runtimeData.allow_popups,
+          title
+        }
+      });
       appendOut('[HTML Runtime] WebView opened.\n');
     }
 
@@ -1135,14 +1121,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       lastRunExceptionEntry = null;
       hideExceptionHelpButton();
       closeExceptionHelpModal();
-      // Save current file before running
-      if (currentOpenFile && (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN)) {
-        try {
-          await saveCurrentFile();
-        } catch (err) {
-          appendOut(`[Warning: could not save "${currentOpenFile.name}" before running: ${err}]\n`);
-        }
-      }
       if (csvEditorActive) {
         appendOut('[Run skipped: CSV files use spreadsheet editing only.]\n');
         return;
@@ -1151,6 +1129,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         if (!currentOpenFile?.path) {
           appendOut('[HTML Runtime] Open an HTML file first.\n');
           return;
+        }
+        if (!openHtmlRuntimePopupShell()) return;
+        setRunButtonState(true);
+        if (currentOpenFile && (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN)) {
+          try {
+            await saveCurrentFile();
+          } catch (err) {
+            appendOut(`[Warning: could not save "${currentOpenFile.name}" before running: ${err}]\n`);
+          }
         }
         try {
           const res = await fetch('/api/html-runtime/start', {
@@ -1161,15 +1148,25 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           const j = await res.json().catch(() => ({}));
           if (!j?.ok) {
             appendOut(`[HTML Runtime Error] ${j?.error || 'Failed to start HTML runtime'}\n`);
+            notifyHtmlRuntimePopup({ type: 'error', message: j?.error || 'Failed to start HTML runtime' });
+            setRunButtonState(false);
             return;
           }
-          setRunButtonState(true);
           openHtmlRuntimePopup(j);
         } catch (err) {
           appendOut('[HTML Runtime Error] Network error while starting HTML runtime.\n');
+          notifyHtmlRuntimePopup({ type: 'error', message: 'Network error while starting HTML runtime.' });
           setRunButtonState(false);
         }
         return;
+      }
+      // Save current file before running Python or JavaScript.
+      if (currentOpenFile && (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN)) {
+        try {
+          await saveCurrentFile();
+        } catch (err) {
+          appendOut(`[Warning: could not save "${currentOpenFile.name}" before running: ${err}]\n`);
+        }
       }
       appendOut('[Sending code]\n');
       setRunButtonState(true);
