@@ -24,6 +24,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional
+from urllib.parse import quote
 
 from flask import Flask, send_from_directory, send_file, request, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
@@ -300,8 +301,9 @@ def _cleanup_expired_html_runtime_sessions(force: bool = False) -> None:
         for runtime_id, session in list(_html_runtime_sessions.items()):
             expires_at = float(session.get("expires_at", 0))
             if force or expires_at <= now:
-                runtime_dir = Path(session.get("runtime_dir", ""))
-                to_remove.append((runtime_id, runtime_dir))
+                runtime_dir = session.get("runtime_dir")
+                if runtime_dir:
+                    to_remove.append((runtime_id, Path(runtime_dir)))
                 _html_runtime_sessions.pop(runtime_id, None)
     for _, runtime_dir in to_remove:
         _delete_path_quietly(runtime_dir)
@@ -311,7 +313,7 @@ def _remove_html_runtime_session(runtime_id: str) -> None:
     runtime_dir = None
     with _html_runtime_lock:
         session = _html_runtime_sessions.pop(runtime_id, None)
-        if session:
+        if session and session.get("runtime_dir"):
             runtime_dir = Path(session.get("runtime_dir", ""))
     if runtime_dir:
         _delete_path_quietly(runtime_dir)
@@ -3054,6 +3056,150 @@ def root():
     return send_from_directory(BASE_DIR, "index.html")
 
 
+def _html_runtime_popup_shell(channel_id: str) -> str:
+    channel_json = json.dumps(channel_id)
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EagleIDE HTML WebView</title>
+  <style>
+    body{{margin:0;font-family:Inter,Arial,sans-serif;background:#121212;color:#eaeaea;display:flex;flex-direction:column;height:100vh}}
+    .hdr{{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#1f1f1f;border-bottom:1px solid #333;gap:12px}}
+    .hdr strong{{font-size:14px}}
+    .hdr button{{border:0;border-radius:8px;padding:6px 10px;background:#c62828;color:#fff;cursor:pointer;font-weight:700}}
+    .runtime-msg{{font-size:12px;opacity:.85;margin-top:2px}}
+    .empty{{flex:1;display:grid;place-items:center;background:#181818;color:#aaa;text-align:center;padding:24px}}
+    #runtimeFrame{{flex:1;width:100%;border:0;background:#fff;display:none}}
+  </style>
+</head>
+<body>
+  <div class="hdr">
+    <div><strong id="runtimeTitle">HTML WebView</strong><div class="runtime-msg" id="runtimeMsg">Preparing preview...</div></div>
+    <button id="runtimeExitBtn" type="button">Exit X</button>
+  </div>
+  <div class="empty" id="runtimeEmpty">Preparing HTML preview...</div>
+  <iframe id="runtimeFrame" sandbox="allow-scripts"></iframe>
+  <script>
+    (function(){{
+      const channelId = {channel_json};
+      const channelName = "eagle-html-runtime-" + channelId;
+      const frame = document.getElementById("runtimeFrame");
+      const empty = document.getElementById("runtimeEmpty");
+      const msgEl = document.getElementById("runtimeMsg");
+      const titleEl = document.getElementById("runtimeTitle");
+      let runtimeId = "";
+      let timeoutHandle = null;
+      let stopped = false;
+      let channel = null;
+
+      const setMsg = (text) => {{ if (msgEl) msgEl.textContent = text || ""; }};
+      const send = (payload) => {{
+        try {{ if (channel) channel.postMessage(payload); }} catch {{}}
+      }};
+      const sendLog = (level, message) => {{
+        send({{ type: "eagle-html-runtime-log", level, message }});
+      }};
+      const cleanupRuntime = () => {{
+        if (!runtimeId) return;
+        try {{
+          navigator.sendBeacon("/api/html-runtime/cleanup", new Blob([JSON.stringify({{ runtime_id: runtimeId }})], {{ type: "application/json" }}));
+        }} catch {{
+          fetch("/api/html-runtime/cleanup", {{ method: "POST", headers: {{ "Content-Type": "application/json" }}, body: JSON.stringify({{ runtime_id: runtimeId }}) }}).catch(() => {{}});
+        }}
+      }};
+      const terminate = (reason, cleanup = true) => {{
+        if (stopped) return;
+        stopped = true;
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        frame.src = "about:blank";
+        frame.style.display = "none";
+        empty.style.display = "grid";
+        empty.textContent = reason || "Execution stopped.";
+        setMsg(reason || "Execution stopped.");
+        sendLog("warn", reason || "Execution stopped.");
+        if (cleanup) cleanupRuntime();
+      }};
+      const loadRuntime = (runtime) => {{
+        if (!runtime || !runtime.runtime_id || !runtime.view_url) {{
+          terminate("Invalid HTML runtime response.", false);
+          return;
+        }}
+        stopped = false;
+        runtimeId = String(runtime.runtime_id);
+        const timeoutSeconds = Number(runtime.timeout_seconds || 30);
+        const sandboxFlags = ["allow-scripts"];
+        if (runtime.allow_popups) sandboxFlags.push("allow-popups");
+        frame.setAttribute("sandbox", sandboxFlags.join(" "));
+        if (titleEl) titleEl.textContent = runtime.title || "HTML WebView";
+        empty.style.display = "none";
+        frame.style.display = "block";
+        setMsg("Running...");
+        timeoutHandle = setTimeout(() => terminate("Execution time limit reached."), Math.max(1000, Math.floor(timeoutSeconds * 1000)));
+        frame.src = runtime.view_url;
+      }};
+
+      if ("BroadcastChannel" in window) {{
+        channel = new BroadcastChannel(channelName);
+        channel.onmessage = (event) => {{
+          const data = event.data || {{}};
+          if (data.type === "load") {{
+            loadRuntime(data.runtime || {{}});
+          }} else if (data.type === "stop") {{
+            terminate(data.reason || "Execution stopped.");
+          }} else if (data.type === "error") {{
+            terminate(data.message || "Could not start HTML runtime.", false);
+          }}
+        }};
+        send({{ type: "ready" }});
+      }} else {{
+        empty.textContent = "This browser does not support isolated HTML previews.";
+        setMsg("BroadcastChannel unavailable.");
+      }}
+
+      window.addEventListener("message", (event) => {{
+        const data = event.data || {{}};
+        if (!data.__eagleHtmlRuntime) return;
+        if (data.type === "limit") {{
+          terminate(data.message || "Execution time limit reached.");
+        }} else if (data.type === "error") {{
+          sendLog("error", data.message || "JavaScript runtime error");
+        }} else if (data.type === "console" && data.level === "error") {{
+          sendLog("error", data.message || "console.error");
+        }} else if (data.type === "status") {{
+          sendLog("warn", data.message || "Runtime status");
+        }}
+      }});
+      frame.addEventListener("load", () => {{
+        if (!stopped && runtimeId) setMsg("Running...");
+      }});
+      frame.addEventListener("error", () => terminate("Execution stopped due to iframe load error."));
+      document.getElementById("runtimeExitBtn").addEventListener("click", () => {{
+        cleanupRuntime();
+        window.close();
+      }});
+      window.addEventListener("beforeunload", () => {{
+        cleanupRuntime();
+        send({{ type: "closed", runtime_id: runtimeId }});
+        try {{ if (channel) channel.close(); }} catch {{}}
+      }});
+    }})();
+  </script>
+</body>
+</html>"""
+
+
+@app.get("/api/html-runtime/popup/<channel_id>")
+def html_runtime_popup(channel_id: str):
+    if not re.fullmatch(r"[A-Za-z0-9_-]{8,120}", channel_id or ""):
+        return jsonify(ok=False, error="Invalid runtime channel"), 400
+    response = app.response_class(_html_runtime_popup_shell(channel_id), mimetype="text/html")
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
 def _html_runtime_js_bridge(cfg: Dict[str, Any]) -> str:
     bridge_cfg = {
         "allow_external_internet": _cfg_bool(cfg, "html_runtime_allow_external_internet", False),
@@ -3261,33 +3407,24 @@ def start_html_runtime():
         return jsonify(ok=False, error="Only .html files can use HTML runtime"), 400
 
     runtime_id = uuid.uuid4().hex
-    runtime_dir = SANDBOX_DIR / f"html_runtime_{runtime_id}"
     source_root = user_dir.resolve()
     entry_path = str(target.resolve().relative_to(source_root)).replace("\\", "/")
-    runtime_resolved = runtime_dir.resolve()
-    sandbox_root = SANDBOX_DIR.resolve()
-    if os.path.commonpath([str(runtime_resolved), str(sandbox_root)]) != str(sandbox_root):
-        return jsonify(ok=False, error="Invalid runtime directory"), 500
-    try:
-        shutil.copytree(source_root, runtime_resolved, dirs_exist_ok=True, symlinks=False, ignore_dangling_symlinks=True)
-    except Exception:
-        _delete_path_quietly(runtime_dir)
-        return jsonify(ok=False, error="Could not prepare HTML runtime environment"), 500
 
     timeout_seconds = _cfg_int(cfg, "html_runtime_timeout_seconds", HTML_RUNTIME_DEFAULT_TIMEOUT, 1, 600)
     session_ttl_seconds = timeout_seconds + 120
     _cleanup_expired_html_runtime_sessions()
     with _html_runtime_lock:
         _html_runtime_sessions[runtime_id] = {
-            "runtime_dir": str(runtime_resolved),
+            "runtime_root": str(source_root),
             "entry_file": entry_path,
+            "owner_email": user.get("email", ""),
             "expires_at": time.time() + session_ttl_seconds,
         }
 
     return jsonify(
         ok=True,
         runtime_id=runtime_id,
-        view_url=f"/api/html-runtime/view/{runtime_id}/{entry_path}",
+        view_url=f"/api/html-runtime/view/{runtime_id}/{quote(entry_path, safe='/')}",
         timeout_seconds=timeout_seconds,
         allow_external_internet=_cfg_bool(cfg, "html_runtime_allow_external_internet", False),
         allow_popups=_cfg_bool(cfg, "html_runtime_allow_popups", False),
@@ -3316,7 +3453,7 @@ def view_html_runtime_asset(runtime_id: str, asset_path: str):
     if not session:
         return jsonify(ok=False, error="Runtime session not found or expired"), 404
 
-    runtime_root = Path(session.get("runtime_dir", ""))
+    runtime_root = Path(session.get("runtime_root") or session.get("runtime_dir", ""))
     target = _validate_user_path(runtime_root, asset_path)
     if not target or not target.exists() or not target.is_file():
         return jsonify(ok=False, error="Runtime asset not found"), 404
