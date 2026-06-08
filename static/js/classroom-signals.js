@@ -5,9 +5,9 @@
   'use strict';
 
   let handRaised = false;
-  let openQuestions = [];
   let teacherHands = [];
   let teacherQuestions = [];
+  let menuOpen = false;
 
   function ctx() {
     return window.EagleIDE?.getContext?.() || {};
@@ -19,12 +19,17 @@
 
   function getClassId() {
     const c = ctx();
-    if (c.TEACHER_TOKEN) return c.currentTeacherClassId;
-    return c.getCurrentClassContext?.()?.id;
+    if (c.TEACHER_TOKEN) return c.currentTeacherClassId || c.teacherClasses?.[0]?.id || null;
+    return c.getCurrentClassContext?.()?.id || c.currentStudentClassId || null;
   }
 
   function classSettings() {
-    return ctx().getCurrentClassContext?.()?.settings || {};
+    const classCtx = ctx().getCurrentClassContext?.();
+    if (classCtx?.settings) return classCtx.settings;
+    const c = ctx();
+    const id = getClassId();
+    const fromList = (c.teacherClasses || c.studentClasses || []).find(cls => cls.id === id);
+    return fromList?.settings || {};
   }
 
   function isStudentInClass() {
@@ -39,12 +44,21 @@
 
   function emitSocket(event, payload) {
     const socket = getSocket();
-    if (!socket) return;
+    if (!socket) return false;
     const c = ctx();
     const classId = getClassId();
-    if (!classId) return;
+    if (!classId) return false;
     const token = c.TEACHER_TOKEN || c.USER_TOKEN;
     socket.emit(event, { class_id: classId, token, ...payload });
+    return true;
+  }
+
+  function setMenuOpen(open) {
+    menuOpen = !!open;
+    const menu = document.getElementById('classroomFabMenu');
+    if (!menu) return;
+    if (menuOpen) menu.removeAttribute('hidden');
+    else menu.setAttribute('hidden', '');
   }
 
   function updateFabVisibility() {
@@ -53,17 +67,19 @@
     const settings = classSettings();
     const show = isStudentInClass() && settings.raise_hand_enabled !== false;
     fab.hidden = !show;
-    if (!show) {
-      document.getElementById('classroomFabMenu')?.setAttribute('hidden', '');
-    }
+    if (!show) setMenuOpen(false);
   }
 
   function updateFabState() {
     const main = document.getElementById('classroomFabMain');
+    const raiseBtn = document.getElementById('classroomRaiseHandBtn');
     if (!main) return;
     main.classList.toggle('raised', handRaised);
-    main.title = handRaised ? 'Hand raised — tap to lower' : 'Classroom help';
+    main.title = handRaised ? 'Hand raised' : 'Classroom help';
     main.textContent = handRaised ? '✋' : '💬';
+    if (raiseBtn) {
+      raiseBtn.textContent = handRaised ? '✋ Lower hand' : '✋ Raise hand';
+    }
   }
 
   function renderTeacherStrip() {
@@ -144,9 +160,10 @@
 
   async function loadTeacherSignals() {
     const c = ctx();
-    if (!c.TEACHER_TOKEN || !getClassId()) return;
+    const classId = getClassId();
+    if (!c.TEACHER_TOKEN || !classId) return;
     try {
-      const res = await fetch(`/api/teacher/classroom/signals?classId=${encodeURIComponent(getClassId())}`, {
+      const res = await fetch(`/api/teacher/classroom/signals?classId=${encodeURIComponent(classId)}`, {
         headers: { 'X-Teacher-Token': c.TEACHER_TOKEN },
       });
       const j = await res.json().catch(() => ({}));
@@ -159,6 +176,9 @@
   }
 
   function bindSocketHandlers(socket) {
+    if (socket.__classroomBound) return;
+    socket.__classroomBound = true;
+
     socket.on('classroom_hands_update', msg => {
       if (!msg || msg.class_id !== getClassId()) return;
       if (isTeacherView()) {
@@ -203,33 +223,52 @@
         c.loadFileTree?.();
       }
     });
+
+    socket.on('connect', () => {
+      const c = ctx();
+      const classId = getClassId();
+      const token = c.TEACHER_TOKEN || c.USER_TOKEN;
+      if (!classId || !token) return;
+      const role = c.TEACHER_TOKEN ? 'teacher' : 'student';
+      socket.emit('join_class_room', { role, token, class_id: classId });
+      if (c.TEACHER_TOKEN) loadTeacherSignals();
+    });
   }
 
   function bindUi() {
     const main = document.getElementById('classroomFabMain');
     const menu = document.getElementById('classroomFabMenu');
-    main?.addEventListener('click', () => {
+
+    main?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setMenuOpen(!menuOpen);
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!menuOpen) return;
+      if (e.target.closest('#classroomFab')) return;
+      setMenuOpen(false);
+    });
+
+    document.getElementById('classroomRaiseHandBtn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
       if (handRaised) {
         emitSocket('classroom_hand_lower', {});
         handRaised = false;
-        updateFabState();
-        menu?.setAttribute('hidden', '');
-        return;
+      } else {
+        if (!emitSocket('classroom_hand_raise', {})) {
+          alert('Could not raise hand. Check your connection and class selection.');
+          return;
+        }
+        handRaised = true;
       }
-      const hidden = menu?.hasAttribute('hidden');
-      if (hidden) menu?.removeAttribute('hidden');
-      else menu?.setAttribute('hidden', '');
-    });
-
-    document.getElementById('classroomRaiseHandBtn')?.addEventListener('click', () => {
-      emitSocket('classroom_hand_raise', {});
-      handRaised = true;
       updateFabState();
-      menu?.setAttribute('hidden', '');
+      setMenuOpen(false);
     });
 
-    document.getElementById('classroomAskQuestionBtn')?.addEventListener('click', () => {
-      menu?.setAttribute('hidden', '');
+    document.getElementById('classroomAskQuestionBtn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setMenuOpen(false);
       document.getElementById('classroomQuestionModal').style.display = 'flex';
       const input = document.getElementById('classroomQuestionInput');
       if (input) {
@@ -245,9 +284,14 @@
     document.getElementById('classroomQuestionSubmitBtn')?.addEventListener('click', () => {
       const text = (document.getElementById('classroomQuestionInput')?.value || '').trim();
       if (!text) return alert('Enter a question');
-      emitSocket('classroom_question_submit', { text: text.slice(0, 200) });
+      if (!emitSocket('classroom_question_submit', { text: text.slice(0, 200) })) {
+        alert('Could not send question. Check your connection.');
+        return;
+      }
       document.getElementById('classroomQuestionModal').style.display = 'none';
     });
+
+    if (menu) menu.setAttribute('hidden', '');
   }
 
   function onAuthChanged() {
@@ -265,16 +309,13 @@
 
   bindUi();
 
-  window.addEventListener('eagle-socket-ready', e => {
-    const socket = e.detail?.socket;
+  function initSocket() {
+    const socket = window.eagleSocket;
     if (socket) bindSocketHandlers(socket);
-    onAuthChanged();
-  });
-
-  if (window.eagleSocket) {
-    bindSocketHandlers(window.eagleSocket);
     onAuthChanged();
   }
 
+  window.addEventListener('eagle-socket-ready', initSocket);
+  if (window.eagleSocket) initSocket();
   document.addEventListener('DOMContentLoaded', onAuthChanged);
 })();
