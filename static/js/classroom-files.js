@@ -21,7 +21,18 @@
   }
 
   function getClassContext() {
-    return ctx().getCurrentClassContext?.() || null;
+    const c = ctx();
+    const fromHelper = c.getCurrentClassContext?.();
+    if (fromHelper) return fromHelper;
+    if (c.TEACHER_TOKEN) {
+      const id = c.currentTeacherClassId || c.teacherClasses?.[0]?.id;
+      return (c.teacherClasses || []).find(cls => cls.id === id) || c.teacherClasses?.[0] || null;
+    }
+    if (c.USER_TOKEN) {
+      const id = c.currentStudentClassId;
+      return (c.studentClasses || []).find(cls => cls.id === id) || c.studentClassData || null;
+    }
+    return null;
   }
 
   function canSendFile(item) {
@@ -108,8 +119,11 @@
     const c = ctx();
     const classCtx = getClassContext();
     if (!sendFileItem || !classCtx) return;
+    const classId = c.TEACHER_TOKEN
+      ? (c.currentTeacherClassId || classCtx.id || c.teacherClasses?.[0]?.id)
+      : classCtx.id;
     const body = {
-      classId: c.TEACHER_TOKEN ? c.currentTeacherClassId : classCtx.id,
+      classId,
       sourcePath: sendFileItem.path,
     };
 

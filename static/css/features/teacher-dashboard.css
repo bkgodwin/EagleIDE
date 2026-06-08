@@ -150,6 +150,19 @@
       font-size: 11px;
       padding: 4px 8px;
     }
+    .teacher-dash-classroom-settings {
+      border: 1px solid var(--columbia-blue);
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 12px;
+      background: rgba(127, 178, 235, 0.08);
+    }
+    .teacher-dash-classroom-settings-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--columbia-blue);
+      margin-bottom: 8px;
+    }
     .teacher-roster-row-online {
       border-color: #4caf50;
       box-shadow: 0 0 0 1px rgba(76,175,80,.25) inset;
