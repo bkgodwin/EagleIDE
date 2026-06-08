@@ -54,7 +54,8 @@ function initEditor() {
       }
     }
 
-    const editor = initEditor();
+    var editor = initEditor();
+    window.eagleEditorApi = editor;
 
     // Teacher code streaming state
     let teacherEditor = null;

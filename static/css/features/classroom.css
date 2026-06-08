@@ -138,7 +138,7 @@
 }
 
 .classroom-audit-banner {
-  display: none;
+  display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
@@ -147,10 +147,11 @@
   border-bottom: 1px solid var(--columbia-blue);
   font-size: 12px;
   color: var(--theme-text);
+  flex-shrink: 0;
 }
 
-.classroom-audit-banner.active {
-  display: flex;
+.classroom-audit-banner[hidden] {
+  display: none !important;
 }
 
 .classroom-send-recipients {
