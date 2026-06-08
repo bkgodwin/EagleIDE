@@ -7,9 +7,9 @@
 }
 
 .topbar-primary {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-4);
   min-height: var(--topbar-h);
@@ -25,22 +25,60 @@
   z-index: 200;
 }
 
+.topbar-primary-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  justify-self: start;
+}
+
 .topbar-primary .brand { display: flex; gap: var(--space-2); align-items: center; min-width: 0; }
 .topbar-primary .brand > div:first-child {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 220px;
+  max-width: 180px;
   font-weight: 800;
+}
+
+.topbar-tools-btn {
+  flex-shrink: 0;
+  min-height: 36px;
+  padding: var(--space-2) var(--space-3);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--theme-topbar-txt);
+  background: rgba(0, 0, 0, 0.12);
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+body.light-mode .topbar-tools-btn {
+  background: rgba(255, 255, 255, 0.35);
+  border-color: rgba(255, 255, 255, 0.5);
 }
 
 .topbar-primary-center {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  flex: 1;
-  min-width: 0;
   justify-content: center;
+  justify-self: center;
+}
+
+.run-btn-hero {
+  min-width: 148px;
+  min-height: 48px;
+  padding: 12px 36px;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(198, 40, 40, 0.35);
+}
+
+.run-btn-hero.stop {
+  min-width: 148px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
 }
 
 .topbar-primary-actions {
@@ -48,6 +86,9 @@
   align-items: center;
   gap: var(--space-2);
   flex-shrink: 0;
+  justify-self: end;
+  justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 .tool-tray {
@@ -65,10 +106,6 @@
 }
 
 .tool-tray.collapsed { display: none; }
-
-.tool-tray-toggle {
-  display: none;
-}
 
 .file-chip {
   max-width: 200px;
@@ -372,6 +409,8 @@ body.tool-tray-collapsed .outer {
   .tool-tray { gap: var(--space-1); }
   .btn, .tab-btn, .workspace-tab-btn, .file-action-btn { min-height: 40px; }
   .file-tree-item { padding-top: 9px; padding-bottom: 9px; }
+  .topbar-primary .brand > div:first-child { max-width: 120px; }
+  .run-btn-hero { min-width: 120px; padding: 10px 24px; font-size: 16px; }
 }
 
 @media (pointer: coarse) {
