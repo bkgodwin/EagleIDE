@@ -1,4 +1,29 @@
 const INPUT_TOKEN = "[[_IDE_INPUT_]]";
+    var editor = window.eagleEditorApi || null;
+
+    function setMainEditorReadOnly(readOnly) {
+      try { window.eagleEditor?.setOption('readOnly', !!readOnly); } catch {}
+    }
+
+    function getMainEditor() {
+      if (window.eagleEditorApi) return window.eagleEditorApi;
+      if (window.eagleEditor) {
+        return {
+          getValue: () => window.eagleEditor.getValue(),
+          setValue: (v) => window.eagleEditor.setValue(v),
+        };
+      }
+      const ta = document.getElementById('editor');
+      return {
+        getValue: () => ta?.value ?? '',
+        setValue: (v) => { if (ta) ta.value = v; },
+      };
+    }
+
+    function syncEditorBridge() {
+      editor = getMainEditor();
+    }
+    syncEditorBridge();
     const AUTH_SESSION_KEY = 'eagle-auth-session-v1';
     let ADMIN_TOKEN = null;
     let TEACHER_TOKEN = null;
@@ -1611,6 +1636,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       } else {
         updateStreamingToggleButton();
       }
+      syncEditorBridge();
       updateEditorOverlay();
       renderClassSelector();
       if (typeof window.afterAuthUiUpdate === "function") window.afterAuthUiUpdate();
@@ -1684,17 +1710,18 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     function updateEditorOverlay() {
       const editorPanel = document.getElementById('editorPanel');
       const isLoggedIn = isAuthenticated();
+      editorPanel.classList.toggle('audit-preview-active', !!(auditPreviewActive || currentOpenFile?.audit));
       if (auditPreviewActive || currentOpenFile?.audit) {
         editorPanel.classList.remove('editor-disabled');
-        if (window.eagleEditor) window.eagleEditor.setOption('readOnly', true);
+        setMainEditorReadOnly(true);
         return;
       }
       if (isLoggedIn && !currentOpenFile) {
         editorPanel.classList.add('editor-disabled');
-        if (window.eagleEditor) window.eagleEditor.setOption('readOnly', true);
+        setMainEditorReadOnly(true);
       } else {
         editorPanel.classList.remove('editor-disabled');
-        if (window.eagleEditor) window.eagleEditor.setOption('readOnly', false);
+        setMainEditorReadOnly(false);
       }
     }
 
@@ -2884,12 +2911,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     function teacherStudentActionsHtml(classId, student) {
       return `
-        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
-          <button class="btn secondary cls-audit-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}" data-name="${escapeHtml(student.name || student.email)}" style="font-size:11px; padding:3px 8px;">Browse Files</button>
-          <button class="btn secondary cls-reset-examples-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}" data-name="${escapeHtml(student.name || student.email)}" style="font-size:11px; padding:3px 8px;">Reset Examples</button>
-          <button class="btn secondary cls-reset-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}" style="font-size:11px; padding:3px 8px;">Reset PW</button>
-          <button class="btn secondary cls-toggle-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}" data-enable="${!student.enabled}" style="font-size:11px; padding:3px 8px;">${student.enabled ? 'Lock' : 'Unlock'}</button>
-          <button class="btn stop cls-remove-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}" style="font-size:11px; padding:3px 8px;">Remove</button>
+        <div class="teacher-dash-student-actions">
+          <button type="button" class="btn secondary cls-edit-name-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}" data-name="${escapeHtml(student.name || '')}">Edit name</button>
+          <button type="button" class="btn secondary cls-audit-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}" data-name="${escapeHtml(student.name || student.email)}">Browse files</button>
+          <button type="button" class="btn secondary cls-reset-examples-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}" data-name="${escapeHtml(student.name || student.email)}">Reset examples</button>
+          <button type="button" class="btn secondary cls-reset-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}">Reset PW</button>
+          <button type="button" class="btn secondary cls-toggle-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}" data-enable="${!student.enabled}">${student.enabled ? 'Lock' : 'Unlock'}</button>
+          <button type="button" class="btn stop cls-remove-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}">Remove</button>
         </div>`;
     }
 
@@ -2942,8 +2970,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           <div style="font-size:13px; font-weight:600; color:var(--columbia-blue); margin-bottom:6px;">Students</div>
           ${(activeClass.students || []).map(student => `
             <div class="teacher-dash-student-row">
-              <span class="teacher-dash-student-name">${escapeHtml(student.name || student.email)}</span>
-              <span class="teacher-dash-student-email">${escapeHtml(student.email)}</span>
+              <div class="teacher-dash-student-meta">
+                <div class="teacher-dash-student-name">${escapeHtml(student.name || student.email)}</div>
+                <div class="teacher-dash-student-email">${escapeHtml(student.email)}</div>
+              </div>
               ${teacherStudentActionsHtml(activeClass.id, student)}
             </div>
           `).join('') || '<div style="color:#888; font-size:12px;">No students enrolled.</div>'}
@@ -3031,6 +3061,22 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         });
         const j = await res.json().catch(() => ({}));
         if (!j?.ok) return alert(j?.error || 'Failed to update student account');
+        await loadTeacherClasses();
+        syncTeacherDashboardClassSelectors();
+        renderTeacherClassManagement();
+      }));
+      wrap.querySelectorAll('.cls-edit-name-btn').forEach(btn => btn.addEventListener('click', async () => {
+        const nextName = prompt('Student display name:', btn.dataset.name || btn.dataset.email || '');
+        if (nextName === null) return;
+        const trimmed = nextName.trim();
+        if (!trimmed) return alert('Name cannot be empty');
+        const res = await fetch('/api/teacher/students/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Teacher-Token': TEACHER_TOKEN },
+          body: JSON.stringify({ email: btn.dataset.email, name: trimmed }),
+        });
+        const j = await res.json().catch(() => ({}));
+        if (!j?.ok) return alert(j?.error || 'Failed to update student');
         await loadTeacherClasses();
         syncTeacherDashboardClassSelectors();
         renderTeacherClassManagement();
@@ -3715,6 +3761,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
       if (title) title.textContent = _workspaceTab === WORKSPACE_TAB_FILES ? 'File Browser' : 'Editor';
       if (_workspaceTab === WORKSPACE_TAB_FILES) {
+        if (auditPreviewActive) closeAuditPreview();
         loadFileTree();
       } else {
         requestAnimationFrame(() => {
@@ -4164,6 +4211,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     async function saveCurrentFile() {
       if (auditPreviewActive || currentOpenFile?.audit) return true;
       if (!currentOpenFile || (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN)) return true;
+      syncEditorBridge();
       const content = csvEditorActive ? stringifyCsvRows(csvEditorRows) : editor.getValue();
       try {
         const res = await fetch('/api/files/write', {
@@ -4215,7 +4263,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     function closeAuditPreview() {
       if (!auditPreviewActive) return;
       auditPreviewActive = false;
-      try { editor.setOption('readOnly', false); } catch {}
+      syncEditorBridge();
+      setMainEditorReadOnly(false);
       if (auditEditorBackup) {
         currentOpenFile = auditEditorBackup.currentOpenFile;
         if (auditEditorBackup.csvActive) {
@@ -4232,13 +4281,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         editor.setValue('');
       }
       auditPreviewMeta = null;
-      document.getElementById('classroomAuditBanner')?.classList.remove('active');
+      const banner = document.getElementById('classroomAuditBanner');
+      if (banner) banner.hidden = true;
       updateActiveFileName();
       updateEditorOverlay();
     }
 
     async function openAuditPreview(path, content, studentEmail) {
       if (!TEACHER_TOKEN) return;
+      syncEditorBridge();
       if (!auditPreviewActive) {
         await saveCurrentFile();
         auditEditorBackup = {
@@ -4253,15 +4304,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const name = String(path || '').split('/').pop() || 'file';
       currentOpenFile = { path, name, audit: true };
       setCsvMode(false);
-      try { editor.setOption('readOnly', true); } catch {}
       editor.setValue(content || '');
+      setMainEditorReadOnly(true);
       const banner = document.getElementById('classroomAuditBanner');
       const bannerText = document.getElementById('classroomAuditBannerText');
-      if (banner) banner.classList.add('active');
+      if (banner) banner.hidden = false;
       if (bannerText) bannerText.textContent = `Audit view: ${studentEmail} — ${path} (read-only)`;
       updateActiveFileName();
       updateEditorOverlay();
-      setWorkspaceTab('editor');
+      setWorkspaceTab(WORKSPACE_TAB_EDITOR);
     }
 
     function updateSendFileButtonVisibility() {
@@ -4277,6 +4328,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     async function openFile(item) {
       if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return;
       if (auditPreviewActive) closeAuditPreview();
+      syncEditorBridge();
       // Save the currently open file before switching
       await saveCurrentFile();
       const res = await fetch('/api/files/read?path=' + encodeURIComponent(item.path), { headers: fileAuthHeaders() });
