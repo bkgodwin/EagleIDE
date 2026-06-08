@@ -25,6 +25,14 @@
   z-index: 200;
 }
 
+/* Beat legacy shell.css header.topbar { z-index: 100 } so account menu clears tool-tray */
+header.topbar.topbar-primary {
+  position: sticky;
+  top: 0;
+  z-index: 500;
+  overflow: visible;
+}
+
 .topbar-primary-left {
   display: flex;
   align-items: center;
@@ -89,6 +97,7 @@ body.light-mode .topbar-tools-btn {
   justify-self: end;
   justify-content: flex-end;
   flex-wrap: wrap;
+  overflow: visible;
 }
 
 .tool-tray {
@@ -102,7 +111,8 @@ body.light-mode .topbar-tools-btn {
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   border-bottom: 1px solid var(--theme-border-mid);
-  z-index: 190;
+  position: relative;
+  z-index: 100;
 }
 
 .tool-tray.collapsed { display: none; }
@@ -124,6 +134,7 @@ body.light-mode .topbar-tools-btn {
 body.light-mode .file-chip { background: rgba(255, 255, 255, 0.45); }
 
 .role-menu { position: relative; }
+.role-menu.open { z-index: 20; }
 .role-menu-panel {
   display: none;
   position: absolute;
@@ -132,9 +143,10 @@ body.light-mode .file-chip { background: rgba(255, 255, 255, 0.45); }
   min-width: 200px;
   padding: var(--space-2);
   border-radius: var(--radius-md);
-  z-index: 300;
+  z-index: 510;
   flex-direction: column;
   gap: 4px;
+  box-shadow: var(--glass-shadow, 0 8px 28px rgba(0, 0, 0, 0.35));
 }
 .role-menu.open .role-menu-panel { display: flex; }
 .role-menu-panel .btn { width: 100%; justify-content: flex-start; }
