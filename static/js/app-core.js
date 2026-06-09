@@ -1284,14 +1284,113 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (e.target === exceptionHelpModal) closeExceptionHelpModal();
     });
     setRunButtonState(false);
-    function sendInput(){ 
-      const v = stdinEl.value ?? ""; 
-      if (socket) {
-        socket.emit('send_input', { data: v }); 
+
+    function appendShellCommandEcho(line) {
+      const prompt = window.ShellCommands?.getPromptDisplay?.() || '$ ';
+      const userSpan = document.createElement('span');
+      userSpan.className = 'shell-user-input';
+      userSpan.textContent = prompt + line;
+      outputEl.appendChild(userSpan);
+      outputEl.appendChild(document.createTextNode('\n'));
+      outputEl.scrollTop = outputEl.scrollHeight;
+    }
+
+    async function runFileFromShell(item, language) {
+      if (!socket || !item?.path) return false;
+      const shellHidden = document.body.classList.contains('shell-hidden');
+      if (shellHidden) document.getElementById('toggleShellBtn')?.click();
+      outputEl.textContent = '';
+      clearErrorHighlights();
+      _inTraceback = false;
+      waitingForUserInput = false;
+      exceptionInCurrentRun = false;
+      lastRunExceptionType = null;
+      lastRunExceptionEntry = null;
+      hideExceptionHelpButton();
+      closeExceptionHelpModal();
+      let code = '';
+      try {
+        const res = await fetch('/api/files/read?path=' + encodeURIComponent(item.path), { headers: fileAuthHeaders() });
+        const j = await res.json().catch(() => ({}));
+        if (!j?.ok) {
+          appendOut(`[Error: could not read "${item.name}"]\n`);
+          return false;
+        }
+        code = j.content || '';
+      } catch {
+        appendOut('[Error: network error while reading file]\n');
+        return false;
       }
-      // DON'T display the input here - let the backend echo it back
-      // This ensures proper ordering with the prompt
-      stdinEl.value=''; 
+      appendOut(`[Running ${item.name}]\n`);
+      setRunButtonState(true);
+      socket.emit('run_code', {
+        code,
+        language: language === 'javascript' ? 'javascript' : 'python',
+        user_token: USER_TOKEN || '',
+        teacher_token: TEACHER_TOKEN || '',
+        admin_token: ADMIN_TOKEN || '',
+        file_path: item.path,
+      });
+      return true;
+    }
+
+    function handleShellItemDeleted(item) {
+      if (currentOpenFile?.path === item.path) {
+        currentOpenFile = null;
+        setCsvMode(false);
+        editor.setValue('');
+        updateActiveFileName();
+        updateEditorOverlay();
+      }
+      const cwd = _currentFolderPath || '';
+      if (item.type === 'folder' && cwd && (cwd === item.path || cwd.startsWith(item.path + '/'))) {
+        _currentFolderPath = item.path.includes('/')
+          ? item.path.substring(0, item.path.lastIndexOf('/'))
+          : '';
+      }
+    }
+
+    function initShellCommands() {
+      if (!window.ShellCommands?.init) return;
+      window.ShellCommands.init({
+        appendOut,
+        getAuthHeaders: fileAuthHeaders,
+        getJsonHeaders: fileJsonHeaders,
+        isAuthenticated,
+        getFileTree: () => _allFileTree,
+        getCwd: () => _currentFolderPath,
+        setCwd: (path) => {
+          _currentFolderPath = path || '';
+          renderCurrentFolder();
+        },
+        getItemsAtPath: _getItemsAtPath,
+        findItemByPath: _findItemByPath,
+        loadFileTree,
+        openFile,
+        runFile: runFileFromShell,
+        onItemDeleted: handleShellItemDeleted,
+        clearShell: () => { outputEl.textContent = ''; },
+        getCurrentUser: () => currentUser || currentTeacher,
+      });
+    }
+
+    async function sendInput(){
+      const v = stdinEl.value ?? '';
+      stdinEl.value = '';
+      if (isProgramRunning && waitingForUserInput) {
+        if (socket) socket.emit('send_input', { data: v });
+        return;
+      }
+      if (window.ShellCommands?.shouldHandle?.(isProgramRunning, waitingForUserInput)) {
+        if (String(v).trim()) appendShellCommandEcho(v);
+        await window.ShellCommands.handle(v);
+        return;
+      }
+      if (isProgramRunning) {
+        appendOut('[Input ignored: program is running]\n');
+        return;
+      }
+      if (socket) socket.emit('send_input', { data: v });
     }
     document.getElementById('sendBtn').addEventListener('click', sendInput);
     stdinEl.addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); sendInput(); } });
@@ -3875,6 +3974,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const folder = _findItemByPath(tree, folderPath);
       return folder ? (folder.children || []) : [];
     }
+
+    initShellCommands();
 
     function _collectTreePaths(items, out = new Set()) {
       for (const item of (items || [])) {
