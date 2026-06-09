@@ -191,8 +191,14 @@ header .actions {
 }
 
 .modal-content h3 { margin-top: 0; color: var(--columbia-blue); }
-.modal-content label { display: block; margin: var(--space-3) 0 var(--space-1); font-weight: 600; }
-.modal-content input, .modal-content textarea {
+.modal-content label:not(.choice-item) {
+  display: block;
+  margin: var(--space-3) 0 var(--space-1);
+  font-weight: 600;
+}
+.modal-content input:not([type="checkbox"]):not([type="radio"]),
+.modal-content select,
+.modal-content textarea {
   width: 100%;
   padding: var(--space-2);
   background: var(--theme-input-bg);
@@ -200,6 +206,56 @@ header .actions {
   border: 1px solid var(--theme-border-mid);
   border-radius: var(--radius-sm);
   font-family: inherit;
+}
+.modal-content input[type="checkbox"],
+.modal-content input[type="radio"] {
+  width: auto;
+  padding: 0;
+}
+
+/* Checkbox / radio rows — send file, class settings, etc. */
+.choice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.choice-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 4px;
+}
+
+.choice-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.choice-item:hover {
+  background: rgba(127, 178, 235, 0.1);
+}
+
+.choice-item input[type="checkbox"],
+.choice-item input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  margin: 2px 0 0;
+  flex-shrink: 0;
+  cursor: pointer;
+  accent-color: var(--columbia-blue);
+}
+
+.choice-item--emphasis .choice-text {
+  font-weight: 700;
 }
 
 .modal-actions { display: flex; gap: var(--space-3); margin-top: var(--space-4); justify-content: flex-end; }

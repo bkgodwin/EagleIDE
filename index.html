@@ -402,7 +402,7 @@
                 <label style="font-size:12px;">Description / Standard</label>
                 <textarea id="skillDescriptionInput" placeholder="Describe the skill standard..." style="width:100%; min-height:90px; margin-bottom:8px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;"></textarea>
                 <label style="font-size:12px;">Assign to Classes</label>
-                <div id="skillClassChecklist" style="max-height:180px; overflow:auto; border:1px solid var(--theme-border-mid); border-radius:8px; padding:8px; margin-top:4px;"></div>
+                <div id="skillClassChecklist" class="choice-list" style="max-height:180px; overflow:auto; border:1px solid var(--theme-border-mid); border-radius:8px; padding:4px; margin-top:4px;"></div>
                 <div style="display:flex; gap:8px; margin-top:10px;">
                   <button class="btn run" id="saveSkillBtn">Save Skill</button>
                   <button class="btn secondary" id="clearSkillFormBtn">Clear</button>
@@ -706,7 +706,7 @@
     <div class="modal-content" style="max-width:520px;">
       <h3 id="classroomSendFileTitle">Send file</h3>
       <p style="font-size:12px; color:var(--theme-text-dim);">A copy is placed in the recipient&apos;s Shared folder.</p>
-      <div id="classroomSendRecipients" class="classroom-send-recipients"></div>
+      <div id="classroomSendRecipients" class="classroom-send-recipients choice-list"></div>
       <div id="classroomSendPeerRow" style="display:none; margin-top:8px;">
         <label for="classroomSendPeerSelect" style="font-size:12px;">Classmate</label>
         <select id="classroomSendPeerSelect" style="width:100%; padding:8px; margin-top:4px; border-radius:8px; border:1px solid var(--theme-border-mid); background:var(--theme-input-bg); color:var(--theme-text);"></select>

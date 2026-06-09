@@ -3013,7 +3013,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       currentTeacherClassId = activeClass?.id || null;
       syncTeacherDashboardClassSelectors();
       const aiToggleTemplate = (cls) => canShowAiToggle
-        ? `<label style="font-size:12px;"><input type="checkbox" class="cls-ai" data-class="${escapeHtml(cls.id)}" ${cls.settings?.ai_enabled ? 'checked' : ''}> AI enabled</label>`
+        ? `<label class="choice-item"><input type="checkbox" class="cls-ai" data-class="${escapeHtml(cls.id)}" ${cls.settings?.ai_enabled ? 'checked' : ''}><span class="choice-text">AI enabled</span></label>`
         : '';
       wrap.innerHTML = activeClass ? `
         <div class="teacher-dash-class-card">
@@ -3028,15 +3028,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           </div>
           <div class="teacher-dash-classroom-settings">
             <div class="teacher-dash-classroom-settings-title">Classroom features</div>
-            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
+            <div class="choice-grid teacher-dash-feature-grid">
               ${aiToggleTemplate(activeClass)}
-              <label style="font-size:12px;"><input type="checkbox" class="cls-wiki" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.wiki_enabled ? 'checked' : ''}> Wiki enabled</label>
-            </div>
-            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
-              <label style="font-size:12px;"><input type="checkbox" class="cls-raise-hand" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.raise_hand_enabled !== false ? 'checked' : ''}> Raise hand &amp; questions</label>
-              <label style="font-size:12px;"><input type="checkbox" class="cls-teacher-send" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.teacher_file_send_enabled !== false ? 'checked' : ''}> Teacher can send files</label>
-              <label style="font-size:12px;"><input type="checkbox" class="cls-student-send" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.student_send_to_teacher_enabled !== false ? 'checked' : ''}> Students send to teacher</label>
-              <label style="font-size:12px;"><input type="checkbox" class="cls-peer-share" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.student_peer_sharing_enabled ? 'checked' : ''}> Student peer sharing</label>
+              <label class="choice-item"><input type="checkbox" class="cls-wiki" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.wiki_enabled ? 'checked' : ''}><span class="choice-text">Wiki enabled</span></label>
+              <label class="choice-item"><input type="checkbox" class="cls-raise-hand" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.raise_hand_enabled !== false ? 'checked' : ''}><span class="choice-text">Raise hand &amp; questions</span></label>
+              <label class="choice-item"><input type="checkbox" class="cls-teacher-send" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.teacher_file_send_enabled !== false ? 'checked' : ''}><span class="choice-text">Teacher can send files</span></label>
+              <label class="choice-item"><input type="checkbox" class="cls-student-send" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.student_send_to_teacher_enabled !== false ? 'checked' : ''}><span class="choice-text">Students send to teacher</span></label>
+              <label class="choice-item"><input type="checkbox" class="cls-peer-share" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.student_peer_sharing_enabled ? 'checked' : ''}><span class="choice-text">Student peer sharing</span></label>
             </div>
             <button class="btn secondary save-class-settings-btn" data-class="${escapeHtml(activeClass.id)}" style="font-size:12px; margin-bottom:10px;">Save classroom settings</button>
           </div>
@@ -3181,9 +3179,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         return;
       }
       wrap.innerHTML = teacherClasses.map(c => `
-        <label style="display:flex; align-items:flex-start; gap:8px; margin-bottom:6px; font-size:12px;">
+        <label class="choice-item">
           <input type="checkbox" class="skill-class-check" value="${escapeHtml(c.id)}" ${selected.includes(c.id) ? 'checked' : ''}>
-          <span>${escapeHtml(c.name)} <span style="color:var(--theme-text-dim);">(${escapeHtml(c.join_code)})</span></span>
+          <span class="choice-text">${escapeHtml(c.name)} <span style="color:var(--theme-text-dim);">(${escapeHtml(c.join_code)})</span></span>
         </label>
       `).join('');
     }

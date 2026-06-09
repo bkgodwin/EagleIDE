@@ -163,6 +163,17 @@
       color: var(--columbia-blue);
       margin-bottom: 8px;
     }
+    .teacher-dash-feature-grid {
+      margin-bottom: 10px;
+    }
+    .teacher-dash-feature-grid .choice-item {
+      background: rgba(0, 0, 0, 0.12);
+      border: 1px solid var(--theme-border-mid);
+    }
+    .teacher-dash-feature-grid .choice-item:hover {
+      background: rgba(127, 178, 235, 0.15);
+      border-color: var(--columbia-blue);
+    }
     .teacher-roster-row-online {
       border-color: #4caf50;
       box-shadow: 0 0 0 1px rgba(76,175,80,.25) inset;
