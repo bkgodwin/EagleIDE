@@ -743,7 +743,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     function refreshEagleIDEContext() {
+      const prev = window.EagleIDE || {};
       window.EagleIDE = {
+        ...prev,
         getContext: () => ({
           USER_TOKEN,
           TEACHER_TOKEN,
@@ -1877,6 +1879,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       adminSettingsBtn.title = 'Admin Settings';
       const teacherDashboardBtn = document.getElementById('teacherDashboardBtn');
       if (teacherDashboardBtn) teacherDashboardBtn.style.display = TEACHER_TOKEN ? '' : 'none';
+      const studentDashboardBtn = document.getElementById('studentDashboardBtn');
+      if (studentDashboardBtn) {
+        const showStudentDash = !!(USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && getCurrentClassContext());
+        studentDashboardBtn.style.display = showStudentDash ? '' : 'none';
+      }
       if (adminUsersBtn) adminUsersBtn.style.display = ADMIN_TOKEN ? '' : 'none';
       if (serverHealthBtn) serverHealthBtn.style.display = ADMIN_TOKEN ? '' : 'none';
       const roleMenuBtn = document.getElementById('roleMenuBtn');
@@ -1891,10 +1898,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       updateEditorOverlay();
       renderClassSelector();
       if (typeof window.afterAuthUiUpdate === "function") window.afterAuthUiUpdate();
+      refreshEagleIDEContext();
       window.ClassroomSignals?.onAuthChanged?.();
       window.StudentDashboard?.onAuthChanged?.();
       updateSendFileButtonVisibility();
-      refreshEagleIDEContext();
       if (TEACHER_TOKEN) startTeacherClassroomPolling();
       else stopTeacherClassroomPolling();
     }
@@ -3724,8 +3731,44 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
     }
 
+    async function prepareMasteryChartsForExport() {
+      const skillsPane = document.getElementById('skills-mastery-pane');
+      const reportsView = document.getElementById('dash-reports');
+      if (!skillsPane || !reportsView) return false;
+      const wasActive = skillsPane.classList.contains('active');
+      const prevPaneStyle = {
+        display: skillsPane.style.display,
+        visibility: skillsPane.style.visibility,
+        position: skillsPane.style.position,
+        pointerEvents: skillsPane.style.pointerEvents,
+      };
+      if (!wasActive) {
+        skillsPane.classList.add('active');
+        skillsPane.style.display = 'block';
+        skillsPane.style.visibility = 'hidden';
+        skillsPane.style.position = 'absolute';
+        skillsPane.style.left = '-10000px';
+        skillsPane.style.pointerEvents = 'none';
+      }
+      await renderMasteryCharts();
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      if (!wasActive) {
+        skillsPane.classList.remove('active');
+        skillsPane.style.display = prevPaneStyle.display;
+        skillsPane.style.visibility = prevPaneStyle.visibility;
+        skillsPane.style.position = prevPaneStyle.position;
+        skillsPane.style.pointerEvents = prevPaneStyle.pointerEvents;
+        skillsPane.style.left = '';
+      }
+      return true;
+    }
+
     async function renderMasteryCharts() {
-      try { await window.EagleIDE?.ensureChart?.(); } catch (e) { console.warn('Chart.js unavailable', e); return; }
+      if (!window.EagleIDE?.ensureChart) {
+        console.warn('Chart.js loader unavailable');
+        return;
+      }
+      try { await window.EagleIDE.ensureChart(); } catch (e) { console.warn('Chart.js unavailable', e); return; }
       const tagSelect = document.getElementById('masteryAnalyticsTagSelect');
       const selectedTag = tagSelect?.value;
       const tagData = currentMasteryData?.analytics?.tags?.[selectedTag] || {};
@@ -3811,8 +3854,24 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     async function openMasteryPdfReport(scope = 'all') {
-      try { await window.EagleIDE?.ensureJsPDF?.(); } catch (e) { console.warn('jsPDF unavailable', e); return; }
-      if (!currentMasteryData || !window.jspdf?.jsPDF) return;
+      if (!currentMasteryData) {
+        alert('Load class reports before exporting a PDF.');
+        return;
+      }
+      if (!window.EagleIDE?.ensureJsPDF) {
+        alert('PDF export is unavailable. Please refresh the page.');
+        return;
+      }
+      try { await window.EagleIDE.ensureJsPDF(); } catch (e) {
+        console.warn('jsPDF unavailable', e);
+        alert('Could not load the PDF library. Check your network connection and try again.');
+        return;
+      }
+      if (!window.jspdf?.jsPDF) {
+        alert('PDF export failed to initialize.');
+        return;
+      }
+      await prepareMasteryChartsForExport();
       const { jsPDF } = window.jspdf;
       const doc = new jsPDF({ unit: 'pt', format: 'letter' });
       const legendItems = [
@@ -3871,6 +3930,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         ensureSpace(height + 10);
         try {
           const dataUrl = canvas.toDataURL('image/png');
+          if (!dataUrl || dataUrl === 'data:,') return;
           doc.addImage(dataUrl, 'PNG', margin, y, width, height);
           y += height + 12;
         } catch (err) {
@@ -3967,7 +4027,20 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       addFooter();
       const blob = doc.output('blob');
       const url = URL.createObjectURL(blob);
-      window.open(url, '_blank', 'noopener');
+      const safeName = String(className).replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'class';
+      const filename = scope === 'tag'
+        ? `${safeName}_${String(tag || 'skill').replace(/[^\w.-]+/g, '_')}_mastery.pdf`
+        : `${safeName}_all_skills_mastery.pdf`;
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      const popup = window.open(url, '_blank', 'noopener');
+      if (!popup) {
+        // Download already triggered; popup may be blocked by the browser.
+      }
       setTimeout(() => URL.revokeObjectURL(url), 60000);
     }
 
@@ -6750,4 +6823,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       renderClassSelector();
       await loadAssignments();
       refreshChallengeAuthState();
+      refreshEagleIDEContext();
+      window.StudentDashboard?.onAuthChanged?.();
+      updateSendFileButtonVisibility();
     })();
