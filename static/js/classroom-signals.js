@@ -233,13 +233,17 @@
     });
 
     socket.on('connect', () => {
-      const c = ctx();
-      const classId = getClassId();
-      const token = c.TEACHER_TOKEN || c.USER_TOKEN;
-      if (!classId || !token) return;
-      const role = c.TEACHER_TOKEN ? 'teacher' : 'student';
-      socket.emit('join_class_room', { role, token, class_id: classId });
-      if (c.TEACHER_TOKEN) loadTeacherSignals();
+      if (typeof window.rejoinClassRooms === 'function') {
+        window.rejoinClassRooms();
+      } else {
+        const c = ctx();
+        const classId = getClassId();
+        const token = c.TEACHER_TOKEN || c.USER_TOKEN;
+        if (!classId || !token) return;
+        const role = c.TEACHER_TOKEN ? 'teacher' : 'student';
+        socket.emit('join_class_room', { role, token, class_id: classId });
+      }
+      if (ctx().TEACHER_TOKEN) loadTeacherSignals();
     });
   }
 
