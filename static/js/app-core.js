@@ -1343,9 +1343,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         updateEditorOverlay();
       }
       const cwd = _currentFolderPath || '';
-      if (item.type === 'folder' && cwd && (cwd === item.path || cwd.startsWith(item.path + '/'))) {
-        _currentFolderPath = item.path.includes('/')
-          ? item.path.substring(0, item.path.lastIndexOf('/'))
+      const normCwd = _normalizeTreePath(cwd);
+      const normItemPath = _normalizeTreePath(item.path);
+      if (item.type === 'folder' && normCwd && (normCwd === normItemPath || normCwd.startsWith(normItemPath + '/'))) {
+        _currentFolderPath = normItemPath.includes('/')
+          ? normItemPath.substring(0, normItemPath.lastIndexOf('/'))
           : '';
       }
     }
@@ -1360,18 +1362,39 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         getFileTree: () => _allFileTree,
         getCwd: () => _currentFolderPath,
         setCwd: (path) => {
-          _currentFolderPath = path || '';
+          _currentFolderPath = _normalizeTreePath(path);
           renderCurrentFolder();
         },
         getItemsAtPath: _getItemsAtPath,
-        findItemByPath: _findItemByPath,
+        findItemByPath: (path) => _findItemByPath(_allFileTree, path),
+        ensureFileTree: async () => {
+          if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return;
+          await loadFileTree();
+        },
         loadFileTree,
         openFile,
         runFile: runFileFromShell,
         onItemDeleted: handleShellItemDeleted,
         clearShell: () => { outputEl.textContent = ''; },
-        getCurrentUser: () => currentUser || currentTeacher,
+        getCurrentUser: () => currentUser || currentTeacher || (ADMIN_TOKEN ? { name: 'Admin', email: 'admin' } : null),
       });
+    }
+
+    const shellHistory = [];
+    let shellHistoryBrowseIndex = -1;
+    let shellHistoryDraft = '';
+
+    function pushShellHistory(line) {
+      const trimmed = String(line ?? '').trim();
+      if (!trimmed) return;
+      if (shellHistory[shellHistory.length - 1] !== trimmed) shellHistory.push(trimmed);
+      if (shellHistory.length > 100) shellHistory.shift();
+      shellHistoryBrowseIndex = -1;
+      shellHistoryDraft = '';
+    }
+
+    function shellCommandModeActive() {
+      return !!window.ShellCommands?.shouldHandle?.(isProgramRunning, waitingForUserInput);
     }
 
     async function sendInput(){
@@ -1381,8 +1404,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         if (socket) socket.emit('send_input', { data: v });
         return;
       }
-      if (window.ShellCommands?.shouldHandle?.(isProgramRunning, waitingForUserInput)) {
-        if (String(v).trim()) appendShellCommandEcho(v);
+      if (shellCommandModeActive()) {
+        if (String(v).trim()) {
+          pushShellHistory(v);
+          appendShellCommandEcho(v);
+        }
         await window.ShellCommands.handle(v);
         return;
       }
@@ -1393,7 +1419,37 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (socket) socket.emit('send_input', { data: v });
     }
     document.getElementById('sendBtn').addEventListener('click', sendInput);
-    stdinEl.addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); sendInput(); } });
+    stdinEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        sendInput();
+        return;
+      }
+      if (!shellCommandModeActive() || !shellHistory.length) return;
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (shellHistoryBrowseIndex === -1) {
+          shellHistoryDraft = stdinEl.value;
+          shellHistoryBrowseIndex = shellHistory.length - 1;
+        } else if (shellHistoryBrowseIndex > 0) {
+          shellHistoryBrowseIndex--;
+        }
+        stdinEl.value = shellHistory[shellHistoryBrowseIndex] || '';
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (shellHistoryBrowseIndex === -1) return;
+        if (shellHistoryBrowseIndex >= shellHistory.length - 1) {
+          shellHistoryBrowseIndex = -1;
+          stdinEl.value = shellHistoryDraft;
+          shellHistoryDraft = '';
+          return;
+        }
+        shellHistoryBrowseIndex++;
+        stdinEl.value = shellHistory[shellHistoryBrowseIndex] || '';
+      }
+    });
 
     // Clear error highlights button
     document.getElementById('clearErrorsBtn').addEventListener('click', () => {
@@ -3958,9 +4014,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       setWorkspaceTab(WORKSPACE_TAB_EDITOR);
     }
 
+    function _normalizeTreePath(path) {
+      return String(path || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+    }
+
     function _findItemByPath(items, path) {
-      for (const item of items) {
-        if (item.path === path) return item;
+      const want = _normalizeTreePath(path);
+      for (const item of (items || [])) {
+        if (_normalizeTreePath(item.path) === want) return item;
         if (item.type === 'folder' && item.children) {
           const found = _findItemByPath(item.children, path);
           if (found) return found;
@@ -3970,8 +4031,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     function _getItemsAtPath(tree, folderPath) {
-      if (!folderPath) return tree;
-      const folder = _findItemByPath(tree, folderPath);
+      const normalized = _normalizeTreePath(folderPath);
+      if (!normalized) return tree;
+      const folder = _findItemByPath(tree, normalized);
       return folder ? (folder.children || []) : [];
     }
 
@@ -4171,7 +4233,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         row.addEventListener('click', (e) => {
           e.stopPropagation();
           if (item.type === 'folder') {
-            _currentFolderPath = item.path;
+            _currentFolderPath = _normalizeTreePath(item.path);
             renderCurrentFolder();
           } else {
             openFile(item);
@@ -4642,8 +4704,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           updateEditorOverlay();
         }
         // If we deleted the folder we're currently in, go up
-        if (item.type === 'folder' && _currentFolderPath && (_currentFolderPath === item.path || _currentFolderPath.startsWith(item.path + '/'))) {
-          _currentFolderPath = item.path.includes('/') ? item.path.substring(0, item.path.lastIndexOf('/')) : '';
+        const normCwd = _normalizeTreePath(_currentFolderPath);
+      const normItemPath = _normalizeTreePath(item.path);
+      if (item.type === 'folder' && normCwd && (normCwd === normItemPath || normCwd.startsWith(normItemPath + '/'))) {
+          _currentFolderPath = normItemPath.includes('/') ? normItemPath.substring(0, normItemPath.lastIndexOf('/')) : '';
         }
         loadFileTree();
       } else alert(j.error || 'Delete failed');

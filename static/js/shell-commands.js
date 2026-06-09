@@ -32,7 +32,8 @@ Other
   clear               Clear shell output
   help                Show this message
 
-Shell commands work when no program is running. Input during a run goes to your program.`;
+Shell commands work when no program is running. Input during a run goes to your program.
+Use the Up/Down arrow keys to recall previous commands.`;
 
   function tokenize(line) {
     const tokens = [];
@@ -63,11 +64,19 @@ Shell commands work when no program is running. Input during a run goes to your 
     return '/' + internalPath;
   }
 
+  function normalizePath(path) {
+    return String(path || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+  }
+
   function resolvePath(arg, cwd) {
     if (arg == null || arg === '' || arg === '~' || arg === '/') return { path: '' };
-    let raw = String(arg);
-    if (raw.startsWith('/')) raw = raw.slice(1);
-    else if (cwd) raw = `${cwd}/${raw}`;
+    let raw = String(arg).replace(/\\/g, '/');
+    if (raw.startsWith('/')) {
+      raw = raw.slice(1);
+    } else {
+      const base = normalizePath(cwd || '');
+      raw = base ? `${base}/${raw}` : raw;
+    }
     const parts = [];
     for (const seg of raw.split('/')) {
       if (!seg || seg === '.') continue;
@@ -90,7 +99,11 @@ Shell commands work when no program is running. Input during a run goes to your 
 
   function listItems(cwd) {
     if (!deps?.getItemsAtPath || !deps?.getFileTree) return [];
-    return deps.getItemsAtPath(deps.getFileTree(), cwd || '');
+    return deps.getItemsAtPath(deps.getFileTree(), normalizePath(cwd));
+  }
+
+  async function ensureTreeLoaded() {
+    if (deps?.ensureFileTree) await deps.ensureFileTree();
   }
 
   function out(text) {
@@ -118,10 +131,12 @@ Shell commands work when no program is running. Input during a run goes to your 
       err(resolved.error);
       return;
     }
-    const item = resolved.path ? findItem(resolved.path) : { type: 'folder', path: '' };
-    if (resolved.path && (!item || item.type !== 'folder')) {
-      err(`cd: ${target}: No such file or directory`);
-      return;
+    if (resolved.path) {
+      const item = findItem(resolved.path);
+      if (!item || item.type !== 'folder') {
+        err(`cd: ${target}: No such file or directory`);
+        return;
+      }
     }
     deps.setCwd?.(resolved.path);
   }
@@ -354,6 +369,7 @@ Shell commands work when no program is running. Input during a run goes to your 
       return true;
     }
     if (!requireAuth()) return true;
+    await ensureTreeLoaded();
 
     switch (cmd) {
       case 'pwd':
