@@ -1357,7 +1357,7 @@ def files_list():
             file_entries.sort(key=lambda x: x.name.lower())
             for entry in folder_entries:
                 entry_path = Path(entry.path)
-                rel = str(entry_path.relative_to(base))
+                rel = str(entry_path.relative_to(base)).replace("\\", "/")
                 children, child_size = build_tree(entry_path, base)
                 total_size += child_size
                 items.append({
@@ -1368,7 +1368,7 @@ def files_list():
                 })
             for entry in file_entries:
                 entry_path = Path(entry.path)
-                rel = str(entry_path.relative_to(base))
+                rel = str(entry_path.relative_to(base)).replace("\\", "/")
                 try:
                     size = entry.stat(follow_symlinks=False).st_size
                 except OSError:
