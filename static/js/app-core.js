@@ -855,6 +855,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (TEACHER_TOKEN && classCtx?.id) emitJoinClassRoom('teacher', TEACHER_TOKEN, classCtx.id);
       applyClassTabVisibility();
       updateTeacherStreamToggleState();
+      window.StudentDashboard?.onClassChanged?.();
     }
 
     // Append a single line (no embedded newlines) to the shell output with correct coloring.
@@ -1881,6 +1882,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       renderClassSelector();
       if (typeof window.afterAuthUiUpdate === "function") window.afterAuthUiUpdate();
       window.ClassroomSignals?.onAuthChanged?.();
+      window.StudentDashboard?.onAuthChanged?.();
       updateSendFileButtonVisibility();
       refreshEagleIDEContext();
       if (TEACHER_TOKEN) startTeacherClassroomPolling();
@@ -2457,6 +2459,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             const pane = document.getElementById(btn.dataset.pane);
             if (pane) pane.classList.add('active');
             ensureTeacherDashboardRosterPolling();
+            if (btn.dataset.pane === 'skills-mastery-pane') {
+              requestAnimationFrame(() => renderMasteryCharts());
+            }
           });
         });
 
@@ -3640,12 +3645,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
               </div>
               <div id="masterySkillDescription" class="skill-description-panel"></div>
               <div style="font-weight:700; margin-bottom:8px; color:var(--columbia-blue);">Selected Skill Distribution</div>
-              <canvas id="masteryTagChart" height="220"></canvas>
+              <div class="chart-canvas-wrap"><canvas id="masteryTagChart"></canvas></div>
+              <div class="chart-empty-note" id="masteryTagChartEmpty" style="display:none;">No scored data for this skill yet.</div>
               <div class="chart-legend-note" id="masteryTagLegendNote"></div>
             </div>
             <div class="teacher-panel-card" style="margin-top:10px;">
               <div style="font-weight:700; margin-bottom:8px; color:var(--columbia-blue);">All Skills Overview (Average Mastery)</div>
-              <canvas id="masterySummaryChart" height="220"></canvas>
+              <div class="chart-canvas-wrap"><canvas id="masterySummaryChart"></canvas></div>
+              <div class="chart-empty-note" id="masterySummaryChartEmpty" style="display:none;">No mastery scores recorded yet.</div>
               <div class="chart-legend-note" id="masterySummaryLegendNote"></div>
               <div id="masteryAverageText" style="margin-top:10px; font-size:12px; color:var(--theme-text);"></div>
             </div>
@@ -3702,7 +3709,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           ? (skillDescriptions[firstTag] || 'No description provided for this skill.')
           : 'No skill selected.';
       }
-      renderMasteryCharts();
+      if (document.getElementById('skills-mastery-pane')?.classList.contains('active')) {
+        requestAnimationFrame(() => renderMasteryCharts());
+      }
     }
 
     async function renderMasteryCharts() {
@@ -3741,34 +3750,54 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         if (!legendEl) return;
         const items = includeUntested ? legendItems : legendItems.filter(item => item.label !== 'Untested');
         legendEl.innerHTML = items.map(item => `
-          <span><i class="chart-legend-swatch" style="background:${item.color};"></i>${item.label}</span>
+          <span class="chart-legend-item">
+            <span class="chart-legend-swatch" style="background:${item.color};"></span>
+            <span>${item.label}</span>
+          </span>
         `).join('');
       };
-      const createPie = (canvasId, payload, includeUntested = true, existingChartRef = null) => {
-        const ctx = document.getElementById(canvasId)?.getContext('2d');
+      const setChartEmpty = (elementId, isEmpty) => {
+        const note = document.getElementById(elementId);
+        if (note) note.style.display = isEmpty ? '' : 'none';
+      };
+      const createPie = (canvasId, payload, includeUntested = true, existingChartRef = null, emptyNoteId = '') => {
+        const canvas = document.getElementById(canvasId);
+        const ctx = canvas?.getContext('2d');
         if (!ctx || !window.Chart) return existingChartRef;
         if (existingChartRef) existingChartRef.destroy();
         const labels = includeUntested ? ['Red', 'Bronze', 'Silver', 'Gold', 'Untested'] : ['Red', 'Bronze', 'Silver', 'Gold'];
         const values = includeUntested
           ? [payload.red || 0, payload.bronze || 0, payload.silver || 0, payload.gold || 0, payload.untested || 0]
           : [payload.red || 0, payload.bronze || 0, payload.silver || 0, payload.gold || 0];
-        const colors = includeUntested ? ['#d32f2f', '#cd7f32', '#c0c0c0', '#ffd700', '#555'] : ['#d32f2f', '#cd7f32', '#c0c0c0', '#ffd700'];
+        const colors = includeUntested ? ['#d32f2f', '#cd7f32', '#c0c0c0', '#ffd700', '#666666'] : ['#d32f2f', '#cd7f32', '#c0c0c0', '#ffd700'];
+        const total = values.reduce((sum, n) => sum + Number(n || 0), 0);
+        if (emptyNoteId) setChartEmpty(emptyNoteId, total <= 0);
+        if (total <= 0) return null;
         return new Chart(ctx, {
           type: 'pie',
-          data: { labels, datasets: [{ data: values, backgroundColor: colors }] },
+          data: { labels, datasets: [{ data: values, backgroundColor: colors, borderWidth: 1, borderColor: 'rgba(0,0,0,0.25)' }] },
           options: {
+            responsive: true,
+            maintainAspectRatio: false,
             plugins: {
-              legend: {
-                display: false
-              }
-            }
-          }
+              legend: { display: false },
+              tooltip: {
+                callbacks: {
+                  label: (item) => {
+                    const count = item.raw || 0;
+                    const pct = total ? Math.round((count / total) * 100) : 0;
+                    return `${item.label}: ${count} (${pct}%)`;
+                  },
+                },
+              },
+            },
+          },
         });
       };
       setLegendNote('masteryTagLegendNote', true);
       setLegendNote('masterySummaryLegendNote', false);
-      masteryTagChart = createPie('masteryTagChart', tagData, true, masteryTagChart);
-      masterySummaryChart = createPie('masterySummaryChart', summary, false, masterySummaryChart);
+      masteryTagChart = createPie('masteryTagChart', tagData, true, masteryTagChart, 'masteryTagChartEmpty');
+      masterySummaryChart = createPie('masterySummaryChart', summary, false, masterySummaryChart, 'masterySummaryChartEmpty');
     }
 
     async function openMasteryPdfReport(scope = 'all') {
@@ -6203,6 +6232,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           modal.remove();
           alert('Assignment submitted successfully.');
           await loadAssignments();
+          window.StudentDashboard?.checkAchievements?.().catch(() => {});
         } catch (error) {
           alert('Network error');
         }
@@ -6370,6 +6400,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         alert('Your answers were submitted successfully.');
         await openStudentScoreReport(assignmentName);
         await loadAssignments();
+        window.StudentDashboard?.checkAchievements?.().catch(() => {});
       } catch (error) {
         alert('Network error submitting answers');
       }
