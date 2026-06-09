@@ -251,6 +251,14 @@
     },
   };
 
-  bindUi();
-  document.addEventListener('DOMContentLoaded', onAuthChanged);
+  function boot() {
+    bindUi();
+    onAuthChanged();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
+  }
 })();
