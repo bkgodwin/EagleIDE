@@ -160,21 +160,17 @@
 }
 
 .classroom-send-recipients {
-  max-height: 200px;
+  max-height: 220px;
   overflow: auto;
   border: 1px solid var(--theme-border-mid);
   border-radius: 8px;
-  padding: 8px;
+  padding: 4px;
   margin: 8px 0;
+  background: var(--theme-input-bg);
 }
 
-.classroom-send-recipients label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  margin-bottom: 6px;
-  cursor: pointer;
+.classroom-send-recipients .choice-item {
+  border-radius: 6px;
 }
 
 .classroom-audit-tree {
