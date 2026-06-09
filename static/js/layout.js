@@ -83,13 +83,6 @@
     });
   }
 
-  function initShellFab() {
-    const fab = document.getElementById('shellFab');
-    const toggleBtn = document.getElementById('toggleShellBtn');
-    if (!fab || !toggleBtn) return;
-    fab.addEventListener('click', () => toggleBtn.click());
-  }
-
   function initLongPressContext() {
     const LONG_MS = 500;
     let timer = null;
@@ -132,7 +125,6 @@
     initToolTray();
     initRoleMenu();
     initTabletPanelNav();
-    initShellFab();
     initLongPressContext();
     initEditorScrollOnFocus();
   });
