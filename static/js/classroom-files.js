@@ -40,16 +40,40 @@
     const c = ctx();
     const classCtx = getClassContext();
     if (!classCtx) return false;
-    const settings = classCtx.settings || {};
-    if (c.TEACHER_TOKEN) return settings.teacher_file_send_enabled !== false;
+    if (c.TEACHER_TOKEN) return true;
     if (c.USER_TOKEN && !c.ADMIN_TOKEN) {
+      const settings = classCtx.settings || {};
       return settings.student_send_to_teacher_enabled !== false
         || settings.student_peer_sharing_enabled === true;
     }
     return false;
   }
 
-  function openSendModal(item) {
+  function studentCanUseSendFeature() {
+    const c = ctx();
+    if (!c.USER_TOKEN || c.TEACHER_TOKEN || c.ADMIN_TOKEN) return false;
+    const classCtx = getClassContext();
+    if (!classCtx) return false;
+    const settings = classCtx.settings || {};
+    return settings.student_send_to_teacher_enabled !== false
+      || settings.student_peer_sharing_enabled === true;
+  }
+
+  async function fetchStudentRoster(classId) {
+    const c = ctx();
+    if (!c.USER_TOKEN || !classId) return [];
+    try {
+      const rosterRes = await fetch(`/api/student/class-roster?classId=${encodeURIComponent(classId)}`, {
+        headers: { 'X-User-Token': c.USER_TOKEN },
+      });
+      const roster = await rosterRes.json().catch(() => ({}));
+      return roster?.students || [];
+    } catch {
+      return [];
+    }
+  }
+
+  async function openSendModal(item) {
     const c = ctx();
     const classCtx = getClassContext();
     if (!canSendFile(item)) return;
@@ -70,7 +94,7 @@
       recipientsWrap.innerHTML = `
         <label class="choice-item choice-item--emphasis">
           <input type="checkbox" id="classroomSendSelectAll">
-          <span class="choice-text">Select all students</span>
+          <span class="choice-text">Everyone (all students)</span>
         </label>
         ${students.map(s => `
           <label class="choice-item">
@@ -86,44 +110,37 @@
         });
       });
     } else {
-      recipientsWrap.innerHTML = `
-        <label class="choice-item">
-          <input type="radio" name="classroomSendMode" value="teacher" checked>
-          <span class="choice-text">Send to teacher</span>
-        </label>
-      `;
       const settings = classCtx.settings || {};
-      if (settings.student_peer_sharing_enabled) {
-        recipientsWrap.innerHTML += `
+      const showTeacher = settings.student_send_to_teacher_enabled !== false;
+      const showPeers = settings.student_peer_sharing_enabled === true;
+      let html = '';
+      let first = true;
+      if (showTeacher) {
+        html += `
           <label class="choice-item">
-            <input type="radio" name="classroomSendMode" value="peer">
-            <span class="choice-text">Send to classmate</span>
+            <input type="radio" name="classroomSendRecipient" value="__teacher__" checked>
+            <span class="choice-text">Teacher</span>
           </label>
         `;
-        if (peerRow) peerRow.style.display = '';
-        loadPeerSelect(classCtx.id);
+        first = false;
       }
+      if (showPeers) {
+        const selfEmail = String(c.currentUser?.email || '').toLowerCase();
+        const peers = (await fetchStudentRoster(classCtx.id))
+          .filter(s => String(s.email || '').toLowerCase() !== selfEmail);
+        peers.forEach(s => {
+          html += `
+            <label class="choice-item">
+              <input type="radio" name="classroomSendRecipient" value="${escapeHtml(s.email)}"${first ? ' checked' : ''}>
+              <span class="choice-text">${escapeHtml(s.name || s.email)}</span>
+            </label>
+          `;
+          first = false;
+        });
+      }
+      recipientsWrap.innerHTML = html || '<div style="color:#888; padding:8px;">No recipients available.</div>';
     }
     modal.style.display = 'flex';
-  }
-
-  async function loadPeerSelect(classId) {
-    const c = ctx();
-    const peerSelect = document.getElementById('classroomSendPeerSelect');
-    if (!peerSelect || !c.USER_TOKEN) return;
-    peerSelect.innerHTML = '<option value="">Select classmate…</option>';
-    try {
-      const rosterRes = await fetch(`/api/student/class-roster?classId=${encodeURIComponent(classId)}`, {
-        headers: { 'X-User-Token': c.USER_TOKEN },
-      });
-      const roster = await rosterRes.json().catch(() => ({}));
-      (roster?.students || []).forEach(s => {
-        const opt = document.createElement('option');
-        opt.value = s.email;
-        opt.textContent = s.name || s.email;
-        peerSelect.appendChild(opt);
-      });
-    } catch {}
   }
 
   async function submitSendFile() {
@@ -143,14 +160,11 @@
       const checked = [...document.querySelectorAll('.classroom-send-student:checked')].map(cb => cb.value);
       if (selectAll) body.recipients = 'all';
       else if (checked.length) body.recipients = checked;
-      else return alert('Select at least one student or use Select all');
+      else return alert('Select at least one student or choose Everyone');
     } else {
-      const mode = document.querySelector('input[name="classroomSendMode"]:checked')?.value || 'teacher';
-      if (mode === 'peer') {
-        const peer = document.getElementById('classroomSendPeerSelect')?.value;
-        if (!peer) return alert('Select a classmate');
-        body.targetEmail = peer;
-      }
+      const recipient = document.querySelector('input[name="classroomSendRecipient"]:checked')?.value;
+      if (!recipient) return alert('Select a recipient');
+      if (recipient !== '__teacher__') body.targetEmail = recipient;
     }
 
     const headers = { 'Content-Type': 'application/json' };
@@ -322,6 +336,7 @@
     resetStudentExamples,
     loadClassroomLog,
     canSendFile,
+    studentCanUseSendFeature,
   };
 
   bindUi();

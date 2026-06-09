@@ -4109,6 +4109,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       updateBreadcrumb();
       if (!items.length) {
         treeEl.innerHTML = '<div class="file-tree-empty">No files here. Create one!</div>';
+        updateSendFileButtonVisibility();
         return;
       }
       const visible = items.length > FILE_TREE_VIRTUAL_LIMIT ? items.slice(0, FILE_TREE_VIRTUAL_LIMIT) : items;
@@ -4124,6 +4125,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         });
         treeEl.appendChild(more);
       }
+      updateSendFileButtonVisibility();
     }
 
     function updateBreadcrumb() {
@@ -4539,9 +4541,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     function canTeacherSendOpenFile(item) {
       if (!item || item.type !== 'file' || !TEACHER_TOKEN) return false;
-      const classCtx = getCurrentClassContext();
-      if (!classCtx) return false;
-      return classCtx.settings?.teacher_file_send_enabled !== false;
+      return !!getCurrentClassContext();
     }
 
     function canSendOpenFile(item) {
@@ -4554,14 +4554,49 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       return settings.student_send_to_teacher_enabled !== false || settings.student_peer_sharing_enabled === true;
     }
 
+    function resolveSendFileItem() {
+      const isStudent = USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN;
+      if (isStudent) {
+        const selectedFiles = getSelectedTreeItems().filter(i => i.type === 'file');
+        if (selectedFiles.length > 1) return null;
+        if (selectedFiles.length === 1) return selectedFiles[0];
+      }
+      if (currentOpenFile && !currentOpenFile.audit) {
+        return { type: 'file', path: currentOpenFile.path, name: currentOpenFile.name };
+      }
+      return null;
+    }
+
     function updateSendFileButtonVisibility() {
       const btn = document.getElementById('sendFileBtn');
       if (!btn) return;
-      const item = currentOpenFile && !currentOpenFile.audit
-        ? { type: 'file', path: currentOpenFile.path, name: currentOpenFile.name }
-        : null;
+      const isStudent = USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN;
+      if (isStudent) {
+        const canUseSend = window.ClassroomFiles?.studentCanUseSendFeature?.() ?? canSendOpenFile({ type: 'file' });
+        if (!canUseSend) {
+          btn.style.display = 'none';
+          btn.disabled = true;
+          return;
+        }
+        btn.style.display = '';
+        const selectedFiles = getSelectedTreeItems().filter(i => i.type === 'file');
+        const item = resolveSendFileItem();
+        const ready = item && canSendOpenFile(item) && selectedFiles.length <= 1;
+        btn.disabled = !ready;
+        btn.title = ready
+          ? 'Send selected file to teacher or classmate'
+          : (selectedFiles.length > 1 ? 'Select only one file to send' : 'Select one file to send');
+        return;
+      }
+      if (!TEACHER_TOKEN) {
+        btn.style.display = 'none';
+        return;
+      }
+      const item = resolveSendFileItem();
       const show = item && canSendOpenFile(item);
       btn.style.display = show ? '' : 'none';
+      btn.disabled = false;
+      btn.title = 'Send open file to students';
     }
 
     async function openFile(item) {
@@ -6539,8 +6574,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     };
 
     document.getElementById('sendFileBtn')?.addEventListener('click', () => {
-      if (!currentOpenFile || currentOpenFile.audit) return;
-      const item = { type: 'file', path: currentOpenFile.path, name: currentOpenFile.name };
+      const item = resolveSendFileItem();
+      if (!item) {
+        const selectedFiles = getSelectedTreeItems().filter(i => i.type === 'file');
+        if (selectedFiles.length > 1) alert('Select only one file to send.');
+        else alert('Select one file to send.');
+        return;
+      }
       if (window.ClassroomFiles?.openSendModal) window.ClassroomFiles.openSendModal(item);
       else alert('Send file is unavailable. Please refresh the page.');
     });
