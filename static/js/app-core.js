@@ -1318,9 +1318,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       lastRunExceptionEntry = null;
       hideExceptionHelpButton();
       closeExceptionHelpModal();
+      const filePath = _normalizeTreePath(item.path);
       let code = '';
       try {
-        const res = await fetch('/api/files/read?path=' + encodeURIComponent(item.path), { headers: fileAuthHeaders() });
+        const res = await fetch('/api/files/read?path=' + encodeURIComponent(filePath), { headers: fileAuthHeaders() });
         const j = await res.json().catch(() => ({}));
         if (!j?.ok) {
           appendOut(`[Error: could not read "${item.name}"]\n`);
@@ -1339,68 +1340,27 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         user_token: USER_TOKEN || '',
         teacher_token: TEACHER_TOKEN || '',
         admin_token: ADMIN_TOKEN || '',
-        file_path: item.path,
+        file_path: filePath,
       });
       return true;
     }
 
     function handleShellItemDeleted(item) {
-      if (currentOpenFile?.path === item.path) {
+      const normItemPath = _normalizeTreePath(item.path);
+      if (currentOpenFile?.path && _normalizeTreePath(currentOpenFile.path) === normItemPath) {
         currentOpenFile = null;
         setCsvMode(false);
         editor.setValue('');
         updateActiveFileName();
         updateEditorOverlay();
       }
-      const cwd = _currentFolderPath || '';
-      const normCwd = _normalizeTreePath(cwd);
-      const normItemPath = _normalizeTreePath(item.path);
+      const normCwd = _normalizeTreePath(_shellCwd);
       if (item.type === 'folder' && normCwd && (normCwd === normItemPath || normCwd.startsWith(normItemPath + '/'))) {
-        _currentFolderPath = normItemPath.includes('/')
+        _shellCwd = normItemPath.includes('/')
           ? normItemPath.substring(0, normItemPath.lastIndexOf('/'))
           : '';
+        _currentFolderPath = _shellCwd;
       }
-    }
-
-    function initShellCommands() {
-      if (!window.ShellCommands?.init) return;
-      window.ShellCommands.init({
-        appendOut,
-        getAuthHeaders: fileAuthHeaders,
-        getJsonHeaders: fileJsonHeaders,
-        isAuthenticated,
-        getFileTree: () => _allFileTree,
-        getCwd: () => _currentFolderPath,
-        setCwd: (path) => {
-          _currentFolderPath = _normalizeTreePath(path);
-          renderCurrentFolder();
-        },
-        getItemsAtPath: _getItemsAtPath,
-        findItemByPath: (path) => _findItemByPath(_allFileTree, path),
-        ensureFileTree: async () => {
-          if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return;
-          await loadFileTree();
-        },
-        loadFileTree,
-        openFile,
-        runFile: runFileFromShell,
-        onItemDeleted: handleShellItemDeleted,
-        clearShell: () => { outputEl.textContent = ''; },
-        getCurrentUser: () => currentUser || currentTeacher || (ADMIN_TOKEN ? { name: 'Admin', email: 'admin' } : null),
-      });
-    }
-
-    const shellHistory = [];
-    let shellHistoryBrowseIndex = -1;
-    let shellHistoryDraft = '';
-
-    function pushShellHistory(line) {
-      const trimmed = String(line ?? '').trim();
-      if (!trimmed) return;
-      if (shellHistory[shellHistory.length - 1] !== trimmed) shellHistory.push(trimmed);
-      if (shellHistory.length > 100) shellHistory.shift();
-      shellHistoryBrowseIndex = -1;
-      shellHistoryDraft = '';
     }
 
     function shellCommandModeActive() {
@@ -1415,10 +1375,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         return;
       }
       if (shellCommandModeActive()) {
-        if (String(v).trim()) {
-          pushShellHistory(v);
-          appendShellCommandEcho(v);
-        }
+        if (String(v).trim()) appendShellCommandEcho(v);
         await window.ShellCommands.handle(v);
         return;
       }
@@ -1433,31 +1390,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (e.key === 'Enter') {
         e.preventDefault();
         sendInput();
-        return;
-      }
-      if (!shellCommandModeActive() || !shellHistory.length) return;
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        if (shellHistoryBrowseIndex === -1) {
-          shellHistoryDraft = stdinEl.value;
-          shellHistoryBrowseIndex = shellHistory.length - 1;
-        } else if (shellHistoryBrowseIndex > 0) {
-          shellHistoryBrowseIndex--;
-        }
-        stdinEl.value = shellHistory[shellHistoryBrowseIndex] || '';
-        return;
-      }
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        if (shellHistoryBrowseIndex === -1) return;
-        if (shellHistoryBrowseIndex >= shellHistory.length - 1) {
-          shellHistoryBrowseIndex = -1;
-          stdinEl.value = shellHistoryDraft;
-          shellHistoryDraft = '';
-          return;
-        }
-        shellHistoryBrowseIndex++;
-        stdinEl.value = shellHistory[shellHistoryBrowseIndex] || '';
       }
     });
 
@@ -3970,7 +3902,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     // ---- File Browser ----
-    let _currentFolderPath = ''; // '' = root
+    let _currentFolderPath = ''; // '' = root (file browser)
+    let _shellCwd = '';          // '' = home (virtual shell)
     let _allFileTree = [];       // full flat tree from server
     let _selectedFileItems = new Set();
     const WORKSPACE_TAB_EDITOR = 'editor';
@@ -4047,8 +3980,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       return folder ? (folder.children || []) : [];
     }
 
-    initShellCommands();
-
     function _collectTreePaths(items, out = new Set()) {
       for (const item of (items || [])) {
         if (!item?.path) continue;
@@ -4095,34 +4026,42 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     let _fileTreeLoadPromise = null;
 
+    async function fetchFileTreeData() {
+      if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return false;
+      const res = await fetch('/api/files/list', { headers: fileAuthHeaders() });
+      const j = await res.json().catch(() => ({}));
+      if (!j.ok) {
+        if (res.status === 401) {
+          clearAuthStateMemory();
+          saveAuthSession();
+          updateAuthUI();
+        }
+        return false;
+      }
+      _allFileTree = j.files || [];
+      const existingPaths = _collectTreePaths(_allFileTree);
+      for (const path of _selectedFileItems) {
+        if (!existingPaths.has(path)) _selectedFileItems.delete(path);
+      }
+      if (j.used_bytes !== undefined && j.limit_bytes !== undefined) setFileStorageStats(j.used_bytes, j.limit_bytes);
+      else refreshFileStorageStats();
+      return true;
+    }
+
     async function loadFileTree() {
       if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return;
-      const treeEl = document.getElementById('fileTree');
-      if (!treeEl) return;
       if (_fileTreeLoadPromise) return _fileTreeLoadPromise;
-      treeEl.innerHTML = '<div class="skeleton file-tree-skeleton" aria-hidden="true"></div>';
+      const treeEl = document.getElementById('fileTree');
+      if (treeEl) treeEl.innerHTML = '<div class="skeleton file-tree-skeleton" aria-hidden="true"></div>';
       _fileTreeLoadPromise = (async () => {
-        const res = await fetch('/api/files/list', { headers: fileAuthHeaders() });
-        const j = await res.json().catch(() => ({}));
-        if (!j.ok) {
-          if (res.status === 401) {
-            clearAuthStateMemory();
-            saveAuthSession();
-            updateAuthUI();
-            treeEl.innerHTML = '<div style="padding:12px;color:#ef5350;">Session expired. Please sign in again.</div>';
-            return;
+        const ok = await fetchFileTreeData();
+        if (!ok) {
+          if (treeEl) {
+            treeEl.innerHTML = '<div style="padding:12px;color:#ef5350;">Error loading files</div>';
           }
-          treeEl.innerHTML = '<div style="padding:12px;color:#ef5350;">Error loading files</div>';
           return;
         }
-        _allFileTree = j.files || [];
-        const existingPaths = _collectTreePaths(_allFileTree);
-        for (const path of _selectedFileItems) {
-          if (!existingPaths.has(path)) _selectedFileItems.delete(path);
-        }
-        renderCurrentFolder();
-        if (j.used_bytes !== undefined && j.limit_bytes !== undefined) setFileStorageStats(j.used_bytes, j.limit_bytes);
-        else refreshFileStorageStats();
+        if (treeEl) renderCurrentFolder();
       })();
       try {
         await _fileTreeLoadPromise;
@@ -4131,10 +4070,50 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
     }
 
+    function initShellCommands() {
+      if (!window.ShellCommands?.init) return;
+      window.ShellCommands.init({
+        appendOut,
+        getAuthHeaders: fileAuthHeaders,
+        getJsonHeaders: fileJsonHeaders,
+        isAuthenticated,
+        getFileTree: () => _allFileTree,
+        getCwd: () => _shellCwd,
+        setCwd: (path) => {
+          _shellCwd = _normalizeTreePath(path);
+          _currentFolderPath = _shellCwd;
+          if (document.getElementById('fileTree')) renderCurrentFolder();
+        },
+        getItemsAtPath: _getItemsAtPath,
+        findItemByPath: (path) => _findItemByPath(_allFileTree, path),
+        ensureFileTree: async () => {
+          if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return false;
+          if (_fileTreeLoadPromise) {
+            await _fileTreeLoadPromise;
+            return true;
+          }
+          return fetchFileTreeData();
+        },
+        loadFileTree,
+        openFile,
+        runFile: runFileFromShell,
+        onItemDeleted: handleShellItemDeleted,
+        clearShell: () => { outputEl.textContent = ''; },
+        getCurrentUser: () => currentUser || currentTeacher || (ADMIN_TOKEN ? { name: 'Admin', email: 'admin' } : null),
+      });
+      window.ShellCommands.bindStdin?.(stdinEl, () => ({
+        isProgramRunning,
+        waitingForUserInput,
+      }));
+    }
+
+    initShellCommands();
+
     const FILE_TREE_VIRTUAL_LIMIT = 100;
 
     function renderCurrentFolder() {
       const treeEl = document.getElementById('fileTree');
+      if (!treeEl) return;
       treeEl.innerHTML = '';
       const items = _getItemsAtPath(_allFileTree, _currentFolderPath);
       updateBreadcrumb();
@@ -4167,7 +4146,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       home.dataset.path = '';
       home.textContent = '🏠 Home';
       home.title = 'Go to root';
-      home.addEventListener('click', () => { _currentFolderPath = ''; renderCurrentFolder(); });
+      home.addEventListener('click', () => {
+        _currentFolderPath = '';
+        _shellCwd = '';
+        renderCurrentFolder();
+      });
       bc.appendChild(home);
 
       if (_currentFolderPath) {
@@ -4182,7 +4165,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           const pathSnap = built;
           crumb.textContent = part;
           crumb.title = pathSnap;
-          crumb.addEventListener('click', () => { _currentFolderPath = pathSnap; renderCurrentFolder(); });
+          crumb.addEventListener('click', () => {
+            _currentFolderPath = pathSnap;
+            _shellCwd = _normalizeTreePath(pathSnap);
+            renderCurrentFolder();
+          });
           bc.appendChild(crumb);
         });
       }
@@ -4244,6 +4231,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           e.stopPropagation();
           if (item.type === 'folder') {
             _currentFolderPath = _normalizeTreePath(item.path);
+            _shellCwd = _currentFolderPath;
             renderCurrentFolder();
           } else {
             openFile(item);
