@@ -5328,7 +5328,10 @@ def _build_class_mastery_report(class_id: str, teacher_email: str) -> Optional[d
             "skillTags": _normalize_skill_tags(a.get("skillTags") or []),
         })
     skills_catalog = _get_teacher_skills(teacher_email)
-    class_skill_rows = [s for s in skills_catalog if class_id in (s.get("class_ids") or [])]
+    class_skill_rows = sorted(
+        [s for s in skills_catalog if class_id in (s.get("class_ids") or [])],
+        key=lambda s: (int(s.get("order") or 0), (s.get("name") or "").lower()),
+    )
     class_skill_descriptions = {
         s.get("name"): s.get("description") or ""
         for s in class_skill_rows
@@ -5410,6 +5413,45 @@ def teacher_class_mastery(class_id: str):
     if not report:
         return jsonify(ok=False, error="Class not found"), 404
     return jsonify(ok=True, report=report)
+
+
+@app.get("/api/student/mastery")
+def student_class_mastery():
+    student = _require_user(request)
+    if not student:
+        return jsonify(ok=False, error="Authentication required"), 401
+    class_id = (request.args.get("classId") or "").strip()
+    if not class_id:
+        return jsonify(ok=False, error="classId required"), 400
+    student_email = (student.get("email") or "").strip().lower()
+    student_record = _find_user(student_email)
+    if not student_record or not _user_in_class(student_record, class_id):
+        return jsonify(ok=False, error="Not in class"), 403
+    cls = _find_class_by_id(class_id)
+    if not cls:
+        return jsonify(ok=False, error="Class not found"), 404
+    teacher_email = (cls.get("teacher_email") or "").strip().lower()
+    report = _build_class_mastery_report(class_id, teacher_email)
+    if not report:
+        return jsonify(ok=False, error="Class not found"), 404
+    student_row = next(
+        (row for row in (report.get("students") or [])
+         if (row.get("email") or "").lower() == student_email),
+        None,
+    )
+    skill_rows = []
+    for tag in report.get("skillTags") or []:
+        score = (student_row.get("skillScores") or {}).get(tag) if student_row else None
+        skill_rows.append({
+            "name": tag,
+            "description": (report.get("skillDescriptions") or {}).get(tag) or "",
+            "score": score,
+            "band": _mastery_bucket(score),
+        })
+    return jsonify(ok=True, report={
+        "class": report.get("class") or {},
+        "skills": skill_rows,
+    })
 
 
 @app.post("/api/teacher/classes/<class_id>/mastery-feedback")

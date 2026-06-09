@@ -53,6 +53,7 @@
         <button class="btn btn--ghost btn--icon secondary" id="roleMenuBtn" type="button" aria-haspopup="true" aria-expanded="false" title="Account menu" style="display:none;">⋯</button>
         <div class="role-menu-panel glass-surface" id="roleMenuPanel">
           <button class="btn btn--admin admin" id="teacherDashboardBtn" title="Teacher Dashboard" style="display:none;">📋 Dashboard</button>
+          <button class="btn btn--admin admin" id="studentDashboardBtn" title="Student Dashboard" style="display:none;">📋 Dashboard</button>
           <button class="btn btn--admin admin" id="adminUsersBtn" title="User Management" style="display:none;">👥 Users</button>
           <button class="btn btn--admin admin" id="serverHealthBtn" title="Server Health" style="display:none;">🖥️ Server Health</button>
           <button class="btn btn--admin admin" id="adminSettingsBtn" title="Admin Settings" style="display:none;">⚙ Settings</button>
@@ -460,6 +461,41 @@
     </div>
   </div>
 
+  <!-- Student Dashboard Modal -->
+  <div id="studentDashboardModal" class="modal teacher-dash-modal glass-modal teacher-dash-fullscreen" style="display:none;">
+    <div class="modal-content">
+      <aside class="teacher-dash-sidebar">
+        <div class="teacher-dash-brand">
+          <span class="teacher-dash-eagle">🦅</span>
+          <div>
+            <div class="teacher-dash-brand-title">Student</div>
+            <div class="teacher-dash-brand-sub">Dashboard</div>
+          </div>
+        </div>
+        <nav class="teacher-dash-nav">
+          <button class="teacher-dash-navbtn active" data-view="student-dash-mastery">
+            <span class="navbtn-icon">🏅</span><span>Skill Mastery</span>
+          </button>
+        </nav>
+        <div class="teacher-dash-close-area">
+          <button class="btn secondary" id="studentDashCloseBtn" style="width:100%;">✕ Close</button>
+        </div>
+      </aside>
+      <main class="teacher-dash-main">
+        <div class="teacher-dash-view active" id="student-dash-mastery">
+          <div class="teacher-dash-view-hdr">
+            <h2 class="teacher-dash-view-title">Skill Mastery</h2>
+          </div>
+          <div class="teacher-dash-scroll">
+            <div id="studentMasteryPane"></div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <div id="studentAchievementToastStack" class="student-achievement-toast-stack" aria-live="polite"></div>
+
   <!-- Exception Help Modal -->
   <div id="exceptionHelpModal" class="modal" style="display:none;">
     <div class="modal-content" style="max-width:460px;">
@@ -739,6 +775,7 @@
   <script src="/static/js/app-core.js"></script>
   <script src="/static/js/classroom-signals.js"></script>
   <script src="/static/js/classroom-files.js"></script>
+  <script src="/static/js/student-dashboard.js"></script>
 
 </body>
 </html>
