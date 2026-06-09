@@ -3664,13 +3664,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
               <div style="font-weight:700; margin-bottom:8px; color:var(--columbia-blue);">Selected Skill Distribution</div>
               <div class="chart-canvas-wrap"><canvas id="masteryTagChart"></canvas></div>
               <div class="chart-empty-note" id="masteryTagChartEmpty" style="display:none;">No scored data for this skill yet.</div>
-              <div class="chart-legend-note" id="masteryTagLegendNote"></div>
+              <div class="mastery-chart-legend" id="masteryTagLegendNote" aria-label="Mastery level legend"></div>
             </div>
             <div class="teacher-panel-card" style="margin-top:10px;">
               <div style="font-weight:700; margin-bottom:8px; color:var(--columbia-blue);">All Skills Overview (Average Mastery)</div>
               <div class="chart-canvas-wrap"><canvas id="masterySummaryChart"></canvas></div>
               <div class="chart-empty-note" id="masterySummaryChartEmpty" style="display:none;">No mastery scores recorded yet.</div>
-              <div class="chart-legend-note" id="masterySummaryLegendNote"></div>
+              <div class="mastery-chart-legend" id="masterySummaryLegendNote" aria-label="Mastery level legend"></div>
               <div id="masteryAverageText" style="margin-top:10px; font-size:12px; color:var(--theme-text);"></div>
             </div>
           </div>
@@ -3774,13 +3774,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const tagData = currentMasteryData?.analytics?.tags?.[selectedTag] || {};
       const summary = currentMasteryData?.analytics?.summary || {};
       const skillDescriptions = currentMasteryData?.skillDescriptions || {};
-      const legendItems = [
-        { label: 'Red', color: '#d32f2f' },
-        { label: 'Bronze', color: '#cd7f32' },
-        { label: 'Silver', color: '#c0c0c0' },
-        { label: 'Gold', color: '#ffd700' },
-        { label: 'Untested', color: '#555' }
-      ];
       const descriptionEl = document.getElementById('masterySkillDescription');
       if (descriptionEl) {
         descriptionEl.textContent = selectedTag
@@ -3798,17 +3791,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const avg = values.length ? (values.reduce((sum, n) => sum + n, 0) / values.length) : null;
         averageText.textContent = `Average mastery across all skills: ${avg === null ? 'No scored data yet' : `${avg.toFixed(1)}%`}`;
       }
-      const setLegendNote = (elementId, includeUntested = true) => {
-        const legendEl = document.getElementById(elementId);
-        if (!legendEl) return;
-        const items = includeUntested ? legendItems : legendItems.filter(item => item.label !== 'Untested');
-        legendEl.innerHTML = items.map(item => `
-          <span class="chart-legend-item">
-            <span class="chart-legend-swatch" style="background:${item.color};"></span>
-            <span>${item.label}</span>
-          </span>
-        `).join('');
-      };
       const setChartEmpty = (elementId, isEmpty) => {
         const note = document.getElementById(elementId);
         if (note) note.style.display = isEmpty ? '' : 'none';
@@ -3822,7 +3804,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const values = includeUntested
           ? [payload.red || 0, payload.bronze || 0, payload.silver || 0, payload.gold || 0, payload.untested || 0]
           : [payload.red || 0, payload.bronze || 0, payload.silver || 0, payload.gold || 0];
-        const colors = includeUntested ? ['#d32f2f', '#cd7f32', '#c0c0c0', '#ffd700', '#666666'] : ['#d32f2f', '#cd7f32', '#c0c0c0', '#ffd700'];
+        const colors = includeUntested
+          ? MASTERY_LEGEND_ITEMS.map((item) => item.chartColor)
+          : MASTERY_LEGEND_ITEMS.filter((item) => item.key !== 'untested').map((item) => item.chartColor);
         const total = values.reduce((sum, n) => sum + Number(n || 0), 0);
         if (emptyNoteId) setChartEmpty(emptyNoteId, total <= 0);
         if (total <= 0) return null;
@@ -3847,8 +3831,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           },
         });
       };
-      setLegendNote('masteryTagLegendNote', true);
-      setLegendNote('masterySummaryLegendNote', false);
+      setMasteryLegend('masteryTagLegendNote', true);
+      setMasteryLegend('masterySummaryLegendNote', false);
       masteryTagChart = createPie('masteryTagChart', tagData, true, masteryTagChart, 'masteryTagChartEmpty');
       masterySummaryChart = createPie('masterySummaryChart', summary, false, masterySummaryChart, 'masterySummaryChartEmpty');
     }
@@ -5426,6 +5410,40 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (score < 80) return 'mastery-cell-bronze';
       if (score < 90) return 'mastery-cell-silver';
       return 'mastery-cell-gold';
+    }
+
+    const MASTERY_LEGEND_ITEMS = [
+      { key: 'red', label: 'Red', range: 'Below 70%', chartColor: '#d32f2f' },
+      { key: 'bronze', label: 'Bronze', range: '70% – 79%', chartColor: '#cd7f32' },
+      { key: 'silver', label: 'Silver', range: '80% – 89%', chartColor: '#b0bec5' },
+      { key: 'gold', label: 'Gold', range: '90% and above', chartColor: '#ffd700' },
+      { key: 'untested', label: 'Untested', range: 'No score yet', chartColor: '#666666' },
+    ];
+
+    function renderMasteryLegendHtml(includeUntested = true) {
+      const items = includeUntested
+        ? MASTERY_LEGEND_ITEMS
+        : MASTERY_LEGEND_ITEMS.filter((item) => item.key !== 'untested');
+      return `
+        <div class="mastery-chart-legend-title">Mastery levels</div>
+        <ul class="mastery-chart-legend-list">
+          ${items.map((item) => `
+            <li class="mastery-chart-legend-entry">
+              <span class="mastery-chart-legend-swatch mastery-chart-legend-swatch--${item.key}" style="background:${item.chartColor};" aria-hidden="true"></span>
+              <span class="mastery-chart-legend-copy">
+                <span class="mastery-chart-legend-label">${escapeHtml(item.label)}</span>
+                <span class="mastery-chart-legend-range">${escapeHtml(item.range)}</span>
+              </span>
+            </li>
+          `).join('')}
+        </ul>
+      `;
+    }
+
+    function setMasteryLegend(elementId, includeUntested = true) {
+      const legendEl = document.getElementById(elementId);
+      if (!legendEl) return;
+      legendEl.innerHTML = renderMasteryLegendHtml(includeUntested);
     }
 
     function assignmentScoreValue(submission) {
