@@ -492,8 +492,6 @@ def register(app, socketio) -> None:
         if teacher:
             if (cls.get("teacher_email") or "").lower() != (teacher.get("email") or "").lower():
                 return jsonify(ok=False, error="Class not found"), 404
-            if not settings.get("teacher_file_send_enabled"):
-                return jsonify(ok=False, error="Teacher file send is disabled for this class"), 403
             if recipients == "all" or recipients == ["all"]:
                 dest_emails = [e.lower() for e in cls.get("students", [])]
             elif isinstance(recipients, list) and recipients:

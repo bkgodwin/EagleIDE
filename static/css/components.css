@@ -304,6 +304,8 @@ header .actions {
 }
 
 .file-action-btn:hover { background: var(--theme-btn-hover); }
+.file-action-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.file-action-btn:disabled:hover { background: var(--theme-btn-bg); }
 .file-action-btn.danger { background: #5a1b1b; color: #ffb3b3; }
 
 .copy-btn {
