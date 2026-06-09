@@ -531,19 +531,21 @@ def _load_classes() -> dict:
                 ai_rigor = 5
             ai_rigor = max(1, min(10, ai_rigor))
             students = list(dict.fromkeys([str(s).strip().lower() for s in c.get("students", []) if str(s).strip()]))
+            normalized_settings = merge_class_settings({
+                **settings,
+                "ai_enabled": bool(settings.get("ai_enabled", True)),
+                "wiki_enabled": bool(settings.get("wiki_enabled", True)),
+                "wiki_url": str(settings.get("wiki_url") or ""),
+                "wiki_html": str(settings.get("wiki_html") or ""),
+                "ai_grading_rigor": ai_rigor,
+                "skill_tags": skill_tags,
+            })
             classes.append({
                 "id": str(c.get("id") or uuid.uuid4().hex),
                 "name": str(c.get("name") or "Class").strip()[:120] or "Class",
                 "teacher_email": str(c.get("teacher_email") or "").strip().lower(),
                 "join_code": str(c.get("join_code") or "").strip().upper(),
-                "settings": {
-                    "ai_enabled": bool(settings.get("ai_enabled", True)),
-                    "wiki_enabled": bool(settings.get("wiki_enabled", True)),
-                    "wiki_url": str(settings.get("wiki_url") or ""),
-                    "wiki_html": str(settings.get("wiki_html") or ""),
-                    "ai_grading_rigor": ai_rigor,
-                    "skill_tags": skill_tags,
-                },
+                "settings": normalized_settings,
                 "students": students,
                 "created_at": c.get("created_at") or _current_timestamp(),
             })
@@ -2291,6 +2293,13 @@ def teacher_update_class_settings():
     if not target:
         return jsonify(ok=False, error="Class not found"), 404
     _save_classes(classes_data)
+    merged_settings = merge_class_settings(target.get("settings", {}))
+    target["settings"] = merged_settings
+    socketio.emit(
+        "classroom_settings_updated",
+        {"class_id": class_id, "settings": merged_settings},
+        room=f"class_{class_id}",
+    )
     return jsonify(ok=True, classData=target)
 
 
