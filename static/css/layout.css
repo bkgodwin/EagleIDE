@@ -272,7 +272,7 @@ body.tool-tray-collapsed .outer {
 .vsplitter { grid-row: 2 / 3; grid-column: 1; }
 .hsplitter { grid-column: 2 / 3; grid-row: 1 / 2; }
 
-.edge-toggle, .shell-fab, .teacher-pane-toggle {
+.edge-toggle, .teacher-pane-toggle {
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
@@ -299,27 +299,6 @@ body.tool-tray-collapsed .outer {
 
 .edge-toggle:active { transform: translateY(-50%) scale(0.94); }
 #rightEdgeToggleBtn { right: 12px; }
-
-.shell-fab {
-  position: absolute;
-  bottom: var(--space-3);
-  right: var(--space-3);
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  border: 1px solid var(--glass-border);
-  background: var(--theme-panel-hdr);
-  color: var(--theme-text);
-  cursor: pointer;
-  z-index: 5;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 16px;
-  box-shadow: var(--glass-shadow);
-}
-
-#shellPanel { position: relative; }
 
 /* Tablet panel switcher */
 .tablet-panel-nav {
