@@ -5,6 +5,9 @@
   'use strict';
 
   let deps = null;
+  const commandHistory = [];
+  let historyBrowseIndex = -1;
+  let historyDraft = '';
 
   const HELP_TEXT = `EagleIDE shell commands (virtual — only your workspace files):
 
@@ -68,6 +71,10 @@ Use the Up/Down arrow keys to recall previous commands.`;
     return String(path || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
   }
 
+  function pathEquals(a, b) {
+    return normalizePath(a).toLowerCase() === normalizePath(b).toLowerCase();
+  }
+
   function resolvePath(arg, cwd) {
     if (arg == null || arg === '' || arg === '~' || arg === '/') return { path: '' };
     let raw = String(arg).replace(/\\/g, '/');
@@ -102,6 +109,66 @@ Use the Up/Down arrow keys to recall previous commands.`;
     return deps.getItemsAtPath(deps.getFileTree(), normalizePath(cwd));
   }
 
+  function itemApiPath(item, fallbackPath) {
+    const fromItem = normalizePath(item?.path || '');
+    if (fromItem) return fromItem;
+    return normalizePath(fallbackPath || '');
+  }
+
+  function findInDirectory(parentPath, baseName, typeFilter) {
+    const siblings = listItems(parentPath);
+    return siblings.find((entry) => {
+      if (typeFilter && entry.type !== typeFilter) return false;
+      return pathEquals(entry.name, baseName) || pathEquals(entry.path, baseName);
+    }) || null;
+  }
+
+  function resolveEntry(name, cwd) {
+    const cwdNorm = normalizePath(cwd);
+    const resolved = resolvePath(name, cwdNorm);
+    if (resolved.error) return { error: resolved.error };
+
+    let item = findItem(resolved.path);
+    const baseName = resolved.path.includes('/')
+      ? resolved.path.slice(resolved.path.lastIndexOf('/') + 1)
+      : resolved.path;
+    const parentPath = resolved.path.includes('/')
+      ? resolved.path.slice(0, resolved.path.lastIndexOf('/'))
+      : '';
+
+    if (!item) {
+      item = findInDirectory(parentPath, baseName);
+    }
+    if (!item) {
+      return { error: `${name}: No such file or directory` };
+    }
+
+    return {
+      item,
+      apiPath: itemApiPath(item, resolved.path),
+    };
+  }
+
+  function resolveFolder(target, cwd) {
+    if (!target || target === '~' || target === '/') return { path: '' };
+    const resolved = resolvePath(target, cwd);
+    if (resolved.error) return { error: resolved.error };
+    if (!resolved.path) return { path: '' };
+
+    let item = findItem(resolved.path);
+    if (!item) {
+      const baseName = resolved.path.split('/').pop();
+      const parentPath = resolved.path.includes('/')
+        ? resolved.path.slice(0, resolved.path.lastIndexOf('/'))
+        : '';
+      item = findInDirectory(parentPath, baseName, 'folder');
+    }
+    if (!item || item.type !== 'folder') {
+      return { error: `cd: ${target}: No such file or directory` };
+    }
+    return { path: itemApiPath(item, resolved.path) };
+  }
+
   async function ensureTreeLoaded() {
     if (deps?.ensureFileTree) await deps.ensureFileTree();
   }
@@ -120,25 +187,27 @@ Use the Up/Down arrow keys to recall previous commands.`;
     return false;
   }
 
+  function rememberCommand(line) {
+    const trimmed = String(line ?? '').trim();
+    if (!trimmed) return;
+    if (commandHistory[commandHistory.length - 1] !== trimmed) commandHistory.push(trimmed);
+    if (commandHistory.length > 100) commandHistory.shift();
+    historyBrowseIndex = -1;
+    historyDraft = '';
+  }
+
   function cmdPwd() {
     out(displayPath(deps.getCwd?.() || ''));
   }
 
   function cmdCd(args) {
     const target = args[0] || '~';
-    const resolved = resolvePath(target, deps.getCwd?.() || '');
-    if (resolved.error) {
-      err(resolved.error);
+    const result = resolveFolder(target, deps.getCwd?.() || '');
+    if (result.error) {
+      err(result.error);
       return;
     }
-    if (resolved.path) {
-      const item = findItem(resolved.path);
-      if (!item || item.type !== 'folder') {
-        err(`cd: ${target}: No such file or directory`);
-        return;
-      }
-    }
-    deps.setCwd?.(resolved.path);
+    deps.setCwd?.(result.path);
   }
 
   function cmdLs() {
@@ -152,34 +221,24 @@ Use the Up/Down arrow keys to recall previous commands.`;
     out(lines.join('  '));
   }
 
-  async function resolveFileArg(args, expectType) {
+  async function cmdCat(args) {
     const name = args[0];
     if (!name) {
-      err(`${expectType}: missing operand`);
-      return null;
+      err('cat: missing operand');
+      return;
     }
-    const resolved = resolvePath(name, deps.getCwd?.() || '');
-    if (resolved.error) {
-      err(resolved.error);
-      return null;
+    const result = resolveEntry(name, deps.getCwd?.() || '');
+    if (result.error) {
+      err(result.error);
+      return;
     }
-    const item = findItem(resolved.path);
-    if (!item) {
-      err(`${name}: No such file or directory`);
-      return null;
-    }
-    return item;
-  }
-
-  async function cmdCat(args) {
-    const item = await resolveFileArg(args, 'cat');
-    if (!item) return;
+    const { item, apiPath } = result;
     if (item.type === 'folder') {
       err(`cat: ${item.name}: Is a directory`);
       return;
     }
     try {
-      const res = await fetch('/api/files/read?path=' + encodeURIComponent(item.path), {
+      const res = await fetch('/api/files/read?path=' + encodeURIComponent(apiPath), {
         headers: deps.getAuthHeaders?.() || {},
       });
       const j = await res.json().catch(() => ({}));
@@ -188,8 +247,8 @@ Use the Up/Down arrow keys to recall previous commands.`;
         return;
       }
       const content = String(j.content ?? '');
-      out(content.endsWith('\n') ? content.slice(0, -1) : content || '');
-      if (content && !content.endsWith('\n')) out('');
+      if (!content) return;
+      out(content.endsWith('\n') ? content.slice(0, -1) : content);
     } catch {
       err('cat: network error');
     }
@@ -206,8 +265,12 @@ Use the Up/Down arrow keys to recall previous commands.`;
       err(resolved.error);
       return;
     }
-    const existing = findItem(resolved.path);
-    if (existing) return;
+    if (findItem(resolved.path) || findInDirectory(
+      resolved.path.includes('/') ? resolved.path.slice(0, resolved.path.lastIndexOf('/')) : '',
+      resolved.path.includes('/') ? resolved.path.slice(resolved.path.lastIndexOf('/') + 1) : resolved.path
+    )) {
+      return;
+    }
     const fileName = resolved.path.includes('/')
       ? resolved.path.slice(resolved.path.lastIndexOf('/') + 1)
       : resolved.path;
@@ -239,21 +302,21 @@ Use the Up/Down arrow keys to recall previous commands.`;
       err(resolved.error);
       return;
     }
-    if (findItem(resolved.path)) {
-      err(`mkdir: cannot create directory '${name}': File exists`);
-      return;
-    }
+    const parentPath = resolved.path.includes('/')
+      ? resolved.path.slice(0, resolved.path.lastIndexOf('/'))
+      : '';
     const folderName = resolved.path.includes('/')
       ? resolved.path.slice(resolved.path.lastIndexOf('/') + 1)
       : resolved.path;
-    const parent = resolved.path.includes('/')
-      ? resolved.path.slice(0, resolved.path.lastIndexOf('/'))
-      : '';
+    if (findItem(resolved.path) || findInDirectory(parentPath, folderName, 'folder')) {
+      err(`mkdir: cannot create directory '${name}': File exists`);
+      return;
+    }
     try {
       const res = await fetch('/api/files/create', {
         method: 'POST',
         headers: deps.getJsonHeaders?.() || {},
-        body: JSON.stringify({ name: folderName, type: 'folder', parent }),
+        body: JSON.stringify({ name: folderName, type: 'folder', parent: parentPath }),
       });
       const j = await res.json().catch(() => ({}));
       if (!j?.ok) err(j?.error || 'mkdir: could not create directory');
@@ -264,13 +327,22 @@ Use the Up/Down arrow keys to recall previous commands.`;
   }
 
   async function cmdNano(args) {
-    const item = await resolveFileArg(args, 'nano');
-    if (!item) return;
+    const name = args[0];
+    if (!name) {
+      err('nano: missing operand');
+      return;
+    }
+    const result = resolveEntry(name, deps.getCwd?.() || '');
+    if (result.error) {
+      err(result.error);
+      return;
+    }
+    const { item, apiPath } = result;
     if (item.type === 'folder') {
       err(`nano: ${item.name}: Is a directory`);
       return;
     }
-    await deps.openFile?.(item);
+    await deps.openFile?.({ ...item, path: apiPath });
     out(`[Opened ${item.name} in editor]`);
   }
 
@@ -286,16 +358,12 @@ Use the Up/Down arrow keys to recall previous commands.`;
       return;
     }
     for (const name of paths) {
-      const resolved = resolvePath(name, deps.getCwd?.() || '');
-      if (resolved.error) {
-        err(resolved.error);
-        continue;
-      }
-      const item = findItem(resolved.path);
-      if (!item) {
+      const result = resolveEntry(name, deps.getCwd?.() || '');
+      if (result.error) {
         err(`rm: cannot remove '${name}': No such file or directory`);
         continue;
       }
+      const { item, apiPath } = result;
       if (item.type === 'folder' && !recursive) {
         err(`rm: cannot remove '${name}': Is a directory`);
         continue;
@@ -304,11 +372,11 @@ Use the Up/Down arrow keys to recall previous commands.`;
         const res = await fetch('/api/files/delete', {
           method: 'DELETE',
           headers: deps.getJsonHeaders?.() || {},
-          body: JSON.stringify({ path: item.path }),
+          body: JSON.stringify({ path: apiPath }),
         });
         const j = await res.json().catch(() => ({}));
         if (!j?.ok) err(j?.error || `rm: cannot remove '${name}'`);
-        else await deps.onItemDeleted?.(item);
+        else await deps.onItemDeleted?.({ ...item, path: apiPath });
       } catch {
         err('rm: network error');
       }
@@ -317,8 +385,17 @@ Use the Up/Down arrow keys to recall previous commands.`;
   }
 
   async function cmdRunProgram(cmd, args) {
-    const item = await resolveFileArg(args, cmd);
-    if (!item) return;
+    const name = args[0];
+    if (!name) {
+      err(`${cmd}: missing operand`);
+      return;
+    }
+    const result = resolveEntry(name, deps.getCwd?.() || '');
+    if (result.error) {
+      err(result.error);
+      return;
+    }
+    const { item, apiPath } = result;
     if (item.type === 'folder') {
       err(`${cmd}: ${item.name}: Is a directory`);
       return;
@@ -333,7 +410,7 @@ Use the Up/Down arrow keys to recall previous commands.`;
       return;
     }
     const language = cmd === 'node' ? 'javascript' : 'python';
-    const ok = await deps.runFile?.(item, language);
+    const ok = await deps.runFile?.({ ...item, path: apiPath }, language);
     if (!ok) err(`${cmd}: could not start program`);
   }
 
@@ -355,7 +432,7 @@ Use the Up/Down arrow keys to recall previous commands.`;
     out(HELP_TEXT);
   }
 
-  async function dispatch(tokens) {
+  async function dispatch(tokens, rawLine) {
     if (!tokens.length) return true;
     const cmd = tokens[0];
     const args = tokens.slice(1);
@@ -369,7 +446,11 @@ Use the Up/Down arrow keys to recall previous commands.`;
       return true;
     }
     if (!requireAuth()) return true;
-    await ensureTreeLoaded();
+    const treeOk = await ensureTreeLoaded();
+    if (treeOk === false) {
+      err('shell: could not load workspace files');
+      return true;
+    }
 
     switch (cmd) {
       case 'pwd':
@@ -410,13 +491,60 @@ Use the Up/Down arrow keys to recall previous commands.`;
       default:
         err(`${cmd}: command not found (type help)`);
     }
+    rememberCommand(rawLine);
     return true;
+  }
+
+  function bindStdin(stdinEl, getRuntimeState) {
+    if (!stdinEl || stdinEl.__shellHistoryBound) return;
+    stdinEl.__shellHistoryBound = true;
+
+    stdinEl.addEventListener('keydown', (e) => {
+      const state = getRuntimeState?.() || {};
+      const shellMode = window.ShellCommands.shouldHandle(
+        !!state.isProgramRunning,
+        !!state.waitingForUserInput
+      );
+      if (!shellMode) return;
+
+      if (e.key === 'ArrowUp') {
+        if (!commandHistory.length) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (historyBrowseIndex === -1) {
+          historyDraft = stdinEl.value;
+          historyBrowseIndex = commandHistory.length - 1;
+        } else if (historyBrowseIndex > 0) {
+          historyBrowseIndex--;
+        }
+        stdinEl.value = commandHistory[historyBrowseIndex] || '';
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        if (historyBrowseIndex === -1) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (historyBrowseIndex >= commandHistory.length - 1) {
+          historyBrowseIndex = -1;
+          stdinEl.value = historyDraft;
+          historyDraft = '';
+          return;
+        }
+        historyBrowseIndex++;
+        stdinEl.value = commandHistory[historyBrowseIndex] || '';
+      }
+    }, true);
+
+    document.getElementById('shellPanel')?.addEventListener('click', () => {
+      try { stdinEl.focus(); } catch {}
+    });
   }
 
   window.ShellCommands = {
     init(api) {
       deps = api;
     },
+    bindStdin,
     getPromptDisplay() {
       return `${displayPath(deps?.getCwd?.() || '')} $ `;
     },
@@ -428,7 +556,7 @@ Use the Up/Down arrow keys to recall previous commands.`;
     async handle(line) {
       const trimmed = String(line ?? '').trim();
       if (!trimmed) return true;
-      return dispatch(tokenize(trimmed));
+      return dispatch(tokenize(trimmed), trimmed);
     },
     HELP_TEXT,
   };
