@@ -602,13 +602,35 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     function mergeClassroomSettings(settings) {
+      const s = settings || {};
       return {
-        raise_hand_enabled: true,
-        teacher_file_send_enabled: true,
-        student_send_to_teacher_enabled: true,
-        student_peer_sharing_enabled: false,
-        ...(settings || {}),
+        ...s,
+        ai_enabled: s.ai_enabled !== false,
+        wiki_enabled: s.wiki_enabled !== false,
+        raise_hand_enabled: s.raise_hand_enabled !== false,
+        teacher_file_send_enabled: s.teacher_file_send_enabled !== false,
+        student_send_to_teacher_enabled: s.student_send_to_teacher_enabled !== false,
+        student_peer_sharing_enabled: s.student_peer_sharing_enabled === true,
       };
+    }
+
+    function applyClassSettingsPatch(classId, settings) {
+      if (!classId || !settings) return;
+      const merged = mergeClassroomSettings(settings);
+      const patchClass = (cls) => (cls?.id === classId ? { ...cls, settings: { ...cls.settings, ...merged } } : cls);
+      teacherClasses = teacherClasses.map(patchClass);
+      studentClasses = studentClasses.map(patchClass);
+      if (studentClassData?.id === classId) {
+        studentClassData = { ...studentClassData, settings: { ...studentClassData.settings, ...merged } };
+      }
+      refreshEagleIDEContext();
+      applyClassTabVisibility();
+      updateSendFileButtonVisibility();
+      window.ClassroomSignals?.onAuthChanged?.();
+      const teacherDash = document.getElementById('teacherDashboardModal');
+      if (TEACHER_TOKEN && teacherDash && teacherDash.style.display !== 'none') {
+        renderTeacherClassManagement();
+      }
     }
 
     function normalizeTeacherClasses(classes) {
@@ -972,6 +994,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           renderClassSelector();
           updateAuthUI();
           await loadAssignments();
+        });
+        socket.on('classroom_settings_updated', (msg) => {
+          if (!msg?.class_id || !msg?.settings) return;
+          const activeClassId = getCurrentClassContext()?.id;
+          if (msg.class_id !== activeClassId) return;
+          applyClassSettingsPatch(msg.class_id, msg.settings);
         });
       } catch (e) {
         console.error('Socket.IO initialization failed:', e);
@@ -6572,6 +6600,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       refreshChallengeAuthState();
       await loadAssignments();
     };
+
+    window.onClassroomSettingsUpdated = applyClassSettingsPatch;
 
     document.getElementById('sendFileBtn')?.addEventListener('click', () => {
       const item = resolveSendFileItem();
