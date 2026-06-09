@@ -142,7 +142,8 @@
       color:var(--theme-text);
       font-size:12px;
     }
-    .chart-legend-note span{
+    .chart-legend-note span,
+    .chart-legend-item{
       display:inline-flex;
       align-items:center;
       gap:6px;
