@@ -36,7 +36,10 @@
     return lib.loading;
   }
 
-  window.EagleIDE = window.EagleIDE || {};
-  window.EagleIDE.ensureChart = () => ensureLib('chart');
-  window.EagleIDE.ensureJsPDF = () => ensureLib('jspdf');
+  function attachLibHelpers() {
+    window.EagleIDE = window.EagleIDE || {};
+    window.EagleIDE.ensureChart = () => ensureLib('chart');
+    window.EagleIDE.ensureJsPDF = () => ensureLib('jspdf');
+  }
+  attachLibHelpers();
 })();
