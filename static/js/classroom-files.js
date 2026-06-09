@@ -68,11 +68,16 @@
       const students = (ctx().teacherClasses || [])
         .find(cls => cls.id === ctx().currentTeacherClassId)?.students || [];
       recipientsWrap.innerHTML = `
-        <label><input type="checkbox" id="classroomSendSelectAll"> <strong>Select all students</strong></label>
+        <label class="choice-item choice-item--emphasis">
+          <input type="checkbox" id="classroomSendSelectAll">
+          <span class="choice-text">Select all students</span>
+        </label>
         ${students.map(s => `
-          <label><input type="checkbox" class="classroom-send-student" value="${escapeHtml(s.email)}">
-            ${escapeHtml(s.name || s.email)}</label>
-        `).join('') || '<div style="color:#888;">No students in class.</div>'}
+          <label class="choice-item">
+            <input type="checkbox" class="classroom-send-student" value="${escapeHtml(s.email)}">
+            <span class="choice-text">${escapeHtml(s.name || s.email)}</span>
+          </label>
+        `).join('') || '<div style="color:#888; padding:8px;">No students in class.</div>'}
       `;
       const selectAll = document.getElementById('classroomSendSelectAll');
       selectAll?.addEventListener('change', () => {
@@ -82,12 +87,18 @@
       });
     } else {
       recipientsWrap.innerHTML = `
-        <label><input type="radio" name="classroomSendMode" value="teacher" checked> Send to teacher</label>
+        <label class="choice-item">
+          <input type="radio" name="classroomSendMode" value="teacher" checked>
+          <span class="choice-text">Send to teacher</span>
+        </label>
       `;
       const settings = classCtx.settings || {};
       if (settings.student_peer_sharing_enabled) {
         recipientsWrap.innerHTML += `
-          <label><input type="radio" name="classroomSendMode" value="peer"> Send to classmate</label>
+          <label class="choice-item">
+            <input type="radio" name="classroomSendMode" value="peer">
+            <span class="choice-text">Send to classmate</span>
+          </label>
         `;
         if (peerRow) peerRow.style.display = '';
         loadPeerSelect(classCtx.id);
