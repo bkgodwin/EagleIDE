@@ -133,7 +133,9 @@ function initEditor() {
         try { localStorage.setItem(TEACHER_PANE_OPEN_KEY, teacherPaneOpen ? '1' : '0'); } catch {}
       }
       if (teacherPaneOpen) {
+        window.ensureEditorTabForTeacherStream?.();
         initTeacherViewer();
+        window.applyPendingTeacherStream?.();
         requestAnimationFrame(() => {
           try { window.eagleEditor?.refresh?.(); } catch {}
           try { teacherEditor?.refresh?.(); } catch {}

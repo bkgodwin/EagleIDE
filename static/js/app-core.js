@@ -55,6 +55,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let csvEditorRows = [];
     let csvAutosaveTimer = null;
     let lastTeacherCodeSnapshot = '';
+    let _pendingTeacherCode = null;
+    let _pendingTeacherLanguage = '';
+    let _teacherCodeFlushRaf = null;
     let errorLineMarkers = []; // Track error line highlights
     let waitingForUserInput = false; // Track if we're waiting for user input
     let _inTraceback = false; // Track if we're currently inside a Python traceback block
@@ -480,6 +483,28 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       socket.emit('leave_class_room', { class_id: classId });
     }
 
+    function rejoinClassRooms() {
+      if (!socket) return;
+      if (TEACHER_TOKEN && currentTeacherClassId) {
+        emitJoinClassRoom('teacher', TEACHER_TOKEN, currentTeacherClassId);
+        if (teacherStreamingEnabled && teacherBroadcastActive) {
+          socket.emit('teacher_stream_status', {
+            token: TEACHER_TOKEN,
+            role: 'teacher',
+            class_id: currentTeacherClassId,
+            active: true,
+          });
+        }
+        return;
+      }
+      if (USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) {
+        studentClasses.forEach((cls) => {
+          if (cls?.id) emitJoinClassRoom('student', USER_TOKEN, cls.id);
+        });
+      }
+    }
+    window.rejoinClassRooms = rejoinClassRooms;
+
     function getSelectedStudentClassId() {
       const availableIds = studentClasses.map(cls => cls?.id).filter(Boolean);
       if (currentStudentClassId && availableIds.includes(currentStudentClassId)) return currentStudentClassId;
@@ -508,6 +533,79 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       return studentClassData;
     }
 
+    function isStudentViewer() {
+      return !!(USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN);
+    }
+
+    function ensureEditorTabForTeacherStream() {
+      const stack = document.getElementById('editorContentStack');
+      if (typeof setWorkspaceTab === 'function' && stack?.classList.contains('file-browser-active')) {
+        setWorkspaceTab('editor');
+      }
+    }
+    window.ensureEditorTabForTeacherStream = ensureEditorTabForTeacherStream;
+
+    function applyTeacherCodeToViewer(code, language) {
+      if (typeof code !== 'string' || document.hidden) return;
+      initTeacherViewer();
+      const modeInfo = getLanguageInfoForKey(language);
+      try { teacherEditor?.setOption('mode', modeInfo.mode); } catch {}
+      if (teacherEditor) teacherEditor.setValue(code);
+      const ta = document.getElementById('teacherStreamEditor');
+      if (ta && !teacherEditor) ta.value = code;
+    }
+
+    function flushPendingTeacherStream() {
+      _teacherCodeFlushRaf = null;
+      if (!teacherPaneOpen || document.hidden || _pendingTeacherCode == null) return;
+      applyTeacherCodeToViewer(_pendingTeacherCode, _pendingTeacherLanguage);
+    }
+    window.applyPendingTeacherStream = flushPendingTeacherStream;
+
+    function queueTeacherStreamCode(code, language, applyToViewer) {
+      if (typeof code !== 'string' || code === lastTeacherCodeSnapshot) return;
+      lastTeacherCodeSnapshot = code;
+      _pendingTeacherCode = code;
+      _pendingTeacherLanguage = language || _pendingTeacherLanguage || 'python';
+      try { localStorage.setItem(TEACHER_CODE_KEY, code); } catch {}
+      if (!applyToViewer || !teacherPaneOpen || document.hidden) return;
+      if (!_teacherCodeFlushRaf) {
+        _teacherCodeFlushRaf = requestAnimationFrame(flushPendingTeacherStream);
+      }
+    }
+
+    function presentTeacherStreamForStudent(forceOpen) {
+      if (!isStudentViewer()) return;
+      const classId = getCurrentClassContext()?.id;
+      if (!classId || !teacherStreamLiveClasses[classId]) return;
+      if (!teacherPaneEnabled) updateTeacherStreamPaneVisibility();
+      if (forceOpen) {
+        ensureEditorTabForTeacherStream();
+        if (!teacherPaneOpen) setTeacherPaneOpen(true);
+      }
+      if (teacherPaneOpen) {
+        if (_pendingTeacherCode != null) flushPendingTeacherStream();
+        else {
+          try {
+            const saved = localStorage.getItem(TEACHER_CODE_KEY);
+            if (saved !== null) queueTeacherStreamCode(saved, _pendingTeacherLanguage, true);
+          } catch {}
+        }
+      }
+      updateTeacherStreamToggleState();
+    }
+
+    function handleTeacherStreamStatus(msg) {
+      if (!msg?.class_id) return;
+      const wasLive = !!teacherStreamLiveClasses[msg.class_id];
+      const isLive = !!msg.active;
+      teacherStreamLiveClasses[msg.class_id] = isLive;
+      const selectedClassId = getCurrentClassContext()?.id;
+      if (selectedClassId !== msg.class_id) return;
+      if (isStudentViewer() && isLive && !wasLive) presentTeacherStreamForStudent(true);
+      updateTeacherStreamToggleState();
+    }
+
     function updateTeacherStreamToggleState() {
       const btn = document.getElementById('teacherPaneToggleBtn');
       const activeClassId = getCurrentClassContext()?.id;
@@ -518,7 +616,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         btn.title = isLive ? `${action} live teacher code stream` : `${action} teacher code stream`;
       }
       const liveIndicator = document.getElementById('editorLiveIndicator');
-      if (liveIndicator) liveIndicator.classList.toggle('on', !!isLive && !!teacherStreamingEnabled && !!(TEACHER_TOKEN || ADMIN_TOKEN));
+      const showLiveChip = !!isLive && (
+        (!!teacherStreamingEnabled && !!(TEACHER_TOKEN || ADMIN_TOKEN))
+        || (isStudentViewer() && !!teacherPaneEnabled)
+      );
+      if (liveIndicator) liveIndicator.classList.toggle('on', showLiveChip);
     }
 
     function updateStreamingToggleButton() {
@@ -883,6 +985,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           window.mySid = mySid;
           appendOut('[Connected]\n');
         });
+        socket.on('connect', () => {
+          rejoinClassRooms();
+        });
         socket.on('connect_error', err => appendOut('[Socket error] ' + (err?.message || err) + '\n'));
         socket.on('run_ack', () => appendOut('[Run acknowledged]\n'));
         socket.on('output', msg => {
@@ -947,36 +1052,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           if (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN) loadFileTree();
         });
         
-        // Listen for teacher code updates
         socket.on('teacher_code', (msg) => {
-          const selectedClassId = getCurrentClassContext()?.id;
-          if (msg && typeof msg.code === 'string' && msg.class_id && msg.class_id === selectedClassId) {
-            if (lastTeacherCodeSnapshot === msg.code) return;
-            if (USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && teacherPaneOpen && !document.hidden) {
-              initTeacherViewer();
-              const modeInfo = getLanguageInfoForKey(msg.language);
-              try { teacherEditor?.setOption('mode', modeInfo.mode); } catch {}
-              if (teacherEditor) teacherEditor.setValue(msg.code);
-              const ta = document.getElementById('teacherStreamEditor');
-              if (ta && !teacherEditor) ta.value = msg.code;
-            }
-            lastTeacherCodeSnapshot = msg.code;
-            // Save to localStorage
-            try {
-              localStorage.setItem(TEACHER_CODE_KEY, msg.code);
-            } catch (e) {
-              console.warn('Failed to save teacher code:', e);
-            }
-          }
+          if (!msg || typeof msg.code !== 'string' || !msg.class_id) return;
+          if (msg.class_id !== getCurrentClassContext()?.id) return;
+          if (!isStudentViewer()) return;
+          queueTeacherStreamCode(msg.code, msg.language, teacherPaneOpen);
         });
-        socket.on('teacher_stream_status', (msg) => {
-          if (!msg?.class_id) return;
-          teacherStreamLiveClasses[msg.class_id] = !!msg.active;
-          const selectedClassId = getCurrentClassContext()?.id;
-          if (selectedClassId === msg.class_id) {
-            updateTeacherStreamToggleState();
-          }
-        });
+        socket.on('teacher_stream_status', handleTeacherStreamStatus);
         socket.on('class_membership_revoked', async (msg) => {
           if (!USER_TOKEN || !currentUser) return;
           const previousClasses = [...studentClasses];
@@ -1054,6 +1136,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         currentStudentClassId = nextId || null;
         syncStudentClassSelection();
         updateTeacherStreamPaneVisibility();
+        if (teacherStreamLiveClasses[currentStudentClassId]) presentTeacherStreamForStudent(true);
+        else updateTeacherStreamToggleState();
       }
       applyClassTabVisibility();
       loadAssignments();
@@ -2219,7 +2303,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       document.getElementById('editor')?.addEventListener('input', () => scheduleTeacherBroadcastFlush(false));
     }
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) scheduleTeacherBroadcastFlush(true);
+      if (!document.hidden) {
+        scheduleTeacherBroadcastFlush(true);
+        if (teacherPaneOpen) flushPendingTeacherStream();
+      }
     });
 
     function setTeacherStreamingEnabled(enabled) {
