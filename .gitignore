@@ -25,6 +25,7 @@ config.txt
 sandboxes/
 leaderboard.csv
 assignments/
+notebooks/
 challenge_scores.json
 user_files/
 users.json

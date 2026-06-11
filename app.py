@@ -46,6 +46,7 @@ LEADERBOARD_CSV = BASE_DIR / "leaderboard.csv"
 CHALLENGE_SCORE_FILE = BASE_DIR / "challenge_scores.json"
 SANDBOX_DIR = BASE_DIR / "sandboxes"
 ASSIGNMENTS_DIR = BASE_DIR / "assignments"
+NOTEBOOKS_DIR = BASE_DIR / "notebooks"
 
 INPUT_TOKEN = "[[_IDE_INPUT_]]"
 MAX_WALL_TIME = 30.0       # seconds (hard kill for user code)
@@ -74,6 +75,11 @@ MAX_SERVER_EVENTS = 500
 MAX_SIGN_IN_EVENTS = 10_000
 MAX_SERVER_HEALTH_ALERTS = 100
 MAX_LOG_TAIL_LINES = 1000
+MAX_NOTEBOOK_TABS = 12
+MAX_NOTEBOOK_TAB_LABEL_CHARS = 32
+MAX_NOTEBOOK_HTML_CHARS = 500_000
+MAX_NOTEBOOK_JSON_CHARS = 2_000_000
+MAX_NOTEBOOK_PROMPT_CHARS = 1200
 EXAMPLES_DIR_NAME = "Examples"
 EXAMPLE_FILES: dict[str, str] = {
     "hello.py": 'print("Hello from EagleIDE!")\nname = input("What is your name? ")\nprint(f"Welcome, {name}!")\n',
@@ -86,6 +92,7 @@ EXAMPLE_FILES: dict[str, str] = {
 
 os.makedirs(SANDBOX_DIR, exist_ok=True)
 os.makedirs(ASSIGNMENTS_DIR, exist_ok=True)
+os.makedirs(NOTEBOOKS_DIR, exist_ok=True)
 
 USERS_FILE = BASE_DIR / "users.json"
 USER_FILES_DIR = BASE_DIR / "user_files"
@@ -341,6 +348,7 @@ _reg_rate_limit: dict = defaultdict(list)  # ip -> list of timestamps
 _login_rate_limit: dict = defaultdict(list)  # ip -> list of timestamps
 _classes_lock = threading.Lock()
 _skills_lock = threading.Lock()
+_notebooks_lock = threading.Lock()
 _server_health_lock = threading.Lock()
 SERVER_START_EPOCH = time.time()
 _server_start_recorded = False
@@ -820,6 +828,244 @@ atexit.register(_record_server_stop_event)
 def _sanitize_storage_component(value: str, fallback: str = "item", max_length: int = 100) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9 _-]", "", (value or "").strip()).strip(" ")
     return cleaned[:max_length] or fallback
+
+
+def _notebook_class_dir(class_id: str) -> Path:
+    safe_class_id = _sanitize_storage_component(class_id, fallback="class", max_length=80)
+    return NOTEBOOKS_DIR / safe_class_id
+
+
+def _notebook_path(student_email: str, class_id: str) -> Path:
+    return _notebook_class_dir(class_id) / f"{_sanitize_email_for_path(student_email)}.json"
+
+
+def _notebook_prompts_path(class_id: str) -> Path:
+    return _notebook_class_dir(class_id) / "prompts.json"
+
+
+def _read_json_file(path: Path, fallback: Any) -> Any:
+    if not path.exists():
+        return fallback
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return fallback
+
+
+def _write_json_file_atomic(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _sanitize_notebook_label(label: Any, fallback: str = "Notes") -> str:
+    cleaned = re.sub(r"\s+", " ", str(label or "").strip())
+    cleaned = re.sub(r"[\x00-\x1f<>]", "", cleaned)
+    return (cleaned[:MAX_NOTEBOOK_TAB_LABEL_CHARS] or fallback)
+
+
+def _notebook_safe_id(raw: Any, prefix: str = "tab") -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_-]", "", str(raw or "").strip())[:80]
+    return cleaned or f"{prefix}_{uuid.uuid4().hex[:10]}"
+
+
+def _sanitize_notebook_html(raw_html: Any) -> str:
+    html_text = str(raw_html or "")
+    if len(html_text) > MAX_NOTEBOOK_HTML_CHARS:
+        html_text = html_text[:MAX_NOTEBOOK_HTML_CHARS]
+    html_text = re.sub(r"(?is)<\s*(script|style|iframe|object|embed|link|meta|form|input|textarea|select|button)[^>]*>.*?<\s*/\s*\1\s*>", "", html_text)
+    html_text = re.sub(r"(?is)<\s*(script|style|iframe|object|embed|link|meta|form|input|textarea|select|button)[^>]*\/?\s*>", "", html_text)
+    html_text = re.sub(r"\s+on[a-zA-Z]+\s*=\s*(['\"]).*?\1", "", html_text)
+    html_text = re.sub(r"\s+on[a-zA-Z]+\s*=\s*[^\s>]+", "", html_text)
+    html_text = re.sub(r"(?i)(href|src)\s*=\s*(['\"])\s*javascript:.*?\2", r"\1=\"#\"", html_text)
+    return html_text
+
+
+def _notebook_plain_text(raw_html: Any) -> str:
+    text = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", "", str(raw_html or ""))
+    text = re.sub(r"(?is)<br\s*/?>", "\n", text)
+    text = re.sub(r"(?is)</(p|div|li|h1|h2|h3|blockquote)>", "\n", text)
+    text = re.sub(r"(?is)<[^>]+>", "", text)
+    text = text.replace("&nbsp;", " ")
+    text = re.sub(r"&[A-Za-z0-9#]+;", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _load_notebook_prompts(class_id: str) -> list[dict]:
+    path = _notebook_prompts_path(class_id)
+    data = _read_json_file(path, {"prompts": []})
+    prompts = []
+    rows = data.get("prompts", []) if isinstance(data, dict) else []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        prompt_id = _notebook_safe_id(row.get("id"), "prompt")
+        prompt_text = re.sub(r"\s+", " ", str(row.get("prompt") or "").strip())[:MAX_NOTEBOOK_PROMPT_CHARS]
+        if not prompt_text:
+            continue
+        try:
+            created_ts = int(row.get("created_ts") or 0)
+        except Exception:
+            created_ts = 0
+        prompts.append({
+            "id": prompt_id,
+            "classId": str(row.get("classId") or class_id),
+            "teacherEmail": str(row.get("teacherEmail") or "").strip().lower(),
+            "prompt": prompt_text,
+            "createdAt": str(row.get("createdAt") or _current_timestamp()),
+            "created_ts": created_ts,
+        })
+    prompts.sort(key=lambda p: (int(p.get("created_ts") or 0), p.get("id", "")))
+    return prompts
+
+
+def _save_notebook_prompts(class_id: str, prompts: list[dict]) -> None:
+    normalized = []
+    for prompt in prompts or []:
+        if not isinstance(prompt, dict):
+            continue
+        prompt_text = re.sub(r"\s+", " ", str(prompt.get("prompt") or "").strip())[:MAX_NOTEBOOK_PROMPT_CHARS]
+        if not prompt_text:
+            continue
+        normalized.append({
+            "id": _notebook_safe_id(prompt.get("id"), "prompt"),
+            "classId": str(prompt.get("classId") or class_id),
+            "teacherEmail": str(prompt.get("teacherEmail") or "").strip().lower(),
+            "prompt": prompt_text,
+            "createdAt": str(prompt.get("createdAt") or _current_timestamp()),
+            "created_ts": int(prompt.get("created_ts") or int(time.time())),
+        })
+    _write_json_file_atomic(_notebook_prompts_path(class_id), {"prompts": normalized})
+
+
+def _default_notebook(class_id: str) -> dict:
+    return {
+        "version": 1,
+        "classId": class_id,
+        "activeTabId": "notes",
+        "tabs": [
+            {"id": "notes", "label": "Notes", "locked": False, "html": "<h2>Class Notes</h2><p><br></p>"},
+            {"id": "assignments", "label": "Assignments", "locked": True, "blocks": []},
+        ],
+        "updatedAt": _current_timestamp(),
+    }
+
+
+def _normalize_assignment_blocks(raw_tabs: list, prompts: list[dict]) -> list[dict]:
+    existing_by_prompt = {}
+    for tab in raw_tabs or []:
+        if not isinstance(tab, dict) or tab.get("id") != "assignments":
+            continue
+        for block in tab.get("blocks") or []:
+            if not isinstance(block, dict):
+                continue
+            prompt_id = str(block.get("promptId") or "").strip()
+            if prompt_id:
+                existing_by_prompt[prompt_id] = block
+    blocks = []
+    for prompt in prompts:
+        prompt_id = prompt.get("id")
+        existing = existing_by_prompt.get(prompt_id, {})
+        response_html = _sanitize_notebook_html(existing.get("responseHtml") or "<ul><li><br></li></ul>")
+        blocks.append({
+            "type": "prompt_response",
+            "promptId": prompt_id,
+            "prompt": prompt.get("prompt", ""),
+            "createdAt": prompt.get("createdAt", ""),
+            "responseHtml": response_html,
+            "updatedAt": str(existing.get("updatedAt") or ""),
+        })
+    return blocks
+
+
+def _normalize_notebook_payload(raw: Any, class_id: str, prompts: Optional[list[dict]] = None) -> dict:
+    if not isinstance(raw, dict):
+        raw = _default_notebook(class_id)
+    prompts = prompts if prompts is not None else _load_notebook_prompts(class_id)
+    raw_tabs = raw.get("tabs") if isinstance(raw.get("tabs"), list) else []
+    tabs = []
+    seen_ids = set()
+    for tab in raw_tabs:
+        if not isinstance(tab, dict):
+            continue
+        tab_id = _notebook_safe_id(tab.get("id"), "tab")
+        if tab_id == "assignments" or tab_id in seen_ids:
+            continue
+        seen_ids.add(tab_id)
+        tabs.append({
+            "id": tab_id,
+            "label": _sanitize_notebook_label(tab.get("label"), "Notes"),
+            "locked": False,
+            "html": _sanitize_notebook_html(tab.get("html") or ""),
+        })
+        if len(tabs) >= MAX_NOTEBOOK_TABS - 1:
+            break
+    if not tabs:
+        tabs.append({"id": "notes", "label": "Notes", "locked": False, "html": "<h2>Class Notes</h2><p><br></p>"})
+    assignment_tab = {
+        "id": "assignments",
+        "label": "Assignments",
+        "locked": True,
+        "blocks": _normalize_assignment_blocks(raw_tabs, prompts),
+    }
+    tabs.append(assignment_tab)
+    active_tab_id = _notebook_safe_id(raw.get("activeTabId"), "tab")
+    valid_ids = {tab["id"] for tab in tabs}
+    if active_tab_id not in valid_ids:
+        active_tab_id = tabs[0]["id"]
+    return {
+        "version": 1,
+        "classId": class_id,
+        "activeTabId": active_tab_id,
+        "tabs": tabs,
+        "updatedAt": _current_timestamp(),
+    }
+
+
+def _load_student_notebook(student_email: str, class_id: str) -> dict:
+    path = _notebook_path(student_email, class_id)
+    prompts = _load_notebook_prompts(class_id)
+    raw = _read_json_file(path, _default_notebook(class_id))
+    notebook = _normalize_notebook_payload(raw, class_id, prompts)
+    if raw != notebook:
+        _write_json_file_atomic(path, notebook)
+    return notebook
+
+
+def _save_student_notebook(student_email: str, class_id: str, notebook: dict) -> dict:
+    if len(json.dumps(notebook or {}, ensure_ascii=False)) > MAX_NOTEBOOK_JSON_CHARS:
+        raise ValueError("Notebook is too large")
+    prompts = _load_notebook_prompts(class_id)
+    normalized = _normalize_notebook_payload(notebook, class_id, prompts)
+    _write_json_file_atomic(_notebook_path(student_email, class_id), normalized)
+    return normalized
+
+
+def _student_can_access_notebook(student_email: str, class_id: str) -> bool:
+    user_obj = _find_user(student_email)
+    return bool(user_obj and user_obj.get("role") == "student" and _user_in_class(user_obj, class_id))
+
+
+def _teacher_owns_class(teacher_email: str, class_id: str) -> Optional[dict]:
+    cls = _find_class_by_id(class_id)
+    if not cls or (cls.get("teacher_email") or "").strip().lower() != (teacher_email or "").strip().lower():
+        return None
+    return cls
+
+
+def _notebook_prompt_response(notebook: dict, prompt_id: str) -> Optional[dict]:
+    for tab in notebook.get("tabs", []):
+        if tab.get("id") != "assignments":
+            continue
+        for block in tab.get("blocks", []):
+            if block.get("promptId") == prompt_id:
+                return block
+    return None
+
+
+def _notebook_response_is_present(block: Optional[dict]) -> bool:
+    return bool(block and _notebook_plain_text(block.get("responseHtml")))
 
 def _record_user_sign_in(email: str, ip: str = "") -> Optional[str]:
     users_data = _load_users()
@@ -2182,6 +2428,173 @@ def join_class():
     user["class_id"] = joined.get("id")
     user["class_ids"] = next_class_ids
     return jsonify(ok=True, **_student_class_response(student))
+
+
+@app.get("/api/notebook")
+def get_notebook():
+    user = _require_user(request)
+    if not user:
+        return jsonify(ok=False, error="Student login required"), 401
+    class_id = (request.args.get("classId") or user.get("class_id") or "").strip()
+    if not class_id:
+        return jsonify(ok=False, error="Join a class to use the notebook"), 400
+    student_email = (user.get("email") or "").strip().lower()
+    if not _student_can_access_notebook(student_email, class_id):
+        return jsonify(ok=False, error="Notebook class not found"), 403
+    with _notebooks_lock:
+        notebook = _load_student_notebook(student_email, class_id)
+    return jsonify(ok=True, notebook=notebook)
+
+
+@app.post("/api/notebook/save")
+def save_notebook():
+    user = _require_user(request)
+    if not user:
+        return jsonify(ok=False, error="Student login required"), 401
+    payload = request.get_json(silent=True) or {}
+    class_id = (payload.get("classId") or user.get("class_id") or "").strip()
+    notebook_payload = payload.get("notebook") or {}
+    if not class_id:
+        return jsonify(ok=False, error="Join a class to use the notebook"), 400
+    student_email = (user.get("email") or "").strip().lower()
+    if not _student_can_access_notebook(student_email, class_id):
+        return jsonify(ok=False, error="Notebook class not found"), 403
+    try:
+        with _notebooks_lock:
+            notebook = _save_student_notebook(student_email, class_id, notebook_payload)
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 413
+    return jsonify(ok=True, notebook=notebook)
+
+
+@app.post("/api/teacher/notebook-prompts/create")
+def teacher_create_notebook_prompt():
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    data = request.get_json(silent=True) or {}
+    class_id = (data.get("classId") or "").strip()
+    prompt_text = re.sub(r"\s+", " ", str(data.get("prompt") or "").strip())[:MAX_NOTEBOOK_PROMPT_CHARS]
+    if not class_id:
+        return jsonify(ok=False, error="classId is required"), 400
+    if not prompt_text:
+        return jsonify(ok=False, error="Prompt text is required"), 400
+    teacher_email = (teacher.get("email") or "").strip().lower()
+    cls = _teacher_owns_class(teacher_email, class_id)
+    if not cls:
+        return jsonify(ok=False, error="Class not found"), 404
+    prompt = {
+        "id": uuid.uuid4().hex,
+        "classId": class_id,
+        "teacherEmail": teacher_email,
+        "prompt": prompt_text,
+        "createdAt": _current_timestamp(),
+        "created_ts": int(time.time()),
+    }
+    with _notebooks_lock:
+        prompts = _load_notebook_prompts(class_id)
+        prompts.append(prompt)
+        _save_notebook_prompts(class_id, prompts)
+        for student_email in cls.get("students", []):
+            try:
+                _load_student_notebook(student_email, class_id)
+            except Exception:
+                pass
+    socketio.emit(
+        "notebook_prompt_created",
+        {"class_id": class_id, "prompt": prompt},
+        room=f"class_{class_id}",
+    )
+    return jsonify(ok=True, prompt=prompt)
+
+
+@app.get("/api/teacher/notebook-prompts")
+def teacher_list_notebook_prompts():
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    class_id = (request.args.get("classId") or "").strip()
+    if not class_id:
+        return jsonify(ok=False, error="classId is required"), 400
+    teacher_email = (teacher.get("email") or "").strip().lower()
+    cls = _teacher_owns_class(teacher_email, class_id)
+    if not cls:
+        return jsonify(ok=False, error="Class not found"), 404
+    users_by_email = {u.get("email", "").lower(): u for u in _load_users().get("users", [])}
+    students = [s for s in cls.get("students", []) if s]
+    result = []
+    with _notebooks_lock:
+        prompts = _load_notebook_prompts(class_id)
+        notebooks_by_email = {}
+        for student_email in students:
+            try:
+                notebooks_by_email[student_email.lower()] = _load_student_notebook(student_email, class_id)
+            except Exception:
+                notebooks_by_email[student_email.lower()] = _default_notebook(class_id)
+        for prompt in reversed(prompts):
+            responded = 0
+            for notebook in notebooks_by_email.values():
+                if _notebook_response_is_present(_notebook_prompt_response(notebook, prompt.get("id", ""))):
+                    responded += 1
+            result.append({
+                **prompt,
+                "studentCount": len(students),
+                "responseCount": responded,
+                "missingCount": max(0, len(students) - responded),
+            })
+    roster = []
+    for student_email in students:
+        u = users_by_email.get(student_email.lower(), {})
+        roster.append({"email": student_email, "name": u.get("name") or student_email})
+    roster.sort(key=lambda s: ((s.get("name") or "").lower(), (s.get("email") or "").lower()))
+    return jsonify(ok=True, prompts=result, students=roster)
+
+
+@app.get("/api/teacher/notebook-prompts/responses")
+def teacher_notebook_prompt_responses():
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    class_id = (request.args.get("classId") or "").strip()
+    prompt_id = (request.args.get("promptId") or "").strip()
+    if not class_id or not prompt_id:
+        return jsonify(ok=False, error="classId and promptId are required"), 400
+    teacher_email = (teacher.get("email") or "").strip().lower()
+    cls = _teacher_owns_class(teacher_email, class_id)
+    if not cls:
+        return jsonify(ok=False, error="Class not found"), 404
+    prompts = _load_notebook_prompts(class_id)
+    prompt = next((p for p in prompts if p.get("id") == prompt_id), None)
+    if not prompt:
+        return jsonify(ok=False, error="Prompt not found"), 404
+    users_by_email = {u.get("email", "").lower(): u for u in _load_users().get("users", [])}
+    responses = []
+    missing = []
+    with _notebooks_lock:
+        for student_email in cls.get("students", []):
+            email = (student_email or "").strip().lower()
+            if not email:
+                continue
+            user_row = users_by_email.get(email, {})
+            name = user_row.get("name") or email
+            try:
+                notebook = _load_student_notebook(email, class_id)
+            except Exception:
+                notebook = _default_notebook(class_id)
+            block = _notebook_prompt_response(notebook, prompt_id)
+            if _notebook_response_is_present(block):
+                responses.append({
+                    "studentEmail": email,
+                    "studentName": name,
+                    "responseHtml": _sanitize_notebook_html(block.get("responseHtml") or ""),
+                    "responseText": _notebook_plain_text(block.get("responseHtml") or ""),
+                    "updatedAt": block.get("updatedAt") or "",
+                })
+            else:
+                missing.append({"studentEmail": email, "studentName": name})
+    responses.sort(key=lambda s: ((s.get("studentName") or "").lower(), s.get("studentEmail", "")))
+    missing.sort(key=lambda s: ((s.get("studentName") or "").lower(), s.get("studentEmail", "")))
+    return jsonify(ok=True, prompt=prompt, responses=responses, missing=missing)
 
 
 @app.get("/api/teacher/classes")
