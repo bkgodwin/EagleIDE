@@ -51,6 +51,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let currentConfig = null;
     let mySid = null;
     let isProgramRunning = false;
+    let activeRunSource = null;
+    let notebookRunHandlers = null;
     let csvEditorActive = false;
     let csvEditorRows = [];
     let csvAutosaveTimer = null;
@@ -659,6 +661,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         studentClassData = null;
         currentStudentClassId = null;
       }
+      refreshEagleIDEContext();
+      window.StudentNotebook?.onAuthChanged?.();
       return studentClassData;
     }
 
@@ -742,6 +746,90 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }));
     }
 
+    function fileNameForLanguage(language, fallbackName) {
+      const name = String(fallbackName || '').trim();
+      if (name) return name;
+      const mode = String(language || '').toLowerCase();
+      if (mode.includes('javascript') || mode === 'js') return 'notebook-snippet.js';
+      if (mode.includes('html')) return 'notebook-snippet.html';
+      if (mode.includes('css')) return 'notebook-snippet.css';
+      return 'notebook-snippet.py';
+    }
+
+    function notifyRunState() {
+      window.dispatchEvent(new CustomEvent('eagle-run-state-change', {
+        detail: {
+          running: !!isProgramRunning,
+          source: activeRunSource,
+        },
+      }));
+    }
+
+    function getEditorSnapshot() {
+      syncEditorBridge();
+      const info = getActiveLanguageInfo();
+      return {
+        code: csvEditorActive ? stringifyCsvRows(csvEditorRows) : editor.getValue(),
+        language: info.mode,
+        languageLabel: info.label,
+        fileName: currentOpenFile?.name || fileNameForLanguage(info.mode),
+        filePath: currentOpenFile?.path || '',
+      };
+    }
+
+    async function setEditorSnapshot(snapshot = {}) {
+      syncEditorBridge();
+      if (auditPreviewActive) closeAuditPreview();
+      await saveCurrentFile();
+      const language = String(snapshot.language || 'python').toLowerCase();
+      const fileName = fileNameForLanguage(language, snapshot.fileName);
+      currentOpenFile = { path: '', name: fileName, notebook: true };
+      setCsvMode(false);
+      editor.setValue(String(snapshot.code || ''));
+      const languageSelector = document.getElementById('languageSelector');
+      if (!isAuthenticated() && languageSelector) {
+        if (language.includes('javascript') || language === 'js') languageSelector.value = 'javascript';
+        else if (language.includes('html')) languageSelector.value = 'html';
+        else if (language.includes('css')) languageSelector.value = 'css';
+        else languageSelector.value = 'python';
+      }
+      updateActiveFileName();
+      updateEditorOverlay();
+      setWorkspaceTab('editor');
+      refreshEditors();
+    }
+
+    function runNotebookCode({ code, language, fileName, onOutput, onFinished, onAck } = {}) {
+      if (isProgramRunning || !socket) return false;
+      notebookRunHandlers = {
+        onOutput: typeof onOutput === 'function' ? onOutput : null,
+        onFinished: typeof onFinished === 'function' ? onFinished : null,
+        onAck: typeof onAck === 'function' ? onAck : null,
+      };
+      setRunButtonState(true, 'notebook');
+      socket.emit('run_code', {
+        code: String(code || ''),
+        language: String(language || 'python'),
+        user_token: USER_TOKEN || '',
+        teacher_token: TEACHER_TOKEN || '',
+        admin_token: ADMIN_TOKEN || '',
+        file_path: '',
+      });
+      return true;
+    }
+
+    function sendNotebookInput(data) {
+      if (!isProgramRunning || activeRunSource !== 'notebook' || !socket) return false;
+      socket.emit('send_input', { data: String(data ?? '') });
+      return true;
+    }
+
+    function stopNotebookRun() {
+      if (!isProgramRunning || activeRunSource !== 'notebook') return false;
+      if (socket) socket.emit('stop', {});
+      return true;
+    }
+
     function refreshEagleIDEContext() {
       const prev = window.EagleIDE || {};
       window.EagleIDE = {
@@ -762,8 +850,16 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           loadFileTree,
           openAuditPreview,
           closeAuditPreview,
+          getEditorSnapshot,
+          setEditorSnapshot,
+          runNotebookCode,
+          sendNotebookInput,
+          stopNotebookRun,
+          isProgramRunning,
+          activeRunSource,
         }),
       };
+      window.dispatchEvent(new CustomEvent('eagle-context-updated', { detail: window.EagleIDE.getContext() }));
     }
     refreshEagleIDEContext();
 
@@ -992,10 +1088,20 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           rejoinClassRooms();
         });
         socket.on('connect_error', err => appendOut('[Socket error] ' + (err?.message || err) + '\n'));
-        socket.on('run_ack', () => appendOut('[Run acknowledged]\n'));
+        socket.on('run_ack', () => {
+          if (activeRunSource === 'notebook') {
+            notebookRunHandlers?.onAck?.();
+            return;
+          }
+          appendOut('[Run acknowledged]\n');
+        });
         socket.on('output', msg => {
           let s = msg.data || '';
           if (!s) return;
+          if (activeRunSource === 'notebook') {
+            notebookRunHandlers?.onOutput?.(s);
+            return;
+          }
           if (s.includes(INPUT_TOKEN)) {
             // Split on INPUT_TOKEN to handle any output that preceded the prompt in the same batch
             const tokenIdx = s.indexOf(INPUT_TOKEN);
@@ -1042,6 +1148,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           }
         });
         socket.on('finished', () => {
+          if (activeRunSource === 'notebook') {
+            notebookRunHandlers?.onFinished?.();
+            notebookRunHandlers = null;
+            setRunButtonState(false, 'notebook');
+            if (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN) loadFileTree();
+            return;
+          }
           _inTraceback = false; // Reset traceback state when process finishes
           waitingForUserInput = false;
           setRunButtonState(false);
@@ -1138,6 +1251,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         }
         currentStudentClassId = nextId || null;
         syncStudentClassSelection();
+        refreshEagleIDEContext();
+        window.StudentNotebook?.onAuthChanged?.();
         updateTeacherStreamPaneVisibility();
         if (teacherStreamLiveClasses[currentStudentClassId]) presentTeacherStreamForStudent(true);
         else updateTeacherStreamToggleState();
@@ -1208,20 +1323,38 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       cleanupHtmlRuntimeSession(runtimeId);
     }
 
-    function setRunButtonState(running) {
+    function setRunButtonState(running, source = activeRunSource || 'editor') {
       isProgramRunning = !!running;
+      activeRunSource = isProgramRunning ? source : null;
       const runBtn = document.getElementById('runBtn');
-      if (!runBtn) return;
-      runBtn.textContent = isProgramRunning ? 'Stop ⏹' : 'Run ▶';
-      runBtn.classList.toggle('stop', isProgramRunning);
+      if (!runBtn) {
+        notifyRunState();
+        refreshEagleIDEContext();
+        return;
+      }
+      if (isProgramRunning && activeRunSource === 'notebook') {
+        runBtn.textContent = 'Notebook Running';
+        runBtn.disabled = true;
+        runBtn.classList.remove('stop');
+        runBtn.classList.add('run-disabled');
+      } else {
+        runBtn.disabled = false;
+        runBtn.textContent = isProgramRunning ? 'Stop ⏹' : 'Run ▶';
+        runBtn.classList.toggle('stop', isProgramRunning);
+        runBtn.classList.remove('run-disabled');
+      }
       runBtn.classList.toggle('run', !isProgramRunning);
-      runBtn.title = isProgramRunning ? 'Stop current program' : 'Run current program';
+      runBtn.title = isProgramRunning
+        ? (activeRunSource === 'notebook' ? 'Notebook code is running' : 'Stop current program')
+        : 'Run current program';
+      notifyRunState();
+      refreshEagleIDEContext();
     }
 
     function stopCurrentRun() {
       closeHtmlRuntimeWindow();
       if (socket) socket.emit('stop', {});
-      setRunButtonState(false);
+      setRunButtonState(false, 'editor');
     }
 
     function openHtmlRuntimePopupShell() {
@@ -1309,6 +1442,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     });
 
     document.getElementById('runBtn').addEventListener('click', async () => {
+      if (isProgramRunning && activeRunSource !== 'editor') {
+        return;
+      }
       if (isProgramRunning) {
         stopCurrentRun();
         return;
@@ -1342,7 +1478,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           return;
         }
         if (!openHtmlRuntimePopupShell()) return;
-        setRunButtonState(true);
+        setRunButtonState(true, 'editor');
         if (currentOpenFile && (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN)) {
           try {
             await saveCurrentFile();
@@ -1380,7 +1516,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         }
       }
       appendOut('[Sending code]\n');
-      setRunButtonState(true);
+      setRunButtonState(true, 'editor');
       if (socket) {
         socket.emit('run_code', {
           code: editor.getValue(),
@@ -1448,7 +1584,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         return false;
       }
       appendOut(`[Running ${item.name}]\n`);
-      setRunButtonState(true);
+      setRunButtonState(true, 'editor');
       socket.emit('run_code', {
         code,
         language: language === 'javascript' ? 'javascript' : 'python',
@@ -1900,6 +2036,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (typeof window.afterAuthUiUpdate === "function") window.afterAuthUiUpdate();
       refreshEagleIDEContext();
       window.ClassroomSignals?.onAuthChanged?.();
+      window.StudentNotebook?.onAuthChanged?.();
       window.StudentDashboard?.onAuthChanged?.();
       updateSendFileButtonVisibility();
       if (TEACHER_TOKEN) startTeacherClassroomPolling();
@@ -2462,6 +2599,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
               stopTeacherDashboardRosterPolling();
               renderTeacherClassManagement();
               window.ClassroomSignals?.loadTeacherSignals?.();
+            } else if (btn.dataset.view === 'dash-notebook') {
+              stopTeacherDashboardRosterPolling();
+              window.StudentNotebook?.onTeacherDashboardOpen?.();
             } else {
               stopTeacherDashboardRosterPolling();
             }
@@ -2543,6 +2683,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         renderClassReports().catch(() => {});
         await loadAssignments();
         renderAdminAssignments();
+        if (targetView === 'dash-notebook') window.StudentNotebook?.onTeacherDashboardOpen?.();
       });
       startTeacherDashboardRosterPolling();
       document.getElementById('teacherPasswordStatus').textContent = '';
@@ -4645,6 +4786,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     // Returns true on success (or if nothing to save), false on error.
     async function saveCurrentFile() {
       if (auditPreviewActive || currentOpenFile?.audit) return true;
+      if (currentOpenFile?.notebook) return true;
       if (!currentOpenFile || (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN)) return true;
       syncEditorBridge();
       const content = csvEditorActive ? stringifyCsvRows(csvEditorRows) : editor.getValue();
@@ -4673,6 +4815,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let _autosaveTimer = null;
     function scheduleAutosave() {
       if (csvEditorActive) return;
+      if (currentOpenFile?.notebook) return;
       if (!currentOpenFile || (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN)) return;
       if (_autosaveTimer) clearTimeout(_autosaveTimer);
       _autosaveTimer = setTimeout(async () => {
@@ -4772,7 +4915,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         if (selectedFiles.length > 1) return null;
         if (selectedFiles.length === 1) return selectedFiles[0];
       }
-      if (currentOpenFile && !currentOpenFile.audit) {
+      if (currentOpenFile?.path && !currentOpenFile.audit && !currentOpenFile.notebook) {
         return { type: 'file', path: currentOpenFile.path, name: currentOpenFile.name };
       }
       return null;
