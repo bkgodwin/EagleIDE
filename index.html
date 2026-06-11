@@ -48,6 +48,7 @@
       <span class="file-chip" id="activeFileChip"><span id="activeFileName"></span></span>
       <span id="editorLiveIndicator" class="live-indicator chip chip--live">Live</span>
       <span class="guest-badge chip" id="guestBadge">Guest</span>
+      <button class="btn secondary" id="notebookOpenBtn" title="Open notebook" style="display:none;">📓 Notebook</button>
       <button class="btn btn--admin" id="loginBtn" title="Login">Sign In</button>
       <div class="role-menu" id="roleMenu">
         <button class="btn btn--ghost btn--icon secondary" id="roleMenuBtn" type="button" aria-haspopup="true" aria-expanded="false" title="Account menu" style="display:none;">⋯</button>
@@ -87,6 +88,7 @@
       </div>
     </div>
     <button class="btn secondary guest-hidden" id="streamingToggleBtn" title="Toggle code streaming to students" style="display:none;">📡 Streaming: Off</button>
+    <button class="btn secondary guest-hidden" id="teacherNotebookPromptBtn" title="Send a notebook prompt to the selected class" style="display:none;">📝 Notebook Prompt</button>
   </div>
   <button class="edge-toggle" id="rightEdgeToggleBtn" title="Hide resources sidebar" style="display:none;">◀</button>
   <button class="teacher-pane-toggle" id="teacherPaneToggleBtn" title="Show teacher code stream" aria-expanded="false">▲</button>
@@ -334,6 +336,9 @@
           <button class="teacher-dash-navbtn" data-view="dash-skills">
             <span class="navbtn-icon">🏷️</span><span>Skills</span>
           </button>
+          <button class="teacher-dash-navbtn" data-view="dash-notebook">
+            <span class="navbtn-icon">📓</span><span>Notebook</span>
+          </button>
           <button class="teacher-dash-navbtn" data-view="dash-account">
             <span class="navbtn-icon">⚙️</span><span>Account</span>
           </button>
@@ -437,6 +442,32 @@
           </div>
         </div>
 
+        <!-- Notebook Responses View -->
+        <div class="teacher-dash-view" id="dash-notebook">
+          <div class="teacher-dash-view-hdr">
+            <h2 class="teacher-dash-view-title">Notebook Responses</h2>
+            <div class="teacher-dash-view-actions">
+              <label for="teacherNotebookClassSelect" style="font-size:12px; color:var(--theme-text-dim);">Class</label>
+              <select id="teacherNotebookClassSelect" style="min-width:220px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;"></select>
+              <button class="btn secondary" id="teacherNotebookRefreshBtn">Refresh</button>
+            </div>
+          </div>
+          <div class="teacher-dash-scroll">
+            <div class="notebook-response-layout">
+              <div class="notebook-response-prompts">
+                <div class="notebook-response-panel-title">Prompts</div>
+                <div id="teacherNotebookPromptList"></div>
+              </div>
+              <div class="notebook-response-detail">
+                <div class="notebook-response-panel-title" id="teacherNotebookResponseTitle">Select a prompt</div>
+                <div id="teacherNotebookResponseList" class="notebook-response-list">
+                  <p style="color:#888; margin:0;">Choose a notebook prompt to review student responses.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Account View -->
         <div class="teacher-dash-view" id="dash-account">
           <div class="teacher-dash-view-hdr">
@@ -495,6 +526,57 @@
   </div>
 
   <div id="studentAchievementToastStack" class="student-achievement-toast-stack" aria-live="polite"></div>
+
+  <!-- Student Notebook Drawer -->
+  <div id="studentNotebookOverlay" class="student-notebook-overlay" hidden></div>
+  <aside id="studentNotebookDrawer" class="student-notebook-drawer" aria-hidden="true" aria-label="Student notebook">
+    <div class="student-notebook-spine" aria-hidden="true"></div>
+    <div class="student-notebook-book">
+      <div class="student-notebook-cover">
+        <div>
+          <div class="student-notebook-kicker">EagleIDE</div>
+          <h2>Notebook</h2>
+        </div>
+        <div class="student-notebook-cover-actions">
+          <span id="studentNotebookSaveStatus" class="student-notebook-save-status">Not loaded</span>
+          <button class="btn secondary" id="studentNotebookExportBtn" title="Export notebook as PDF">Export PDF</button>
+          <button class="btn secondary btn--icon" id="studentNotebookCloseBtn" title="Close notebook" aria-label="Close notebook">✕</button>
+        </div>
+      </div>
+      <div class="student-notebook-toolbar" aria-label="Notebook formatting tools">
+        <button type="button" class="notebook-tool" data-notebook-command="formatBlock" data-value="h2" title="Heading">H2</button>
+        <button type="button" class="notebook-tool" data-notebook-command="bold" title="Bold"><strong>B</strong></button>
+        <button type="button" class="notebook-tool" data-notebook-command="italic" title="Italic"><em>I</em></button>
+        <button type="button" class="notebook-tool" data-notebook-command="insertUnorderedList" title="Bulleted list">• List</button>
+        <button type="button" class="notebook-tool" data-notebook-command="insertOrderedList" title="Numbered list">1. List</button>
+        <button type="button" class="notebook-tool" id="studentNotebookInsertCodeBtn" title="Insert code from editor">Insert Code</button>
+        <div class="student-notebook-search">
+          <input type="search" id="studentNotebookSearchInput" placeholder="Search notebook" aria-label="Search notebook">
+        </div>
+      </div>
+      <div class="student-notebook-page-wrap">
+        <div id="studentNotebookTabRail" class="student-notebook-tab-rail" role="tablist" aria-label="Notebook tabs"></div>
+        <div id="studentNotebookPage" class="student-notebook-page">
+          <div id="studentNotebookEmptyState" class="student-notebook-empty">Open your notebook to start writing.</div>
+        </div>
+        <div id="studentNotebookSearchResults" class="student-notebook-search-results" hidden></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Teacher Notebook Prompt Composer -->
+  <div id="teacherNotebookPromptModal" class="modal glass-modal" style="display:none;">
+    <div class="modal-content" style="max-width:560px;">
+      <h3>Send Notebook Prompt</h3>
+      <p id="teacherNotebookPromptClassLabel" style="color:var(--theme-text-dim); font-size:13px; margin-top:-4px;"></p>
+      <textarea id="teacherNotebookPromptInput" placeholder="Type the reflection or notebook prompt for your selected class..." style="width:100%; min-height:150px; resize:vertical; padding:10px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;"></textarea>
+      <div id="teacherNotebookPromptStatus" style="font-size:12px; margin-top:8px; color:var(--theme-text-dim);"></div>
+      <div class="modal-actions">
+        <button class="btn secondary" id="teacherNotebookPromptCancelBtn">Cancel</button>
+        <button class="btn run" id="teacherNotebookPromptSubmitBtn">Send Prompt</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Exception Help Modal -->
   <div id="exceptionHelpModal" class="modal" style="display:none;">
@@ -775,6 +857,7 @@
   <script src="/static/js/app-core.js?v=20250609"></script>
   <script src="/static/js/classroom-signals.js"></script>
   <script src="/static/js/classroom-files.js?v=20250608"></script>
+  <script src="/static/js/student-notebook.js?v=20250611"></script>
   <script src="/static/js/student-dashboard.js?v=20250608"></script>
 
 </body>
