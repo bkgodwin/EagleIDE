@@ -8,7 +8,9 @@
   const ASSIGNMENTS_TAB_ID = 'assignments';
   const DEFAULT_RESPONSE_HTML = '<ul><li><br></li></ul>';
   const SAVE_DELAY_MS = 900;
-  const MAX_TABS = 12;
+  const MAX_TABS = 80;
+  const DEFAULT_TAB_COLORS = ['#f7d666', '#98d3f2', '#f2a9bd', '#a8df9f', '#d8b4fe', '#f7b267'];
+  const DEFAULT_ASSIGNMENTS_COLOR = '#f3c74d';
   let notebook = null;
   let activeClassId = null;
   let loadedClassId = null;
@@ -35,7 +37,7 @@
   function sanitizeHtml(html) {
     if (window.DOMPurify) {
       return DOMPurify.sanitize(String(html || ''), {
-        ADD_ATTR: ['data-language', 'data-file-name', 'data-code-id'],
+        ADD_ATTR: ['contenteditable', 'data-language', 'data-file-name', 'data-code-id', 'hidden'],
       });
     }
     return String(html || '').replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '');
@@ -97,12 +99,34 @@
     return tabById(ASSIGNMENTS_TAB_ID);
   }
 
+  function defaultTabColor(index = 0) {
+    return DEFAULT_TAB_COLORS[Math.abs(index) % DEFAULT_TAB_COLORS.length];
+  }
+
+  function normalizeTabColor(color, index = 0) {
+    const value = String(color || '').trim();
+    return /^#[0-9a-f]{6}$/i.test(value) ? value : defaultTabColor(index);
+  }
+
   function ensureNotebookShape(raw) {
     const shaped = raw && typeof raw === 'object' ? raw : {};
     const tabs = Array.isArray(shaped.tabs) ? shaped.tabs : [];
     if (!tabs.some(tab => tab.id === ASSIGNMENTS_TAB_ID)) {
-      tabs.push({ id: ASSIGNMENTS_TAB_ID, label: 'Assignments', locked: true, blocks: [] });
+      tabs.push({ id: ASSIGNMENTS_TAB_ID, label: 'Assignments', locked: true, blocks: [], color: DEFAULT_ASSIGNMENTS_COLOR, bookmarked: false });
     }
+    tabs.forEach((tab, index) => {
+      if (!tab || typeof tab !== 'object') return;
+      if (tab.id === ASSIGNMENTS_TAB_ID) {
+        tab.locked = true;
+        tab.label = 'Assignments';
+        tab.color = DEFAULT_ASSIGNMENTS_COLOR;
+        tab.bookmarked = false;
+      } else {
+        tab.locked = false;
+        tab.color = normalizeTabColor(tab.color, index);
+        tab.bookmarked = !!tab.bookmarked;
+      }
+    });
     shaped.tabs = tabs;
     shaped.activeTabId = shaped.activeTabId || tabs[0]?.id || ASSIGNMENTS_TAB_ID;
     return shaped;
@@ -124,7 +148,14 @@
       return;
     }
     const editor = document.getElementById('studentNotebookEditor');
-    if (editor) tab.html = sanitizeHtml(editor.innerHTML || '');
+    if (editor) {
+      editor.querySelectorAll('.student-notebook-code-block').forEach(block => {
+        if (block.dataset.codeId !== runningCodeId) resetCodeBlockShell(block);
+      });
+      const cleanCopy = editor.cloneNode(true);
+      cleanCopy.querySelectorAll('.student-notebook-code-block').forEach(cleanCodeBlockForSave);
+      tab.html = sanitizeHtml(cleanCopy.innerHTML || '');
+    }
   }
 
   async function loadNotebook(force = false) {
@@ -181,9 +212,9 @@
     }
   }
 
-  function scheduleSave() {
+  function scheduleSave({ persist = true } = {}) {
     if (!notebook) return;
-    persistActivePageFromDom();
+    if (persist) persistActivePageFromDom();
     dirty = true;
     setStatus('Unsaved');
     if (saveTimer) clearTimeout(saveTimer);
@@ -194,8 +225,8 @@
     if (!notebook || notebook.activeTabId === tabId) return;
     persistActivePageFromDom();
     notebook.activeTabId = tabId;
-    scheduleSave();
     renderNotebook(true);
+    scheduleSave({ persist: false });
   }
 
   function addTab() {
@@ -206,6 +237,7 @@
     }
     const label = prompt('Tab label:', 'New Tab');
     if (!label || !label.trim()) return;
+    persistActivePageFromDom();
     const id = `tab_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     const assignmentsIndex = notebook.tabs.findIndex(tab => tab.id === ASSIGNMENTS_TAB_ID);
     const insertAt = assignmentsIndex >= 0 ? assignmentsIndex : notebook.tabs.length;
@@ -213,11 +245,13 @@
       id,
       label: label.trim().slice(0, 32),
       locked: false,
+      color: defaultTabColor(insertAt),
+      bookmarked: false,
       html: '<h2>New Notes</h2><p><br></p>',
     });
     notebook.activeTabId = id;
-    scheduleSave();
     renderNotebook(true);
+    scheduleSave({ persist: false });
   }
 
   function renameActiveTab() {
@@ -226,31 +260,84 @@
     const label = prompt('Rename tab:', tab.label || 'Notes');
     if (!label || !label.trim()) return;
     tab.label = label.trim().slice(0, 32);
-    scheduleSave();
     renderNotebook();
+    scheduleSave({ persist: false });
   }
 
   function deleteActiveTab() {
     const tab = activeTab();
     if (!tab || tab.locked) return;
     if (!confirm(`Delete the "${tab.label}" tab?`)) return;
+    persistActivePageFromDom();
     notebook.tabs = notebook.tabs.filter(t => t.id !== tab.id);
     notebook.activeTabId = notebook.tabs[0]?.id || ASSIGNMENTS_TAB_ID;
-    scheduleSave();
     renderNotebook(true);
+    scheduleSave({ persist: false });
+  }
+
+  function toggleActiveTabBookmark() {
+    const tab = activeTab();
+    if (!tab || tab.locked) return;
+    persistActivePageFromDom();
+    tab.bookmarked = !tab.bookmarked;
+    renderNotebook();
+    scheduleSave({ persist: false });
+  }
+
+  function updateActiveTabColor(color) {
+    const tab = activeTab();
+    if (!tab || tab.locked) return;
+    tab.color = normalizeTabColor(color);
+    renderTabRail();
+    scheduleSave({ persist: false });
+  }
+
+  function moveTab(sourceId, targetId) {
+    if (!notebook || !sourceId || !targetId || sourceId === targetId) return;
+    const sourceIndex = notebook.tabs.findIndex(tab => tab.id === sourceId);
+    const targetIndex = notebook.tabs.findIndex(tab => tab.id === targetId);
+    if (sourceIndex < 0 || targetIndex < 0) return;
+    const sourceTab = notebook.tabs[sourceIndex];
+    const targetTab = notebook.tabs[targetIndex];
+    if (sourceTab.locked || targetTab.locked) return;
+    persistActivePageFromDom();
+    notebook.tabs.splice(sourceIndex, 1);
+    const adjustedTarget = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+    notebook.tabs.splice(adjustedTarget, 0, sourceTab);
+    renderTabRail();
+    scheduleSave({ persist: false });
   }
 
   function renderTabRail() {
     const rail = document.getElementById('studentNotebookTabRail');
     if (!rail || !notebook) return;
     rail.innerHTML = '';
-    (notebook.tabs || []).forEach(tab => {
+    (notebook.tabs || []).forEach((tab, index) => {
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = `student-notebook-tab${tab.id === notebook.activeTabId ? ' active' : ''}${tab.locked ? ' locked' : ''}`;
+      btn.className = `student-notebook-tab${tab.id === notebook.activeTabId ? ' active' : ''}${tab.locked ? ' locked' : ''}${tab.bookmarked ? ' bookmarked' : ''}`;
       btn.textContent = tab.label || 'Tab';
       btn.title = tab.locked ? `${tab.label} (locked)` : `Open ${tab.label}`;
+      btn.dataset.tabId = tab.id;
+      btn.style.setProperty('--tab-color', tab.id === ASSIGNMENTS_TAB_ID ? DEFAULT_ASSIGNMENTS_COLOR : normalizeTabColor(tab.color, index));
+      btn.draggable = !tab.locked;
       btn.addEventListener('click', () => switchTab(tab.id));
+      btn.addEventListener('dragstart', event => {
+        if (tab.locked || !event.dataTransfer) return;
+        event.dataTransfer.setData('text/plain', tab.id);
+        event.dataTransfer.effectAllowed = 'move';
+        btn.classList.add('dragging');
+      });
+      btn.addEventListener('dragend', () => btn.classList.remove('dragging'));
+      btn.addEventListener('dragover', event => {
+        if (tab.locked) return;
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      });
+      btn.addEventListener('drop', event => {
+        event.preventDefault();
+        moveTab(event.dataTransfer?.getData('text/plain'), tab.id);
+      });
       rail.appendChild(btn);
     });
     const addBtn = document.createElement('button');
@@ -284,7 +371,14 @@
   function renderEditablePage(page, tab) {
     page.innerHTML = `
       <div class="student-notebook-tab-actions">
-        <h3 class="student-notebook-tab-title">${escapeHtml(tab.label || 'Notes')}</h3>
+        <h3 class="student-notebook-tab-title">
+          <button class="student-notebook-bookmark-btn${tab.bookmarked ? ' active' : ''}" id="studentNotebookBookmarkTabBtn" type="button" title="${tab.bookmarked ? 'Remove bookmark' : 'Bookmark tab'}" aria-label="${tab.bookmarked ? 'Remove bookmark' : 'Bookmark tab'}">🔖</button>
+          <span>${escapeHtml(tab.label || 'Notes')}</span>
+        </h3>
+        <label class="student-notebook-color-picker" title="Set tab color">
+          <span>Tab color</span>
+          <input type="color" id="studentNotebookTabColorInput" value="${escapeHtml(normalizeTabColor(tab.color))}" aria-label="Set tab color">
+        </label>
         <button class="btn secondary" id="studentNotebookRenameTabBtn">Rename Tab</button>
         <button class="btn secondary" id="studentNotebookDeleteTabBtn">Delete Tab</button>
       </div>
@@ -294,6 +388,8 @@
     activeEditorEl.innerHTML = sanitizeHtml(tab.html || '<p><br></p>');
     activeEditorEl.addEventListener('input', scheduleSave);
     activeEditorEl.addEventListener('focus', () => { activeEditorEl = page.querySelector('#studentNotebookEditor'); });
+    page.querySelector('#studentNotebookBookmarkTabBtn')?.addEventListener('click', toggleActiveTabBookmark);
+    page.querySelector('#studentNotebookTabColorInput')?.addEventListener('input', e => updateActiveTabColor(e.target.value));
     page.querySelector('#studentNotebookRenameTabBtn')?.addEventListener('click', renameActiveTab);
     page.querySelector('#studentNotebookDeleteTabBtn')?.addEventListener('click', deleteActiveTab);
   }
@@ -352,21 +448,42 @@
     return 'python';
   }
 
+  function isRunnableLanguage(language) {
+    return ['python', 'javascript'].includes(normalizeLanguage(language));
+  }
+
+  function fileNameForLanguage(language, fallbackName = '') {
+    const name = String(fallbackName || '').trim();
+    if (name) return name;
+    const lang = normalizeLanguage(language);
+    if (lang === 'javascript') return 'snippet.js';
+    if (lang === 'html') return 'snippet.html';
+    if (lang === 'css') return 'snippet.css';
+    return 'snippet.py';
+  }
+
+  function codeLinesHtml(code, language) {
+    const hlLang = highlightLanguage(language);
+    const lines = String(code ?? '').split('\n');
+    return `<ol class="student-notebook-code-lines">${lines.map(line => `<li><code class="language-${escapeHtml(hlLang)}">${escapeHtml(line)}</code></li>`).join('')}</ol>`;
+  }
+
   function buildCodeBlockHtml(snapshot) {
     const codeId = `code_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const language = normalizeLanguage(snapshot.language);
-    const fileName = snapshot.fileName || (language === 'javascript' ? 'snippet.js' : 'snippet.py');
+    const fileName = fileNameForLanguage(language, snapshot.fileName);
+    const runnable = isRunnableLanguage(language);
     return `
       <figure class="student-notebook-code-block" contenteditable="false" data-code-id="${escapeHtml(codeId)}" data-language="${escapeHtml(language)}" data-file-name="${escapeHtml(fileName)}">
         <figcaption class="student-notebook-code-head">
-          <span>${escapeHtml(fileName)} · ${escapeHtml(language)}</span>
+          <span class="student-notebook-code-label">${escapeHtml(fileName)} · ${escapeHtml(language)}</span>
           <span class="student-notebook-code-actions">
             <button type="button" data-code-action="open">Open in Editor</button>
-            <button type="button" data-code-action="run">Run Here</button>
+            <button type="button" data-code-action="run"${runnable ? '' : ' disabled'} title="${runnable ? 'Run this code in the notebook' : 'Open HTML or CSS in the editor to preview it'}">Run Here</button>
             <button type="button" data-code-action="copy">Copy</button>
           </span>
         </figcaption>
-        <pre><code class="language-${escapeHtml(highlightLanguage(language))}">${escapeHtml(snapshot.code || '')}</code></pre>
+        ${codeLinesHtml(snapshot.code || '', language)}
         <div class="student-notebook-inline-shell" hidden>
           <div class="notebook-shell-output"></div>
           <div class="notebook-shell-input">
@@ -404,7 +521,7 @@
 
   function highlightCodeBlocks(root = document) {
     if (!window.hljs) return;
-    root.querySelectorAll('.student-notebook-code-block code').forEach(codeEl => {
+    root.querySelectorAll('.student-notebook-code-lines code, .student-notebook-code-block pre code').forEach(codeEl => {
       try {
         codeEl.removeAttribute('data-highlighted');
         window.hljs.highlightElement(codeEl);
@@ -413,7 +530,24 @@
   }
 
   function getCodeBlockText(block) {
+    const numberedLines = Array.from(block.querySelectorAll('.student-notebook-code-lines li code'));
+    if (numberedLines.length) return numberedLines.map(line => line.textContent || '').join('\n');
     return block.querySelector('pre code')?.textContent || '';
+  }
+
+  function ensureCodeBlockLineNumbers(block, language) {
+    const lineList = block.querySelector('.student-notebook-code-lines');
+    if (lineList) {
+      lineList.querySelectorAll('code').forEach(codeEl => {
+        codeEl.className = `language-${highlightLanguage(language)}`;
+      });
+      return;
+    }
+    const legacyPre = block.querySelector('pre');
+    if (!legacyPre) return;
+    const wrap = document.createElement('div');
+    wrap.innerHTML = codeLinesHtml(legacyPre.querySelector('code')?.textContent || '', language);
+    legacyPre.replaceWith(wrap.firstElementChild);
   }
 
   function ensureCodeBlockControls(block) {
@@ -422,7 +556,8 @@
     }
     const language = normalizeLanguage(block.dataset.language || 'python');
     block.dataset.language = language;
-    const fileName = block.dataset.fileName || (language === 'javascript' ? 'snippet.js' : 'snippet.py');
+    ensureCodeBlockLineNumbers(block, language);
+    const fileName = fileNameForLanguage(language, block.dataset.fileName);
     block.dataset.fileName = fileName;
     let head = block.querySelector('.student-notebook-code-head');
     if (!head) {
@@ -432,13 +567,20 @@
     }
     if (!head.querySelector('.student-notebook-code-actions')) {
       head.innerHTML = `
-        <span>${escapeHtml(fileName)} · ${escapeHtml(language)}</span>
+        <span class="student-notebook-code-label">${escapeHtml(fileName)} · ${escapeHtml(language)}</span>
         <span class="student-notebook-code-actions">
           <button type="button" data-code-action="open">Open in Editor</button>
           <button type="button" data-code-action="run">Run Here</button>
           <button type="button" data-code-action="copy">Copy</button>
         </span>
       `;
+    }
+    const label = head.querySelector('.student-notebook-code-label') || head.firstElementChild;
+    if (label) label.textContent = `${fileName} · ${language}`;
+    const runBtn = head.querySelector('[data-code-action="run"]');
+    if (runBtn && !isRunnableLanguage(language)) {
+      runBtn.disabled = true;
+      runBtn.title = 'Open HTML or CSS in the editor to preview it';
     }
     let shell = block.querySelector('.student-notebook-inline-shell');
     if (!shell || !shell.querySelector('input') || !shell.querySelector('[data-code-action="send-input"]')) {
@@ -456,6 +598,36 @@
       `;
       block.appendChild(shell);
     }
+  }
+
+  function resetCodeBlockShell(block) {
+    const shell = block?.querySelector?.('.student-notebook-inline-shell');
+    if (!shell) return;
+    shell.hidden = true;
+    const output = shell.querySelector('.notebook-shell-output');
+    if (output) output.textContent = '';
+    const input = shell.querySelector('.notebook-shell-input input');
+    if (input) input.value = '';
+  }
+
+  function cleanCodeBlockForSave(block) {
+    const language = normalizeLanguage(block?.dataset?.language || 'python');
+    ensureCodeBlockLineNumbers(block, language);
+    resetCodeBlockShell(block);
+    block.querySelectorAll('.student-notebook-code-lines code, pre code').forEach(codeEl => {
+      codeEl.textContent = codeEl.textContent || '';
+      codeEl.className = `language-${highlightLanguage(language)}`;
+      codeEl.removeAttribute('data-highlighted');
+    });
+  }
+
+  function resetInactiveCodeBlocks(target) {
+    if (!drawerOpen) return;
+    if (target?.closest?.('.student-notebook-code-block')) return;
+    document.querySelectorAll('.student-notebook-code-block').forEach(block => {
+      if (block.dataset.codeId === runningCodeId) return;
+      resetCodeBlockShell(block);
+    });
   }
 
   function appendNotebookOutput(shell, text) {
@@ -481,8 +653,10 @@
       const openBtn = block.querySelector('[data-code-action="open"]');
       const disabled = running && !(source === 'notebook' && runningCodeId === codeId);
       if (runBtn) {
-        runBtn.disabled = disabled;
+        const runnable = isRunnableLanguage(block.dataset.language);
+        runBtn.disabled = !runnable || disabled;
         runBtn.textContent = source === 'notebook' && runningCodeId === codeId ? 'Running...' : 'Run Here';
+        runBtn.title = runnable ? 'Run this code in the notebook' : 'Open HTML or CSS in the editor to preview it';
       }
       if (openBtn) openBtn.disabled = running;
     });
@@ -570,7 +744,7 @@
     document.getElementById('studentNotebookDrawer')?.classList.add('open');
     document.getElementById('studentNotebookDrawer')?.setAttribute('aria-hidden', 'false');
     const overlay = document.getElementById('studentNotebookOverlay');
-    if (overlay) overlay.hidden = false;
+    if (overlay) overlay.hidden = true;
     loadNotebook().catch(err => console.warn(err));
   }
 
@@ -632,17 +806,29 @@
   }
 
   function codeTokens(line, language) {
-    const keywords = language === 'javascript'
+    const lang = normalizeLanguage(language);
+    const keywords = lang === 'javascript'
       ? /\b(const|let|var|function|return|if|else|for|while|class|new|await|async|import|from|console|true|false|null)\b/g
-      : /\b(def|return|if|elif|else|for|while|class|import|from|as|with|try|except|True|False|None|print|range|in)\b/g;
+      : lang === 'css'
+        ? /\b(display|position|grid|flex|color|background|border|padding|margin|font|width|height|content|media|hover|focus|active)\b/g
+        : lang === 'html'
+          ? /<\/?[A-Za-z][\w-]*|[A-Za-z:-]+(?=\=)/g
+          : /\b(def|return|if|elif|else|for|while|class|import|from|as|with|try|except|True|False|None|print|range|in)\b/g;
     const parts = [];
     let i = 0;
-    const pattern = /("(?:\\.|[^"])*"|'(?:\\.|[^'])*'|#.*$|\/\/.*$|\b\d+(?:\.\d+)?\b)/g;
+    const pattern = lang === 'css'
+      ? /("(?:\\.|[^"])*"|'(?:\\.|[^'])*'|\/\*.*?\*\/|#[0-9A-Fa-f]{3,8}\b|\b\d+(?:\.\d+)?(?:px|rem|em|%|vh|vw)?\b)/g
+      : lang === 'html'
+        ? /(<!--.*?-->|"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|\b\d+(?:\.\d+)?\b)/g
+        : /("(?:\\.|[^"])*"|'(?:\\.|[^'])*'|#.*$|\/\/.*$|\b\d+(?:\.\d+)?\b)/g;
     let match;
     while ((match = pattern.exec(line))) {
       if (match.index > i) parts.push({ text: line.slice(i, match.index), type: 'plain' });
       const token = match[0];
-      parts.push({ text: token, type: token.startsWith('#') || token.startsWith('//') ? 'comment' : (/^\d/.test(token) ? 'number' : 'string') });
+      const type = token.startsWith('//') || token.startsWith('/*') || token.startsWith('<!--') || (lang === 'python' && token.startsWith('#'))
+        ? 'comment'
+        : (/^#/.test(token) || /^\d/.test(token) ? 'number' : 'string');
+      parts.push({ text: token, type });
       i = match.index + token.length;
     }
     if (i < line.length) parts.push({ text: line.slice(i), type: 'plain' });
@@ -739,9 +925,7 @@
             const holder = document.createElement('div');
             holder.innerHTML = sanitizeHtml(tab.html || '');
             holder.querySelectorAll('.student-notebook-code-block').forEach(block => {
-              const marker = document.createElement('p');
-              marker.textContent = `[[CODE:${block.dataset.codeId || Math.random()}]]`;
-              block.replaceWith(marker);
+              block.remove();
             });
             addText(holder.textContent || '', 11);
             const codeHolder = document.createElement('div');
@@ -885,7 +1069,6 @@
   function bindUi() {
     document.getElementById('notebookOpenBtn')?.addEventListener('click', openDrawer);
     document.getElementById('studentNotebookCloseBtn')?.addEventListener('click', closeDrawer);
-    document.getElementById('studentNotebookOverlay')?.addEventListener('click', closeDrawer);
     document.getElementById('studentNotebookInsertCodeBtn')?.addEventListener('click', insertEditorCode);
     document.getElementById('studentNotebookExportBtn')?.addEventListener('click', exportPdf);
     document.getElementById('studentNotebookSearchInput')?.addEventListener('input', e => searchNotebook(e.target.value));
@@ -907,6 +1090,7 @@
     });
     window.addEventListener('eagle-run-state-change', updateNotebookRunButtons);
     window.addEventListener('eagle-context-updated', onAuthChanged);
+    document.addEventListener('click', event => resetInactiveCodeBlocks(event.target));
     window.addEventListener('beforeunload', () => {
       if (dirty) persistActivePageFromDom();
     });

@@ -75,11 +75,12 @@ MAX_SERVER_EVENTS = 500
 MAX_SIGN_IN_EVENTS = 10_000
 MAX_SERVER_HEALTH_ALERTS = 100
 MAX_LOG_TAIL_LINES = 1000
-MAX_NOTEBOOK_TABS = 12
+MAX_NOTEBOOK_TABS = 80
 MAX_NOTEBOOK_TAB_LABEL_CHARS = 32
 MAX_NOTEBOOK_HTML_CHARS = 500_000
 MAX_NOTEBOOK_JSON_CHARS = 2_000_000
 MAX_NOTEBOOK_PROMPT_CHARS = 1200
+DEFAULT_NOTEBOOK_TAB_COLOR = "#f7d666"
 EXAMPLES_DIR_NAME = "Examples"
 EXAMPLE_FILES: dict[str, str] = {
     "hello.py": 'print("Hello from EagleIDE!")\nname = input("What is your name? ")\nprint(f"Welcome, {name}!")\n',
@@ -870,6 +871,13 @@ def _notebook_safe_id(raw: Any, prefix: str = "tab") -> str:
     return cleaned or f"{prefix}_{uuid.uuid4().hex[:10]}"
 
 
+def _sanitize_notebook_color(raw: Any) -> str:
+    value = str(raw or "").strip()
+    if re.fullmatch(r"#[0-9A-Fa-f]{6}", value):
+        return value.lower()
+    return DEFAULT_NOTEBOOK_TAB_COLOR
+
+
 def _sanitize_notebook_html(raw_html: Any) -> str:
     html_text = str(raw_html or "")
     if len(html_text) > MAX_NOTEBOOK_HTML_CHARS:
@@ -945,8 +953,22 @@ def _default_notebook(class_id: str) -> dict:
         "classId": class_id,
         "activeTabId": "notes",
         "tabs": [
-            {"id": "notes", "label": "Notes", "locked": False, "html": "<h2>Class Notes</h2><p><br></p>"},
-            {"id": "assignments", "label": "Assignments", "locked": True, "blocks": []},
+            {
+                "id": "notes",
+                "label": "Notes",
+                "locked": False,
+                "html": "<h2>Class Notes</h2><p><br></p>",
+                "color": DEFAULT_NOTEBOOK_TAB_COLOR,
+                "bookmarked": False,
+            },
+            {
+                "id": "assignments",
+                "label": "Assignments",
+                "locked": True,
+                "blocks": [],
+                "color": "#f3c74d",
+                "bookmarked": False,
+            },
         ],
         "updatedAt": _current_timestamp(),
     }
@@ -998,16 +1020,27 @@ def _normalize_notebook_payload(raw: Any, class_id: str, prompts: Optional[list[
             "label": _sanitize_notebook_label(tab.get("label"), "Notes"),
             "locked": False,
             "html": _sanitize_notebook_html(tab.get("html") or ""),
+            "color": _sanitize_notebook_color(tab.get("color")),
+            "bookmarked": bool(tab.get("bookmarked")),
         })
         if len(tabs) >= MAX_NOTEBOOK_TABS - 1:
             break
     if not tabs:
-        tabs.append({"id": "notes", "label": "Notes", "locked": False, "html": "<h2>Class Notes</h2><p><br></p>"})
+        tabs.append({
+            "id": "notes",
+            "label": "Notes",
+            "locked": False,
+            "html": "<h2>Class Notes</h2><p><br></p>",
+            "color": DEFAULT_NOTEBOOK_TAB_COLOR,
+            "bookmarked": False,
+        })
     assignment_tab = {
         "id": "assignments",
         "label": "Assignments",
         "locked": True,
         "blocks": _normalize_assignment_blocks(raw_tabs, prompts),
+        "color": "#f3c74d",
+        "bookmarked": False,
     }
     tabs.append(assignment_tab)
     active_tab_id = _notebook_safe_id(raw.get("activeTabId"), "tab")

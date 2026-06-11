@@ -146,7 +146,13 @@ class NotebookTestCase(unittest.TestCase):
                 "classId": self.class_id,
                 "notebook": {
                     "activeTabId": "custom",
-                    "tabs": [{"id": "custom", "label": "Mine", "html": "<p>hello</p>"}],
+                    "tabs": [{
+                        "id": "custom",
+                        "label": "Mine",
+                        "html": "<p>hello</p>",
+                        "color": "#123abc",
+                        "bookmarked": True,
+                    }],
                 },
             },
         )
@@ -154,8 +160,46 @@ class NotebookTestCase(unittest.TestCase):
         self.assertEqual(save_response.status_code, 200)
         saved = save_response.get_json()["notebook"]
         saved_assignments = next(tab for tab in saved["tabs"] if tab["id"] == "assignments")
+        saved_custom = next(tab for tab in saved["tabs"] if tab["id"] == "custom")
+        self.assertEqual(saved_custom["color"], "#123abc")
+        self.assertTrue(saved_custom["bookmarked"])
         self.assertTrue(saved_assignments["locked"])
         self.assertEqual(saved_assignments["blocks"][0]["promptId"], prompt["id"])
+
+    def test_notebook_tab_metadata_and_limit_are_normalized(self):
+        raw_tabs = [
+            {
+                "id": f"tab-{idx}",
+                "label": f"Tab {idx}",
+                "html": f"<p>{idx}</p>",
+                "color": "#abcdef" if idx == 0 else "not-a-color",
+                "bookmarked": idx == 0,
+            }
+            for idx in range(90)
+        ]
+
+        response = self.client.post(
+            "/api/notebook/save",
+            headers={"X-User-Token": self.student_token},
+            json={
+                "classId": self.class_id,
+                "notebook": {
+                    "activeTabId": "tab-0",
+                    "tabs": raw_tabs,
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        saved = response.get_json()["notebook"]
+        self.assertEqual(len(saved["tabs"]), eagle.MAX_NOTEBOOK_TABS)
+        first = saved["tabs"][0]
+        second = saved["tabs"][1]
+        self.assertEqual(first["color"], "#abcdef")
+        self.assertTrue(first["bookmarked"])
+        self.assertEqual(second["color"], eagle.DEFAULT_NOTEBOOK_TAB_COLOR)
+        self.assertFalse(second["bookmarked"])
+        self.assertEqual(saved["tabs"][-1]["id"], "assignments")
 
     def test_teacher_can_view_prompt_responses_and_missing_students(self):
         prompt = self._create_prompt()
