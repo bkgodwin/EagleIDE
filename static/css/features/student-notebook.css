@@ -7,8 +7,32 @@
 .student-notebook-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.32);
+  background: transparent;
   z-index: 1500;
+  pointer-events: none;
+}
+
+#notebookOpenBtn {
+  background: linear-gradient(180deg, #fff4b8, #f4c542);
+  border: 2px solid #8b6515;
+  color: #2b2107;
+  box-shadow: 0 0 0 2px rgba(244, 197, 66, 0.26), 0 8px 18px rgba(0, 0, 0, 0.22);
+  font-weight: 900;
+}
+
+#notebookOpenBtn:hover {
+  background: linear-gradient(180deg, #fff8cb, #ffd95a);
+  transform: translateY(-1px);
+}
+
+#studentNotebookCloseBtn {
+  background: #d7372f;
+  border-color: #8f1f19;
+  color: #fff;
+}
+
+#studentNotebookCloseBtn:hover {
+  background: #ef4b42;
 }
 
 .student-notebook-drawer {
@@ -200,20 +224,26 @@
   position: absolute;
   top: 18px;
   right: 0;
-  width: 92px;
+  width: 104px;
+  max-height: 500px;
+  overflow-y: auto;
+  overflow-x: visible;
   z-index: 2;
   display: flex;
   flex-direction: column;
   gap: 8px;
   align-items: flex-start;
+  padding: 2px 12px 8px 0;
+  scrollbar-width: thin;
 }
 
 .student-notebook-tab {
   width: 92px;
   min-height: 42px;
-  border: 1px solid rgba(45, 35, 20, 0.18);
+  border: 2px solid rgba(45, 35, 20, 0.2);
   border-left: 0;
   border-radius: 0 8px 8px 0;
+  background: var(--tab-color, #f7d666);
   padding: 6px 7px;
   color: #1f2933;
   font-weight: 800;
@@ -225,14 +255,25 @@
   transition: transform 160ms ease, filter 160ms ease;
 }
 
-.student-notebook-tab:nth-child(4n + 1) { background: #f7d666; }
-.student-notebook-tab:nth-child(4n + 2) { background: #98d3f2; }
-.student-notebook-tab:nth-child(4n + 3) { background: #f2a9bd; }
-.student-notebook-tab:nth-child(4n + 4) { background: #a8df9f; }
-
 .student-notebook-tab.active {
   transform: translateX(-10px);
   filter: saturate(1.1);
+}
+
+.student-notebook-tab.bookmarked {
+  border-color: #1f7aff;
+  border-left: 0;
+  box-shadow: 3px 4px 8px rgba(0, 0, 0, 0.18), 0 0 0 2px rgba(31, 122, 255, 0.28);
+}
+
+.student-notebook-tab.locked {
+  border-color: #d4a017;
+  border-left: 0;
+  box-shadow: 3px 4px 8px rgba(0, 0, 0, 0.18), 0 0 0 3px rgba(212, 160, 23, 0.36);
+}
+
+.student-notebook-tab.dragging {
+  opacity: 0.55;
 }
 
 .student-notebook-tab.locked::after {
@@ -268,6 +309,48 @@
   gap: 8px;
   color: #244b7a;
   margin: 0 0 10px;
+}
+
+.student-notebook-bookmark-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 2px solid rgba(36, 75, 122, 0.25);
+  border-radius: 999px;
+  background: #fff7d7;
+  color: #244b7a;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.student-notebook-bookmark-btn.active {
+  border-color: #1f7aff;
+  background: #dbeaff;
+  box-shadow: 0 0 0 2px rgba(31, 122, 255, 0.18);
+}
+
+.student-notebook-color-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 3px 8px;
+  border: 1px solid rgba(88, 58, 25, 0.2);
+  border-radius: 6px;
+  background: rgba(255, 248, 223, 0.8);
+  color: #553516;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.student-notebook-color-picker input {
+  width: 32px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
 }
 
 .student-notebook-code-block {
@@ -325,8 +408,36 @@
   white-space: pre;
 }
 
+.student-notebook-code-lines {
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  padding: 12px 14px 12px 52px;
+  font-family: inherit;
+  font-size: 13px;
+  white-space: pre;
+}
+
+.student-notebook-code-lines li {
+  padding-left: 8px;
+  min-height: 18px;
+}
+
+.student-notebook-code-lines li::marker {
+  color: #94a3b8;
+  font-variant-numeric: tabular-nums;
+}
+
 .student-notebook-code-block code {
   font-family: inherit;
+  white-space: pre;
+}
+
+.student-notebook-code-block code.hljs {
+  display: inline;
+  overflow: visible;
+  padding: 0;
+  background: transparent;
 }
 
 .student-notebook-inline-shell {
