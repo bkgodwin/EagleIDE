@@ -22,6 +22,7 @@
   let waitingForNotebookInput = false;
   let selectedTeacherPromptId = null;
   const collapsedAssignmentIds = new Set();
+  let colorPaletteOpen = false;
 
   function ctx() {
     return window.EagleIDE?.getContext?.() || {};
@@ -252,6 +253,7 @@
     if (!notebook || notebook.activeTabId === tabId) return;
     persistActivePageFromDom();
     notebook.activeTabId = tabId;
+    colorPaletteOpen = false;
     renderNotebook(true);
     scheduleSave({ persist: false });
   }
@@ -311,12 +313,18 @@
     scheduleSave({ persist: false });
   }
 
+  function toggleTabColorPalette() {
+    colorPaletteOpen = !colorPaletteOpen;
+    renderNotebook();
+  }
+
   function updateActiveTabColor(color) {
     const tab = activeTab();
     if (!tab || tab.locked) return;
     persistActivePageFromDom();
     tab.color = normalizeTabColor(color);
-    renderTabRail();
+    colorPaletteOpen = false;
+    renderNotebook();
     scheduleSave({ persist: false });
   }
 
@@ -403,16 +411,12 @@
           <button class="student-notebook-bookmark-btn${tab.bookmarked ? ' active' : ''}" id="studentNotebookBookmarkTabBtn" type="button" title="${tab.bookmarked ? 'Remove bookmark' : 'Bookmark tab'}" aria-label="${tab.bookmarked ? 'Remove bookmark' : 'Bookmark tab'}">🔖</button>
           <span>${escapeHtml(tab.label || 'Notes')}</span>
         </h3>
-        <div class="student-notebook-color-picker" title="Set tab color">
-          <span>Tab color</span>
-          ${tabColorPaletteHtml(tab.color)}
-          <label class="student-notebook-custom-color">
-            <span>Custom</span>
-          <input type="color" id="studentNotebookTabColorInput" value="${escapeHtml(normalizeTabColor(tab.color))}" aria-label="Set tab color">
-          </label>
+        <div class="student-notebook-color-picker${colorPaletteOpen ? ' open' : ''}">
+          <button class="student-notebook-tab-icon-btn student-notebook-color-toggle" id="studentNotebookTabColorToggle" type="button" title="Choose tab color" aria-label="Choose tab color" aria-expanded="${colorPaletteOpen ? 'true' : 'false'}">🎨</button>
+          ${colorPaletteOpen ? tabColorPaletteHtml(tab.color) : ''}
         </div>
-        <button class="btn secondary" id="studentNotebookRenameTabBtn">Rename Tab</button>
-        <button class="btn secondary" id="studentNotebookDeleteTabBtn">Delete Tab</button>
+        <button class="student-notebook-tab-icon-btn" id="studentNotebookRenameTabBtn" type="button" title="Rename tab" aria-label="Rename tab">✎</button>
+        <button class="student-notebook-tab-icon-btn danger" id="studentNotebookDeleteTabBtn" type="button" title="Delete tab" aria-label="Delete tab">🗑</button>
       </div>
       <div id="studentNotebookEditor" class="student-notebook-editor" contenteditable="true" spellcheck="true"></div>
     `;
@@ -421,11 +425,10 @@
     activeEditorEl.addEventListener('input', scheduleSave);
     activeEditorEl.addEventListener('focus', () => { activeEditorEl = page.querySelector('#studentNotebookEditor'); });
     page.querySelector('#studentNotebookBookmarkTabBtn')?.addEventListener('click', toggleActiveTabBookmark);
-    page.querySelector('#studentNotebookTabColorInput')?.addEventListener('input', e => updateActiveTabColor(e.target.value));
+    page.querySelector('#studentNotebookTabColorToggle')?.addEventListener('click', toggleTabColorPalette);
     page.querySelectorAll('[data-tab-color]').forEach(btn => {
       btn.addEventListener('click', () => {
         updateActiveTabColor(btn.dataset.tabColor);
-        renderNotebook();
       });
     });
     page.querySelector('#studentNotebookRenameTabBtn')?.addEventListener('click', renameActiveTab);
@@ -449,7 +452,7 @@
     page.innerHTML = `
       <div class="student-notebook-tab-actions">
         <h3 class="student-notebook-tab-title">Assignments</h3>
-        <span class="student-notebook-assignment-help">Open an assignment to read the prompt and respond. Written assignments use the lined response area. Code assignments use Insert Code to add or update the current editor code. Locked assignments can still be reviewed, but cannot be changed.</span>
+        <span class="student-notebook-assignment-help">Respond to prompts given by your teacher here by either typing in your response or submitting your editor code.</span>
       </div>
       <div class="student-notebook-assignment-list">
         ${blocks.length ? blocks.map(block => `
@@ -477,9 +480,12 @@
     page.querySelectorAll('[data-assignment-toggle]').forEach(btn => {
       btn.addEventListener('click', () => {
         const promptId = btn.dataset.assignmentToggle;
-        if (collapsedAssignmentIds.has(promptId)) collapsedAssignmentIds.delete(promptId);
-        else collapsedAssignmentIds.add(promptId);
-        renderAssignmentsPage(page, tab);
+        if (!promptId) return;
+        const nextCollapsed = !collapsedAssignmentIds.has(promptId);
+        if (nextCollapsed) collapsedAssignmentIds.add(promptId);
+        else collapsedAssignmentIds.delete(promptId);
+        btn.closest('.student-notebook-prompt-card')?.classList.toggle('collapsed', nextCollapsed);
+        btn.setAttribute('aria-expanded', nextCollapsed ? 'false' : 'true');
       });
     });
     page.querySelectorAll('[data-assignment-code]').forEach(btn => {
@@ -1227,25 +1233,36 @@
       if (!data?.ok) throw new Error(data?.error || 'Load failed');
       const prompt = data.prompt || {};
       if (title) title.textContent = prompt.title || prompt.prompt || 'Notebook responses';
-      const responsesHtml = (data.responses || []).map(row => `
-        <article class="teacher-notebook-response-card" data-student-email="${escapeHtml(row.studentEmail || '')}">
-          <strong>${escapeHtml(row.studentName || row.studentEmail)}</strong>
-          <div class="meta">${escapeHtml(row.studentEmail || '')}${row.updatedAt ? ` · Submitted ${escapeHtml(formatLocalDateTime(row.updatedAt))}` : ''}</div>
+      const responsesHtml = (data.responses || []).map(row => {
+        const scored = !!(String(row.score || '').trim() || String(row.feedback || '').trim());
+        return `
+        <article class="teacher-notebook-response-card${scored ? ' scored' : ''}" data-student-email="${escapeHtml(row.studentEmail || '')}">
+          <div class="teacher-notebook-response-head">
+            <div>
+              <strong>${escapeHtml(row.studentName || row.studentEmail)}</strong>
+              <div class="meta">${escapeHtml(row.studentEmail || '')}${row.updatedAt ? ` · Submitted ${escapeHtml(formatLocalDateTime(row.updatedAt))}` : ''}</div>
+            </div>
+            <div class="teacher-notebook-score-actions">
+              <span class="teacher-notebook-scored-badge" ${scored ? '' : 'hidden'}>Scored</span>
+              <button type="button" class="btn secondary" data-grade-toggle>${scored ? 'Edit Score' : 'Score'}</button>
+            </div>
+          </div>
           <div class="teacher-notebook-response-body">${sanitizeHtml(row.responseHtml || '')}</div>
-          ${(row.score || row.feedback) ? `
+          ${scored ? `
             <div class="teacher-notebook-feedback-note">
               ${row.score ? `<strong>Score: ${escapeHtml(row.score)}</strong>` : ''}
               ${row.feedback ? `<span>${escapeHtml(row.feedback)}</span>` : ''}
             </div>
           ` : ''}
-          <div class="teacher-notebook-grade-controls">
+          <div class="teacher-notebook-grade-controls" hidden>
             <input type="text" data-grade-score value="${escapeHtml(row.score || '')}" placeholder="Score">
             <textarea data-grade-feedback placeholder="Feedback">${escapeHtml(row.feedback || '')}</textarea>
             <button type="button" class="btn secondary" data-grade-save>Save Feedback</button>
             <span data-grade-status></span>
           </div>
         </article>
-      `).join('');
+      `;
+      }).join('');
       const missing = data.missing || [];
       list.innerHTML = `
         <div class="teacher-notebook-assignment-actions">
@@ -1268,6 +1285,14 @@
       });
       document.getElementById('teacherNotebookDeletePromptBtn')?.addEventListener('click', () => {
         deleteTeacherPrompt(classId, promptId).catch(err => alert(err.message || 'Could not delete assignment.'));
+      });
+      list.querySelectorAll('[data-grade-toggle]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const card = btn.closest('[data-student-email]');
+          const controls = card?.querySelector('.teacher-notebook-grade-controls');
+          if (!controls) return;
+          controls.hidden = !controls.hidden;
+        });
       });
       list.querySelectorAll('[data-grade-save]').forEach(btn => {
         btn.addEventListener('click', () => {
