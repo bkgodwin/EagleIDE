@@ -76,7 +76,7 @@ MAX_SIGN_IN_EVENTS = 10_000
 MAX_SERVER_HEALTH_ALERTS = 100
 MAX_LOG_TAIL_LINES = 1000
 MAX_NOTEBOOK_TABS = 80
-MAX_NOTEBOOK_TAB_LABEL_CHARS = 32
+MAX_NOTEBOOK_TAB_LABEL_CHARS = 20
 MAX_NOTEBOOK_HTML_CHARS = 500_000
 MAX_NOTEBOOK_JSON_CHARS = 2_000_000
 MAX_NOTEBOOK_PROMPT_CHARS = 1200
@@ -1022,18 +1022,21 @@ def _normalize_assignment_blocks(raw_tabs: list, prompts: list[dict]) -> list[di
     for prompt in prompts:
         prompt_id = prompt.get("id")
         existing = existing_by_prompt.get(prompt_id, {})
-        response_html = _sanitize_notebook_html(existing.get("responseHtml") or "<ul><li><br></li></ul>")
+        response_type = _sanitize_notebook_response_type(prompt.get("responseType"))
+        default_response_html = "<div class=\"student-notebook-code-placeholder\"></div>" if response_type == "code" else "<ul><li><br></li></ul>"
+        response_html = _sanitize_notebook_html(existing.get("responseHtml") or default_response_html)
+        score = _sanitize_notebook_score(existing.get("score"))
         blocks.append({
             "type": "prompt_response",
             "promptId": prompt_id,
             "title": prompt.get("title", "Notebook Assignment"),
             "prompt": prompt.get("prompt", ""),
-            "responseType": _sanitize_notebook_response_type(prompt.get("responseType")),
+            "responseType": response_type,
             "locked": bool(prompt.get("locked")),
             "createdAt": prompt.get("createdAt", ""),
             "responseHtml": response_html,
             "updatedAt": str(existing.get("updatedAt") or ""),
-            "score": _sanitize_notebook_score(existing.get("score")),
+            "score": score,
             "feedback": _sanitize_notebook_feedback(existing.get("feedback")),
             "gradedAt": str(existing.get("gradedAt") or ""),
         })
@@ -1122,7 +1125,7 @@ def _save_student_notebook(student_email: str, class_id: str, notebook: dict) ->
                 block["score"] = _sanitize_notebook_score(existing_block.get("score"))
                 block["feedback"] = _sanitize_notebook_feedback(existing_block.get("feedback"))
                 block["gradedAt"] = str(existing_block.get("gradedAt") or "")
-                if prompt_id in locked_prompt_ids:
+                if prompt_id in locked_prompt_ids or block["score"]:
                     block["responseHtml"] = _sanitize_notebook_html(existing_block.get("responseHtml") or "")
                     block["updatedAt"] = str(existing_block.get("updatedAt") or "")
     _write_json_file_atomic(_notebook_path(student_email, class_id), normalized)

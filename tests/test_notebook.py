@@ -172,7 +172,7 @@ class NotebookTestCase(unittest.TestCase):
         raw_tabs = [
             {
                 "id": f"tab-{idx}",
-                "label": f"Tab {idx}",
+                "label": "This label is intentionally far too long" if idx == 0 else f"Tab {idx}",
                 "html": f"<p>{idx}</p>",
                 "color": "#abcdef" if idx == 0 else "not-a-color",
                 "bookmarked": idx == 0,
@@ -197,6 +197,7 @@ class NotebookTestCase(unittest.TestCase):
         self.assertEqual(len(saved["tabs"]), eagle.MAX_NOTEBOOK_TABS)
         first = saved["tabs"][0]
         second = saved["tabs"][1]
+        self.assertEqual(first["label"], "This label is intent")
         self.assertEqual(first["color"], "#abcdef")
         self.assertTrue(first["bookmarked"])
         self.assertEqual(second["color"], eagle.DEFAULT_NOTEBOOK_TAB_COLOR)
@@ -263,6 +264,63 @@ class NotebookTestCase(unittest.TestCase):
         )
         self.assertEqual(grade_response.status_code, 200)
 
+        graded = self.client.get(
+            f"/api/notebook?classId={self.class_id}",
+            headers={"X-User-Token": self.student_token},
+        ).get_json()["notebook"]
+        graded_assignments = next(tab for tab in graded["tabs"] if tab["id"] == "assignments")
+        graded_assignments["blocks"][0]["responseHtml"] = "<p>changed after score</p>"
+        graded_save = self.client.post(
+            "/api/notebook/save",
+            headers={"X-User-Token": self.student_token},
+            json={"classId": self.class_id, "notebook": graded},
+        )
+        self.assertEqual(graded_save.status_code, 200)
+        graded_block = next(tab for tab in graded_save.get_json()["notebook"]["tabs"] if tab["id"] == "assignments")["blocks"][0]
+        self.assertIn('print("hi")', graded_block["responseHtml"])
+        self.assertEqual(graded_block["score"], "9/10")
+
+        clear_grade_response = self.client.post(
+            "/api/teacher/notebook-prompts/grade",
+            headers={"X-Teacher-Token": self.teacher_token},
+            json={
+                "classId": self.class_id,
+                "promptId": prompt["id"],
+                "studentEmail": self.student_email,
+                "score": "",
+                "feedback": "",
+            },
+        )
+        self.assertEqual(clear_grade_response.status_code, 200)
+        reopened = self.client.get(
+            f"/api/notebook?classId={self.class_id}",
+            headers={"X-User-Token": self.student_token},
+        ).get_json()["notebook"]
+        reopened_assignments = next(tab for tab in reopened["tabs"] if tab["id"] == "assignments")
+        reopened_assignments["blocks"][0]["responseHtml"] = "<p>changed after score cleared</p>"
+        reopened_save = self.client.post(
+            "/api/notebook/save",
+            headers={"X-User-Token": self.student_token},
+            json={"classId": self.class_id, "notebook": reopened},
+        )
+        self.assertEqual(reopened_save.status_code, 200)
+        reopened_block = next(tab for tab in reopened_save.get_json()["notebook"]["tabs"] if tab["id"] == "assignments")["blocks"][0]
+        self.assertIn("changed after score cleared", reopened_block["responseHtml"])
+        self.assertEqual(reopened_block["score"], "")
+
+        grade_response = self.client.post(
+            "/api/teacher/notebook-prompts/grade",
+            headers={"X-Teacher-Token": self.teacher_token},
+            json={
+                "classId": self.class_id,
+                "promptId": prompt["id"],
+                "studentEmail": self.student_email,
+                "score": "9/10",
+                "feedback": "Great trace.",
+            },
+        )
+        self.assertEqual(grade_response.status_code, 200)
+
         lock_response = self.client.post(
             "/api/teacher/notebook-prompts/lock",
             headers={"X-Teacher-Token": self.teacher_token},
@@ -286,7 +344,7 @@ class NotebookTestCase(unittest.TestCase):
         )
         self.assertEqual(locked_save.status_code, 200)
         locked_block = next(tab for tab in locked_save.get_json()["notebook"]["tabs"] if tab["id"] == "assignments")["blocks"][0]
-        self.assertIn('print("hi")', locked_block["responseHtml"])
+        self.assertIn("changed after score cleared", locked_block["responseHtml"])
         self.assertEqual(locked_block["score"], "9/10")
         self.assertEqual(locked_block["feedback"], "Great trace.")
 

@@ -7,8 +7,10 @@
   const INPUT_TOKEN = '[[_IDE_INPUT_]]';
   const ASSIGNMENTS_TAB_ID = 'assignments';
   const DEFAULT_RESPONSE_HTML = '<ul><li><br></li></ul>';
+  const DEFAULT_CODE_RESPONSE_HTML = '<div class="student-notebook-code-placeholder"></div>';
   const SAVE_DELAY_MS = 900;
   const MAX_TABS = 80;
+  const MAX_TAB_LABEL_LENGTH = 20;
   const DEFAULT_TAB_COLORS = ['#fff2a8', '#b9e4ff', '#ffc4d6', '#c9f2c7', '#dcc8ff', '#ffd5a6', '#c5f3e8', '#f5c9ff'];
   const DEFAULT_ASSIGNMENTS_COLOR = '#f3c74d';
   let notebook = null;
@@ -136,6 +138,29 @@
     `;
   }
 
+  function trimTabLabel(label) {
+    return String(label || '').trim().slice(0, MAX_TAB_LABEL_LENGTH);
+  }
+
+  function assignmentDefaultHtml(block) {
+    return block?.responseType === 'code' ? DEFAULT_CODE_RESPONSE_HTML : DEFAULT_RESPONSE_HTML;
+  }
+
+  function assignmentResponseHtml(block) {
+    const html = sanitizeHtml(block?.responseHtml || assignmentDefaultHtml(block));
+    if (block?.responseType !== 'code') return html;
+    const holder = document.createElement('div');
+    holder.innerHTML = html;
+    holder.querySelectorAll('ul, ol, p').forEach(el => {
+      if (!el.textContent.trim() && !el.querySelector('.student-notebook-code-block')) el.remove();
+    });
+    return holder.innerHTML || DEFAULT_CODE_RESPONSE_HTML;
+  }
+
+  function isAssignmentResponseLocked(block) {
+    return !!(block?.locked || String(block?.score || '').trim());
+  }
+
   function ensureNotebookShape(raw) {
     const shaped = raw && typeof raw === 'object' ? raw : {};
     const tabs = Array.isArray(shaped.tabs) ? shaped.tabs : [];
@@ -168,8 +193,8 @@
       document.querySelectorAll('.student-notebook-prompt-response[data-prompt-id]').forEach(el => {
         const promptId = el.dataset.promptId;
         const block = (tab.blocks || []).find(b => b.promptId === promptId);
-        if (block) {
-          block.responseHtml = sanitizeHtml(el.innerHTML || DEFAULT_RESPONSE_HTML);
+        if (block && !isAssignmentResponseLocked(block)) {
+          block.responseHtml = sanitizeHtml(el.innerHTML || assignmentDefaultHtml(block));
           block.updatedAt = new Date().toISOString();
         }
       });
@@ -272,7 +297,7 @@
     const insertAt = assignmentsIndex >= 0 ? assignmentsIndex : notebook.tabs.length;
     notebook.tabs.splice(insertAt, 0, {
       id,
-      label: label.trim().slice(0, 32),
+      label: trimTabLabel(label),
       locked: false,
       color: defaultTabColor(insertAt),
       bookmarked: false,
@@ -288,7 +313,7 @@
     if (!tab || tab.locked) return;
     const label = prompt('Rename tab:', tab.label || 'Notes');
     if (!label || !label.trim()) return;
-    tab.label = label.trim().slice(0, 32);
+    tab.label = trimTabLabel(label);
     renderNotebook();
     scheduleSave({ persist: false });
   }
@@ -352,9 +377,11 @@
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = `student-notebook-tab${tab.id === notebook.activeTabId ? ' active' : ''}${tab.locked ? ' locked' : ''}${tab.bookmarked ? ' bookmarked' : ''}`;
-      btn.textContent = tab.label || 'Tab';
+      const label = trimTabLabel(tab.label || 'Tab');
+      btn.innerHTML = `<span class="student-notebook-tab-label">${escapeHtml(label)}</span>`;
       btn.title = tab.locked ? `${tab.label} (locked)` : `Open ${tab.label}`;
       btn.dataset.tabId = tab.id;
+      btn.style.setProperty('--tab-label-chars', String(Math.max(3, label.length)));
       btn.style.setProperty('--tab-color', tab.id === ASSIGNMENTS_TAB_ID ? DEFAULT_ASSIGNMENTS_COLOR : normalizeTabColor(tab.color, index));
       btn.draggable = !tab.locked;
       btn.addEventListener('click', () => switchTab(tab.id));
@@ -396,7 +423,9 @@
     }
     if (animate) {
       page.classList.remove('turning');
-      requestAnimationFrame(() => page.classList.add('turning'));
+      void page.offsetWidth;
+      page.classList.add('turning');
+      page.addEventListener('animationend', () => page.classList.remove('turning'), { once: true });
     }
     if (tab.id === ASSIGNMENTS_TAB_ID) renderAssignmentsPage(page, tab);
     else renderEditablePage(page, tab);
@@ -456,20 +485,20 @@
       </div>
       <div class="student-notebook-assignment-list">
         ${blocks.length ? blocks.map(block => `
-          <section class="student-notebook-prompt-card${collapsedAssignmentIds.has(block.promptId) ? ' collapsed' : ''}${block.locked ? ' locked' : ''}" data-prompt-id="${escapeHtml(block.promptId)}">
+          <section class="student-notebook-prompt-card${collapsedAssignmentIds.has(block.promptId) ? ' collapsed' : ''}${isAssignmentResponseLocked(block) ? ' locked' : ''}${String(block.score || '').trim() ? ' scored' : ''}" data-prompt-id="${escapeHtml(block.promptId)}">
             <button type="button" class="student-notebook-assignment-toggle" data-assignment-toggle="${escapeHtml(block.promptId)}" aria-expanded="${collapsedAssignmentIds.has(block.promptId) ? 'false' : 'true'}">
               <span class="student-notebook-prompt-meta">${escapeHtml(formatLocalDateTime(block.createdAt) || block.createdAt || '')}</span>
               <strong>${escapeHtml(block.title || 'Notebook Assignment')}</strong>
               <span class="student-notebook-assignment-badges">
                 <span>${block.responseType === 'code' ? 'Code response' : 'Written response'}</span>
-                ${block.locked ? '<span>Locked</span>' : ''}
+                ${isAssignmentResponseLocked(block) ? '<span>Locked</span>' : ''}
               </span>
             </button>
             <div class="student-notebook-assignment-body">
               <div class="student-notebook-prompt-text">${escapeHtml(block.prompt || '')}</div>
-              ${block.responseType === 'code' && !block.locked ? `<button type="button" class="btn secondary student-notebook-assignment-code-btn" data-assignment-code="${escapeHtml(block.promptId)}">${sanitizeHtml(block.responseHtml || '').includes('student-notebook-code-block') ? 'Update Code' : 'Insert Code'}</button>` : ''}
-              <div class="student-notebook-response-wrap">
-                <div class="student-notebook-prompt-response" contenteditable="${block.locked ? 'false' : 'true'}" spellcheck="true" data-prompt-id="${escapeHtml(block.promptId)}">${sanitizeHtml(block.responseHtml || DEFAULT_RESPONSE_HTML)}</div>
+              ${block.responseType === 'code' && !isAssignmentResponseLocked(block) ? `<button type="button" class="btn secondary student-notebook-assignment-code-btn" data-assignment-code="${escapeHtml(block.promptId)}">${sanitizeHtml(block.responseHtml || '').includes('student-notebook-code-block') ? 'Update Code' : 'Insert Code'}</button>` : ''}
+              <div class="student-notebook-response-wrap${block.responseType === 'code' ? ' code-response-wrap' : ''}">
+                <div class="student-notebook-prompt-response${block.responseType === 'code' ? ' code-response' : ''}" contenteditable="${block.responseType === 'code' || isAssignmentResponseLocked(block) ? 'false' : 'true'}" spellcheck="true" data-prompt-id="${escapeHtml(block.promptId)}">${assignmentResponseHtml(block)}</div>
                 ${assignmentGradeHtml(block)}
               </div>
             </div>
@@ -494,11 +523,11 @@
     page.querySelectorAll('.student-notebook-prompt-response').forEach(el => {
       el.addEventListener('input', () => {
         const block = blocks.find(b => b.promptId === el.dataset.promptId);
-        if (block && !block.locked) {
-          block.responseHtml = sanitizeHtml(el.innerHTML || DEFAULT_RESPONSE_HTML);
+        if (block && !isAssignmentResponseLocked(block)) {
+          block.responseHtml = sanitizeHtml(el.innerHTML || assignmentDefaultHtml(block));
           block.updatedAt = new Date().toISOString();
         }
-        if (block && !block.locked) scheduleSave();
+        if (block && !isAssignmentResponseLocked(block)) scheduleSave();
       });
       el.addEventListener('focus', () => { activeEditorEl = el; });
     });
@@ -548,7 +577,8 @@
     return `<ol class="student-notebook-code-lines">${lines.map(line => `<li><code class="language-${escapeHtml(hlLang)}">${escapeHtml(line)}</code></li>`).join('')}</ol>`;
   }
 
-  function buildCodeBlockHtml(snapshot) {
+  function buildCodeBlockHtml(snapshot, options = {}) {
+    const trailingParagraph = options.trailingParagraph !== false;
     const codeId = `code_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const language = normalizeLanguage(snapshot.language);
     const fileName = fileNameForLanguage(language, snapshot.fileName);
@@ -572,7 +602,7 @@
             <button type="button" data-code-action="stop">Stop</button>
           </div>
         </div>
-      </figure><p><br></p>
+      </figure>${trailingParagraph ? '<p><br></p>' : ''}
     `;
   }
 
@@ -604,7 +634,7 @@
     const tab = assignmentsTab();
     const block = (tab?.blocks || []).find(row => row.promptId === promptId);
     if (!block) return;
-    if (block.locked) {
+    if (isAssignmentResponseLocked(block)) {
       alert('This assignment is locked by your teacher.');
       return;
     }
@@ -619,15 +649,10 @@
     const existing = responseEl.querySelector('.student-notebook-code-block');
     if (existing && !confirm('Replace the code already inserted for this assignment?')) return;
     const holder = document.createElement('div');
-    holder.innerHTML = buildCodeBlockHtml(snapshot);
-    if (existing) {
-      responseEl.innerHTML = '';
-      Array.from(holder.childNodes).forEach(node => responseEl.appendChild(node));
-    } else {
-      responseEl.appendChild(document.createElement('p'));
-      Array.from(holder.childNodes).forEach(node => responseEl.appendChild(node));
-    }
-    block.responseHtml = sanitizeHtml(responseEl.innerHTML || DEFAULT_RESPONSE_HTML);
+    holder.innerHTML = buildCodeBlockHtml(snapshot, { trailingParagraph: false });
+    responseEl.innerHTML = '';
+    Array.from(holder.childNodes).forEach(node => responseEl.appendChild(node));
+    block.responseHtml = sanitizeHtml(responseEl.innerHTML || assignmentDefaultHtml(block));
     block.updatedAt = new Date().toISOString();
     bindCodeBlockActions();
     highlightCodeBlocks(responseEl);
@@ -889,8 +914,8 @@
     if (freshAssignments) {
       (freshAssignments.blocks || []).forEach(block => {
         const local = localBlocks.get(block.promptId);
-        if (local && !block.locked) {
-          block.responseHtml = local.responseHtml || block.responseHtml || DEFAULT_RESPONSE_HTML;
+        if (local && !isAssignmentResponseLocked(block)) {
+          block.responseHtml = local.responseHtml || block.responseHtml || assignmentDefaultHtml(block);
           block.updatedAt = local.updatedAt || block.updatedAt || '';
         }
       });
