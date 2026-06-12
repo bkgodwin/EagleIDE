@@ -39,7 +39,7 @@
   position: fixed;
   top: 0;
   right: 0;
-  width: min(760px, 96vw);
+  width: min(860px, 98vw);
   height: 100vh;
   z-index: 1510;
   transform: translateX(calc(100% + 28px));
@@ -164,21 +164,23 @@
 }
 
 .student-notebook-page {
+  --notebook-line-height: 31px;
   position: relative;
   height: 100%;
   min-height: 0;
   overflow: auto;
-  margin-right: 42px;
-  padding: 24px 32px 32px 60px;
+  margin-right: 68px;
+  padding: 24px 40px 32px 64px;
   color: #202020;
   font-family: "Comic Sans MS", "Comic Neue", cursive;
   font-size: 17px;
-  line-height: 1.62;
+  line-height: var(--notebook-line-height);
   background:
     linear-gradient(90deg, transparent 0 42px, rgba(205, 67, 67, 0.58) 42px 44px, transparent 44px),
     repeating-linear-gradient(180deg, #fffaf0 0 29px, #bed6f5 30px, #fffaf0 31px),
     radial-gradient(circle at 20% 12%, rgba(255,255,255,0.65), transparent 26%),
     #fffaf0;
+  background-attachment: local, local, local, scroll;
   box-shadow: inset 10px 0 18px rgba(68, 47, 25, 0.08);
 }
 
@@ -213,7 +215,11 @@
 .student-notebook-editor {
   min-height: calc(100vh - 200px);
   outline: none;
-  white-space: normal;
+  max-width: 100%;
+  line-height: var(--notebook-line-height);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .student-notebook-editor h1,
@@ -225,52 +231,63 @@
 }
 
 .student-notebook-editor p {
-  margin: 0 0 10px;
+  margin: 0;
+  min-height: var(--notebook-line-height);
 }
 
 .student-notebook-editor ul,
 .student-notebook-editor ol {
-  margin-top: 4px;
-  margin-bottom: 12px;
+  margin-top: 0;
+  margin-bottom: var(--notebook-line-height);
 }
 
 .student-notebook-tab-rail {
   position: absolute;
   top: 18px;
   right: 0;
-  width: 112px;
-  max-height: 500px;
+  width: 70px;
+  max-height: min(720px, calc(100vh - 240px));
   overflow-y: auto;
   overflow-x: visible;
   z-index: 2;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   align-items: flex-start;
-  padding: 2px 12px 8px 8px;
+  padding: 2px 12px 8px 0;
   scrollbar-width: thin;
 }
 
 .student-notebook-tab {
-  width: 96px;
-  min-height: 44px;
+  position: relative;
+  width: 52px;
+  min-height: clamp(76px, calc((var(--tab-label-chars, 8) * 8px) + 34px), 196px);
   border: 2px solid rgba(45, 35, 20, 0.2);
   border-left: 0;
   border-radius: 0 8px 8px 0;
   background: var(--tab-color, #f7d666);
-  padding: 6px 8px 6px 10px;
+  padding: 8px 4px;
   color: #1f2933;
   font-weight: 800;
   font-size: 12px;
   line-height: 1.12;
-  text-align: left;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
   cursor: pointer;
   box-shadow: 3px 4px 8px rgba(0, 0, 0, 0.18);
   transform: translateX(0);
   transition: transform 160ms ease, filter 160ms ease;
+  display: grid;
+  place-items: center;
+}
+
+.student-notebook-tab-label {
+  display: inline-block;
+  max-width: none;
+  white-space: nowrap;
+  transform: rotate(90deg);
+  transform-origin: center;
 }
 
 .student-notebook-tab.active {
@@ -295,16 +312,19 @@
 }
 
 .student-notebook-tab.locked::after {
-  content: " locked";
-  display: block;
-  font-size: 9px;
-  opacity: 0.7;
-  font-weight: 700;
+  content: "";
+  position: absolute;
+  right: 9px;
+  bottom: 7px;
+  left: 9px;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(58, 44, 24, 0.55);
 }
 
 .student-notebook-add-tab {
-  width: 58px;
-  min-height: 34px;
+  width: 52px;
+  min-height: 44px;
   border: 1px dashed rgba(45, 35, 20, 0.35);
   border-left: 0;
   border-radius: 0 8px 8px 0;
@@ -425,6 +445,9 @@
 
 .student-notebook-code-block {
   margin: 14px 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   border: 1px solid rgba(42, 51, 66, 0.34);
   border-radius: 8px;
   overflow: hidden;
@@ -444,12 +467,19 @@
   background: #1f2937;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   font-size: 12px;
+  min-width: 0;
+}
+
+.student-notebook-code-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .student-notebook-code-actions {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .student-notebook-code-actions button,
@@ -486,6 +516,7 @@
   font-family: inherit;
   font-size: 13px;
   white-space: pre;
+  max-width: 100%;
 }
 
 .student-notebook-code-lines li {
@@ -562,8 +593,13 @@
 }
 
 .student-notebook-assignment-help {
+  display: block;
+  flex-basis: 100%;
+  max-width: 100%;
   color: rgba(48,40,30,.65);
   font-size: 13px;
+  line-height: var(--notebook-line-height);
+  overflow-wrap: anywhere;
 }
 
 .student-notebook-assignment-toggle {
@@ -634,10 +670,9 @@
 }
 
 .student-notebook-response-wrap {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
-  gap: 18px;
-  align-items: end;
+  position: relative;
+  display: block;
+  min-width: 0;
 }
 
 .student-notebook-prompt-meta {
@@ -647,21 +682,46 @@
 }
 
 .student-notebook-prompt-text {
-  margin: 6px 0 10px;
+  margin: 0 0 var(--notebook-line-height);
   color: #244b7a;
   font-weight: 800;
+  line-height: var(--notebook-line-height);
+  overflow-wrap: anywhere;
 }
 
 .student-notebook-prompt-response {
   min-height: 48px;
+  max-width: 100%;
+  line-height: var(--notebook-line-height);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   outline: none;
+}
+
+.student-notebook-prompt-response.code-response {
+  min-height: 0;
+  white-space: normal;
+}
+
+.student-notebook-code-placeholder {
+  min-height: var(--notebook-line-height);
 }
 
 .student-notebook-prompt-response[contenteditable="false"] {
   opacity: 0.82;
 }
 
-.student-notebook-grade-note,
+.student-notebook-prompt-response ul,
+.student-notebook-prompt-response ol {
+  margin-top: 0;
+  margin-bottom: var(--notebook-line-height);
+}
+
+.student-notebook-prompt-response li {
+  min-height: var(--notebook-line-height);
+}
+
 .teacher-notebook-feedback-note {
   color: #d71920;
   font-family: "Comic Sans MS", "Comic Neue", cursive;
@@ -676,13 +736,30 @@
 }
 
 .student-notebook-grade-note {
-  justify-self: end;
-  align-self: end;
-  min-width: 220px;
-  max-width: 280px;
-  margin: 8px 32px 10px 20px;
-  transform: rotate(-30deg);
-  transform-origin: left center;
+  position: absolute;
+  z-index: 3;
+  right: 22px;
+  top: 50%;
+  max-width: min(260px, 45%);
+  color: #d71920;
+  font-family: "Comic Sans MS", "Comic Neue", cursive;
+  font-style: italic;
+  font-size: 17px;
+  line-height: 1.24;
+  transform: translateY(-50%) rotate(-10deg);
+  transform-origin: center;
+  background: #fff3a5;
+  border: 1px solid rgba(174, 137, 22, 0.45);
+  border-radius: 3px;
+  padding: 10px 12px;
+  box-shadow: 0 8px 18px rgba(83, 58, 18, 0.22);
+  opacity: 0.96;
+  transition: opacity 140ms ease, filter 140ms ease;
+}
+
+.student-notebook-grade-note:hover {
+  opacity: 0.08;
+  filter: blur(0.2px);
 }
 
 .teacher-notebook-feedback-note {
@@ -906,15 +983,17 @@
     display: none;
   }
   .student-notebook-page {
-    margin-right: 34px;
+    margin-right: 54px;
     padding-left: 50px;
+    padding-right: 22px;
   }
   .student-notebook-tab-rail {
-    width: 74px;
+    width: 54px;
   }
   .student-notebook-tab {
-    width: 74px;
+    width: 44px;
     font-size: 11px;
+    min-height: clamp(68px, calc((var(--tab-label-chars, 8) * 7px) + 30px), 164px);
   }
   .student-notebook-assignment-toggle,
   .student-notebook-response-wrap,
@@ -927,6 +1006,15 @@
   .student-notebook-grade-note,
   .teacher-notebook-feedback-note {
     max-width: none;
+  }
+  .student-notebook-grade-note {
+    position: relative;
+    right: auto;
+    top: auto;
+    display: inline-block;
+    max-width: 100%;
+    margin: 8px 0 0 auto;
+    transform: rotate(-4deg);
   }
   .notebook-response-layout {
     grid-template-columns: 1fr;
