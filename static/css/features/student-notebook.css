@@ -183,12 +183,26 @@
 }
 
 .student-notebook-page.turning {
-  animation: notebook-page-turn 260ms ease;
+  transform-origin: left center;
+  will-change: transform, opacity, box-shadow;
+  animation: notebook-page-turn 320ms ease;
 }
 
 @keyframes notebook-page-turn {
-  0% { transform: perspective(1100px) rotateY(-7deg); opacity: 0.52; }
-  100% { transform: perspective(1100px) rotateY(0); opacity: 1; }
+  0% {
+    transform: perspective(1200px) rotateY(-12deg) translateX(-8px);
+    opacity: 0.58;
+    box-shadow: inset 28px 0 32px rgba(68, 47, 25, 0.18);
+  }
+  62% {
+    transform: perspective(1200px) rotateY(3deg) translateX(1px);
+    opacity: 0.94;
+  }
+  100% {
+    transform: perspective(1200px) rotateY(0) translateX(0);
+    opacity: 1;
+    box-shadow: inset 10px 0 18px rgba(68, 47, 25, 0.08);
+  }
 }
 
 .student-notebook-empty {
@@ -334,6 +348,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
   min-height: 32px;
   padding: 3px 8px;
   border: 1px solid rgba(88, 58, 25, 0.2);
@@ -342,6 +357,34 @@
   color: #553516;
   font-size: 12px;
   font-weight: 800;
+}
+
+.student-notebook-color-palette {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.student-notebook-color-swatch {
+  width: 30px;
+  height: 30px;
+  border: 2px solid rgba(46, 36, 20, 0.24);
+  border-radius: 999px;
+  background: var(--swatch-color);
+  cursor: pointer;
+  box-shadow: inset 0 0 0 2px rgba(255,255,255,0.35);
+}
+
+.student-notebook-color-swatch.active {
+  border-color: #244b7a;
+  box-shadow: 0 0 0 2px rgba(36, 75, 122, 0.18), inset 0 0 0 2px rgba(255,255,255,0.4);
+}
+
+.student-notebook-custom-color {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .student-notebook-color-picker input {
@@ -475,14 +518,83 @@
 .student-notebook-assignment-list {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 12px;
 }
 
 .student-notebook-prompt-card {
   border-left: 4px solid #e08d33;
   background: rgba(255, 255, 255, 0.38);
-  padding: 12px 14px;
+  padding: 0;
   border-radius: 8px;
+  overflow: hidden;
+}
+
+.student-notebook-prompt-card.locked {
+  border-left-color: #9f7a17;
+  background: rgba(255, 248, 220, 0.56);
+}
+
+.student-notebook-assignment-help {
+  color: rgba(48,40,30,.65);
+  font-size: 13px;
+}
+
+.student-notebook-assignment-toggle {
+  width: 100%;
+  min-height: 42px;
+  border: 0;
+  background: rgba(255, 248, 226, 0.72);
+  color: #244b7a;
+  display: grid;
+  grid-template-columns: minmax(112px, auto) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  text-align: left;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.student-notebook-assignment-toggle strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.student-notebook-assignment-badges {
+  display: inline-flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.student-notebook-assignment-badges span {
+  border: 1px solid rgba(36, 75, 122, 0.25);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 11px;
+  color: #553516;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.student-notebook-assignment-body {
+  padding: 12px 14px;
+}
+
+.student-notebook-prompt-card.collapsed .student-notebook-assignment-body {
+  display: none;
+}
+
+.student-notebook-assignment-code-btn {
+  margin: 2px 0 10px;
+}
+
+.student-notebook-response-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
 }
 
 .student-notebook-prompt-meta {
@@ -500,6 +612,43 @@
 .student-notebook-prompt-response {
   min-height: 48px;
   outline: none;
+}
+
+.student-notebook-prompt-response[contenteditable="false"] {
+  opacity: 0.82;
+}
+
+.student-notebook-grade-note,
+.teacher-notebook-feedback-note {
+  max-width: 190px;
+  color: #c62222;
+  font-family: "Comic Sans MS", "Comic Neue", cursive;
+  font-style: italic;
+  font-size: 15px;
+  line-height: 1.32;
+  transform: rotate(-1.5deg);
+  background: rgba(255, 246, 210, 0.72);
+  border: 1px solid rgba(198, 34, 34, 0.18);
+  border-radius: 7px;
+  padding: 8px 10px;
+  box-shadow: 0 4px 10px rgba(60, 20, 10, 0.12);
+}
+
+.student-notebook-grade-note span,
+.teacher-notebook-feedback-note span {
+  display: block;
+}
+
+.teacher-notebook-response-type label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--theme-border-mid);
+  border-radius: 999px;
+  background: var(--theme-input-bg);
+  color: var(--theme-text);
+  font-size: 13px;
 }
 
 .student-notebook-search-results {
@@ -594,10 +743,57 @@
   margin-bottom: 10px;
 }
 
+.teacher-notebook-assignment-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  border: 1px solid var(--theme-border-mid);
+  border-radius: 8px;
+  background: var(--theme-input-bg);
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.notebook-response-detail .btn.danger {
+  background: #8f1f19;
+  border-color: #ef5350;
+  color: #fff;
+}
+
 .teacher-notebook-response-body {
   margin-top: 8px;
   color: var(--theme-text);
   line-height: 1.45;
+}
+
+.teacher-notebook-grade-controls {
+  display: grid;
+  grid-template-columns: minmax(80px, 120px) minmax(180px, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.teacher-notebook-grade-controls input,
+.teacher-notebook-grade-controls textarea {
+  width: 100%;
+  border: 1px solid var(--theme-border-mid);
+  border-radius: 6px;
+  background: var(--theme-panel-bg);
+  color: var(--theme-text);
+  padding: 7px 8px;
+}
+
+.teacher-notebook-grade-controls textarea {
+  min-height: 42px;
+  resize: vertical;
+}
+
+.teacher-notebook-grade-controls [data-grade-status] {
+  color: var(--theme-text-dim);
+  font-size: 12px;
 }
 
 .teacher-notebook-missing {
@@ -628,6 +824,18 @@
   .student-notebook-tab {
     width: 74px;
     font-size: 11px;
+  }
+  .student-notebook-assignment-toggle,
+  .student-notebook-response-wrap,
+  .teacher-notebook-grade-controls {
+    grid-template-columns: 1fr;
+  }
+  .student-notebook-assignment-badges {
+    justify-content: flex-start;
+  }
+  .student-notebook-grade-note,
+  .teacher-notebook-feedback-note {
+    max-width: none;
   }
   .notebook-response-layout {
     grid-template-columns: 1fr;
