@@ -82,6 +82,7 @@ MAX_NOTEBOOK_JSON_CHARS = 2_000_000
 MAX_NOTEBOOK_PROMPT_CHARS = 1200
 MAX_NOTEBOOK_PROMPT_TITLE_CHARS = 80
 MAX_NOTEBOOK_FEEDBACK_CHARS = 2000
+MAX_NOTEBOOK_PROMPT_MAX_SCORE = 1000
 DEFAULT_NOTEBOOK_TAB_COLOR = "#f7d666"
 EXAMPLES_DIR_NAME = "Examples"
 EXAMPLE_FILES: dict[str, str] = {
@@ -885,6 +886,29 @@ def _sanitize_notebook_score(value: Any) -> str:
     return cleaned[:40]
 
 
+def _sanitize_notebook_max_score(value: Any, default: int = 10) -> int:
+    if value is None or value == "":
+        return default
+    try:
+        score = int(float(value))
+    except Exception:
+        score = default
+    return max(0, min(MAX_NOTEBOOK_PROMPT_MAX_SCORE, score))
+
+
+def _notebook_score_value(value: Any) -> Optional[float]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    if not match:
+        return None
+    try:
+        return float(match.group(0))
+    except Exception:
+        return None
+
+
 def _sanitize_notebook_feedback(value: Any) -> str:
     cleaned = str(value or "").strip()
     cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f<>]", "", cleaned)
@@ -949,6 +973,8 @@ def _load_notebook_prompts(class_id: str) -> list[dict]:
             "title": title,
             "prompt": prompt_text,
             "responseType": _sanitize_notebook_response_type(row.get("responseType")),
+            "maxScore": _sanitize_notebook_max_score(row.get("maxScore")),
+            "skillTags": _normalize_skill_tags(row.get("skillTags") or []),
             "locked": bool(row.get("locked")),
             "createdAt": str(row.get("createdAt") or _current_timestamp()),
             "created_ts": created_ts,
@@ -973,6 +999,8 @@ def _save_notebook_prompts(class_id: str, prompts: list[dict]) -> None:
             "title": title,
             "prompt": prompt_text,
             "responseType": _sanitize_notebook_response_type(prompt.get("responseType")),
+            "maxScore": _sanitize_notebook_max_score(prompt.get("maxScore")),
+            "skillTags": _normalize_skill_tags(prompt.get("skillTags") or []),
             "locked": bool(prompt.get("locked")),
             "createdAt": str(prompt.get("createdAt") or _current_timestamp()),
             "created_ts": int(prompt.get("created_ts") or int(time.time())),
@@ -1032,6 +1060,8 @@ def _normalize_assignment_blocks(raw_tabs: list, prompts: list[dict]) -> list[di
             "title": prompt.get("title", "Notebook Assignment"),
             "prompt": prompt.get("prompt", ""),
             "responseType": response_type,
+            "maxScore": _sanitize_notebook_max_score(prompt.get("maxScore")),
+            "skillTags": _normalize_skill_tags(prompt.get("skillTags") or []),
             "locked": bool(prompt.get("locked")),
             "createdAt": prompt.get("createdAt", ""),
             "responseHtml": response_html,
@@ -2583,6 +2613,8 @@ def teacher_create_notebook_prompt():
     prompt_text = re.sub(r"\s+", " ", str(data.get("prompt") or "").strip())[:MAX_NOTEBOOK_PROMPT_CHARS]
     title = _sanitize_notebook_prompt_title(data.get("title") or prompt_text[:MAX_NOTEBOOK_PROMPT_TITLE_CHARS])
     response_type = _sanitize_notebook_response_type(data.get("responseType"))
+    max_score = _sanitize_notebook_max_score(data.get("maxScore"))
+    skill_tags = _normalize_skill_tags(data.get("skillTags") or [])
     if not class_id:
         return jsonify(ok=False, error="classId is required"), 400
     if not prompt_text:
@@ -2598,6 +2630,8 @@ def teacher_create_notebook_prompt():
         "title": title,
         "prompt": prompt_text,
         "responseType": response_type,
+        "maxScore": max_score,
+        "skillTags": skill_tags,
         "locked": False,
         "createdAt": _current_timestamp(),
         "created_ts": int(time.time()),
@@ -6086,12 +6120,36 @@ def _build_class_mastery_report(class_id: str, teacher_email: str) -> Optional[d
     users_by_email = {u.get("email", "").lower(): u for u in _load_users().get("users", [])}
     assignments = [a for a in _list_assignments() if (a.get("targetClassId") or "") == class_id]
     assignment_rows = []
+    assignment_names = set()
     for a in assignments:
+        name = a.get("name", "")
+        assignment_names.add(name)
         assignment_rows.append({
-            "name": a.get("name", ""),
+            "name": name,
             "maxTotal": _assignment_total_max_score(a),
             "skillTags": _normalize_skill_tags(a.get("skillTags") or []),
+            "source": "assignment",
         })
+    notebook_prompts = [
+        prompt for prompt in _load_notebook_prompts(class_id)
+        if _normalize_skill_tags(prompt.get("skillTags") or []) and _sanitize_notebook_max_score(prompt.get("maxScore")) > 0
+    ]
+    notebook_assignment_rows = []
+    for prompt in notebook_prompts:
+        base_name = f"Notebook: {prompt.get('title') or 'Notebook Assignment'}"
+        name = base_name
+        if name in assignment_names:
+            name = f"{base_name} ({str(prompt.get('id') or '')[:6]})"
+        assignment_names.add(name)
+        row = {
+            "name": name,
+            "maxTotal": _sanitize_notebook_max_score(prompt.get("maxScore")),
+            "skillTags": _normalize_skill_tags(prompt.get("skillTags") or []),
+            "source": "notebook",
+            "promptId": prompt.get("id", ""),
+        }
+        assignment_rows.append(row)
+        notebook_assignment_rows.append(row)
     skills_catalog = _get_teacher_skills(teacher_email)
     class_skill_rows = sorted(
         [s for s in skills_catalog if class_id in (s.get("class_ids") or [])],
@@ -6117,12 +6175,22 @@ def _build_class_mastery_report(class_id: str, teacher_email: str) -> Optional[d
     skill_descriptions = {tag: class_skill_descriptions.get(tag, "") for tag in tag_order}
 
     student_rows = []
+    notebooks_by_email = {}
+    if notebook_assignment_rows:
+        with _notebooks_lock:
+            for email in cls.get("students", []):
+                normalized_email = (email or "").strip().lower()
+                try:
+                    notebooks_by_email[normalized_email] = _load_student_notebook(normalized_email, class_id)
+                except Exception:
+                    notebooks_by_email[normalized_email] = _default_notebook(class_id)
     for email in cls.get("students", []):
         u = users_by_email.get((email or "").lower(), {})
         name = u.get("name") or email
         per_assignment = {}
+        normalized_email = (email or "").lower()
         for assignment in assignments:
-            sub = next((s for s in (assignment.get("submissions") or []) if (s.get("email") or "").lower() == (email or "").lower()), None)
+            sub = next((s for s in (assignment.get("submissions") or []) if (s.get("email") or "").lower() == normalized_email), None)
             percent = None
             total_score = None
             if sub:
@@ -6133,6 +6201,14 @@ def _build_class_mastery_report(class_id: str, teacher_email: str) -> Optional[d
             per_assignment[assignment.get("name", "")] = {
                 "percent": percent,
                 "totalScore": total_score,
+            }
+        notebook_row = notebooks_by_email.get(normalized_email)
+        for notebook_assignment in notebook_assignment_rows:
+            block = _notebook_prompt_response(notebook_row or {}, notebook_assignment.get("promptId", ""))
+            score_value = _notebook_score_value((block or {}).get("score"))
+            per_assignment[notebook_assignment.get("name", "")] = {
+                "percent": _score_percent(score_value, notebook_assignment.get("maxTotal")),
+                "totalScore": score_value,
             }
         skill_scores = {}
         for tag in tag_order:

@@ -33,7 +33,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20260612-3">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260612-4">
 </head>
 <body>
     <div class="app-shell">
@@ -577,6 +577,10 @@
         <label><input type="radio" name="teacherNotebookResponseType" value="written" checked> Written response</label>
         <label><input type="radio" name="teacherNotebookResponseType" value="code"> Code response</label>
       </div>
+      <label style="display:block; margin:8px 0 10px; font-size:13px; color:var(--theme-text-dim);">Maximum Score</label>
+      <input id="teacherNotebookPromptMaxScoreInput" type="number" min="0" max="1000" step="1" value="10" style="width:100%; padding:10px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; margin-bottom:10px;">
+      <label style="display:block; margin:8px 0 10px; font-size:13px; color:var(--theme-text-dim);">Skill Tags</label>
+      <div id="teacherNotebookSkillTags" class="teacher-notebook-skill-picker"></div>
       <textarea id="teacherNotebookPromptInput" placeholder="Type the reflection or notebook prompt for your selected class..." style="width:100%; min-height:150px; resize:vertical; padding:10px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;"></textarea>
       <div id="teacherNotebookPromptStatus" style="font-size:12px; margin-top:8px; color:var(--theme-text-dim);"></div>
       <div class="modal-actions">
@@ -865,7 +869,7 @@
   <script src="/static/js/app-core.js?v=20250609"></script>
   <script src="/static/js/classroom-signals.js"></script>
   <script src="/static/js/classroom-files.js?v=20250608"></script>
-  <script src="/static/js/student-notebook.js?v=20260612-3"></script>
+  <script src="/static/js/student-notebook.js?v=20260612-4"></script>
   <script src="/static/js/student-dashboard.js?v=20250608"></script>
 
 </body>
