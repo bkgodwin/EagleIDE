@@ -80,6 +80,8 @@ MAX_NOTEBOOK_TAB_LABEL_CHARS = 32
 MAX_NOTEBOOK_HTML_CHARS = 500_000
 MAX_NOTEBOOK_JSON_CHARS = 2_000_000
 MAX_NOTEBOOK_PROMPT_CHARS = 1200
+MAX_NOTEBOOK_PROMPT_TITLE_CHARS = 80
+MAX_NOTEBOOK_FEEDBACK_CHARS = 2000
 DEFAULT_NOTEBOOK_TAB_COLOR = "#f7d666"
 EXAMPLES_DIR_NAME = "Examples"
 EXAMPLE_FILES: dict[str, str] = {
@@ -866,6 +868,29 @@ def _sanitize_notebook_label(label: Any, fallback: str = "Notes") -> str:
     return (cleaned[:MAX_NOTEBOOK_TAB_LABEL_CHARS] or fallback)
 
 
+def _sanitize_notebook_prompt_title(title: Any, fallback: str = "Notebook Assignment") -> str:
+    cleaned = re.sub(r"\s+", " ", str(title or "").strip())
+    cleaned = re.sub(r"[\x00-\x1f<>]", "", cleaned)
+    return cleaned[:MAX_NOTEBOOK_PROMPT_TITLE_CHARS] or fallback
+
+
+def _sanitize_notebook_response_type(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    return "code" if raw == "code" else "written"
+
+
+def _sanitize_notebook_score(value: Any) -> str:
+    cleaned = re.sub(r"\s+", " ", str(value or "").strip())
+    cleaned = re.sub(r"[\x00-\x1f<>]", "", cleaned)
+    return cleaned[:40]
+
+
+def _sanitize_notebook_feedback(value: Any) -> str:
+    cleaned = str(value or "").strip()
+    cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f<>]", "", cleaned)
+    return cleaned[:MAX_NOTEBOOK_FEEDBACK_CHARS]
+
+
 def _notebook_safe_id(raw: Any, prefix: str = "tab") -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_-]", "", str(raw or "").strip())[:80]
     return cleaned or f"{prefix}_{uuid.uuid4().hex[:10]}"
@@ -912,6 +937,7 @@ def _load_notebook_prompts(class_id: str) -> list[dict]:
         prompt_text = re.sub(r"\s+", " ", str(row.get("prompt") or "").strip())[:MAX_NOTEBOOK_PROMPT_CHARS]
         if not prompt_text:
             continue
+        title = _sanitize_notebook_prompt_title(row.get("title") or prompt_text[:MAX_NOTEBOOK_PROMPT_TITLE_CHARS])
         try:
             created_ts = int(row.get("created_ts") or 0)
         except Exception:
@@ -920,7 +946,10 @@ def _load_notebook_prompts(class_id: str) -> list[dict]:
             "id": prompt_id,
             "classId": str(row.get("classId") or class_id),
             "teacherEmail": str(row.get("teacherEmail") or "").strip().lower(),
+            "title": title,
             "prompt": prompt_text,
+            "responseType": _sanitize_notebook_response_type(row.get("responseType")),
+            "locked": bool(row.get("locked")),
             "createdAt": str(row.get("createdAt") or _current_timestamp()),
             "created_ts": created_ts,
         })
@@ -936,11 +965,15 @@ def _save_notebook_prompts(class_id: str, prompts: list[dict]) -> None:
         prompt_text = re.sub(r"\s+", " ", str(prompt.get("prompt") or "").strip())[:MAX_NOTEBOOK_PROMPT_CHARS]
         if not prompt_text:
             continue
+        title = _sanitize_notebook_prompt_title(prompt.get("title") or prompt_text[:MAX_NOTEBOOK_PROMPT_TITLE_CHARS])
         normalized.append({
             "id": _notebook_safe_id(prompt.get("id"), "prompt"),
             "classId": str(prompt.get("classId") or class_id),
             "teacherEmail": str(prompt.get("teacherEmail") or "").strip().lower(),
+            "title": title,
             "prompt": prompt_text,
+            "responseType": _sanitize_notebook_response_type(prompt.get("responseType")),
+            "locked": bool(prompt.get("locked")),
             "createdAt": str(prompt.get("createdAt") or _current_timestamp()),
             "created_ts": int(prompt.get("created_ts") or int(time.time())),
         })
@@ -993,10 +1026,16 @@ def _normalize_assignment_blocks(raw_tabs: list, prompts: list[dict]) -> list[di
         blocks.append({
             "type": "prompt_response",
             "promptId": prompt_id,
+            "title": prompt.get("title", "Notebook Assignment"),
             "prompt": prompt.get("prompt", ""),
+            "responseType": _sanitize_notebook_response_type(prompt.get("responseType")),
+            "locked": bool(prompt.get("locked")),
             "createdAt": prompt.get("createdAt", ""),
             "responseHtml": response_html,
             "updatedAt": str(existing.get("updatedAt") or ""),
+            "score": _sanitize_notebook_score(existing.get("score")),
+            "feedback": _sanitize_notebook_feedback(existing.get("feedback")),
+            "gradedAt": str(existing.get("gradedAt") or ""),
         })
     return blocks
 
@@ -1070,7 +1109,22 @@ def _save_student_notebook(student_email: str, class_id: str, notebook: dict) ->
     if len(json.dumps(notebook or {}, ensure_ascii=False)) > MAX_NOTEBOOK_JSON_CHARS:
         raise ValueError("Notebook is too large")
     prompts = _load_notebook_prompts(class_id)
+    existing_raw = _read_json_file(_notebook_path(student_email, class_id), _default_notebook(class_id))
+    existing_normalized = _normalize_notebook_payload(existing_raw, class_id, prompts)
     normalized = _normalize_notebook_payload(notebook, class_id, prompts)
+    locked_prompt_ids = {p.get("id") for p in prompts if p.get("locked")}
+    assignments = _notebook_assignments_tab(normalized)
+    if assignments:
+        for block in assignments.get("blocks", []):
+            prompt_id = block.get("promptId")
+            existing_block = _notebook_prompt_response(existing_normalized, prompt_id)
+            if existing_block:
+                block["score"] = _sanitize_notebook_score(existing_block.get("score"))
+                block["feedback"] = _sanitize_notebook_feedback(existing_block.get("feedback"))
+                block["gradedAt"] = str(existing_block.get("gradedAt") or "")
+                if prompt_id in locked_prompt_ids:
+                    block["responseHtml"] = _sanitize_notebook_html(existing_block.get("responseHtml") or "")
+                    block["updatedAt"] = str(existing_block.get("updatedAt") or "")
     _write_json_file_atomic(_notebook_path(student_email, class_id), normalized)
     return normalized
 
@@ -1087,6 +1141,14 @@ def _teacher_owns_class(teacher_email: str, class_id: str) -> Optional[dict]:
     return cls
 
 
+def _emit_notebook_assignments_changed(class_id: str, event_type: str, prompt: Optional[dict] = None) -> None:
+    payload = {"class_id": class_id, "event": event_type}
+    if prompt:
+        payload["prompt"] = prompt
+        payload["promptId"] = prompt.get("id")
+    socketio.emit("notebook_prompts_updated", payload, room=f"class_{class_id}")
+
+
 def _notebook_prompt_response(notebook: dict, prompt_id: str) -> Optional[dict]:
     for tab in notebook.get("tabs", []):
         if tab.get("id") != "assignments":
@@ -1097,8 +1159,16 @@ def _notebook_prompt_response(notebook: dict, prompt_id: str) -> Optional[dict]:
     return None
 
 
+def _notebook_assignments_tab(notebook: dict) -> Optional[dict]:
+    for tab in notebook.get("tabs", []):
+        if isinstance(tab, dict) and tab.get("id") == "assignments":
+            return tab
+    return None
+
+
 def _notebook_response_is_present(block: Optional[dict]) -> bool:
     return bool(block and _notebook_plain_text(block.get("responseHtml")))
+
 
 def _record_user_sign_in(email: str, ip: str = "") -> Optional[str]:
     users_data = _load_users()
@@ -2508,6 +2578,8 @@ def teacher_create_notebook_prompt():
     data = request.get_json(silent=True) or {}
     class_id = (data.get("classId") or "").strip()
     prompt_text = re.sub(r"\s+", " ", str(data.get("prompt") or "").strip())[:MAX_NOTEBOOK_PROMPT_CHARS]
+    title = _sanitize_notebook_prompt_title(data.get("title") or prompt_text[:MAX_NOTEBOOK_PROMPT_TITLE_CHARS])
+    response_type = _sanitize_notebook_response_type(data.get("responseType"))
     if not class_id:
         return jsonify(ok=False, error="classId is required"), 400
     if not prompt_text:
@@ -2520,7 +2592,10 @@ def teacher_create_notebook_prompt():
         "id": uuid.uuid4().hex,
         "classId": class_id,
         "teacherEmail": teacher_email,
+        "title": title,
         "prompt": prompt_text,
+        "responseType": response_type,
+        "locked": False,
         "createdAt": _current_timestamp(),
         "created_ts": int(time.time()),
     }
@@ -2533,11 +2608,8 @@ def teacher_create_notebook_prompt():
                 _load_student_notebook(student_email, class_id)
             except Exception:
                 pass
-    socketio.emit(
-        "notebook_prompt_created",
-        {"class_id": class_id, "prompt": prompt},
-        room=f"class_{class_id}",
-    )
+    socketio.emit("notebook_prompt_created", {"class_id": class_id, "prompt": prompt}, room=f"class_{class_id}")
+    _emit_notebook_assignments_changed(class_id, "created", prompt)
     return jsonify(ok=True, prompt=prompt)
 
 
@@ -2622,12 +2694,119 @@ def teacher_notebook_prompt_responses():
                     "responseHtml": _sanitize_notebook_html(block.get("responseHtml") or ""),
                     "responseText": _notebook_plain_text(block.get("responseHtml") or ""),
                     "updatedAt": block.get("updatedAt") or "",
+                    "score": _sanitize_notebook_score(block.get("score")),
+                    "feedback": _sanitize_notebook_feedback(block.get("feedback")),
+                    "gradedAt": block.get("gradedAt") or "",
                 })
             else:
                 missing.append({"studentEmail": email, "studentName": name})
     responses.sort(key=lambda s: ((s.get("studentName") or "").lower(), s.get("studentEmail", "")))
     missing.sort(key=lambda s: ((s.get("studentName") or "").lower(), s.get("studentEmail", "")))
     return jsonify(ok=True, prompt=prompt, responses=responses, missing=missing)
+
+
+@app.post("/api/teacher/notebook-prompts/lock")
+def teacher_lock_notebook_prompt():
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    data = request.get_json(silent=True) or {}
+    class_id = (data.get("classId") or "").strip()
+    prompt_id = (data.get("promptId") or "").strip()
+    locked = bool(data.get("locked"))
+    if not class_id or not prompt_id:
+        return jsonify(ok=False, error="classId and promptId are required"), 400
+    teacher_email = (teacher.get("email") or "").strip().lower()
+    cls = _teacher_owns_class(teacher_email, class_id)
+    if not cls:
+        return jsonify(ok=False, error="Class not found"), 404
+    with _notebooks_lock:
+        prompts = _load_notebook_prompts(class_id)
+        prompt = next((p for p in prompts if p.get("id") == prompt_id), None)
+        if not prompt:
+            return jsonify(ok=False, error="Prompt not found"), 404
+        prompt["locked"] = locked
+        _save_notebook_prompts(class_id, prompts)
+        prompt = next((p for p in _load_notebook_prompts(class_id) if p.get("id") == prompt_id), prompt)
+        for student_email in cls.get("students", []):
+            try:
+                _load_student_notebook(student_email, class_id)
+            except Exception:
+                pass
+    _emit_notebook_assignments_changed(class_id, "locked" if locked else "unlocked", prompt)
+    return jsonify(ok=True, prompt=prompt)
+
+
+@app.post("/api/teacher/notebook-prompts/delete")
+def teacher_delete_notebook_prompt():
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    data = request.get_json(silent=True) or {}
+    class_id = (data.get("classId") or "").strip()
+    prompt_id = (data.get("promptId") or "").strip()
+    if not class_id or not prompt_id:
+        return jsonify(ok=False, error="classId and promptId are required"), 400
+    teacher_email = (teacher.get("email") or "").strip().lower()
+    cls = _teacher_owns_class(teacher_email, class_id)
+    if not cls:
+        return jsonify(ok=False, error="Class not found"), 404
+    with _notebooks_lock:
+        prompts = _load_notebook_prompts(class_id)
+        prompt = next((p for p in prompts if p.get("id") == prompt_id), None)
+        if not prompt:
+            return jsonify(ok=False, error="Prompt not found"), 404
+        prompts = [p for p in prompts if p.get("id") != prompt_id]
+        _save_notebook_prompts(class_id, prompts)
+        for student_email in cls.get("students", []):
+            try:
+                _load_student_notebook(student_email, class_id)
+            except Exception:
+                pass
+    _emit_notebook_assignments_changed(class_id, "deleted", prompt)
+    return jsonify(ok=True, promptId=prompt_id)
+
+
+@app.post("/api/teacher/notebook-prompts/grade")
+def teacher_grade_notebook_prompt_response():
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    data = request.get_json(silent=True) or {}
+    class_id = (data.get("classId") or "").strip()
+    prompt_id = (data.get("promptId") or "").strip()
+    student_email = (data.get("studentEmail") or "").strip().lower()
+    score = _sanitize_notebook_score(data.get("score"))
+    feedback = _sanitize_notebook_feedback(data.get("feedback"))
+    if not class_id or not prompt_id or not student_email:
+        return jsonify(ok=False, error="classId, promptId, and studentEmail are required"), 400
+    teacher_email = (teacher.get("email") or "").strip().lower()
+    cls = _teacher_owns_class(teacher_email, class_id)
+    if not cls:
+        return jsonify(ok=False, error="Class not found"), 404
+    if student_email not in {(s or "").strip().lower() for s in cls.get("students", [])}:
+        return jsonify(ok=False, error="Student not found in class"), 404
+    with _notebooks_lock:
+        prompts = _load_notebook_prompts(class_id)
+        prompt = next((p for p in prompts if p.get("id") == prompt_id), None)
+        if not prompt:
+            return jsonify(ok=False, error="Prompt not found"), 404
+        notebook = _load_student_notebook(student_email, class_id)
+        block = _notebook_prompt_response(notebook, prompt_id)
+        if not block:
+            return jsonify(ok=False, error="Response not found"), 404
+        block["score"] = score
+        block["feedback"] = feedback
+        block["gradedAt"] = _current_timestamp() if (score or feedback) else ""
+        _write_json_file_atomic(_notebook_path(student_email, class_id), notebook)
+    _emit_notebook_assignments_changed(class_id, "graded", prompt)
+    return jsonify(ok=True, response={
+        "studentEmail": student_email,
+        "promptId": prompt_id,
+        "score": score,
+        "feedback": feedback,
+        "gradedAt": block.get("gradedAt") or "",
+    })
 
 
 @app.get("/api/teacher/classes")
