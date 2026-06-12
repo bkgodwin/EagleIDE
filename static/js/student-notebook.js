@@ -202,7 +202,9 @@
         const promptId = el.dataset.promptId;
         const block = (tab.blocks || []).find(b => b.promptId === promptId);
         if (block && !isAssignmentResponseLocked(block)) {
-          block.responseHtml = sanitizeHtml(el.innerHTML || assignmentDefaultHtml(block));
+          const cleanCopy = el.cloneNode(true);
+          cleanCopy.querySelectorAll('.student-notebook-code-block').forEach(cleanCodeBlockForSave);
+          block.responseHtml = sanitizeHtml(cleanCopy.innerHTML || assignmentDefaultHtml(block));
           block.updatedAt = new Date().toISOString();
         }
       });
@@ -210,9 +212,6 @@
     }
     const editor = document.getElementById('studentNotebookEditor');
     if (editor) {
-      editor.querySelectorAll('.student-notebook-code-block').forEach(block => {
-        if (block.dataset.codeId !== runningCodeId) resetCodeBlockShell(block);
-      });
       const cleanCopy = editor.cloneNode(true);
       cleanCopy.querySelectorAll('.student-notebook-code-block').forEach(cleanCodeBlockForSave);
       tab.html = sanitizeHtml(cleanCopy.innerHTML || '');
@@ -284,6 +283,7 @@
 
   function switchTab(tabId) {
     if (!notebook || notebook.activeTabId === tabId) return;
+    hideAllCodeBlockShells({ stop: true });
     persistActivePageFromDom();
     notebook.activeTabId = tabId;
     colorPaletteOpen = false;
@@ -299,6 +299,7 @@
     }
     const label = prompt('Tab label:', 'New Tab');
     if (!label || !label.trim()) return;
+    hideAllCodeBlockShells({ stop: true });
     persistActivePageFromDom();
     const id = `tab_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     const assignmentsIndex = notebook.tabs.findIndex(tab => tab.id === ASSIGNMENTS_TAB_ID);
@@ -330,6 +331,7 @@
     const tab = activeTab();
     if (!tab || tab.locked) return;
     if (!confirm(`Delete the "${tab.label}" tab?`)) return;
+    hideAllCodeBlockShells({ stop: true });
     persistActivePageFromDom();
     notebook.tabs = notebook.tabs.filter(t => t.id !== tab.id);
     notebook.activeTabId = notebook.tabs[0]?.id || ASSIGNMENTS_TAB_ID;
@@ -612,7 +614,7 @@
       `${codeLinesHtml(snapshot.code || '', language, editable)}` +
       `<div class="student-notebook-inline-shell" contenteditable="false" hidden><div class="notebook-shell-output"></div><div class="notebook-shell-input">` +
       `<input type="text" placeholder="Program input" autocomplete="off"><button type="button" data-code-action="send-input">Send</button>` +
-      `<button type="button" data-code-action="stop">Stop</button></div></div></figure>${trailingParagraph ? '<p><br></p>' : ''}`;
+      `<button type="button" data-code-action="stop">Stop</button><button type="button" data-code-action="close-shell">Close</button></div></div></figure>${trailingParagraph ? '<p><br></p>' : ''}`;
   }
 
   function insertEditorCode() {
@@ -727,34 +729,39 @@
       block.insertBefore(head, block.firstChild);
     }
     head.contentEditable = 'false';
-    if (!head.querySelector('.student-notebook-code-actions')) {
-      head.innerHTML = `
-        <span class="student-notebook-code-label">${escapeHtml(fileName)} · ${escapeHtml(language)}</span>
-        <span class="student-notebook-code-actions">
-          <button type="button" data-code-action="open">Open in Editor</button>
-          <button type="button" data-code-action="run">Run Here</button>
-          <button type="button" data-code-action="copy">Copy</button>
-        </span>
-      `;
+    let label = head.querySelector('.student-notebook-code-label');
+    if (!label) {
+      label = document.createElement('span');
+      label.className = 'student-notebook-code-label';
+      head.insertBefore(label, head.firstChild);
     }
-    const actions = head.querySelector('.student-notebook-code-actions');
-    if (actions) {
-      actions.contentEditable = 'false';
-      if (assignmentBlock) {
-        actions.querySelectorAll('[data-code-action="delete"]').forEach(btn => btn.remove());
-      } else if (!actions.querySelector('[data-code-action="delete"]')) {
-        actions.insertAdjacentHTML('beforeend', '<button type="button" class="student-notebook-code-delete" data-code-action="delete" title="Delete code block" aria-label="Delete code block">🗑</button>');
-      }
-    }
-    const label = head.querySelector('.student-notebook-code-label') || head.firstElementChild;
     if (label) label.textContent = `${fileName} · ${language}`;
+    let actions = head.querySelector('.student-notebook-code-actions');
+    if (!actions) {
+      actions = document.createElement('span');
+      actions.className = 'student-notebook-code-actions';
+      head.appendChild(actions);
+    }
+    actions.contentEditable = 'false';
+    const actionsMissing = !actions.querySelector('[data-code-action="open"]')
+      || !actions.querySelector('[data-code-action="run"]')
+      || !actions.querySelector('[data-code-action="copy"]')
+      || (!assignmentBlock && !actions.querySelector('[data-code-action="delete"]'))
+      || (assignmentBlock && !!actions.querySelector('[data-code-action="delete"]'));
+    if (actionsMissing) {
+      actions.innerHTML = '<button type="button" data-code-action="open">Open in Editor</button>'
+        + '<button type="button" data-code-action="run">Run Here</button>'
+        + '<button type="button" data-code-action="copy">Copy</button>'
+        + (assignmentBlock ? '' : '<button type="button" class="student-notebook-code-delete" data-code-action="delete" title="Delete code block" aria-label="Delete code block">🗑</button>');
+      boundCodeBlocks.delete(block);
+    }
     const runBtn = head.querySelector('[data-code-action="run"]');
     if (runBtn && !isRunnableLanguage(language)) {
       runBtn.disabled = true;
       runBtn.title = 'Open HTML or CSS in the editor to preview it';
     }
     let shell = block.querySelector('.student-notebook-inline-shell');
-    if (!shell || !shell.querySelector('input') || !shell.querySelector('[data-code-action="send-input"]')) {
+    if (!shell || !shell.querySelector('input') || !shell.querySelector('[data-code-action="send-input"]') || !shell.querySelector('[data-code-action="close-shell"]')) {
       if (shell) shell.remove();
       shell = document.createElement('div');
       shell.className = 'student-notebook-inline-shell';
@@ -766,9 +773,11 @@
           <input type="text" placeholder="Program input" autocomplete="off">
           <button type="button" data-code-action="send-input">Send</button>
           <button type="button" data-code-action="stop">Stop</button>
+          <button type="button" data-code-action="close-shell">Close</button>
         </div>
       `;
       block.appendChild(shell);
+      boundCodeBlocks.delete(block);
     }
     shell.contentEditable = 'false';
   }
@@ -783,6 +792,20 @@
     if (input) input.value = '';
   }
 
+  function closeCodeBlockShell(block, { stop = false } = {}) {
+    if (stop && block?.dataset?.codeId && block.dataset.codeId === runningCodeId) {
+      ctx().stopNotebookRun?.();
+      runningCodeId = null;
+      waitingForNotebookInput = false;
+      updateNotebookRunButtons();
+    }
+    resetCodeBlockShell(block);
+  }
+
+  function hideAllCodeBlockShells({ stop = false } = {}) {
+    document.querySelectorAll('.student-notebook-code-block').forEach(block => closeCodeBlockShell(block, { stop }));
+  }
+
   function cleanCodeBlockForSave(block) {
     const language = normalizeLanguage(block?.dataset?.language || 'python');
     block.removeAttribute('data-bound');
@@ -792,15 +815,6 @@
       codeEl.textContent = codeEl.textContent || '';
       codeEl.className = `language-${highlightLanguage(language)}`;
       codeEl.removeAttribute('data-highlighted');
-    });
-  }
-
-  function resetInactiveCodeBlocks(target) {
-    if (!drawerOpen) return;
-    if (target?.closest?.('.student-notebook-code-block')) return;
-    document.querySelectorAll('.student-notebook-code-block').forEach(block => {
-      if (block.dataset.codeId === runningCodeId) return;
-      resetCodeBlockShell(block);
     });
   }
 
@@ -927,6 +941,11 @@
         event.stopPropagation();
         ctx().stopNotebookRun?.();
       });
+      block.querySelector('[data-code-action="close-shell"]')?.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        closeCodeBlockShell(block, { stop: true });
+      });
     });
     updateNotebookRunButtons();
   }
@@ -945,6 +964,7 @@
   }
 
   async function closeDrawer() {
+    hideAllCodeBlockShells({ stop: true });
     if (dirty) await saveNotebook({ immediate: true });
     drawerOpen = false;
     document.getElementById('studentNotebookDrawer')?.classList.remove('open');
@@ -1468,7 +1488,6 @@
     });
     window.addEventListener('eagle-run-state-change', updateNotebookRunButtons);
     window.addEventListener('eagle-context-updated', onAuthChanged);
-    document.addEventListener('click', event => resetInactiveCodeBlocks(event.target));
     window.addEventListener('beforeunload', () => {
       if (dirty) persistActivePageFromDom();
     });
