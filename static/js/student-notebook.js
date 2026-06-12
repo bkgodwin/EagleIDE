@@ -25,6 +25,7 @@
   let selectedTeacherPromptId = null;
   const collapsedAssignmentIds = new Set();
   let colorPaletteOpen = false;
+  let teacherNotebookSkills = [];
 
   function ctx() {
     return window.EagleIDE?.getContext?.() || {};
@@ -136,6 +137,12 @@
         `).join('')}
       </div>
     `;
+  }
+
+  function skillTagsHtml(tags) {
+    const rows = Array.isArray(tags) ? tags.filter(Boolean) : [];
+    if (!rows.length) return '';
+    return `<span class="student-notebook-skill-chips">${rows.map(tag => `<span class="student-notebook-skill-chip">#${escapeHtml(tag)}</span>`).join('')}</span>`;
   }
 
   function trimTabLabel(label) {
@@ -421,6 +428,7 @@
       page.innerHTML = '<div class="student-notebook-empty">No notebook tab selected.</div>';
       return;
     }
+    updateNotebookToolbarMode(tab);
     if (animate) {
       page.classList.remove('turning');
       void page.offsetWidth;
@@ -431,6 +439,12 @@
     else renderEditablePage(page, tab);
     bindCodeBlockActions();
     highlightCodeBlocks(page);
+  }
+
+  function updateNotebookToolbarMode(tab) {
+    const toolbar = document.querySelector('.student-notebook-toolbar');
+    if (!toolbar) return;
+    toolbar.classList.toggle('assignments-active', tab?.id === ASSIGNMENTS_TAB_ID);
   }
 
   function renderEditablePage(page, tab) {
@@ -488,9 +502,10 @@
           <section class="student-notebook-prompt-card${collapsedAssignmentIds.has(block.promptId) ? ' collapsed' : ''}${isAssignmentResponseLocked(block) ? ' locked' : ''}${String(block.score || '').trim() ? ' scored' : ''}" data-prompt-id="${escapeHtml(block.promptId)}">
             <button type="button" class="student-notebook-assignment-toggle" data-assignment-toggle="${escapeHtml(block.promptId)}" aria-expanded="${collapsedAssignmentIds.has(block.promptId) ? 'false' : 'true'}">
               <span class="student-notebook-prompt-meta">${escapeHtml(formatLocalDateTime(block.createdAt) || block.createdAt || '')}</span>
-              <strong>${escapeHtml(block.title || 'Notebook Assignment')}</strong>
+              <span class="student-notebook-assignment-title-wrap"><strong>${escapeHtml(block.title || 'Notebook Assignment')}</strong>${skillTagsHtml(block.skillTags)}</span>
               <span class="student-notebook-assignment-badges">
                 <span>${block.responseType === 'code' ? 'Code response' : 'Written response'}</span>
+                ${Number(block.maxScore || 0) > 0 ? `<span>${escapeHtml(block.maxScore)} pts</span>` : ''}
                 ${isAssignmentResponseLocked(block) ? '<span>Locked</span>' : ''}
               </span>
             </button>
@@ -583,27 +598,15 @@
     const language = normalizeLanguage(snapshot.language);
     const fileName = fileNameForLanguage(language, snapshot.fileName);
     const runnable = isRunnableLanguage(language);
-    return `
-      <figure class="student-notebook-code-block" contenteditable="false" data-code-id="${escapeHtml(codeId)}" data-language="${escapeHtml(language)}" data-file-name="${escapeHtml(fileName)}">
-        <figcaption class="student-notebook-code-head">
-          <span class="student-notebook-code-label">${escapeHtml(fileName)} · ${escapeHtml(language)}</span>
-          <span class="student-notebook-code-actions">
-            <button type="button" data-code-action="open">Open in Editor</button>
-            <button type="button" data-code-action="run"${runnable ? '' : ' disabled'} title="${runnable ? 'Run this code in the notebook' : 'Open HTML or CSS in the editor to preview it'}">Run Here</button>
-            <button type="button" data-code-action="copy">Copy</button>
-          </span>
-        </figcaption>
-        ${codeLinesHtml(snapshot.code || '', language)}
-        <div class="student-notebook-inline-shell" hidden>
-          <div class="notebook-shell-output"></div>
-          <div class="notebook-shell-input">
-            <input type="text" placeholder="Program input" autocomplete="off">
-            <button type="button" data-code-action="send-input">Send</button>
-            <button type="button" data-code-action="stop">Stop</button>
-          </div>
-        </div>
-      </figure>${trailingParagraph ? '<p><br></p>' : ''}
-    `;
+    return `<figure class="student-notebook-code-block" contenteditable="false" data-code-id="${escapeHtml(codeId)}" data-language="${escapeHtml(language)}" data-file-name="${escapeHtml(fileName)}">` +
+      `<figcaption class="student-notebook-code-head"><span class="student-notebook-code-label">${escapeHtml(fileName)} · ${escapeHtml(language)}</span>` +
+      `<span class="student-notebook-code-actions"><button type="button" data-code-action="open">Open in Editor</button>` +
+      `<button type="button" data-code-action="run"${runnable ? '' : ' disabled'} title="${runnable ? 'Run this code in the notebook' : 'Open HTML or CSS in the editor to preview it'}">Run Here</button>` +
+      `<button type="button" data-code-action="copy">Copy</button></span></figcaption>` +
+      `${codeLinesHtml(snapshot.code || '', language)}` +
+      `<div class="student-notebook-inline-shell" hidden><div class="notebook-shell-output"></div><div class="notebook-shell-input">` +
+      `<input type="text" placeholder="Program input" autocomplete="off"><button type="button" data-code-action="send-input">Send</button>` +
+      `<button type="button" data-code-action="stop">Stop</button></div></div></figure>${trailingParagraph ? '<p><br></p>' : ''}`;
   }
 
   function insertEditorCode() {
@@ -1119,6 +1122,43 @@
     })();
   }
 
+  async function loadTeacherNotebookSkills() {
+    if (!isTeacher()) {
+      teacherNotebookSkills = [];
+      return [];
+    }
+    try {
+      const res = await fetch('/api/teacher/skills', { headers: teacherHeaders() });
+      const data = await res.json().catch(() => ({}));
+      teacherNotebookSkills = Array.isArray(data?.skills) ? data.skills : [];
+    } catch {
+      teacherNotebookSkills = [];
+    }
+    return teacherNotebookSkills;
+  }
+
+  function renderTeacherNotebookSkillPicker(classId, selectedTags = []) {
+    const box = document.getElementById('teacherNotebookSkillTags');
+    if (!box) return;
+    const selected = new Set(selectedTags || []);
+    const skills = teacherNotebookSkills.filter(skill => {
+      const classIds = Array.isArray(skill.class_ids) ? skill.class_ids : [];
+      return classIds.includes(classId);
+    });
+    box.innerHTML = skills.length ? skills.map(skill => `
+      <label class="teacher-notebook-skill-option">
+        <input type="checkbox" class="teacher-notebook-skill-check" value="${escapeHtml(skill.name || '')}" ${selected.has(skill.name) ? 'checked' : ''}>
+        <span>#${escapeHtml(skill.name || '')}</span>
+      </label>
+    `).join('') : '<div class="teacher-notebook-skill-empty">No skill tags are attached to this class yet.</div>';
+  }
+
+  function selectedTeacherNotebookSkillTags() {
+    return Array.from(document.querySelectorAll('.teacher-notebook-skill-check:checked'))
+      .map(input => input.value)
+      .filter(Boolean);
+  }
+
   function openTeacherPromptModal() {
     if (!isTeacher()) return;
     const c = ctx();
@@ -1129,6 +1169,10 @@
     document.getElementById('teacherNotebookPromptClassLabel').textContent = cls ? `Class: ${cls.name}` : 'Selected class';
     document.getElementById('teacherNotebookPromptTitleInput').value = '';
     document.getElementById('teacherNotebookPromptInput').value = '';
+    const maxScoreInput = document.getElementById('teacherNotebookPromptMaxScoreInput');
+    if (maxScoreInput) maxScoreInput.value = '10';
+    renderTeacherNotebookSkillPicker(classId);
+    loadTeacherNotebookSkills().then(() => renderTeacherNotebookSkillPicker(classId));
     const written = document.querySelector('input[name="teacherNotebookResponseType"][value="written"]');
     if (written) written.checked = true;
     document.getElementById('teacherNotebookPromptStatus').textContent = '';
@@ -1142,6 +1186,9 @@
     const title = document.getElementById('teacherNotebookPromptTitleInput')?.value?.trim() || '';
     const prompt = document.getElementById('teacherNotebookPromptInput')?.value?.trim() || '';
     const responseType = document.querySelector('input[name="teacherNotebookResponseType"]:checked')?.value || 'written';
+    const maxScoreRaw = document.getElementById('teacherNotebookPromptMaxScoreInput')?.value;
+    const maxScore = Math.max(0, Math.min(1000, parseInt(maxScoreRaw || '10', 10) || 0));
+    const skillTags = selectedTeacherNotebookSkillTags();
     const status = document.getElementById('teacherNotebookPromptStatus');
     if (!classId) return alert('Select a class first.');
     if (!prompt) {
@@ -1153,7 +1200,7 @@
       const res = await fetch('/api/teacher/notebook-prompts/create', {
         method: 'POST',
         headers: teacherJsonHeaders(),
-        body: JSON.stringify({ classId, title, prompt, responseType }),
+        body: JSON.stringify({ classId, title, prompt, responseType, maxScore, skillTags }),
       });
       const data = await res.json().catch(() => ({}));
       if (!data?.ok) throw new Error(data?.error || 'Send failed');
@@ -1190,8 +1237,8 @@
       const prompts = data.prompts || [];
       list.innerHTML = prompts.length ? prompts.map(prompt => `
         <button class="teacher-notebook-prompt-row${prompt.id === selectedTeacherPromptId ? ' active' : ''}" data-prompt-id="${escapeHtml(prompt.id)}">
-          <strong>${escapeHtml(prompt.title || prompt.prompt || 'Notebook Assignment')}</strong>
-          <div class="meta">${escapeHtml(formatLocalDateTime(prompt.createdAt) || prompt.createdAt || '')} · ${prompt.responseType === 'code' ? 'Code' : 'Written'} · ${prompt.responseCount || 0}/${prompt.studentCount || 0} responded${prompt.locked ? ' · Locked' : ''}</div>
+          <span class="teacher-notebook-prompt-title"><strong>${escapeHtml(prompt.title || prompt.prompt || 'Notebook Assignment')}</strong>${skillTagsHtml(prompt.skillTags)}</span>
+          <div class="meta">${escapeHtml(formatLocalDateTime(prompt.createdAt) || prompt.createdAt || '')} · ${prompt.responseType === 'code' ? 'Code' : 'Written'} · Max ${escapeHtml(prompt.maxScore || 0)} · ${prompt.responseCount || 0}/${prompt.studentCount || 0} responded${prompt.locked ? ' · Locked' : ''}</div>
         </button>
       `).join('') : '<div style="color:#888;">No notebook prompts have been sent yet.</div>';
       list.querySelectorAll('[data-prompt-id]').forEach(btn => {
@@ -1292,8 +1339,8 @@
       list.innerHTML = `
         <div class="teacher-notebook-assignment-actions">
           <div>
-            <strong>${escapeHtml(prompt.title || 'Notebook Assignment')}</strong>
-            <div class="meta">${escapeHtml(formatLocalDateTime(prompt.createdAt) || prompt.createdAt || '')} · ${prompt.responseType === 'code' ? 'Code response' : 'Written response'}</div>
+            <span class="teacher-notebook-prompt-title"><strong>${escapeHtml(prompt.title || 'Notebook Assignment')}</strong>${skillTagsHtml(prompt.skillTags)}</span>
+            <div class="meta">${escapeHtml(formatLocalDateTime(prompt.createdAt) || prompt.createdAt || '')} · ${prompt.responseType === 'code' ? 'Code response' : 'Written response'} · Max ${escapeHtml(prompt.maxScore || 0)}</div>
           </div>
           <button type="button" class="btn secondary" id="teacherNotebookLockPromptBtn">${prompt.locked ? 'Unlock Submissions' : 'Lock Submissions'}</button>
           <button type="button" class="btn danger" id="teacherNotebookDeletePromptBtn">Delete Assignment</button>

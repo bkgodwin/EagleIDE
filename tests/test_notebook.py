@@ -22,16 +22,23 @@ class NotebookTestCase(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.notebooks_dir = self.root / "notebooks"
+        self.assignments_dir = self.root / "assignments"
         self.users_file = self.root / "users.json"
         self.classes_file = self.root / "classes.json"
+        self.skills_file = self.root / "skills.json"
         self.notebooks_dir.mkdir()
+        self.assignments_dir.mkdir()
 
         self.original_notebooks_dir = eagle.NOTEBOOKS_DIR
+        self.original_assignments_dir = eagle.ASSIGNMENTS_DIR
         self.original_users_file = eagle.USERS_FILE
         self.original_classes_file = eagle.CLASSES_FILE
+        self.original_skills_file = eagle.SKILLS_FILE
         eagle.NOTEBOOKS_DIR = self.notebooks_dir
+        eagle.ASSIGNMENTS_DIR = self.assignments_dir
         eagle.USERS_FILE = self.users_file
         eagle.CLASSES_FILE = self.classes_file
+        eagle.SKILLS_FILE = self.skills_file
 
         self.class_id = "class-notebook"
         self.teacher_email = "teacher@example.com"
@@ -82,6 +89,7 @@ class NotebookTestCase(unittest.TestCase):
         }
         self.users_file.write_text(json.dumps(users), encoding="utf-8")
         self.classes_file.write_text(json.dumps(classes), encoding="utf-8")
+        self.skills_file.write_text(json.dumps({"skills": []}), encoding="utf-8")
 
         eagle._teacher_tokens[self.teacher_token] = {
             "email": self.teacher_email,
@@ -109,15 +117,31 @@ class NotebookTestCase(unittest.TestCase):
         eagle._student_tokens.pop(self.student_token, None)
         eagle._student_tokens.pop(self.second_student_token, None)
         eagle.NOTEBOOKS_DIR = self.original_notebooks_dir
+        eagle.ASSIGNMENTS_DIR = self.original_assignments_dir
         eagle.USERS_FILE = self.original_users_file
         eagle.CLASSES_FILE = self.original_classes_file
+        eagle.SKILLS_FILE = self.original_skills_file
         self.tmp.cleanup()
 
-    def _create_prompt(self, prompt="Reflect on today's loop practice.", title="Loop Reflection", response_type="written"):
+    def _create_prompt(
+        self,
+        prompt="Reflect on today's loop practice.",
+        title="Loop Reflection",
+        response_type="written",
+        skill_tags=None,
+        max_score=10,
+    ):
         response = self.client.post(
             "/api/teacher/notebook-prompts/create",
             headers={"X-Teacher-Token": self.teacher_token},
-            json={"classId": self.class_id, "prompt": prompt, "title": title, "responseType": response_type},
+            json={
+                "classId": self.class_id,
+                "prompt": prompt,
+                "title": title,
+                "responseType": response_type,
+                "skillTags": skill_tags or [],
+                "maxScore": max_score,
+            },
         )
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
@@ -360,6 +384,80 @@ class NotebookTestCase(unittest.TestCase):
         ).get_json()["notebook"]
         assignments_after_delete = next(tab for tab in after_delete["tabs"] if tab["id"] == "assignments")
         self.assertEqual(assignments_after_delete["blocks"], [])
+
+    def test_notebook_prompt_scores_contribute_to_skill_mastery(self):
+        self.skills_file.write_text(
+            json.dumps({
+                "skills": [{
+                    "id": "skill-loops",
+                    "teacher_email": self.teacher_email,
+                    "name": "Loops",
+                    "description": "Loop basics",
+                    "order": 0,
+                    "class_ids": [self.class_id],
+                    "created_at": "2026-06-11 00:00:00",
+                    "updated_at": "2026-06-11 00:00:00",
+                }]
+            }),
+            encoding="utf-8",
+        )
+        (self.assignments_dir / "Regular Loops.json").write_text(
+            json.dumps({
+                "name": "Regular Loops",
+                "task": "Practice loops.",
+                "allowFileSubmission": True,
+                "maxScore": 10,
+                "targetClassId": self.class_id,
+                "targetClassName": "Notebook Class",
+                "createdByEmail": self.teacher_email,
+                "skillTags": ["Loops"],
+                "submissions": [{
+                    "email": self.student_email,
+                    "name": "Student One",
+                    "totalScore": 10,
+                    "score": 10,
+                }],
+            }),
+            encoding="utf-8",
+        )
+        prompt = self._create_prompt(title="Notebook Loops", skill_tags=["Loops"], max_score=10)
+        notebook = self.client.get(
+            f"/api/notebook?classId={self.class_id}",
+            headers={"X-User-Token": self.student_token},
+        ).get_json()["notebook"]
+        assignments = next(tab for tab in notebook["tabs"] if tab["id"] == "assignments")
+        assignments["blocks"][0]["responseHtml"] = "<ul><li>I can trace loop counters.</li></ul>"
+        save_response = self.client.post(
+            "/api/notebook/save",
+            headers={"X-User-Token": self.student_token},
+            json={"classId": self.class_id, "notebook": notebook},
+        )
+        self.assertEqual(save_response.status_code, 200)
+        grade_response = self.client.post(
+            "/api/teacher/notebook-prompts/grade",
+            headers={"X-Teacher-Token": self.teacher_token},
+            json={
+                "classId": self.class_id,
+                "promptId": prompt["id"],
+                "studentEmail": self.student_email,
+                "score": "6",
+                "feedback": "Keep practicing.",
+            },
+        )
+        self.assertEqual(grade_response.status_code, 200)
+
+        response = self.client.get(
+            f"/api/teacher/classes/{self.class_id}/mastery",
+            headers={"X-Teacher-Token": self.teacher_token},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        report = response.get_json()["report"]
+        student = next(row for row in report["students"] if row["email"] == self.student_email)
+        self.assertEqual(student["skillScores"]["Loops"], 80.0)
+        assignment_names = [row["name"] for row in report["assignments"]]
+        self.assertIn("Regular Loops", assignment_names)
+        self.assertIn("Notebook: Notebook Loops", assignment_names)
 
 
 if __name__ == "__main__":
