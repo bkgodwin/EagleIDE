@@ -33,7 +33,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20260611">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260612">
 </head>
 <body>
     <div class="app-shell">
@@ -571,6 +571,12 @@
     <div class="modal-content" style="max-width:560px;">
       <h3>Send Notebook Prompt</h3>
       <p id="teacherNotebookPromptClassLabel" style="color:var(--theme-text-dim); font-size:13px; margin-top:-4px;"></p>
+      <label style="display:block; margin:8px 0 10px; font-size:13px; color:var(--theme-text-dim);">Assignment Title</label>
+      <input id="teacherNotebookPromptTitleInput" type="text" maxlength="80" placeholder="Notebook assignment title" style="width:100%; padding:10px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; margin-bottom:10px;">
+      <div class="teacher-notebook-response-type" role="radiogroup" aria-label="Notebook response type" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+        <label><input type="radio" name="teacherNotebookResponseType" value="written" checked> Written response</label>
+        <label><input type="radio" name="teacherNotebookResponseType" value="code"> Code response</label>
+      </div>
       <textarea id="teacherNotebookPromptInput" placeholder="Type the reflection or notebook prompt for your selected class..." style="width:100%; min-height:150px; resize:vertical; padding:10px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;"></textarea>
       <div id="teacherNotebookPromptStatus" style="font-size:12px; margin-top:8px; color:var(--theme-text-dim);"></div>
       <div class="modal-actions">
@@ -859,7 +865,7 @@
   <script src="/static/js/app-core.js?v=20250609"></script>
   <script src="/static/js/classroom-signals.js"></script>
   <script src="/static/js/classroom-files.js?v=20250608"></script>
-  <script src="/static/js/student-notebook.js?v=20260611"></script>
+  <script src="/static/js/student-notebook.js?v=20260612"></script>
   <script src="/static/js/student-dashboard.js?v=20250608"></script>
 
 </body>

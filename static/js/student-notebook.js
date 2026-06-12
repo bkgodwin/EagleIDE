@@ -9,7 +9,7 @@
   const DEFAULT_RESPONSE_HTML = '<ul><li><br></li></ul>';
   const SAVE_DELAY_MS = 900;
   const MAX_TABS = 80;
-  const DEFAULT_TAB_COLORS = ['#f7d666', '#98d3f2', '#f2a9bd', '#a8df9f', '#d8b4fe', '#f7b267'];
+  const DEFAULT_TAB_COLORS = ['#fff2a8', '#b9e4ff', '#ffc4d6', '#c9f2c7', '#dcc8ff', '#ffd5a6', '#c5f3e8', '#f5c9ff'];
   const DEFAULT_ASSIGNMENTS_COLOR = '#f3c74d';
   let notebook = null;
   let activeClassId = null;
@@ -21,6 +21,7 @@
   let runningCodeId = null;
   let waitingForNotebookInput = false;
   let selectedTeacherPromptId = null;
+  const collapsedAssignmentIds = new Set();
 
   function ctx() {
     return window.EagleIDE?.getContext?.() || {};
@@ -47,6 +48,21 @@
     const div = document.createElement('div');
     div.innerHTML = sanitizeHtml(html);
     return div.textContent.replace(/\s+/g, ' ').trim();
+  }
+
+  function formatLocalDateTime(value) {
+    if (!value) return '';
+    const text = String(value).trim();
+    const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(text) ? text.replace(' ', 'T') : text;
+    const date = new Date(normalized);
+    if (Number.isNaN(date.getTime())) return text;
+    return date.toLocaleString([], {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
   }
 
   function currentClassId() {
@@ -106,6 +122,17 @@
   function normalizeTabColor(color, index = 0) {
     const value = String(color || '').trim();
     return /^#[0-9a-f]{6}$/i.test(value) ? value : defaultTabColor(index);
+  }
+
+  function tabColorPaletteHtml(activeColor) {
+    const active = normalizeTabColor(activeColor).toLowerCase();
+    return `
+      <div class="student-notebook-color-palette" role="group" aria-label="Choose tab color">
+        ${DEFAULT_TAB_COLORS.map(color => `
+          <button type="button" class="student-notebook-color-swatch${color.toLowerCase() === active ? ' active' : ''}" data-tab-color="${escapeHtml(color)}" style="--swatch-color:${escapeHtml(color)}" title="${escapeHtml(color)}" aria-label="Set tab color ${escapeHtml(color)}"></button>
+        `).join('')}
+      </div>
+    `;
   }
 
   function ensureNotebookShape(raw) {
@@ -287,6 +314,7 @@
   function updateActiveTabColor(color) {
     const tab = activeTab();
     if (!tab || tab.locked) return;
+    persistActivePageFromDom();
     tab.color = normalizeTabColor(color);
     renderTabRail();
     scheduleSave({ persist: false });
@@ -375,10 +403,14 @@
           <button class="student-notebook-bookmark-btn${tab.bookmarked ? ' active' : ''}" id="studentNotebookBookmarkTabBtn" type="button" title="${tab.bookmarked ? 'Remove bookmark' : 'Bookmark tab'}" aria-label="${tab.bookmarked ? 'Remove bookmark' : 'Bookmark tab'}">🔖</button>
           <span>${escapeHtml(tab.label || 'Notes')}</span>
         </h3>
-        <label class="student-notebook-color-picker" title="Set tab color">
+        <div class="student-notebook-color-picker" title="Set tab color">
           <span>Tab color</span>
+          ${tabColorPaletteHtml(tab.color)}
+          <label class="student-notebook-custom-color">
+            <span>Custom</span>
           <input type="color" id="studentNotebookTabColorInput" value="${escapeHtml(normalizeTabColor(tab.color))}" aria-label="Set tab color">
-        </label>
+          </label>
+        </div>
         <button class="btn secondary" id="studentNotebookRenameTabBtn">Rename Tab</button>
         <button class="btn secondary" id="studentNotebookDeleteTabBtn">Delete Tab</button>
       </div>
@@ -390,8 +422,26 @@
     activeEditorEl.addEventListener('focus', () => { activeEditorEl = page.querySelector('#studentNotebookEditor'); });
     page.querySelector('#studentNotebookBookmarkTabBtn')?.addEventListener('click', toggleActiveTabBookmark);
     page.querySelector('#studentNotebookTabColorInput')?.addEventListener('input', e => updateActiveTabColor(e.target.value));
+    page.querySelectorAll('[data-tab-color]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        updateActiveTabColor(btn.dataset.tabColor);
+        renderNotebook();
+      });
+    });
     page.querySelector('#studentNotebookRenameTabBtn')?.addEventListener('click', renameActiveTab);
     page.querySelector('#studentNotebookDeleteTabBtn')?.addEventListener('click', deleteActiveTab);
+  }
+
+  function assignmentGradeHtml(block) {
+    const score = String(block.score || '').trim();
+    const feedback = String(block.feedback || '').trim();
+    if (!score && !feedback) return '';
+    return `
+      <aside class="student-notebook-grade-note">
+        ${score ? `<strong>Score: ${escapeHtml(score)}</strong>` : ''}
+        ${feedback ? `<span>${escapeHtml(feedback)}</span>` : ''}
+      </aside>
+    `;
   }
 
   function renderAssignmentsPage(page, tab) {
@@ -399,26 +449,50 @@
     page.innerHTML = `
       <div class="student-notebook-tab-actions">
         <h3 class="student-notebook-tab-title">Assignments</h3>
-        <span style="color:rgba(48,40,30,.65);font-size:13px;">Teacher prompts are locked. Your response bullets are editable.</span>
+        <span class="student-notebook-assignment-help">Open an assignment to read the prompt and respond. Written assignments use the lined response area. Code assignments use Insert Code to add or update the current editor code. Locked assignments can still be reviewed, but cannot be changed.</span>
       </div>
       <div class="student-notebook-assignment-list">
         ${blocks.length ? blocks.map(block => `
-          <section class="student-notebook-prompt-card" data-prompt-id="${escapeHtml(block.promptId)}">
-            <div class="student-notebook-prompt-meta">${escapeHtml(block.createdAt || '')}</div>
-            <div class="student-notebook-prompt-text">${escapeHtml(block.prompt || '')}</div>
-            <div class="student-notebook-prompt-response" contenteditable="true" spellcheck="true" data-prompt-id="${escapeHtml(block.promptId)}">${sanitizeHtml(block.responseHtml || DEFAULT_RESPONSE_HTML)}</div>
+          <section class="student-notebook-prompt-card${collapsedAssignmentIds.has(block.promptId) ? ' collapsed' : ''}${block.locked ? ' locked' : ''}" data-prompt-id="${escapeHtml(block.promptId)}">
+            <button type="button" class="student-notebook-assignment-toggle" data-assignment-toggle="${escapeHtml(block.promptId)}" aria-expanded="${collapsedAssignmentIds.has(block.promptId) ? 'false' : 'true'}">
+              <span class="student-notebook-prompt-meta">${escapeHtml(formatLocalDateTime(block.createdAt) || block.createdAt || '')}</span>
+              <strong>${escapeHtml(block.title || 'Notebook Assignment')}</strong>
+              <span class="student-notebook-assignment-badges">
+                <span>${block.responseType === 'code' ? 'Code response' : 'Written response'}</span>
+                ${block.locked ? '<span>Locked</span>' : ''}
+              </span>
+            </button>
+            <div class="student-notebook-assignment-body">
+              <div class="student-notebook-prompt-text">${escapeHtml(block.prompt || '')}</div>
+              ${block.responseType === 'code' && !block.locked ? `<button type="button" class="btn secondary student-notebook-assignment-code-btn" data-assignment-code="${escapeHtml(block.promptId)}">${sanitizeHtml(block.responseHtml || '').includes('student-notebook-code-block') ? 'Update Code' : 'Insert Code'}</button>` : ''}
+              <div class="student-notebook-response-wrap">
+                <div class="student-notebook-prompt-response" contenteditable="${block.locked ? 'false' : 'true'}" spellcheck="true" data-prompt-id="${escapeHtml(block.promptId)}">${sanitizeHtml(block.responseHtml || DEFAULT_RESPONSE_HTML)}</div>
+                ${assignmentGradeHtml(block)}
+              </div>
+            </div>
           </section>
         `).join('') : '<div class="student-notebook-empty">No teacher notebook prompts yet.</div>'}
       </div>
     `;
+    page.querySelectorAll('[data-assignment-toggle]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const promptId = btn.dataset.assignmentToggle;
+        if (collapsedAssignmentIds.has(promptId)) collapsedAssignmentIds.delete(promptId);
+        else collapsedAssignmentIds.add(promptId);
+        renderAssignmentsPage(page, tab);
+      });
+    });
+    page.querySelectorAll('[data-assignment-code]').forEach(btn => {
+      btn.addEventListener('click', () => insertAssignmentCode(btn.dataset.assignmentCode));
+    });
     page.querySelectorAll('.student-notebook-prompt-response').forEach(el => {
       el.addEventListener('input', () => {
         const block = blocks.find(b => b.promptId === el.dataset.promptId);
-        if (block) {
+        if (block && !block.locked) {
           block.responseHtml = sanitizeHtml(el.innerHTML || DEFAULT_RESPONSE_HTML);
           block.updatedAt = new Date().toISOString();
         }
-        scheduleSave();
+        if (block && !block.locked) scheduleSave();
       });
       el.addEventListener('focus', () => { activeEditorEl = el; });
     });
@@ -517,6 +591,42 @@
     bindCodeBlockActions();
     highlightCodeBlocks(editorEl);
     scheduleSave();
+  }
+
+  function insertAssignmentCode(promptId) {
+    const c = ctx();
+    const tab = assignmentsTab();
+    const block = (tab?.blocks || []).find(row => row.promptId === promptId);
+    if (!block) return;
+    if (block.locked) {
+      alert('This assignment is locked by your teacher.');
+      return;
+    }
+    const snapshot = c.getEditorSnapshot?.();
+    if (!snapshot || !String(snapshot.code || '').trim()) {
+      alert('The editor is empty.');
+      return;
+    }
+    const responseEl = Array.from(document.querySelectorAll('.student-notebook-prompt-response[data-prompt-id]'))
+      .find(el => el.dataset.promptId === promptId);
+    if (!responseEl) return;
+    const existing = responseEl.querySelector('.student-notebook-code-block');
+    if (existing && !confirm('Replace the code already inserted for this assignment?')) return;
+    const holder = document.createElement('div');
+    holder.innerHTML = buildCodeBlockHtml(snapshot);
+    if (existing) {
+      responseEl.innerHTML = '';
+      Array.from(holder.childNodes).forEach(node => responseEl.appendChild(node));
+    } else {
+      responseEl.appendChild(document.createElement('p'));
+      Array.from(holder.childNodes).forEach(node => responseEl.appendChild(node));
+    }
+    block.responseHtml = sanitizeHtml(responseEl.innerHTML || DEFAULT_RESPONSE_HTML);
+    block.updatedAt = new Date().toISOString();
+    bindCodeBlockActions();
+    highlightCodeBlocks(responseEl);
+    scheduleSave();
+    renderAssignmentsPage(document.getElementById('studentNotebookPage'), tab);
   }
 
   function highlightCodeBlocks(root = document) {
@@ -757,6 +867,40 @@
     if (overlay) overlay.hidden = true;
   }
 
+  async function refreshAssignmentsFromServer() {
+    if (!drawerOpen || !isStudentInClass()) return;
+    const classId = currentClassId();
+    if (!classId) return;
+    persistActivePageFromDom();
+    const localNotebook = notebook;
+    const localAssignments = assignmentsTab();
+    const localBlocks = new Map((localAssignments?.blocks || []).map(block => [block.promptId, block]));
+    const res = await fetch(`/api/notebook?classId=${encodeURIComponent(classId)}`, { headers: userHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!data?.ok) throw new Error(data?.error || 'Notebook refresh failed');
+    const fresh = ensureNotebookShape(data.notebook);
+    const freshAssignments = (fresh.tabs || []).find(tab => tab.id === ASSIGNMENTS_TAB_ID);
+    if (freshAssignments) {
+      (freshAssignments.blocks || []).forEach(block => {
+        const local = localBlocks.get(block.promptId);
+        if (local && !block.locked) {
+          block.responseHtml = local.responseHtml || block.responseHtml || DEFAULT_RESPONSE_HTML;
+          block.updatedAt = local.updatedAt || block.updatedAt || '';
+        }
+      });
+    }
+    if (localNotebook) {
+      localNotebook.tabs = (localNotebook.tabs || []).filter(tab => tab.id !== ASSIGNMENTS_TAB_ID);
+      localNotebook.tabs.push(freshAssignments || { id: ASSIGNMENTS_TAB_ID, label: 'Assignments', locked: true, blocks: [] });
+      localNotebook.activeTabId = notebook?.activeTabId || localNotebook.activeTabId;
+      notebook = ensureNotebookShape(localNotebook);
+    } else {
+      notebook = fresh;
+    }
+    loadedClassId = classId;
+    if (activeTab()?.id === ASSIGNMENTS_TAB_ID) renderNotebook(false);
+  }
+
   function updateEntryPoints() {
     const c = ctx();
     const studentShow = !!(c.USER_TOKEN && !c.TEACHER_TOKEN && !c.ADMIN_TOKEN && currentClassId());
@@ -918,7 +1062,8 @@
           addText(tab.label || 'Tab', 15, [36, 75, 122]);
           if (tab.id === ASSIGNMENTS_TAB_ID) {
             (tab.blocks || []).forEach(block => {
-              addText(`${block.createdAt || ''} - ${block.prompt || ''}`, 11, [128, 75, 20]);
+              addText(`${formatLocalDateTime(block.createdAt) || block.createdAt || ''} - ${block.title || 'Notebook Assignment'}`, 11, [128, 75, 20]);
+              addText(block.prompt || '', 11, [36, 75, 122]);
               addText(stripHtml(block.responseHtml || ''), 11);
             });
           } else {
@@ -951,16 +1096,21 @@
     const cls = (c.teacherClasses || []).find(row => row.id === classId);
     const modal = document.getElementById('teacherNotebookPromptModal');
     document.getElementById('teacherNotebookPromptClassLabel').textContent = cls ? `Class: ${cls.name}` : 'Selected class';
+    document.getElementById('teacherNotebookPromptTitleInput').value = '';
     document.getElementById('teacherNotebookPromptInput').value = '';
+    const written = document.querySelector('input[name="teacherNotebookResponseType"][value="written"]');
+    if (written) written.checked = true;
     document.getElementById('teacherNotebookPromptStatus').textContent = '';
     modal.style.display = 'flex';
-    setTimeout(() => document.getElementById('teacherNotebookPromptInput')?.focus(), 0);
+    setTimeout(() => document.getElementById('teacherNotebookPromptTitleInput')?.focus(), 0);
   }
 
   async function submitTeacherPrompt() {
     const c = ctx();
     const classId = c.currentTeacherClassId || c.teacherClasses?.[0]?.id;
+    const title = document.getElementById('teacherNotebookPromptTitleInput')?.value?.trim() || '';
     const prompt = document.getElementById('teacherNotebookPromptInput')?.value?.trim() || '';
+    const responseType = document.querySelector('input[name="teacherNotebookResponseType"]:checked')?.value || 'written';
     const status = document.getElementById('teacherNotebookPromptStatus');
     if (!classId) return alert('Select a class first.');
     if (!prompt) {
@@ -972,7 +1122,7 @@
       const res = await fetch('/api/teacher/notebook-prompts/create', {
         method: 'POST',
         headers: teacherJsonHeaders(),
-        body: JSON.stringify({ classId, prompt }),
+        body: JSON.stringify({ classId, title, prompt, responseType }),
       });
       const data = await res.json().catch(() => ({}));
       if (!data?.ok) throw new Error(data?.error || 'Send failed');
@@ -1009,8 +1159,8 @@
       const prompts = data.prompts || [];
       list.innerHTML = prompts.length ? prompts.map(prompt => `
         <button class="teacher-notebook-prompt-row${prompt.id === selectedTeacherPromptId ? ' active' : ''}" data-prompt-id="${escapeHtml(prompt.id)}">
-          <strong>${escapeHtml(prompt.prompt)}</strong>
-          <div class="meta">${escapeHtml(prompt.createdAt || '')} · ${prompt.responseCount || 0}/${prompt.studentCount || 0} responded</div>
+          <strong>${escapeHtml(prompt.title || prompt.prompt || 'Notebook Assignment')}</strong>
+          <div class="meta">${escapeHtml(formatLocalDateTime(prompt.createdAt) || prompt.createdAt || '')} · ${prompt.responseType === 'code' ? 'Code' : 'Written'} · ${prompt.responseCount || 0}/${prompt.studentCount || 0} responded${prompt.locked ? ' · Locked' : ''}</div>
         </button>
       `).join('') : '<div style="color:#888;">No notebook prompts have been sent yet.</div>';
       list.querySelectorAll('[data-prompt-id]').forEach(btn => {
@@ -1024,6 +1174,46 @@
     }
   }
 
+  async function setTeacherPromptLocked(classId, promptId, locked) {
+    const res = await fetch('/api/teacher/notebook-prompts/lock', {
+      method: 'POST',
+      headers: teacherJsonHeaders(),
+      body: JSON.stringify({ classId, promptId, locked }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!data?.ok) throw new Error(data?.error || 'Could not update lock.');
+    await loadTeacherNotebookPrompts();
+    await loadTeacherPromptResponses(classId, promptId);
+  }
+
+  async function deleteTeacherPrompt(classId, promptId) {
+    if (!confirm('Delete this notebook assignment and remove student submissions from the Assignments tab?')) return;
+    const res = await fetch('/api/teacher/notebook-prompts/delete', {
+      method: 'POST',
+      headers: teacherJsonHeaders(),
+      body: JSON.stringify({ classId, promptId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!data?.ok) throw new Error(data?.error || 'Could not delete assignment.');
+    selectedTeacherPromptId = null;
+    await loadTeacherNotebookPrompts();
+  }
+
+  async function saveTeacherNotebookGrade(classId, promptId, studentEmail, card) {
+    const score = card.querySelector('[data-grade-score]')?.value || '';
+    const feedback = card.querySelector('[data-grade-feedback]')?.value || '';
+    const status = card.querySelector('[data-grade-status]');
+    if (status) status.textContent = 'Saving...';
+    const res = await fetch('/api/teacher/notebook-prompts/grade', {
+      method: 'POST',
+      headers: teacherJsonHeaders(),
+      body: JSON.stringify({ classId, promptId, studentEmail, score, feedback }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!data?.ok) throw new Error(data?.error || 'Could not save feedback.');
+    if (status) status.textContent = 'Saved';
+  }
+
   async function loadTeacherPromptResponses(classId, promptId) {
     selectedTeacherPromptId = promptId;
     document.querySelectorAll('.teacher-notebook-prompt-row').forEach(row => row.classList.toggle('active', row.dataset.promptId === promptId));
@@ -1035,22 +1225,61 @@
       const res = await fetch(`/api/teacher/notebook-prompts/responses?classId=${encodeURIComponent(classId)}&promptId=${encodeURIComponent(promptId)}`, { headers: teacherHeaders() });
       const data = await res.json().catch(() => ({}));
       if (!data?.ok) throw new Error(data?.error || 'Load failed');
-      if (title) title.textContent = data.prompt?.prompt || 'Notebook responses';
+      const prompt = data.prompt || {};
+      if (title) title.textContent = prompt.title || prompt.prompt || 'Notebook responses';
       const responsesHtml = (data.responses || []).map(row => `
-        <article class="teacher-notebook-response-card">
+        <article class="teacher-notebook-response-card" data-student-email="${escapeHtml(row.studentEmail || '')}">
           <strong>${escapeHtml(row.studentName || row.studentEmail)}</strong>
-          <div class="meta">${escapeHtml(row.studentEmail || '')}${row.updatedAt ? ` · ${escapeHtml(row.updatedAt)}` : ''}</div>
+          <div class="meta">${escapeHtml(row.studentEmail || '')}${row.updatedAt ? ` · Submitted ${escapeHtml(formatLocalDateTime(row.updatedAt))}` : ''}</div>
           <div class="teacher-notebook-response-body">${sanitizeHtml(row.responseHtml || '')}</div>
+          ${(row.score || row.feedback) ? `
+            <div class="teacher-notebook-feedback-note">
+              ${row.score ? `<strong>Score: ${escapeHtml(row.score)}</strong>` : ''}
+              ${row.feedback ? `<span>${escapeHtml(row.feedback)}</span>` : ''}
+            </div>
+          ` : ''}
+          <div class="teacher-notebook-grade-controls">
+            <input type="text" data-grade-score value="${escapeHtml(row.score || '')}" placeholder="Score">
+            <textarea data-grade-feedback placeholder="Feedback">${escapeHtml(row.feedback || '')}</textarea>
+            <button type="button" class="btn secondary" data-grade-save>Save Feedback</button>
+            <span data-grade-status></span>
+          </div>
         </article>
       `).join('');
       const missing = data.missing || [];
       list.innerHTML = `
+        <div class="teacher-notebook-assignment-actions">
+          <div>
+            <strong>${escapeHtml(prompt.title || 'Notebook Assignment')}</strong>
+            <div class="meta">${escapeHtml(formatLocalDateTime(prompt.createdAt) || prompt.createdAt || '')} · ${prompt.responseType === 'code' ? 'Code response' : 'Written response'}</div>
+          </div>
+          <button type="button" class="btn secondary" id="teacherNotebookLockPromptBtn">${prompt.locked ? 'Unlock Submissions' : 'Lock Submissions'}</button>
+          <button type="button" class="btn danger" id="teacherNotebookDeletePromptBtn">Delete Assignment</button>
+        </div>
         ${responsesHtml || '<div style="color:#888;">No responses yet.</div>'}
         <div class="teacher-notebook-missing">
           <strong>Not responded (${missing.length})</strong>
           <div>${missing.map(s => escapeHtml(s.studentName || s.studentEmail)).join(', ') || 'Everyone has responded.'}</div>
         </div>
       `;
+      highlightCodeBlocks(list);
+      document.getElementById('teacherNotebookLockPromptBtn')?.addEventListener('click', () => {
+        setTeacherPromptLocked(classId, promptId, !prompt.locked).catch(err => alert(err.message || 'Could not update lock.'));
+      });
+      document.getElementById('teacherNotebookDeletePromptBtn')?.addEventListener('click', () => {
+        deleteTeacherPrompt(classId, promptId).catch(err => alert(err.message || 'Could not delete assignment.'));
+      });
+      list.querySelectorAll('[data-grade-save]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const card = btn.closest('[data-student-email]');
+          saveTeacherNotebookGrade(classId, promptId, card.dataset.studentEmail, card)
+            .then(() => loadTeacherPromptResponses(classId, promptId))
+            .catch(err => {
+              const status = card.querySelector('[data-grade-status]');
+              if (status) status.textContent = err.message || 'Save failed';
+            });
+        });
+      });
     } catch (err) {
       list.innerHTML = `<div style="color:#ef5350;">${escapeHtml(err.message || 'Could not load responses.')}</div>`;
     }
@@ -1097,12 +1326,18 @@
     const socket = window.eagleSocket;
     if (socket) {
       socket.on('notebook_prompt_created', msg => {
-        if (drawerOpen && msg?.class_id === currentClassId()) loadNotebook(true).catch(() => {});
+        if (drawerOpen && msg?.class_id === currentClassId()) refreshAssignmentsFromServer().catch(() => {});
+      });
+      socket.on('notebook_prompts_updated', msg => {
+        if (drawerOpen && msg?.class_id === currentClassId()) refreshAssignmentsFromServer().catch(() => {});
       });
     } else {
       window.addEventListener('eagle-socket-ready', event => {
         event.detail?.socket?.on('notebook_prompt_created', msg => {
-          if (drawerOpen && msg?.class_id === currentClassId()) loadNotebook(true).catch(() => {});
+          if (drawerOpen && msg?.class_id === currentClassId()) refreshAssignmentsFromServer().catch(() => {});
+        });
+        event.detail?.socket?.on('notebook_prompts_updated', msg => {
+          if (drawerOpen && msg?.class_id === currentClassId()) refreshAssignmentsFromServer().catch(() => {});
         });
       }, { once: true });
     }
