@@ -64,7 +64,7 @@ pip install -r requirements.txt
 |---------|---------|
 | `flask` | Web framework — serves HTTP routes and static files |
 | `flask-socketio` | WebSocket / Socket.IO support — streams real-time code output to the browser |
-| `eventlet` | Async networking library required by `flask-socketio` (`async_mode="eventlet"`) |
+| `simple-websocket` | WebSocket transport used by Flask-SocketIO standard threading mode |
 | `requests` | HTTP client — used to call the Ollama AI API for code explain / assistant features |
 | `bcrypt` | Secure password hashing for student and admin accounts |
 | `cryptography` | Encrypts stored admin credentials in `config.txt` using Fernet |

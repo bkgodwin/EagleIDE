@@ -11,6 +11,7 @@
   const SAVE_DELAY_MS = 900;
   const MAX_TABS = 80;
   const MAX_TAB_LABEL_LENGTH = 20;
+  const MAX_INLINE_OUTPUT_CHARS = 120000;
   const DEFAULT_TAB_COLORS = ['#fff2a8', '#b9e4ff', '#ffc4d6', '#c9f2c7', '#dcc8ff', '#ffd5a6', '#c5f3e8', '#f5c9ff'];
   const DEFAULT_ASSIGNMENTS_COLOR = '#f3c74d';
   let notebook = null;
@@ -823,11 +824,20 @@
     if (!out) return;
     let s = String(text || '');
     if (s.includes(INPUT_TOKEN)) {
-      s = s.replace(INPUT_TOKEN, '');
+      s = s.split(INPUT_TOKEN).join('');
       waitingForNotebookInput = true;
       setTimeout(() => shell.querySelector('input')?.focus(), 0);
     }
-    out.textContent += s;
+    let textNode = out.lastChild;
+    if (!textNode || textNode.nodeType !== Node.TEXT_NODE) {
+      textNode = document.createTextNode('');
+      out.appendChild(textNode);
+    }
+    textNode.appendData(s);
+    if (textNode.length > MAX_INLINE_OUTPUT_CHARS) {
+      const keep = textNode.data.slice(-(MAX_INLINE_OUTPUT_CHARS - 64));
+      textNode.data = `[Earlier output removed to keep the browser responsive]\n${keep}`;
+    }
     out.scrollTop = out.scrollHeight;
   }
 
