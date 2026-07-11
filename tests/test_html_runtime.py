@@ -27,6 +27,12 @@ class HtmlRuntimeTestCase(unittest.TestCase):
 
         self.original_user_files_dir = eagle.USER_FILES_DIR
         self.original_sandbox_dir = eagle.SANDBOX_DIR
+        self.original_asset_limit = eagle.MAX_HTML_RUNTIME_ASSET_BYTES
+        self.original_session_limit = eagle.MAX_HTML_RUNTIME_SESSIONS_PER_USER
+        self.original_preview_origin = eagle.HTML_RUNTIME_PREVIEW_ORIGIN
+        self.original_preview_isolated = eagle.HTML_RUNTIME_PREVIEW_ISOLATED
+        eagle.HTML_RUNTIME_PREVIEW_ORIGIN = ""
+        eagle.HTML_RUNTIME_PREVIEW_ISOLATED = False
         eagle.USER_FILES_DIR = self.user_files_dir
         eagle.SANDBOX_DIR = self.sandbox_dir
         eagle._html_runtime_sessions.clear()
@@ -57,6 +63,10 @@ class HtmlRuntimeTestCase(unittest.TestCase):
         eagle._html_runtime_sessions.clear()
         eagle.USER_FILES_DIR = self.original_user_files_dir
         eagle.SANDBOX_DIR = self.original_sandbox_dir
+        eagle.MAX_HTML_RUNTIME_ASSET_BYTES = self.original_asset_limit
+        eagle.MAX_HTML_RUNTIME_SESSIONS_PER_USER = self.original_session_limit
+        eagle.HTML_RUNTIME_PREVIEW_ORIGIN = self.original_preview_origin
+        eagle.HTML_RUNTIME_PREVIEW_ISOLATED = self.original_preview_isolated
         self.tmp.cleanup()
 
     def _start_runtime(self, file_path="index.html"):
@@ -80,19 +90,32 @@ class HtmlRuntimeTestCase(unittest.TestCase):
         self.assertEqual(session["entry_file"], "index.html")
         self.assertNotIn("runtime_dir", session)
 
-    def test_view_injects_bridge_and_serves_relative_assets(self):
+    def test_safe_fallback_disables_scripts_and_serves_relative_assets(self):
         start_data = self._start_runtime().get_json()
 
         html_response = self.client.get(start_data["view_url"])
         self.assertEqual(html_response.status_code, 200)
         html = html_response.get_data(as_text=True)
-        self.assertIn("__eagleHtmlRuntime", html)
+        self.assertFalse(start_data["scripts_enabled"])
+        self.assertNotIn("__eagleHtmlRuntime", html)
         self.assertIn("Runtime OK", html)
-        self.assertIn("Content-Security-Policy", html_response.headers)
+        self.assertIn("script-src 'none'", html_response.headers["Content-Security-Policy"])
 
         css_response = self.client.get(f"/api/html-runtime/view/{start_data['runtime_id']}/styles.css")
         self.assertEqual(css_response.status_code, 200)
         self.assertIn("color: red", css_response.get_data(as_text=True))
+
+    def test_isolated_preview_origin_enables_runtime_bridge(self):
+        eagle.HTML_RUNTIME_PREVIEW_ORIGIN = "https://preview.example.invalid"
+        eagle.HTML_RUNTIME_PREVIEW_ISOLATED = True
+        start_data = self._start_runtime().get_json()
+
+        self.assertTrue(start_data["scripts_enabled"])
+        self.assertTrue(start_data["view_url"].startswith(eagle.HTML_RUNTIME_PREVIEW_ORIGIN))
+        html_response = self.client.get(start_data["view_url"])
+
+        self.assertEqual(html_response.status_code, 200)
+        self.assertIn("__eagleHtmlRuntime", html_response.get_data(as_text=True))
 
     def test_view_rejects_path_traversal(self):
         start_data = self._start_runtime().get_json()
@@ -121,6 +144,22 @@ class HtmlRuntimeTestCase(unittest.TestCase):
         self.assertIn("BroadcastChannel", body)
         self.assertIn("sandbox=\"allow-scripts\"", body)
         self.assertEqual(response.headers.get("Cross-Origin-Opener-Policy"), "same-origin")
+
+    def test_runtime_session_count_is_bounded_per_user(self):
+        eagle.MAX_HTML_RUNTIME_SESSIONS_PER_USER = 1
+        first = self._start_runtime()
+        second = self._start_runtime()
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 429)
+
+    def test_runtime_asset_size_is_bounded(self):
+        eagle.MAX_HTML_RUNTIME_ASSET_BYTES = 512
+        start_data = self._start_runtime().get_json()
+
+        response = self.client.get(f"/api/html-runtime/view/{start_data['runtime_id']}/large.txt")
+
+        self.assertEqual(response.status_code, 413)
 
 
 if __name__ == "__main__":

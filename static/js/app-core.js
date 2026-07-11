@@ -364,6 +364,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       (EXCEPTION_FLASH_ANIMATION_MS * EXCEPTION_FLASH_ITERATIONS) + EXCEPTION_FLASH_BUFFER_MS;
     const outputEl = document.getElementById('output');
     const stdinEl = document.getElementById('stdin');
+    const MAX_SHELL_OUTPUT_CHARS = 220000;
+    const MAX_SHELL_OUTPUT_NODES = 5000;
+    let shellOutputChars = 0;
+    let shellScrollFrame = null;
     const exceptionHelpBtn = document.getElementById('exceptionHelpBtn');
     const exceptionHelpModal = document.getElementById('exceptionHelpModal');
     const exceptionHelpContent = document.getElementById('exceptionHelpContent');
@@ -957,14 +961,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     // Append a single line (no embedded newlines) to the shell output with correct coloring.
-    function _appendLine(line) {
+    function _appendLine(line, parent = outputEl) {
       if (!line) return; // skip null, undefined, and empty string
       // System messages: [Connected], [Process started], etc.
       if (SYSTEM_MESSAGE_PATTERN.test(line)) {
         const span = document.createElement('span');
         span.className = 'sys-msg';
         span.textContent = line;
-        outputEl.appendChild(span);
+        parent.appendChild(span);
         return;
       }
       // Start of a Python traceback
@@ -973,7 +977,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const span = document.createElement('span');
         span.className = 'shell-error';
         span.textContent = line;
-        outputEl.appendChild(span);
+        parent.appendChild(span);
         return;
       }
       // Lines that are part of an active traceback
@@ -981,7 +985,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const span = document.createElement('span');
         span.className = 'shell-error';
         span.textContent = line;
-        outputEl.appendChild(span);
+        parent.appendChild(span);
         // The exception type line ends the traceback (e.g. "NameError: name 'x' is not defined")
         if (TRACEBACK_EXCEPTION_LINE_PATTERN.test(line) || TRACEBACK_SPECIAL_END_PATTERN.test(line)) {
           markExceptionFromLine(line);
@@ -1001,22 +1005,72 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const span = document.createElement('span');
         span.className = 'shell-error';
         span.textContent = line;
-        outputEl.appendChild(span);
+        parent.appendChild(span);
         return;
       }
       // Normal output
-      outputEl.appendChild(document.createTextNode(line));
+      parent.appendChild(document.createTextNode(line));
+    }
+
+    function trimShellOutput() {
+      let removed = false;
+      const oldestRemovableNode = () => {
+        const first = outputEl.firstChild;
+        if (first?.classList?.contains('shell-output-truncated')) return first.nextSibling;
+        return first;
+      };
+      while (outputEl.childNodes.length > MAX_SHELL_OUTPUT_NODES || shellOutputChars > MAX_SHELL_OUTPUT_CHARS) {
+        const node = oldestRemovableNode();
+        if (!node) break;
+        shellOutputChars = Math.max(0, shellOutputChars - String(node.textContent || '').length);
+        node.remove();
+        removed = true;
+      }
+      if (removed && !outputEl.querySelector('.shell-output-truncated')) {
+        const marker = document.createElement('span');
+        marker.className = 'sys-msg shell-output-truncated';
+        marker.textContent = '[Earlier output removed to keep the browser responsive]\n';
+        outputEl.prepend(marker);
+      }
+    }
+
+    function scheduleShellScroll() {
+      if (shellScrollFrame) return;
+      shellScrollFrame = requestAnimationFrame(() => {
+        shellScrollFrame = null;
+        outputEl.scrollTop = outputEl.scrollHeight;
+      });
+    }
+
+    function appendDirectShellText(text, className = '') {
+      const value = String(text || '');
+      if (!value) return;
+      if (!outputEl.firstChild) shellOutputChars = 0;
+      const node = className ? document.createElement('span') : document.createTextNode(value);
+      if (className) {
+        node.className = className;
+        node.textContent = value;
+      }
+      outputEl.appendChild(node);
+      shellOutputChars += value.length;
+      trimShellOutput();
+      scheduleShellScroll();
     }
 
     // Append a (possibly multi-line) string to the shell output with correct per-line coloring.
     const appendOut = (s) => {
       if (!s) return;
+      if (!outputEl.firstChild) shellOutputChars = 0;
       // Split into lines while preserving newlines at end of each segment
       const segments = s.split(/(?<=\n)/);
+      const fragment = document.createDocumentFragment();
       for (const seg of segments) {
-        _appendLine(seg);
+        _appendLine(seg, fragment);
       }
-      outputEl.scrollTop = outputEl.scrollHeight;
+      outputEl.appendChild(fragment);
+      shellOutputChars += String(s).length;
+      trimShellOutput();
+      scheduleShellScroll();
     };
 
     function highlightErrorLine(lineNum) {
@@ -1115,10 +1169,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
                 appendOut(before.substring(0, lastNl + 1));
                 // Prompt text (no newline — stays on same line as future input)
                 const prompt = before.substring(lastNl + 1);
-                if (prompt) outputEl.appendChild(document.createTextNode(prompt));
+                if (prompt) appendDirectShellText(prompt);
               } else {
                 // Entire `before` is the prompt with no preceding newline
-                outputEl.appendChild(document.createTextNode(before));
+                appendDirectShellText(before);
               }
             }
             waitingForUserInput = true;
@@ -1134,11 +1188,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             const echoLine = nlIdx >= 0 ? s.substring(0, nlIdx) : s.replace(/\n$/, '');
             const remainder = nlIdx >= 0 ? s.substring(nlIdx + 1) : '';
             // Display echo in green
-            const userSpan = document.createElement('span');
-            userSpan.className = 'shell-user-input';
-            userSpan.textContent = echoLine;
-            outputEl.appendChild(userSpan);
-            outputEl.appendChild(document.createTextNode('\n'));
+            appendDirectShellText(echoLine + '\n', 'shell-user-input');
             waitingForUserInput = false;
             // Process any remaining output after the echo normally
             if (remainder) appendOut(remainder);
@@ -1175,6 +1225,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           queueTeacherStreamCode(msg.code, msg.language, teacherPaneOpen);
         });
         socket.on('teacher_stream_status', handleTeacherStreamStatus);
+        socket.on('class_presence_updated', (data) => {
+          const classKey = String(data?.classId || '');
+          if (!TEACHER_TOKEN || !classKey) return;
+          activeStudentsByClass[classKey] = new Set((data.activeStudents || []).map(e => String(e || '').toLowerCase()));
+          inQuizStudentsByClass[classKey] = new Set((data.inQuizStudents || []).map(e => String(e || '').toLowerCase()));
+          lastSignInByClass[classKey] = data.lastSignInByEmail || {};
+          updateRosterCells(classKey);
+        });
         socket.on('class_membership_revoked', async (msg) => {
           if (!USER_TOKEN || !currentUser) return;
           const previousClasses = [...studentClasses];
@@ -1408,6 +1466,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
       htmlRuntimeId = runtimeData.runtime_id;
       const timeoutSeconds = Number(runtimeData.timeout_seconds || 30);
+      if (runtimeData.safety_notice) {
+        appendOut(`[HTML Runtime] ${String(runtimeData.safety_notice)}\n`);
+      }
       const title = `HTML WebView • ${currentOpenFile?.name || 'index.html'}`;
       if (htmlRuntimeCloseMonitor) clearTimeout(htmlRuntimeCloseMonitor);
       htmlRuntimeCloseMonitor = setTimeout(() => {
@@ -1548,12 +1609,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     function appendShellCommandEcho(line) {
       const prompt = window.ShellCommands?.getPromptDisplay?.() || '$ ';
-      const userSpan = document.createElement('span');
-      userSpan.className = 'shell-user-input';
-      userSpan.textContent = prompt + line;
-      outputEl.appendChild(userSpan);
-      outputEl.appendChild(document.createTextNode('\n'));
-      outputEl.scrollTop = outputEl.scrollHeight;
+      appendDirectShellText(prompt + line + '\n', 'shell-user-input');
     }
 
     async function runFileFromShell(item, language) {
@@ -2050,7 +2106,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       _teacherClassroomPoll = setInterval(() => {
         if (!TEACHER_TOKEN || document.hidden) return;
         window.ClassroomSignals?.loadTeacherSignals?.();
-      }, 4000);
+      }, 30000);
     }
     function stopTeacherClassroomPolling() {
       if (_teacherClassroomPoll) {
@@ -2393,7 +2449,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       teacherBroadcastFlushTimer = setTimeout(() => {
         teacherBroadcastFlushTimer = null;
         flushTeacherBroadcast(false);
-      }, 200);
+      }, 500);
     }
     
     function startTeacherBroadcast() {
@@ -2553,7 +2609,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           return;
         }
         await refreshActiveStudentsForClass(currentTeacherClassId);
-      }, 2000);
+      }, 30000);
     }
 
     function ensureTeacherDashboardRosterPolling() {
