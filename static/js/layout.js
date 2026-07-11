@@ -3,6 +3,19 @@
   'use strict';
 
   const TABLET_BP = 1200;
+  let viewportFrame = null;
+
+  function syncAppHeight() {
+    if (viewportFrame) cancelAnimationFrame(viewportFrame);
+    viewportFrame = requestAnimationFrame(() => {
+      viewportFrame = null;
+      const viewportHeight = window.visualViewport?.height || window.innerHeight;
+      if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return;
+      document.documentElement.style.setProperty('--app-height', `${Math.round(viewportHeight)}px`);
+      const output = document.getElementById('output');
+      if (output) output.scrollTop = output.scrollHeight;
+    });
+  }
 
   function isTabletWidth() {
     return window.matchMedia(`(max-width: ${TABLET_BP}px)`).matches;
@@ -111,24 +124,21 @@
     });
   }
 
-  function initEditorScrollOnFocus() {
-    document.getElementById('editorPanel')?.addEventListener('focusin', () => {
-      if (window.matchMedia('(pointer: coarse)').matches) {
-        document.getElementById('editorPanel')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-      }
-    });
-  }
-
-  window.addEventListener('resize', syncTabletMode);
+  window.addEventListener('resize', () => {
+    syncTabletMode();
+    syncAppHeight();
+  }, { passive: true });
+  window.visualViewport?.addEventListener('resize', syncAppHeight, { passive: true });
+  window.visualViewport?.addEventListener('scroll', syncAppHeight, { passive: true });
   document.addEventListener('DOMContentLoaded', () => {
+    syncAppHeight();
     syncTabletMode();
     initToolTray();
     initRoleMenu();
     initTabletPanelNav();
     initLongPressContext();
-    initEditorScrollOnFocus();
   });
 
   window.EagleIDE = window.EagleIDE || {};
-  window.EagleIDE.layout = { syncTabletMode, isTabletWidth, setToolTrayCollapsed };
+  window.EagleIDE.layout = { syncTabletMode, syncAppHeight, isTabletWidth, setToolTrayCollapsed };
 })();
