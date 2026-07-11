@@ -7,6 +7,9 @@ browser-based HTML/CSS projects, AI-powered features, assignment management,
 interactive challenges, and a full user management suite for educational
 environments. Designed for public-facing classroom deployment.
 
+See docs/HARDENING_AND_PERFORMANCE.md for security controls, capacity tuning,
+isolated HTML preview deployment, monitoring, and load-test guidance.
+
 ================================================================================
                               TABLE OF CONTENTS
 ================================================================================
