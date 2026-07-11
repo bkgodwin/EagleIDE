@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
-import eventlet
-eventlet.monkey_patch()
-
 import atexit
+import codecs
 import csv
 import hashlib
 import heapq
@@ -16,6 +14,7 @@ import random
 import re
 import secrets
 import shutil
+import signal
 import string
 import subprocess
 import sys
@@ -24,7 +23,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from flask import Flask, send_from_directory, send_file, request, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
@@ -34,6 +33,9 @@ from collections import defaultdict, deque
 from cryptography.fernet import Fernet, InvalidToken
 
 from classroom_features import merge_class_settings, register as register_classroom_features
+
+_native_threading = threading
+_native_time = time
 
 # -------------------------
 # Paths & constants
@@ -50,13 +52,63 @@ NOTEBOOKS_DIR = BASE_DIR / "notebooks"
 
 INPUT_TOKEN = "[[_IDE_INPUT_]]"
 MAX_WALL_TIME = 30.0       # seconds (hard kill for user code)
-IDLE_TIMEOUT = 10.0        # reserved, if you later want idle detection
-MAX_OUTPUT_BYTES = 500_000  # 500 KB max stdout before killing the process
+MAX_CPU_TIME_SECONDS = 8
+IDLE_TIMEOUT = 30.0
+MAX_INTERACTIVE_WALL_TIME = 120.0
+MAX_OUTPUT_BYTES = 200_000
+MAX_OUTPUT_LINES = 5_000
+OUTPUT_READ_CHUNK_BYTES = 4_096
 MAX_ASSISTANT_CODE_CHARS = 12_000
 MAX_RUN_CODE_CHARS = 200_000
+MAX_RUN_CODE_BYTES = 400_000
 MAX_STDIN_CHARS = 10_000
+MAX_STDIN_EVENTS_PER_WINDOW = 30
+STDIN_RATE_WINDOW_SECONDS = 10.0
 MAX_SKILL_NAME_CHARS = 80
 SANDBOX_WORKER = BASE_DIR / "sandbox_worker.py"
+
+MAX_HTTP_BODY_BYTES = 16 * 1024 * 1024
+MAX_SOCKET_MESSAGE_BYTES = 1_000_000
+MAX_EDITOR_FILE_BYTES = 10 * 1024 * 1024
+MAX_UPLOAD_FILE_BYTES = 10 * 1024 * 1024
+MAX_HTML_RUNTIME_ASSET_BYTES = 10 * 1024 * 1024
+MAX_HTML_RUNTIME_HTML_BYTES = 2 * 1024 * 1024
+MAX_HTML_RUNTIME_SESSIONS = 256
+MAX_HTML_RUNTIME_SESSIONS_PER_USER = 3
+MAX_RUN_WRITE_BYTES = 10 * 1024 * 1024
+RUNNER_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024
+RUNNER_CPU_PERCENT = 50
+
+
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except Exception:
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+_default_run_capacity = max(1, min(4, max(1, int(os.cpu_count() or 2) // 2)))
+MAX_CONCURRENT_RUNS = _env_int("EAGLE_MAX_CONCURRENT_RUNS", _default_run_capacity, 1, 32)
+MAX_GUEST_RUNS_PER_IP = _env_int("EAGLE_MAX_GUEST_RUNS_PER_IP", 2, 1, 16)
+MAX_RUN_STARTS_PER_WINDOW = _env_int("EAGLE_MAX_RUN_STARTS_PER_10_SECONDS", 6, 1, 60)
+RUN_START_RATE_WINDOW_SECONDS = 10.0
+RUN_RATE_IDENTITY_STALE_SECONDS = 3600.0
+MAX_RUN_RATE_IDENTITIES = 4096
+MAX_SOCKET_CONNECTIONS = _env_int("EAGLE_MAX_SOCKET_CONNECTIONS", 512, 16, 4096)
+MAX_SOCKET_CONNECTIONS_PER_IP = _env_int("EAGLE_MAX_SOCKET_CONNECTIONS_PER_IP", 128, 8, 1024)
+REQUIRE_WINDOWS_JOB_LIMITS = os.environ.get("EAGLE_REQUIRE_WINDOWS_JOB_LIMITS", "1").strip().lower() not in {"0", "false", "no"}
+
+MAX_TEACHER_STREAM_CODE_BYTES = 200_000
+TEACHER_STREAM_MIN_INTERVAL_SECONDS = 0.25
+
+MAX_CONCURRENT_AI_REQUESTS = _env_int("EAGLE_MAX_CONCURRENT_AI_REQUESTS", 2, 1, 16)
+MAX_AI_REQUESTS_PER_MINUTE = _env_int("EAGLE_MAX_AI_REQUESTS_PER_MINUTE", 6, 1, 120)
+MAX_AI_PROMPT_CHARS = _env_int("EAGLE_MAX_AI_PROMPT_CHARS", 64_000, 2_000, 250_000)
+MAX_AI_RESPONSE_CHARS = _env_int("EAGLE_MAX_AI_RESPONSE_CHARS", 64_000, 2_000, 250_000)
+MAX_AI_HTTP_RESPONSE_BYTES = _env_int("EAGLE_MAX_AI_HTTP_RESPONSE_BYTES", 2 * 1024 * 1024, 64 * 1024, 16 * 1024 * 1024)
+AI_CIRCUIT_FAILURE_THRESHOLD = _env_int("EAGLE_AI_CIRCUIT_FAILURES", 3, 1, 20)
+AI_CIRCUIT_COOLDOWN_SECONDS = _env_int("EAGLE_AI_CIRCUIT_COOLDOWN_SECONDS", 30, 5, 300)
 
 # HTML runtime defaults/safeguards
 HTML_RUNTIME_DEFAULT_TIMEOUT = 30
@@ -64,6 +116,8 @@ HTML_RUNTIME_DEFAULT_MAX_FPS = 30
 HTML_RUNTIME_DEFAULT_MEMORY_MB = 128
 HTML_RUNTIME_DEFAULT_MAX_DOM_NODES = 3000
 HTML_RUNTIME_DEFAULT_MAX_POPUPS = 2
+HTML_RUNTIME_PREVIEW_ORIGIN = os.environ.get("EAGLE_HTML_PREVIEW_ORIGIN", "").strip().rstrip("/")
+HTML_RUNTIME_PREVIEW_ISOLATED = os.environ.get("EAGLE_HTML_PREVIEW_ISOLATED", "").strip().lower() in {"1", "true", "yes"}
 
 # File count limits
 MAX_FILES_PER_FOLDER = 20
@@ -153,13 +207,23 @@ except Exception:
 # App & Socket
 # -------------------------
 app = Flask(__name__, static_folder="static", static_url_path="/static")
+app.config["MAX_CONTENT_LENGTH"] = MAX_HTTP_BODY_BYTES
+app.config["MAX_FORM_MEMORY_SIZE"] = 2 * 1024 * 1024
 socketio = SocketIO(
     app,
-    async_mode="eventlet",
-    cors_allowed_origins="*",
+    async_mode="threading",
+    cors_allowed_origins=None,
     logger=False,
-    engineio_logger=False
+    engineio_logger=False,
+    max_http_buffer_size=MAX_SOCKET_MESSAGE_BYTES,
+    ping_interval=25,
+    ping_timeout=20,
 )
+
+
+@app.errorhandler(413)
+def _request_too_large(_error):
+    return jsonify(ok=False, error=f"Request body exceeds the {MAX_HTTP_BODY_BYTES // (1024 * 1024)}MB limit"), 413
 
 @app.after_request
 def _add_security_headers(response):
@@ -167,6 +231,10 @@ def _add_security_headers(response):
     response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Permissions-Policy", "geolocation=(), camera=(), microphone=()")
+    if request.path.startswith("/static/"):
+        response.headers.setdefault("Cache-Control", "public, max-age=300, must-revalidate")
+    elif request.path == "/":
+        response.headers.setdefault("Cache-Control", "no-cache")
     return response
 
 # Suppress noisy werkzeug HTTP request logs when not in debug mode
@@ -178,17 +246,25 @@ if not DEBUG_MODE:
 # Config load/save
 # -------------------------
 _cfg_lock = threading.Lock()
+_cfg_cache: Optional[Dict[str, Any]] = None
+_cfg_cache_mtime_ns: Optional[int] = None
 _admin_tokens = set()   # ephemeral, cleared on restart
 
 def _load_config() -> Dict[str, Any]:
+    global _cfg_cache, _cfg_cache_mtime_ns
     # Start with defaults so any keys added to DEFAULT_CONFIG are always present.
     merged = DEFAULT_CONFIG.copy()
     with _cfg_lock:
         if PERSIST_FILE.exists():
             try:
+                mtime_ns = PERSIST_FILE.stat().st_mtime_ns
+                if _cfg_cache is not None and _cfg_cache_mtime_ns == mtime_ns:
+                    return dict(_cfg_cache)
                 stored = json.loads(PERSIST_FILE.read_text(encoding="utf-8"))
                 merged.update(stored)
-                return merged
+                _cfg_cache = dict(merged)
+                _cfg_cache_mtime_ns = mtime_ns
+                return dict(merged)
             except Exception as e:
                 print(f"Warning: Failed to load config from {PERSIST_FILE}: {e}")
                 print("Creating default config...")
@@ -197,10 +273,13 @@ def _load_config() -> Dict[str, Any]:
     return merged
 
 def _save_config(new_cfg: Dict[str, Any]) -> None:
+    global _cfg_cache, _cfg_cache_mtime_ns
     with _cfg_lock:
         tmp = PERSIST_FILE.with_suffix(".tmp")
         tmp.write_text(json.dumps(new_cfg, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(PERSIST_FILE)
+        _cfg_cache = dict(new_cfg)
+        _cfg_cache_mtime_ns = PERSIST_FILE.stat().st_mtime_ns
 
 def _update_config(partial: Dict[str, Any]) -> Dict[str, Any]:
     cfg = _load_config()
@@ -338,6 +417,25 @@ atexit.register(lambda: _cleanup_expired_html_runtime_sessions(force=True))
 def _is_html_file(path: Path) -> bool:
     return path.suffix.lower() in {".html", ".htm"}
 
+
+def _validated_html_preview_origin() -> str:
+    if not HTML_RUNTIME_PREVIEW_ORIGIN or not HTML_RUNTIME_PREVIEW_ISOLATED:
+        return ""
+    parsed = urlsplit(HTML_RUNTIME_PREVIEW_ORIGIN)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        return ""
+    if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        return ""
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _html_preview_request_is_isolated() -> bool:
+    preview_origin = _validated_html_preview_origin()
+    if not preview_origin:
+        return False
+    request_origin = f"{request.scheme}://{request.host}".rstrip("/")
+    return hmac.compare_digest(request_origin.lower(), preview_origin.lower())
+
 # -------------------------
 # User account management
 # -------------------------
@@ -346,6 +444,7 @@ _student_tokens: Dict[str, dict] = {}  # token -> user info dict
 _teacher_tokens: Dict[str, dict] = {}  # token -> teacher info dict
 _teacher_code_snapshots: Dict[str, str] = {}
 _teacher_code_languages: Dict[str, str] = {}
+_teacher_stream_last_emit: Dict[str, float] = {}
 _live_teacher_stream_sids_by_class: Dict[str, set[str]] = {}
 _socket_live_class_ids: Dict[str, set[str]] = {}
 _reg_rate_limit: dict = defaultdict(list)  # ip -> list of timestamps
@@ -354,6 +453,9 @@ _classes_lock = threading.Lock()
 _skills_lock = threading.Lock()
 _notebooks_lock = threading.Lock()
 _server_health_lock = threading.Lock()
+_users_cache: Optional[tuple[str, int, dict]] = None
+_classes_cache: Optional[tuple[str, int, dict]] = None
+_skills_cache: Optional[tuple[str, int, dict]] = None
 SERVER_START_EPOCH = time.time()
 _server_start_recorded = False
 
@@ -368,10 +470,17 @@ def _sanitize_email_for_path(email: str) -> str:
     return f"user_{digest}"
 
 def _load_users() -> dict:
+    global _users_cache
     with _users_lock:
         if USERS_FILE.exists():
             try:
-                return _normalize_users_data(json.loads(USERS_FILE.read_text(encoding="utf-8")))
+                cache_path = str(USERS_FILE.resolve())
+                mtime_ns = USERS_FILE.stat().st_mtime_ns
+                if _users_cache and _users_cache[0] == cache_path and _users_cache[1] == mtime_ns:
+                    return copy.deepcopy(_users_cache[2])
+                normalized = _normalize_users_data(json.loads(USERS_FILE.read_text(encoding="utf-8")))
+                _users_cache = (cache_path, mtime_ns, normalized)
+                return copy.deepcopy(normalized)
             except Exception:
                 pass
         return {"users": []}
@@ -466,11 +575,13 @@ def _normalize_users_data(data: dict) -> dict:
 
 
 def _save_users(data: dict) -> None:
+    global _users_cache
     with _users_lock:
         data = _normalize_users_data(data)
         tmp = USERS_FILE.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(USERS_FILE)
+        _users_cache = (str(USERS_FILE.resolve()), USERS_FILE.stat().st_mtime_ns, copy.deepcopy(data))
 
 def _find_user(email: str) -> Optional[dict]:
     data = _load_users()
@@ -517,9 +628,14 @@ def _verify_user_password(user: dict, password: str) -> bool:
 
 
 def _load_classes() -> dict:
+    global _classes_cache
     with _classes_lock:
         if CLASSES_FILE.exists():
             try:
+                cache_path = str(CLASSES_FILE.resolve())
+                mtime_ns = CLASSES_FILE.stat().st_mtime_ns
+                if _classes_cache and _classes_cache[0] == cache_path and _classes_cache[1] == mtime_ns:
+                    return copy.deepcopy(_classes_cache[2])
                 data = json.loads(CLASSES_FILE.read_text(encoding="utf-8"))
             except Exception:
                 data = {}
@@ -561,14 +677,19 @@ def _load_classes() -> dict:
                 "students": students,
                 "created_at": c.get("created_at") or _current_timestamp(),
             })
-        return {"classes": classes}
+        normalized = {"classes": classes}
+        if CLASSES_FILE.exists():
+            _classes_cache = (str(CLASSES_FILE.resolve()), CLASSES_FILE.stat().st_mtime_ns, normalized)
+        return copy.deepcopy(normalized)
 
 
 def _save_classes(data: dict) -> None:
+    global _classes_cache
     with _classes_lock:
         tmp = CLASSES_FILE.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(CLASSES_FILE)
+        _classes_cache = None
 
 
 def _find_class_by_code(join_code: str) -> Optional[dict]:
@@ -1297,13 +1418,21 @@ def _require_user_for_files(req) -> Optional[dict]:
 def _get_user_storage_used(user_dir: Path) -> int:
     """Return total bytes used in user directory"""
     total = 0
-    if user_dir.exists():
-        for f in user_dir.rglob("*"):
-            if f.is_file():
-                try:
-                    total += f.stat().st_size
-                except Exception:
-                    pass
+    pending = [str(user_dir)] if user_dir.exists() else []
+    while pending:
+        current = pending.pop()
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            pending.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            total += entry.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        continue
+        except OSError:
+            continue
     return total
 
 def _count_files_in_folder(directory: Path) -> int:
@@ -1842,6 +1971,11 @@ def files_read():
     
     if target.suffix.lower() not in ALLOWED_EXTENSIONS:
         return jsonify(ok=False, error="File type not allowed"), 400
+    try:
+        if target.stat().st_size > MAX_EDITOR_FILE_BYTES:
+            return jsonify(ok=False, error=f"File exceeds the {MAX_EDITOR_FILE_BYTES // (1024 * 1024)}MB editor limit"), 413
+    except OSError:
+        return jsonify(ok=False, error="Could not inspect file"), 500
     
     try:
         content = target.read_text(encoding="utf-8")
@@ -1858,6 +1992,8 @@ def files_write():
     data = request.get_json(silent=True) or {}
     path_str = (data.get("path") or "").strip()
     content = data.get("content", "")
+    if not isinstance(content, str):
+        return jsonify(ok=False, error="File content must be text"), 400
     
     if not path_str:
         return jsonify(ok=False, error="Path required"), 400
@@ -1874,6 +2010,8 @@ def files_write():
     limit_bytes = USER_STORAGE_LIMIT_MB * 1024 * 1024
     used = _get_user_storage_used(user_dir)
     content_bytes = len(content.encode("utf-8"))
+    if content_bytes > MAX_EDITOR_FILE_BYTES:
+        return jsonify(ok=False, error=f"File exceeds the {MAX_EDITOR_FILE_BYTES // (1024 * 1024)}MB editor limit"), 413
     existing_size = target.stat().st_size if target.exists() else 0
     if used - existing_size + content_bytes > limit_bytes:
         return jsonify(ok=False, error=f"Storage limit of {USER_STORAGE_LIMIT_MB}MB exceeded"), 413
@@ -1979,13 +2117,17 @@ def files_upload():
     if not target_validated:
         return jsonify(ok=False, error="Invalid path"), 400
     
-    # Check storage limit
-    content = f.read()
+    if request.content_length and request.content_length > MAX_HTTP_BODY_BYTES:
+        return jsonify(ok=False, error="Upload request is too large"), 413
+
+    # Check storage and per-file limits before retaining upload bytes in memory.
     limit_bytes = USER_STORAGE_LIMIT_MB * 1024 * 1024
     used = _get_user_storage_used(user_dir)
     existing_size = target_validated.stat().st_size if target_validated.exists() else 0
-    if used - existing_size + len(content) > limit_bytes:
-        return jsonify(ok=False, error=f"Storage limit exceeded"), 413
+    remaining_storage = max(0, limit_bytes - (used - existing_size))
+    max_upload_bytes = min(MAX_UPLOAD_FILE_BYTES, remaining_storage)
+    if max_upload_bytes <= 0:
+        return jsonify(ok=False, error="Storage limit exceeded"), 413
 
     # Check file count limits (only for new files)
     if not target_validated.exists():
@@ -1995,11 +2137,40 @@ def files_upload():
         if _count_all_files_for_user(user_dir) >= MAX_FILES_PER_ACCOUNT:
             return jsonify(ok=False, error=f"Account limit reached (max {MAX_FILES_PER_ACCOUNT} files per account)"), 400
     
+    temp_target = target_validated.with_name(f".{target_validated.name}.{uuid.uuid4().hex}.upload")
+    written = 0
     try:
-        target_validated.write_bytes(content)
+        target_validated.parent.mkdir(parents=True, exist_ok=True)
+        with temp_target.open("wb") as handle:
+            while True:
+                chunk = f.stream.read(64 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_upload_bytes:
+                    raise ValueError("upload_limit")
+                handle.write(chunk)
+        temp_target.replace(target_validated)
         return jsonify(ok=True, path=str(target_validated.relative_to(user_dir)))
+    except ValueError:
+        try:
+            temp_target.unlink(missing_ok=True)
+        except Exception:
+            pass
+        if written > MAX_UPLOAD_FILE_BYTES:
+            return jsonify(ok=False, error=f"File exceeds the {MAX_UPLOAD_FILE_BYTES // (1024 * 1024)}MB upload limit"), 413
+        return jsonify(ok=False, error="Storage limit exceeded"), 413
     except Exception:
+        try:
+            temp_target.unlink(missing_ok=True)
+        except Exception:
+            pass
         return jsonify(ok=False, error="Could not save uploaded file"), 500
+    finally:
+        try:
+            f.close()
+        except Exception:
+            pass
 
 @app.get("/api/files/download")
 def files_download():
@@ -2019,6 +2190,12 @@ def files_download():
 
     if target.suffix.lower() not in ALLOWED_EXTENSIONS:
         return jsonify(ok=False, error="File type not allowed"), 400
+
+    try:
+        if target.stat().st_size > MAX_EDITOR_FILE_BYTES:
+            return jsonify(ok=False, error=f"File exceeds the {MAX_EDITOR_FILE_BYTES // (1024 * 1024)}MB download limit"), 413
+    except OSError:
+        return jsonify(ok=False, error="Could not inspect file"), 500
 
     ext = target.suffix.lower()
     mimetypes_map = {
@@ -3214,14 +3391,8 @@ def teacher_reorder_skills():
     return jsonify(ok=True)
 
 
-@app.get("/api/teacher/classes/<class_id>/active-students")
-def teacher_active_students(class_id: str):
-    teacher = _require_teacher(request)
-    if not teacher:
-        return jsonify(ok=False, error="Teacher token required"), 401
-    cls = _find_class_by_id(class_id)
-    if not cls or (cls.get("teacher_email") or "").lower() != (teacher.get("email") or "").lower():
-        return jsonify(ok=False, error="Class not found"), 404
+def _class_presence_payload(class_id: str, cls: Optional[dict] = None) -> dict:
+    cls = cls or _find_class_by_id(class_id) or {}
     active_emails = set()
     in_quiz_emails = set()
     users_by_email = {str(u.get("email") or "").strip().lower(): u for u in _load_users().get("users", [])}
@@ -3240,13 +3411,29 @@ def teacher_active_students(class_id: str):
         email: str((users_by_email.get(email) or {}).get("last_sign_in") or "")
         for email in class_students
     }
-    return jsonify(
-        ok=True,
-        classId=class_id,
-        activeStudents=sorted(active_emails),
-        inQuizStudents=sorted(in_quiz_emails),
-        lastSignInByEmail=last_sign_in_by_email,
-    )
+    return {
+        "ok": True,
+        "classId": class_id,
+        "activeStudents": sorted(active_emails),
+        "inQuizStudents": sorted(in_quiz_emails),
+        "lastSignInByEmail": last_sign_in_by_email,
+    }
+
+
+def _emit_class_presence(class_id: str) -> None:
+    if class_id:
+        socketio.emit("class_presence_updated", _class_presence_payload(class_id), to=f"class_{class_id}_teachers")
+
+
+@app.get("/api/teacher/classes/<class_id>/active-students")
+def teacher_active_students(class_id: str):
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    cls = _find_class_by_id(class_id)
+    if not cls or (cls.get("teacher_email") or "").lower() != (teacher.get("email") or "").lower():
+        return jsonify(ok=False, error="Class not found"), 404
+    return jsonify(_class_presence_payload(class_id, cls))
 
 
 @app.post("/api/teacher/students/reset-password")
@@ -3371,19 +3558,139 @@ def teacher_toggle_student():
 # -------------------------
 # Ollama helpers (AI)
 # -------------------------
+_ai_slots = threading.BoundedSemaphore(MAX_CONCURRENT_AI_REQUESTS)
+_ai_lock = threading.Lock()
+_ai_request_history: Dict[str, deque] = defaultdict(deque)
+_ai_cache: Dict[str, tuple[float, str]] = {}
+_ai_consecutive_failures = 0
+_ai_circuit_open_until = 0.0
+_ai_metrics = {
+    "active": 0,
+    "accepted": 0,
+    "capacity_rejected": 0,
+    "rate_rejected": 0,
+    "circuit_rejected": 0,
+    "failures": 0,
+    "cache_hits": 0,
+}
+AI_CACHE_TTL_SECONDS = 60.0
+AI_CACHE_MAX_ENTRIES = 128
+
+
+def _ai_request_identity() -> str:
+    user = _require_user(request)
+    if user:
+        return f"student:{str(user.get('email') or '').strip().lower()}"
+    teacher = _require_teacher(request)
+    if teacher:
+        return f"teacher:{str(teacher.get('email') or '').strip().lower()}"
+    if _require_admin(request):
+        return f"admin:{ADMIN_ACCOUNT_EMAIL.lower()}"
+    return f"ip:{_get_request_ip(request)}"
+
+
+def _prune_ai_state(now: float) -> None:
+    cutoff = now - 60.0
+    for identity, history in list(_ai_request_history.items()):
+        while history and history[0] <= cutoff:
+            history.popleft()
+        if not history:
+            _ai_request_history.pop(identity, None)
+    for key, (expires_at, _) in list(_ai_cache.items()):
+        if expires_at <= now:
+            _ai_cache.pop(key, None)
+    overflow = len(_ai_cache) - AI_CACHE_MAX_ENTRIES
+    if overflow > 0:
+        for key, _ in sorted(_ai_cache.items(), key=lambda item: item[1][0])[:overflow]:
+            _ai_cache.pop(key, None)
+
+
 def call_ollama_generate(ollama_url: str, model: str, prompt: str, timeout: float = 25.0) -> Dict[str, Any]:
+    global _ai_consecutive_failures, _ai_circuit_open_until
+    prompt = str(prompt or "")
+    if not prompt:
+        return {"ok": False, "error": "AI prompt is empty"}
+    if len(prompt) > MAX_AI_PROMPT_CHARS:
+        return {"ok": False, "error": f"AI prompt exceeds {MAX_AI_PROMPT_CHARS} characters"}
+    parsed = urlsplit(str(ollama_url or "").strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        return {"ok": False, "error": "AI service URL is invalid"}
+
     url = ollama_url.rstrip("/") + "/api/generate"
-    payload = {"model": model, "prompt": prompt, "stream": False}
+    model = str(model or "").strip()[:200]
+    payload = {"model": model, "prompt": prompt, "stream": False, "options": {"num_predict": 2048}}
+    cache_key = hashlib.sha256(f"{url}\0{model}\0{prompt}".encode("utf-8")).hexdigest()
+    identity = _ai_request_identity()
+    now = time.monotonic()
+    with _ai_lock:
+        _prune_ai_state(now)
+        if now < _ai_circuit_open_until:
+            _ai_metrics["circuit_rejected"] += 1
+            return {"ok": False, "error": "AI service is temporarily unavailable; retry shortly"}
+        cached = _ai_cache.get(cache_key)
+        if cached and cached[0] > now:
+            _ai_metrics["cache_hits"] += 1
+            return {"ok": True, "text": cached[1], "cached": True}
+        history = _ai_request_history[identity]
+        while history and history[0] <= now - 60.0:
+            history.popleft()
+        if len(history) >= MAX_AI_REQUESTS_PER_MINUTE:
+            _ai_metrics["rate_rejected"] += 1
+            return {"ok": False, "error": "AI request limit reached; wait before trying again"}
+        history.append(now)
+
+    if not _ai_slots.acquire(blocking=False):
+        with _ai_lock:
+            _ai_metrics["capacity_rejected"] += 1
+        return {"ok": False, "error": "AI service is busy; retry shortly"}
+    with _ai_lock:
+        _ai_metrics["active"] += 1
+        _ai_metrics["accepted"] += 1
+    r = None
     try:
-        r = requests.post(url, json=payload, timeout=timeout)
+        bounded_timeout = max(2.0, min(float(timeout), 60.0))
+        r = requests.post(url, json=payload, timeout=(3.0, bounded_timeout), stream=True)
         r.raise_for_status()
-        j = r.json()
-        text = j.get("response") or j.get("data") or ""
+        declared_size = int(r.headers.get("Content-Length", "0") or 0)
+        if declared_size > MAX_AI_HTTP_RESPONSE_BYTES:
+            raise ValueError("AI service response exceeds the configured byte limit")
+        response_bytes = bytearray()
+        for chunk in r.iter_content(chunk_size=16_384):
+            if not chunk:
+                continue
+            response_bytes.extend(chunk)
+            if len(response_bytes) > MAX_AI_HTTP_RESPONSE_BYTES:
+                raise ValueError("AI service response exceeds the configured byte limit")
+        j = json.loads(response_bytes.decode("utf-8"))
+        text = str(j.get("response") or j.get("data") or "")[:MAX_AI_RESPONSE_CHARS]
+        with _ai_lock:
+            _ai_consecutive_failures = 0
+            _ai_cache[cache_key] = (time.monotonic() + AI_CACHE_TTL_SECONDS, text)
+            _prune_ai_state(time.monotonic())
         return {"ok": True, "text": text}
     except requests.exceptions.RequestException as e:
+        with _ai_lock:
+            _ai_metrics["failures"] += 1
+            _ai_consecutive_failures += 1
+            if _ai_consecutive_failures >= AI_CIRCUIT_FAILURE_THRESHOLD:
+                _ai_circuit_open_until = time.monotonic() + AI_CIRCUIT_COOLDOWN_SECONDS
         return {"ok": False, "error": f"Ollama connection failed: {e}"}
     except Exception as e:
+        with _ai_lock:
+            _ai_metrics["failures"] += 1
+            _ai_consecutive_failures += 1
+            if _ai_consecutive_failures >= AI_CIRCUIT_FAILURE_THRESHOLD:
+                _ai_circuit_open_until = time.monotonic() + AI_CIRCUIT_COOLDOWN_SECONDS
         return {"ok": False, "error": f"Ollama error: {e}"}
+    finally:
+        if r is not None:
+            try:
+                r.close()
+            except Exception:
+                pass
+        with _ai_lock:
+            _ai_metrics["active"] = max(0, _ai_metrics["active"] - 1)
+        _ai_slots.release()
 
 
 def _normalize_language_hint(language: Any, file_name: str = "") -> str:
@@ -3870,6 +4177,7 @@ def _html_runtime_popup_shell(channel_id: str) -> str:
       }}
 
       window.addEventListener("message", (event) => {{
+        if (event.source !== frame.contentWindow) return;
         const data = event.data || {{}};
         if (!data.__eagleHtmlRuntime) return;
         if (data.type === "limit") {{
@@ -4123,19 +4431,39 @@ def start_html_runtime():
 
     timeout_seconds = _cfg_int(cfg, "html_runtime_timeout_seconds", HTML_RUNTIME_DEFAULT_TIMEOUT, 1, 600)
     session_ttl_seconds = timeout_seconds + 120
+    preview_origin = _validated_html_preview_origin()
+    scripts_enabled = bool(preview_origin)
     _cleanup_expired_html_runtime_sessions()
     with _html_runtime_lock:
+        owner_email = str(user.get("email") or "").strip().lower()
+        owner_sessions = sum(
+            1
+            for session in _html_runtime_sessions.values()
+            if str(session.get("owner_email") or "").strip().lower() == owner_email
+        )
+        if len(_html_runtime_sessions) >= MAX_HTML_RUNTIME_SESSIONS:
+            return jsonify(ok=False, error="HTML runtime capacity is busy; close a preview and try again"), 503
+        if owner_sessions >= MAX_HTML_RUNTIME_SESSIONS_PER_USER:
+            return jsonify(ok=False, error=f"Close an existing HTML preview before starting another (limit {MAX_HTML_RUNTIME_SESSIONS_PER_USER})"), 429
         _html_runtime_sessions[runtime_id] = {
             "runtime_root": str(source_root),
             "entry_file": entry_path,
-            "owner_email": user.get("email", ""),
+            "owner_email": owner_email,
             "expires_at": time.time() + session_ttl_seconds,
+            "scripts_enabled": scripts_enabled,
         }
 
+    view_path = f"/api/html-runtime/view/{runtime_id}/{quote(entry_path, safe='/')}"
     return jsonify(
         ok=True,
         runtime_id=runtime_id,
-        view_url=f"/api/html-runtime/view/{runtime_id}/{quote(entry_path, safe='/')}",
+        view_url=f"{preview_origin}{view_path}" if preview_origin else view_path,
+        scripts_enabled=scripts_enabled,
+        safety_notice=(
+            "JavaScript is running on the configured isolated preview origin."
+            if scripts_enabled
+            else "JavaScript is disabled because an isolated preview origin is not configured; HTML and CSS remain available."
+        ),
         timeout_seconds=timeout_seconds,
         allow_external_internet=_cfg_bool(cfg, "html_runtime_allow_external_internet", False),
         allow_popups=_cfg_bool(cfg, "html_runtime_allow_popups", False),
@@ -4168,23 +4496,39 @@ def view_html_runtime_asset(runtime_id: str, asset_path: str):
     target = _validate_user_path(runtime_root, asset_path)
     if not target or not target.exists() or not target.is_file():
         return jsonify(ok=False, error="Runtime asset not found"), 404
+    try:
+        asset_size = target.stat().st_size
+    except OSError:
+        return jsonify(ok=False, error="Could not inspect runtime asset"), 500
+    if asset_size > MAX_HTML_RUNTIME_ASSET_BYTES:
+        return jsonify(ok=False, error=f"Runtime asset exceeds the {MAX_HTML_RUNTIME_ASSET_BYTES // (1024 * 1024)}MB limit"), 413
 
     ext = target.suffix.lower()
     if ext == ".html":
+        if asset_size > MAX_HTML_RUNTIME_HTML_BYTES:
+            return jsonify(ok=False, error=f"HTML document exceeds the {MAX_HTML_RUNTIME_HTML_BYTES // (1024 * 1024)}MB preview limit"), 413
         cfg = _load_config()
         try:
             html = target.read_text(encoding="utf-8", errors="replace")
         except Exception:
             return jsonify(ok=False, error="Could not load HTML asset"), 500
-        bridge = _html_runtime_js_bridge(cfg)
-        if "</head>" in html:
-            html = html.replace("</head>", bridge + "\n</head>", 1)
-        elif re.search(r"<body[^>]*>", html, flags=re.IGNORECASE):
-            html = re.sub(r"(<body[^>]*>)", r"\1\n" + bridge + "\n", html, count=1, flags=re.IGNORECASE)
-        else:
-            html = bridge + "\n" + html
+        scripts_enabled = bool(session.get("scripts_enabled")) and _html_preview_request_is_isolated()
+        if scripts_enabled:
+            bridge = _html_runtime_js_bridge(cfg)
+            if re.search(r"</head\s*>", html, flags=re.IGNORECASE):
+                html = re.sub(r"</head\s*>", bridge + "\n</head>", html, count=1, flags=re.IGNORECASE)
+            elif re.search(r"<body[^>]*>", html, flags=re.IGNORECASE):
+                html = re.sub(r"(<body[^>]*>)", r"\1\n" + bridge + "\n", html, count=1, flags=re.IGNORECASE)
+            else:
+                html = bridge + "\n" + html
         response = app.response_class(html, mimetype="text/html")
-        if not _cfg_bool(cfg, "html_runtime_allow_external_internet", False):
+        if not scripts_enabled:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self' data: blob:; script-src 'none'; object-src 'none'; "
+                "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; "
+                "connect-src 'none'; media-src 'self' data: blob:; frame-src 'none'; base-uri 'none'; form-action 'none'"
+            )
+        elif not _cfg_bool(cfg, "html_runtime_allow_external_internet", False):
             response.headers["Content-Security-Policy"] = (
                 "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; "
                 "img-src 'self' data: blob:; "
@@ -4194,209 +4538,505 @@ def view_html_runtime_asset(runtime_id: str, asset_path: str):
                 "frame-src 'self'; "
                 "child-src 'self'"
             )
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
         return response
-    return send_file(str(target))
+    response = send_file(str(target), conditional=True, max_age=0)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
+    return response
 
 # -------------------------
 # Execution sandbox
 # -------------------------
-class Runner:
-    def __init__(self, sid: str):
-        self.sid = sid
-        self.proc: Optional[subprocess.Popen] = None
-        self.thread: Optional[threading.Thread] = None
-        self.stop_evt = threading.Event()
-        self.started_at = 0.0
-
-    def start(self, code: str, user_dir: Optional[Path] = None, allowed_root: Optional[Path] = None):
-        if self.proc:
-            self.stop()
-
-        sbox = SANDBOX_DIR / f"pyide_{self.sid}"
-        try:
-            if sbox.exists():
-                for p in sbox.iterdir():
-                    try: p.unlink()
-                    except Exception: pass
-            else:
-                sbox.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            pass
-
-        runner_py = sbox / "runner.py"
-        runner_py.write_text(code, encoding="utf-8")
-
-        # Use user_dir as cwd if provided and exists, so relative file paths work
-        cwd = str(user_dir) if (user_dir and user_dir.exists()) else str(sbox)
-
-        allowed_root_dir = str(allowed_root.resolve()) if (allowed_root and allowed_root.exists()) else str(Path(cwd).resolve())
-
-        self.proc = subprocess.Popen(
-            [sys.executable, "-u", str(SANDBOX_WORKER), str(runner_py), allowed_root_dir],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            cwd=cwd,
-            env={"PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"},
-            close_fds=True
-        )
-        self.started_at = time.time()
-        self.stop_evt.clear()
-        self.thread = threading.Thread(target=self._pump, daemon=True)
-        self.thread.start()
-
-        socketio.emit("output", {"data": "[Process started]\n"}, to=self.sid)
-
-    def _pump(self):
-        assert self.proc and self.proc.stdout and self.proc.stdin
-        stdout = self.proc.stdout
-        total_output_bytes = [0]  # mutable container for closure
-
-        # Batch output to avoid overwhelming the browser with rapid socket messages.
-        # Lines are collected until BATCH_BYTES is reached or BATCH_SECS has elapsed.
-        BATCH_BYTES = 4096
-        BATCH_SECS = 0.05  # 50 ms
-
-        def reader():
-            buf: list[str] = []
-            buf_size = 0
-            last_flush = time.time()
-
-            def flush():
-                nonlocal buf, buf_size, last_flush
-                if buf:
-                    try:
-                        socketio.emit("output", {"data": "".join(buf)}, to=self.sid)
-                    except Exception:
-                        pass
-                buf = []
-                buf_size = 0
-                last_flush = time.time()
-
-            while not self.stop_evt.is_set():
-                b = stdout.readline()
-                if not b:
-                    flush()
-                    break
-                total_output_bytes[0] += len(b)
-                if total_output_bytes[0] > MAX_OUTPUT_BYTES:
-                    flush()
-                    try:
-                        self.proc.kill()
-                    except Exception:
-                        pass
-                    try:
-                        socketio.emit("output", {"data": "\n[Output limit exceeded (500 KB) -- process killed to protect your browser]\n"}, to=self.sid)
-                    except Exception:
-                        pass
-                    return
-                decoded = b.decode("utf-8", errors="replace")
-                buf.append(decoded)
-                buf_size += len(decoded)  # track decoded character count for batch threshold
-                # Immediately flush when an input() prompt token is detected
-                # so the user sees the prompt without waiting for the batch timer
-                if INPUT_TOKEN in decoded:
-                    flush()
-                else:
-                    now = time.time()
-                    if buf_size >= BATCH_BYTES or (now - last_flush) >= BATCH_SECS:
-                        flush()
-            flush()
-
-        t = threading.Thread(target=reader, daemon=True)
-        t.start()
-
-        while self.proc and self.proc.poll() is None and not self.stop_evt.is_set():
-            now = time.time()
-            if now - self.started_at > MAX_WALL_TIME:
-                try: self.proc.kill()
-                except Exception: pass
-                socketio.emit("output", {"data": "\n[Process killed due to wall-time limit]\n"}, to=self.sid)
-                break
-            time.sleep(0.05)
-
-        try:
-            socketio.emit("finished", {}, to=self.sid)
-        except Exception:
-            pass
-
-    def send_stdin(self, data: str):
-        if self.proc and self.proc.stdin and self.proc.poll() is None:
-            try:
-                self.proc.stdin.write((data + "\n").encode("utf-8"))
-                self.proc.stdin.flush()
-                self.started_at = max(self.started_at, time.time() - 1.0)
-            except Exception:
-                pass
-
-    def stop(self):
-        self.stop_evt.set()
-        if self.proc and self.proc.poll() is None:
-            try: self.proc.terminate()
-            except Exception: pass
-            try:
-                for _ in range(10):
-                    if self.proc.poll() is not None: break
-                    time.sleep(0.1)
-                if self.proc.poll() is None:
-                    self.proc.kill()
-            except Exception:
-                pass
-        self.proc = None
-
 _runners: Dict[str, "Runner | JsRunner"] = {}
-_runner_lock = threading.Lock()
+_runner_lock = _native_threading.Lock()
 _socket_sid_info: Dict[str, dict] = {}
 _socket_sid_rooms: Dict[str, set] = {}
 
 NODE_EXECUTABLE = shutil.which("node") or "node"
 
-class JsRunner:
-    """Runs JavaScript code via Node.js, mirrors the Runner API."""
+def _popen_isolation_kwargs() -> dict[str, Any]:
+    if os.name == "nt":
+        flags = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        flags |= int(getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0))
+        return {"creationflags": flags}
+    return {"start_new_session": True}
 
+
+def _attach_windows_job(proc: subprocess.Popen) -> Optional[int]:
+    """Put a Windows runner in a kill-on-close, CPU-, memory-, and process-limited Job Object."""
+    if os.name != "nt":
+        return None
+    handle = None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class BasicLimits(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_longlong),
+                ("PerJobUserTimeLimit", ctypes.c_longlong),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class IoCounters(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_ulonglong),
+                ("WriteOperationCount", ctypes.c_ulonglong),
+                ("OtherOperationCount", ctypes.c_ulonglong),
+                ("ReadTransferCount", ctypes.c_ulonglong),
+                ("WriteTransferCount", ctypes.c_ulonglong),
+                ("OtherTransferCount", ctypes.c_ulonglong),
+            ]
+
+        class ExtendedLimits(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", BasicLimits),
+                ("IoInfo", IoCounters),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        class CpuLimits(ctypes.Structure):
+            _fields_ = [("ControlFlags", wintypes.DWORD), ("CpuRate", wintypes.DWORD)]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel32.CreateJobObjectW(None, None)
+        if not handle:
+            raise ctypes.WinError(ctypes.get_last_error())
+
+        info = ExtendedLimits()
+        info.BasicLimitInformation.LimitFlags = 0x00000008 | 0x00000100 | 0x00002000
+        info.BasicLimitInformation.ActiveProcessLimit = 1
+        info.ProcessMemoryLimit = RUNNER_MEMORY_LIMIT_BYTES
+        if not kernel32.SetInformationJobObject(handle, 9, ctypes.byref(info), ctypes.sizeof(info)):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+        cpu = CpuLimits()
+        cpu.ControlFlags = 0x1 | 0x4
+        cpu.CpuRate = max(1, min(10_000, RUNNER_CPU_PERCENT * 100))
+        if not kernel32.SetInformationJobObject(handle, 15, ctypes.byref(cpu), ctypes.sizeof(cpu)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if not kernel32.AssignProcessToJobObject(handle, wintypes.HANDLE(int(proc._handle))):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return int(handle)
+    except Exception:
+        try:
+            if handle:
+                ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle(handle)
+        except Exception:
+            pass
+        if REQUIRE_WINDOWS_JOB_LIMITS:
+            raise
+        return None
+
+
+def _apply_posix_process_limits(proc: subprocess.Popen) -> None:
+    if os.name == "nt":
+        return
+    try:
+        import resource
+    except Exception:
+        return
+    if hasattr(resource, "prlimit"):
+        limits = [
+            (resource.RLIMIT_CPU, (MAX_CPU_TIME_SECONDS, MAX_CPU_TIME_SECONDS + 1)),
+            (resource.RLIMIT_FSIZE, (MAX_EDITOR_FILE_BYTES, MAX_EDITOR_FILE_BYTES)),
+            (resource.RLIMIT_NOFILE, (64, 64)),
+        ]
+        if hasattr(resource, "RLIMIT_NPROC"):
+            limits.append((resource.RLIMIT_NPROC, (16, 16)))
+        if hasattr(resource, "RLIMIT_CORE"):
+            limits.append((resource.RLIMIT_CORE, (0, 0)))
+        for limit_name, values in limits:
+            try:
+                resource.prlimit(proc.pid, limit_name, values)
+            except Exception:
+                pass
+    try:
+        if hasattr(os, "setpriority") and hasattr(os, "PRIO_PROCESS"):
+            os.setpriority(os.PRIO_PROCESS, proc.pid, 10)
+    except Exception:
+        pass
+
+
+def _close_windows_job(handle: Optional[int]) -> None:
+    if os.name != "nt" or not handle:
+        return
+    try:
+        import ctypes
+
+        ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle(handle)
+    except Exception:
+        pass
+
+
+def _terminate_isolated_process(proc: Optional[subprocess.Popen], job_handle: Optional[int], force: bool = False) -> None:
+    if not proc or proc.poll() is not None:
+        return
+    if os.name == "nt" and job_handle:
+        try:
+            import ctypes
+
+            ctypes.WinDLL("kernel32", use_last_error=True).TerminateJobObject(job_handle, 1)
+            return
+        except Exception:
+            pass
+    if os.name != "nt":
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL if force else signal.SIGTERM)
+            return
+        except Exception:
+            pass
+    try:
+        proc.kill() if force else proc.terminate()
+    except Exception:
+        pass
+
+
+def _prepare_runner_sandbox(prefix: str, sid: str) -> Path:
+    safe_sid = re.sub(r"[^A-Za-z0-9_-]", "_", str(sid))[:120] or uuid.uuid4().hex
+    sbox = SANDBOX_DIR / f"{prefix}_{safe_sid}"
+    try:
+        if sbox.exists():
+            shutil.rmtree(sbox)
+        sbox.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        raise RuntimeError("Could not prepare execution sandbox") from exc
+    return sbox
+
+
+def _runner_environment(extra: Optional[dict[str, str]] = None) -> dict[str, str]:
+    allowed_names = (
+        "SYSTEMROOT",
+        "WINDIR",
+        "TEMP",
+        "TMP",
+        "COMSPEC",
+        "PATHEXT",
+        "LANG",
+        "LC_ALL",
+        "TZ",
+    )
+    env = {name: os.environ[name] for name in allowed_names if os.environ.get(name)}
+    env.update(extra or {})
+    return env
+
+
+class _ProcessRunnerBase:
     def __init__(self, sid: str):
         self.sid = sid
         self.proc: Optional[subprocess.Popen] = None
         self.thread: Optional[threading.Thread] = None
-        self.stop_evt = threading.Event()
+        self.stop_evt = _native_threading.Event()
         self.started_at = 0.0
+        self.waiting_for_input = False
+        self.input_wait_started = 0.0
+        self.total_input_wait = 0.0
+        self.run_id = 0
+        self.job_handle: Optional[int] = None
+        self._state_lock = _native_threading.RLock()
 
-    def start(self, code: str, user_dir: Optional[Path] = None):
-        if self.proc:
-            self.stop()
+    def _is_current(self, proc: subprocess.Popen, run_id: int) -> bool:
+        with self._state_lock:
+            return self.proc is proc and self.run_id == run_id
 
-        sbox = SANDBOX_DIR / f"jside_{self.sid}"
+    def _emit_output(self, proc: subprocess.Popen, run_id: int, data: str) -> None:
+        if not data or not self._is_current(proc, run_id):
+            return
         try:
-            if sbox.exists():
-                for p in sbox.iterdir():
-                    try: p.unlink()
-                    except Exception: pass
-            else:
-                sbox.mkdir(parents=True, exist_ok=True)
+            socketio.emit("output", {"data": data}, to=self.sid)
         except Exception:
             pass
 
+    def _mark_waiting_for_input(self, proc: subprocess.Popen, run_id: int) -> None:
+        with self._state_lock:
+            if self.proc is not proc or self.run_id != run_id or self.waiting_for_input:
+                return
+            self.waiting_for_input = True
+            self.input_wait_started = time.time()
+
+    def _launch(
+        self,
+        command: list[str],
+        cwd: str,
+        env: dict[str, str],
+        disk_root: Optional[Path] = None,
+        disk_limit_bytes: int = 0,
+    ) -> None:
+        with self._state_lock:
+            if self.proc and self.proc.poll() is None:
+                raise RuntimeError("A program is already running for this session")
+            self.run_id += 1
+            run_id = self.run_id
+            stop_evt = _native_threading.Event()
+
+        proc = subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=cwd,
+            env=env,
+            close_fds=True,
+            **_popen_isolation_kwargs(),
+        )
+        _apply_posix_process_limits(proc)
+        try:
+            job_handle = _attach_windows_job(proc)
+        except Exception as exc:
+            _terminate_isolated_process(proc, None, force=True)
+            try:
+                proc.wait(timeout=2)
+            except Exception:
+                pass
+            raise RuntimeError("Could not establish hard operating-system runner limits") from exc
+
+        with self._state_lock:
+            self.proc = proc
+            self.stop_evt = stop_evt
+            self.started_at = time.time()
+            self.waiting_for_input = False
+            self.input_wait_started = 0.0
+            self.total_input_wait = 0.0
+            self.job_handle = job_handle
+            self.thread = _native_threading.Thread(
+                target=self._pump,
+                args=(proc, stop_evt, run_id, job_handle, disk_root, disk_limit_bytes),
+                daemon=True,
+            )
+        try:
+            socketio.emit("run_ack", {"ok": True}, to=self.sid)
+        except Exception:
+            pass
+        self._emit_output(proc, run_id, "[Process started]\n")
+        self.thread.start()
+
+    @staticmethod
+    def _partial_input_token_suffix(text: str) -> int:
+        for size in range(min(len(text), len(INPUT_TOKEN) - 1), 0, -1):
+            if text.endswith(INPUT_TOKEN[:size]):
+                return size
+        return 0
+
+    def _pump(
+        self,
+        proc: subprocess.Popen,
+        stop_evt: threading.Event,
+        run_id: int,
+        job_handle: Optional[int],
+        disk_root: Optional[Path],
+        disk_limit_bytes: int,
+    ) -> None:
+        assert proc.stdout and proc.stdin
+        stdout = proc.stdout
+        limit_reason: list[str] = []
+        limit_lock = _native_threading.Lock()
+
+        def set_limit(reason: str) -> None:
+            with limit_lock:
+                if not limit_reason:
+                    limit_reason.append(reason)
+            stop_evt.set()
+            _terminate_isolated_process(proc, job_handle, force=True)
+
+        def reader() -> None:
+            decoder = codecs.getincrementaldecoder("utf-8")("replace")
+            pending = ""
+            total_bytes = 0
+            total_lines = 0
+
+            def flush(force: bool = False) -> None:
+                nonlocal pending
+                if not pending:
+                    return
+                keep = 0 if force else self._partial_input_token_suffix(pending)
+                emit_text = pending if keep == 0 else pending[:-keep]
+                pending = "" if keep == 0 else pending[-keep:]
+                if emit_text:
+                    self._emit_output(proc, run_id, emit_text)
+
+            try:
+                while True:
+                    if hasattr(stdout, "read1"):
+                        raw = stdout.read1(OUTPUT_READ_CHUNK_BYTES)
+                    else:
+                        raw = os.read(stdout.fileno(), OUTPUT_READ_CHUNK_BYTES)
+                    if not raw:
+                        pending += decoder.decode(b"", final=True)
+                        flush(force=True)
+                        return
+                    total_bytes += len(raw)
+                    total_lines += raw.count(b"\n")
+                    if total_bytes > MAX_OUTPUT_BYTES:
+                        flush(force=True)
+                        set_limit(f"Output limit exceeded ({MAX_OUTPUT_BYTES // 1000} KB); process stopped")
+                        return
+                    if total_lines > MAX_OUTPUT_LINES:
+                        flush(force=True)
+                        set_limit(f"Output line limit exceeded ({MAX_OUTPUT_LINES} lines); process stopped")
+                        return
+                    pending += decoder.decode(raw)
+                    if INPUT_TOKEN in pending:
+                        self._mark_waiting_for_input(proc, run_id)
+                        flush(force=True)
+                    else:
+                        flush()
+            except Exception:
+                flush(force=True)
+
+        reader_thread = _native_threading.Thread(target=reader, daemon=True)
+        reader_thread.start()
+        next_disk_check = time.time() + 2.0
+        try:
+            while proc.poll() is None and not stop_evt.is_set():
+                now = time.time()
+                with self._state_lock:
+                    waiting = self.waiting_for_input and self.proc is proc and self.run_id == run_id
+                    wait_started = self.input_wait_started
+                    completed_wait = self.total_input_wait
+                    started_at = self.started_at
+                if now - started_at > MAX_INTERACTIVE_WALL_TIME:
+                    set_limit("Process stopped due to absolute interactive time limit")
+                    break
+                if waiting and wait_started and now - wait_started > IDLE_TIMEOUT:
+                    set_limit("Process stopped while waiting too long for input")
+                    break
+                current_wait = max(0.0, now - wait_started) if waiting and wait_started else 0.0
+                if now - started_at - completed_wait - current_wait > MAX_WALL_TIME:
+                    set_limit("Process stopped due to active wall-time limit")
+                    break
+                if disk_root and disk_limit_bytes > 0 and now >= next_disk_check:
+                    next_disk_check = now + 2.0
+                    try:
+                        if _get_user_storage_used(disk_root) > disk_limit_bytes:
+                            set_limit("Process stopped after exceeding its workspace write budget")
+                            break
+                    except Exception:
+                        pass
+                _native_time.sleep(0.05)
+        finally:
+            if stop_evt.is_set() and proc.poll() is None:
+                _terminate_isolated_process(proc, job_handle, force=True)
+            try:
+                proc.wait(timeout=2)
+            except Exception:
+                _terminate_isolated_process(proc, job_handle, force=True)
+            reader_thread.join(timeout=2)
+            for stream in (proc.stdin, proc.stdout):
+                try:
+                    if stream:
+                        stream.close()
+                except Exception:
+                    pass
+            _close_windows_job(job_handle)
+            with limit_lock:
+                reason = limit_reason[0] if limit_reason else ""
+            if reason:
+                self._emit_output(proc, run_id, f"\n[{reason}]\n")
+            if self._is_current(proc, run_id):
+                with self._state_lock:
+                    self.proc = None
+                    self.job_handle = None
+                    self.waiting_for_input = False
+                try:
+                    socketio.emit("finished", {}, to=self.sid)
+                except Exception:
+                    pass
+            _runner_finished(self.sid, self, run_id)
+
+    def send_stdin(self, data: str) -> None:
+        with self._state_lock:
+            proc = self.proc
+            if self.waiting_for_input and self.input_wait_started:
+                self.total_input_wait += max(0.0, time.time() - self.input_wait_started)
+            self.waiting_for_input = False
+            self.input_wait_started = 0.0
+        if proc and proc.stdin and proc.poll() is None:
+            try:
+                proc.stdin.write((data + "\n").encode("utf-8"))
+                proc.stdin.flush()
+            except Exception:
+                pass
+
+    def stop(self) -> None:
+        with self._state_lock:
+            proc = self.proc
+            job_handle = self.job_handle
+            stop_evt = self.stop_evt
+        stop_evt.set()
+        if proc and proc.poll() is None:
+            _terminate_isolated_process(proc, job_handle, force=False)
+            try:
+                proc.wait(timeout=1)
+            except Exception:
+                _terminate_isolated_process(proc, job_handle, force=True)
+
+
+class Runner(_ProcessRunnerBase):
+    def start(self, code: str, user_dir: Optional[Path] = None, allowed_root: Optional[Path] = None) -> None:
+        sbox = _prepare_runner_sandbox("pyide", self.sid)
+        runner_py = sbox / "runner.py"
+        runner_py.write_text(code, encoding="utf-8")
+        cwd_path = user_dir if user_dir and user_dir.exists() else sbox
+        allowed_root_path = allowed_root.resolve() if allowed_root and allowed_root.exists() else cwd_path.resolve()
+        write_budget = MAX_RUN_WRITE_BYTES
+        used = 0
+        try:
+            used = _get_user_storage_used(allowed_root_path)
+            remaining = max(0, (USER_STORAGE_LIMIT_MB * 1024 * 1024) - used)
+            write_budget = min(write_budget, remaining)
+        except Exception:
+            pass
+        env = _runner_environment({
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUNBUFFERED": "1",
+            "HOME": str(allowed_root_path),
+            "USERPROFILE": str(allowed_root_path),
+            "TEMP": str(cwd_path),
+            "TMP": str(cwd_path),
+            "EAGLE_MAX_CPU_SECONDS": str(MAX_CPU_TIME_SECONDS),
+            "EAGLE_MAX_MEMORY_BYTES": str(RUNNER_MEMORY_LIMIT_BYTES),
+            "EAGLE_MAX_FILE_BYTES": str(max(1024, min(MAX_EDITOR_FILE_BYTES, write_budget or 1024))),
+            "EAGLE_RUN_WRITE_BUDGET_BYTES": str(write_budget),
+        })
+        self._launch(
+            [sys.executable, "-u", str(SANDBOX_WORKER), str(runner_py), str(allowed_root_path)],
+            str(cwd_path),
+            env,
+            disk_root=allowed_root_path,
+            disk_limit_bytes=min(USER_STORAGE_LIMIT_MB * 1024 * 1024, used + MAX_RUN_WRITE_BYTES),
+        )
+
+
+class JsRunner(_ProcessRunnerBase):
+    """Runs JavaScript code via Node.js in a locked-down VM context."""
+
+    def start(self, code: str, user_dir: Optional[Path] = None) -> None:
+        sbox = _prepare_runner_sandbox("jside", self.sid)
         runner_js = sbox / "runner.js"
         runner_js.write_text(code, encoding="utf-8")
-
-        cwd = str(user_dir) if (user_dir and user_dir.exists()) else str(sbox)
-
-        runner_js_repr = repr(str(runner_js))
-        cwd_repr = repr(cwd)
-
-        # Wrapper that provides synchronous input() and executes JS in a locked-down vm context.
+        cwd_path = user_dir if user_dir and user_dir.exists() else sbox
         wrapper_code = f"""
 const fs = require('fs');
 const vm = require('vm');
 const INPUT_TOKEN = {repr(INPUT_TOKEN)};
-
-// Synchronous input() — writes prompt + INPUT_TOKEN, then reads a line from stdin.
 function input(prompt) {{
-  if (prompt !== undefined && prompt !== null) {{
-    process.stdout.write(String(prompt));
-  }}
+  if (prompt !== undefined && prompt !== null) process.stdout.write(String(prompt));
   process.stdout.write(INPUT_TOKEN + '\\n');
-  // Read from stdin one byte at a time (synchronous).
   const buf = Buffer.alloc(1);
   let line = '';
   while (true) {{
@@ -4410,21 +5050,17 @@ function input(prompt) {{
   process.stdout.write(line + '\\n');
   return line;
 }}
-
 const safeConsole = Object.freeze({{
   log: (...args) => process.stdout.write(args.map(v => String(v)).join(' ') + '\\n'),
   info: (...args) => process.stdout.write(args.map(v => String(v)).join(' ') + '\\n'),
   warn: (...args) => process.stdout.write(args.map(v => String(v)).join(' ') + '\\n'),
   error: (...args) => process.stderr.write(args.map(v => String(v)).join(' ') + '\\n')
 }});
-
 try {{
-  const __userCode = fs.readFileSync({runner_js_repr}, 'utf8');
-  process.chdir({cwd_repr});
+  const __userCode = fs.readFileSync({repr(str(runner_js))}, 'utf8');
+  process.chdir({repr(str(cwd_path))});
   const sandbox = {{
-    console: safeConsole,
-    input,
-    Math, Date, JSON,
+    console: safeConsole, input, Math, Date, JSON,
     parseInt, parseFloat, isNaN, isFinite, encodeURIComponent, decodeURIComponent,
     setTimeout, setInterval, clearTimeout, clearInterval
   }};
@@ -4437,115 +5073,22 @@ try {{
   process.exit(1);
 }}
 """
-
-        self.proc = subprocess.Popen(
-            [NODE_EXECUTABLE, "--max-old-space-size=256", "-e", wrapper_code],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            cwd=cwd,
-            env={"NODE_DISABLE_COLORS": "1"},
-            close_fds=True
+        self._launch(
+            [NODE_EXECUTABLE, f"--max-old-space-size={RUNNER_MEMORY_LIMIT_BYTES // (1024 * 1024)}", "-e", wrapper_code],
+            str(cwd_path),
+            _runner_environment({"NODE_DISABLE_COLORS": "1"}),
         )
-        self.started_at = time.time()
-        self.stop_evt.clear()
-        self.thread = threading.Thread(target=self._pump, daemon=True)
-        self.thread.start()
 
-        socketio.emit("output", {"data": "[Process started]\n"}, to=self.sid)
 
-    def _pump(self):
-        assert self.proc and self.proc.stdout and self.proc.stdin
-        stdout = self.proc.stdout
-        total_output_bytes = [0]
-
-        BATCH_BYTES = 4096
-        BATCH_SECS = 0.05
-
-        def reader():
-            buf: list[str] = []
-            buf_size = 0
-            last_flush = time.time()
-
-            def flush():
-                nonlocal buf, buf_size, last_flush
-                if buf:
-                    try:
-                        socketio.emit("output", {"data": "".join(buf)}, to=self.sid)
-                    except Exception:
-                        pass
-                buf = []
-                buf_size = 0
-                last_flush = time.time()
-
-            while not self.stop_evt.is_set():
-                b = stdout.readline()
-                if not b:
-                    flush()
-                    break
-                total_output_bytes[0] += len(b)
-                if total_output_bytes[0] > MAX_OUTPUT_BYTES:
-                    flush()
-                    try:
-                        self.proc.kill()
-                    except Exception:
-                        pass
-                    try:
-                        socketio.emit("output", {"data": "\n[Output limit exceeded (500 KB) -- process killed to protect your browser]\n"}, to=self.sid)
-                    except Exception:
-                        pass
-                    return
-                decoded = b.decode("utf-8", errors="replace")
-                buf.append(decoded)
-                buf_size += len(decoded)
-                if INPUT_TOKEN in decoded:
-                    flush()
-                else:
-                    now = time.time()
-                    if buf_size >= BATCH_BYTES or (now - last_flush) >= BATCH_SECS:
-                        flush()
-            flush()
-
-        t = threading.Thread(target=reader, daemon=True)
-        t.start()
-
-        while self.proc and self.proc.poll() is None and not self.stop_evt.is_set():
-            now = time.time()
-            if now - self.started_at > MAX_WALL_TIME:
-                try: self.proc.kill()
-                except Exception: pass
-                socketio.emit("output", {"data": "\n[Process killed due to wall-time limit]\n"}, to=self.sid)
-                break
-            time.sleep(0.05)
-
-        try:
-            socketio.emit("finished", {}, to=self.sid)
-        except Exception:
-            pass
-
-    def send_stdin(self, data: str):
-        if self.proc and self.proc.stdin and self.proc.poll() is None:
-            try:
-                self.proc.stdin.write((data + "\n").encode("utf-8"))
-                self.proc.stdin.flush()
-                self.started_at = max(self.started_at, time.time() - 1.0)
-            except Exception:
-                pass
-
-    def stop(self):
-        self.stop_evt.set()
-        if self.proc and self.proc.poll() is None:
-            try: self.proc.terminate()
-            except Exception: pass
-            try:
-                for _ in range(10):
-                    if self.proc.poll() is not None: break
-                    time.sleep(0.1)
-                if self.proc.poll() is None:
-                    self.proc.kill()
-            except Exception:
-                pass
-        self.proc = None
+def _runner_finished(sid: str, runner: _ProcessRunnerBase, run_id: int) -> None:
+    should_release = False
+    with _runner_lock:
+        current = _runners.get(sid)
+        if current is runner and runner.run_id == run_id:
+            _runners.pop(sid, None)
+            should_release = True
+    if should_release:
+        _release_execution_slot(sid)
 
 
 def _get_runner(sid: str) -> Runner:
@@ -4591,17 +5134,232 @@ def _get_js_runner(sid: str) -> JsRunner:
             pass
     return r
 
+
+_execution_admission_lock = _native_threading.Lock()
+_active_runs_by_sid: Dict[str, dict] = {}
+_active_sid_by_identity: Dict[str, str] = {}
+_run_start_history: Dict[str, deque] = defaultdict(deque)
+_run_history_last_seen: Dict[str, float] = {}
+_stdin_event_history: Dict[str, deque] = defaultdict(deque)
+_socket_limit_lock = _native_threading.Lock()
+_socket_sid_ips: Dict[str, str] = {}
+_run_metrics: Dict[str, int] = defaultdict(int)
+
+
+def _resolve_execution_context(payload: dict, sid: str) -> tuple[Optional[dict], Optional[str]]:
+    user_token = str(payload.get("user_token") or "").strip()
+    teacher_token = str(payload.get("teacher_token") or "").strip()
+    admin_token = str(payload.get("admin_token") or "").strip()
+    file_path = str(payload.get("file_path") or "").strip()
+
+    info = None
+    role = "guest"
+    if user_token:
+        info = _student_tokens.get(user_token)
+        role = "student"
+        if not info:
+            return None, "Run rejected: invalid or expired student session"
+    elif teacher_token:
+        info = _teacher_tokens.get(teacher_token)
+        role = "teacher"
+        if not info:
+            return None, "Run rejected: invalid or expired teacher session"
+    elif admin_token:
+        if admin_token not in _admin_tokens:
+            return None, "Run rejected: invalid or expired admin session"
+        info = {"email": ADMIN_ACCOUNT_EMAIL, "name": "Admin", "role": "admin"}
+        role = "admin"
+
+    if info:
+        email = str(info.get("email") or "").strip().lower()
+        if not email:
+            return None, "Run rejected: account identity is unavailable"
+        root = _get_user_dir(email)
+        root.mkdir(parents=True, exist_ok=True)
+        run_dir = root
+        if file_path:
+            file_abs = _validate_user_path(root, file_path)
+            if file_abs and file_abs.exists() and file_abs.is_file():
+                run_dir = file_abs.parent
+        return {
+            "identity": f"account:{email}",
+            "rate_identity": f"account:{email}",
+            "role": role,
+            "email": email,
+            "run_dir": run_dir,
+            "allowed_root": root,
+            "guest_ip": "",
+        }, None
+
+    guest_ip = _socket_sid_ips.get(sid) or _get_request_ip(request)
+    return {
+        "identity": f"guest:{guest_ip}:{sid}",
+        "rate_identity": f"guest-ip:{guest_ip}",
+        "role": "guest",
+        "email": "",
+        "run_dir": None,
+        "allowed_root": None,
+        "guest_ip": guest_ip,
+    }, None
+
+
+def _try_acquire_execution_slot(sid: str, context: dict) -> tuple[bool, str]:
+    now = time.time()
+    identity = str(context.get("identity") or "")
+    rate_identity = str(context.get("rate_identity") or identity)
+    guest_ip = str(context.get("guest_ip") or "")
+    pressure_reason = _execution_pressure_reason()
+    if pressure_reason:
+        _run_metrics["pressure_rejected"] += 1
+        return False, pressure_reason
+    with _execution_admission_lock:
+        stale_cutoff = now - RUN_RATE_IDENTITY_STALE_SECONDS
+        for stale_key in [key for key, seen in list(_run_history_last_seen.items()) if seen < stale_cutoff]:
+            _run_history_last_seen.pop(stale_key, None)
+            _run_start_history.pop(stale_key, None)
+        overflow = len(_run_history_last_seen) - MAX_RUN_RATE_IDENTITIES
+        if overflow > 0:
+            oldest = heapq.nsmallest(overflow, _run_history_last_seen.items(), key=lambda item: item[1])
+            for stale_key, _ in oldest:
+                _run_history_last_seen.pop(stale_key, None)
+                _run_start_history.pop(stale_key, None)
+        if sid in _active_runs_by_sid:
+            return False, "A program is already running in this browser session"
+        existing_sid = _active_sid_by_identity.get(identity)
+        if existing_sid and existing_sid != sid:
+            return False, "This account already has a program running in another tab"
+
+        history = _run_start_history[rate_identity]
+        _run_history_last_seen[rate_identity] = now
+        cutoff = now - RUN_START_RATE_WINDOW_SECONDS
+        while history and history[0] < cutoff:
+            history.popleft()
+        if len(history) >= MAX_RUN_STARTS_PER_WINDOW:
+            _run_metrics["rate_rejected"] += 1
+            return False, "Run rate limit reached; wait a few seconds before trying again"
+        if len(_active_runs_by_sid) >= MAX_CONCURRENT_RUNS:
+            _run_metrics["capacity_rejected"] += 1
+            return False, "Execution capacity is busy; try again shortly"
+        if guest_ip:
+            guest_count = sum(1 for row in _active_runs_by_sid.values() if row.get("guest_ip") == guest_ip)
+            if guest_count >= MAX_GUEST_RUNS_PER_IP:
+                _run_metrics["guest_rejected"] += 1
+                return False, "Guest execution capacity is busy; try again shortly"
+
+        history.append(now)
+        record = {"identity": identity, "guest_ip": guest_ip, "started_at": now, "role": context.get("role", "guest")}
+        _active_runs_by_sid[sid] = record
+        _active_sid_by_identity[identity] = sid
+        _run_metrics["admitted"] += 1
+        return True, ""
+
+
+def _windows_memory_status() -> tuple[int, int]:
+    if os.name != "nt":
+        return 0, 0
+    try:
+        import ctypes
+
+        class MemoryStatus(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        status = MemoryStatus()
+        status.dwLength = ctypes.sizeof(status)
+        if ctypes.WinDLL("kernel32", use_last_error=True).GlobalMemoryStatusEx(ctypes.byref(status)):
+            return int(status.ullTotalPhys), int(status.ullAvailPhys)
+    except Exception:
+        pass
+    return 0, 0
+
+
+def _execution_pressure_reason() -> str:
+    try:
+        disk = shutil.disk_usage(BASE_DIR)
+        minimum_disk = max(256 * 1024 * 1024, int(disk.total * 0.02))
+        if disk.free < minimum_disk:
+            return "Server storage is below its execution safety threshold"
+    except Exception:
+        pass
+    try:
+        total, used = _parse_meminfo_bytes()
+        available = max(0, total - used)
+        if total <= 0:
+            total, available = _windows_memory_status()
+        if total > 0 and available < max(256 * 1024 * 1024, int(total * 0.08)):
+            return "Server memory is below its execution safety threshold"
+    except Exception:
+        pass
+    return ""
+
+
+def _release_execution_slot(sid: str) -> None:
+    with _execution_admission_lock:
+        record = _active_runs_by_sid.pop(sid, None)
+        if not record:
+            return
+        identity = str(record.get("identity") or "")
+        if _active_sid_by_identity.get(identity) == sid:
+            _active_sid_by_identity.pop(identity, None)
+        _run_metrics["completed"] += 1
+
+
+def _stdin_event_allowed(sid: str) -> bool:
+    now = time.time()
+    history = _stdin_event_history[sid]
+    cutoff = now - STDIN_RATE_WINDOW_SECONDS
+    while history and history[0] < cutoff:
+        history.popleft()
+    if len(history) >= MAX_STDIN_EVENTS_PER_WINDOW:
+        return False
+    history.append(now)
+    return True
+
+
+def _stop_all_runners() -> None:
+    with _runner_lock:
+        items = list(_runners.items())
+        _runners.clear()
+    for sid, runner in items:
+        _release_execution_slot(sid)
+        try:
+            runner.stop()
+        except Exception:
+            pass
+
+
+atexit.register(_stop_all_runners)
+
 # -------------------------
 # Socket.IO handlers
 # -------------------------
 @socketio.on("connect")
 def on_connect():
+    ip = _get_request_ip(request)
+    with _socket_limit_lock:
+        if len(_socket_sid_ips) >= MAX_SOCKET_CONNECTIONS:
+            return False
+        per_ip = sum(1 for existing_ip in _socket_sid_ips.values() if existing_ip == ip)
+        if per_ip >= MAX_SOCKET_CONNECTIONS_PER_IP:
+            return False
+        _socket_sid_ips[request.sid] = ip
     _socket_sid_rooms[request.sid] = set()
     emit("connected", {"sid": request.sid})
 
 @socketio.on("disconnect")
 def on_disconnect():
+    departed_class_ids = list(_socket_sid_rooms.get(request.sid, set()))
     r = _pop_runner(request.sid)
+    _release_execution_slot(request.sid)
     if r:
         try:
             r.stop()
@@ -4611,59 +5369,40 @@ def on_disconnect():
         _set_teacher_stream_state_for_sid(request.sid, class_id, False)
     _socket_sid_info.pop(request.sid, None)
     _socket_sid_rooms.pop(request.sid, None)
+    _stdin_event_history.pop(request.sid, None)
+    with _socket_limit_lock:
+        _socket_sid_ips.pop(request.sid, None)
+    for class_id in departed_class_ids:
+        _emit_class_presence(class_id)
 
 @socketio.on("run_code")
 def on_run_code(payload):
-    payload = payload or {}
+    payload = payload if isinstance(payload, dict) else {}
     raw_code = payload.get("code", "")
     code = str(raw_code if isinstance(raw_code, str) else "")
     if len(code) > MAX_RUN_CODE_CHARS:
         emit("output", {"data": f"[Run rejected: code exceeds {MAX_RUN_CODE_CHARS} characters]\n"})
         emit("finished", {})
         return
-    user_token = (payload or {}).get("user_token", "")
-    teacher_token = (payload or {}).get("teacher_token", "")
-    admin_token = (payload or {}).get("admin_token", "")
-    file_path = (payload or {}).get("file_path", "")  # relative path of the open file
-    run_dir = None
-    allowed_root_dir = None
-    if user_token:
-        user_info = _student_tokens.get(user_token)
-        if user_info:
-            user_root_dir = _get_user_dir(user_info["email"])
-            allowed_root_dir = user_root_dir
-            # Use the directory containing the open file as CWD so relative
-            # file operations in user code work from that folder.
-            if file_path:
-                file_abs = _validate_user_path(user_root_dir, file_path)
-                if file_abs and file_abs.exists():
-                    run_dir = file_abs.parent
-            if not run_dir:
-                run_dir = user_root_dir
-    elif teacher_token:
-        teacher_info = _teacher_tokens.get(teacher_token)
-        if teacher_info:
-            teacher_root_dir = _get_user_dir(teacher_info["email"])
-            teacher_root_dir.mkdir(parents=True, exist_ok=True)
-            allowed_root_dir = teacher_root_dir
-            if file_path:
-                file_abs = _validate_user_path(teacher_root_dir, file_path)
-                if file_abs and file_abs.exists():
-                    run_dir = file_abs.parent
-            if not run_dir:
-                run_dir = teacher_root_dir
-    elif admin_token and admin_token in _admin_tokens:
-        admin_root_dir = _get_user_dir(ADMIN_ACCOUNT_EMAIL)
-        admin_root_dir.mkdir(parents=True, exist_ok=True)
-        allowed_root_dir = admin_root_dir
-        if file_path:
-            file_abs = _validate_user_path(admin_root_dir, file_path)
-            if file_abs and file_abs.exists():
-                run_dir = file_abs.parent
-        if not run_dir:
-            run_dir = admin_root_dir
+    code_bytes = len(code.encode("utf-8"))
+    if code_bytes > MAX_RUN_CODE_BYTES:
+        emit("output", {"data": f"[Run rejected: UTF-8 code size exceeds {MAX_RUN_CODE_BYTES // 1000} KB]\n"})
+        emit("finished", {})
+        return
+
+    context, context_error = _resolve_execution_context(payload, request.sid)
+    if context_error or not context:
+        emit("output", {"data": f"[{context_error or 'Run rejected'}]\n"})
+        emit("finished", {})
+        return
+    admitted, admission_error = _try_acquire_execution_slot(request.sid, context)
+    if not admitted:
+        emit("output", {"data": f"[Run rejected: {admission_error}]\n"})
+        emit("finished", {})
+        return
 
     # Choose the appropriate runner based on language hint or file extension.
+    file_path = str(payload.get("file_path") or "")
     language_hint = _normalize_language_hint(payload.get("language"), file_path)
     is_js = language_hint == "javascript" or (Path(file_path).suffix.lower() == ".js" if file_path else False)
     if is_js:
@@ -4672,11 +5411,12 @@ def on_run_code(payload):
         r = _get_runner(request.sid)
     try:
         if isinstance(r, JsRunner):
-            r.start(code, user_dir=run_dir)
+            r.start(code, user_dir=context.get("run_dir"))
         else:
-            r.start(code, user_dir=run_dir, allowed_root=allowed_root_dir)
-        emit("run_ack", {"ok": True})
+            r.start(code, user_dir=context.get("run_dir"), allowed_root=context.get("allowed_root"))
     except Exception as e:
+        _pop_runner(request.sid)
+        _release_execution_slot(request.sid)
         emit("output", {"data": f"[Error starting process] {e}\n"})
         emit("finished", {})
 
@@ -4685,6 +5425,9 @@ def on_send_input(payload):
     data = str((payload or {}).get("data", ""))
     if len(data) > MAX_STDIN_CHARS:
         emit("output", {"data": f"[Input rejected: exceeds {MAX_STDIN_CHARS} characters]\n"})
+        return
+    if not _stdin_event_allowed(request.sid):
+        emit("output", {"data": "[Input rate limit reached; wait before sending more input]\n"})
         return
     r = _get_active_runner(request.sid)
     if not r:
@@ -4698,6 +5441,7 @@ def on_send_input(payload):
 @socketio.on("stop")
 def on_stop(_=None):
     r = _pop_runner(request.sid)
+    _release_execution_slot(request.sid)
     if r:
         r.stop()
     emit("output", {"data": "\n[Stopped]\n"})
@@ -4706,24 +5450,43 @@ def on_stop(_=None):
 @socketio.on("teacher_code_update")
 def on_teacher_code_update(payload):
     """Broadcast teacher code updates to a class room (admin/teacher only)."""
-    token = (payload or {}).get("token", "")
+    payload = payload if isinstance(payload, dict) else {}
+    token = str(payload.get("token") or "").strip()
     class_id = str((payload or {}).get("class_id") or "").strip()
     role = str((payload or {}).get("role") or "").strip().lower()
     if not class_id:
         return
+    cls = _find_class_by_id(class_id)
+    if not cls:
+        return
+    actor_key = ""
     if role == "teacher":
-        if token not in _teacher_tokens:
+        teacher = _teacher_tokens.get(token)
+        if not teacher or (cls.get("teacher_email") or "").strip().lower() != (teacher.get("email") or "").strip().lower():
             return
-    else:
+        actor_key = f"teacher:{(teacher.get('email') or '').strip().lower()}:{class_id}"
+    elif role == "admin":
         if token not in _admin_tokens:
             return
-    code = (payload or {}).get("code", "")
+        actor_key = f"admin:{class_id}"
+    else:
+        return
+    code = payload.get("code", "")
+    if not isinstance(code, str) or len(code.encode("utf-8")) > MAX_TEACHER_STREAM_CODE_BYTES:
+        return
+    now = time.monotonic()
+    last_emit = _teacher_stream_last_emit.get(actor_key, 0.0)
+    if now - last_emit < TEACHER_STREAM_MIN_INTERVAL_SECONDS:
+        return
+    _teacher_stream_last_emit[actor_key] = now
     language = str((payload or {}).get("language") or "").strip().lower()
-    _teacher_code_snapshots[class_id] = str(code if isinstance(code, str) else "")
+    if language not in {"python", "javascript", "html", "css", "xml"}:
+        language = ""
+    _teacher_code_snapshots[class_id] = code
     if language:
         _teacher_code_languages[class_id] = language
-    payload = {"code": code, "class_id": class_id, "language": _teacher_code_languages.get(class_id, language)}
-    socketio.emit("teacher_code", payload, to=f"class_{class_id}_students")
+    outbound = {"code": code, "class_id": class_id, "language": _teacher_code_languages.get(class_id, language)}
+    socketio.emit("teacher_code", outbound, to=f"class_{class_id}_students")
 
 
 @socketio.on("teacher_stream_status")
@@ -4781,6 +5544,8 @@ def on_join_class_room(payload):
     join_room(f"class_{class_id}")
     if role == "student":
         join_room(f"class_{class_id}_students")
+    elif role in {"teacher", "admin"}:
+        join_room(f"class_{class_id}_teachers")
     _socket_sid_rooms.setdefault(request.sid, set()).add(class_id)
     _emit_teacher_stream_status(class_id, sid=request.sid)
     cached_code = _teacher_code_snapshots.get(class_id)
@@ -4790,6 +5555,7 @@ def on_join_class_room(payload):
             {"code": cached_code, "class_id": class_id, "language": _teacher_code_languages.get(class_id, "")},
             to=request.sid,
         )
+    _emit_class_presence(class_id)
 
 
 @socketio.on("leave_class_room")
@@ -4799,7 +5565,9 @@ def on_leave_class_room(payload):
         return
     leave_room(f"class_{class_id}")
     leave_room(f"class_{class_id}_students")
+    leave_room(f"class_{class_id}_teachers")
     _socket_sid_rooms.setdefault(request.sid, set()).discard(class_id)
+    _emit_class_presence(class_id)
 
 
 @socketio.on("quiz_open")
@@ -4807,6 +5575,8 @@ def on_quiz_open(payload):
     info = _socket_sid_info.get(request.sid)
     if info and info.get("role") == "student":
         info["in_quiz"] = True
+        for class_id in _socket_sid_rooms.get(request.sid, set()):
+            _emit_class_presence(class_id)
 
 
 @socketio.on("quiz_close")
@@ -4814,6 +5584,8 @@ def on_quiz_close(payload):
     info = _socket_sid_info.get(request.sid)
     if info and info.get("role") == "student":
         info["in_quiz"] = False
+        for class_id in _socket_sid_rooms.get(request.sid, set()):
+            _emit_class_presence(class_id)
 
 # -------------------------
 # Assignment system
@@ -4854,9 +5626,14 @@ def _normalize_skill_record(skill: dict, default_order: Optional[int] = None) ->
 
 
 def _load_skills() -> dict:
+    global _skills_cache
     with _skills_lock:
         if SKILLS_FILE.exists():
             try:
+                cache_path = str(SKILLS_FILE.resolve())
+                mtime_ns = SKILLS_FILE.stat().st_mtime_ns
+                if _skills_cache and _skills_cache[0] == cache_path and _skills_cache[1] == mtime_ns:
+                    return copy.deepcopy(_skills_cache[2])
                 data = json.loads(SKILLS_FILE.read_text(encoding="utf-8"))
             except Exception:
                 data = {}
@@ -4869,14 +5646,19 @@ def _load_skills() -> dict:
             normalized = _normalize_skill_record(row, default_order=idx)
             if normalized.get("name") and normalized.get("teacher_email"):
                 skills.append(normalized)
-        return {"skills": skills}
+        normalized_data = {"skills": skills}
+        if SKILLS_FILE.exists():
+            _skills_cache = (str(SKILLS_FILE.resolve()), SKILLS_FILE.stat().st_mtime_ns, normalized_data)
+        return copy.deepcopy(normalized_data)
 
 
 def _save_skills(data: dict) -> None:
+    global _skills_cache
     with _skills_lock:
         tmp = SKILLS_FILE.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(SKILLS_FILE)
+        _skills_cache = None
 
 
 def _get_teacher_skills(teacher_email: str) -> list[dict]:
@@ -6394,6 +7176,25 @@ def admin_server_health():
     disk_percent = round((disk.used / disk.total) * 100, 1) if disk.total > 0 else 0.0
     with _server_health_lock:
         event_feed = list(reversed(_read_json_list_file(SERVER_EVENTS_FILE)[-MAX_SERVER_HEALTH_ALERTS:]))
+    with _execution_admission_lock:
+        execution_health = {
+            "active": len(_active_runs_by_sid),
+            "capacity": MAX_CONCURRENT_RUNS,
+            "admitted_total": int(_run_metrics.get("admitted", 0)),
+            "completed_total": int(_run_metrics.get("completed", 0)),
+            "capacity_rejected_total": int(_run_metrics.get("capacity_rejected", 0)),
+            "rate_rejected_total": int(_run_metrics.get("rate_rejected", 0)),
+            "guest_rejected_total": int(_run_metrics.get("guest_rejected", 0)),
+            "pressure_rejected_total": int(_run_metrics.get("pressure_rejected", 0)),
+        }
+    with _html_runtime_lock:
+        html_runtime_active = len(_html_runtime_sessions)
+    with _ai_lock:
+        ai_health = {
+            **{key: int(value) for key, value in _ai_metrics.items()},
+            "capacity": MAX_CONCURRENT_AI_REQUESTS,
+            "circuit_open": time.monotonic() < _ai_circuit_open_until,
+        }
     return jsonify(
         ok=True,
         data={
@@ -6412,6 +7213,12 @@ def admin_server_health():
                 "free_bytes": disk.free,
                 "percent": disk_percent,
             },
+            "execution": execution_health,
+            "html_runtime_sessions": {
+                "active": html_runtime_active,
+                "capacity": MAX_HTML_RUNTIME_SESSIONS,
+            },
+            "ai": ai_health,
             "sign_ins": {
                 "last_24_hours": _count_sign_ins(24 * 3600),
                 "last_7_days": _count_sign_ins(7 * 24 * 3600),
@@ -6444,7 +7251,7 @@ if __name__ == "__main__":
     _append_server_log(f"Server listening on http://{host}:{port} (async={socketio.async_mode})", "INFO")
     _cleanup_all_user_files()
     try:
-        socketio.run(app, host=host, port=port, debug=False)
+        socketio.run(app, host=host, port=port, debug=False, allow_unsafe_werkzeug=True)
     except (KeyboardInterrupt, SystemExit):
         pass
     print("Server stopped.")
