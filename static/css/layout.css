@@ -3,7 +3,12 @@
 .app-shell {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  height: var(--app-height, 100dvh);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .topbar-primary {
@@ -23,6 +28,7 @@
   position: sticky;
   top: 0;
   z-index: 200;
+  flex: 0 0 auto;
 }
 
 /* Beat legacy shell.css header.topbar { z-index: 100 } so account menu clears tool-tray */
@@ -113,6 +119,7 @@ body.light-mode .topbar-tools-btn {
   border-bottom: 1px solid var(--theme-border-mid);
   position: relative;
   z-index: 100;
+  flex: 0 0 auto;
 }
 
 .tool-tray.collapsed { display: none; }
@@ -159,12 +166,13 @@ body.light-mode .file-chip { background: rgba(255, 255, 255, 0.45); }
   padding: var(--space-3);
   flex: 1;
   min-height: 0;
-  height: calc(100vh - var(--topbar-h) - var(--tool-tray-h));
+  height: auto;
+  max-height: 100%;
   overflow: hidden;
 }
 
 body.tool-tray-collapsed .outer {
-  height: calc(100vh - var(--topbar-h));
+  height: auto;
 }
 
 .panel {
@@ -201,7 +209,11 @@ body.tool-tray-collapsed .outer {
 }
 
 #rightStackPanel .content { overflow: auto; }
-#rightColumn { overflow: hidden; }
+#editorPanel, #rightColumn {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
 
 .outer.no-sidebar #editorPanel { grid-column: 1 / 2; }
 .outer.no-sidebar #hsplitter { grid-column: 2 / 3; }
@@ -379,10 +391,14 @@ body.tool-tray-collapsed .outer {
   body.tablet-mode.panel-shell #rightColumn { display: block !important; }
   body.tablet-mode.panel-shell #shellPanel { display: flex !important; }
   body.tablet-mode.panel-shell .vsplitter { display: none; }
+  body.tablet-mode.panel-shell .rightstack { grid-template-rows: minmax(0, 1fr) !important; }
+  body.tablet-mode.panel-shell #shellPanel { grid-row: 1 / 2 !important; }
   body.tablet-mode.panel-resources #editorPanel { display: none; }
   body.tablet-mode.panel-resources #rightColumn { display: block !important; }
   body.tablet-mode.panel-resources #shellPanel { display: none !important; }
   body.tablet-mode.panel-resources .vsplitter { display: none; }
+  body.tablet-mode.panel-resources .rightstack { grid-template-rows: minmax(0, 1fr) !important; }
+  body.tablet-mode.panel-resources #rightStackPanel { grid-row: 1 / 2 !important; }
   body.tablet-mode.panel-resources #rightStackPanel { display: flex !important; }
   .teacher-dash-modal .modal-content { flex-direction: column; }
   .teacher-dash-sidebar { width: 100%; flex-direction: row; overflow-x: auto; border-right: none; border-bottom: 1px solid var(--theme-border-mid); }
@@ -410,6 +426,15 @@ body.tool-tray-collapsed .outer {
   }
   .file-select-checkbox { width: 22px; height: 22px; }
   :root { --splitter-hit: 20px; }
+  .panel .content,
+  #output,
+  .file-tree,
+  .CodeMirror-scroll {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    touch-action: pan-x pan-y;
+  }
+  .shell-input-bar input { font-size: 16px; }
 }
 
 body.guest-mode #rightStackPanel { display: none !important; }

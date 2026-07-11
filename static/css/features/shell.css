@@ -1,124 +1,75 @@
---theme-shell-bg:   rgba(12,12,12,0.60);
-      --theme-shell-text: #dcdcdc;
-      --theme-tab-bg:     #111;
-      --theme-tab-btn:    #222;
-      --theme-topbar:     linear-gradient(90deg,rgba(165,200,240,0.92),rgba(127,178,235,0.92));
-      --theme-topbar-txt: #0b2540;
-      --theme-output-bg:  #0f0f0f;
-      --theme-cm-bg:      rgba(30,30,30,0.40);
-      --theme-splitter-a: #2b2b2b;
-      --theme-splitter-b: #1a1a1a;
-      --theme-bg-image:   url(/api/background_dark);
+/* Shell output, input, split layout, and status treatments */
 
-      --splitter-size: 12px;
-      --vsplitter-size: 14px;
-      --shell-size: 35%;
-      --left-width: 50%;
-      --teacher-pane-size: 50%;
-      --splitter-hit: 12px;
+#shellPanel > .content {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
 
-      --cm-font-size: 14px;
-      --indent-ch: 4;
-      --indent-tabs: 4;
-    }
+#output {
+  flex: 1 1 auto;
+  width: 100%;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
+  scrollbar-gutter: stable;
+  background: var(--theme-output-bg);
+  color: var(--theme-shell-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
+  padding: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 
-    /* ── Light mode overrides ── */
-      --theme-bg:         #f0f2f5;
-      --theme-panel:      rgba(255,255,255,0.88);
-      --theme-panel-hdr:  rgba(230,235,245,0.96);
-      --theme-border:     #c8d0dc;
-      --theme-border-mid: #d4dae4;
-      --theme-text:       #1a2030;
-      --theme-text-dim:   #555;
-      --theme-input-bg:   #ffffff;
-      --theme-btn:        #dde3ed;
-      --theme-btn-hover:  #c8d2e0;
-      --theme-secondary:  #d0d8e8;
-      --theme-shell-bg:   rgba(240,242,246,0.95);
-      --theme-shell-text: #1a2030;
-      --theme-tab-bg:     #e4e9f3;
-      --theme-tab-btn:    #d0d8e8;
-      --theme-topbar:     linear-gradient(90deg,rgba(165,200,240,0.96),rgba(100,160,230,0.96));
-      --theme-topbar-txt: #0b2540;
-      --theme-output-bg:  #eef0f5;
-      --theme-cm-bg:      rgba(255,255,255,0.80);
-      --theme-splitter-a: #c8d0dc;
-      --theme-splitter-b: #dde3ed;
-      --theme-bg-image:   url(/api/background);
-      --bg-dark: #f0f2f5;
-      --text-light: #1a2030;
-      --panel-dark: #f0f2f5;
-      --panel-mid: #dde3ed;
-    }
+.shell-input-bar {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  border-top: 1px solid var(--theme-border-mid);
+  padding: 8px;
+  background: var(--theme-tab-bg);
+}
 
-    *{box-sizing:border-box}
-    body{ margin:0; background:var(--theme-bg); color:var(--theme-text); font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Arial; background-image:var(--theme-bg-image); background-attachment:fixed; background-size:cover; background-position:center; background-repeat:no-repeat; }
-    header.topbar{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 14px; background:var(--theme-topbar); color:var(--theme-topbar-txt); font-weight:700; letter-spacing:.3px; backdrop-filter:blur(4px); position:relative; z-index:100; }
-    header .brand{ display:flex; gap:8px; align-items:center; min-width:0; }
-    header .brand > div:first-child{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:280px; }
-    header .actions{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
-    .signout-slot{ margin-left:auto; display:flex; align-items:center; }
-    .control-group{ display:flex; align-items:center; gap:6px; padding:4px 6px; border:1px solid var(--theme-border-mid); border-radius:10px; background:rgba(0,0,0,.08); }
-    .topbar select{
-      appearance:none;
-      -webkit-appearance:none;
-      -moz-appearance:none;
-      background:var(--theme-input-bg) !important;
-      color:var(--theme-text) !important;
-      border:1px solid var(--theme-border-mid) !important;
-    }
+.shell-input-bar input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--theme-input-bg);
+  color: var(--theme-text);
+  border: 1px solid var(--theme-border-mid);
+  border-radius: 8px;
+  outline: none;
+  font-size: 14px;
+}
 
-    #output{ background:var(--theme-output-bg); color:var(--theme-shell-text); font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Courier New",monospace; padding:12px; height:100%; overflow:auto; white-space:pre-wrap }
-    .sys-msg{ color:#ff9933; }
-    .shell-input-bar{ display:flex; gap:8px; border-top:1px solid var(--theme-border-mid); padding:8px; background:var(--theme-tab-bg) }
-    .shell-input-bar input{ flex:1; padding:8px 10px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; outline:none; font-size:14px; }
+.shell-input-bar .btn {
+  flex: 0 0 auto;
+}
 
-    .rightstack{ display:grid; grid-template-rows: var(--shell-size) var(--splitter-size) 1fr; grid-template-columns: 1fr; height:100%; min-height:0; overflow:hidden; }
-    .rightstack .panel{ min-height:0; overflow:hidden; display:flex; flex-direction:column; }
-    .vsplitter{ grid-row:2 / 3; grid-column:1; background:linear-gradient(180deg,var(--theme-splitter-a),var(--theme-splitter-b)); border-top:1px solid var(--theme-border); border-bottom:1px solid var(--theme-bg); position:relative; cursor:row-resize; user-select:none; touch-action:none; }
-    .vsplitter::before{ content:""; position:absolute; left:0; right:0; top:calc(-1 * var(--splitter-hit)); height:calc(var(--splitter-size) + 2 * var(--splitter-hit)); }
-    .vsplitter::after{ content:"···"; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); color:var(--theme-text-dim); letter-spacing:4px; font-weight:900; pointer-events:none; }
+.sys-msg { color: #ff9933; }
+.shell-error { color: #ff5555; }
+.shell-user-input { color: #4caf50; font-weight: normal; }
+.cm-error-line { background-color: rgba(255, 85, 85, 0.15); }
 
-    .hsplitter{ grid-column:2 / 3; grid-row:1 / 2; background:linear-gradient(90deg,var(--theme-splitter-a),var(--theme-splitter-b)); border-left:1px solid var(--theme-border); border-right:1px solid var(--theme-bg); position:relative; cursor:col-resize; user-select:none; border-radius:12px; touch-action:none; }
-    .hsplitter::before{ content:""; position:absolute; top:0; bottom:0; left:calc(-1 * var(--splitter-hit)); width:calc(var(--vsplitter-size) + 2 * var(--splitter-hit)); }
-    .hsplitter::after{ content:"⋮"; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); color:var(--theme-text-dim); font-weight:900; pointer-events:none; }
+.ai-thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--columbia-blue);
+  font-style: italic;
+}
 
-    .tabs{ display:flex; gap:6px; border-bottom:1px solid var(--theme-border-mid); background:var(--theme-tab-bg); padding:6px }
-    body.shell-hidden #shellPanel { display: none !important; }
-    body.shell-hidden .vsplitter { display: none !important; }
-    body.shell-hidden .rightstack { grid-template-rows: 1fr !important; }
-    body.shell-hidden #rightStackPanel { grid-row: 1 / 2 !important; }
-
-    /* Error highlighting in shell */
-    .shell-error { color: #ff5555; }
-    .shell-user-input { color: #4caf50; font-weight: normal; }
-
-    /* Error highlighting in editor */
-    .cm-error-line { background-color: rgba(255, 85, 85, 0.15); }
-
-    /* AI thinking indicator */
-    .ai-thinking {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      color: var(--columbia-blue);
-      font-style: italic;
-    }
-    .ai-thinking::after {
-      content: '';
-      width: 16px;
-      height: 16px;
-      border: 2px solid var(--columbia-blue);
-      border-top-color: transparent;
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-    }
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-
-    @media (max-width:1000px){
-      .outer{ grid-template-columns: 1fr !important; grid-template-rows: auto auto auto; }
-      .hsplitter{ display:none }
-      #editorPanel{ height:50vh; grid-column:1 !important; grid-row:auto }
-      #rightColumn{ grid-column:1 !important; grid-row:auto }
+.ai-thinking::after {
+  content: "";
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--columbia-blue);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}

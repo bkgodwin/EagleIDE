@@ -197,6 +197,16 @@ Features:
 - Drag-and-drop file organization
 
 --------------------------------------------------
+SCREEN LAYOUT AND SCROLLING
+--------------------------------------------------
+- The workspace stays fitted to the visible browser area; the browser page itself does not scroll.
+- The editor side and the shell/resources side scroll independently.
+- Shell output remains inside its panel, scrolls automatically to the newest output, and can still be scrolled manually to review earlier output.
+- On tablets and phones, use the bottom Editor, Shell, and Resources buttons to switch panels.
+- Touch scrolling and drag handles use larger touch targets on touch-capable devices.
+- When an on-screen keyboard changes the visible browser height, the workspace resizes to keep the active panel and shell controls on screen.
+
+--------------------------------------------------
 HTML/CSS WEBVIEW RUNTIME
 --------------------------------------------------
 - Create and edit .html and .css files in the file browser
