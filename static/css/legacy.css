@@ -1,3 +1,4 @@
+/* Obsolete token fragment retained as a comment; active tokens live in tokens.css.
 --columbia-blue:#a5c8f0;
       --eagle-red:#c62828;
       --bg-dark:#1e1e1e;
@@ -17,6 +18,7 @@
       --theme-btn:        #222;
       --theme-btn-hover:  #2a2a2a;
       --theme-secondary:  #2b2b2b;
+*/
     .btn{ border:0; border-radius:10px; padding:8px 14px; font-weight:700; cursor:pointer; background:var(--theme-btn); color:var(--theme-text); box-shadow:0 2px 8px rgba(0,0,0,.2); transition:transform .05s, box-shadow .2s, background .2s; font-size:14px; line-height:1; display:inline-flex; align-items:center; gap:6px; }
     .btn:hover{ transform:translateY(-1px); background:var(--theme-btn-hover) }
     .run{ background:var(--eagle-red); color:#fff; } .run:hover{ background:#b71c1c }
@@ -31,7 +33,7 @@
       50% { background:#ff2e2e; box-shadow:0 0 12px rgba(255,46,46,0.9); }
     }
 
-    .outer{ display:grid; grid-template-columns: var(--left-width) var(--vsplitter-size) 1fr; grid-template-rows: 1fr; gap:10px; padding:10px; height:calc(100vh - 60px); min-height:400px; overflow:hidden; }
+    /* Main viewport sizing lives in layout.css. Do not reintroduce fixed viewport math here. */
     /* Default column positions */
     .outer.no-sidebar #editorPanel { grid-column: 1 / 2; }
     .outer.no-sidebar #hsplitter   { grid-column: 2 / 3; }
