@@ -1,10 +1,10 @@
 /* EagleIDE main stylesheet */
 @import url("tokens.css");
-@import url("base.css");
-@import url("layout.css");
+@import url("base.css?v=20260711-1");
+@import url("layout.css?v=20260711-1");
 @import url("components.css");
 @import url("features/editor.css");
-@import url("features/shell.css");
+@import url("features/shell.css?v=20260711-1");
 @import url("features/file-browser.css");
 @import url("features/resources.css");
 @import url("features/quiz.css");
