@@ -1636,8 +1636,8 @@ def _effective_ai_enabled(req, payload: Optional[dict] = None) -> tuple[bool, Op
             cls = _find_class_by_id(class_id)
             if not cls or (cls.get("teacher_email") or "").lower() != (teacher.get("email") or "").lower():
                 return False, "Invalid class selected"
-            if not (cls.get("settings") or {}).get("ai_enabled", True):
-                return False, "AI features disabled for this class"
+        # The class switch controls student access only. Teachers retain AI
+        # tools for instruction, grading, and reporting for their own classes.
         return True, None
     return True, None
 
@@ -1663,6 +1663,7 @@ def admin_login():
     if email_ok and pw_ok:
         token = uuid.uuid4().hex
         _admin_tokens.add(token)
+        _seed_example_files(ADMIN_ACCOUNT_EMAIL)
         _record_sign_in_event(ADMIN_ACCOUNT_EMAIL, "admin", ip, "admin_login")
         return jsonify(ok=True, token=token)
     return jsonify(ok=False, error="Invalid email or password"), 401
@@ -1850,6 +1851,10 @@ def files_list():
     
     user_dir = _get_user_dir(user["email"])
     user_dir.mkdir(parents=True, exist_ok=True)
+    # Repair a missing starter folder for existing accounts as well as new
+    # ones without recreating individual examples a user intentionally removed.
+    if not (user_dir / EXAMPLES_DIR_NAME).is_dir():
+        _seed_example_files(user["email"])
     
     def build_tree(directory: Path, base: Path) -> tuple[list, int]:
         items = []
@@ -2430,6 +2435,7 @@ def admin_create_teacher():
         "enabled": True,
     })
     _save_users(users_data)
+    _seed_example_files(email)
     return jsonify(ok=True)
 
 @app.post("/api/admin/users/reset-password")
@@ -5449,7 +5455,7 @@ def on_stop(_=None):
 
 @socketio.on("teacher_code_update")
 def on_teacher_code_update(payload):
-    """Broadcast teacher code updates to a class room (admin/teacher only)."""
+    """Broadcast code updates from the teacher who owns the class."""
     payload = payload if isinstance(payload, dict) else {}
     token = str(payload.get("token") or "").strip()
     class_id = str((payload or {}).get("class_id") or "").strip()
@@ -5460,17 +5466,12 @@ def on_teacher_code_update(payload):
     if not cls:
         return
     actor_key = ""
-    if role == "teacher":
-        teacher = _teacher_tokens.get(token)
-        if not teacher or (cls.get("teacher_email") or "").strip().lower() != (teacher.get("email") or "").strip().lower():
-            return
-        actor_key = f"teacher:{(teacher.get('email') or '').strip().lower()}:{class_id}"
-    elif role == "admin":
-        if token not in _admin_tokens:
-            return
-        actor_key = f"admin:{class_id}"
-    else:
+    if role != "teacher":
         return
+    teacher = _teacher_tokens.get(token)
+    if not teacher or (cls.get("teacher_email") or "").strip().lower() != (teacher.get("email") or "").strip().lower():
+        return
+    actor_key = f"teacher:{(teacher.get('email') or '').strip().lower()}:{class_id}"
     code = payload.get("code", "")
     if not isinstance(code, str) or len(code.encode("utf-8")) > MAX_TEACHER_STREAM_CODE_BYTES:
         return
@@ -5497,15 +5498,11 @@ def on_teacher_stream_status(payload):
     active = bool((payload or {}).get("active"))
     if not token or not class_id:
         return
-    if role == "teacher":
-        teacher = _teacher_tokens.get(token)
-        cls = _find_class_by_id(class_id)
-        if not teacher or not cls or (cls.get("teacher_email") or "").lower() != (teacher.get("email") or "").lower():
-            return
-    elif role == "admin":
-        if token not in _admin_tokens:
-            return
-    else:
+    if role != "teacher":
+        return
+    teacher = _teacher_tokens.get(token)
+    cls = _find_class_by_id(class_id)
+    if not teacher or not cls or (cls.get("teacher_email") or "").lower() != (teacher.get("email") or "").lower():
         return
     _set_teacher_stream_state_for_sid(request.sid, class_id, active)
 
