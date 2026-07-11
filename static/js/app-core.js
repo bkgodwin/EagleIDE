@@ -623,7 +623,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
       const liveIndicator = document.getElementById('editorLiveIndicator');
       const showLiveChip = !!isLive && (
-        (!!teacherStreamingEnabled && !!(TEACHER_TOKEN || ADMIN_TOKEN))
+        (!!teacherStreamingEnabled && !!TEACHER_TOKEN)
         || (isStudentViewer() && !!teacherPaneEnabled)
       );
       if (liveIndicator) liveIndicator.classList.toggle('on', showLiveChip);
@@ -888,7 +888,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const tWiki = document.getElementById('lessonTabBtn');
       const tAssignment = document.getElementById('assignmentTabBtn');
       const aiMasterEnabled = !!currentConfig?.ai_explainer_enabled;
-      const effectiveAiEnabled = aiMasterEnabled && (ADMIN_TOKEN || aiEnabledForClass);
+      // A class AI switch limits students, not the teacher who manages it.
+      const effectiveAiEnabled = aiMasterEnabled && (ADMIN_TOKEN || TEACHER_TOKEN || aiEnabledForClass);
       const shouldHideAiTabs = isGuest;
       const canViewWikiContent = !!(ADMIN_TOKEN || TEACHER_TOKEN || wikiEnabledForClass);
       const hasGlobalWikiContent = !!(String(currentConfig?.lesson_html || '').trim() || String(currentConfig?.lesson_url || '').trim());
@@ -1271,8 +1272,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         if (currentTeacherClassId && currentTeacherClassId !== nextId) emitLeaveClassRoom(currentTeacherClassId);
         if (teacherStreamingEnabled && currentTeacherClassId && currentTeacherClassId !== nextId && socket) {
           socket.emit('teacher_stream_status', {
-            token: ADMIN_TOKEN || TEACHER_TOKEN,
-            role: ADMIN_TOKEN ? 'admin' : 'teacher',
+            token: TEACHER_TOKEN,
+            role: 'teacher',
             class_id: currentTeacherClassId,
             active: false
           });
@@ -1285,8 +1286,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         window.ClassroomSignals?.loadTeacherSignals?.();
         if (teacherStreamingEnabled && currentTeacherClassId && socket) {
           socket.emit('teacher_stream_status', {
-            token: ADMIN_TOKEN || TEACHER_TOKEN,
-            role: ADMIN_TOKEN ? 'admin' : 'teacher',
+            token: TEACHER_TOKEN,
+            role: 'teacher',
             class_id: currentTeacherClassId,
             active: true
           });
@@ -2080,8 +2081,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (serverHealthBtn) serverHealthBtn.style.display = ADMIN_TOKEN ? '' : 'none';
       const roleMenuBtn = document.getElementById('roleMenuBtn');
       if (roleMenuBtn) roleMenuBtn.style.display = isLoggedIn ? '' : 'none';
-      streamingToggleBtn.style.display = (ADMIN_TOKEN || TEACHER_TOKEN) ? '' : 'none';
-      if (!ADMIN_TOKEN && !TEACHER_TOKEN) {
+      streamingToggleBtn.style.display = TEACHER_TOKEN ? '' : 'none';
+      if (!TEACHER_TOKEN) {
         setTeacherStreamingEnabled(false);
       } else {
         updateStreamingToggleButton();
@@ -2415,8 +2416,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     
     function flushTeacherBroadcast(force = false) {
       if (!teacherStreamingEnabled || !teacherBroadcastActive || document.hidden) return;
-      const token = ADMIN_TOKEN || TEACHER_TOKEN;
-      const role = ADMIN_TOKEN ? 'admin' : (TEACHER_TOKEN ? 'teacher' : '');
+      const token = TEACHER_TOKEN;
+      const role = TEACHER_TOKEN ? 'teacher' : '';
       const activeClassId = getCurrentClassContext()?.id;
       if (!token || !role || !activeClassId || !socket) return;
       const currentCode = editor.getValue();
@@ -2453,7 +2454,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
     
     function startTeacherBroadcast() {
-      if (teacherBroadcastActive) return;
+      if (teacherBroadcastActive || !TEACHER_TOKEN) return;
       const classId = getCurrentClassContext()?.id;
       if (!classId) return;
       const initialCode = editor.getValue();
@@ -2464,14 +2465,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       try { localStorage.setItem(TEACHER_CODE_KEY, initialCode); } catch(e) {}
       if (socket) {
         socket.emit('teacher_stream_status', {
-          token: ADMIN_TOKEN || TEACHER_TOKEN,
-          role: ADMIN_TOKEN ? 'admin' : 'teacher',
+          token: TEACHER_TOKEN,
+          role: 'teacher',
           class_id: classId,
           active: true
         });
         socket.emit('teacher_code_update', {
-          token: ADMIN_TOKEN || TEACHER_TOKEN,
-          role: ADMIN_TOKEN ? 'admin' : 'teacher',
+          token: TEACHER_TOKEN,
+          role: 'teacher',
           class_id: classId,
           code: initialCode,
           language: lastBroadcastedLanguage
@@ -2490,8 +2491,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         teacherBroadcastActive = false;
         if (socket && activeClassId) {
           socket.emit('teacher_stream_status', {
-            token: ADMIN_TOKEN || TEACHER_TOKEN,
-            role: ADMIN_TOKEN ? 'admin' : 'teacher',
+            token: TEACHER_TOKEN,
+            role: 'teacher',
             class_id: activeClassId,
             active: false
           });
@@ -2512,7 +2513,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     });
 
     function setTeacherStreamingEnabled(enabled) {
-      const next = !!enabled;
+      const next = !!enabled && !!TEACHER_TOKEN;
       teacherStreamingEnabled = next;
       if (next) {
         startTeacherBroadcast();
