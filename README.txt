@@ -196,6 +196,12 @@ Features:
 - Interactive input support (input() works in both Python and JavaScript)
 - Drag-and-drop file organization
 
+Account and classroom defaults:
+- New student and teacher workspaces include an Examples folder with Python, JavaScript, HTML, CSS, CSV, and text starter files.
+- Opening the file browser repairs the Examples folder for an older account if the folder is missing; files users intentionally remove are not recreated on every refresh.
+- Live editor streaming is available to teachers only and remains limited to classes they own.
+- A class's AI enabled switch controls student access. The owning teacher retains AI explaining, chat, grading, and reporting tools while site-wide AI remains enabled.
+
 --------------------------------------------------
 SCREEN LAYOUT AND SCROLLING
 --------------------------------------------------
