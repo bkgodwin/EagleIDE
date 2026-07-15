@@ -30,8 +30,17 @@ challenge_scores.json
 user_files/
 users.json
 classes.json
+skills.json
+classroom_events.json
+classroom_signals.json
 .admin_key
 server.log
+server.out.log
+server.err.log
 server_events.json
 server_state.json
 sign_in_events.json
+wiki_data/
+wiki_backups/
+network_data/
+logs/
