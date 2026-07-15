@@ -104,6 +104,7 @@ class HtmlRuntimeTestCase(unittest.TestCase):
         css_response = self.client.get(f"/api/html-runtime/view/{start_data['runtime_id']}/styles.css")
         self.assertEqual(css_response.status_code, 200)
         self.assertIn("color: red", css_response.get_data(as_text=True))
+        css_response.close()
 
     def test_isolated_preview_origin_enables_runtime_bridge(self):
         eagle.HTML_RUNTIME_PREVIEW_ORIGIN = "https://preview.example.invalid"

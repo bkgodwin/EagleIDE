@@ -90,6 +90,7 @@ class NotebookTestCase(unittest.TestCase):
         self.users_file.write_text(json.dumps(users), encoding="utf-8")
         self.classes_file.write_text(json.dumps(classes), encoding="utf-8")
         self.skills_file.write_text(json.dumps({"skills": []}), encoding="utf-8")
+        eagle._skills_cache = None
 
         eagle._teacher_tokens[self.teacher_token] = {
             "email": self.teacher_email,
@@ -121,7 +122,30 @@ class NotebookTestCase(unittest.TestCase):
         eagle.USERS_FILE = self.original_users_file
         eagle.CLASSES_FILE = self.original_classes_file
         eagle.SKILLS_FILE = self.original_skills_file
+        eagle._skills_cache = None
         self.tmp.cleanup()
+
+    def test_default_python_and_javascript_skills_seed_once_and_remain_deletable(self):
+        headers = {"X-Teacher-Token": self.teacher_token}
+        response = self.client.get("/api/teacher/skills", headers=headers)
+        self.assertEqual(response.status_code, 200)
+        skills = response.get_json()["skills"]
+        by_name = {skill["name"]: skill for skill in skills}
+        self.assertIn("Python-Print", by_name)
+        self.assertIn("Python-Elif", by_name)
+        self.assertIn("JavaScript-Console-Log", by_name)
+        self.assertIn("JavaScript-DOM-Events", by_name)
+        self.assertTrue(all(not skill["class_ids"] for skill in skills))
+
+        deleted = by_name["Python-Print"]
+        delete_response = self.client.post(
+            "/api/teacher/skills/delete", headers=headers, json={"skillId": deleted["id"]}
+        )
+        self.assertEqual(delete_response.status_code, 200)
+        refreshed = self.client.get("/api/teacher/skills", headers=headers).get_json()["skills"]
+        self.assertNotIn("Python-Print", {skill["name"] for skill in refreshed})
+        saved = json.loads(self.skills_file.read_text(encoding="utf-8"))
+        self.assertIn(self.teacher_email, saved["default_skills_seeded_for"])
 
     def _create_prompt(
         self,

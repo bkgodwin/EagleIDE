@@ -28,6 +28,7 @@
   const boundCodeBlocks = new WeakSet();
   let colorPaletteOpen = false;
   let teacherNotebookSkills = [];
+  let wikiLinkRange = null;
 
   function ctx() {
     return window.EagleIDE?.getContext?.() || {};
@@ -557,6 +558,82 @@
     if (!activeEditorEl || activeTab()?.id === ASSIGNMENTS_TAB_ID && !activeEditorEl.classList.contains('student-notebook-prompt-response')) return;
     activeEditorEl.focus();
     document.execCommand(command, false, value || null);
+    scheduleSave();
+  }
+
+  function wikiPages() {
+    const reader = window.WikiReader;
+    const tree = reader?.getState?.().tree || [];
+    return (reader?.flattenTree?.(tree) || []).filter(item => item.kind === 'page' && item.status === 'published');
+  }
+
+  function renderWikiLinkChoices(query = '') {
+    const target = document.getElementById('studentNotebookWikiLinkResults');
+    if (!target) return;
+    const normalized = String(query || '').trim().toLocaleLowerCase();
+    const pages = wikiPages().filter(page => !normalized || `${page.title} ${page.description || ''}`.toLocaleLowerCase().includes(normalized));
+    target.textContent = '';
+    if (!pages.length) {
+      target.innerHTML = '<div class="student-notebook-wiki-link-empty">No published wiki pages match this search.</div>';
+      return;
+    }
+    for (const page of pages.slice(0, 100)) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'student-notebook-wiki-link-choice';
+      button.innerHTML = `<strong>${escapeHtml(page.title)}</strong><span>${escapeHtml(page.description || '/wiki/' + page.slug)}</span>`;
+      button.addEventListener('click', () => insertWikiLink(page));
+      target.appendChild(button);
+    }
+  }
+
+  async function openWikiLinkPicker() {
+    if (!activeEditorEl) activeEditorEl = document.getElementById('studentNotebookEditor');
+    if (!activeEditorEl || activeTab()?.id === ASSIGNMENTS_TAB_ID) return;
+    const selection = window.getSelection();
+    wikiLinkRange = selection?.rangeCount && activeEditorEl.contains(selection.getRangeAt(0).commonAncestorContainer)
+      ? selection.getRangeAt(0).cloneRange()
+      : null;
+    const modal = document.getElementById('studentNotebookWikiLinkModal');
+    const search = document.getElementById('studentNotebookWikiLinkSearch');
+    modal.style.display = 'flex';
+    search.value = '';
+    document.getElementById('studentNotebookWikiLinkResults').innerHTML = '<div class="student-notebook-wiki-link-empty">Loading wiki pages…</div>';
+    try {
+      await window.WikiReader?.loadHome?.({ quiet: true });
+      renderWikiLinkChoices('');
+      setTimeout(() => search.focus(), 40);
+    } catch {
+      document.getElementById('studentNotebookWikiLinkResults').innerHTML = '<div class="student-notebook-wiki-link-empty">The wiki could not be loaded.</div>';
+    }
+  }
+
+  function insertWikiLink(page) {
+    if (!activeEditorEl?.isConnected || !page?.slug) return;
+    activeEditorEl.focus();
+    const range = wikiLinkRange && activeEditorEl.contains(wikiLinkRange.commonAncestorContainer)
+      ? wikiLinkRange
+      : document.createRange();
+    if (!wikiLinkRange) {
+      range.selectNodeContents(activeEditorEl);
+      range.collapse(false);
+    }
+    const label = range.collapsed ? page.title : range.toString();
+    range.deleteContents();
+    const anchor = document.createElement('a');
+    anchor.href = `/wiki/${encodeURIComponent(page.slug)}`;
+    anchor.textContent = label || page.title;
+    range.insertNode(anchor);
+    const spacer = document.createTextNode(' ');
+    anchor.after(spacer);
+    const selection = window.getSelection();
+    const after = document.createRange();
+    after.setStartAfter(spacer);
+    after.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(after);
+    wikiLinkRange = null;
+    document.getElementById('studentNotebookWikiLinkModal').style.display = 'none';
     scheduleSave();
   }
 
@@ -1478,6 +1555,18 @@
     document.getElementById('notebookOpenBtn')?.addEventListener('click', openDrawer);
     document.getElementById('studentNotebookCloseBtn')?.addEventListener('click', closeDrawer);
     document.getElementById('studentNotebookInsertCodeBtn')?.addEventListener('click', insertEditorCode);
+    document.getElementById('studentNotebookWikiLinkBtn')?.addEventListener('click', openWikiLinkPicker);
+    document.getElementById('studentNotebookWikiLinkSearch')?.addEventListener('input', event => renderWikiLinkChoices(event.target.value));
+    document.getElementById('studentNotebookWikiLinkCancelBtn')?.addEventListener('click', () => {
+      wikiLinkRange = null;
+      document.getElementById('studentNotebookWikiLinkModal').style.display = 'none';
+    });
+    document.getElementById('studentNotebookWikiLinkModal')?.addEventListener('click', event => {
+      if (event.target.id === 'studentNotebookWikiLinkModal') {
+        wikiLinkRange = null;
+        event.currentTarget.style.display = 'none';
+      }
+    });
     document.getElementById('studentNotebookExportBtn')?.addEventListener('click', exportPdf);
     document.getElementById('studentNotebookSearchInput')?.addEventListener('input', e => searchNotebook(e.target.value));
     document.querySelectorAll('[data-notebook-command]').forEach(btn => {

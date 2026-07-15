@@ -51,4 +51,13 @@ DEFAULT_CONFIG = {
 
     # Registration toggle
     "registration_enabled": True,
+
+    # Optional network simulator. Teachers can further restrict enabled access
+    # class-by-class; admins may privately preview it while this is disabled.
+    "network_sim_enabled": False,
+
+    # Wiki media limits. Large files use chunked uploads under the global
+    # HTTP request limit; these values apply to the completed files on disk.
+    "wiki_max_asset_mb": 1024,
+    "wiki_total_asset_mb": 10240,
 }

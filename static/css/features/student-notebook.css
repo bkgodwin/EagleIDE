@@ -586,6 +586,63 @@
   background: #05070c;
 }
 
+.student-notebook-wiki-link-modal {
+  width: min(680px, 94vw) !important;
+  max-width: none !important;
+  max-height: min(760px, 90vh) !important;
+  overflow: hidden !important;
+}
+
+.student-notebook-wiki-link-modal > p {
+  margin-top: 0;
+  color: var(--theme-text-dim);
+  line-height: 1.5;
+}
+
+#studentNotebookWikiLinkSearch {
+  width: 100%;
+  min-height: 44px;
+  padding: 9px 11px;
+  border: 1px solid var(--theme-border-mid);
+  background: var(--theme-input-bg);
+  color: var(--theme-text);
+  font: inherit;
+}
+
+.student-notebook-wiki-link-results {
+  max-height: 430px;
+  margin-top: 10px;
+  overflow: auto;
+  border: 1px solid var(--theme-border-mid);
+}
+
+.student-notebook-wiki-link-choice {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  min-height: 54px;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--theme-border-mid);
+  background: var(--theme-panel);
+  color: var(--theme-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.student-notebook-wiki-link-choice:hover,
+.student-notebook-wiki-link-choice:focus-visible {
+  background: var(--theme-btn-hover);
+}
+
+.student-notebook-wiki-link-choice span,
+.student-notebook-wiki-link-empty {
+  color: var(--theme-text-dim);
+  font-size: 12px;
+}
+
+.student-notebook-wiki-link-empty { padding: 16px; }
+
 .notebook-shell-output {
   min-height: 54px;
   max-height: 220px;

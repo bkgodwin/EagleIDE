@@ -19,6 +19,7 @@ isolated HTML preview deployment, monitoring, and load-test guidance.
 3. Configuration
 4. Running the Application
 5. Using the IDE
+5A. Public Coding Wiki
 6. AI Features
 7. Assignment System
 8. Admin Panel
@@ -244,6 +245,91 @@ JAVASCRIPT SUPPORT
 - Output (console.log, console.error, etc.) appears in the shell
 - All shell input features work the same as with Python
 - JavaScript files are identified by the ⚡ icon in the file browser
+
+================================================================================
+                         5A. PUBLIC CODING WIKI
+================================================================================
+
+The public wiki is the application's landing page. Guests can browse, search,
+follow topic links, view uploaded media, and open runnable examples in the IDE
+without signing in. Guests cannot bookmark content. The IDE's Wiki tab uses an
+embedded reader for the same content.
+
+Reader features:
+- A show/hide contents sidebar on both the home and article views, with an
+  admin-ordered folder tree and keyboard, mouse, and touch controls
+- Folder rows expand or collapse their children; only pages and media open a reader
+- Two home reference columns: a structured Standards table and an External
+  Resources table with a title, HTTP/HTTPS link, and description
+- Full-text search across page titles, aliases, headings, and Markdown content;
+  opening a result jumps to and highlights the matching text
+- Automatic links for unambiguous page titles, aliases, and section headings
+- Mouse hover previews show clean context at each matching location with arrow
+  controls when a term occurs more than once; on touch devices, first tap previews
+  and second tap opens
+- Sanitized Markdown, stable section links, and a generated table of contents
+- Expandable standards-covered tags beneath each page's table of contents
+- Copy and Open in IDE buttons on Python, JavaScript, HTML, and CSS code fences
+- Inline images, pre-encoded MP4 video, and PDF viewing; other allowed files can
+  be organized in the same tree and downloaded
+
+Student and teacher workflow:
+- Signed-in students can add or remove personal bookmarks. They appear in the
+  Bookmarks menu.
+- A teacher's Lesson Material bookmark is assigned to one teacher-owned class.
+  Students in that class see it with the Lesson Material label. The class picker
+  is shown whenever the teacher bookmarks or features an item.
+- Teachers can feature a page or folder for one class. A featured folder always
+  includes its current descendants, including children added later.
+- Guests see the complete published tree in the order chosen by the admin, with
+  no class-specific featured section.
+
+Admin Wiki Manager:
+1. Sign in as admin and choose Wiki Manager in the top bar.
+2. Use the Home tab to change the landing-page title, supporting text, site footer,
+   structured Standards, and External Resources table. Standards require an ID and
+   description and can be assigned to individual pages from Item settings.
+3. Use the Content tab to create folders and pages, or upload an existing .md
+   page. Folder icons accept standard Unicode emoji. Drag the tree handle to move
+   items before, after, or inside folders; Move Up/Down remains available. New pages are drafts;
+   expand their folders in Wiki Manager and select Published when they are ready
+   to appear in the public contents sidebar.
+4. Edit Markdown with an independently autosaved draft. Page settings collapse to
+   keep the editor in view, and Editor, Split, and Preview modes make better use of
+   the available screen. Published content remains unchanged until explicit save.
+5. Place the Markdown cursor where an image belongs and choose Insert Image. The
+   device file picker opens first; after selecting a file, set its alt text,
+   caption, alignment, and width. A visible image directive is inserted at the
+   saved cursor position and controls its vertical placement and preview. Removing
+   the directive removes the image from the page. Image assets do not appear in
+   the public or admin content tree.
+6. Use the Media tab to upload and review images. Permanent deletion also removes
+   the stored file and its directives from published pages and autosaved drafts.
+   Upload videos and other attachments from Content, then move and reorder them in
+   the folder tree.
+7. Review the latest three published page revisions and the compact admin-only analytics tab. Search analytics
+   count completed searches only: selecting a result or submitting with Enter or
+   the Search button.
+
+Allowed uploads are PNG, JPEG, WebP, GIF, MP4, PDF, TXT, CSV, PY, JS, HTML, CSS,
+JSON, and ZIP. The server verifies both the extension and basic file signature.
+HTML, JavaScript, and ZIP attachments are always downloaded rather than rendered.
+For predictable playback and good iPad compatibility, encode video as an MP4 with
+H.264 video, AAC audio, and web-optimized/fast-start metadata before uploading.
+
+Wiki backup and restore:
+- Download Backup creates a portable ZIP containing the catalog structure,
+  settings, Markdown, media, drafts, revisions, class features, and analytics.
+- Personal and Lesson Material bookmarks are intentionally excluded.
+- Restore validates paths and checksums, creates an automatic pre-restore backup,
+  replaces wiki content/settings, and preserves the bookmarks currently on the
+  server.
+- Runtime data is stored in wiki_data/ and temporary/downloadable archives in
+  wiki_backups/. Both are ignored by Git. For isolated deployments or testing,
+  set EAGLEIDE_WIKI_DATA_DIR and EAGLEIDE_WIKI_BACKUP_DIR to absolute paths.
+
+Default limits are 1 GB per asset and 10 GB total wiki media. Operators can change
+wiki_max_asset_mb and wiki_total_asset_mb in the application configuration.
 
 ================================================================================
                             6. AI FEATURES
@@ -643,6 +729,73 @@ For classroom or multi-user deployment:
 
 ================================================================================
 
+================================================================================
+                  15. OPTIONAL NETWORK SIMULATOR
+================================================================================
+
+EagleIDE includes a modular browser-based Network Simulator for LANs,
+routing, VLANs, IPv4/IPv6, wireless, RSTP, stateful firewalls/PAT, safe
+cybersecurity scenarios, Wireshark-style packet capture, and automatically
+graded labs. Seeded background traffic runs in a Web Worker so realistic ARP,
+DHCP, DNS, HTTP/TLS, and attack-indicator traffic does not block the editor UI.
+
+DHCP clients support Automatic and Manual addressing. Router LAN ports have
+independent gateway addresses, masks, and VLANs; a DHCP scope binds to one LAN
+interface and derives its gateway/mask/VLAN to prevent contradictory settings.
+Packet Test can broadcast DHCP Discover and display the full
+Discover, Offer, Request, and Acknowledgment exchange.
+
+Physical ports are finite: PCs and laptops have one LAN port, servers have four,
+Layer 2 and Layer 3 switches have eight Ethernet ports, and routers separate WAN from LAN. Cable
+creation prompts for an available port at each endpoint. Ports expose link state
+and speed controls. Ethernet, fiber, and serial links render differently, and
+line thickness reflects the slower endpoint's negotiated speed. Authenticated
+wireless clients display a dotted association to their nearest matching WAP.
+Server LAN ports have independent IPv4 configuration.
+Routers support static or ISP-DHCP WAN addressing and NAT.
+
+Layer 2 switches provide access/trunk VLAN behavior without routing. Layer 3
+switches add SVIs, inter-VLAN routing, static routes, and ordered ACLs. Routers
+also support ordered protocol/source/destination/port ACLs. Layer 3 switch ACLs
+can be attached to an SVI such as VLAN20, matching common inter-VLAN practice.
+Blocked packet animation stops at the enforcing device and clearly identifies
+ACL, VLAN, firewall, link-state, routing, gateway, or service failures.
+
+DNS servers include structured A, CNAME, and NS records, recursive resolution,
+fallback forwarders, TTL caching, and multi-level delegation. The DNS + HTTP
+packet workflow resolves a domain and then simulates TCP/80 and an HTTP GET.
+Packet traces can be stepped or played in a continuous loop with an animated marker
+moving one physical link at a time; the Play button becomes Stop while looping.
+Device settings use touch-friendly menus for finite choices and topology-aware
+suggestions for masks, VLANs, SSIDs, networks, domains, and ports. IPv4, gateway,
+DNS, and pool-address fields remain direct entry to avoid long menus. The
+Configuration and Network Tools panes are resizable. The bottom Reference tab
+lists supported CLI commands, common service ports, and common acronyms.
+
+Administrator:
+- Open Settings -> Network Sim to enable or disable the app globally.
+- Admins can privately preview it while disabled.
+
+Teacher:
+- Open Dashboard -> Network Sim.
+- Select a class, allow class access, and assign one of the built-in labs.
+- Use Open to Demonstrate for a temporary teacher copy with the Lab Guide and
+  solution visible beside the simulator.
+- Expand a lab to see student instructions, the step-by-step solution, and each
+  student's completion state, objective progress, score, and last save time.
+
+Student/guest:
+- Use Network Sim in the top bar when access is enabled.
+- Start blank, open an example, or resume an assigned lab.
+- Follow the practice objectives included with every example topology.
+- Reset any selected device to defaults without removing its cables.
+- Guests can simulate and export but cannot save.
+
+See docs/NETWORK_SIMULATOR.md for the full illustrated workflow, device
+capabilities, lab descriptions, command reference, and operations notes.
+
+================================================================================
+
 For support or issues: https://github.com/bkgodwin/EagleIDE
 
-Last Updated: 2026-05-15
+Last Updated: 2026-07-14

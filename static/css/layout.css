@@ -79,19 +79,20 @@ body.light-mode .topbar-tools-btn {
   justify-self: center;
 }
 
-.run-btn-hero {
-  min-width: 148px;
-  min-height: 48px;
-  padding: 12px 36px;
-  font-size: 18px;
+.btn.run-btn-hero {
+  min-width: 168px;
+  min-height: 52px;
+  margin-left: 24px;
+  padding: 13px 40px;
+  font-size: 19px;
   font-weight: 800;
   letter-spacing: 0.4px;
   border-radius: 12px;
   box-shadow: 0 4px 16px rgba(198, 40, 40, 0.35);
 }
 
-.run-btn-hero.stop {
-  min-width: 148px;
+.btn.run-btn-hero.stop {
+  min-width: 168px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
 }
 
@@ -417,7 +418,7 @@ body.tool-tray-collapsed .outer {
   .btn, .tab-btn, .workspace-tab-btn, .file-action-btn { min-height: 40px; }
   .file-tree-item { padding-top: 9px; padding-bottom: 9px; }
   .topbar-primary .brand > div:first-child { max-width: 120px; }
-  .run-btn-hero { min-width: 120px; padding: 10px 24px; font-size: 16px; }
+  .btn.run-btn-hero { min-width: 138px; min-height: 48px; margin-left: 16px; padding: 11px 26px; font-size: 17px; }
 }
 
 @media (pointer: coarse) {

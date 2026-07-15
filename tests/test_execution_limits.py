@@ -368,6 +368,8 @@ class ExecutionLimitTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual((self.user_dir / "streamed.txt").stat().st_size, len(content))
+        response.request.close()
+        response.request.environ["wsgi.input"].close()
         response.close()
 
     def test_teacher_stream_requires_class_ownership_and_size_limit(self):
