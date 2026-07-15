@@ -44,9 +44,139 @@ class StaticHtmlTestCase(unittest.TestCase):
         missing = [path for path in self.parser.local_assets if not (BASE_DIR / path.lstrip("/")).exists()]
         self.assertEqual(missing, [])
 
+    def test_static_assets_use_classroom_friendly_cache_policy(self):
+        source = (BASE_DIR / "app.py").read_text(encoding="utf-8")
+        self.assertIn('"public, max-age=31536000, immutable"', source)
+        self.assertIn('"public, max-age=300, must-revalidate"', source)
+
     def test_attribute_ampersands_are_html_escaped(self):
         unescaped = re.findall(r'(?:href|src)="[^"]*&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9A-Fa-f]+);)', self.raw)
         self.assertEqual(unescaped, [])
+
+    def test_wiki_uses_shared_contents_sidebar_and_image_picker(self):
+        ids = set(self.parser.ids)
+        self.assertTrue({
+            "wikiNavDrawer", "wikiNavBtn", "wikiNavTree", "wikiImageInsertFile",
+            "wikiHomeStandards", "wikiHomeResourcesBody", "wikiAdminStandards",
+            "wikiAdminExternalResources", "wikiAdminAddResourceBtn", "wikiAdminMediaPanel",
+            "wikiAdminMediaGrid", "wikiAdminMediaInput", "wikiAdminContentPanel",
+            "wikiAdminEditorOnlyBtn", "wikiAdminSplitViewBtn", "wikiAdminPreviewOnlyBtn",
+            "wikiSearchSubmitBtn", "wikiViewBtn", "wikiPageStandardsList",
+            "wikiAdminAddStandardBtn", "wikiAdminPageStandards",
+            "wikiSiteFooter", "wikiAdminFooterText", "wikiAdminFolderIcon",
+            "wikiEmojiPickerModal", "studentNotebookWikiLinkBtn", "studentNotebookWikiLinkModal",
+        }.issubset(ids))
+        self.assertNotIn("wikiHomeTree", ids)
+        self.assertIn('accept=".png,.jpg,.jpeg,.webp,.gif"', self.raw)
+
+    def test_wiki_home_order_and_class_management_surfaces(self):
+        ids = set(self.parser.ids)
+        self.assertLess(self.raw.index('id="wikiFeaturedSection"'), self.raw.index('id="wikiHomeStandards"'))
+        self.assertNotIn("wikiHomeBookmarksSection", ids)
+        self.assertTrue({
+            "student-dash-classes", "joinClassCodeInput", "studentClassMembershipList",
+            "adminUsersRoleFilter", "settingsOpenWikiManagerBtn", "settingsOpenWikiHomeBtn",
+        }.issubset(ids))
+        self.assertNotIn("lessonUrlInputModal", ids)
+        self.assertNotIn("lessonUseLocalModal", ids)
+        self.assertNotIn('class="cls-wiki-url"', self.raw)
+
+    def test_ide_search_does_not_force_wiki_mode_and_hides_contents_toggle(self):
+        reader = (BASE_DIR / "static" / "js" / "wiki-reader.js").read_text(encoding="utf-8")
+        wiki_css = (BASE_DIR / "static" / "css" / "features" / "wiki.css").read_text(encoding="utf-8")
+        self.assertNotIn("wikiSearchInput')?.addEventListener('focus'", reader)
+        self.assertIn("wikiViewBtn')?.addEventListener('click'", reader)
+        self.assertIn("body:not(.wiki-mode) #wikiNavBtn", wiki_css)
+        self.assertIn("body:not(.wiki-mode) #ideViewBtn", wiki_css)
+        self.assertIn("#wikiEmojiPickerModal { z-index: 10200; }", wiki_css)
+        self.assertIn("&limit=8", reader)
+        self.assertIn("setTimeout(() => performSearch(event.target.value), 300)", reader)
+
+    def test_network_simulator_surfaces_are_modular_and_touch_ready(self):
+        ids = set(self.parser.ids)
+        self.assertTrue({
+            "networkViewBtn", "networkView", "networkLibrary", "networkWorkspace",
+            "networkDevicePalette", "networkCanvas", "networkInspector",
+            "networkPacketResult", "networkCliForm", "networkObjectivesPanel",
+            "networkPacketTargetLabel", "networkPacketPortLabel", "networkPacketDomainLabel",
+            "networkPacketDomain", "networkPacketOverlayLayer", "networkPortPicker",
+            "networkInspectorResizer", "networkConsoleResizer",
+            "networkTeacherClassSelect", "networkTeacherAccessToggle",
+            "networkTeacherLabList", "networkSimEnabledModal", "networkCommandModal",
+            "networkReferencePanel", "networkDiagnosticsPanel", "networkCapturePanel",
+            "networkSimulationPanel", "networkTrafficToggleBtn",
+            "wikiHeroNetworkBtn", "wikiHomeBtn",
+        }.issubset(ids))
+        script = (BASE_DIR / "static" / "js" / "network-sim.js").read_text(encoding="utf-8")
+        advanced_script = (BASE_DIR / "static" / "js" / "network-sim-advanced.js").read_text(encoding="utf-8")
+        worker_script = (BASE_DIR / "static" / "js" / "network-sim-worker.js").read_text(encoding="utf-8")
+        css = (BASE_DIR / "static" / "css" / "features" / "network-sim.css").read_text(encoding="utf-8")
+        app_source = (BASE_DIR / "app.py").read_text(encoding="utf-8")
+        self.assertIn("pointerdown", script)
+        self.assertIn('value="dhcp">DHCP Discover', self.raw)
+        self.assertIn("DHCPDISCOVER", script)
+        self.assertIn("Automatic (DHCP)", script)
+        self.assertIn("networkDhcpRequestBtn", script)
+        self.assertIn("dhcp_dns_primary", script)
+        self.assertIn("DEVICE_PORTS", script)
+        self.assertIn("simulateWebRequest", script)
+        self.assertIn("DNS + HTTP Request", self.raw)
+        self.assertIn("networkPacketPlayBtn", script)
+        self.assertIn("▶ Play loop", script)
+        self.assertIn("state.packetStep >= steps.length - 1 ? 0", script)
+        self.assertIn("topologySuggestions", script)
+        self.assertIn("prepareDirectAddressInputs", script)
+        self.assertIn("referenceMarkup", script)
+        self.assertIn("port_reference", script)
+        self.assertIn("acronym_reference", script)
+        self.assertIn("wirelessAssociations", script)
+        self.assertIn("network-link--wireless", script)
+        self.assertIn("network-link--speed-very-fast", css)
+        self.assertIn("new Worker", advanced_script)
+        self.assertIn("rogue-dhcp", worker_script)
+        self.assertIn("if (running) start()", worker_script)
+        self.assertIn("network-sim:topology-opened", script)
+        self.assertIn("stpCacheRevision", script)
+        self.assertIn("saveInFlight", script)
+        self.assertNotIn("state.topology = saved", script)
+        self.assertNotIn("return pendingSave;\n    renderCommandReference", script)
+        self.assertNotIn("networkMinimap", self.raw)
+        self.assertNotIn("networkMinimap", advanced_script)
+        self.assertNotIn("network-minimap", css)
+        self.assertNotIn("networkAvailableIps", script)
+        self.assertNotIn("networkGateways", script)
+        self.assertNotIn("networkDnsChoices", script)
+        self.assertIn("data-switch-port-mode", script)
+        self.assertIn("data-route-field", script)
+        self.assertIn("data-firewall-interface-field", script)
+        self.assertIn("data-address-list", script)
+        self.assertIn("window.EagleIDE?.configReady", script)
+        self.assertIn("requestBootstrap", script)
+        self.assertIn("previousForm && device && previousForm.dataset.inspectorDevice", script)
+        self.assertIn(".network-link.is-selected", script)
+        self.assertIn("state.selectedLinkId === linkId ? '' : linkId", script)
+        self.assertIn("$('networkCanvas')?.addEventListener('pointerdown'", script)
+        self.assertIn("labelInspectorSections", script)
+        self.assertIn("window.addEventListener('pagehide', stopPacketPlayback)", script)
+        self.assertIn("network-packet-token", script)
+        self.assertIn("data-server-interface-field", script)
+        self.assertIn("network-student-progress", script)
+        self.assertIn("setupPanelResizers", script)
+        self.assertIn("Layer 3 Switch", script)
+        self.assertIn("data-acl-field", script)
+        self.assertIn("networkResetDeviceBtn", script)
+        self.assertIn("data-teacher-demo-lab", script)
+        self.assertIn("is-blocked-hop", script)
+        self.assertIn("data-connect-port", script)
+        self.assertIn("touch-action: none", css)
+        self.assertIn("@media (pointer: coarse)", css)
+        self.assertIn("body.network-mode", css)
+        self.assertIn('id="wikiHomeBtn" type="button">Wiki Home</button>', self.raw)
+        self.assertIn('id="wikiHeroNetworkBtn"', self.raw)
+        app_core = (BASE_DIR / "static" / "js" / "app-core.js").read_text(encoding="utf-8")
+        self.assertIn("window.EagleIDE.configReady = loadConfig()", app_core)
+        self.assertIn('@app.get("/network")', app_source)
+        self.assertIn("register_network_features", app_source)
 
 
 if __name__ == "__main__":

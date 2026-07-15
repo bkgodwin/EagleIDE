@@ -44,6 +44,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let currentStudentClassId = null;
     let teacherStreamLiveClasses = {};
     let currentOpenFile = null; // { path, name } of open file in sidebar
+    let currentBufferDirty = false;
     let auditPreviewActive = false;
     let auditPreviewMeta = null;
     let auditEditorBackup = null;
@@ -66,6 +67,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let htmlRuntimeWindow = null;
     let htmlRuntimeId = '';
     let htmlRuntimeCloseMonitor = null;
+    const WORKSPACE_TAB_EDITOR = 'editor';
+    const WORKSPACE_TAB_FILES = 'files';
+    let _workspaceTab = WORKSPACE_TAB_EDITOR;
+    let teacherBroadcastActive = false;
+    let teacherBroadcastFlushTimer = null;
+    let lastBroadcastedCode = '';
+    let lastBroadcastedLanguage = 'python';
     const LANGUAGE_INFO = {
       python: { mode: 'python', label: 'Python', highlight: 'python' },
       javascript: { mode: 'javascript', label: 'JavaScript', highlight: 'javascript' },
@@ -97,6 +105,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (val === 'python') return LANGUAGE_INFO.python;
       if (val === 'javascript') return LANGUAGE_INFO.javascript;
       if (val === 'html') return LANGUAGE_INFO.html;
+      if (val === 'css') return LANGUAGE_INFO.css;
       return null;
     }
 
@@ -784,12 +793,27 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     async function setEditorSnapshot(snapshot = {}) {
       syncEditorBridge();
       if (auditPreviewActive) closeAuditPreview();
-      await saveCurrentFile();
+      if (currentBufferDirty && (currentOpenFile?.draft || !isAuthenticated())) {
+        const replace = window.confirm('The current editor contains unsaved work. Replace it with this wiki example?');
+        if (!replace) return false;
+      }
+      const saved = await saveCurrentFile();
+      if (!saved) {
+        window.alert('The current file could not be saved. The wiki example was not opened.');
+        return false;
+      }
       const language = String(snapshot.language || 'python').toLowerCase();
       const fileName = fileNameForLanguage(language, snapshot.fileName);
-      currentOpenFile = { path: '', name: fileName, notebook: true };
+      currentOpenFile = {
+        path: '',
+        name: fileName,
+        draft: true,
+        draftSource: snapshot.source || 'external',
+        wikiSource: snapshot.wikiSource || null,
+      };
       setCsvMode(false);
       editor.setValue(String(snapshot.code || ''));
+      currentBufferDirty = false;
       const languageSelector = document.getElementById('languageSelector');
       if (!isAuthenticated() && languageSelector) {
         if (language.includes('javascript') || language === 'js') languageSelector.value = 'javascript';
@@ -801,6 +825,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       updateEditorOverlay();
       setWorkspaceTab('editor');
       refreshEditors();
+      return true;
     }
 
     function runNotebookCode({ code, language, fileName, onOutput, onFinished, onAck } = {}) {
@@ -891,13 +916,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       // A class AI switch limits students, not the teacher who manages it.
       const effectiveAiEnabled = aiMasterEnabled && (ADMIN_TOKEN || TEACHER_TOKEN || aiEnabledForClass);
       const shouldHideAiTabs = isGuest;
-      const canViewWikiContent = !!(ADMIN_TOKEN || TEACHER_TOKEN || wikiEnabledForClass);
-      const hasGlobalWikiContent = !!(String(currentConfig?.lesson_html || '').trim() || String(currentConfig?.lesson_url || '').trim());
-      const canShowWikiTab = isAuthenticatedUser && (
-        ADMIN_TOKEN ||
-        TEACHER_TOKEN ||
-        (classCtx ? wikiEnabledForClass : hasGlobalWikiContent)
-      );
+      const canViewWikiContent = true;
+      const canShowWikiTab = true;
       const canSeeAssignments = !!TEACHER_TOKEN || (!!USER_TOKEN && !!classCtx);
       if (tAssignment) tAssignment.style.display = canSeeAssignments ? '' : 'none';
       if (tExplain) tExplain.style.display = (!shouldHideAiTabs && effectiveAiEnabled) ? '' : 'none';
@@ -910,7 +930,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       updateSendFileButtonVisibility();
       const lessonLocal = document.getElementById('lessonLocal');
       const lessonFrame = document.getElementById('lessonFrame');
-      if (classCtx?.settings?.wiki_html && canViewWikiContent) {
+      const embeddedWiki = document.getElementById('wikiEmbeddedReader');
+      if (embeddedWiki) {
+        if (lessonLocal) lessonLocal.style.display = 'none';
+        if (lessonFrame) lessonFrame.style.display = 'none';
+      } else if (classCtx?.settings?.wiki_html && canViewWikiContent) {
         lessonLocal.innerHTML = classCtx.settings.wiki_html;
         lessonLocal.style.display = 'block';
         lessonFrame.style.display = 'none';
@@ -1788,7 +1812,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const useLocal = document.getElementById('lessonUseLocal');
       if (urlIn) urlIn.value = cfg.lesson_url || '';
       if (useLocal) useLocal.checked = !!cfg.lesson_use_local;
-      if (cfg.lesson_use_local){
+      if (document.getElementById('wikiEmbeddedReader')) {
+        if (iframe) iframe.style.display = 'none';
+        if (localDiv) localDiv.style.display = 'none';
+      } else if (cfg.lesson_use_local){
         iframe.style.display = 'none'; localDiv.style.display = 'block';
         localDiv.innerHTML = cfg.lesson_html || '<p>(No local lesson content yet)</p>';
       } else {
@@ -1808,6 +1835,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const u = document.getElementById('aiUrlInput'); if (u) u.value = cfg.ai_ollama_url || '';
       const m = document.getElementById('aiModelInput'); if (m) m.value = cfg.ai_model || 'gemma3:4b';
       const ap = document.getElementById('assistantPromptInput'); if (ap) ap.value = cfg.ai_assistant_preprompt || '';
+      window.NetworkSim?.applyConfig?.(cfg);
       applyClassTabVisibility();
     }
     async function saveConfig(partial){
@@ -1818,7 +1846,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (!j?.ok){ alert(j?.error || 'Save failed'); }
       else { currentConfig = {...(currentConfig||{}), ...partial}; }
     }
-    loadConfig();
+    // Feature modules loaded after app-core share this request instead of each
+    // issuing their own /api/config fetch during startup.
+    window.EagleIDE.configReady = loadConfig().catch(() => null);
 
     (function initEditorControls() {
       const MIN_FONT_SIZE = 12;
@@ -2074,7 +2104,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (teacherDashboardBtn) teacherDashboardBtn.style.display = TEACHER_TOKEN ? '' : 'none';
       const studentDashboardBtn = document.getElementById('studentDashboardBtn');
       if (studentDashboardBtn) {
-        const showStudentDash = !!(USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && getCurrentClassContext());
+        const showStudentDash = !!(USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN);
         studentDashboardBtn.style.display = showStudentDash ? '' : 'none';
       }
       if (adminUsersBtn) adminUsersBtn.style.display = ADMIN_TOKEN ? '' : 'none';
@@ -2409,11 +2439,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     })();
 
     // Teacher Code Broadcasting
-    let teacherBroadcastActive = false;
-    let teacherBroadcastFlushTimer = null;
-    let lastBroadcastedCode = '';
-    let lastBroadcastedLanguage = 'python';
-    
     function flushTeacherBroadcast(force = false) {
       if (!teacherStreamingEnabled || !teacherBroadcastActive || document.hidden) return;
       const token = TEACHER_TOKEN;
@@ -2534,17 +2559,16 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     document.getElementById('adminSettingsBtn').addEventListener('click', () => {
       if (!ADMIN_TOKEN) return;
       document.getElementById('adminSettingsModal').style.display = 'flex';
-      const siteWideSettingsSection = document.getElementById('siteWideSettingsSection');
-      const settingsSaveBtn = document.getElementById('settingsSaveBtn');
-      const modalTitle = document.querySelector('#adminSettingsModal .modal-content h3');
+      document.querySelectorAll('[data-admin-settings-section]').forEach(button => {
+        button.classList.toggle('active', button.dataset.adminSettingsSection === 'general');
+      });
+      document.querySelectorAll('[data-admin-settings-pane]').forEach(pane => {
+        pane.classList.toggle('active', pane.dataset.adminSettingsPane === 'general');
+      });
       
       // Page settings
       document.getElementById('pageTitleInput').value = currentConfig?.page_title || 'Eagles Web IDE (Python)';
       document.getElementById('topBarColorInput').value = currentConfig?.topbar_color || 'linear-gradient(90deg,#a5c8f0,#7fb2eb)';
-      
-      // Wiki/Lesson settings
-      document.getElementById('lessonUrlInputModal').value = currentConfig?.lesson_url || '';
-      document.getElementById('lessonUseLocalModal').checked = currentConfig?.lesson_use_local || false;
       
       // AI settings
       document.getElementById('aiEnabledModal').checked = currentConfig?.ai_explainer_enabled || false;
@@ -2565,11 +2589,31 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
       // Registration setting
       document.getElementById('registrationEnabledModal').checked = currentConfig?.registration_enabled !== false;
+      document.getElementById('networkSimEnabledModal').checked = !!currentConfig?.network_sim_enabled;
 
-      if (modalTitle) modalTitle.textContent = 'Admin Settings';
-      if (siteWideSettingsSection) siteWideSettingsSection.style.display = '';
-      if (settingsSaveBtn) settingsSaveBtn.style.display = '';
-      loadAdminUsers();
+      const status = document.getElementById('adminSettingsStatus');
+      if (status) status.textContent = '';
+    });
+
+    document.querySelectorAll('[data-admin-settings-section]').forEach(button => {
+      button.addEventListener('click', () => {
+        const section = button.dataset.adminSettingsSection;
+        document.querySelectorAll('[data-admin-settings-section]').forEach(item => item.classList.toggle('active', item === button));
+        document.querySelectorAll('[data-admin-settings-pane]').forEach(pane => pane.classList.toggle('active', pane.dataset.adminSettingsPane === section));
+      });
+    });
+
+    document.getElementById('settingsOpenWikiManagerBtn')?.addEventListener('click', () => {
+      document.getElementById('adminSettingsModal').style.display = 'none';
+      window.WikiAdmin?.openManager?.();
+    });
+    document.getElementById('settingsOpenWikiHomeBtn')?.addEventListener('click', () => {
+      document.getElementById('adminSettingsModal').style.display = 'none';
+      window.WikiReader?.showHome?.();
+    });
+    document.getElementById('settingsOpenUsersBtn')?.addEventListener('click', () => {
+      document.getElementById('adminSettingsModal').style.display = 'none';
+      document.getElementById('adminUsersBtn')?.click();
     });
 
     document.getElementById('settingsCancelBtn').addEventListener('click', () => {
@@ -2659,6 +2703,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             } else if (btn.dataset.view === 'dash-notebook') {
               stopTeacherDashboardRosterPolling();
               window.StudentNotebook?.onTeacherDashboardOpen?.();
+            } else if (btn.dataset.view === 'dash-network') {
+              stopTeacherDashboardRosterPolling();
+              await window.NetworkSim?.openTeacherPanel?.();
             } else {
               stopTeacherDashboardRosterPolling();
             }
@@ -2699,6 +2746,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         });
         document.getElementById('teacherClassesActiveSelect')?.addEventListener('change', async (e) => {
           currentTeacherClassId = e.target.value || null;
+          refreshEagleIDEContext();
           renderClassSelector();
           syncTeacherDashboardClassSelectors();
           await refreshActiveStudentsForClass(currentTeacherClassId);
@@ -2741,6 +2789,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         await loadAssignments();
         renderAdminAssignments();
         if (targetView === 'dash-notebook') window.StudentNotebook?.onTeacherDashboardOpen?.();
+        if (targetView === 'dash-network') window.NetworkSim?.openTeacherPanel?.();
       });
       startTeacherDashboardRosterPolling();
       document.getElementById('teacherPasswordStatus').textContent = '';
@@ -2867,10 +2916,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const page_title = document.getElementById('pageTitleInput').value.trim();
       const topbar_color = document.getElementById('topBarColorInput').value.trim();
       
-      // Wiki/Lesson settings
-      const lesson_url = document.getElementById('lessonUrlInputModal').value.trim();
-      const lesson_use_local = document.getElementById('lessonUseLocalModal').checked;
-      
       // AI settings
       const ai_explainer_enabled = document.getElementById('aiEnabledModal').checked;
       const ai_ollama_url = document.getElementById('aiUrlInputModal').value.trim();
@@ -2888,12 +2933,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const html_runtime_max_dom_nodes = parseInt(document.getElementById('htmlMaxDomNodesModal').value, 10) || 3000;
       const html_runtime_max_popups = parseInt(document.getElementById('htmlMaxPopupSpawnModal').value, 10) || 2;
       
-      // Save all settings at once
-      await saveConfig({ 
+      const registration_enabled = document.getElementById('registrationEnabledModal').checked;
+      const network_sim_enabled = document.getElementById('networkSimEnabledModal').checked;
+      const status = document.getElementById('adminSettingsStatus');
+      if (status) status.textContent = 'Saving…';
+      await saveConfig({
         page_title, 
         topbar_color, 
-        lesson_url, 
-        lesson_use_local,
         ai_explainer_enabled, 
         ai_ollama_url, 
         ai_model, 
@@ -2906,30 +2952,27 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         html_runtime_max_fps,
         html_runtime_memory_limit_mb,
         html_runtime_max_dom_nodes,
-        html_runtime_max_popups
+        html_runtime_max_popups,
+        network_sim_enabled
       });
-      
+      const registrationResponse = await fetch('/api/admin/registration', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+        body: JSON.stringify({ enabled: registration_enabled })
+      });
+      const registrationResult = await registrationResponse.json().catch(() => ({}));
+      if (!registrationResult?.ok) {
+        if (status) status.textContent = registrationResult?.error || 'Could not save registration setting.';
+        return;
+      }
+      currentConfig.registration_enabled = registration_enabled;
+
       applyConfig(currentConfig);
-      document.getElementById('adminSettingsModal').style.display = 'none';
-      alert('All settings saved successfully!');
+      if (status) status.textContent = 'Settings saved.';
     });
 
     // ---- Admin Users Management ----
-    document.getElementById('saveRegistrationBtn').addEventListener('click', async () => {
-      if (!ADMIN_TOKEN) return;
-      const enabled = document.getElementById('registrationEnabledModal').checked;
-      const res = await fetch('/api/admin/registration', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
-        body: JSON.stringify({ enabled })
-      });
-      const j = await res.json().catch(() => ({}));
-      if (j?.ok) { currentConfig.registration_enabled = enabled; alert('Registration setting saved.'); }
-      else alert(j.error || 'Failed');
-    });
-
-    document.getElementById('refreshUsersBtn').addEventListener('click', loadAdminUsers);
-    document.getElementById('createTeacherBtn').addEventListener('click', createTeacherAccount);
+    document.getElementById('createTeacherBtn')?.addEventListener('click', createTeacherAccount);
     document.getElementById('createClassBtn').addEventListener('click', async () => {
       if (!TEACHER_TOKEN) return alert('Teacher login required.');
       const name = document.getElementById('newClassNameInput').value.trim();
@@ -2987,32 +3030,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
     });
 
-    async function loadAdminUsers() {
-      if (!ADMIN_TOKEN) return;
-      const res = await fetch('/api/admin/users', { headers: { 'X-Admin-Token': ADMIN_TOKEN } });
-      const j = await res.json().catch(() => ({}));
-      const tbody = document.getElementById('usersTableBody');
-      tbody.innerHTML = '';
-      if (!j.ok) { tbody.innerHTML = '<tr><td colspan="8" style="color:#ef5350;">Failed to load users</td></tr>'; return; }
-      if (!j.users.length) { tbody.innerHTML = '<tr><td colspan="8" style="color:#888;">No users registered yet.</td></tr>'; return; }
-      j.users.forEach(u => {
-        const tr = document.createElement('tr');
-        if (!u.enabled) tr.className = 'disabled-row';
-        tr.innerHTML = `<td>${escapeHtml(u.name || '')}</td><td>${escapeHtml(u.email)}</td><td>${escapeHtml(u.role || 'student')}</td><td>${escapeHtml(u.class_name || '—')}</td><td>${escapeHtml(u.created_at || '')}</td><td>${escapeHtml(u.last_sign_in || '—')}</td><td>${u.enabled ? '✅ Active' : '🔒 Disabled'}</td>
-          <td style="display:flex;gap:4px;flex-wrap:wrap;">
-            <button class="btn secondary" data-action="reset" style="font-size:11px;padding:2px 6px;">Reset PW</button>
-            <button class="btn secondary" data-action="toggle" data-enable="${!u.enabled}" style="font-size:11px;padding:2px 6px;">${u.enabled ? 'Disable' : 'Enable'}</button>
-            <button class="btn secondary" data-action="delete" style="font-size:11px;padding:2px 6px;color:#ef5350;">Delete</button>
-          </td>`;
-        // Use data attributes + event listeners to avoid inline JS with user data
-        const [resetBtn, toggleBtn, deleteBtn] = tr.querySelectorAll('button[data-action]');
-        resetBtn.addEventListener('click', () => adminResetPassword(u.email));
-        toggleBtn.addEventListener('click', () => adminToggleUser(u.email, !u.enabled));
-        deleteBtn.addEventListener('click', () => adminDeleteUser(u.email));
-        tbody.appendChild(tr);
-      });
-    }
-
     async function adminResetPassword(email) {
       if (!confirm(`Reset password for ${email}?`)) return;
       const res = await fetch('/api/admin/users/reset-password', {
@@ -3051,29 +3068,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
     }
 
-    async function adminToggleUser(email, enable) {
-      const res = await fetch('/api/admin/users/toggle', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
-        body: JSON.stringify({ email, enabled: enable })
-      });
-      const j = await res.json().catch(() => ({}));
-      if (j?.ok) loadAdminUsers();
-      else alert(j.error || 'Failed');
-    }
-
-    async function adminDeleteUser(email) {
-      if (!confirm(`Delete user ${email} and all their files? This cannot be undone.`)) return;
-      const res = await fetch('/api/admin/users/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
-        body: JSON.stringify({ email })
-      });
-      const j = await res.json().catch(() => ({}));
-      if (j?.ok) loadAdminUsers();
-      else alert(j.error || 'Failed');
-    }
-
     async function createTeacherAccount() {
       if (!ADMIN_TOKEN) return;
       const name = document.getElementById('newTeacherName').value.trim();
@@ -3090,7 +3084,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       document.getElementById('newTeacherName').value = '';
       document.getElementById('newTeacherEmail').value = '';
       document.getElementById('newTeacherPassword').value = '';
-      loadAdminUsers();
+      await loadAdminUsersModal();
       alert('Teacher account created.');
     }
 
@@ -3118,12 +3112,16 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     function filterAdminUsersTable() {
       const q = (document.getElementById('adminUsersSearch')?.value || '').toLowerCase();
+      const roleFilter = document.getElementById('adminUsersRoleFilter')?.value || 'all';
       const rows = document.querySelectorAll('#adminUsersStatsBody tr[data-email]');
       let vis = 0;
       rows.forEach(tr => {
         const email = (tr.dataset.email || '').toLowerCase();
         const name = (tr.dataset.name || '').toLowerCase();
-        const match = !q || email.includes(q) || name.includes(q);
+        const searchable = (tr.dataset.search || `${name} ${email}`).toLowerCase();
+        const roleMatch = roleFilter === 'all'
+          || (roleFilter === 'disabled' ? tr.dataset.enabled === 'false' : tr.dataset.role === roleFilter);
+        const match = roleMatch && (!q || searchable.includes(q));
         tr.style.display = match ? '' : 'none';
         if (match) vis++;
       });
@@ -3134,20 +3132,33 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     async function loadAdminUsersModal() {
       if (!ADMIN_TOKEN) return;
       const tbody = document.getElementById('adminUsersStatsBody');
-      if (tbody) tbody.innerHTML = '<tr><td colspan="12" style="text-align:center; padding:16px; color:#888;">Loading…</td></tr>';
+      if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="admin-users-empty">Loading accounts…</td></tr>';
       const res = await fetch('/api/admin/users', { headers: { 'X-Admin-Token': ADMIN_TOKEN } });
       const j = await res.json().catch(() => ({}));
       if (!j?.ok) {
-        if (tbody) tbody.innerHTML = '<tr><td colspan="12" style="color:#ef5350; padding:8px;">Failed to load users</td></tr>';
+        if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="admin-users-empty error">Failed to load users</td></tr>';
         return;
       }
       _adminUsersData = j.users || [];
+      const students = _adminUsersData.filter(user => (user.role || 'student') === 'student').length;
+      const teachers = _adminUsersData.filter(user => user.role === 'teacher').length;
+      const disabled = _adminUsersData.filter(user => !user.enabled).length;
+      const stats = {
+        adminUsersTotalStat: _adminUsersData.length,
+        adminUsersStudentStat: students,
+        adminUsersTeacherStat: teachers,
+        adminUsersDisabledStat: disabled,
+      };
+      Object.entries(stats).forEach(([id, value]) => {
+        const element = document.getElementById(id);
+        if (element) element.textContent = String(value);
+      });
       _adminSelectedEmails.clear();
       _updateAdminBulkButtons();
 
       if (!tbody) return;
       if (!_adminUsersData.length) {
-        tbody.innerHTML = '<tr><td colspan="12" style="color:#888; padding:12px;">No users registered yet.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="admin-users-empty">No users registered yet.</td></tr>';
         const summary = document.getElementById('adminUsersSummary');
         if (summary) summary.textContent = '0 users';
         return;
@@ -3162,6 +3173,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const tr = document.createElement('tr');
         tr.dataset.email = u.email || '';
         tr.dataset.name = u.name || '';
+        tr.dataset.role = u.role || 'student';
+        tr.dataset.enabled = u.enabled ? 'true' : 'false';
+        tr.dataset.search = [u.name, u.email, u.role, ...(u.class_names || []), u.class_name].filter(Boolean).join(' ');
         if (!u.enabled) tr.classList.add('disabled-row');
         if (_adminSelectedEmails.has(u.email)) tr.classList.add('selected-row');
 
@@ -3188,17 +3202,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         chkTd.appendChild(chk);
         tr.appendChild(chkTd);
 
+        const classNames = Array.isArray(u.class_names) ? u.class_names : (u.class_name ? [u.class_name] : []);
         const cells = [
-          escapeHtml(u.name || ''),
-          escapeHtml(u.email || ''),
-          `<span style="text-transform:capitalize;">${escapeHtml(u.role || 'student')}</span>`,
-          escapeHtml(u.class_name || '—'),
-          escapeHtml(u.created_at || '—'),
-          escapeHtml(u.last_sign_in || '—'),
-          `<span class="stat-ip">${escapeHtml(u.last_ip || '—')}</span>`,
-          `<span class="stat-storage">${_formatBytes(u.storage_bytes)}</span>`,
-          String(u.file_count ?? 0),
-          u.enabled ? '✅ Active' : '🔒 Disabled',
+          `<div class="admin-user-identity"><strong>${escapeHtml(u.name || 'Unnamed user')}</strong><span>${escapeHtml(u.email || '')}</span></div>`,
+          `<span class="admin-role-badge admin-role-badge--${escapeHtml(u.role || 'student')}">${escapeHtml(u.role || 'student')}</span>`,
+          `<div class="admin-class-list">${classNames.length ? classNames.map(name => `<span>${escapeHtml(name)}</span>`).join('') : '<em>None</em>'}</div>`,
+          `<div class="admin-user-activity"><span><strong>Last sign-in</strong> ${escapeHtml(u.last_sign_in || 'Never')}</span><span><strong>Registered</strong> ${escapeHtml(u.created_at || '—')}</span><span class="stat-ip">${escapeHtml(u.last_ip || 'No IP recorded')}</span></div>`,
+          `<div class="admin-user-storage"><strong>${_formatBytes(u.storage_bytes)}</strong><span>${String(u.file_count ?? 0)} file${Number(u.file_count || 0) === 1 ? '' : 's'}</span></div>`,
+          `<span class="admin-status-badge ${u.enabled ? 'is-active' : 'is-disabled'}">${u.enabled ? 'Active' : 'Disabled'}</span>`,
         ];
         cells.forEach(html => {
           const td = document.createElement('td');
@@ -3208,29 +3219,26 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
         // Actions cell
         const actTd = document.createElement('td');
-        actTd.style.cssText = 'white-space:nowrap;';
+        actTd.className = 'admin-user-actions';
         const resetBtn = document.createElement('button');
         resetBtn.className = 'btn secondary';
-        resetBtn.style.cssText = 'font-size:10px;padding:2px 5px;margin:1px;';
         resetBtn.textContent = 'Reset PW';
         resetBtn.addEventListener('click', () => adminResetPassword(u.email));
 
         const toggleBtn = document.createElement('button');
         toggleBtn.className = 'btn secondary';
-        toggleBtn.style.cssText = 'font-size:10px;padding:2px 5px;margin:1px;';
         toggleBtn.textContent = u.enabled ? 'Disable' : 'Enable';
         toggleBtn.addEventListener('click', () => adminToggleUserAndReload(u.email, !u.enabled));
 
         const clearBtn = document.createElement('button');
         clearBtn.className = 'btn secondary';
-        clearBtn.style.cssText = 'font-size:10px;padding:2px 5px;margin:1px;';
         clearBtn.title = 'Delete all files for this user without viewing them';
-        clearBtn.textContent = '🗑 Files';
+        clearBtn.textContent = 'Clear Files';
         clearBtn.addEventListener('click', () => adminClearUserFiles(u.email));
 
         const delBtn = document.createElement('button');
         delBtn.className = 'btn secondary';
-        delBtn.style.cssText = 'font-size:10px;padding:2px 5px;margin:1px;color:#ef5350;';
+        delBtn.classList.add('admin-danger-action');
         delBtn.textContent = 'Delete';
         delBtn.addEventListener('click', () => adminDeleteUserAndReload(u.email));
 
@@ -3242,7 +3250,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (_adminUsersData.length > ADMIN_USERS_RENDER_LIMIT) {
         const tr = document.createElement('tr');
         const td = document.createElement('td');
-        td.colSpan = 12;
+        td.colSpan = 8;
         td.style.textAlign = 'center';
         td.style.padding = '12px';
         const btn = document.createElement('button');
@@ -3313,6 +3321,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       document.getElementById('adminUsersModal').style.display = 'none';
     });
     document.getElementById('adminUsersRefreshBtn')?.addEventListener('click', loadAdminUsersModal);
+    document.getElementById('adminUsersSearch')?.addEventListener('input', filterAdminUsersTable);
+    document.getElementById('adminUsersRoleFilter')?.addEventListener('change', filterAdminUsersTable);
     document.getElementById('serverHealthBtn')?.addEventListener('click', () => {
       document.getElementById('serverHealthModal').style.display = 'flex';
       loadServerHealth();
@@ -3435,6 +3445,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
               <div class="teacher-dash-class-code">Join code: <strong>${escapeHtml(activeClass.join_code)}</strong> · ${activeClass.students?.length || 0} student(s)</div>
             </div>
             <div style="display:flex; gap:6px; flex-wrap:wrap;">
+              <button class="btn secondary copy-class-code-btn" data-code="${escapeHtml(activeClass.join_code)}" style="font-size:12px;">Copy Join Code</button>
               <button class="btn stop delete-class-btn" data-class="${escapeHtml(activeClass.id)}" data-name="${escapeHtml(activeClass.name)}" style="font-size:12px;">Delete</button>
             </div>
           </div>
@@ -3442,7 +3453,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             <div class="teacher-dash-classroom-settings-title">Classroom features</div>
             <div class="choice-grid teacher-dash-feature-grid">
               ${aiToggleTemplate(activeClass)}
-              <label class="choice-item"><input type="checkbox" class="cls-wiki" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.wiki_enabled ? 'checked' : ''}><span class="choice-text">Wiki enabled</span></label>
               <label class="choice-item"><input type="checkbox" class="cls-raise-hand" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.raise_hand_enabled !== false ? 'checked' : ''}><span class="choice-text">Raise hand &amp; questions</span></label>
               <label class="choice-item"><input type="checkbox" class="cls-teacher-send" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.teacher_file_send_enabled !== false ? 'checked' : ''}><span class="choice-text">Teacher can send files</span></label>
               <label class="choice-item"><input type="checkbox" class="cls-student-send" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.student_send_to_teacher_enabled !== false ? 'checked' : ''}><span class="choice-text">Students send to teacher</span></label>
@@ -3454,8 +3464,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             <label style="font-size:12px; margin:0 0 4px; display:block;">AI Grading Rigor: <span class="cls-rigor-label" data-class="${escapeHtml(activeClass.id)}">${rigorLevelLabel(activeClass.settings?.ai_grading_rigor || 5)}</span> (${activeClass.settings?.ai_grading_rigor || 5}/10)</label>
             <input type="range" min="1" max="10" value="${activeClass.settings?.ai_grading_rigor || 5}" class="cls-rigor" data-class="${escapeHtml(activeClass.id)}" style="width:100%;">
           </div>
-          <input type="text" class="cls-wiki-url" data-class="${escapeHtml(activeClass.id)}" value="${escapeHtml(activeClass.settings?.wiki_url || '')}" placeholder="Class wiki URL (optional)" style="width:100%; margin-bottom:8px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; font-size:12px;">
-          <textarea class="cls-wiki-html" data-class="${escapeHtml(activeClass.id)}" placeholder="Class wiki HTML" style="width:100%; margin-bottom:8px; min-height:70px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; padding:8px; font-size:12px;">${escapeHtml(activeClass.settings?.wiki_html || '')}</textarea>
+          <section class="teacher-class-wiki-card" aria-label="Wiki material for ${escapeHtml(activeClass.name)}">
+            <div class="teacher-class-wiki-copy"><span class="teacher-class-wiki-kicker">Coding Wiki</span><strong>Class material lives in the shared wiki</strong><p>Open a page and choose <b>Feature for Class</b> to place it on this class home, or bookmark it as <b>Lesson Material</b> for the day. The class is selected before the action is saved.</p></div>
+            <div class="teacher-class-wiki-actions">
+              <button class="btn run open-class-wiki-btn" type="button">Open Wiki</button>
+              <button class="btn secondary open-class-bookmarks-btn" type="button">View Lesson Material</button>
+            </div>
+          </section>
           <div style="font-size:13px; font-weight:600; color:var(--columbia-blue); margin-bottom:6px;">Students</div>
           ${(activeClass.students || []).map(student => `
             <div class="teacher-dash-student-row">
@@ -3468,6 +3483,27 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           `).join('') || '<div style="color:#888; font-size:12px;">No students enrolled.</div>'}
         </div>
       ` : '';
+      wrap.querySelectorAll('.copy-class-code-btn').forEach(btn => btn.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(btn.dataset.code || '');
+          const previous = btn.textContent;
+          btn.textContent = 'Copied';
+          setTimeout(() => { btn.textContent = previous; }, 1400);
+        } catch {
+          alert(`Join code: ${btn.dataset.code || ''}`);
+        }
+      }));
+      wrap.querySelectorAll('.open-class-wiki-btn').forEach(btn => btn.addEventListener('click', async () => {
+        document.getElementById('teacherDashboardModal').style.display = 'none';
+        if (window.WikiReader?.selectClass) await window.WikiReader.selectClass(currentTeacherClassId, { show: true }).catch(() => {});
+        else window.WikiReader?.showHome?.();
+      }));
+      wrap.querySelectorAll('.open-class-bookmarks-btn').forEach(btn => btn.addEventListener('click', async () => {
+        document.getElementById('teacherDashboardModal').style.display = 'none';
+        if (window.WikiReader?.selectClass) await window.WikiReader.selectClass(currentTeacherClassId, { show: true }).catch(() => {});
+        else window.WikiReader?.showHome?.();
+        document.getElementById('wikiBookmarksBtn')?.click();
+      }));
       wrap.querySelectorAll('.delete-class-btn').forEach(btn => btn.addEventListener('click', async () => {
         const classId = btn.dataset.class;
         const className = btn.dataset.name || 'this class';
@@ -3488,14 +3524,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       wrap.querySelectorAll('.save-class-settings-btn').forEach(btn => btn.addEventListener('click', async () => {
         const classId = btn.dataset.class;
         const ai = canShowAiToggle ? wrap.querySelector(`.cls-ai[data-class="${CSS.escape(classId)}"]`)?.checked : undefined;
-        const wiki = wrap.querySelector(`.cls-wiki[data-class="${CSS.escape(classId)}"]`)?.checked;
-        const wikiUrl = wrap.querySelector(`.cls-wiki-url[data-class="${CSS.escape(classId)}"]`)?.value || '';
-        const wikiHtml = wrap.querySelector(`.cls-wiki-html[data-class="${CSS.escape(classId)}"]`)?.value || '';
         const rigor = parseInt(wrap.querySelector(`.cls-rigor[data-class="${CSS.escape(classId)}"]`)?.value || '5', 10) || 5;
         const settingsPayload = {
-          wiki_enabled: !!wiki,
-          wiki_url: wikiUrl.trim(),
-          wiki_html: wikiHtml,
           ai_grading_rigor: rigor,
           raise_hand_enabled: !!wrap.querySelector(`.cls-raise-hand[data-class="${CSS.escape(classId)}"]`)?.checked,
           teacher_file_send_enabled: !!wrap.querySelector(`.cls-teacher-send[data-class="${CSS.escape(classId)}"]`)?.checked,
@@ -4305,10 +4335,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let _shellCwd = '';          // '' = home (virtual shell)
     let _allFileTree = [];       // full flat tree from server
     let _selectedFileItems = new Set();
-    const WORKSPACE_TAB_EDITOR = 'editor';
-    const WORKSPACE_TAB_FILES = 'files';
-    let _workspaceTab = WORKSPACE_TAB_EDITOR;
-
     function setWorkspaceTab(tabName) {
       const editorTabBtn = document.getElementById('workspaceEditorTabBtn');
       const filesTabBtn = document.getElementById('workspaceFilesTabBtn');
@@ -4844,6 +4870,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     async function saveCurrentFile() {
       if (auditPreviewActive || currentOpenFile?.audit) return true;
       if (currentOpenFile?.notebook) return true;
+      if (currentOpenFile?.draft) return true;
       if (!currentOpenFile || (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN)) return true;
       syncEditorBridge();
       const content = csvEditorActive ? stringifyCsvRows(csvEditorRows) : editor.getValue();
@@ -4855,6 +4882,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         });
         if (!res.ok) return false;
         const j = await res.json().catch(() => ({}));
+        if (j.ok) currentBufferDirty = false;
         return !!j.ok;
       } catch (e) {
         return false;
@@ -4865,14 +4893,61 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     function updateActiveFileName() {
       const el = document.getElementById('activeFileName');
       if (el) el.textContent = currentOpenFile ? currentOpenFile.name : '';
+      const saveDraftBtn = document.getElementById('saveDraftBtn');
+      if (saveDraftBtn) saveDraftBtn.style.display = currentOpenFile?.draft && isAuthenticated() ? '' : 'none';
       if (!csvEditorActive) syncEditorLanguage();
     }
+
+    async function saveDraftAsFile() {
+      if (!currentOpenFile?.draft) return true;
+      if (!isAuthenticated()) {
+        document.getElementById('loginBtn')?.click();
+        return false;
+      }
+      const requested = window.prompt('Save this wiki example as a file in your workspace:', currentOpenFile.name || 'wiki-example.py');
+      if (requested === null) return false;
+      const fileName = String(requested || '').trim().split(/[\\/]/).pop();
+      if (!fileName) { window.alert('A file name is required.'); return false; }
+      try {
+        const existing = await fetch('/api/files/read?path=' + encodeURIComponent(fileName), { headers: fileAuthHeaders() });
+        if (existing.ok) {
+          window.alert('A file with that name already exists. Choose a different name.');
+          return false;
+        }
+        const created = await fetch('/api/files/create', {
+          method: 'POST',
+          headers: fileJsonHeaders(),
+          body: JSON.stringify({ name: fileName, type: 'file', parent: '' }),
+        });
+        const createdJson = await created.json().catch(() => ({}));
+        if (!created.ok || !createdJson.ok) throw new Error(createdJson.error || 'Could not create file');
+        syncEditorBridge();
+        const written = await fetch('/api/files/write', {
+          method: 'POST',
+          headers: fileJsonHeaders(),
+          body: JSON.stringify({ path: createdJson.path || fileName, content: editor.getValue() }),
+        });
+        const writtenJson = await written.json().catch(() => ({}));
+        if (!written.ok || !writtenJson.ok) throw new Error(writtenJson.error || 'Could not save file');
+        currentOpenFile = { path: createdJson.path || fileName, name: fileName };
+        currentBufferDirty = false;
+        updateActiveFileName();
+        await loadFileTree();
+        return true;
+      } catch (error) {
+        window.alert(error.message || 'Could not save this draft.');
+        return false;
+      }
+    }
+
+    document.getElementById('saveDraftBtn')?.addEventListener('click', saveDraftAsFile);
 
     // Autosave: save current file 1.5 s after the last edit
     let _autosaveTimer = null;
     function scheduleAutosave() {
       if (csvEditorActive) return;
       if (currentOpenFile?.notebook) return;
+      if (currentOpenFile?.draft) return;
       if (!currentOpenFile || (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN)) return;
       if (_autosaveTimer) clearTimeout(_autosaveTimer);
       _autosaveTimer = setTimeout(async () => {
@@ -4889,11 +4964,30 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     // initEditor() runs in an earlier <script> block and sets window.eagleEditor synchronously,
     // so it is always defined by the time this block executes.
     if (window.eagleEditor) {
-      window.eagleEditor.on('change', scheduleAutosave);
+      window.eagleEditor.on('change', () => {
+        currentBufferDirty = true;
+        scheduleAutosave();
+      });
     } else {
       // Fallback: textarea change
-      document.getElementById('editor').addEventListener('input', scheduleAutosave);
+      document.getElementById('editor').addEventListener('input', () => {
+        currentBufferDirty = true;
+        scheduleAutosave();
+      });
     }
+
+    window.addEventListener('beforeunload', (event) => {
+      if (!currentBufferDirty || (!currentOpenFile?.draft && isAuthenticated())) return;
+      event.preventDefault();
+      event.returnValue = '';
+    });
+
+    window.addEventListener('keydown', (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's' && currentOpenFile?.draft) {
+        event.preventDefault();
+        saveDraftAsFile();
+      }
+    });
 
     function closeAuditPreview() {
       if (!auditPreviewActive) return;
@@ -5028,6 +5122,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         setCsvMode(false);
         editor.setValue(j.content || '');
       }
+      currentBufferDirty = false;
       updateActiveFileName();
       updateEditorOverlay();
       setWorkspaceTab('editor');

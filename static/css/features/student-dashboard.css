@@ -11,6 +11,29 @@
   pointer-events: none;
 }
 
+.student-classes-subtitle { margin: 5px 0 0; color: var(--theme-text-dim); font-size: 12px; }
+.student-classes-layout { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, .75fr); gap: 18px; align-items: start; }
+.student-classes-panel { border: 1px solid var(--theme-border-mid); background: var(--theme-input-bg); padding: 20px; }
+.student-classes-panel h3 { margin: 3px 0 0; color: var(--theme-text); font-size: 18px; }
+.student-classes-panel-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-bottom: 14px; border-bottom: 1px solid var(--theme-border-mid); }
+.student-classes-eyebrow { display: block; color: var(--columbia-blue); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.student-class-count { display: grid; place-items: center; min-width: 38px; height: 38px; padding: 0 10px; border: 1px solid var(--columbia-blue); color: var(--columbia-blue); font-weight: 800; }
+.student-class-membership-list { display: grid; gap: 8px; padding-top: 14px; }
+.student-class-membership { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 66px; padding: 12px 14px; border: 1px solid var(--theme-border-mid); background: var(--theme-output-bg); }
+.student-class-membership.is-active { border-left: 4px solid var(--columbia-blue); background: rgba(127,178,235,.1); }
+.student-class-membership > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.student-class-membership strong { color: var(--theme-text); font-size: 14px; }
+.student-class-membership span { color: var(--theme-text-dim); font-size: 11px; }
+.student-current-class-badge { padding: 5px 8px; border: 1px solid var(--columbia-blue); color: var(--columbia-blue) !important; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; }
+.student-classes-empty { display: flex; flex-direction: column; gap: 5px; padding: 24px 12px; text-align: center; color: var(--theme-text-dim); }
+.student-classes-empty strong { color: var(--theme-text); }
+.student-join-panel p { color: var(--theme-text-dim); font-size: 12px; line-height: 1.5; }
+.student-join-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 18px; }
+.student-join-form input { width: 100%; min-height: 42px; padding: 8px 12px; border: 1px solid var(--theme-border-mid); background: var(--theme-output-bg); color: var(--theme-text); font: 800 17px/1 ui-monospace, monospace; letter-spacing: .14em; text-transform: uppercase; }
+.student-join-status { min-height: 18px; margin-top: 8px; font-size: 12px; color: var(--theme-text-dim); }
+
+@media (max-width: 900px) { .student-classes-layout { grid-template-columns: 1fr; } }
+
 .student-achievement-toast {
   pointer-events: auto;
   background: var(--theme-panel-hdr);

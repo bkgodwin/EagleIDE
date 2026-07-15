@@ -38,6 +38,36 @@
     return c.getCurrentClassContext?.()?.id || c.currentStudentClassId || null;
   }
 
+  function renderClassesPane() {
+    const c = ctx();
+    const list = document.getElementById('studentClassMembershipList');
+    const count = document.getElementById('studentClassCount');
+    const joinPanel = document.getElementById('joinClassPanel');
+    const classes = Array.isArray(c.studentClasses) ? c.studentClasses : [];
+    const activeId = getClassId();
+    if (joinPanel) joinPanel.style.display = isStudent() ? '' : 'none';
+    if (count) count.textContent = String(classes.length);
+    if (!list) return;
+    if (!classes.length) {
+      list.innerHTML = '<div class="student-classes-empty"><strong>No classes yet</strong><span>Enter a teacher\'s join code to add your first class.</span></div>';
+      return;
+    }
+    list.innerHTML = classes.map(cls => `
+      <article class="student-class-membership${cls.id === activeId ? ' is-active' : ''}">
+        <div><strong>${escapeHtml(cls.name || 'Class')}</strong><span>${cls.id === activeId ? 'Current class' : 'Class member'}</span></div>
+        ${cls.id === activeId ? '<span class="student-current-class-badge">Current</span>' : `<button class="btn secondary student-select-class-btn" type="button" data-class-id="${escapeHtml(cls.id)}">Switch</button>`}
+      </article>
+    `).join('');
+    list.querySelectorAll('.student-select-class-btn').forEach(button => {
+      button.addEventListener('click', () => {
+        const selector = document.getElementById('classSelector');
+        if (!selector) return;
+        selector.value = button.dataset.classId || '';
+        selector.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    });
+  }
+
   function storageKey(classId) {
     return `${STORAGE_PREFIX}${classId || 'none'}`;
   }
@@ -197,13 +227,21 @@
     masteryPollTimer = setInterval(() => {
       if (document.hidden) return;
       checkAchievements({ silent: false }).catch(() => {});
-    }, 60000);
+    }, 300000);
   }
 
   function openDashboard() {
     const modal = document.getElementById('studentDashboardModal');
     if (!modal || !isStudent()) return;
     modal.style.display = 'flex';
+    const hasClass = !!getClassId();
+    modal.querySelectorAll('.teacher-dash-navbtn').forEach(button => {
+      button.classList.toggle('active', button.dataset.view === (hasClass ? 'student-dash-mastery' : 'student-dash-classes'));
+    });
+    modal.querySelectorAll('.teacher-dash-view').forEach(view => {
+      view.classList.toggle('active', view.id === (hasClass ? 'student-dash-mastery' : 'student-dash-classes'));
+    });
+    renderClassesPane();
     renderMasteryPane().catch(() => {});
     checkAchievements({ silent: true }).catch(() => {});
   }
@@ -219,6 +257,18 @@
 
     document.getElementById('studentDashboardBtn')?.addEventListener('click', openDashboard);
     document.getElementById('studentDashCloseBtn')?.addEventListener('click', closeDashboard);
+    document.querySelectorAll('#studentDashboardModal .teacher-dash-navbtn').forEach(button => {
+      button.addEventListener('click', () => {
+        const viewId = button.dataset.view;
+        document.querySelectorAll('#studentDashboardModal .teacher-dash-navbtn').forEach(item => item.classList.toggle('active', item === button));
+        document.querySelectorAll('#studentDashboardModal .teacher-dash-view').forEach(view => view.classList.toggle('active', view.id === viewId));
+        if (viewId === 'student-dash-classes') renderClassesPane();
+        if (viewId === 'student-dash-mastery') renderMasteryPane().catch(() => {});
+      });
+    });
+    document.getElementById('joinClassCodeInput')?.addEventListener('keydown', event => {
+      if (event.key === 'Enter') document.getElementById('joinClassBtn')?.click();
+    });
 
     const modal = document.getElementById('studentDashboardModal');
     modal?.addEventListener('click', (e) => {
@@ -228,7 +278,7 @@
 
   function onAuthChanged() {
     const btn = document.getElementById('studentDashboardBtn');
-    const show = isStudent() && !!getClassId();
+    const show = isStudent();
     if (btn) btn.style.display = show ? '' : 'none';
     if (!show) {
       closeDashboard();
@@ -236,6 +286,7 @@
       return;
     }
     startMasteryPolling();
+    renderClassesPane();
     checkAchievements({ silent: true }).catch(() => {});
   }
 
@@ -243,10 +294,12 @@
     open: openDashboard,
     close: closeDashboard,
     refreshMastery: renderMasteryPane,
+    refreshClasses: renderClassesPane,
     checkAchievements,
     onAuthChanged,
     onClassChanged() {
       onAuthChanged();
+      renderClassesPane();
       renderMasteryPane().catch(() => {});
     },
   };
