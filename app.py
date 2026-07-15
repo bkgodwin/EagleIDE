@@ -33,6 +33,8 @@ from collections import defaultdict, deque
 from cryptography.fernet import Fernet, InvalidToken
 
 from classroom_features import merge_class_settings, register as register_classroom_features
+from network_features import register as register_network_features
+from wiki_features import register as register_wiki_features
 
 _native_threading = threading
 _native_time = time
@@ -49,6 +51,9 @@ CHALLENGE_SCORE_FILE = BASE_DIR / "challenge_scores.json"
 SANDBOX_DIR = BASE_DIR / "sandboxes"
 ASSIGNMENTS_DIR = BASE_DIR / "assignments"
 NOTEBOOKS_DIR = BASE_DIR / "notebooks"
+WIKI_DATA_DIR = Path(os.environ.get("EAGLEIDE_WIKI_DATA_DIR", str(BASE_DIR / "wiki_data"))).expanduser().resolve()
+WIKI_BACKUP_DIR = Path(os.environ.get("EAGLEIDE_WIKI_BACKUP_DIR", str(BASE_DIR / "wiki_backups"))).expanduser().resolve()
+NETWORK_DATA_DIR = Path(os.environ.get("EAGLEIDE_NETWORK_DATA_DIR", str(BASE_DIR / "network_data"))).expanduser().resolve()
 
 INPUT_TOKEN = "[[_IDE_INPUT_]]"
 MAX_WALL_TIME = 30.0       # seconds (hard kill for user code)
@@ -201,6 +206,9 @@ except Exception:
         "page_title": "Eagle IDE (Python + JavaScript + HTML + CSS)",
         "topbar_color": "linear-gradient(90deg,#a5c8f0,#7fb2eb)",
         "registration_enabled": True,
+        "network_sim_enabled": False,
+        "wiki_max_asset_mb": 1024,
+        "wiki_total_asset_mb": 10240,
     }
 
 # -------------------------
@@ -232,7 +240,15 @@ def _add_security_headers(response):
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Permissions-Policy", "geolocation=(), camera=(), microphone=()")
     if request.path.startswith("/static/"):
-        response.headers.setdefault("Cache-Control", "public, max-age=300, must-revalidate")
+        # Flask's default static response is ``no-cache``. Override it so a classroom
+        # full of browsers does not revalidate every asset on every navigation.
+        # Explicitly versioned assets can be retained indefinitely; unversioned assets
+        # keep a short revalidation window so local development remains predictable.
+        response.headers["Cache-Control"] = (
+            "public, max-age=31536000, immutable"
+            if request.args.get("v")
+            else "public, max-age=300, must-revalidate"
+        )
     elif request.path == "/":
         response.headers.setdefault("Cache-Control", "no-cache")
     return response
@@ -451,6 +467,7 @@ _reg_rate_limit: dict = defaultdict(list)  # ip -> list of timestamps
 _login_rate_limit: dict = defaultdict(list)  # ip -> list of timestamps
 _classes_lock = threading.Lock()
 _skills_lock = threading.Lock()
+_default_skills_seed_lock = threading.Lock()
 _notebooks_lock = threading.Lock()
 _server_health_lock = threading.Lock()
 _users_cache: Optional[tuple[str, int, dict]] = None
@@ -2385,8 +2402,10 @@ def admin_list_users():
     classes = {c.get("id"): c for c in _load_classes().get("classes", [])}
     users = []
     for u in data.get("users", []):
+        class_ids = _get_user_class_ids(u)
         class_id = u.get("class_id")
         class_name = (classes.get(class_id) or {}).get("name") if class_id else None
+        class_names = [classes[class_key].get("name") for class_key in class_ids if classes.get(class_key)]
         email = u.get("email", "")
         user_dir = _get_user_dir(email)
         storage_bytes = _get_user_storage_used(user_dir)
@@ -2397,6 +2416,8 @@ def admin_list_users():
             "role": u.get("role", "student"),
             "class_id": class_id,
             "class_name": class_name,
+            "class_ids": class_ids,
+            "class_names": [name for name in class_names if name],
             "created_at": u.get("created_at"),
             "last_sign_in": u.get("last_sign_in", ""),
             "last_ip": u.get("last_ip", ""),
@@ -3243,6 +3264,7 @@ def teacher_list_skills():
     if not teacher:
         return jsonify(ok=False, error="Teacher token required"), 401
     teacher_email = (teacher.get("email") or "").strip().lower()
+    _ensure_default_teacher_skills(teacher_email)
     classes = _get_teacher_classes(teacher_email)
     class_lookup = {c.get("id"): c.get("name") for c in classes}
     skills = []
@@ -3256,6 +3278,7 @@ def teacher_list_skills():
             "id": skill.get("id"),
             "name": skill.get("name"),
             "description": skill.get("description") or "",
+            "is_default": bool(skill.get("is_default", False)),
             "order": max(0, order_value),
             "class_ids": class_ids,
             "class_names": [class_lookup[cid] for cid in class_ids],
@@ -4077,6 +4100,14 @@ def assistant_chat():
 # -------------------------
 @app.get("/")
 def root():
+    return send_from_directory(BASE_DIR, "index.html")
+
+
+@app.get("/ide")
+@app.get("/network")
+@app.get("/wiki")
+@app.get("/wiki/<path:wiki_path>")
+def spa_route(wiki_path: str = ""):
     return send_from_directory(BASE_DIR, "index.html")
 
 
@@ -4983,6 +5014,7 @@ class _ProcessRunnerBase:
             proc = self.proc
             job_handle = self.job_handle
             stop_evt = self.stop_evt
+            pump_thread = self.thread
         stop_evt.set()
         if proc and proc.poll() is None:
             _terminate_isolated_process(proc, job_handle, force=False)
@@ -4990,6 +5022,15 @@ class _ProcessRunnerBase:
                 proc.wait(timeout=1)
             except Exception:
                 _terminate_isolated_process(proc, job_handle, force=True)
+                try:
+                    proc.wait(timeout=2)
+                except Exception:
+                    pass
+        # The process can be gone while the pump thread is still closing pipes,
+        # the Windows Job Object, or a workspace scan handle. Joining here keeps
+        # stop/disconnect acknowledgements from racing temporary-directory cleanup.
+        if pump_thread and pump_thread is not _native_threading.current_thread():
+            pump_thread.join(timeout=3)
 
 
 class Runner(_ProcessRunnerBase):
@@ -5587,6 +5628,78 @@ def on_quiz_close(payload):
 # -------------------------
 # Assignment system
 # -------------------------
+DEFAULT_CODING_SKILL_TAGS = (
+    # Python fundamentals
+    ("Python-Print", "Display text and values with Python's print function."),
+    ("Python-Comments", "Write single-line comments that explain Python code."),
+    ("Python-Numeric-Variables", "Store and update integer and floating-point values."),
+    ("Python-String-Variables", "Store and combine text values in variables."),
+    ("Python-Boolean-Variables", "Represent true and false state with Boolean values."),
+    ("Python-Input", "Collect keyboard input with the input function."),
+    ("Python-Type-Conversion", "Convert values between strings, integers, floats, and Booleans."),
+    ("Python-Arithmetic", "Use Python arithmetic operators and order of operations."),
+    ("Python-Comparisons", "Compare values with equality and relational operators."),
+    ("Python-If", "Run code conditionally with an if statement."),
+    ("Python-Elif", "Test an additional condition with an elif branch."),
+    ("Python-Else", "Provide a fallback branch with else."),
+    ("Python-Logical-Operators", "Combine or invert conditions with and, or, and not."),
+    ("Python-While-Loops", "Repeat code while a condition remains true."),
+    ("Python-For-Loops", "Iterate over a sequence with a for loop."),
+    ("Python-Range", "Generate integer sequences for counted loops."),
+    ("Python-Break-Continue", "Control loop flow with break and continue."),
+    ("Python-Lists", "Create and update ordered Python lists."),
+    ("Python-List-Indexing", "Read and replace list items by position."),
+    ("Python-List-Methods", "Add, remove, sort, and search list items with list methods."),
+    ("Python-Dictionaries", "Store related values as key-value pairs."),
+    ("Python-Dictionary-Lookup", "Read, add, and update dictionary values by key."),
+    ("Python-Functions", "Define and call reusable functions."),
+    ("Python-Parameters", "Pass information into functions through parameters."),
+    ("Python-Return-Values", "Return a result from a function and use it elsewhere."),
+    ("Python-String-Methods", "Transform and inspect text with string methods."),
+    ("Python-String-Formatting", "Build readable output with f-strings."),
+    ("Python-Try-Except", "Handle expected runtime errors with try and except."),
+    ("Python-Imports", "Use code from Python modules with import."),
+    ("Python-File-Reading", "Open and read text files safely."),
+    ("Python-File-Writing", "Create or update text files safely."),
+    ("Python-Classes", "Define a class with data and behavior."),
+    ("Python-Objects", "Create objects and use their attributes and methods."),
+    # JavaScript fundamentals
+    ("JavaScript-Console-Log", "Display values in the JavaScript console."),
+    ("JavaScript-Comments", "Write line and block comments that explain JavaScript code."),
+    ("JavaScript-Let-Variables", "Declare values that can be reassigned with let."),
+    ("JavaScript-Const-Variables", "Declare values that should not be reassigned with const."),
+    ("JavaScript-Numeric-Variables", "Store and update numeric values in JavaScript."),
+    ("JavaScript-String-Variables", "Store and combine text values in JavaScript."),
+    ("JavaScript-Boolean-Variables", "Represent true and false state with Boolean values."),
+    ("JavaScript-Type-Conversion", "Convert values between strings, numbers, and Booleans."),
+    ("JavaScript-Arithmetic", "Use JavaScript arithmetic operators and order of operations."),
+    ("JavaScript-Comparisons", "Compare values with strict equality and relational operators."),
+    ("JavaScript-If", "Run code conditionally with an if statement."),
+    ("JavaScript-Else-If", "Test an additional condition with an else if branch."),
+    ("JavaScript-Else", "Provide a fallback branch with else."),
+    ("JavaScript-Logical-Operators", "Combine or invert conditions with &&, ||, and !."),
+    ("JavaScript-While-Loops", "Repeat code while a condition remains true."),
+    ("JavaScript-For-Loops", "Repeat code with a counted for loop."),
+    ("JavaScript-For-Of", "Iterate over array or string values with for...of."),
+    ("JavaScript-Break-Continue", "Control loop flow with break and continue."),
+    ("JavaScript-Arrays", "Create and update ordered arrays."),
+    ("JavaScript-Array-Indexing", "Read and replace array items by position."),
+    ("JavaScript-Array-Methods", "Add, remove, transform, and search values with array methods."),
+    ("JavaScript-Objects", "Store related values in JavaScript objects."),
+    ("JavaScript-Object-Properties", "Read, add, and update object properties."),
+    ("JavaScript-Functions", "Define and call reusable functions."),
+    ("JavaScript-Parameters", "Pass information into functions through parameters."),
+    ("JavaScript-Return-Values", "Return a result from a function and use it elsewhere."),
+    ("JavaScript-Arrow-Functions", "Write concise function expressions with arrow syntax."),
+    ("JavaScript-Template-Literals", "Build strings with interpolation using template literals."),
+    ("JavaScript-Try-Catch", "Handle expected runtime errors with try and catch."),
+    ("JavaScript-JSON", "Convert data to and from JSON text."),
+    ("JavaScript-DOM-Selection", "Find page elements with DOM query methods."),
+    ("JavaScript-DOM-Events", "Respond to user actions with event listeners."),
+    ("JavaScript-Async-Await", "Write readable asynchronous code with async and await."),
+)
+
+
 def _normalize_skill_tags(raw_tags) -> list[str]:
     tags: list[str] = []
     for tag in (raw_tags or []):
@@ -5606,6 +5719,7 @@ def _normalize_skill_record(skill: dict, default_order: Optional[int] = None) ->
     row["teacher_email"] = str(row.get("teacher_email") or "").strip().lower()
     row["name"] = _normalize_skill_name(row.get("name"))
     row["description"] = str(row.get("description") or "").strip()[:2000]
+    row["is_default"] = bool(row.get("is_default", False))
     try:
         order_val = int(row.get("order"))
     except Exception:
@@ -5643,7 +5757,12 @@ def _load_skills() -> dict:
             normalized = _normalize_skill_record(row, default_order=idx)
             if normalized.get("name") and normalized.get("teacher_email"):
                 skills.append(normalized)
-        normalized_data = {"skills": skills}
+        seeded_for = []
+        for email in data.get("default_skills_seeded_for") or []:
+            normalized_email = str(email or "").strip().lower()
+            if normalized_email and normalized_email not in seeded_for:
+                seeded_for.append(normalized_email)
+        normalized_data = {"skills": skills, "default_skills_seeded_for": seeded_for}
         if SKILLS_FILE.exists():
             _skills_cache = (str(SKILLS_FILE.resolve()), SKILLS_FILE.stat().st_mtime_ns, normalized_data)
         return copy.deepcopy(normalized_data)
@@ -5666,6 +5785,42 @@ def _get_teacher_skills(teacher_email: str) -> list[dict]:
             continue
         rows.append(skill)
     return sorted(rows, key=lambda s: (int(s.get("order") or 0), (s.get("name") or "").lower()))
+
+
+def _ensure_default_teacher_skills(teacher_email: str) -> None:
+    normalized_email = str(teacher_email or "").strip().lower()
+    if not normalized_email:
+        return
+    with _default_skills_seed_lock:
+        data = _load_skills()
+        seeded_for = data.setdefault("default_skills_seeded_for", [])
+        if normalized_email in seeded_for:
+            return
+        teacher_rows = [
+            row for row in data.get("skills", [])
+            if (row.get("teacher_email") or "").lower() == normalized_email
+        ]
+        existing_names = {(row.get("name") or "").casefold() for row in teacher_rows}
+        next_order = max((int(row.get("order") or 0) for row in teacher_rows), default=-1) + 1
+        now = _current_timestamp()
+        for name, description in DEFAULT_CODING_SKILL_TAGS:
+            if name.casefold() in existing_names:
+                continue
+            data.setdefault("skills", []).append(_normalize_skill_record({
+                "id": uuid.uuid5(uuid.NAMESPACE_URL, f"eagleide-skill:{normalized_email}:{name}").hex,
+                "teacher_email": normalized_email,
+                "name": name,
+                "description": description,
+                "order": next_order,
+                "class_ids": [],
+                "is_default": True,
+                "created_at": now,
+                "updated_at": now,
+            }))
+            existing_names.add(name.casefold())
+            next_order += 1
+        seeded_for.append(normalized_email)
+        _save_skills(data)
 
 
 def _normalize_assignment_schema(assignment: dict) -> dict:
@@ -6890,7 +7045,7 @@ def _mastery_bucket(score: Optional[float]) -> str:
     return "gold"
 
 
-def _build_class_mastery_report(class_id: str, teacher_email: str) -> Optional[dict]:
+def _build_class_mastery_report_uncached(class_id: str, teacher_email: str) -> Optional[dict]:
     cls = _find_class_by_id(class_id)
     if not cls:
         return None
@@ -7022,6 +7177,29 @@ def _build_class_mastery_report(class_id: str, teacher_email: str) -> Optional[d
         "skillDescriptions": skill_descriptions,
         "analytics": analytics,
     }
+
+
+_mastery_report_cache_lock = threading.Lock()
+_mastery_report_cache: Dict[tuple[str, str], tuple[float, Optional[dict]]] = {}
+_MASTERY_REPORT_CACHE_SECONDS = 5.0
+
+
+def _build_class_mastery_report(class_id: str, teacher_email: str) -> Optional[dict]:
+    """Collapse simultaneous roster-wide report reads into one short-lived build."""
+    key = (str(class_id or "").strip(), str(teacher_email or "").strip().lower())
+    now = _native_time.monotonic()
+    with _mastery_report_cache_lock:
+        cached = _mastery_report_cache.get(key)
+        if cached and now - cached[0] <= _MASTERY_REPORT_CACHE_SECONDS:
+            return copy.deepcopy(cached[1])
+        report = _build_class_mastery_report_uncached(*key)
+        _mastery_report_cache[key] = (now, copy.deepcopy(report))
+        if len(_mastery_report_cache) > 64:
+            cutoff = now - _MASTERY_REPORT_CACHE_SECONDS
+            for cache_key, (created_at, _value) in list(_mastery_report_cache.items()):
+                if created_at < cutoff or len(_mastery_report_cache) > 64:
+                    _mastery_report_cache.pop(cache_key, None)
+        return copy.deepcopy(report)
 
 
 @app.get("/api/teacher/classes/<class_id>/mastery")
@@ -7233,6 +7411,29 @@ def admin_server_health():
 def health():
     return jsonify(ok=True)
 
+register_wiki_features(
+    app,
+    base_dir=WIKI_DATA_DIR,
+    backup_dir=WIKI_BACKUP_DIR,
+    require_admin=_require_admin,
+    require_teacher=_require_teacher,
+    require_user=_require_user,
+    find_user=_find_user,
+    get_user_class_ids=_get_user_class_ids,
+    find_class=_find_class_by_id,
+    config_provider=_load_config,
+)
+register_network_features(
+    app,
+    base_dir=NETWORK_DATA_DIR,
+    require_admin=_require_admin,
+    require_teacher=_require_teacher,
+    require_user=_require_user,
+    find_user=_find_user,
+    get_user_class_ids=_get_user_class_ids,
+    find_class=_find_class_by_id,
+    config_provider=_load_config,
+)
 register_classroom_features(app, socketio)
 
 # -------------------------

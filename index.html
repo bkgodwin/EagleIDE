@@ -4,6 +4,7 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Eagles Web IDE (Python + JavaScript)</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 
   <!-- CodeMirror 5 -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
@@ -33,24 +34,38 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20260711-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260714-25">
 </head>
-<body>
+<body class="wiki-mode">
     <div class="app-shell">
   <header class="topbar topbar-primary" id="topbarPrimary">
     <div class="topbar-primary-left">
       <div class="brand"><div>EagleIDE</div></div>
-      <button class="btn btn--ghost topbar-tools-btn" id="topbarToolsBtn" type="button" aria-expanded="true" aria-controls="toolTray" title="Show or hide editor tools">Tools ▾</button>
+      <button class="btn btn--ghost wiki-nav-btn" id="wikiNavBtn" type="button" aria-expanded="true" aria-controls="wikiNavDrawer" title="Hide wiki contents"><span aria-hidden="true">☰</span><span class="wiki-nav-label">Hide Contents</span></button>
+      <button class="btn btn--ghost topbar-tools-btn ide-only" id="topbarToolsBtn" type="button" aria-expanded="true" aria-controls="toolTray" title="Show or hide editor tools">Tools ▾</button>
     </div>
     <div class="topbar-primary-center">
-      <button class="btn run run-btn-hero" id="runBtn">Run ▶</button>
+      <nav class="site-primary-nav" aria-label="Primary navigation">
+        <button class="site-nav-link" id="wikiHomeBtn" type="button">Wiki Home</button>
+        <div class="wiki-top-search" role="search">
+          <span aria-hidden="true">⌕</span>
+          <input id="wikiSearchInput" type="search" placeholder="Search the wiki" autocomplete="off" spellcheck="false" aria-label="Search the wiki" aria-controls="wikiSearchResults" />
+          <button id="wikiSearchSubmitBtn" type="button">Search</button>
+        </div>
+        <button class="site-nav-link site-nav-link--wiki ide-only" id="wikiViewBtn" type="button">Wiki</button>
+        <button class="site-nav-link site-nav-link--network" id="networkViewBtn" type="button" hidden>Network Sim</button>
+        <button class="site-nav-link site-nav-link--ide" id="ideViewBtn" type="button">Open IDE</button>
+        <button class="site-nav-link" id="wikiBookmarksBtn" type="button" aria-expanded="false" aria-controls="wikiBookmarksPanel">Bookmarks</button>
+      </nav>
+      <button class="btn run run-btn-hero ide-only" id="runBtn">Run ▶</button>
     </div>
     <div class="topbar-primary-actions">
-      <button class="btn exception-help-btn" id="exceptionHelpBtn" title="Troubleshooting Assistant" aria-label="Open troubleshooting assistant">🛠️ Help</button>
-      <span class="file-chip" id="activeFileChip"><span id="activeFileName"></span></span>
-      <span id="editorLiveIndicator" class="live-indicator chip chip--live">Live</span>
+      <button class="btn exception-help-btn ide-only" id="exceptionHelpBtn" title="Troubleshooting Assistant" aria-label="Open troubleshooting assistant">🛠️ Help</button>
+      <span class="file-chip ide-only" id="activeFileChip"><span id="activeFileName"></span></span>
+      <button class="btn secondary ide-only" id="saveDraftBtn" type="button" style="display:none;">Save Draft</button>
+      <span id="editorLiveIndicator" class="live-indicator chip chip--live ide-only">Live</span>
       <span class="guest-badge chip" id="guestBadge">Guest</span>
-      <button class="btn secondary" id="notebookOpenBtn" title="Open notebook" style="display:none;">📓 Notebook</button>
+      <button class="btn secondary ide-only" id="notebookOpenBtn" title="Open notebook" style="display:none;">📓 Notebook</button>
       <button class="btn btn--admin" id="loginBtn" title="Login">Sign In</button>
       <div class="role-menu" id="roleMenu">
         <button class="btn btn--ghost btn--icon secondary" id="roleMenuBtn" type="button" aria-haspopup="true" aria-expanded="false" title="Account menu" style="display:none;">⋯</button>
@@ -59,6 +74,7 @@
           <button class="btn btn--admin admin" id="studentDashboardBtn" title="Student Dashboard" style="display:none;">📋 Dashboard</button>
           <button class="btn btn--admin admin" id="adminUsersBtn" title="User Management" style="display:none;">👥 Users</button>
           <button class="btn btn--admin admin" id="serverHealthBtn" title="Server Health" style="display:none;">🖥️ Server Health</button>
+          <button class="btn btn--admin admin" id="adminWikiBtn" title="Manage Wiki" style="display:none;">📚 Wiki Manager</button>
           <button class="btn btn--admin admin" id="adminSettingsBtn" title="Admin Settings" style="display:none;">⚙ Settings</button>
           <button class="btn btn--danger stop" id="signOutBtn" title="Sign out" style="display:none;">Sign Out</button>
         </div>
@@ -73,6 +89,7 @@
         <option value="python">Python</option>
         <option value="javascript">JavaScript</option>
         <option value="html">HTML</option>
+        <option value="css">CSS</option>
       </select>
     </div>
     <button class="btn secondary" id="themeToggleBtn" title="Toggle light/dark mode">🌙</button>
@@ -92,8 +109,252 @@
     <button class="btn secondary guest-hidden" id="streamingToggleBtn" title="Toggle code streaming to students" style="display:none;">📡 Streaming: Off</button>
     <button class="btn secondary guest-hidden" id="teacherNotebookPromptBtn" title="Send a notebook prompt to the selected class" style="display:none;">📝 Notebook Prompt</button>
   </div>
+  <main class="wiki-view" id="wikiView" aria-label="EagleIDE coding wiki">
+    <button class="wiki-drawer-scrim" id="wikiDrawerScrim" type="button" aria-label="Close topic navigation"></button>
+    <aside class="wiki-nav-drawer glass-surface" id="wikiNavDrawer" aria-label="Wiki topic navigation">
+      <div class="wiki-drawer-header">
+        <div>
+          <strong>Wiki Contents</strong>
+          <span>Folders expand to show their pages</span>
+        </div>
+        <button class="wiki-sidebar-hide-btn" id="wikiNavCloseBtn" type="button" aria-label="Hide wiki contents">Hide</button>
+      </div>
+      <label class="wiki-tree-filter" for="wikiTreeFilter">
+        <span aria-hidden="true">⌕</span>
+        <input id="wikiTreeFilter" type="search" placeholder="Filter topics" autocomplete="off" />
+      </label>
+      <div class="wiki-tree" id="wikiNavTree" role="tree" aria-label="Wiki topics"></div>
+    </aside>
+
+    <section class="wiki-reader-shell">
+      <div class="wiki-status" id="wikiStatus" role="status" aria-live="polite"></div>
+      <section class="wiki-home" id="wikiHomePanel">
+        <div class="wiki-hero glass-surface">
+          <div>
+            <span class="wiki-eyebrow">EagleIDE Coding Wiki</span>
+            <h1 id="wikiHomeTitle">Learn it. Try it. Build it.</h1>
+            <p id="wikiHomeSubtitle">Browse classroom-ready programming topics, open examples directly in the IDE, and keep important lessons close at hand.</p>
+          </div>
+          <div class="wiki-hero-actions">
+            <button class="btn run wiki-hero-ide-btn" id="wikiHeroIdeBtn" type="button">Open the IDE</button>
+            <button class="btn run wiki-hero-network-btn" id="wikiHeroNetworkBtn" type="button" hidden>Open Network Sim</button>
+          </div>
+        </div>
+
+        <div class="wiki-class-context" id="wikiClassContext" hidden>
+          <label for="wikiClassSelector">Class view</label>
+          <select id="wikiClassSelector"></select>
+        </div>
+
+        <section class="wiki-home-section" id="wikiFeaturedSection" hidden>
+          <div class="wiki-section-heading">
+            <div><span class="wiki-eyebrow">Selected by your teacher</span><h2>Featured for this class</h2></div>
+          </div>
+          <div class="wiki-card-grid" id="wikiFeaturedList"></div>
+        </section>
+
+        <div class="wiki-home-info-grid wiki-home-info-grid--footer">
+          <section class="wiki-home-info-panel" aria-labelledby="wikiStandardsHeading">
+            <header><span class="wiki-eyebrow">Curriculum</span><h2 id="wikiStandardsHeading">Standards</h2></header>
+            <div class="wiki-home-standards-wrap">
+              <table class="wiki-home-standards" id="wikiHomeStandards">
+                <thead><tr><th>Standard ID</th><th>Description</th></tr></thead>
+                <tbody id="wikiHomeStandardsBody"></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="wiki-home-info-panel" aria-labelledby="wikiResourcesHeading">
+            <header><span class="wiki-eyebrow">Beyond EagleIDE</span><h2 id="wikiResourcesHeading">External Resources</h2></header>
+            <div class="wiki-home-resources-wrap">
+              <table class="wiki-home-resources">
+                <thead><tr><th>Resource</th><th>Description</th></tr></thead>
+                <tbody id="wikiHomeResourcesBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <article class="wiki-article glass-surface" id="wikiArticlePanel" hidden>
+        <nav class="wiki-breadcrumbs" id="wikiBreadcrumbs" aria-label="Breadcrumb"></nav>
+        <header class="wiki-article-header">
+          <div>
+            <span class="wiki-kind-label" id="wikiArticleKind"></span>
+            <h1 id="wikiArticleTitle"></h1>
+            <p id="wikiArticleDescription"></p>
+          </div>
+          <div class="wiki-article-actions">
+            <button class="btn secondary" id="wikiArticleBookmarkBtn" type="button">☆ Bookmark</button>
+            <button class="btn secondary" id="wikiArticleFeatureBtn" type="button" hidden>Feature for class</button>
+            <button class="btn secondary" id="wikiArticleHomeBtn" type="button">Wiki Home</button>
+          </div>
+        </header>
+        <div class="wiki-article-layout">
+          <div class="wiki-article-body" id="wikiArticleBody"></div>
+          <aside class="wiki-toc" id="wikiToc" aria-label="On this page" hidden>
+            <section id="wikiTocContents"><strong>On this page</strong><nav id="wikiTocLinks"></nav></section>
+            <section class="wiki-page-standards" id="wikiPageStandards" hidden>
+              <strong>Standards covered</strong>
+              <div id="wikiPageStandardsList"></div>
+            </section>
+          </aside>
+        </div>
+      </article>
+      <footer class="wiki-site-footer" id="wikiSiteFooter">Created by Ben Godwin | Computer Science Department ARCA High School | Youngsville Louisiana | Contact bgodwin@acadianacharter.org</footer>
+    </section>
+    <section class="wiki-bookmarks-panel glass-surface" id="wikiBookmarksPanel" hidden aria-label="Bookmarks">
+      <div class="wiki-popover-heading"><strong>Bookmarks</strong><button class="wiki-icon-btn" id="wikiBookmarksCloseBtn" type="button" aria-label="Close bookmarks">×</button></div>
+      <div id="wikiBookmarksList"></div>
+    </section>
+    <aside class="wiki-link-preview glass-surface" id="wikiLinkPreview" hidden></aside>
+  </main>
+  <section class="wiki-search-panel glass-surface" id="wikiSearchPanel" hidden aria-label="Search results">
+    <div class="wiki-popover-heading"><strong>Search results</strong><button class="wiki-icon-btn" id="wikiSearchCloseBtn" type="button" aria-label="Close search">×</button></div>
+    <div id="wikiSearchResults"></div>
+  </section>
   <button class="edge-toggle" id="rightEdgeToggleBtn" title="Hide resources sidebar" style="display:none;">◀</button>
   <button class="teacher-pane-toggle" id="teacherPaneToggleBtn" title="Show teacher code stream" aria-expanded="false">▲</button>
+
+  <main class="network-view" id="networkView" aria-label="Network Simulator">
+    <section class="network-library" id="networkLibrary">
+      <header class="network-library-hero">
+        <div>
+          <span class="network-kicker">EagleIDE Network Lab</span>
+          <h1>Build, test, and inspect networks.</h1>
+          <p>Practice addressing, routing, VLANs, wireless, and defensive security in a safe browser simulation.</p>
+          <div class="network-preview-warning" id="networkPreviewWarning" hidden>Admin preview: the simulator is currently disabled for other users.</div>
+        </div>
+        <div class="network-library-actions">
+          <button class="btn run" id="networkNewBtn" type="button">＋ New Network</button>
+          <label class="btn secondary network-file-button" for="networkImportInput">Import JSON</label>
+          <input id="networkImportInput" type="file" accept="application/json,.json" hidden>
+          <button class="btn secondary" id="networkCommandRefBtn" type="button">Command Reference</button>
+        </div>
+      </header>
+      <div class="network-guest-note" id="networkGuestNote" hidden>Guest session: you can build, run tests, and export a network, but saving and assigned labs require sign-in.</div>
+      <section class="network-library-section" id="networkAssignedSection" hidden>
+        <div class="network-section-heading"><div><span class="network-kicker">Your classes</span><h2>Assigned labs</h2></div></div>
+        <div class="network-card-grid" id="networkAssignedList"></div>
+      </section>
+      <section class="network-library-section">
+        <div class="network-section-heading"><div><span class="network-kicker">Ready to explore</span><h2>Example topologies</h2></div><span>Open any example as your own editable copy.</span></div>
+        <div class="network-card-grid" id="networkExampleList"></div>
+      </section>
+      <section class="network-library-section" id="networkSavedSection" hidden>
+        <div class="network-section-heading"><div><span class="network-kicker">Private workspace</span><h2>Saved networks</h2></div></div>
+        <div class="network-card-grid" id="networkSavedList"></div>
+      </section>
+      <div class="network-loading" id="networkLoading" role="status">Loading Network Simulator…</div>
+    </section>
+
+    <section class="network-workspace" id="networkWorkspace" hidden>
+      <header class="network-toolbar">
+        <button class="network-icon-button" id="networkBackBtn" type="button" title="Back to network library" aria-label="Back to network library">←</button>
+        <label class="network-title-field"><span>Network name</span><input id="networkTitleInput" maxlength="120" value="Untitled Network"></label>
+        <div class="network-toolbar-group">
+          <button class="btn secondary" id="networkUndoBtn" type="button" title="Undo">↶ Undo</button>
+          <button class="btn secondary" id="networkRedoBtn" type="button" title="Redo">↷ Redo</button>
+          <button class="btn secondary" id="networkConnectBtn" type="button" aria-pressed="false">Cable</button>
+          <label class="network-compact-field" title="Cable medium"><span>Medium</span><select id="networkCableMediaSelect"><option value="ethernet">Ethernet</option><option value="fiber">Fiber</option><option value="serial">Serial</option></select></label>
+          <button class="btn secondary" id="networkDeleteBtn" type="button">Delete</button>
+          <button class="btn secondary" id="networkDuplicateBtn" type="button" title="Duplicate selected devices">Duplicate</button>
+        </div>
+        <div class="network-toolbar-group network-toolbar-end">
+          <span class="network-save-state" id="networkSaveState" role="status"></span>
+          <button class="btn secondary" id="networkExportBtn" type="button">Export</button>
+          <button class="btn run" id="networkSaveBtn" type="button">Save</button>
+        </div>
+      </header>
+
+      <div class="network-editor-grid">
+        <aside class="network-palette" aria-label="Device library">
+          <div class="network-pane-heading"><strong>Devices</strong><span>Tap or drag onto canvas</span></div>
+          <div class="network-device-palette" id="networkDevicePalette"></div>
+          <div class="network-palette-tip"><strong>Touch tip</strong><span>Tap a device to add it. Use Cable, then tap two devices to connect them.</span></div>
+        </aside>
+
+        <section class="network-canvas-pane" aria-label="Topology canvas">
+          <div class="network-canvas-controls">
+            <button class="network-icon-button" id="networkZoomOutBtn" type="button" aria-label="Zoom out">−</button>
+            <output id="networkZoomOutput">100%</output>
+            <button class="network-icon-button" id="networkZoomInBtn" type="button" aria-label="Zoom in">＋</button>
+            <button class="network-icon-button" id="networkZoomFitBtn" type="button">Fit</button>
+            <button class="network-icon-button" id="networkSnapBtn" type="button" aria-pressed="false" title="Snap devices to grid">Grid</button>
+            <button class="network-icon-button" id="networkMultiSelectBtn" type="button" aria-pressed="false" title="Select multiple devices">Select+</button>
+            <button class="network-icon-button" id="networkAlignHBtn" type="button" title="Align selected devices horizontally">Align H</button>
+            <button class="network-icon-button" id="networkAlignVBtn" type="button" title="Align selected devices vertically">Align V</button>
+            <button class="network-icon-button" id="networkAutoLayoutBtn" type="button" title="Automatically arrange devices">Layout</button>
+            <button class="network-icon-button" id="networkExportImageBtn" type="button" title="Export topology image">PNG</button>
+          </div>
+          <div class="network-canvas-scroll" id="networkCanvasScroll">
+            <div class="network-canvas" id="networkCanvas">
+              <svg class="network-links" id="networkLinks" viewBox="0 0 1000 600" aria-hidden="true"></svg>
+              <div class="network-node-layer" id="networkNodeLayer"></div>
+              <div class="network-packet-overlay-layer" id="networkPacketOverlayLayer" aria-live="polite"></div>
+              <div class="network-port-picker" id="networkPortPicker" hidden role="dialog" aria-label="Select a physical port"></div>
+              <div class="network-empty-canvas" id="networkEmptyCanvas"><strong>Start building</strong><span>Add a device from the library.</span></div>
+            </div>
+          </div>
+        </section>
+
+        <div class="network-panel-resizer network-inspector-resizer" id="networkInspectorResizer" role="separator" tabindex="0" aria-label="Resize configuration panel" aria-orientation="vertical"></div>
+        <aside class="network-inspector" aria-label="Device inspector">
+          <div class="network-pane-heading"><strong>Configuration</strong><span id="networkInspectorHint">Select a device</span></div>
+          <div id="networkInspector" class="network-inspector-content">
+            <div class="network-empty-inspector">Select a device to configure its name, addressing, services, VLAN, or wireless settings.</div>
+          </div>
+        </aside>
+      </div>
+
+      <div class="network-panel-resizer network-console-resizer" id="networkConsoleResizer" role="separator" tabindex="0" aria-label="Resize network tools panel" aria-orientation="horizontal"></div>
+      <section class="network-console" aria-label="Network tools">
+        <nav class="network-console-tabs" aria-label="Network tool tabs">
+          <button class="active" data-network-panel="objectives" type="button">Objectives <span id="networkObjectiveCount"></span></button>
+          <button data-network-panel="packet" type="button">Packet Test</button>
+          <button data-network-panel="cli" type="button">CLI</button>
+          <button data-network-panel="reference" type="button">Reference</button>
+          <button data-network-panel="diagnostics" type="button">Diagnostics <span id="networkDiagnosticCount"></span></button>
+          <button data-network-panel="capture" type="button">Packet Capture <span id="networkCaptureCount"></span></button>
+          <button data-network-panel="simulation" type="button">Traffic</button>
+          <button data-network-panel="events" type="button">Event Log</button>
+          <button data-network-panel="lab" type="button" id="networkLabGuideTab" hidden>Lab Guide</button>
+        </nav>
+        <div class="network-console-content">
+          <div class="network-console-panel active" data-network-panel-content="objectives" id="networkObjectivesPanel"></div>
+          <div class="network-console-panel" data-network-panel-content="packet">
+            <div class="network-packet-controls">
+              <label>Source<select id="networkPacketSource"></select></label>
+              <label id="networkPacketTargetLabel">Destination<select id="networkPacketTarget"></select></label>
+              <label>Protocol<select id="networkPacketProtocol"><option value="icmp">ICMP</option><option value="icmp6">ICMPv6</option><option value="tcp">TCP</option><option value="udp">UDP</option><option value="dhcp">DHCP Discover</option><option value="web">DNS + HTTP Request</option></select></label>
+              <label id="networkPacketPortLabel">Port<input id="networkPacketPort" type="number" min="1" max="65535" placeholder="443"></label>
+              <label id="networkPacketSizeLabel">Bytes<input id="networkPacketSize" type="number" min="42" max="9216" value="128"></label>
+              <label id="networkPacketDomainLabel" hidden>Domain<input id="networkPacketDomain" type="text" maxlength="253" placeholder="www.school.test" autocomplete="off" spellcheck="false"></label>
+              <button class="btn run" id="networkPacketSendBtn" type="button">Send Packet</button>
+            </div>
+            <div class="network-packet-result" id="networkPacketResult">Choose two devices to trace a simulated packet.</div>
+          </div>
+          <div class="network-console-panel" data-network-panel-content="cli">
+            <div class="network-cli-output" id="networkCliOutput" role="log" aria-live="polite">Eagle Network CLI — select a device and type help.</div>
+            <form class="network-cli-input-row" id="networkCliForm"><span id="networkCliPrompt">$</span><input id="networkCliInput" autocomplete="off" spellcheck="false" aria-label="Network command"><button class="btn secondary" type="submit">Run</button></form>
+          </div>
+          <div class="network-console-panel" data-network-panel-content="reference" id="networkReferencePanel"></div>
+          <div class="network-console-panel" data-network-panel-content="diagnostics" id="networkDiagnosticsPanel"></div>
+          <div class="network-console-panel" data-network-panel-content="capture" id="networkCapturePanel">
+            <div class="network-capture-toolbar"><input id="networkCaptureFilter" type="search" placeholder="Filter protocol, address, device, or info" aria-label="Filter packet capture"><button class="btn secondary" id="networkCaptureExportBtn" type="button">Export CSV</button><button class="btn secondary" id="networkCaptureClearBtn" type="button">Clear</button></div>
+            <div class="network-capture-table-wrap"><table class="network-capture-table"><thead><tr><th>No.</th><th>Time</th><th>Source</th><th>Destination</th><th>Protocol</th><th>Length</th><th>Info</th></tr></thead><tbody id="networkCaptureRows"></tbody></table></div>
+            <div class="network-capture-detail" id="networkCaptureDetail">Select a frame to inspect protocol layers.</div>
+          </div>
+          <div class="network-console-panel" data-network-panel-content="simulation" id="networkSimulationPanel">
+            <div class="network-traffic-controls"><label>Profile<select id="networkTrafficProfile"><option value="classroom">Classroom browsing</option><option value="startup">Startup (ARP/DHCP/DNS)</option><option value="busy">Busy office</option><option value="rogue-dhcp">Rogue DHCP</option><option value="arp-spoof">ARP spoofing</option><option value="dns-poison">DNS poisoning</option><option value="port-scan">Port scan</option><option value="syn-flood">SYN flood</option></select></label><label>Seed<input id="networkTrafficSeed" type="number" value="1337" min="1" max="2147483647"></label><label>Speed<select id="networkTrafficSpeed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label><button class="btn run" id="networkTrafficToggleBtn" type="button" aria-pressed="false">▶ Start traffic</button><button class="btn secondary" id="networkTrafficStepBtn" type="button">Step once</button></div>
+            <div class="network-traffic-summary"><div><span>Simulation time</span><strong id="networkSimulationClock">00:00.000</strong></div><div><span>Frames</span><strong id="networkTrafficFrameCount">0</strong></div><div><span>Alerts</span><strong id="networkTrafficAlertCount">0</strong></div><div><span>Reproducible</span><strong id="networkTrafficSeedState">Seed 1337</strong></div></div>
+            <div id="networkIdsAlerts" class="network-ids-alerts"></div>
+          </div>
+          <div class="network-console-panel" data-network-panel-content="events"><div class="network-event-log" id="networkEventLog"></div></div>
+          <div class="network-console-panel" data-network-panel-content="lab" id="networkLabGuidePanel"></div>
+        </div>
+      </section>
+    </section>
+  </main>
 
   <div class="outer no-sidebar" id="outer">
     <!-- Left: Editor -->
@@ -217,8 +478,16 @@
 
             <!-- Wiki -->
             <div class="tab-pane" id="lessonTab">
+              <div class="wiki-embedded-reader" id="wikiEmbeddedReader">
+                <div class="wiki-embedded-toolbar">
+                  <button class="btn secondary" id="wikiEmbeddedHomeBtn" type="button">Wiki Home</button>
+                  <button class="btn secondary" id="wikiEmbeddedBackBtn" type="button">Back</button>
+                  <button class="btn secondary" id="wikiEmbeddedFullBtn" type="button">Open Full Wiki</button>
+                </div>
+                <div class="wiki-embedded-content" id="wikiEmbeddedContent"></div>
+              </div>
               <div id="lessonLocal" contenteditable="false" style="display:none;"></div>
-              <iframe id="lessonFrame" sandbox="allow-scripts allow-same-origin allow-popups" referrerpolicy="no-referrer"></iframe>
+              <iframe id="lessonFrame" sandbox="allow-scripts allow-same-origin allow-popups" referrerpolicy="no-referrer" style="display:none;"></iframe>
             </div>
 
             <!-- AI Explain -->
@@ -291,14 +560,6 @@
 
               <div id="assignmentStudentView" style="padding:12px;">
                 <div id="studentAccountNotice" class="account-notice">Sign in with a student account to submit assignment files and view your scores.</div>
-                <div id="joinClassPanel" style="display:none; margin:12px 0; padding:12px; border:1px solid var(--theme-border-mid); border-radius:10px; background:var(--theme-input-bg);">
-                  <div id="joinClassPanelTitle" style="font-weight:700; margin-bottom:8px; color:var(--columbia-blue);">Join Class</div>
-                  <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                    <input type="text" id="joinClassCodeInput" maxlength="6" placeholder="Enter 6-character code" aria-label="Join class code" style="padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; text-transform:uppercase;">
-                    <button class="btn run" id="joinClassBtn">Join Class</button>
-                  </div>
-                  <div id="joinClassStatus" style="font-size:12px; margin-top:8px;"></div>
-                </div>
                 <h3 style="color:var(--columbia-blue); margin-top:0;">Active Assignments</h3>
                 <div id="studentAssignmentList"></div>
 
@@ -340,6 +601,9 @@
           </button>
           <button class="teacher-dash-navbtn" data-view="dash-notebook">
             <span class="navbtn-icon">📓</span><span>Notebook</span>
+          </button>
+          <button class="teacher-dash-navbtn" data-view="dash-network">
+            <span class="navbtn-icon">🌐</span><span>Network Sim</span>
           </button>
           <button class="teacher-dash-navbtn" data-view="dash-account">
             <span class="navbtn-icon">⚙️</span><span>Account</span>
@@ -470,6 +734,26 @@
           </div>
         </div>
 
+        <!-- Network Simulator View -->
+        <div class="teacher-dash-view" id="dash-network">
+          <div class="teacher-dash-view-hdr">
+            <h2 class="teacher-dash-view-title">Network Simulator Labs</h2>
+            <div class="teacher-dash-view-actions">
+              <label for="networkTeacherClassSelect">Class</label>
+              <select id="networkTeacherClassSelect"></select>
+              <button class="btn secondary" id="networkTeacherRefreshBtn" type="button">Refresh</button>
+            </div>
+          </div>
+          <div class="teacher-dash-scroll">
+            <div class="network-teacher-access-card">
+              <div><strong>Class access</strong><span>Global admin access must also be enabled. Assigning a lab automatically turns this class setting on.</span></div>
+              <label class="network-switch"><input id="networkTeacherAccessToggle" type="checkbox"><span>Allow this class</span></label>
+            </div>
+            <div id="networkTeacherStatus" class="network-teacher-status" role="status"></div>
+            <div id="networkTeacherLabList" class="network-teacher-labs"></div>
+          </div>
+        </div>
+
         <!-- Account View -->
         <div class="teacher-dash-view" id="dash-account">
           <div class="teacher-dash-view-hdr">
@@ -506,7 +790,10 @@
           </div>
         </div>
         <nav class="teacher-dash-nav">
-          <button class="teacher-dash-navbtn active" data-view="student-dash-mastery">
+          <button class="teacher-dash-navbtn active" data-view="student-dash-classes">
+            <span class="navbtn-icon">🏫</span><span>Classes</span>
+          </button>
+          <button class="teacher-dash-navbtn" data-view="student-dash-mastery">
             <span class="navbtn-icon">🏅</span><span>Skill Mastery</span>
           </button>
         </nav>
@@ -515,7 +802,34 @@
         </div>
       </aside>
       <main class="teacher-dash-main">
-        <div class="teacher-dash-view active" id="student-dash-mastery">
+        <div class="teacher-dash-view active" id="student-dash-classes">
+          <div class="teacher-dash-view-hdr">
+            <div>
+              <h2 class="teacher-dash-view-title">My Classes</h2>
+              <p class="student-classes-subtitle">Join with the six-character code provided by each teacher. You can belong to more than one class.</p>
+            </div>
+          </div>
+          <div class="teacher-dash-scroll student-classes-layout">
+            <section class="student-classes-panel" aria-labelledby="studentMembershipHeading">
+              <div class="student-classes-panel-heading">
+                <div><span class="student-classes-eyebrow">Memberships</span><h3 id="studentMembershipHeading">Your classes</h3></div>
+                <span id="studentClassCount" class="student-class-count">0</span>
+              </div>
+              <div id="studentClassMembershipList" class="student-class-membership-list"></div>
+            </section>
+            <section id="joinClassPanel" class="student-classes-panel student-join-panel" style="display:none;" aria-labelledby="joinClassPanelTitle">
+              <span class="student-classes-eyebrow">Class code</span>
+              <h3 id="joinClassPanelTitle">Join a class</h3>
+              <p>Codes are not case-sensitive. Joining another class will not remove your existing memberships.</p>
+              <div class="student-join-form">
+                <input type="text" id="joinClassCodeInput" maxlength="6" placeholder="ABC123" aria-label="Join class code" autocomplete="off" inputmode="text">
+                <button class="btn run" id="joinClassBtn">Join Class</button>
+              </div>
+              <div id="joinClassStatus" class="student-join-status" role="status" aria-live="polite"></div>
+            </section>
+          </div>
+        </div>
+        <div class="teacher-dash-view" id="student-dash-mastery">
           <div class="teacher-dash-view-hdr">
             <h2 class="teacher-dash-view-title">Skill Mastery</h2>
           </div>
@@ -552,6 +866,7 @@
         <button type="button" class="notebook-tool" data-notebook-command="insertUnorderedList" title="Bulleted list">• List</button>
         <button type="button" class="notebook-tool" data-notebook-command="insertOrderedList" title="Numbered list">1. List</button>
         <button type="button" class="notebook-tool" id="studentNotebookInsertCodeBtn" title="Insert code from editor">Insert Code</button>
+        <button type="button" class="notebook-tool" id="studentNotebookWikiLinkBtn" title="Link selected text to a wiki page">Link Wiki Page</button>
         <div class="student-notebook-search">
           <input type="search" id="studentNotebookSearchInput" placeholder="Search notebook" aria-label="Search notebook">
         </div>
@@ -565,6 +880,16 @@
       </div>
     </div>
   </aside>
+
+  <div id="studentNotebookWikiLinkModal" class="modal glass-modal" style="display:none;">
+    <div class="modal-content student-notebook-wiki-link-modal">
+      <h3>Link a Wiki Page</h3>
+      <p>Select a published wiki page. Selected notebook text becomes the link label; otherwise the page title is inserted.</p>
+      <input id="studentNotebookWikiLinkSearch" type="search" placeholder="Search wiki pages" autocomplete="off" aria-label="Search wiki pages">
+      <div id="studentNotebookWikiLinkResults" class="student-notebook-wiki-link-results"></div>
+      <div class="modal-actions"><button class="btn secondary" id="studentNotebookWikiLinkCancelBtn" type="button">Cancel</button></div>
+    </div>
+  </div>
 
   <!-- Teacher Notebook Prompt Composer -->
   <div id="teacherNotebookPromptModal" class="modal glass-modal" style="display:none;">
@@ -625,48 +950,46 @@
   </div>
 
   <!-- Admin Users Management Modal -->
-  <div id="adminUsersModal" class="modal" style="display:none;">
-    <div class="modal-content" style="max-width:980px;">
-      <h3>User Management</h3>
-      <p style="color:var(--theme-text-dim); font-size:12px; margin-top:-8px; margin-bottom:12px;">Admin view — file contents are never displayed here. Deletions are permanent.</p>
-
-      <div class="admin-users-toolbar">
-        <input type="text" id="adminUsersSearch" placeholder="🔍 Search by name or email…" oninput="filterAdminUsersTable()">
-        <button class="btn secondary" id="adminUsersRefreshBtn" style="font-size:12px; padding:6px 12px;">↻ Refresh</button>
-        <span id="adminUsersSelCount" style="font-size:12px; color:var(--theme-text-dim); white-space:nowrap;">0 selected</span>
-        <button class="btn secondary" id="adminBulkEnableBtn" style="font-size:12px; padding:6px 12px; display:none;">✅ Enable Selected</button>
-        <button class="btn secondary" id="adminBulkDisableBtn" style="font-size:12px; padding:6px 12px; display:none;">🔒 Disable Selected</button>
-        <button class="btn secondary" id="adminBulkClearFilesBtn" style="font-size:12px; padding:6px 12px; display:none;">🗑 Clear Files</button>
-        <button class="btn secondary" id="adminBulkDeleteBtn" style="font-size:12px; padding:6px 12px; color:#ef5350; display:none;">⛔ Delete Selected</button>
+  <div id="adminUsersModal" class="modal admin-management-modal" style="display:none;">
+    <div class="modal-content admin-management-shell">
+      <header class="admin-management-header">
+        <div><span class="admin-management-kicker">Administration</span><h3>User Management</h3><p>Manage access, class memberships, and account storage without exposing file contents.</p></div>
+        <button class="btn secondary" id="adminUsersCloseBtn" type="button">Close</button>
+      </header>
+      <section class="admin-create-teacher" aria-labelledby="createTeacherHeading">
+        <div><span class="admin-management-kicker">Staff accounts</span><h4 id="createTeacherHeading">Create teacher</h4></div>
+        <div class="admin-create-teacher-form">
+          <input type="text" id="newTeacherName" placeholder="Teacher name" autocomplete="name">
+          <input type="email" id="newTeacherEmail" placeholder="teacher@example.com" autocomplete="email">
+          <input type="password" id="newTeacherPassword" placeholder="Temporary password (8+ characters)" autocomplete="new-password">
+          <button class="btn run" id="createTeacherBtn" type="button">Add Teacher</button>
+        </div>
+      </section>
+      <div class="admin-user-summary-grid" aria-label="Account summary">
+        <div><span>Total accounts</span><strong id="adminUsersTotalStat">—</strong></div>
+        <div><span>Students</span><strong id="adminUsersStudentStat">—</strong></div>
+        <div><span>Teachers</span><strong id="adminUsersTeacherStat">—</strong></div>
+        <div><span>Disabled</span><strong id="adminUsersDisabledStat">—</strong></div>
       </div>
-
-      <div style="max-height:60vh; overflow-y:auto; border:1px solid var(--theme-border-mid); border-radius:8px;">
+      <div class="admin-users-toolbar">
+        <input type="search" id="adminUsersSearch" placeholder="Search name, email, role, or class" aria-label="Search users">
+        <select id="adminUsersRoleFilter" aria-label="Filter users by role"><option value="all">All roles</option><option value="student">Students</option><option value="teacher">Teachers</option><option value="disabled">Disabled</option></select>
+        <button class="btn secondary" id="adminUsersRefreshBtn" type="button">Refresh</button>
+      </div>
+      <div class="admin-users-bulkbar" id="adminUsersBulkBar">
+        <span id="adminUsersSelCount">0 selected</span>
+        <button class="btn secondary" id="adminBulkEnableBtn" style="display:none;">Enable</button>
+        <button class="btn secondary" id="adminBulkDisableBtn" style="display:none;">Disable</button>
+        <button class="btn secondary" id="adminBulkClearFilesBtn" style="display:none;">Clear Files</button>
+        <button class="btn secondary admin-danger-action" id="adminBulkDeleteBtn" style="display:none;">Delete</button>
+      </div>
+      <div class="admin-users-table-wrap">
         <table class="admin-users-stats-table" id="adminUsersStatsTable">
-          <thead>
-            <tr>
-              <th><input type="checkbox" id="adminSelectAllChk" title="Select all"></th>
-              <th>Name</th>
-              <th>Email</th>
-              <th>Role</th>
-              <th>Class</th>
-              <th>Registered</th>
-              <th>Last Sign In</th>
-              <th>Last IP</th>
-              <th>Storage</th>
-              <th>Files</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
+          <thead><tr><th><input type="checkbox" id="adminSelectAllChk" title="Select visible users" aria-label="Select visible users"></th><th>User</th><th>Role</th><th>Classes</th><th>Activity</th><th>Storage</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody id="adminUsersStatsBody"></tbody>
         </table>
       </div>
-
-      <div id="adminUsersSummary" style="margin-top:8px; font-size:12px; color:var(--theme-text-dim);"></div>
-
-      <div class="modal-actions" style="margin-top:16px;">
-        <button class="btn secondary" id="adminUsersCloseBtn">Close</button>
-      </div>
+      <footer class="admin-management-footer"><span id="adminUsersSummary"></span><span>Deleting users or files cannot be undone.</span></footer>
     </div>
   </div>
 
@@ -707,96 +1030,265 @@
     </div>
   </div>
 
+  <div id="wikiClassActionModal" class="modal" style="display:none;">
+    <div class="modal-content wiki-class-action-modal">
+      <h3 id="wikiClassActionTitle">Select a class</h3>
+      <p id="wikiClassActionDescription">Choose the class that should receive this content.</p>
+      <label for="wikiClassActionSelect">Class</label>
+      <select id="wikiClassActionSelect"></select>
+      <div class="wiki-class-action-state" id="wikiClassActionState" role="status" aria-live="polite">Checking current status…</div>
+      <div class="modal-actions">
+        <button class="btn secondary" id="wikiClassActionCancelBtn" type="button">Cancel</button>
+        <button class="btn run" id="wikiClassActionConfirmBtn" type="button">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="wikiEmojiPickerModal" class="modal" style="display:none;">
+    <div class="modal-content wiki-emoji-picker-modal">
+      <header><div><span class="wiki-eyebrow">Folder appearance</span><h3>Choose an Emoji</h3></div><button class="wiki-icon-btn" id="wikiEmojiPickerCloseBtn" type="button" aria-label="Close emoji selector">×</button></header>
+      <p>The selector uses emoji supported by this browser and operating system. You can also paste any Windows or Apple emoji into the folder icon field.</p>
+      <div class="wiki-emoji-picker-controls">
+        <select id="wikiEmojiPickerCategory" aria-label="Emoji category">
+          <option value="favorites">Common folder icons</option>
+          <option value="faces">Faces and people</option>
+          <option value="objects">Objects, nature, and food</option>
+          <option value="travel">Travel and places</option>
+          <option value="symbols">Activities and symbols</option>
+          <option value="flags">Flags</option>
+        </select>
+        <button class="btn secondary" id="wikiEmojiClearBtn" type="button">No Icon</button>
+      </div>
+      <div class="wiki-emoji-grid" id="wikiEmojiGrid" role="listbox" aria-label="Emoji choices"></div>
+      <button class="btn secondary wiki-emoji-more" id="wikiEmojiMoreBtn" type="button">Show More</button>
+    </div>
+  </div>
+
+  <div id="wikiManagerModal" class="modal" style="display:none;">
+    <div class="modal-content wiki-manager-modal">
+      <header class="wiki-manager-header">
+        <div><span class="wiki-eyebrow">Administration</span><h3>Wiki Manager</h3></div>
+        <div class="wiki-manager-header-actions">
+          <nav class="wiki-manager-tabs" aria-label="Wiki Manager sections">
+            <button class="btn secondary is-active" id="wikiAdminContentTabBtn" type="button">Content</button>
+            <button class="btn secondary" id="wikiAdminHomeTabBtn" type="button">Home</button>
+            <button class="btn secondary" id="wikiAdminMediaTabBtn" type="button">Media</button>
+            <button class="btn secondary" id="wikiAdminAnalyticsBtn" type="button">Analytics</button>
+          </nav>
+          <button class="btn secondary" id="wikiAdminBackupBtn" type="button">Download Backup</button>
+          <label class="btn secondary wiki-file-label" for="wikiAdminRestoreInput">Restore Backup</label>
+          <input id="wikiAdminRestoreInput" type="file" accept=".zip,application/zip" />
+          <button class="wiki-icon-btn" id="wikiAdminCloseBtn" type="button" aria-label="Close Wiki Manager">×</button>
+        </div>
+      </header>
+      <div class="wiki-admin-progress" id="wikiAdminProgress" role="status" aria-live="polite"></div>
+      <section class="wiki-manager-utility-panel wiki-home-settings" id="wikiAdminHomePanel" hidden>
+        <div class="wiki-manager-panel-heading"><div><span class="wiki-eyebrow">Landing page</span><h4>Edit wiki home content</h4></div></div>
+        <div class="wiki-home-settings-fields">
+          <div class="wiki-home-banner-fields">
+            <label>Banner title<input id="wikiAdminHomeTitle" maxlength="200" /></label>
+            <label>Supporting text<textarea id="wikiAdminHomeSubtitle" maxlength="1000" rows="2"></textarea></label>
+            <label class="wiki-admin-footer-field">Wiki footer<textarea id="wikiAdminFooterText" maxlength="1000" rows="2"></textarea></label>
+          </div>
+          <div class="wiki-home-content-fields">
+            <section class="wiki-admin-standards-editor" aria-labelledby="wikiAdminStandardsHeading">
+              <div class="wiki-admin-resources-heading"><strong id="wikiAdminStandardsHeading">Curriculum Standards</strong><button class="btn secondary" id="wikiAdminAddStandardBtn" type="button">Add Standard</button></div>
+              <p>Each standard requires an ID and description. Pages can be tagged with these standards from Item settings.</p>
+              <div id="wikiAdminStandards"></div>
+            </section>
+            <section class="wiki-admin-resources-editor" aria-labelledby="wikiAdminResourcesHeading">
+              <div class="wiki-admin-resources-heading"><strong id="wikiAdminResourcesHeading">External Resources</strong><button class="btn secondary" id="wikiAdminAddResourceBtn" type="button">Add Resource</button></div>
+              <div id="wikiAdminExternalResources"></div>
+            </section>
+          </div>
+          <div class="wiki-home-settings-actions"><button class="btn run" id="wikiAdminHomeSaveBtn" type="button">Save home content</button></div>
+        </div>
+      </section>
+      <div class="wiki-manager-layout" id="wikiAdminContentPanel">
+        <aside class="wiki-manager-tree-pane">
+          <div class="wiki-manager-toolbar">
+            <button class="btn secondary" id="wikiAdminNewFolderBtn" type="button">New Folder</button>
+            <button class="btn secondary" id="wikiAdminNewPageBtn" type="button">New Page</button>
+            <label class="btn secondary wiki-file-label" for="wikiAdminMarkdownInput">Upload .md</label>
+            <input id="wikiAdminMarkdownInput" type="file" accept=".md,text/markdown" multiple />
+            <label class="btn secondary wiki-file-label" for="wikiAdminAssetInput">Upload Media / Files</label>
+            <input id="wikiAdminAssetInput" type="file" accept=".mp4,.pdf,.txt,.csv,.py,.js,.html,.css,.json,.zip" multiple />
+          </div>
+          <p class="wiki-upload-help">Images are kept in Media Manager instead of this content tree. Videos must be pre-encoded as MP4; for reliable classroom and iPad playback, use H.264 video with AAC audio. Large files upload in validated 8MB chunks.</p>
+          <div class="wiki-tree wiki-admin-tree" id="wikiAdminTree" role="tree" aria-label="Wiki content structure"></div>
+        </aside>
+        <section class="wiki-manager-editor-pane">
+          <div class="wiki-admin-empty" id="wikiAdminEmptyState">
+            <h4>Select a wiki item</h4>
+            <p>Choose a folder, page, video, PDF, or file from the tree to edit its details. Manage images from the Media tab.</p>
+          </div>
+          <form id="wikiAdminEditor" hidden>
+            <details class="wiki-admin-properties" id="wikiAdminProperties">
+              <summary>Item settings</summary>
+              <div class="wiki-admin-properties-content">
+                <div class="wiki-admin-fields-grid">
+                  <label>Title<input id="wikiAdminTitle" maxlength="200" required /></label>
+                  <label>URL slug<input id="wikiAdminSlug" maxlength="160" /></label>
+                  <label class="wiki-admin-field-wide">Description<input id="wikiAdminDescription" maxlength="1000" /></label>
+                  <div class="wiki-admin-folder-icon-field wiki-admin-field-wide" id="wikiAdminFolderIconWrap" hidden>
+                    <label>Folder icon<input id="wikiAdminFolderIcon" maxlength="32" inputmode="text" placeholder="📁" aria-describedby="wikiAdminFolderIconHelp" /></label>
+                    <button class="btn secondary" id="wikiAdminFolderIconPickerBtn" type="button">Choose Emoji</button>
+                    <small id="wikiAdminFolderIconHelp">Any standard Unicode emoji is supported, including emoji entered with the Windows or Apple system picker.</small>
+                  </div>
+                  <label id="wikiAdminAliasesWrap" class="wiki-admin-field-wide">Aliases<input id="wikiAdminAliases" placeholder="looping, iteration, for loops" /></label>
+                  <label>Status<select id="wikiAdminStatus"><option value="draft">Draft</option><option value="published">Published</option></select></label>
+                  <label>Move to<select id="wikiAdminParent"></select></label>
+                  <fieldset class="wiki-admin-field-wide wiki-admin-page-standards" id="wikiAdminPageStandardsWrap">
+                    <legend>Standards covered by this page</legend>
+                    <div id="wikiAdminPageStandards"></div>
+                  </fieldset>
+                </div>
+                <div class="wiki-admin-node-actions">
+                  <button class="btn secondary" id="wikiAdminMoveUpBtn" type="button">Move Up</button>
+                  <button class="btn secondary" id="wikiAdminMoveDownBtn" type="button">Move Down</button>
+                  <button class="btn secondary" id="wikiAdminApplyMoveBtn" type="button">Move to Folder</button>
+                  <button class="btn btn--danger" id="wikiAdminDeleteBtn" type="button">Delete</button>
+                </div>
+              </div>
+            </details>
+            <div class="wiki-admin-page-tools" id="wikiAdminPageTools" hidden>
+              <div class="wiki-markdown-toolbar" role="toolbar" aria-label="Markdown editor tools">
+                <button type="button" data-md-prefix="## ">Heading</button>
+                <button type="button" data-md-wrap="**">Bold</button>
+                <button type="button" data-md-wrap="`">Code</button>
+                <button type="button" data-md-prefix="- ">List</button>
+                <button type="button" id="wikiAdminInsertImageBtn">Insert Image</button>
+                <span class="wiki-editor-view-controls" aria-label="Editor view">
+                  <button type="button" id="wikiAdminEditorOnlyBtn">Editor</button>
+                  <button type="button" id="wikiAdminSplitViewBtn" class="is-active">Split</button>
+                  <button type="button" id="wikiAdminPreviewOnlyBtn">Preview</button>
+                </span>
+              </div>
+              <div class="wiki-admin-editor-split">
+                <label class="wiki-markdown-editor-label">Markdown<textarea id="wikiAdminContent" spellcheck="true"></textarea></label>
+                <div class="wiki-admin-preview-wrap"><span>Preview</span><div id="wikiAdminPreview" class="wiki-article-body"></div></div>
+              </div>
+              <div class="wiki-revisions" id="wikiAdminRevisions"></div>
+            </div>
+            <div class="modal-actions wiki-admin-save-actions">
+              <button class="btn secondary" id="wikiAdminPreviewBtn" type="button">Refresh Preview</button>
+              <button class="btn run" id="wikiAdminSaveBtn" type="submit">Save Changes</button>
+            </div>
+          </form>
+        </section>
+      </div>
+      <section class="wiki-manager-utility-panel wiki-admin-media" id="wikiAdminMediaPanel" hidden>
+        <div class="wiki-manager-panel-heading">
+          <div><span class="wiki-eyebrow">Asset library</span><h4>Image Media Manager</h4><p>Images are stored here and are not shown in the wiki folder tree.</p></div>
+          <label class="btn run wiki-file-label" for="wikiAdminMediaInput">Upload Images</label>
+          <input id="wikiAdminMediaInput" type="file" accept=".png,.jpg,.jpeg,.webp,.gif" multiple />
+        </div>
+        <div class="wiki-media-grid" id="wikiAdminMediaGrid"></div>
+      </section>
+      <section class="wiki-manager-utility-panel wiki-admin-analytics" id="wikiAdminAnalytics" hidden>
+        <div class="wiki-manager-panel-heading"><div><span class="wiki-eyebrow">Usage</span><h4>Wiki analytics</h4></div></div>
+        <div id="wikiAdminAnalyticsContent"></div>
+      </section>
+    </div>
+  </div>
+
+  <div id="wikiImageInsertModal" class="modal" style="display:none;">
+    <div class="modal-content wiki-image-insert-modal">
+      <h3>Insert an image</h3>
+      <p class="wiki-image-insert-help">Choose an image from this device, then set its placement and size. Supported formats: PNG, JPEG, WebP, and GIF.</p>
+      <label for="wikiImageInsertFile">Image</label>
+      <input id="wikiImageInsertFile" type="file" accept=".png,.jpg,.jpeg,.webp,.gif" />
+      <label for="wikiImageInsertAlt">Alternative text</label>
+      <input id="wikiImageInsertAlt" maxlength="300" placeholder="Describe the image" />
+      <label for="wikiImageInsertCaption">Caption</label>
+      <input id="wikiImageInsertCaption" maxlength="300" placeholder="Optional caption" />
+      <label for="wikiImageInsertAlign">Placement</label>
+      <select id="wikiImageInsertAlign"><option value="center">Centered</option><option value="left">Float left</option><option value="right">Float right</option><option value="full">Full width</option></select>
+      <label for="wikiImageInsertWidth">Width: <span id="wikiImageInsertWidthValue">70%</span></label>
+      <input id="wikiImageInsertWidth" type="range" min="20" max="100" step="10" value="70" />
+      <div class="modal-actions">
+        <button class="btn secondary" id="wikiImageInsertCancelBtn" type="button">Cancel</button>
+        <button class="btn run" id="wikiImageInsertConfirmBtn" type="button">Upload and Insert</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Admin Settings Modal -->
-  <div id="adminSettingsModal" class="modal" style="display:none;">
-    <div class="modal-content" style="max-width:700px;">
-      <h3>Admin Settings</h3>
-      
-      <div id="siteWideSettingsSection">
-      <h4 style="margin-top:20px; color:var(--columbia-blue); font-size:14px;">Page Settings</h4>
-      <label for="pageTitleInput">Page Title:</label>
-      <input type="text" id="pageTitleInput" placeholder="Eagles Web IDE (Python)">
-      <label for="topBarColorInput">Top Bar Color (CSS gradient or color):</label>
-      <input type="text" id="topBarColorInput" placeholder="linear-gradient(90deg,#a5c8f0,#7fb2eb)">
-      
-      <h4 style="margin-top:20px; color:var(--columbia-blue); font-size:14px;">Wiki/Lesson Settings</h4>
-      <label for="lessonUrlInputModal">Lesson URL:</label>
-      <input type="text" id="lessonUrlInputModal" placeholder="https://example.com/lesson">
-      <label style="display:flex; align-items:center; gap:8px; margin-top:8px;">
-        <input type="checkbox" id="lessonUseLocalModal" style="accent-color:#c62828">
-        Use local wiki content (instead of iframe)
-      </label>
-      
-      <h4 style="margin-top:20px; color:var(--columbia-blue); font-size:14px;">AI Settings</h4>
-      <label style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-        <input type="checkbox" id="aiEnabledModal" style="accent-color:#c62828">
-        Enable AI Features
-      </label>
-      <label for="aiUrlInputModal">Ollama URL:</label>
-      <input type="text" id="aiUrlInputModal" placeholder="http://127.0.0.1:11434">
-      <label for="aiModelInputModal">AI Model:</label>
-      <input type="text" id="aiModelInputModal" placeholder="gemma3:4b">
-      <label for="assistantPromptInputModal">AI Assistant Preprompt:</label>
-      <textarea id="assistantPromptInputModal" placeholder="You are a helpful Python tutor..." style="width:100%; height:80px; padding:8px; background:#1a1a1a; color:#fff; border:1px solid #2b2b2b; border-radius:6px; font-family:monospace; resize:vertical;"></textarea>
-
-      <h4 style="margin-top:20px; color:var(--columbia-blue); font-size:14px;">HTML Runtime / WebView</h4>
-      <label style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-        <input type="checkbox" id="htmlRuntimeEnabledModal" style="accent-color:#c62828">
-        Enable HTML runtime support
-      </label>
-      <label for="htmlRuntimeTimeoutModal">HTML runtime timeout (seconds):</label>
-      <input type="number" id="htmlRuntimeTimeoutModal" min="1" max="600" step="1" placeholder="30">
-      <label style="display:flex; align-items:center; gap:8px; margin-top:8px;">
-        <input type="checkbox" id="htmlAllowExternalModal" style="accent-color:#c62828">
-        Allow external internet access
-      </label>
-      <label style="display:flex; align-items:center; gap:8px; margin-top:8px;">
-        <input type="checkbox" id="htmlAllowPopupsModal" style="accent-color:#c62828">
-        Allow popup windows
-      </label>
-      <label style="display:flex; align-items:center; gap:8px; margin-top:8px;">
-        <input type="checkbox" id="htmlAllowNavigationModal" style="accent-color:#c62828">
-        Allow navigation away from generated project
-      </label>
-      <label for="htmlMaxFpsModal">Max FPS cap:</label>
-      <input type="number" id="htmlMaxFpsModal" min="1" max="120" step="1" placeholder="30">
-      <label for="htmlMemoryLimitModal">Memory limit (MB):</label>
-      <input type="number" id="htmlMemoryLimitModal" min="32" max="2048" step="1" placeholder="128">
-      <label for="htmlMaxDomNodesModal">Max DOM node count:</label>
-      <input type="number" id="htmlMaxDomNodesModal" min="100" max="200000" step="100" placeholder="3000">
-      <label for="htmlMaxPopupSpawnModal">Max popup spawn count:</label>
-      <input type="number" id="htmlMaxPopupSpawnModal" min="0" max="20" step="1" placeholder="2">
-      
-      <h4 style="margin-top:20px; color:var(--columbia-blue); font-size:14px;">Student Registration</h4>
-      <label style="display:flex; align-items:center; gap:8px;">
-        <input type="checkbox" id="registrationEnabledModal" style="accent-color:#c62828">
-        Allow new student registrations
-      </label>
-      <button class="btn secondary" id="saveRegistrationBtn" style="margin-top:8px; font-size:13px;">Save Registration Setting</button>
-
-      <h4 style="margin-top:20px; color:var(--columbia-blue); font-size:14px;">Student Accounts
-        <button class="btn secondary" id="refreshUsersBtn" style="margin-left:10px; font-size:11px; padding:3px 8px;">↻ Refresh</button>
-      </h4>
-      <div id="teacherCreatePanel" style="margin:10px 0 16px; padding:10px; border:1px solid var(--theme-border-mid); border-radius:8px; background:var(--theme-input-bg);">
-        <div style="font-weight:700; margin-bottom:8px; color:var(--columbia-blue);">Create Teacher Account</div>
-        <div style="display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap:8px;">
-          <input type="text" id="newTeacherName" placeholder="Teacher name">
-          <input type="email" id="newTeacherEmail" placeholder="teacher@example.com">
-          <input type="password" id="newTeacherPassword" placeholder="Temporary password">
-          <button class="btn run" id="createTeacherBtn" style="white-space:nowrap;">Add Teacher</button>
+  <div id="adminSettingsModal" class="modal admin-settings-modal" style="display:none;">
+    <div class="modal-content admin-settings-shell">
+      <header class="admin-management-header">
+        <div><span class="admin-management-kicker">Administration</span><h3>System Settings</h3><p>Configure EagleIDE services and access. Wiki content is managed separately in the Wiki Manager.</p></div>
+        <button class="btn secondary" id="settingsCancelBtn" type="button">Close</button>
+      </header>
+      <div class="admin-settings-workspace">
+        <nav class="admin-settings-nav" aria-label="Settings sections">
+          <button type="button" class="active" data-admin-settings-section="general">General</button>
+          <button type="button" data-admin-settings-section="wiki">Wiki</button>
+          <button type="button" data-admin-settings-section="network">Network Sim</button>
+          <button type="button" data-admin-settings-section="ai">AI</button>
+          <button type="button" data-admin-settings-section="runtime">Web Runtime</button>
+          <button type="button" data-admin-settings-section="access">Access</button>
+        </nav>
+        <div id="siteWideSettingsSection" class="admin-settings-content">
+          <section class="admin-settings-pane active" data-admin-settings-pane="general">
+            <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Appearance</span><h4>General</h4><p>Set the browser title and application header treatment.</p></div>
+            <div class="admin-settings-fields two-column">
+              <label><span>Page title</span><input type="text" id="pageTitleInput" placeholder="Eagles Web IDE (Python)"></label>
+              <label><span>Top bar CSS color or gradient</span><input type="text" id="topBarColorInput" placeholder="linear-gradient(90deg,#a5c8f0,#7fb2eb)"></label>
+            </div>
+          </section>
+          <section class="admin-settings-pane" data-admin-settings-pane="network">
+            <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Optional learning app</span><h4>Network Simulator</h4><p>Enable the separate topology, lab, packet inspection, wireless, VLAN, and cybersecurity workspace.</p></div>
+            <label class="admin-setting-toggle"><input type="checkbox" id="networkSimEnabledModal"><span><strong>Enable Network Simulator</strong><small>Guests may simulate without saving. Signed-in students also require access from at least one of their classes.</small></span></label>
+            <div class="admin-wiki-settings-card">
+              <div><strong>Private admin preview</strong><span>You can test the full simulator while it is disabled. Existing simulator data is preserved when the feature is turned off.</span></div>
+              <button class="btn secondary" id="settingsOpenNetworkSimBtn" type="button">Open Simulator</button>
+            </div>
+          </section>
+          <section class="admin-settings-pane" data-admin-settings-pane="wiki">
+            <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Public knowledge base</span><h4>Coding Wiki</h4><p>The built-in wiki is the landing page. Teachers feature existing pages for their classes and mark daily pages as Lesson Material.</p></div>
+            <div class="admin-wiki-settings-card">
+              <div><strong>Content and home page</strong><span>Create folders, edit Markdown, upload media, standards, and external resources.</span></div>
+              <button class="btn run" id="settingsOpenWikiManagerBtn" type="button">Open Wiki Manager</button>
+            </div>
+            <div class="admin-wiki-settings-card">
+              <div><strong>Teacher workflow</strong><span>Teachers open the wiki from their Classes dashboard to feature content or bookmark Lesson Material for one selected class.</span></div>
+              <button class="btn secondary" id="settingsOpenWikiHomeBtn" type="button">Open Wiki Home</button>
+            </div>
+          </section>
+          <section class="admin-settings-pane" data-admin-settings-pane="ai">
+            <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Ollama integration</span><h4>AI Features</h4><p>These settings affect explanations, assistance, challenge grading, and mastery feedback.</p></div>
+            <label class="admin-setting-toggle"><input type="checkbox" id="aiEnabledModal"><span><strong>Enable AI features</strong><small>Requires a reachable Ollama service.</small></span></label>
+            <div class="admin-settings-fields two-column">
+              <label><span>Ollama URL</span><input type="text" id="aiUrlInputModal" placeholder="http://127.0.0.1:11434"></label>
+              <label><span>Model</span><input type="text" id="aiModelInputModal" placeholder="gemma3:4b"></label>
+              <label class="full-width"><span>Assistant preprompt</span><textarea id="assistantPromptInputModal" placeholder="You are a helpful programming tutor..."></textarea></label>
+            </div>
+          </section>
+          <section class="admin-settings-pane" data-admin-settings-pane="runtime">
+            <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Security boundary</span><h4>HTML Runtime</h4><p>Control browser preview capabilities and resource limits for student HTML projects.</p></div>
+            <label class="admin-setting-toggle"><input type="checkbox" id="htmlRuntimeEnabledModal"><span><strong>Enable HTML runtime</strong><small>Allows safe HTML/CSS previews under the configured policy.</small></span></label>
+            <div class="admin-settings-fields three-column">
+              <label><span>Timeout (seconds)</span><input type="number" id="htmlRuntimeTimeoutModal" min="1" max="600" step="1"></label>
+              <label><span>Max FPS</span><input type="number" id="htmlMaxFpsModal" min="1" max="120" step="1"></label>
+              <label><span>Memory limit (MB)</span><input type="number" id="htmlMemoryLimitModal" min="32" max="2048" step="1"></label>
+              <label><span>Max DOM nodes</span><input type="number" id="htmlMaxDomNodesModal" min="100" max="200000" step="100"></label>
+              <label><span>Max popup count</span><input type="number" id="htmlMaxPopupSpawnModal" min="0" max="20" step="1"></label>
+            </div>
+            <div class="admin-runtime-permissions">
+              <label class="admin-setting-toggle compact"><input type="checkbox" id="htmlAllowExternalModal"><span><strong>External internet</strong><small>Permit remote resources.</small></span></label>
+              <label class="admin-setting-toggle compact"><input type="checkbox" id="htmlAllowPopupsModal"><span><strong>Popup windows</strong><small>Permit limited popup creation.</small></span></label>
+              <label class="admin-setting-toggle compact"><input type="checkbox" id="htmlAllowNavigationModal"><span><strong>External navigation</strong><small>Permit leaving the generated project.</small></span></label>
+            </div>
+          </section>
+          <section class="admin-settings-pane" data-admin-settings-pane="access">
+            <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Accounts</span><h4>Access</h4><p>Control self-registration and open the dedicated account-management workspace.</p></div>
+            <label class="admin-setting-toggle"><input type="checkbox" id="registrationEnabledModal"><span><strong>Allow student registration</strong><small>Students can create their own account from the sign-in dialog.</small></span></label>
+            <div class="admin-wiki-settings-card"><div><strong>Users and teachers</strong><span>Create teacher accounts, review class memberships, reset passwords, and manage storage.</span></div><button class="btn secondary" id="settingsOpenUsersBtn" type="button">Open User Management</button></div>
+          </section>
         </div>
       </div>
-      <div id="usersTableWrap" style="max-height:220px; overflow-y:auto; margin-top:8px;">
-        <table class="users-table"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Class</th><th>Registered</th><th>Last Sign In</th><th>Status</th><th>Actions</th></tr></thead>
-          <tbody id="usersTableBody"></tbody>
-        </table>
-      </div>
-      </div>
-
-      <div class="modal-actions" style="margin-top:20px;">
-        <button class="btn secondary" id="settingsCancelBtn">Cancel</button>
-        <button class="btn run" id="settingsSaveBtn">Save All Settings</button>
-      </div>
+      <footer class="admin-settings-actions"><span id="adminSettingsStatus" role="status" aria-live="polite"></span><button class="btn run" id="settingsSaveBtn" type="button">Save Settings</button></footer>
     </div>
   </div>
 
@@ -818,6 +1310,13 @@
   </div>
 
   <div id="classroomTeacherStrip" class="classroom-teacher-strip" hidden></div>
+
+  <div id="networkCommandModal" class="modal network-command-modal" style="display:none;">
+    <div class="modal-content">
+      <header><div><span class="network-kicker">Student reference</span><h3>Network Reference</h3></div><button class="network-icon-button" id="networkCommandCloseBtn" type="button" aria-label="Close">✕</button></header>
+      <div class="network-reference-host" id="networkCommandList"></div>
+    </div>
+  </div>
 
   <div id="classroomQuestionModal" class="modal" style="display:none;">
     <div class="modal-content" style="max-width:480px;">
@@ -866,11 +1365,15 @@
   <script src="/static/js/editor-init.js"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js"></script>
-  <script src="/static/js/app-core.js?v=20260711-2"></script>
+  <script src="/static/js/app-core.js?v=20260714-8"></script>
+<script src="/static/js/network-sim.js?v=20260714-18"></script>
+<script src="/static/js/network-sim-advanced.js?v=20260714-4"></script>
+  <script src="/static/js/wiki-reader.js?v=20260714-9"></script>
+  <script src="/static/js/wiki-admin.js?v=20260714-7"></script>
   <script src="/static/js/classroom-signals.js"></script>
   <script src="/static/js/classroom-files.js?v=20250608"></script>
-  <script src="/static/js/student-notebook.js?v=20260612-6"></script>
-  <script src="/static/js/student-dashboard.js?v=20250608"></script>
+  <script src="/static/js/student-notebook.js?v=20260714-7"></script>
+  <script src="/static/js/student-dashboard.js?v=20260714-6"></script>
 
 </body>
 </html>

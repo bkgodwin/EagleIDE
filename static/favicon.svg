@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="EagleIDE">
+  <rect width="64" height="64" fill="#111827"/>
+  <path d="M12 14h40v9H22v7h25v8H22v7h30v9H12z" fill="#b9d9eb"/>
+  <rect x="46" y="14" width="8" height="40" fill="#c8102e"/>
+</svg>

@@ -116,6 +116,56 @@ class RolePermissionTestCase(unittest.TestCase):
         examples_dir = eagle._get_user_dir("new.teacher@example.com") / eagle.EXAMPLES_DIR_NAME
         self.assertEqual({path.name for path in examples_dir.iterdir()}, set(eagle.EXAMPLE_FILES))
 
+    def test_student_can_join_a_second_class_without_losing_first(self):
+        eagle.USERS_FILE.write_text(json.dumps({"users": [{
+            "email": self.student_email,
+            "name": "Student",
+            "role": "student",
+            "class_id": "class-one",
+            "class_ids": ["class-one"],
+            "enabled": True,
+        }]}), encoding="utf-8")
+        eagle.CLASSES_FILE.write_text(json.dumps({"classes": [
+            {"id": "class-one", "name": "Class One", "join_code": "FIRST1", "teacher_email": self.teacher_email, "students": [self.student_email]},
+            {"id": "class-two", "name": "Class Two", "join_code": "SECOND", "teacher_email": self.teacher_email, "students": []},
+        ]}), encoding="utf-8")
+        eagle._users_cache = None
+        eagle._classes_cache = None
+
+        response = self.http.post(
+            "/api/classes/join",
+            headers={"X-User-Token": self.student_token},
+            json={"joinCode": "SECOND"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual([item["id"] for item in payload["classList"]], ["class-one", "class-two"])
+        self.assertEqual(payload["classData"]["id"], "class-two")
+
+    def test_admin_user_list_includes_all_class_memberships(self):
+        eagle.USERS_FILE.write_text(json.dumps({"users": [{
+            "email": self.student_email,
+            "name": "Student",
+            "role": "student",
+            "class_id": "class-two",
+            "class_ids": ["class-one", "class-two"],
+            "enabled": True,
+        }]}), encoding="utf-8")
+        eagle.CLASSES_FILE.write_text(json.dumps({"classes": [
+            {"id": "class-one", "name": "Class One"},
+            {"id": "class-two", "name": "Class Two"},
+        ]}), encoding="utf-8")
+        eagle._users_cache = None
+        eagle._classes_cache = None
+
+        response = self.http.get("/api/admin/users", headers={"X-Admin-Token": self.admin_token})
+
+        self.assertEqual(response.status_code, 200)
+        user = response.get_json()["users"][0]
+        self.assertEqual(user["class_ids"], ["class-one", "class-two"])
+        self.assertEqual(user["class_names"], ["Class One", "Class Two"])
+
     def test_new_student_gets_examples_immediately(self):
         with patch("app._load_config", return_value={"registration_enabled": True}):
             response = self.http.post(
