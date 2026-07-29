@@ -127,8 +127,8 @@
     $('wikiAdminTitle').value = node.title || '';
     $('wikiAdminSlug').value = node.slug || '';
     $('wikiAdminDescription').value = node.description || '';
-    $('wikiAdminFolderIconWrap').hidden = node.kind !== 'folder';
-    $('wikiAdminFolderIcon').value = node.kind === 'folder' ? (node.icon || '') : '';
+    $('wikiAdminFolderIconWrap').hidden = !['folder', 'page'].includes(node.kind);
+    $('wikiAdminFolderIcon').value = ['folder', 'page'].includes(node.kind) ? (node.icon || '') : '';
     $('wikiAdminAliases').value = (node.aliases || []).join(', ');
     $('wikiAdminStatus').value = node.status || 'draft';
     $('wikiAdminAliasesWrap').hidden = node.kind === 'image';
@@ -140,7 +140,6 @@
       renderPageStandardOptions();
       $('wikiAdminContent').value = node.draft_markdown || node.markdown || '';
       setEditorView(state.editorView);
-      renderPreview();
       renderRevisions();
     } else {
       $('wikiAdminContent').value = '';
@@ -152,8 +151,15 @@
 
   function renderPreview() {
     if (!state.node || state.node.kind !== 'page') return;
+    const previewWrap = $('wikiAdminPreview')?.closest('.wiki-admin-preview-wrap');
+    const previousScrollTop = previewWrap?.scrollTop || 0;
+    const previousScrollLeft = previewWrap?.scrollLeft || 0;
     const previewNode = { ...state.node, markdown: $('wikiAdminContent').value || '' };
     reader().renderMarkdown($('wikiAdminPreview'), previewNode.markdown, previewNode, { embedded: true });
+    if (previewWrap) {
+      previewWrap.scrollTop = Math.min(previousScrollTop, previewWrap.scrollHeight);
+      previewWrap.scrollLeft = previousScrollLeft;
+    }
   }
 
   function renderRevisions() {
@@ -206,7 +212,7 @@
     clearTimeout(state.draftTimer);
     state.draftTimer = setTimeout(() => autosaveDraft(), 1200);
     clearTimeout(state.previewTimer);
-    state.previewTimer = setTimeout(renderPreview, 220);
+    if (state.editorView !== 'editor') state.previewTimer = setTimeout(renderPreview, 500);
   }
 
   async function saveEditor(event) {
@@ -220,7 +226,9 @@
       status: $('wikiAdminStatus').value,
       aliases: $('wikiAdminAliases').value.split(',').map(item => item.trim()).filter(Boolean),
     };
-    if (state.node.kind === 'folder') payload.icon = $('wikiAdminFolderIcon').value.trim();
+    if (['folder', 'page'].includes(state.node.kind)) {
+      payload.icon = $('wikiAdminFolderIcon').value.trim();
+    }
     if (state.node.kind === 'page') {
       payload.content = $('wikiAdminContent').value || '';
       payload.standard_ids = [...$('wikiAdminPageStandards').querySelectorAll('input[type="checkbox"]:checked')].map(input => input.value);
@@ -721,10 +729,34 @@
     }
   }
 
+  async function importStandardsCsv(file) {
+    if (!file) return;
+    progress(`Importing standards from ${file.name}…`);
+    const form = new FormData();
+    form.append('file', file, file.name);
+    try {
+      const payload = await reader().fetchJson('/api/admin/wiki/standards/import', {
+        method: 'POST',
+        headers: adminHeaders(),
+        body: form,
+      });
+      fillHomeSettings(payload.home_settings || {});
+      await reader().loadHome({ quiet: true });
+      progress(`${Number(payload.imported_count || 0)} standard row${Number(payload.imported_count || 0) === 1 ? '' : 's'} imported.`);
+    } catch (error) {
+      progress(error.message || 'Could not import standards CSV.', true);
+    }
+  }
+
   const FAVORITE_FOLDER_EMOJIS = [
-    '📁','📂','📚','📖','📝','📌','📎','🗂️','🗃️','💻','🖥️','⌨️','🧠','🎓','🏫','👩‍🏫','👨‍🏫',
-    '🐍','🟨','🌐','🎨','🧩','🔧','⚙️','🔬','🧪','📊','📈','✅','⭐','💡','🚀','🎯','🏆','🔒',
+    '📁','📂','📚','📖','📝','📌','📎','🗂️','🗃️','💻','🖥️','🖧','🗄️','⌨️','🧠','🎓','🏫','👩‍🏫','👨‍🏫',
+    '🐍','🟨','⚡','📜','🌐','🎨','🧩','🔧','🛠️','⚙️','💾','📡','🔌','☁️','🔬','🧪','📊','📈','✅','⭐','💡','🚀','🎯','🏆','🔒',
     '🔑','📅','🕹️','🤖','🌱','🌎','🧮','➕','♻️','❤️','🧡','💙','💜','🟥','🟦','🟩','🟨',
+  ];
+  const TECHNOLOGY_EMOJIS = [
+    '💻','🖥️','🖧','🗄️','💾','💿','⌨️','🖱️','🖨️','📡','🔌','🔋','⚙️','🔧','🛠️','🧰',
+    '📦','🗃️','🗂️','☁️','🌐','🔒','🔐','🔑','🛡️','🚨','📊','📈','🤖','🧑‍💻','👨‍💻','👩‍💻',
+    '🐍','🟨','⚡','📜','🧩','🌍','🔗','📱','📶','🛰️','🏢','🏫','🧪','🧠','✅','❌',
   ];
 
   function emojiPresentationRegex() {
@@ -761,6 +793,7 @@
   function emojisForCategory(category) {
     let items = [];
     if (category === 'favorites') items = FAVORITE_FOLDER_EMOJIS;
+    else if (category === 'technology') items = TECHNOLOGY_EMOJIS;
     else if (category === 'faces') items = [...emojiRange(0x1f600, 0x1f64f), ...emojiRange(0x1f900, 0x1f9ff), ...emojiRange(0x1fa70, 0x1faff)];
     else if (category === 'objects') items = emojiRange(0x1f300, 0x1f5ff);
     else if (category === 'travel') items = emojiRange(0x1f680, 0x1f6ff);
@@ -791,7 +824,7 @@
   }
 
   function openEmojiPicker() {
-    if (state.node?.kind !== 'folder') return;
+    if (!['folder', 'page'].includes(state.node?.kind)) return;
     state.emojiCategory = $('wikiEmojiPickerCategory')?.value || 'favorites';
     state.emojiVisible = 240;
     $('wikiEmojiPickerModal').style.display = 'flex';
@@ -826,6 +859,11 @@
     $('wikiAdminCloseBtn')?.addEventListener('click', closeManager);
     $('wikiAdminHomeSaveBtn')?.addEventListener('click', saveHomeSettings);
     $('wikiAdminAddStandardBtn')?.addEventListener('click', () => addStandardRow());
+    $('wikiAdminStandardsCsvInput')?.addEventListener('change', event => {
+      const file = event.target.files?.[0];
+      event.target.value = '';
+      if (file) importStandardsCsv(file);
+    });
     $('wikiAdminAddResourceBtn')?.addEventListener('click', () => addExternalResourceRow());
     $('wikiAdminNewFolderBtn')?.addEventListener('click', createFolder);
     $('wikiAdminNewPageBtn')?.addEventListener('click', createPage);

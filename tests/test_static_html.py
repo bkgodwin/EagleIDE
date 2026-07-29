@@ -43,6 +43,9 @@ class StaticHtmlTestCase(unittest.TestCase):
     def test_all_local_script_and_style_assets_exist(self):
         missing = [path for path in self.parser.local_assets if not (BASE_DIR / path.lstrip("/")).exists()]
         self.assertEqual(missing, [])
+        self.assertIn("marked@18.0.7/lib/marked.umd.js", self.raw)
+        self.assertIn("dompurify@3.4.7/dist/purify.min.js", self.raw)
+        self.assertEqual(self.raw.count('integrity="sha384-'), 2)
 
     def test_static_assets_use_classroom_friendly_cache_policy(self):
         source = (BASE_DIR / "app.py").read_text(encoding="utf-8")
@@ -62,12 +65,13 @@ class StaticHtmlTestCase(unittest.TestCase):
             "wikiAdminMediaGrid", "wikiAdminMediaInput", "wikiAdminContentPanel",
             "wikiAdminEditorOnlyBtn", "wikiAdminSplitViewBtn", "wikiAdminPreviewOnlyBtn",
             "wikiSearchSubmitBtn", "wikiViewBtn", "wikiPageStandardsList",
-            "wikiAdminAddStandardBtn", "wikiAdminPageStandards",
+            "wikiAdminAddStandardBtn", "wikiAdminStandardsCsvInput", "wikiAdminPageStandards",
             "wikiSiteFooter", "wikiAdminFooterText", "wikiAdminFolderIcon",
             "wikiEmojiPickerModal", "studentNotebookWikiLinkBtn", "studentNotebookWikiLinkModal",
         }.issubset(ids))
         self.assertNotIn("wikiHomeTree", ids)
         self.assertIn('accept=".png,.jpg,.jpeg,.webp,.gif"', self.raw)
+        self.assertIn('accept=".csv,text/csv"', self.raw)
 
     def test_wiki_home_order_and_class_management_surfaces(self):
         ids = set(self.parser.ids)
@@ -89,6 +93,9 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn("body:not(.wiki-mode) #wikiNavBtn", wiki_css)
         self.assertIn("body:not(.wiki-mode) #ideViewBtn", wiki_css)
         self.assertIn("#wikiEmojiPickerModal { z-index: 10200; }", wiki_css)
+        self.assertIn("--wiki-nav-drawer-width", wiki_css)
+        self.assertIn("flex: 0 0 38px", wiki_css)
+        self.assertIn("setTimeout(renderPreview, 500)", (BASE_DIR / "static" / "js" / "wiki-admin.js").read_text(encoding="utf-8"))
         self.assertIn("&limit=8", reader)
         self.assertIn("setTimeout(() => performSearch(event.target.value), 300)", reader)
 

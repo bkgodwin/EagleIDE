@@ -64,6 +64,7 @@ Required runtime components:
 |   |-- test_execution_limits.py Execution admission, runner limits, files, and stream safeguards
 |   |-- test_html_runtime.py     HTML runtime security, assets, bridge, and cleanup
 |   |-- test_notebook.py         Notebook prompts, locking, grading, and mastery integration
+|   |-- test_server_lifecycle.py Graceful shutdown state and false crash-alert regression coverage
 |   |-- test_static_html.py      Static HTML structure, IDs, and local asset wiring
 |   |-- test_network_sim.py      Simulator validation, persistence, grading, auth, and class access
 |   `-- test_wiki.py             Wiki persistence, auth, media, class features, and backup tests
