@@ -173,6 +173,84 @@ class WikiStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "selected standards"):
             self.store.update_node(page["id"], standard_ids=["0" * 32])
 
+    def test_standards_coverage_preserves_order_and_filters_by_folder(self):
+        settings = self.store.update_home_settings(
+            None,
+            None,
+            standards=[
+                {"standard_id": "NET.2", "description": "Configure addressing."},
+                {"standard_id": "NET.1", "description": "Explain network models."},
+                {"standard_id": "CYB.1", "description": "Apply access controls."},
+            ],
+        )
+        standards = settings["standards"]
+        networking = self.store.create_folder("Networking")
+        switching = self.store.create_folder("Switching", networking["id"])
+        cybersecurity = self.store.create_folder("Cybersecurity")
+        addressing = self.store.create_page(
+            "IP Addressing",
+            "# IP Addressing",
+            networking["id"],
+            status="published",
+            standard_ids=[standards[0]["id"], standards[1]["id"]],
+        )
+        vlans = self.store.create_page(
+            "VLANs",
+            "# VLANs",
+            switching["id"],
+            status="published",
+            standard_ids=[standards[0]["id"]],
+        )
+        acl = self.store.create_page(
+            "Router ACLs",
+            "# Router ACLs",
+            cybersecurity["id"],
+            status="published",
+            standard_ids=[standards[2]["id"]],
+        )
+        self.store.create_page(
+            "Draft Lab",
+            "# Draft Lab",
+            networking["id"],
+            status="draft",
+            standard_ids=[standards[0]["id"]],
+        )
+
+        all_coverage = self.store.standards_coverage()
+        self.assertEqual(
+            [item["standard_id"] for item in all_coverage["standards"]],
+            ["NET.2", "NET.1", "CYB.1"],
+        )
+        self.assertEqual(
+            [page["id"] for page in all_coverage["standards"][0]["pages"]],
+            [vlans["id"], addressing["id"]],
+        )
+        self.assertEqual(all_coverage["standards"][2]["pages"][0]["id"], acl["id"])
+        self.assertEqual([folder["title"] for folder in all_coverage["folders"]], [
+            "Networking", "Switching", "Cybersecurity",
+        ])
+
+        networking_coverage = self.store.standards_coverage(networking["id"])
+        self.assertEqual(networking_coverage["folder_title"], "Networking")
+        self.assertEqual(networking_coverage["page_count"], 2)
+        self.assertEqual(
+            [page["id"] for page in networking_coverage["standards"][0]["pages"]],
+            [vlans["id"], addressing["id"]],
+        )
+        self.assertEqual(networking_coverage["standards"][2]["pages"], [])
+        self.store.update_node(addressing["id"], standard_ids=[standards[2]["id"]])
+        refreshed = self.store.standards_coverage(networking["id"])
+        self.assertEqual(
+            [page["id"] for page in refreshed["standards"][2]["pages"]],
+            [addressing["id"]],
+        )
+        self.assertNotIn(
+            addressing["id"],
+            {page["id"] for page in refreshed["standards"][0]["pages"]},
+        )
+        with self.assertRaisesRegex(ValueError, "Published wiki folder"):
+            self.store.standards_coverage("0" * 32)
+
     def test_standard_import_merges_by_id_and_preserves_page_tags(self):
         settings = self.store.update_home_settings(
             None,
@@ -289,6 +367,57 @@ class WikiApiTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/api/wiki/nodes/{draft['id']}").status_code, 404)
         tree = self.client.get("/api/wiki/tree").get_json()["tree"]
         self.assertNotIn(draft["id"], {node["id"] for node in _flatten(tree)})
+
+    def test_standards_coverage_api_is_public_cacheable_and_folder_scoped(self):
+        settings = self.store.update_home_settings(
+            None,
+            None,
+            standards=[
+                {"standard_id": "CS.1", "description": "Decompose problems."},
+                {"standard_id": "CS.2", "description": "Develop solutions."},
+            ],
+        )
+        python_folder = self.store.create_folder("Python")
+        javascript_folder = self.store.create_folder("JavaScript")
+        python_page = self.store.create_page(
+            "Functions",
+            "# Functions",
+            python_folder["id"],
+            status="published",
+            standard_ids=[settings["standards"][0]["id"]],
+        )
+        self.store.create_page(
+            "Callbacks",
+            "# Callbacks",
+            javascript_folder["id"],
+            status="published",
+            standard_ids=[settings["standards"][1]["id"]],
+        )
+
+        response = self.client.get("/api/wiki/standards/coverage")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("public", response.headers["Cache-Control"])
+        self.assertTrue(response.headers.get("ETag"))
+        self.assertEqual(
+            self.client.get(
+                "/api/wiki/standards/coverage",
+                headers={"If-None-Match": response.headers["ETag"]},
+            ).status_code,
+            304,
+        )
+        payload = response.get_json()
+        self.assertEqual([item["standard_id"] for item in payload["standards"]], ["CS.1", "CS.2"])
+
+        scoped = self.client.get(
+            f"/api/wiki/standards/coverage?folder_id={python_folder['id']}"
+        ).get_json()
+        self.assertEqual(scoped["folder_id"], python_folder["id"])
+        self.assertEqual(scoped["standards"][0]["pages"][0]["id"], python_page["id"])
+        self.assertEqual(scoped["standards"][1]["pages"], [])
+        self.assertEqual(
+            self.client.get("/api/wiki/standards/coverage?folder_id=" + ("0" * 32)).status_code,
+            404,
+        )
 
     def test_admin_mutations_require_admin_token(self):
         response = self.client.post("/api/admin/wiki/folders", json={"title": "Denied"})

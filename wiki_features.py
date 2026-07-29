@@ -160,6 +160,20 @@ def register(
             catalog_version=store.catalog_version(),
         )
 
+    @app.get("/api/wiki/standards/coverage")
+    def wiki_standards_coverage():
+        try:
+            payload = store.standards_coverage(request.args.get("folder_id") or "")
+        except ValueError as exc:
+            return _json_error(str(exc), 404)
+        catalog_version = store.catalog_version()
+        response = jsonify(ok=True, **payload, catalog_version=catalog_version)
+        response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=300"
+        response.set_etag(
+            f"wiki-standards-coverage-{catalog_version}-{payload.get('folder_id') or 'all'}"
+        )
+        return response.make_conditional(request)
+
     @app.get("/api/wiki/nodes/<identifier>")
     def wiki_node(identifier: str):
         payload = store.page_response(identifier)

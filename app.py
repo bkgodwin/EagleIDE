@@ -4158,6 +4158,7 @@ def root():
 
 @app.get("/ide")
 @app.get("/network")
+@app.get("/standards-coverage")
 @app.get("/wiki")
 @app.get("/wiki/<path:wiki_path>")
 def spa_route(wiki_path: str = ""):
