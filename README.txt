@@ -153,9 +153,17 @@ Example:
 --------------------------------------------------
 BASIC USAGE
 --------------------------------------------------
-python app.py
+Use the project virtual environment so the compatible Socket.IO and WebSocket
+packages from requirements.txt take precedence over Linux distribution packages:
+
+  .venv/bin/python app.py                  # Linux/macOS
+  .\.venv\Scripts\python.exe app.py        # Windows PowerShell
 
 The server will start at: http://0.0.0.0:8000
+
+The embedded Werkzeug server is intended for local or classroom-network use.
+EagleIDE includes a compatibility guard for a known harmless Werkzeug/Engine.IO
+traceback that some package combinations log when a healthy WebSocket disconnects.
 
 --------------------------------------------------
 CUSTOM HOST/PORT
