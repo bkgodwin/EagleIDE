@@ -214,6 +214,50 @@ except Exception:
 # -------------------------
 # App & Socket
 # -------------------------
+class _WerkzeugWebSocketTeardownGuard:
+    """Translate Werkzeug's headerless raw-socket teardown into a clean drop.
+
+    The Engine.IO threading driver owns the raw socket for a WebSocket request
+    and intentionally does not call the WSGI ``start_response`` callback. Some
+    Werkzeug releases treat the normal return from that session as an invalid
+    empty HTTP response and log ``write() before start_response``. Raising
+    ``ConnectionError`` after a completed Werkzeug Socket.IO session uses the
+    request handler's existing clean-disconnect path without hiding exceptions
+    raised by the wrapped application.
+    """
+
+    def __init__(self, wsgi_app):
+        self.wsgi_app = wsgi_app
+
+    @staticmethod
+    def _is_werkzeug_socketio_websocket(environ: dict) -> bool:
+        return (
+            "werkzeug.socket" in environ
+            and str(environ.get("HTTP_UPGRADE") or "").strip().casefold() == "websocket"
+            and str(environ.get("PATH_INFO") or "").startswith("/socket.io/")
+        )
+
+    def __call__(self, environ, start_response):
+        if not self._is_werkzeug_socketio_websocket(environ):
+            return self.wsgi_app(environ, start_response)
+
+        response_started = False
+
+        def tracked_start_response(status, headers, exc_info=None):
+            nonlocal response_started
+            response_started = True
+            return start_response(status, headers, exc_info)
+
+        response = self.wsgi_app(environ, tracked_start_response)
+        if response_started:
+            return response
+
+        close = getattr(response, "close", None)
+        if callable(close):
+            close()
+        raise ConnectionError("Werkzeug Socket.IO WebSocket session closed")
+
+
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 app.config["MAX_CONTENT_LENGTH"] = MAX_HTTP_BODY_BYTES
 app.config["MAX_FORM_MEMORY_SIZE"] = 2 * 1024 * 1024
@@ -227,6 +271,7 @@ socketio = SocketIO(
     ping_interval=25,
     ping_timeout=20,
 )
+app.wsgi_app = _WerkzeugWebSocketTeardownGuard(app.wsgi_app)
 
 
 @app.errorhandler(413)
