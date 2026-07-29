@@ -305,6 +305,7 @@ class WikiStore:
         self._tree_cache: OrderedDict[tuple[Any, ...], list[dict[str, Any]]] = OrderedDict()
         self._search_cache: OrderedDict[tuple[Any, ...], list[dict[str, Any]]] = OrderedDict()
         self._link_cache: OrderedDict[tuple[Any, ...], list[dict[str, str]]] = OrderedDict()
+        self._coverage_cache: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
         self._prepare_directories()
         self._init_schema()
         self.prune_revisions()
@@ -516,6 +517,7 @@ class WikiStore:
             self._tree_cache.clear()
             self._search_cache.clear()
             self._link_cache.clear()
+            self._coverage_cache.clear()
 
     def checkpoint(self) -> None:
         with self._connect() as conn:
@@ -622,6 +624,87 @@ class WikiStore:
     def list_standards(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
             return self._list_standards_locked(conn)
+
+    def standards_coverage(self, folder_id: str = "") -> dict[str, Any]:
+        """Build a public standards-to-pages matrix from the published tree."""
+        selected_folder_id = str(folder_id or "").strip().lower()
+        if selected_folder_id:
+            selected_folder_id = self._validate_id(selected_folder_id)
+        cache_key = (self.catalog_version(), selected_folder_id)
+        cached = self._cache_get(self._coverage_cache, cache_key)
+        if cached is not None:
+            return cached
+
+        tree = self.get_tree(include_images=False)
+        folders: list[dict[str, Any]] = []
+        selected_folder: Optional[dict[str, Any]] = None
+
+        def visit_folders(nodes: Iterable[dict[str, Any]], path: list[str]) -> None:
+            nonlocal selected_folder
+            for node in nodes:
+                if node.get("kind") != "folder":
+                    continue
+                next_path = [*path, str(node.get("title") or "Folder")]
+                folders.append({
+                    "id": node["id"],
+                    "title": node.get("title") or "Folder",
+                    "parent_id": node.get("parent_id"),
+                    "depth": len(path),
+                    "path": " / ".join(next_path),
+                })
+                if node["id"] == selected_folder_id:
+                    selected_folder = node
+                visit_folders(node.get("children") or [], next_path)
+
+        visit_folders(tree, [])
+        if selected_folder_id and selected_folder is None:
+            raise ValueError("Published wiki folder not found")
+
+        scoped_nodes = [selected_folder] if selected_folder else tree
+        ordered_pages: list[dict[str, Any]] = []
+
+        def visit_pages(nodes: Iterable[dict[str, Any]]) -> None:
+            for node in nodes:
+                if node.get("kind") == "page":
+                    ordered_pages.append({
+                        "id": node["id"],
+                        "title": node.get("title") or "Untitled Page",
+                        "slug": node.get("slug") or "",
+                    })
+                if node.get("children"):
+                    visit_pages(node["children"])
+
+        visit_pages(scoped_nodes)
+        page_ids = {page["id"] for page in ordered_pages}
+        pages_by_standard: dict[str, set[str]] = defaultdict(set)
+        with self._connect() as conn:
+            standards = self._list_standards_locked(conn)
+            if page_ids:
+                for row in conn.execute(
+                    "SELECT ps.standard_id,ps.page_id FROM page_standards ps "
+                    "JOIN nodes n ON n.id=ps.page_id "
+                    "WHERE n.kind='page' AND n.status='published' AND n.deleted_at IS NULL"
+                ):
+                    if row["page_id"] in page_ids:
+                        pages_by_standard[row["standard_id"]].add(row["page_id"])
+
+        coverage = []
+        for standard in standards:
+            covered_ids = pages_by_standard.get(standard["id"], set())
+            item = dict(standard)
+            item["pages"] = [dict(page) for page in ordered_pages if page["id"] in covered_ids]
+            item["coverage_count"] = len(item["pages"])
+            coverage.append(item)
+
+        result = {
+            "standards": coverage,
+            "folders": folders,
+            "folder_id": selected_folder_id,
+            "folder_title": selected_folder.get("title") if selected_folder else "",
+            "page_count": len(ordered_pages),
+        }
+        self._cache_put(self._coverage_cache, cache_key, result, 16)
+        return result
 
     def _replace_standards(self, conn: sqlite3.Connection, standards: Any) -> None:
         cleaned = safe_standards(standards)
