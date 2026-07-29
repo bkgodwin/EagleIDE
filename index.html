@@ -38,7 +38,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20260729-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260729-2">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -64,6 +64,15 @@
       <button class="btn run run-btn-hero ide-only" id="runBtn">Run ▶</button>
     </div>
     <div class="topbar-primary-actions">
+      <label class="wiki-font-size-control" for="wikiFontSizeSelect">
+        <span>Text size</span>
+        <select id="wikiFontSizeSelect" aria-label="Wiki article text size">
+          <option value="14">Small</option>
+          <option value="16" selected>Default</option>
+          <option value="18">Large</option>
+          <option value="20">Extra large</option>
+        </select>
+      </label>
       <button class="btn exception-help-btn ide-only" id="exceptionHelpBtn" title="Troubleshooting Assistant" aria-label="Open troubleshooting assistant">🛠️ Help</button>
       <span class="file-chip ide-only" id="activeFileChip"><span id="activeFileName"></span></span>
       <button class="btn secondary ide-only" id="saveDraftBtn" type="button" style="display:none;">Save Draft</button>
@@ -159,7 +168,10 @@
 
         <div class="wiki-home-info-grid wiki-home-info-grid--footer">
           <section class="wiki-home-info-panel" aria-labelledby="wikiStandardsHeading">
-            <header><span class="wiki-eyebrow">Curriculum</span><h2 id="wikiStandardsHeading">Standards</h2></header>
+            <header class="wiki-home-panel-header">
+              <div><span class="wiki-eyebrow">Curriculum</span><h2 id="wikiStandardsHeading">Standards</h2></div>
+              <a class="btn wiki-coverage-link-btn" id="wikiStandardsCoverageBtn" href="/standards-coverage">View Coverage</a>
+            </header>
             <div class="wiki-home-standards-wrap">
               <table class="wiki-home-standards" id="wikiHomeStandards">
                 <thead><tr><th>Standard ID</th><th>Description</th></tr></thead>
@@ -179,6 +191,32 @@
         </div>
       </section>
 
+      <section class="wiki-standards-coverage glass-surface" id="wikiStandardsCoveragePanel" hidden>
+        <header class="wiki-coverage-header">
+          <div>
+            <span class="wiki-eyebrow">Curriculum map</span>
+            <h1>Standards Coverage</h1>
+            <p>Each dot represents a published wiki page tagged with that standard.</p>
+          </div>
+          <button class="btn secondary" id="wikiCoverageHomeBtn" type="button">Wiki Home</button>
+        </header>
+        <div class="wiki-coverage-controls">
+          <label for="wikiCoverageFolderFilter">
+            <span>Filter by folder</span>
+            <select id="wikiCoverageFolderFilter">
+              <option value="">All wiki content</option>
+            </select>
+          </label>
+          <p id="wikiCoverageSummary" role="status" aria-live="polite"></p>
+        </div>
+        <div class="wiki-coverage-table-wrap">
+          <table class="wiki-coverage-table">
+            <thead><tr><th>Standard ID</th><th>Description</th><th>Covered by wiki pages</th></tr></thead>
+            <tbody id="wikiCoverageTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
       <article class="wiki-article glass-surface" id="wikiArticlePanel" hidden>
         <nav class="wiki-breadcrumbs" id="wikiBreadcrumbs" aria-label="Breadcrumb"></nav>
         <header class="wiki-article-header">
@@ -195,12 +233,12 @@
         </header>
         <div class="wiki-article-layout">
           <div class="wiki-article-body" id="wikiArticleBody"></div>
-          <aside class="wiki-toc" id="wikiToc" aria-label="On this page" hidden>
-            <section id="wikiTocContents"><strong>On this page</strong><nav id="wikiTocLinks"></nav></section>
+          <aside class="wiki-toc" id="wikiToc" aria-label="Page information" hidden>
             <section class="wiki-page-standards" id="wikiPageStandards" hidden>
               <strong>Standards covered</strong>
               <div id="wikiPageStandardsList"></div>
             </section>
+            <section id="wikiTocContents"><strong>On this page</strong><nav id="wikiTocLinks"></nav></section>
           </aside>
         </div>
       </article>
@@ -1380,7 +1418,7 @@
   <script src="/static/js/app-core.js?v=20260714-8"></script>
 <script src="/static/js/network-sim.js?v=20260714-18"></script>
 <script src="/static/js/network-sim-advanced.js?v=20260714-4"></script>
-  <script src="/static/js/wiki-reader.js?v=20260729-1"></script>
+  <script src="/static/js/wiki-reader.js?v=20260729-2"></script>
   <script src="/static/js/wiki-admin.js?v=20260729-1"></script>
   <script src="/static/js/classroom-signals.js"></script>
   <script src="/static/js/classroom-files.js?v=20250608"></script>

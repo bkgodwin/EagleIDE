@@ -4,6 +4,9 @@
   const state = {
     tree: [],
     home: null,
+    coverage: null,
+    coverageAbort: null,
+    coverageFolderId: '',
     currentNode: null,
     selectedClassId: '',
     expanded: new Set(),
@@ -25,6 +28,8 @@
   };
 
   const $ = (id) => document.getElementById(id);
+  const WIKI_FONT_SIZE_KEY = 'eagleide-wiki-font-size';
+  const WIKI_FONT_SIZES = new Set([14, 16, 18, 20]);
 
   function context() {
     try { return window.EagleIDE?.getContext?.() || {}; } catch { return {}; }
@@ -106,13 +111,30 @@
     closeFloatingPanels();
     if (!push) return;
     const destination = wiki ? (path || '/') : '/ide';
-    const current = `${location.pathname}${location.hash}`;
+    const current = `${location.pathname}${location.search}${location.hash}`;
     if (current !== destination) history.pushState({ eagleView: mode }, '', destination);
   }
 
   function showIDE(push = true) {
     setView('ide', { push });
     try { window.eagleEditor?.refresh?.(); } catch {}
+  }
+
+  function applyWikiFontSize(value, { persist = true } = {}) {
+    const parsed = Number(value);
+    const size = WIKI_FONT_SIZES.has(parsed) ? parsed : 16;
+    $('wikiView')?.style.setProperty('--wiki-body-font-size', `${size}px`);
+    if ($('wikiFontSizeSelect')) $('wikiFontSizeSelect').value = String(size);
+    if (persist) {
+      try { localStorage.setItem(WIKI_FONT_SIZE_KEY, String(size)); } catch {}
+    }
+    return size;
+  }
+
+  function restoreWikiFontSize() {
+    let saved = 16;
+    try { saved = Number(localStorage.getItem(WIKI_FONT_SIZE_KEY) || 16); } catch {}
+    applyWikiFontSize(saved, { persist: false });
   }
 
   function closeFloatingPanels() {
@@ -624,13 +646,122 @@
   }
 
   async function showHome({ push = true } = {}) {
+    state.coverageAbort?.abort?.();
     setView('wiki', { push, path: '/' });
     state.currentNode = null;
     $('wikiHomePanel').hidden = false;
+    $('wikiStandardsCoveragePanel').hidden = true;
     $('wikiArticlePanel').hidden = true;
     $('wikiHomeBtn')?.setAttribute('aria-current', 'page');
     if (!state.home) await loadHome().catch(() => {});
     else renderHomeData();
+    $('wikiReaderShell')?.scrollTo?.({ top: 0, behavior: 'instant' });
+  }
+
+  function renderCoverage(data) {
+    const target = $('wikiCoverageTableBody');
+    const select = $('wikiCoverageFolderFilter');
+    if (!target || !select) return;
+    state.coverage = data;
+    state.coverageFolderId = data.folder_id || '';
+
+    select.textContent = '';
+    const allOption = document.createElement('option');
+    allOption.value = '';
+    allOption.textContent = 'All wiki content';
+    select.appendChild(allOption);
+    for (const folder of data.folders || []) {
+      const option = document.createElement('option');
+      option.value = folder.id;
+      const indent = folder.depth ? `${'\u00a0\u00a0'.repeat(folder.depth)}↳ ` : '';
+      option.textContent = `${indent}${folder.path || folder.title || 'Folder'}`;
+      select.appendChild(option);
+    }
+    select.value = state.coverageFolderId;
+
+    const pageCount = Number(data.page_count || 0);
+    const scope = data.folder_title ? `“${data.folder_title}” and its subfolders` : 'all wiki folders';
+    if ($('wikiCoverageSummary')) {
+      $('wikiCoverageSummary').textContent = `${pageCount} published ${pageCount === 1 ? 'page' : 'pages'} in ${scope}.`;
+    }
+
+    target.textContent = '';
+    const standards = Array.isArray(data.standards) ? data.standards : [];
+    if (!standards.length) {
+      const row = document.createElement('tr');
+      const cell = document.createElement('td');
+      cell.colSpan = 3;
+      cell.className = 'wiki-home-info-empty';
+      cell.textContent = 'Standards have not been posted yet.';
+      row.appendChild(cell);
+      target.appendChild(row);
+      return;
+    }
+    for (const standard of standards) {
+      const row = document.createElement('tr');
+      const id = document.createElement('th');
+      id.scope = 'row';
+      id.textContent = standard.standard_id || '';
+      const description = document.createElement('td');
+      description.textContent = standard.description || '';
+      const pages = document.createElement('td');
+      pages.className = 'wiki-coverage-dots';
+      for (const page of standard.pages || []) {
+        const link = document.createElement('a');
+        link.href = `/wiki/${encodeURIComponent(page.slug || page.id)}`;
+        link.className = 'wiki-coverage-dot';
+        link.title = page.title || 'Open wiki page';
+        link.setAttribute('aria-label', `Open ${page.title || 'wiki page'}`);
+        link.textContent = '●';
+        pages.appendChild(link);
+      }
+      if (!pages.childElementCount) {
+        const empty = document.createElement('span');
+        empty.className = 'wiki-coverage-none';
+        empty.textContent = 'Not yet covered';
+        pages.appendChild(empty);
+      }
+      row.append(id, description, pages);
+      target.appendChild(row);
+    }
+  }
+
+  async function loadCoverage(folderId = state.coverageFolderId) {
+    const normalizedFolderId = String(folderId || '').trim();
+    state.coverageAbort?.abort?.();
+    const controller = new AbortController();
+    state.coverageAbort = controller;
+    const suffix = normalizedFolderId ? `?folder_id=${encodeURIComponent(normalizedFolderId)}` : '';
+    try {
+      const data = await fetchJson(`/api/wiki/standards/coverage${suffix}`, {
+        signal: controller.signal,
+        cache: 'no-cache',
+      });
+      if (controller.signal.aborted) return null;
+      renderCoverage(data);
+      showStatus('');
+      return data;
+    } catch (error) {
+      if (error?.name === 'AbortError') return null;
+      showStatus(error.message || 'Could not load standards coverage', true);
+      throw error;
+    }
+  }
+
+  async function showStandardsCoverage({ push = true, folderId = '' } = {}) {
+    const directFolderId = !push ? new URLSearchParams(location.search).get('folder_id') : '';
+    const selectedFolderId = String(folderId || directFolderId || '').trim();
+    const path = selectedFolderId
+      ? `/standards-coverage?folder_id=${encodeURIComponent(selectedFolderId)}`
+      : '/standards-coverage';
+    setView('wiki', { push, path });
+    state.currentNode = null;
+    $('wikiHomePanel').hidden = true;
+    $('wikiArticlePanel').hidden = true;
+    $('wikiStandardsCoveragePanel').hidden = false;
+    $('wikiHomeBtn')?.setAttribute('aria-current', 'false');
+    showStatus('Loading standards coverage…', false, 0);
+    await loadCoverage(selectedFolderId).catch(() => {});
     $('wikiReaderShell')?.scrollTo?.({ top: 0, behavior: 'instant' });
   }
 
@@ -642,6 +773,7 @@
   }
 
   async function openNode(identifier, { push = true, anchor = '', highlight = '' } = {}) {
+    state.coverageAbort?.abort?.();
     setView('wiki', { push: false });
     showStatus('Loading topic…', false, 0);
     try {
@@ -659,6 +791,7 @@
       for (const id of pathToNode(data.node.id)) state.expanded.add(id);
       renderNode(data.node, $('wikiArticleBody'), { embedded: false });
       $('wikiHomePanel').hidden = true;
+      $('wikiStandardsCoveragePanel').hidden = true;
       $('wikiArticlePanel').hidden = false;
       $('wikiHomeBtn')?.setAttribute('aria-current', 'false');
       updatePathForNode(data.node, push, anchor);
@@ -682,6 +815,7 @@
   }
 
   function highlightSearchTerm(container, term) {
+    clearSearchHighlights(container);
     const query = String(term || '').trim();
     if (!container || query.length < 2) return null;
     const regex = new RegExp(escapeRegExp(query), 'gi');
@@ -715,6 +849,14 @@
       textNode.replaceWith(fragment);
     }
     return first;
+  }
+
+  function clearSearchHighlights(container = $('wikiArticleBody')) {
+    if (!container) return;
+    for (const mark of container.querySelectorAll('mark.wiki-search-hit')) {
+      mark.replaceWith(document.createTextNode(mark.textContent || ''));
+    }
+    container.normalize();
   }
 
   function renderBreadcrumbs(node) {
@@ -1047,7 +1189,7 @@
     const contents = $('wikiTocContents');
     const links = $('wikiTocLinks');
     links.textContent = '';
-    const visible = (sections || []).filter(section => Number(section.level) <= 3);
+    const visible = (sections || []).filter(section => Number(section.level) <= 4);
     contents.hidden = !visible.length;
     toc.hidden = !visible.length && $('wikiPageStandards')?.hidden !== false;
     for (const section of visible) {
@@ -1072,15 +1214,23 @@
     const items = Array.isArray(standards) ? standards : [];
     target.textContent = '';
     section.hidden = !items.length;
-    for (const standard of items) {
-      const details = document.createElement('details');
-      const summary = document.createElement('summary');
-      summary.textContent = standard.standard_id || 'Standard';
-      const description = document.createElement('p');
-      description.textContent = standard.description || '';
-      details.append(summary, description);
-      target.appendChild(details);
-    }
+    items.forEach((standard, index) => {
+      const wrap = document.createElement('span');
+      wrap.className = 'wiki-standard-tooltip';
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'wiki-standard-id';
+      button.textContent = standard.standard_id || 'Standard';
+      button.title = standard.description || '';
+      const tooltip = document.createElement('span');
+      tooltip.className = 'wiki-standard-tooltip-text';
+      tooltip.id = `wiki-standard-tooltip-${index}`;
+      tooltip.setAttribute('role', 'tooltip');
+      tooltip.textContent = standard.description || 'No description provided.';
+      button.setAttribute('aria-describedby', tooltip.id);
+      wrap.append(button, tooltip);
+      target.appendChild(wrap);
+    });
     toc.hidden = !$('wikiTocLinks')?.childElementCount && !items.length;
   }
 
@@ -1148,8 +1298,11 @@
     const normalized = String(query || '').trim();
     if (normalized.length < 2) {
       state.searchAbort?.abort?.();
+      state.searchQuery = '';
+      state.searchResults = [];
       panel.hidden = true;
       target.textContent = '';
+      clearSearchHighlights();
       return;
     }
     panel.hidden = false;
@@ -1514,6 +1667,21 @@
     $('wikiDrawerScrim')?.addEventListener('click', closeDrawer);
     $('wikiHomeBtn')?.addEventListener('click', () => showHome());
     $('wikiArticleHomeBtn')?.addEventListener('click', () => showHome());
+    $('wikiStandardsCoverageBtn')?.addEventListener('click', event => {
+      event.preventDefault();
+      showStandardsCoverage();
+    });
+    $('wikiCoverageHomeBtn')?.addEventListener('click', () => showHome());
+    $('wikiCoverageFolderFilter')?.addEventListener('change', event => {
+      const folderId = event.target.value || '';
+      const path = folderId
+        ? `/standards-coverage?folder_id=${encodeURIComponent(folderId)}`
+        : '/standards-coverage';
+      history.replaceState({ eagleView: 'wiki', standardsCoverage: true }, '', path);
+      showStatus('Updating standards coverage…', false, 0);
+      loadCoverage(folderId).catch(() => {});
+    });
+    $('wikiFontSizeSelect')?.addEventListener('change', event => applyWikiFontSize(event.target.value));
     $('wikiHeroIdeBtn')?.addEventListener('click', () => showIDE());
     $('ideViewBtn')?.addEventListener('click', () => showIDE());
     $('wikiViewBtn')?.addEventListener('click', () => showHome());
@@ -1526,14 +1694,32 @@
     });
     $('wikiSearchInput')?.addEventListener('input', (event) => {
       clearTimeout(state.searchTimer);
+      if (String(event.target.value || '').trim().length < 2) {
+        performSearch(event.target.value);
+        return;
+      }
       state.searchTimer = setTimeout(() => performSearch(event.target.value), 300);
     });
     $('wikiSearchInput')?.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') { state.searchAbort?.abort?.(); $('wikiSearchPanel').hidden = true; }
+      if (event.key === 'Escape') {
+        state.searchAbort?.abort?.();
+        state.searchQuery = '';
+        state.searchResults = [];
+        $('wikiSearchPanel').hidden = true;
+        event.target.value = '';
+        clearSearchHighlights();
+      }
       if (event.key === 'Enter') { event.preventDefault(); submitSearch(); }
     });
     $('wikiSearchSubmitBtn')?.addEventListener('click', submitSearch);
-    $('wikiSearchCloseBtn')?.addEventListener('click', () => { state.searchAbort?.abort?.(); $('wikiSearchPanel').hidden = true; $('wikiSearchInput').value = ''; });
+    $('wikiSearchCloseBtn')?.addEventListener('click', () => {
+      state.searchAbort?.abort?.();
+      state.searchQuery = '';
+      state.searchResults = [];
+      $('wikiSearchPanel').hidden = true;
+      $('wikiSearchInput').value = '';
+      clearSearchHighlights();
+    });
     $('wikiBookmarksBtn')?.addEventListener('click', () => {
       if (!document.body.classList.contains('wiki-mode')) setView('wiki', { push: true, path: '/' });
       $('wikiBookmarksPanel').hidden ? loadBookmarksPanel() : closeFloatingPanels();
@@ -1591,6 +1777,10 @@
       showIDE(false);
       return;
     }
+    if (path === '/standards-coverage') {
+      showStandardsCoverage({ push: false });
+      return;
+    }
     if (path.startsWith('/wiki/')) {
       const slug = decodeURIComponent(path.slice('/wiki/'.length));
       openNode(slug, { push: false, anchor: decodeURIComponent(location.hash.replace(/^#/, '')) });
@@ -1600,6 +1790,7 @@
   }
 
   async function initialize() {
+    restoreWikiFontSize();
     attachEvents();
     syncSidebarControls();
     refreshContext();
@@ -1621,6 +1812,7 @@
     renderMarkdown,
     renderTree,
     selectClass,
+    showStandardsCoverage,
     showHome,
     showIDE,
     showStatus,

@@ -68,6 +68,8 @@ class StaticHtmlTestCase(unittest.TestCase):
             "wikiAdminAddStandardBtn", "wikiAdminStandardsCsvInput", "wikiAdminPageStandards",
             "wikiSiteFooter", "wikiAdminFooterText", "wikiAdminFolderIcon",
             "wikiEmojiPickerModal", "studentNotebookWikiLinkBtn", "studentNotebookWikiLinkModal",
+            "wikiStandardsCoverageBtn", "wikiStandardsCoveragePanel", "wikiCoverageFolderFilter",
+            "wikiCoverageTableBody", "wikiCoverageHomeBtn", "wikiFontSizeSelect",
         }.issubset(ids))
         self.assertNotIn("wikiHomeTree", ids)
         self.assertIn('accept=".png,.jpg,.jpeg,.webp,.gif"', self.raw)
@@ -98,6 +100,11 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn("setTimeout(renderPreview, 500)", (BASE_DIR / "static" / "js" / "wiki-admin.js").read_text(encoding="utf-8"))
         self.assertIn("&limit=8", reader)
         self.assertIn("setTimeout(() => performSearch(event.target.value), 300)", reader)
+        self.assertIn("localStorage.setItem(WIKI_FONT_SIZE_KEY", reader)
+        self.assertIn("clearSearchHighlights", reader)
+        self.assertIn("showStandardsCoverage", reader)
+        self.assertIn('@app.get("/standards-coverage")', (BASE_DIR / "app.py").read_text(encoding="utf-8"))
+        self.assertLess(self.raw.index('id="wikiPageStandards"'), self.raw.index('id="wikiTocContents"'))
 
     def test_network_simulator_surfaces_are_modular_and_touch_ready(self):
         ids = set(self.parser.ids)
