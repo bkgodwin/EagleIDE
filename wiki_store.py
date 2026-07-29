@@ -699,6 +699,36 @@ class WikiStore:
             self._bump_version(conn)
         return self.home_settings()
 
+    def import_standards(self, standards: Any) -> dict[str, Any]:
+        """Merge validated standards by their human-readable Standard ID."""
+        imported = safe_standards(standards)
+        if not imported:
+            raise ValueError("The CSV file does not contain any standards")
+        with self._write_lock, self._connect() as conn:
+            existing = self._list_standards_locked(conn)
+            combined = [dict(item) for item in existing]
+            positions = {
+                normalize_term(item["standard_id"]): index
+                for index, item in enumerate(combined)
+            }
+            for item in imported:
+                current_index = positions.get(item["normalized_id"])
+                if current_index is None:
+                    positions[item["normalized_id"]] = len(combined)
+                    combined.append({
+                        "standard_id": item["standard_id"],
+                        "description": item["description"],
+                    })
+                else:
+                    combined[current_index] = {
+                        **combined[current_index],
+                        "standard_id": item["standard_id"],
+                        "description": item["description"],
+                    }
+            self._replace_standards(conn, combined)
+            self._bump_version(conn)
+        return self.home_settings()
+
     def _replace_page_standards(
         self, conn: sqlite3.Connection, page_id: str, standard_ids: Iterable[Any]
     ) -> None:
@@ -799,6 +829,7 @@ class WikiStore:
         status: str = "draft",
         aliases: Iterable[Any] = (),
         description: Any = "",
+        icon: Any = "",
         file_name: str = "",
         standard_ids: Iterable[Any] = (),
     ) -> dict[str, Any]:
@@ -818,10 +849,10 @@ class WikiStore:
                 self._parent_exists(conn, parent_id)
                 slug = self._unique_slug(conn, title)
                 conn.execute(
-                    "INSERT INTO nodes(id,parent_id,kind,title,slug,sort_order,status,file_name,storage_name,mime_type,size_bytes,description,created_at,updated_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,'text/markdown; charset=utf-8',?,?,?,?)",
+                    "INSERT INTO nodes(id,parent_id,kind,title,icon,slug,sort_order,status,file_name,storage_name,mime_type,size_bytes,description,created_at,updated_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,'text/markdown; charset=utf-8',?,?,?,?)",
                     (
-                        node_id, parent_id, "page", title, slug, self._next_order(conn, parent_id), status,
+                        node_id, parent_id, "page", title, safe_icon(icon), slug, self._next_order(conn, parent_id), status,
                         safe_filename(file_name or f"{slug}.md"), storage_name, len(content.encode("utf-8")),
                         safe_description(description), now, now,
                     ),
@@ -906,7 +937,11 @@ class WikiStore:
                         (current["slug"], node_id, utc_timestamp()),
                     )
             next_description = safe_description(description) if description is not None else current["description"]
-            next_icon = safe_icon(icon) if icon is not None and current["kind"] == "folder" else current.get("icon", "")
+            next_icon = (
+                safe_icon(icon)
+                if icon is not None and current["kind"] in {"folder", "page"}
+                else current.get("icon", "")
+            )
             next_status = current["status"]
             if status is not None:
                 next_status = "published" if status == "published" else "draft"

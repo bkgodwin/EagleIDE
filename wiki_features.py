@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import json
 import re
 import threading
@@ -14,6 +16,9 @@ from typing import Any, Callable, Iterable, Optional
 from flask import Flask, jsonify, request, send_file
 
 from wiki_store import MAX_PAGE_BYTES, ASSET_TYPES, WikiStore, safe_filename, safe_title
+
+
+MAX_STANDARDS_CSV_BYTES = 1024 * 1024
 
 
 def register(
@@ -363,6 +368,62 @@ def register(
             return _json_error(str(exc), 400)
         return jsonify(ok=True, home_settings=settings, catalog_version=store.catalog_version())
 
+    @app.post("/api/admin/wiki/standards/import")
+    def admin_wiki_standards_import():
+        _, error = _admin_required()
+        if error:
+            return error
+        uploaded = request.files.get("file")
+        if not uploaded or not uploaded.filename:
+            return _json_error("Standards CSV file required", 400)
+        if Path(safe_filename(uploaded.filename)).suffix.lower() != ".csv":
+            return _json_error("Only .csv files can be imported as standards", 400)
+        raw = uploaded.stream.read(MAX_STANDARDS_CSV_BYTES + 1)
+        if len(raw) > MAX_STANDARDS_CSV_BYTES:
+            return _json_error("Standards CSV exceeds the 1MB limit", 413)
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            return _json_error("Standards CSV files must use UTF-8 encoding", 400)
+        if "\x00" in text:
+            return _json_error("Standards CSV contains invalid characters", 400)
+        try:
+            csv_reader = csv.DictReader(io.StringIO(text, newline=""))
+            fields = {
+                re.sub(r"[^a-z0-9]+", "", str(name or "").casefold()): name
+                for name in (csv_reader.fieldnames or [])
+            }
+            id_field = next((fields[key] for key in ("standardid", "standard", "code", "id") if key in fields), None)
+            description_field = next((
+                fields[key] for key in ("description", "standarddescription", "details")
+                if key in fields
+            ), None)
+            if not id_field or not description_field:
+                return _json_error('CSV headers must include "Standard ID" and "Description"', 400)
+            standards = []
+            for row_number, row in enumerate(csv_reader, start=2):
+                standard_id = str(row.get(id_field) or "").strip()
+                description = str(row.get(description_field) or "").strip()
+                if not standard_id and not description:
+                    continue
+                if not standard_id or not description:
+                    return _json_error(
+                        f"CSV row {row_number} requires both a Standard ID and Description", 400
+                    )
+                standards.append({"standard_id": standard_id, "description": description})
+        except csv.Error as exc:
+            return _json_error(f"Could not read standards CSV: {exc}", 400)
+        try:
+            settings = store.import_standards(standards)
+        except ValueError as exc:
+            return _json_error(str(exc), 400)
+        return jsonify(
+            ok=True,
+            imported_count=len(standards),
+            home_settings=settings,
+            catalog_version=store.catalog_version(),
+        )
+
     @app.get("/api/admin/wiki/nodes/<node_id>")
     def admin_wiki_node_get(node_id: str):
         _, error = _admin_required()
@@ -397,6 +458,7 @@ def register(
                 status=data.get("status") or "draft",
                 aliases=data.get("aliases") or [],
                 description=data.get("description") or "",
+                icon=data.get("icon") or "",
                 standard_ids=data.get("standard_ids") or [],
             )
         except ValueError as exc:
