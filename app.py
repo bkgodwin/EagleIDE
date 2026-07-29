@@ -475,6 +475,7 @@ _classes_cache: Optional[tuple[str, int, dict]] = None
 _skills_cache: Optional[tuple[str, int, dict]] = None
 SERVER_START_EPOCH = time.time()
 _server_start_recorded = False
+_server_stop_recorded = False
 
 def _sanitize_email_for_path(email: str) -> str:
     """Convert email to safe directory name"""
@@ -936,7 +937,7 @@ def _pid_is_running(pid: int) -> bool:
         return False
 
 def _record_server_startup_event() -> None:
-    global _server_start_recorded
+    global _server_start_recorded, _server_stop_recorded
     prior = {}
     try:
         if SERVER_STATE_FILE.exists():
@@ -957,13 +958,20 @@ def _record_server_startup_event() -> None:
     _append_server_log("Server started.", "INFO")
     _mark_server_running_state(True)
     _server_start_recorded = True
+    _server_stop_recorded = False
 
 def _record_server_stop_event() -> None:
-    if not _server_start_recorded:
+    global _server_stop_recorded
+    if not _server_start_recorded or _server_stop_recorded:
         return
+    _server_stop_recorded = True
+    _mark_server_running_state(False)
     _append_server_event("server_stop", "Server stopped.", "warning", {"pid": os.getpid()})
     _append_server_log("Server stopped.", "WARNING")
-    _mark_server_running_state(False)
+
+def _handle_server_termination(_signum, _frame) -> None:
+    """Move service-manager termination through the main loop's cleanup path."""
+    raise SystemExit(0)
 
 atexit.register(_record_server_stop_event)
 
@@ -7443,6 +7451,10 @@ if __name__ == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", str(SERVER_PORT)))
     _record_server_startup_event()
+    try:
+        signal.signal(signal.SIGTERM, _handle_server_termination)
+    except (AttributeError, OSError, ValueError):
+        pass
     print(f"Async mode: {socketio.async_mode}", flush=True)
     print(f"EagleIDE server starting on http://{host}:{port}", flush=True)
     print("Press Ctrl+C to stop.", flush=True)
@@ -7452,4 +7464,6 @@ if __name__ == "__main__":
         socketio.run(app, host=host, port=port, debug=False, allow_unsafe_werkzeug=True)
     except (KeyboardInterrupt, SystemExit):
         pass
+    finally:
+        _record_server_stop_event()
     print("Server stopped.")

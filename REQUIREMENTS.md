@@ -83,8 +83,8 @@ These libraries are loaded from public CDNs when a student opens the IDE in thei
 |---------|---------|-----|---------|
 | CodeMirror | 5.65.16 | cdnjs | Code editor with syntax highlighting (Python, JS, HTML, CSS) |
 | Socket.IO client | 4.7.5 | cdn.socket.io | Real-time WebSocket communication with the server |
-| marked | latest | jsDelivr | Markdown → HTML rendering (AI output, notes) |
-| DOMPurify | 3.1.6 | jsDelivr | HTML sanitizer (prevents XSS in rendered Markdown) |
+| marked | 18.0.7 | jsDelivr | Markdown → HTML rendering (AI output, notes) |
+| DOMPurify | 3.4.7 | jsDelivr | HTML sanitizer (prevents XSS in rendered Markdown) |
 | highlight.js | 11.9.0 | cdnjs | Syntax highlighting inside Markdown code blocks |
 | Google Fonts (Inter) | — | fonts.googleapis.com | UI font |
 

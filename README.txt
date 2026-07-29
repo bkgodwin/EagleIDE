@@ -288,9 +288,12 @@ Admin Wiki Manager:
 1. Sign in as admin and choose Wiki Manager in the top bar.
 2. Use the Home tab to change the landing-page title, supporting text, site footer,
    structured Standards, and External Resources table. Standards require an ID and
-   description and can be assigned to individual pages from Item settings.
+   description and can be assigned to individual pages from Item settings. To add
+   standards in bulk, choose Import CSV and upload a UTF-8 file with Standard ID and
+   Description headers. Existing matching IDs are updated and new IDs are appended.
 3. Use the Content tab to create folders and pages, or upload an existing .md
-   page. Folder icons accept standard Unicode emoji. Drag the tree handle to move
+   page. Folder and page icons accept standard Unicode emoji; the picker includes
+   coding, JavaScript, server, and system-administration choices. Drag the tree handle to move
    items before, after, or inside folders; Move Up/Down remains available. New pages are drafts;
    expand their folders in Wiki Manager and select Published when they are ready
    to appear in the public contents sidebar.
