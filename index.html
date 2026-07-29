@@ -26,15 +26,19 @@
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 
   <!-- Markdown + Sanitizer + Syntax highlight -->
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@18.0.7/lib/marked.umd.js"
+          integrity="sha384-7njNzKcJUBdezPGfqUrIFizi2QkXJH0M6wF3o1h9GE/nce6X4YdecMwh31B19yTi"
+          crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.7/dist/purify.min.js"
+          integrity="sha384-C5g1ZoYBpnvKyArNZI21kaBEk3egHOYfHj/cUOHmyJ7CSDMyNMyM+STqfkBt8m2Y"
+          crossorigin="anonymous"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/monokai-sublime.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20260714-25">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260729-1">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -1046,11 +1050,12 @@
 
   <div id="wikiEmojiPickerModal" class="modal" style="display:none;">
     <div class="modal-content wiki-emoji-picker-modal">
-      <header><div><span class="wiki-eyebrow">Folder appearance</span><h3>Choose an Emoji</h3></div><button class="wiki-icon-btn" id="wikiEmojiPickerCloseBtn" type="button" aria-label="Close emoji selector">×</button></header>
-      <p>The selector uses emoji supported by this browser and operating system. You can also paste any Windows or Apple emoji into the folder icon field.</p>
+      <header><div><span class="wiki-eyebrow">Wiki item appearance</span><h3>Choose an Emoji</h3></div><button class="wiki-icon-btn" id="wikiEmojiPickerCloseBtn" type="button" aria-label="Close emoji selector">×</button></header>
+      <p>The selector uses emoji supported by this browser and operating system. You can also paste any Windows or Apple emoji into the icon field.</p>
       <div class="wiki-emoji-picker-controls">
         <select id="wikiEmojiPickerCategory" aria-label="Emoji category">
           <option value="favorites">Common folder icons</option>
+          <option value="technology">Coding, servers, and systems</option>
           <option value="faces">Faces and people</option>
           <option value="objects">Objects, nature, and food</option>
           <option value="travel">Travel and places</option>
@@ -1092,8 +1097,15 @@
           </div>
           <div class="wiki-home-content-fields">
             <section class="wiki-admin-standards-editor" aria-labelledby="wikiAdminStandardsHeading">
-              <div class="wiki-admin-resources-heading"><strong id="wikiAdminStandardsHeading">Curriculum Standards</strong><button class="btn secondary" id="wikiAdminAddStandardBtn" type="button">Add Standard</button></div>
-              <p>Each standard requires an ID and description. Pages can be tagged with these standards from Item settings.</p>
+              <div class="wiki-admin-resources-heading">
+                <strong id="wikiAdminStandardsHeading">Curriculum Standards</strong>
+                <div class="wiki-admin-heading-actions">
+                  <button class="btn secondary" id="wikiAdminAddStandardBtn" type="button">Add Standard</button>
+                  <label class="btn secondary wiki-file-label" for="wikiAdminStandardsCsvInput">Import CSV</label>
+                  <input id="wikiAdminStandardsCsvInput" type="file" accept=".csv,text/csv" hidden />
+                </div>
+              </div>
+              <p>Each standard requires an ID and description. Import a UTF-8 CSV with <strong>Standard ID</strong> and <strong>Description</strong> headers; matching IDs are updated and new IDs are added. Pages can be tagged from Item settings.</p>
               <div id="wikiAdminStandards"></div>
             </section>
             <section class="wiki-admin-resources-editor" aria-labelledby="wikiAdminResourcesHeading">
@@ -1131,9 +1143,9 @@
                   <label>URL slug<input id="wikiAdminSlug" maxlength="160" /></label>
                   <label class="wiki-admin-field-wide">Description<input id="wikiAdminDescription" maxlength="1000" /></label>
                   <div class="wiki-admin-folder-icon-field wiki-admin-field-wide" id="wikiAdminFolderIconWrap" hidden>
-                    <label>Folder icon<input id="wikiAdminFolderIcon" maxlength="32" inputmode="text" placeholder="📁" aria-describedby="wikiAdminFolderIconHelp" /></label>
+                    <label>Icon emoji<input id="wikiAdminFolderIcon" maxlength="32" inputmode="text" placeholder="📄" aria-describedby="wikiAdminFolderIconHelp" /></label>
                     <button class="btn secondary" id="wikiAdminFolderIconPickerBtn" type="button">Choose Emoji</button>
-                    <small id="wikiAdminFolderIconHelp">Any standard Unicode emoji is supported, including emoji entered with the Windows or Apple system picker.</small>
+                    <small id="wikiAdminFolderIconHelp">Folders and pages can use any standard Unicode emoji, including emoji entered with the Windows or Apple system picker.</small>
                   </div>
                   <label id="wikiAdminAliasesWrap" class="wiki-admin-field-wide">Aliases<input id="wikiAdminAliases" placeholder="looping, iteration, for loops" /></label>
                   <label>Status<select id="wikiAdminStatus"><option value="draft">Draft</option><option value="published">Published</option></select></label>
@@ -1368,8 +1380,8 @@
   <script src="/static/js/app-core.js?v=20260714-8"></script>
 <script src="/static/js/network-sim.js?v=20260714-18"></script>
 <script src="/static/js/network-sim-advanced.js?v=20260714-4"></script>
-  <script src="/static/js/wiki-reader.js?v=20260714-9"></script>
-  <script src="/static/js/wiki-admin.js?v=20260714-7"></script>
+  <script src="/static/js/wiki-reader.js?v=20260729-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20260729-1"></script>
   <script src="/static/js/classroom-signals.js"></script>
   <script src="/static/js/classroom-files.js?v=20250608"></script>
   <script src="/static/js/student-notebook.js?v=20260714-7"></script>

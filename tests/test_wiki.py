@@ -173,6 +173,25 @@ class WikiStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "selected standards"):
             self.store.update_node(page["id"], standard_ids=["0" * 32])
 
+    def test_standard_import_merges_by_id_and_preserves_page_tags(self):
+        settings = self.store.update_home_settings(
+            None,
+            None,
+            standards=[{"standard_id": "CS.1", "description": "Original description."}],
+        )
+        original = settings["standards"][0]
+        page = self.store.create_page(
+            "Tagged", "# Tagged", status="published", standard_ids=[original["id"]]
+        )
+        imported = self.store.import_standards([
+            {"standard_id": "CS.1", "description": "Updated description."},
+            {"standard_id": "CS.2", "description": "A newly imported standard."},
+        ])
+        self.assertEqual([item["standard_id"] for item in imported["standards"]], ["CS.1", "CS.2"])
+        self.assertEqual(imported["standards"][0]["id"], original["id"])
+        self.assertEqual(imported["standards"][0]["description"], "Updated description.")
+        self.assertEqual(self.store.get_node(page["id"])["standard_ids"], [original["id"]])
+
     def test_restore_rejects_manifest_storage_traversal(self):
         page = self.store.create_page("Safe Page", "# Safe Page", status="published")
         valid = self.store.create_backup(self.root / "valid.zip")
@@ -311,6 +330,49 @@ class WikiApiTests(unittest.TestCase):
         )
         self.assertEqual(rejected.status_code, 400)
 
+    def test_admin_can_import_standards_csv(self):
+        initial = self.client.patch(
+            "/api/admin/wiki/settings",
+            headers=self.admin,
+            json={"standards": [{"standard_id": "CS.1", "description": "Old description."}]},
+        ).get_json()["home_settings"]["standards"][0]
+        response = self.client.post(
+            "/api/admin/wiki/standards/import",
+            headers=self.admin,
+            data={
+                "file": (
+                    io.BytesIO(
+                        b'\xef\xbb\xbfStandard ID,Description\r\n'
+                        b'CS.1,"Updated, with a comma."\r\n'
+                        b'CS.2,Create and test a program.\r\n'
+                    ),
+                    "standards.csv",
+                )
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["imported_count"], 2)
+        standards = payload["home_settings"]["standards"]
+        self.assertEqual([item["standard_id"] for item in standards], ["CS.1", "CS.2"])
+        self.assertEqual(standards[0]["id"], initial["id"])
+        self.assertEqual(standards[0]["description"], "Updated, with a comma.")
+
+        denied = self.client.post(
+            "/api/admin/wiki/standards/import",
+            data={"file": (io.BytesIO(b"Standard ID,Description\nCS.3,Denied"), "denied.csv")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(denied.status_code, 401)
+        invalid = self.client.post(
+            "/api/admin/wiki/standards/import",
+            headers=self.admin,
+            data={"file": (io.BytesIO(b"Code,Title\nCS.3,Missing description"), "invalid.csv")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(invalid.status_code, 400)
+
     def test_teacher_features_only_owned_class_and_folder_is_dynamic(self):
         folder, page = self._create_published_page()
         denied = self.client.put(f"/api/wiki/classes/class-two/features/{folder['id']}", headers=self.teacher)
@@ -342,7 +404,7 @@ class WikiApiTests(unittest.TestCase):
         self.assertEqual(public["standard_ids"], [standard["id"]])
         self.assertEqual(public["standards"][0]["standard_id"], "AP-CSP-3.2")
 
-    def test_folder_icon_and_drag_position_api(self):
+    def test_folder_and_page_icons_and_drag_position_api(self):
         first = self.client.post(
             "/api/admin/wiki/folders", headers=self.admin, json={"title": "Python", "icon": "🐍"}
         ).get_json()["node"]
@@ -358,6 +420,21 @@ class WikiApiTests(unittest.TestCase):
         tree = self.client.get("/api/wiki/tree").get_json()["tree"]
         self.assertEqual([node["id"] for node in tree[:2]], [second["id"], first["id"]])
         self.assertEqual(tree[0]["icon"], "🟨")
+        page = self.client.post(
+            "/api/admin/wiki/pages",
+            headers=self.admin,
+            json={"title": "Server Setup", "content": "# Server Setup", "status": "published", "icon": "🗄️"},
+        ).get_json()["node"]
+        self.assertEqual(page["icon"], "🗄️")
+        updated = self.client.patch(
+            f"/api/admin/wiki/nodes/{page['id']}",
+            headers=self.admin,
+            json={"icon": "⚙️"},
+        )
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.get_json()["node"]["icon"], "⚙️")
+        public_nodes = _flatten(self.client.get("/api/wiki/tree").get_json()["tree"])
+        self.assertEqual(next(item for item in public_nodes if item["id"] == page["id"])["icon"], "⚙️")
 
     def test_student_and_teacher_bookmarks_merge_labels(self):
         _, page = self._create_published_page()

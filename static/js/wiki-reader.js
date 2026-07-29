@@ -21,6 +21,7 @@
     touchArmedHref: '',
     classAction: null,
     treeDragId: '',
+    drawerResizeFrame: 0,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -162,7 +163,7 @@
 
   function iconFor(node, open = false) {
     const kind = typeof node === 'string' ? node : node?.kind;
-    if (kind === 'folder' && node?.icon) return node.icon;
+    if (['folder', 'page'].includes(kind) && node?.icon) return node.icon;
     if (kind === 'folder') return open ? '📂' : '📁';
     if (kind === 'page') return '📄';
     if (kind === 'image') return '🖼️';
@@ -261,6 +262,7 @@
         const link = document.createElement('button');
         link.type = 'button';
         link.className = 'wiki-tree-link';
+        link.title = node.title;
         if (node.kind !== 'folder') link.dataset.wikiNode = node.id;
         if (node.kind === 'folder') link.classList.add('is-folder');
         const meta = admin && node.status === 'draft' ? `${node.kind} · draft` : node.kind;
@@ -426,7 +428,42 @@
 
   function renderAllTrees() {
     renderTree($('wikiNavTree'), state.tree, { filter: $('wikiTreeFilter')?.value || '' });
+    scheduleContentsDrawerResize();
     window.WikiAdmin?.renderTree?.();
+  }
+
+  function scheduleContentsDrawerResize() {
+    if (state.drawerResizeFrame) return;
+    state.drawerResizeFrame = requestAnimationFrame(() => {
+      state.drawerResizeFrame = 0;
+      resizeContentsDrawer();
+    });
+  }
+
+  function resizeContentsDrawer() {
+    const drawer = $('wikiNavDrawer');
+    if (!drawer) return;
+    const titles = [...drawer.querySelectorAll('.wiki-tree-title')];
+    const viewportLimit = Math.max(320, Math.min(640, window.innerWidth - (window.innerWidth <= 600 ? 16 : 28)));
+    if (!titles.length) {
+      drawer.style.setProperty('--wiki-nav-drawer-width', `${Math.min(420, viewportLimit)}px`);
+      return;
+    }
+    const canvas = resizeContentsDrawer.canvas || (resizeContentsDrawer.canvas = document.createElement('canvas'));
+    const context2d = canvas.getContext('2d');
+    if (context2d) context2d.font = getComputedStyle(titles[0]).font;
+    let idealWidth = 400;
+    for (const title of titles) {
+      const textWidth = context2d
+        ? context2d.measureText(title.textContent || '').width
+        : (title.textContent || '').length * 7;
+      const level = Math.max(1, Number(title.closest('.wiki-tree-node')?.getAttribute('aria-level') || 1));
+      idealWidth = Math.max(idealWidth, textWidth + ((level - 1) * 22) + 174);
+    }
+    drawer.style.setProperty(
+      '--wiki-nav-drawer-width',
+      `${Math.round(Math.min(viewportLimit, idealWidth))}px`,
+    );
   }
 
   function renderCards(target, items, { bookmark = false } = {}) {
@@ -701,7 +738,7 @@
     target.textContent = '';
     if (!embedded) {
       renderBreadcrumbs(node);
-      $('wikiArticleTitle').textContent = node.title || 'Wiki';
+      $('wikiArticleTitle').textContent = `${node.icon ? `${node.icon} ` : ''}${node.title || 'Wiki'}`;
       $('wikiArticleKind').textContent = node.kind || 'Topic';
       $('wikiArticleDescription').textContent = node.description || '';
       $('wikiArticleBookmarkBtn').hidden = (!isStudent() && !isTeacher()) || (node.kind === 'folder' && !(node.children || []).length);
@@ -1481,6 +1518,7 @@
     $('ideViewBtn')?.addEventListener('click', () => showIDE());
     $('wikiViewBtn')?.addEventListener('click', () => showHome());
     $('wikiTreeFilter')?.addEventListener('input', () => renderAllTrees());
+    window.addEventListener('resize', scheduleContentsDrawerResize, { passive: true });
     $('wikiClassSelector')?.addEventListener('change', async (event) => {
       state.selectedClassId = event.target.value || '';
       await loadHome().catch(() => {});
