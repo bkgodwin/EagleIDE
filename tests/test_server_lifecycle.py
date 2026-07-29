@@ -64,3 +64,58 @@ class ServerLifecycleTestCase(unittest.TestCase):
             1,
         )
         eagle._record_server_stop_event()
+
+
+class WerkzeugWebSocketTeardownGuardTestCase(unittest.TestCase):
+    @staticmethod
+    def _websocket_environ():
+        return {
+            "PATH_INFO": "/socket.io/",
+            "HTTP_UPGRADE": "websocket",
+            "werkzeug.socket": object(),
+        }
+
+    def test_headerless_werkzeug_websocket_teardown_becomes_clean_disconnect(self):
+        class Response(list):
+            closed = False
+
+            def close(self):
+                self.closed = True
+
+        response = Response()
+        guard = eagle._WerkzeugWebSocketTeardownGuard(
+            lambda _environ, _start_response: response
+        )
+
+        with self.assertRaisesRegex(ConnectionError, "session closed"):
+            guard(self._websocket_environ(), lambda _status, _headers, _exc_info=None: None)
+        self.assertTrue(response.closed)
+
+    def test_real_websocket_http_response_is_not_hidden(self):
+        def rejected_request(_environ, start_response):
+            start_response("400 Bad Request", [("Content-Type", "text/plain")])
+            return [b"rejected"]
+
+        captured = []
+        guard = eagle._WerkzeugWebSocketTeardownGuard(rejected_request)
+        response = guard(
+            self._websocket_environ(),
+            lambda status, headers, _exc_info=None: captured.append((status, headers)),
+        )
+
+        self.assertEqual(response, [b"rejected"])
+        self.assertEqual(captured[0][0], "400 Bad Request")
+
+    def test_guard_is_limited_to_werkzeug_socketio_websockets(self):
+        response = []
+        guard = eagle._WerkzeugWebSocketTeardownGuard(
+            lambda _environ, _start_response: response
+        )
+
+        self.assertIs(
+            guard(
+                {"PATH_INFO": "/health", "werkzeug.socket": object()},
+                lambda _status, _headers, _exc_info=None: None,
+            ),
+            response,
+        )
