@@ -154,6 +154,12 @@ def apply_landlock(
         path = Path(path_value).expanduser().resolve()
         if not path.exists():
             return
+        # READ_DIR is valid only for directory rules. The worker also grants
+        # its generated source and bootstrap script as individual read-only
+        # files; including READ_DIR for those makes landlock_add_rule fail with
+        # EINVAL and would unnecessarily disable all native modules.
+        if path.is_file():
+            access &= ~ACCESS_FS_READ_DIR
         flags = int(getattr(os, "O_PATH", os.O_RDONLY)) | int(getattr(os, "O_CLOEXEC", 0))
         fd = os.open(path, flags)
         opened_fds.append(fd)
