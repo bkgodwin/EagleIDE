@@ -27,6 +27,7 @@
     drawerResizeFrame: 0,
     standardTooltipTarget: null,
     wikiReturn: null,
+    printDocumentTitle: '',
   };
 
   const $ = (id) => document.getElementById(id);
@@ -393,7 +394,8 @@
           if (!hasChildren && node.kind !== 'folder') return;
           if (state.expanded.has(node.id)) state.expanded.delete(node.id);
           else state.expanded.add(node.id);
-          renderAllTrees();
+          if (embedded) renderEmbeddedHome();
+          else renderAllTrees();
         };
         const toggle = document.createElement('button');
         toggle.type = 'button';
@@ -807,12 +809,47 @@
 
     const pageCount = Number(data.page_count || 0);
     const scope = data.folder_title ? `“${data.folder_title}” and its subfolders` : 'all wiki folders';
+    const reportScope = data.folder_title || 'All Wiki Content';
+    if ($('wikiCoverageTitle')) {
+      $('wikiCoverageTitle').textContent = data.folder_title
+        ? `Standards Coverage: ${data.folder_title}`
+        : 'Standards Coverage';
+    }
+    if ($('wikiCoveragePrintMeta')) {
+      $('wikiCoveragePrintMeta').textContent = `Report scope: ${reportScope}`;
+    }
+    $('wikiStandardsCoveragePanel')?.setAttribute('data-print-title', `Standards Coverage - ${reportScope}`);
     if ($('wikiCoverageSummary')) {
       $('wikiCoverageSummary').textContent = `${pageCount} published ${pageCount === 1 ? 'page' : 'pages'} in ${scope}.`;
     }
 
     target.textContent = '';
     const standards = Array.isArray(data.standards) ? data.standards : [];
+    const usedClassFolders = new Map();
+    for (const standard of standards) {
+      for (const page of standard.pages || []) {
+        const id = page.root_folder_id || 'wiki-root';
+        if (!usedClassFolders.has(id)) {
+          usedClassFolders.set(id, {
+            title: page.root_folder_title || 'Wiki root',
+            icon: page.root_folder_icon || (page.root_folder_id ? '📁' : '📄'),
+          });
+        }
+      }
+    }
+    const classLegend = $('wikiCoverageClassLegend');
+    if (classLegend) {
+      classLegend.textContent = '';
+      for (const folder of usedClassFolders.values()) {
+        const item = document.createElement('span');
+        const icon = document.createElement('i');
+        icon.setAttribute('aria-hidden', 'true');
+        icon.textContent = folder.icon;
+        item.append(icon, document.createTextNode(folder.title));
+        classLegend.appendChild(item);
+      }
+      classLegend.hidden = usedClassFolders.size === 0;
+    }
     if (!standards.length) {
       const row = document.createElement('tr');
       const cell = document.createElement('td');
@@ -838,9 +875,10 @@
         const link = document.createElement('a');
         link.href = `/wiki/${encodeURIComponent(page.slug || page.id)}`;
         link.className = 'wiki-coverage-dot';
-        link.title = page.title || 'Open wiki page';
-        link.setAttribute('aria-label', `Open ${page.title || 'wiki page'}`);
-        link.textContent = '●';
+        const classTitle = page.root_folder_title || 'Wiki root';
+        link.title = `${page.title || 'Open wiki page'} - ${classTitle}`;
+        link.setAttribute('aria-label', `Open ${page.title || 'wiki page'} from ${classTitle}`);
+        link.textContent = page.root_folder_icon || (page.root_folder_id ? '📁' : '📄');
         dots.appendChild(link);
       }
       if (!dots.childElementCount) {
@@ -890,6 +928,28 @@
     showStatus('Loading standards coverage…', false, 0);
     await loadCoverage(selectedFolderId).catch(() => {});
     $('wikiReaderShell')?.scrollTo?.({ top: 0, behavior: 'instant' });
+  }
+
+  function prepareCoveragePrint() {
+    const panel = $('wikiStandardsCoveragePanel');
+    if (!panel || panel.hidden) return;
+    if (!state.printDocumentTitle) state.printDocumentTitle = document.title;
+    document.title = panel.dataset.printTitle || 'Standards Coverage';
+    document.body.classList.add('wiki-printing-coverage');
+  }
+
+  function finishCoveragePrint() {
+    document.body.classList.remove('wiki-printing-coverage');
+    if (state.printDocumentTitle) {
+      document.title = state.printDocumentTitle;
+      state.printDocumentTitle = '';
+    }
+  }
+
+  function printCoverage() {
+    prepareCoveragePrint();
+    window.print();
+    window.setTimeout(finishCoveragePrint, 1500);
   }
 
   function updatePathForNode(node, push, anchor = '') {
@@ -1089,7 +1149,7 @@
     return result;
   }
 
-  function preprocessDirectives(markdown) {
+  function preprocessDirectives(markdown, mediaMetadata = {}) {
     return String(markdown || '').replace(/\{\{(image|video|file):([0-9a-f]{32})(?:\|([^}]*))?\}\}/gi, (_all, type, id, raw) => {
       const options = directiveOptions(raw);
       if (type.toLowerCase() === 'image') {
@@ -1101,13 +1161,65 @@
           width = Math.max(20, Math.min(100, width));
           widthClass = `width-${width}`;
         }
-        return `<figure class="wiki-image align-${align} ${widthClass}"><img src="/api/wiki/media/${id}" alt="${escapeHtml(options.alt || '')}" loading="lazy">${options.caption ? `<figcaption>${escapeHtml(options.caption)}</figcaption>` : ''}</figure>`;
+        const metadata = mediaMetadata?.[id.toLowerCase()] || {};
+        const intrinsicWidth = Number(metadata.width || 0);
+        const intrinsicHeight = Number(metadata.height || 0);
+        const dimensions = intrinsicWidth > 0 && intrinsicHeight > 0
+          ? ` width="${Math.round(intrinsicWidth)}" height="${Math.round(intrinsicHeight)}"`
+          : '';
+        return `<figure class="wiki-image align-${align} ${widthClass} is-loading"><img data-wiki-src="/api/wiki/media/${id}" alt="${escapeHtml(options.alt || '')}" loading="lazy" decoding="async"${dimensions}>${options.caption ? `<figcaption>${escapeHtml(options.caption)}</figcaption>` : ''}</figure>`;
       }
       if (type.toLowerCase() === 'video') {
         return `<figure class="wiki-embedded-media"><video src="/api/wiki/media/${id}" controls preload="metadata" playsinline></video>${options.caption ? `<figcaption>${escapeHtml(options.caption)}</figcaption>` : ''}</figure>`;
       }
       return `<p><a class="wiki-file-directive" href="/api/wiki/media/${id}?download=1">${escapeHtml(options.caption || 'Download file')}</a></p>`;
     });
+  }
+
+  function prepareWikiImages(target) {
+    target._wikiImageObserver?.disconnect?.();
+    target._wikiImageObserver = null;
+    for (const image of target.querySelectorAll('img:not([data-wiki-src])')) {
+      image.loading = image.loading || 'lazy';
+      image.decoding = 'async';
+    }
+    const images = [...target.querySelectorAll('img[data-wiki-src]')];
+    if (!images.length) return;
+    const scrollRoot = target.closest('.wiki-admin-preview-wrap,.wiki-embedded-content') || $('wikiReaderShell');
+    const loadImage = image => {
+      const source = image.dataset.wikiSrc;
+      if (!source) return;
+      image.addEventListener('load', () => {
+        image.closest('.wiki-image')?.classList.remove('is-loading', 'is-error');
+      }, { once: true });
+      image.addEventListener('error', () => {
+        image.closest('.wiki-image')?.classList.remove('is-loading');
+        image.closest('.wiki-image')?.classList.add('is-error');
+      }, { once: true });
+      const rootBounds = scrollRoot?.getBoundingClientRect?.();
+      const imageBounds = image.getBoundingClientRect();
+      if (!rootBounds || imageBounds.top <= rootBounds.bottom + 320) image.fetchPriority = 'high';
+      image.loading = 'eager';
+      image.src = source;
+      delete image.dataset.wikiSrc;
+    };
+    if (!('IntersectionObserver' in window)) {
+      images.forEach(loadImage);
+      return;
+    }
+    const observer = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        observer.unobserve(entry.target);
+        loadImage(entry.target);
+      }
+    }, {
+      root: scrollRoot || null,
+      rootMargin: '1400px 0px',
+      threshold: 0.01,
+    });
+    target._wikiImageObserver = observer;
+    images.forEach(image => observer.observe(image));
   }
 
   function extractFenceMetadata(markdown) {
@@ -1137,12 +1249,13 @@
     }
     try {
       marked.setOptions({ breaks: true, gfm: true, mangle: false, headerIds: false });
-      const parsed = marked.parse(preprocessDirectives(markdown));
+      const parsed = marked.parse(preprocessDirectives(markdown, node.media_metadata || {}));
       target.innerHTML = DOMPurify.sanitize(parsed, {
         USE_PROFILES: { html: true },
         FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'textarea', 'select', 'option'],
         FORBID_ATTR: ['style', 'srcdoc'],
       });
+      prepareWikiImages(target);
       const headings = [...target.querySelectorAll('h1,h2,h3,h4,h5,h6')];
       headings.forEach((heading, index) => {
         const section = node.sections?.[index];
@@ -1818,6 +1931,7 @@
       showStandardsCoverage();
     });
     $('wikiCoverageHomeBtn')?.addEventListener('click', () => showHome());
+    $('wikiCoveragePrintBtn')?.addEventListener('click', printCoverage);
     $('wikiCoverageFolderFilter')?.addEventListener('change', event => {
       const folderId = event.target.value || '';
       const path = folderId
@@ -1904,6 +2018,8 @@
       state.previewTimer = setTimeout(() => { if (!$('wikiLinkPreview')?.matches(':hover')) $('wikiLinkPreview').hidden = true; }, 180);
     });
     window.addEventListener('eagle-context-updated', refreshContext);
+    window.addEventListener('beforeprint', prepareCoveragePrint);
+    window.addEventListener('afterprint', finishCoveragePrint);
     window.addEventListener('resize', () => {
       syncSidebarControls();
       hideStandardDescriptionTooltip();
