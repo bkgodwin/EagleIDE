@@ -15,6 +15,7 @@
     standards: [],
     emojiCategory: 'favorites',
     emojiVisible: 240,
+    clipboardImageUpload: false,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -302,10 +303,11 @@
     progress(`${files.length} Markdown file${files.length === 1 ? '' : 's'} uploaded as drafts.`);
   }
 
-  async function uploadChunkedFile(file, { parentId = null, purpose = 'asset', title = '' } = {}) {
+  async function uploadChunkedFile(file, { parentId = null, purpose = 'asset', title = '', fileName = '' } = {}) {
+    const uploadName = String(fileName || file.name || 'upload').trim();
     const started = await reader().fetchJson('/api/admin/wiki/uploads/start', {
       method: 'POST', headers: adminHeaders(true),
-      body: JSON.stringify({ filename: file.name, total_size: file.size, parent_id: parentId, purpose, title: title || file.name.replace(/\.[^.]+$/, '') }),
+      body: JSON.stringify({ filename: uploadName, total_size: file.size, parent_id: parentId, purpose, title: title || uploadName.replace(/\.[^.]+$/, '') }),
     });
     const chunkSize = Number(started.chunk_size || 8 * 1024 * 1024);
     let offset = Number(started.offset || 0);
@@ -319,7 +321,7 @@
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload.ok) throw new Error(payload.error || `Upload failed (${response.status})`);
       offset = Number(payload.offset);
-      progress(`Uploading ${file.name}: ${Math.round((offset / file.size) * 100)}%`);
+      progress(`Uploading ${uploadName}: ${Math.round((offset / file.size) * 100)}%`);
     }
     const completed = await reader().fetchJson(`/api/admin/wiki/uploads/${started.upload_id}/complete`, {
       method: 'POST', headers: adminHeaders(true), body: '{}',
@@ -437,8 +439,7 @@
     $('wikiImageInsertAlt').value = '';
     $('wikiImageInsertCaption').value = '';
     $('wikiImageInsertAlign').value = 'center';
-    $('wikiImageInsertWidth').value = '70';
-    $('wikiImageInsertWidthValue').textContent = '70%';
+    $('wikiImageInsertWidth').value = 'original';
     $('wikiImageInsertModal').style.display = 'flex';
     // This runs directly from the toolbar click, so browsers permit the native
     // picker. The dialog remains open if the user cancels and wants to retry.
@@ -449,17 +450,101 @@
     return String(value || '').replace(/[|}\r\n]+/g, ' ').trim().slice(0, 300);
   }
 
+  function imageDirective(node, { alt = '', caption = '', align = 'center', width = 'original' } = {}) {
+    const placement = ['left', 'right', 'center', 'full'].includes(align) ? align : 'center';
+    const scale = width === 'original' ? 'original' : String(Math.max(20, Math.min(100, Number(width) || 70)));
+    return `{{image:${node.id}|alt=${directiveValue(alt || node.file_name || node.title)}|caption=${directiveValue(caption)}|align=${placement}|width=${scale}}}`;
+  }
+
+  function clipboardImageName(file, index = 0) {
+    const supplied = String(file?.name || '').trim();
+    if (/\.(?:png|jpe?g|webp|gif)$/i.test(supplied)) return supplied;
+    const extensions = {
+      'image/png': '.png',
+      'image/jpeg': '.jpg',
+      'image/webp': '.webp',
+      'image/gif': '.gif',
+    };
+    const extension = extensions[String(file?.type || '').toLowerCase()];
+    if (!extension) return '';
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '');
+    return `pasted-image-${stamp}${index ? `-${index + 1}` : ''}${extension}`;
+  }
+
+  async function pasteClipboardImages(event) {
+    if (!state.node || state.node.kind !== 'page') return;
+    const files = Array.from(event.clipboardData?.items || [])
+      .filter(item => item.kind === 'file' && String(item.type || '').toLowerCase().startsWith('image/'))
+      .map(item => item.getAsFile())
+      .filter(Boolean);
+    if (!files.length) return;
+    event.preventDefault();
+    if (state.clipboardImageUpload) {
+      progress('Please wait for the current pasted image to finish uploading.', true);
+      return;
+    }
+    const prepared = files.map((file, index) => ({ file, fileName: clipboardImageName(file, index) }));
+    if (prepared.some(item => !item.fileName)) {
+      progress('Clipboard images must be PNG, JPEG, WebP, or GIF.', true);
+      return;
+    }
+    const textarea = $('wikiAdminContent');
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const uploaded = [];
+    state.clipboardImageUpload = true;
+    textarea.readOnly = true;
+    try {
+      const directives = [];
+      for (let index = 0; index < prepared.length; index += 1) {
+        const { file, fileName } = prepared[index];
+        progress(`Uploading pasted image ${index + 1} of ${prepared.length}: ${fileName}`);
+        const node = await uploadChunkedFile(file, {
+          parentId: null,
+          title: fileName,
+          fileName,
+        });
+        uploaded.push(node);
+        directives.push(imageDirective(node, {
+          alt: fileName,
+          align: 'center',
+          width: 'original',
+        }));
+      }
+      const insertion = `\n${directives.join('\n\n')}\n`;
+      textarea.setRangeText(insertion, start, end, 'end');
+      scheduleDraftSave();
+      renderPreview();
+      await autosaveDraft(true);
+      await loadMedia().catch(() => {});
+      progress(`${prepared.length} clipboard image${prepared.length === 1 ? '' : 's'} uploaded and inserted at the cursor.`);
+    } catch (error) {
+      for (const node of uploaded) {
+        await reader().fetchJson(`/api/admin/wiki/media/${encodeURIComponent(node.id)}`, {
+          method: 'DELETE',
+          headers: adminHeaders(),
+        }).catch(() => {});
+      }
+      progress(error.message || 'Could not paste the clipboard image.', true);
+    } finally {
+      state.clipboardImageUpload = false;
+      textarea.readOnly = false;
+      textarea.focus();
+    }
+  }
+
   async function insertImage() {
     const file = $('wikiImageInsertFile').files?.[0];
     if (!file) { progress('Choose an image to upload.', true); return; }
     try {
       progress(`Uploading ${file.name}…`);
-      const node = await uploadChunkedFile(file, { parentId: null, title: $('wikiImageInsertAlt').value || file.name.replace(/\.[^.]+$/, '') });
-      const alt = directiveValue($('wikiImageInsertAlt').value || node.title);
-      const caption = directiveValue($('wikiImageInsertCaption').value);
-      const align = $('wikiImageInsertAlign').value;
-      const width = $('wikiImageInsertWidth').value;
-      const directive = `\n{{image:${node.id}|alt=${alt}|caption=${caption}|align=${align}|width=${width}}}\n`;
+      const node = await uploadChunkedFile(file, { parentId: null, title: file.name });
+      const directive = `\n${imageDirective(node, {
+        alt: $('wikiImageInsertAlt').value || file.name,
+        caption: $('wikiImageInsertCaption').value,
+        align: $('wikiImageInsertAlign').value,
+        width: $('wikiImageInsertWidth').value,
+      })}\n`;
       const textarea = $('wikiAdminContent');
       const start = Math.min(state.imageInsertRange.start, textarea.value.length);
       const end = Math.min(Math.max(start, state.imageInsertRange.end), textarea.value.length);
@@ -887,6 +972,7 @@
     });
     $('wikiAdminEditor')?.addEventListener('submit', saveEditor);
     $('wikiAdminContent')?.addEventListener('input', scheduleDraftSave);
+    $('wikiAdminContent')?.addEventListener('paste', pasteClipboardImages);
     $('wikiAdminPreviewBtn')?.addEventListener('click', renderPreview);
     $('wikiAdminMoveUpBtn')?.addEventListener('click', () => reorder('up'));
     $('wikiAdminMoveDownBtn')?.addEventListener('click', () => reorder('down'));
@@ -915,7 +1001,10 @@
     $('wikiAdminEditorOnlyBtn')?.addEventListener('click', () => setEditorView('editor'));
     $('wikiAdminSplitViewBtn')?.addEventListener('click', () => setEditorView('split'));
     $('wikiAdminPreviewOnlyBtn')?.addEventListener('click', () => setEditorView('preview'));
-    $('wikiImageInsertWidth')?.addEventListener('input', event => { $('wikiImageInsertWidthValue').textContent = `${event.target.value}%`; });
+    $('wikiImageInsertFile')?.addEventListener('change', event => {
+      const file = event.target.files?.[0];
+      if (file && !$('wikiImageInsertAlt').value.trim()) $('wikiImageInsertAlt').value = file.name;
+    });
     $('wikiImageInsertCancelBtn')?.addEventListener('click', () => { $('wikiImageInsertModal').style.display = 'none'; });
     $('wikiImageInsertConfirmBtn')?.addEventListener('click', insertImage);
     $('wikiAdminBackupBtn')?.addEventListener('click', downloadBackup);
