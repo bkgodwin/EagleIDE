@@ -25,6 +25,7 @@
     classAction: null,
     treeDragId: '',
     drawerResizeFrame: 0,
+    standardTooltipTarget: null,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -124,6 +125,8 @@
     const parsed = Number(value);
     const size = WIKI_FONT_SIZES.has(parsed) ? parsed : 16;
     $('wikiView')?.style.setProperty('--wiki-body-font-size', `${size}px`);
+    if ($('wikiView')) $('wikiView').dataset.wikiFontSize = String(size);
+    $('wikiArticleBody')?.style.setProperty('font-size', `${size}px`, 'important');
     if ($('wikiFontSizeSelect')) $('wikiFontSizeSelect').value = String(size);
     if (persist) {
       try { localStorage.setItem(WIKI_FONT_SIZE_KEY, String(size)); } catch {}
@@ -143,7 +146,39 @@
       if (el) el.hidden = true;
     });
     $('wikiBookmarksBtn')?.setAttribute('aria-expanded', 'false');
+    hideStandardDescriptionTooltip();
     state.touchArmedHref = '';
+  }
+
+  function hideStandardDescriptionTooltip() {
+    const tooltip = $('wikiStandardDescriptionTooltip');
+    if (state.standardTooltipTarget) {
+      state.standardTooltipTarget.setAttribute('aria-expanded', 'false');
+    }
+    state.standardTooltipTarget = null;
+    if (tooltip) tooltip.hidden = true;
+  }
+
+  function showStandardDescriptionTooltip(button, description) {
+    const tooltip = $('wikiStandardDescriptionTooltip');
+    const text = String(description || '').trim();
+    if (!tooltip || !button || !text) return;
+    state.standardTooltipTarget = button;
+    button.setAttribute('aria-expanded', 'true');
+    tooltip.textContent = text;
+    tooltip.hidden = false;
+    const rect = button.getBoundingClientRect();
+    requestAnimationFrame(() => {
+      if (state.standardTooltipTarget !== button || tooltip.hidden) return;
+      const width = Math.min(380, window.innerWidth - 24);
+      const height = tooltip.getBoundingClientRect().height;
+      const left = Math.max(12, Math.min(window.innerWidth - width - 12, rect.right - width));
+      let top = rect.bottom + 9;
+      if (top + height > window.innerHeight - 12) top = Math.max(12, rect.top - height - 9);
+      tooltip.style.width = `${width}px`;
+      tooltip.style.left = `${left}px`;
+      tooltip.style.top = `${top}px`;
+    });
   }
 
   function compactSidebar() {
@@ -716,10 +751,7 @@
         pages.appendChild(link);
       }
       if (!pages.childElementCount) {
-        const empty = document.createElement('span');
-        empty.className = 'wiki-coverage-none';
-        empty.textContent = 'Not yet covered';
-        pages.appendChild(empty);
+        pages.setAttribute('aria-label', 'No published wiki pages are tagged with this standard');
       }
       row.append(id, description, pages);
       target.appendChild(row);
@@ -755,6 +787,7 @@
       ? `/standards-coverage?folder_id=${encodeURIComponent(selectedFolderId)}`
       : '/standards-coverage';
     setView('wiki', { push, path });
+    closeDrawer();
     state.currentNode = null;
     $('wikiHomePanel').hidden = true;
     $('wikiArticlePanel').hidden = true;
@@ -1214,22 +1247,29 @@
     const items = Array.isArray(standards) ? standards : [];
     target.textContent = '';
     section.hidden = !items.length;
-    items.forEach((standard, index) => {
-      const wrap = document.createElement('span');
-      wrap.className = 'wiki-standard-tooltip';
+    items.forEach(standard => {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'wiki-standard-id';
       button.textContent = standard.standard_id || 'Standard';
-      button.title = standard.description || '';
-      const tooltip = document.createElement('span');
-      tooltip.className = 'wiki-standard-tooltip-text';
-      tooltip.id = `wiki-standard-tooltip-${index}`;
-      tooltip.setAttribute('role', 'tooltip');
-      tooltip.textContent = standard.description || 'No description provided.';
-      button.setAttribute('aria-describedby', tooltip.id);
-      wrap.append(button, tooltip);
-      target.appendChild(wrap);
+      button.dataset.standardDescription = standard.description || 'No description provided.';
+      button.setAttribute('aria-describedby', 'wikiStandardDescriptionTooltip');
+      button.setAttribute('aria-expanded', 'false');
+      button.setAttribute('aria-label', `Standard ${button.textContent}. Hover or focus to read its description.`);
+      button.addEventListener('mouseenter', () => showStandardDescriptionTooltip(button, button.dataset.standardDescription));
+      button.addEventListener('mouseleave', () => {
+        if (document.activeElement !== button) hideStandardDescriptionTooltip();
+      });
+      button.addEventListener('focus', () => showStandardDescriptionTooltip(button, button.dataset.standardDescription));
+      button.addEventListener('blur', hideStandardDescriptionTooltip);
+      button.addEventListener('click', () => {
+        if (state.standardTooltipTarget === button && !($('wikiStandardDescriptionTooltip')?.hidden)) {
+          hideStandardDescriptionTooltip();
+        } else {
+          showStandardDescriptionTooltip(button, button.dataset.standardDescription);
+        }
+      });
+      target.appendChild(button);
     });
     toc.hidden = !$('wikiTocLinks')?.childElementCount && !items.length;
   }
@@ -1618,6 +1658,9 @@
   }
 
   function handleDocumentClick(event) {
+    if (!event.target.closest?.('.wiki-standard-id,#wikiStandardDescriptionTooltip')) {
+      hideStandardDescriptionTooltip();
+    }
     if (!$('wikiSearchPanel')?.hidden && !event.target.closest?.('#wikiSearchPanel,.wiki-top-search')) {
       state.searchAbort?.abort?.();
       $('wikiSearchPanel').hidden = true;
@@ -1681,7 +1724,10 @@
       showStatus('Updating standards coverage…', false, 0);
       loadCoverage(folderId).catch(() => {});
     });
-    $('wikiFontSizeSelect')?.addEventListener('change', event => applyWikiFontSize(event.target.value));
+    $('wikiFontSizeSelect')?.addEventListener('change', event => {
+      const size = applyWikiFontSize(event.target.value);
+      showStatus(`Wiki text size set to ${event.target.selectedOptions?.[0]?.textContent || `${size}px`}.`);
+    });
     $('wikiHeroIdeBtn')?.addEventListener('click', () => showIDE());
     $('ideViewBtn')?.addEventListener('click', () => showIDE());
     $('wikiViewBtn')?.addEventListener('click', () => showHome());
@@ -1740,6 +1786,7 @@
     $('lessonTabBtn')?.addEventListener('click', () => { if (!state.embeddedNode && !state.home) loadHome({ quiet: true }); });
     document.addEventListener('pointerdown', event => { state.lastPointerType = event.pointerType || 'mouse'; }, true);
     document.addEventListener('click', handleDocumentClick, true);
+    $('wikiReaderShell')?.addEventListener('scroll', hideStandardDescriptionTooltip, { passive: true });
     document.addEventListener('pointerover', event => {
       if (event.pointerType && event.pointerType !== 'mouse') return;
       const anchor = event.target.closest?.('a[href^="/wiki/"]');
@@ -1753,7 +1800,10 @@
       state.previewTimer = setTimeout(() => { if (!$('wikiLinkPreview')?.matches(':hover')) $('wikiLinkPreview').hidden = true; }, 180);
     });
     window.addEventListener('eagle-context-updated', refreshContext);
-    window.addEventListener('resize', syncSidebarControls);
+    window.addEventListener('resize', () => {
+      syncSidebarControls();
+      hideStandardDescriptionTooltip();
+    });
     window.addEventListener('popstate', routeFromLocation);
     window.addEventListener('keydown', event => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
@@ -1761,6 +1811,7 @@
         $('wikiSearchInput')?.focus();
       }
       if (event.key === 'Escape') {
+        hideStandardDescriptionTooltip();
         closeDrawer(); closeFloatingPanels();
         if ($('wikiClassActionModal')?.style.display !== 'none') $('wikiClassActionModal').style.display = 'none';
       }

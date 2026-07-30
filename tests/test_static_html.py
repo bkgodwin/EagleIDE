@@ -52,6 +52,17 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn('"public, max-age=31536000, immutable"', source)
         self.assertIn('"public, max-age=300, must-revalidate"', source)
 
+    def test_wiki_asset_cache_versions_stay_in_sync(self):
+        main_css = (BASE_DIR / "static" / "css" / "main.css").read_text(encoding="utf-8")
+        page_version = re.search(r'/static/css/main\.css\?v=([^"]+)', self.raw)
+        import_version = re.search(r'features/wiki\.css\?v=([^"]+)', main_css)
+        reader_version = re.search(r'/static/js/wiki-reader\.js\?v=([^"]+)', self.raw)
+        self.assertIsNotNone(page_version)
+        self.assertIsNotNone(import_version)
+        self.assertIsNotNone(reader_version)
+        self.assertEqual(page_version.group(1), import_version.group(1))
+        self.assertEqual(page_version.group(1), reader_version.group(1))
+
     def test_attribute_ampersands_are_html_escaped(self):
         unescaped = re.findall(r'(?:href|src)="[^"]*&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9A-Fa-f]+);)', self.raw)
         self.assertEqual(unescaped, [])
@@ -70,6 +81,7 @@ class StaticHtmlTestCase(unittest.TestCase):
             "wikiEmojiPickerModal", "studentNotebookWikiLinkBtn", "studentNotebookWikiLinkModal",
             "wikiStandardsCoverageBtn", "wikiStandardsCoveragePanel", "wikiCoverageFolderFilter",
             "wikiCoverageTableBody", "wikiCoverageHomeBtn", "wikiFontSizeSelect",
+            "wikiReaderShell", "wikiStandardDescriptionTooltip",
         }.issubset(ids))
         self.assertNotIn("wikiHomeTree", ids)
         self.assertIn('accept=".png,.jpg,.jpeg,.webp,.gif"', self.raw)
@@ -103,6 +115,9 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn("localStorage.setItem(WIKI_FONT_SIZE_KEY", reader)
         self.assertIn("clearSearchHighlights", reader)
         self.assertIn("showStandardsCoverage", reader)
+        self.assertIn("style.setProperty('font-size', `${size}px`, 'important')", reader)
+        self.assertIn("showStandardDescriptionTooltip", reader)
+        self.assertNotIn("Not yet covered", reader)
         self.assertIn('@app.get("/standards-coverage")', (BASE_DIR / "app.py").read_text(encoding="utf-8"))
         self.assertLess(self.raw.index('id="wikiPageStandards"'), self.raw.index('id="wikiTocContents"'))
 
