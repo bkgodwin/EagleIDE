@@ -351,14 +351,20 @@ def _safe_input(prompt: Any = "") -> str:
 class ChartArtifactManager:
     """Turn ``plt.show()`` into deterministic PNG artifacts."""
 
-    __slots__ = ("_charts_dir", "_counter", "_patched", "_source_stem")
+    __slots__ = ("_artifact_dir", "_counter", "_patched", "_source_stem")
 
     def __init__(self, workspace: str):
         source_name = str(os.environ.get("EAGLE_RUN_SOURCE_NAME") or "python-chart")
         source_stem = Path(source_name).stem or "python-chart"
         safe_stem = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in source_stem).strip("-_")
         self._source_stem = safe_stem[:80] or "python-chart"
-        self._charts_dir = Path(workspace) / "charts"
+        workspace_path = Path(workspace).resolve()
+        try:
+            current_directory = Path.cwd().resolve()
+            current_directory.relative_to(workspace_path)
+            self._artifact_dir = current_directory
+        except (OSError, ValueError):
+            self._artifact_dir = workspace_path
         self._counter = 0
         self._patched = False
 
@@ -377,11 +383,10 @@ class ChartArtifactManager:
             if not figure_numbers:
                 print("[Matplotlib: no open figures to save]")
                 return
-            self._charts_dir.mkdir(parents=True, exist_ok=True)
             for figure_number in figure_numbers:
                 self._counter += 1
                 figure = pyplot.figure(figure_number)
-                target = self._charts_dir / f"{self._source_stem}-figure-{self._counter}.png"
+                target = self._artifact_dir / f"{self._source_stem}-figure-{self._counter}.png"
                 figure.savefig(target, format="png", dpi=120, bbox_inches="tight")
                 pyplot.close(figure)
 

@@ -72,6 +72,7 @@ CONTAINMENT_REQUIRED_MODULES = frozenset(
         "inspect",
         "kiwisolver",
         "matplotlib",
+        "mpl_toolkits",
         "numpy",
         "sqlite3",
     }
@@ -90,6 +91,7 @@ STUDENT_THIRD_PARTY_MODULES = frozenset(
         "fontTools",
         "kiwisolver",
         "matplotlib",
+        "mpl_toolkits",
         "numpy",
         "packaging",
         "pyparsing",
@@ -314,7 +316,7 @@ MODULE_CATALOG: tuple[dict[str, Any], ...] = (
         "name": "matplotlib",
         "label": "Matplotlib",
         "category": "Charts",
-        "description": "Headless chart generation saved as PNG files in the workspace.",
+        "description": "Headless 2D and 3D chart generation saved beside the Python source file.",
         "default_enabled": True,
         "requires_containment": True,
         "depends_on": ("numpy", "inspect"),
@@ -361,6 +363,8 @@ def disabled_module_roots(value: Any) -> frozenset[str]:
     disabled = {name for name, enabled in access.items() if not enabled}
     if "sqlite3" in disabled:
         disabled.add("_sqlite3")
+    if "matplotlib" in disabled:
+        disabled.add("mpl_toolkits")
     return frozenset(disabled)
 
 

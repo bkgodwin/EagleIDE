@@ -28,9 +28,12 @@ class PythonSandboxPolicyTests(unittest.TestCase):
         source: str,
         *,
         disabled_modules: tuple[str, ...] = (),
+        run_dir: Path | None = None,
         timeout: float = 45.0,
     ) -> subprocess.CompletedProcess[str]:
-        code_path = workspace / "student.py"
+        run_dir = run_dir or workspace
+        run_dir.mkdir(parents=True, exist_ok=True)
+        code_path = run_dir / "student.py"
         code_path.write_text(source, encoding="utf-8")
         env = dict(os.environ)
         env.update(
@@ -55,7 +58,7 @@ class PythonSandboxPolicyTests(unittest.TestCase):
         )
         return subprocess.run(
             [sys.executable, "-u", str(WORKER), str(code_path), str(workspace)],
-            cwd=workspace,
+            cwd=run_dir,
             env=env,
             text=True,
             capture_output=True,
@@ -70,11 +73,12 @@ class PythonSandboxPolicyTests(unittest.TestCase):
         self.assertFalse(access["matplotlib"])
         self.assertFalse(access["unittest"])
         self.assertIn("_sqlite3", disabled_module_roots({"sqlite3": False}))
+        self.assertIn("mpl_toolkits", disabled_module_roots({"matplotlib": False}))
         self.assertIn("subprocess", SECURITY_LOCKED_MODULES)
         self.assertIn("ctypes", SECURITY_LOCKED_MODULES)
         self.assertIn("_socket", SECURITY_LOCKED_MODULES)
         self.assertTrue(
-            {"PIL", "contourpy", "kiwisolver", "matplotlib", "numpy"}.issubset(
+            {"PIL", "contourpy", "kiwisolver", "matplotlib", "mpl_toolkits", "numpy"}.issubset(
                 CONTAINMENT_REQUIRED_MODULES
             )
         )
@@ -156,6 +160,7 @@ class PythonSandboxPolicyTests(unittest.TestCase):
             test_root = Path(tmp)
             workspace = test_root / "workspace"
             workspace.mkdir()
+            lesson_dir = workspace / "lesson"
             escaped_database = test_root / "outside.sqlite3"
             escaped_literal = repr(str(escaped_database))
             managed_imports = "\n".join(
@@ -202,22 +207,28 @@ class PythonSandboxPolicyTests(unittest.TestCase):
                     "    raise AssertionError('SQLite escaped the workspace')\n"
                     "connection.close()\n"
                     "import matplotlib.pyplot as plt\n"
-                    "plt.plot([1, 2, 3], [2, 4, 3])\n"
-                    "plt.title('Contained chart')\n"
+                    "from mpl_toolkits.mplot3d import Axes3D\n"
+                    "figure = plt.figure()\n"
+                    "axes = figure.add_subplot(111, projection='3d')\n"
+                    "axes.plot([0, 1, 2], [0, 1, 0], [0, 2, 1])\n"
+                    "axes.set_title('Contained 3D chart')\n"
                     "plt.show()\n"
                     "print('managed and native modules complete')\n"
                 ),
+                run_dir=lesson_dir,
             )
 
-            chart = workspace / "charts" / "student-figure-1.png"
-            database = workspace / "lesson.sqlite3"
+            chart = lesson_dir / "student-figure-1.png"
+            database = lesson_dir / "lesson.sqlite3"
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("attach blocked", result.stdout)
             self.assertIn("managed and native modules complete", result.stdout)
+            self.assertNotIn("Unable to import Axes3D", result.stderr)
             self.assertTrue(database.is_file())
             self.assertEqual(database.read_bytes()[:16], b"SQLite format 3\x00")
             self.assertTrue(chart.is_file())
             self.assertEqual(chart.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
+            self.assertFalse((workspace / "charts").exists())
             self.assertFalse(escaped_database.exists())
 
     @unittest.skipIf(sys.platform == "linux", "Linux integration test covers enabled native modules")
@@ -227,7 +238,7 @@ class PythonSandboxPolicyTests(unittest.TestCase):
                 Path(tmp),
                 (
                     "for name in ('PIL', 'contourpy', 'inspect', 'kiwisolver', "
-                    "'matplotlib', 'numpy', 'sqlite3'):\n"
+                    "'matplotlib', 'mpl_toolkits', 'numpy', 'sqlite3'):\n"
                     "    try:\n"
                     "        __import__(name)\n"
                     "    except ImportError:\n"
