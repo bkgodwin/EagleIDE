@@ -35,6 +35,13 @@ jobs:
         run: |
           python -m py_compile app.py sandbox_worker.py sandbox_policy.py sandbox_containment.py
           node --check static/js/app-core.js
+          bash -n start.sh
+
+      - name: Validate one-command LXC setup
+        env:
+          EAGLEIDE_SETUP_ONLY: "1"
+          EAGLEIDE_SKIP_SYSTEM_PACKAGES: "1"
+        run: ./start.sh
 
       - name: Run test suite
         run: python -m unittest discover -s tests -v
