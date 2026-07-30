@@ -83,7 +83,11 @@ class StaticHtmlTestCase(unittest.TestCase):
             "wikiSiteFooter", "wikiAdminFooterText", "wikiAdminFolderIcon",
             "wikiEmojiPickerModal", "studentNotebookWikiLinkBtn", "studentNotebookWikiLinkModal",
             "wikiStandardsCoverageBtn", "wikiStandardsCoveragePanel", "wikiCoverageFolderFilter",
-            "wikiCoverageTableBody", "wikiCoverageHomeBtn", "wikiFontSizeSelect",
+            "wikiCoverageTableBody", "wikiCoverageHomeBtn", "wikiCoveragePrintBtn",
+            "wikiCoverageTitle", "wikiCoveragePrintMeta", "wikiCoverageClassLegend",
+            "wikiAdminPageStandardsSearch", "wikiAdminPageStandardsSelectedBtn",
+            "wikiAdminPageStandardsClearBtn", "wikiAdminPageStandardsSummary",
+            "wikiAdminPageStandardsNoMatches", "wikiFontSizeSelect",
             "wikiReaderShell", "wikiStandardDescriptionTooltip",
         }.issubset(ids))
         self.assertNotIn("wikiHomeTree", ids)
