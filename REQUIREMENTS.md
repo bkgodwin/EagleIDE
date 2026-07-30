@@ -74,7 +74,7 @@ the system interpreter and is not a supported production start command.
 | `bcrypt` | Secure password hashing for student and admin accounts |
 | `cryptography` | Encrypts stored admin credentials in `config.txt` using Fernet |
 | `numpy` | Native numerical prerequisite used by Matplotlib inside contained Python workers |
-| `matplotlib` | Headless `Agg` chart rendering; `plt.show()` saves PNG artifacts to the student's workspace |
+| `matplotlib` | Headless `Agg` 2D/3D rendering; `plt.show()` saves PNG artifacts beside the Python source file |
 | `Pillow` | Pinned image runtime used by Matplotlib and authenticated IDE image validation |
 
 NumPy, Matplotlib, Pillow, bcrypt, and cryptography include native components.

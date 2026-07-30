@@ -3,6 +3,7 @@ import getpass
 import io
 import json
 import shutil
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -360,7 +361,19 @@ class ExecutionLimitTestCase(unittest.TestCase):
         image_path = self.user_dir / "chart.png"
         Image.new("RGB", (24, 12), "#4aa8d8").save(image_path, format="PNG")
         database_path = self.user_dir / "lesson.sqlite3"
-        database_path.write_bytes(b"SQLite format 3\x00")
+        connection = sqlite3.connect(database_path)
+        try:
+            connection.execute("CREATE TABLE scores (name TEXT, score INTEGER, notes BLOB)")
+            connection.executemany(
+                "INSERT INTO scores VALUES (?, ?, ?)",
+                [
+                    ("Ava", 95, b"\x00\x01"),
+                    ("Noah", 88, None),
+                ],
+            )
+            connection.commit()
+        finally:
+            connection.close()
 
         listing = self.http.get("/api/files/list", headers={"X-User-Token": self.token})
         image_read = self.http.get(
@@ -375,6 +388,10 @@ class ExecutionLimitTestCase(unittest.TestCase):
             "/api/files/preview?path=chart.png",
             headers={"X-User-Token": self.token},
         )
+        database_preview = self.http.get(
+            "/api/files/database-preview?path=lesson.sqlite3",
+            headers={"X-User-Token": self.token},
+        )
 
         rows = {row["name"]: row for row in listing.get_json()["files"]}
         self.assertEqual(rows["chart.png"]["kind"], "image")
@@ -384,6 +401,12 @@ class ExecutionLimitTestCase(unittest.TestCase):
         self.assertEqual(preview.status_code, 200)
         self.assertEqual(preview.mimetype, "image/png")
         self.assertEqual(preview.headers.get("X-Content-Type-Options"), "nosniff")
+        self.assertEqual(database_preview.status_code, 200)
+        database_payload = database_preview.get_json()
+        self.assertEqual(database_payload["selected_table"], "scores")
+        self.assertEqual([row["name"] for row in database_payload["columns"]], ["name", "score", "notes"])
+        self.assertEqual(database_payload["rows"][0], ["Ava", 95, "<BLOB 2 bytes>"])
+        self.assertEqual(database_payload["rows"][1], ["Noah", 88, None])
         preview.close()
 
     def test_image_preview_requires_auth_and_rejects_non_images(self):
@@ -403,6 +426,51 @@ class ExecutionLimitTestCase(unittest.TestCase):
         self.assertEqual(denied.status_code, 401)
         self.assertEqual(wrong_type.status_code, 415)
         self.assertEqual(traversal.status_code, 404)
+
+    def test_database_preview_is_authenticated_read_only_and_table_scoped(self):
+        database_path = self.user_dir / "classwork.db"
+        connection = sqlite3.connect(database_path)
+        try:
+            connection.execute('CREATE TABLE "odd table" ("student name" TEXT, score INTEGER)')
+            connection.execute('INSERT INTO "odd table" VALUES (?, ?)', ("Ava", 97))
+            connection.commit()
+        finally:
+            connection.close()
+        original_signature = (database_path.stat().st_mtime_ns, database_path.stat().st_size)
+        text_path = self.user_dir / "notes.txt"
+        text_path.write_text("not a database", encoding="utf-8")
+        invalid_path = self.user_dir / "invalid.sqlite3"
+        invalid_path.write_bytes(b"SQLite format 3\x00")
+
+        denied = self.http.get("/api/files/database-preview?path=classwork.db")
+        wrong_type = self.http.get(
+            "/api/files/database-preview?path=notes.txt",
+            headers={"X-User-Token": self.token},
+        )
+        invalid = self.http.get(
+            "/api/files/database-preview?path=invalid.sqlite3",
+            headers={"X-User-Token": self.token},
+        )
+        missing_table = self.http.get(
+            "/api/files/database-preview",
+            query_string={"path": "classwork.db", "table": 'odd table" UNION SELECT 1'},
+            headers={"X-User-Token": self.token},
+        )
+        preview = self.http.get(
+            "/api/files/database-preview",
+            query_string={"path": "classwork.db", "table": "odd table"},
+            headers={"X-User-Token": self.token},
+        )
+
+        self.assertEqual(denied.status_code, 401)
+        self.assertEqual(wrong_type.status_code, 415)
+        self.assertEqual(invalid.status_code, 422)
+        self.assertEqual(missing_table.status_code, 404)
+        self.assertEqual(preview.status_code, 200)
+        payload = preview.get_json()
+        self.assertEqual(payload["selected_table"], "odd table")
+        self.assertEqual(payload["rows"], [["Ava", 97]])
+        self.assertEqual((database_path.stat().st_mtime_ns, database_path.stat().st_size), original_signature)
 
     def test_newline_free_output_is_bounded(self):
         eagle.MAX_OUTPUT_BYTES = 1024

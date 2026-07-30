@@ -304,8 +304,10 @@ SQLite example:
 
 SQLite databases must be inside the student's workspace; ":memory:" is also
 supported. URI database paths, extension loading, and access outside the
-workspace are blocked. Database files appear in the File Browser and can be
-downloaded, renamed, moved, or deleted, but are not opened as editable text.
+workspace are blocked. Clicking a database in the File Browser opens a
+read-only table viewer with a table selector and a bounded sample of rows.
+The viewer never accepts SQL or modifies the database. Database files can
+also be downloaded, renamed, moved, or deleted.
 
 Matplotlib example:
 
@@ -316,10 +318,16 @@ Matplotlib example:
   plt.show()
 
 The non-interactive Agg backend is always used. plt.show() saves each open
-figure as a PNG under the workspace's charts folder. The shell reports the
-saved path, the File Browser refreshes, and clicking the PNG opens a scaled
-image preview in the editor area. Calling savefig() directly also creates a
-normal image artifact that appears after the run.
+figure as a PNG beside the Python file that generated it. The shell reports
+the saved path, the File Browser refreshes, and clicking the PNG opens a
+scaled image preview in the editor area. Calling savefig() directly also
+creates a normal image artifact that appears after the run.
+
+Static 3D Matplotlib projections are supported through projection="3d" and
+render through the same safe PNG workflow. Open Examples/matplotlib_3d.py for
+a surface-plot starter. Static rendering was chosen instead of an interactive
+browser renderer so 3D lessons retain the same sandbox, bandwidth, and iPad
+behavior as other charts.
 
 ================================================================================
                          5A. PUBLIC CODING WIKI

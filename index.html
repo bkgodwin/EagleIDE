@@ -38,7 +38,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20260730-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260730-2">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -436,9 +436,23 @@
               <div id="fileArtifactPreviewStatus" class="file-artifact-preview-status">Loading preview…</div>
               <img id="fileArtifactPreviewImage" alt="" hidden />
               <div id="fileArtifactDatabaseInfo" class="file-artifact-database-info" hidden>
-                <span aria-hidden="true">🗄️</span>
-                <strong>SQLite database</strong>
-                <p>This binary database is available to Python through <code>sqlite3</code>. Run queries from a Python file; the database is not opened as editable text.</p>
+                <div class="file-artifact-database-heading">
+                  <span aria-hidden="true">🗄️</span>
+                  <div><strong>SQLite database viewer</strong><p>Read-only preview. Changes are made from Python using <code>sqlite3</code>.</p></div>
+                </div>
+                <div class="file-artifact-database-controls">
+                  <label for="fileArtifactDatabaseTable">Table</label>
+                  <select id="fileArtifactDatabaseTable"></select>
+                  <button class="btn secondary" id="fileArtifactDatabaseRefresh" type="button">Refresh</button>
+                </div>
+                <div id="fileArtifactDatabaseStatus" class="file-artifact-database-status">Loading database…</div>
+                <div id="fileArtifactDatabaseTableWrap" class="file-artifact-database-table-wrap" hidden>
+                  <table>
+                    <thead id="fileArtifactDatabaseHead"></thead>
+                    <tbody id="fileArtifactDatabaseBody"></tbody>
+                  </table>
+                </div>
+                <div id="fileArtifactDatabaseNote" class="file-artifact-database-note"></div>
               </div>
             </div>
           </section>
@@ -1486,11 +1500,11 @@
   <script src="/static/js/editor-init.js"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js"></script>
-  <script src="/static/js/app-core.js?v=20260714-8"></script>
+  <script src="/static/js/app-core.js?v=20260730-2"></script>
 <script src="/static/js/network-sim.js?v=20260714-18"></script>
 <script src="/static/js/network-sim-advanced.js?v=20260714-4"></script>
-  <script src="/static/js/wiki-reader.js?v=20260730-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20260730-1"></script>
+  <script src="/static/js/wiki-reader.js?v=20260730-2"></script>
+  <script src="/static/js/wiki-admin.js?v=20260730-2"></script>
   <script src="/static/js/classroom-signals.js"></script>
   <script src="/static/js/classroom-files.js?v=20250608"></script>
   <script src="/static/js/student-notebook.js?v=20260714-7"></script>
