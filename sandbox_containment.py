@@ -3,7 +3,7 @@
 Landlock is applied inside the already-created worker process after its source
 has been read but before user code executes. The worker keeps the Python audit
 hook and resource limits as defense in depth; Landlock is the native-code
-filesystem boundary used by SQLite, NumPy, and Matplotlib.
+filesystem boundary used by SQLite, NumPy, Matplotlib, and its image stack.
 """
 
 from __future__ import annotations

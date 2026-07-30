@@ -66,6 +66,7 @@ Required runtime components:
 |-- tests/
 |   |-- test_execution_limits.py Execution admission, runner limits, files, and stream safeguards
 |   |-- test_python_sandbox.py   Module ACL, native containment, SQLite, and chart security
+|   |-- test_startup.py          Launcher safety, dependency pinning, and environment checks
 |   |-- test_html_runtime.py     HTML runtime security, assets, bridge, and cleanup
 |   |-- test_notebook.py         Notebook prompts, locking, grading, and mastery integration
 |   |-- test_server_lifecycle.py Graceful shutdown state and false crash-alert regression coverage
@@ -166,16 +167,28 @@ When a feature crosses the browser/server boundary, trace and update the full pa
 
 ## Setup and Startup
 
-Linux/macOS:
+Linux LXC (recommended):
+
+```bash
+./start.sh
+```
+
+The launcher installs supported Debian/Ubuntu or Fedora system prerequisites
+when authorized, creates an isolated `.venv`, installs pinned binary wheels
+when `requirements.txt` changes, verifies package provenance/versions, reports
+Landlock status, validates Node.js 18+, and executes `app.py` with the venv
+interpreter. `EAGLEIDE_SETUP_ONLY=1 ./start.sh` performs setup without starting
+the server. Landlock must be enabled on the container host and cannot be
+enabled by the launcher.
+
+Manual Linux/macOS development:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.txt
+python -m pip install --only-binary=:all: -r requirements.txt
 HOST=127.0.0.1 PORT=8000 python app.py
 ```
-
-On Linux, `./start.sh` creates or repairs `.venv`, installs dependencies, and starts on `0.0.0.0:8000`.
 
 Windows PowerShell:
 

@@ -7886,7 +7886,7 @@ if __name__ == "__main__":
         )
     else:
         print(
-            "WARNING: SQLite, Inspect, NumPy, and Matplotlib will fail closed: "
+            "WARNING: SQLite, Inspect, NumPy, Pillow, and Matplotlib will fail closed: "
             f"{containment.get('reason') or 'Linux Landlock ABI 3+ is unavailable'}",
             flush=True,
         )

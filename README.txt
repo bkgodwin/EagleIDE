@@ -37,8 +37,9 @@ isolated HTML preview deployment, monitoring, and load-test guidance.
 Required:
 - Python 3.12 or higher (required by the pinned Matplotlib/NumPy runtime)
 - Node.js 18 or higher (for JavaScript execution)
-- Linux with Landlock ABI 3+ for SQLite, Inspect, NumPy, and Matplotlib in
-  student sandboxes. These native modules fail closed on unsupported hosts.
+- Linux with Landlock ABI 3+ for SQLite, Inspect, NumPy, Pillow, and
+  Matplotlib in student sandboxes. These native modules fail closed on
+  unsupported hosts.
 - Modern web browser (Chrome, Firefox, Edge, Safari)
 - Internet connection (for CDN resources; required at page load for CodeMirror,
   Socket.IO, marked, DOMPurify, highlight.js, and Google Fonts)
@@ -78,10 +79,30 @@ Step 1: Clone or download the repository
   git clone https://github.com/bkgodwin/EagleIDE.git
   cd EagleIDE
 
-Step 2: Install Python dependencies
-  pip install -r requirements.txt
+Step 2: Start EagleIDE
+  ./start.sh
 
-Step 3: Verify installation
+On a fresh Debian/Ubuntu or Fedora LXC, start.sh:
+- Installs Python, venv, Node.js, CA certificates, and system fonts when run as
+  root or through sudo
+- Requires Python 3.12+ and Node.js 18+
+- Creates an isolated .venv that cannot inherit system Python packages
+- Installs and verifies the pinned requirements only when they change
+- Reports whether Landlock ABI 3+ is available
+- Always launches app.py with .venv/bin/python
+
+Use a current LXC image such as Debian 13 or Ubuntu 24.04+. Older images whose
+package repositories only provide Python 3.11 are not supported. Landlock is a
+host-kernel feature and must already be enabled on the Proxmox host; start.sh
+cannot modify or reboot the host from inside a container.
+
+To prepare and validate dependencies without starting the server:
+  EAGLEIDE_SETUP_ONLY=1 ./start.sh
+
+For a manual non-Linux development setup:
+  python3 -m venv .venv
+  . .venv/bin/activate
+  python -m pip install --only-binary=:all: -r requirements.txt
   python app.py
 
 The server should start on http://0.0.0.0:8000
@@ -599,7 +620,8 @@ Python:
   GUI, and interpreter-control surfaces such as subprocess, multiprocessing,
   socket, ssl, ctypes, cffi, mmap, resource, fcntl, pty, and tkinter.
 - Linux Landlock ABI 3+ provides the native filesystem boundary required by
-  sqlite3, inspect, NumPy, and Matplotlib. These modules fail closed without it.
+  sqlite3, inspect, NumPy, Pillow, and Matplotlib. These modules fail closed
+  without it.
 - File I/O is boundary-checked against the user's workspace root (realpath +
   normalized path checks to block traversal and symlink escapes)
 - os process-spawn APIs (fork/exec/spawn/system/popen) are blocked; sensitive
@@ -661,7 +683,7 @@ SECURITY RECOMMENDATIONS FOR PRODUCTION
    could abuse Node.js network APIs
 8. Run EagleIDE as a dedicated unprivileged service account, not root
 9. Confirm "Native containment ready" in Admin Settings → Python Runtime before
-   assigning SQLite, Inspect, NumPy, or Matplotlib work
+   assigning SQLite, Inspect, NumPy, Pillow, or Matplotlib work
 
 ================================================================================
                           11. FILE STRUCTURE
@@ -749,7 +771,11 @@ Solution:
 - If autofill still appears, dismiss it; it will not affect code execution
 
 Problem: Server won't start
-Solution: Check if port 8000 is already in use, try different port
+Solution:
+- Run ./start.sh rather than system Python directly
+- Check that Python 3.12+ and Node.js 18+ are available
+- Check if port 8000 is already in use, or set a different PORT
+- On Linux, run EAGLEIDE_SETUP_ONLY=1 ./start.sh to revalidate the environment
 
 Problem: AI features not working
 Solution:
@@ -883,4 +909,4 @@ capabilities, lab descriptions, command reference, and operations notes.
 
 For support or issues: https://github.com/bkgodwin/EagleIDE
 
-Last Updated: 2026-07-14
+Last Updated: 2026-07-30
