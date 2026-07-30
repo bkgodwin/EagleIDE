@@ -221,9 +221,9 @@ class WikiStoreTests(unittest.TestCase):
             ],
         )
         standards = settings["standards"]
-        networking = self.store.create_folder("Networking")
+        networking = self.store.create_folder("Networking", icon="🌐")
         switching = self.store.create_folder("Switching", networking["id"])
-        cybersecurity = self.store.create_folder("Cybersecurity")
+        cybersecurity = self.store.create_folder("Cybersecurity", icon="🛡️")
         addressing = self.store.create_page(
             "IP Addressing",
             "# IP Addressing",
@@ -263,6 +263,13 @@ class WikiStoreTests(unittest.TestCase):
             [vlans["id"], addressing["id"]],
         )
         self.assertEqual(all_coverage["standards"][2]["pages"][0]["id"], acl["id"])
+        self.assertEqual(all_coverage["standards"][0]["pages"][0]["root_folder_id"], networking["id"])
+        self.assertEqual(all_coverage["standards"][0]["pages"][0]["root_folder_title"], "Networking")
+        self.assertEqual(all_coverage["standards"][0]["pages"][0]["root_folder_icon"], "🌐")
+        self.assertEqual(
+            [(folder["title"], folder["icon"]) for folder in all_coverage["class_folders"]],
+            [("Networking", "🌐"), ("Cybersecurity", "🛡️")],
+        )
         self.assertEqual([folder["title"] for folder in all_coverage["folders"]], [
             "Networking", "Switching", "Cybersecurity",
         ])
@@ -685,7 +692,13 @@ class WikiApiTests(unittest.TestCase):
         self.assertEqual(rejected.status_code, 400)
 
     def test_admin_tree_excludes_images_and_media_manager_can_delete_them(self):
-        image = self._upload_asset("diagram.png", b"\x89PNG\r\n\x1a\nminimal")
+        png = (
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+            + (1200).to_bytes(4, "big")
+            + (800).to_bytes(4, "big")
+            + b"\x08\x02\x00\x00\x00"
+        )
+        image = self._upload_asset("diagram.png", png)
         directive = f"{{{{image:{image['id']}|alt=Diagram|width=65|align=center}}}}"
         page = self.store.create_page(
             "Image Lesson", f"# Image Lesson\n\n{directive}\n\nPublished text.", status="published"
@@ -699,6 +712,11 @@ class WikiApiTests(unittest.TestCase):
         self.assertEqual(media.status_code, 200)
         listed = next(item for item in media.get_json()["images"] if item["id"] == image["id"])
         self.assertEqual(listed["reference_count"], 1)
+        public_page = self.client.get(f"/api/wiki/nodes/{page['id']}").get_json()["node"]
+        self.assertEqual(
+            public_page["media_metadata"][image["id"]],
+            {"width": 1200, "height": 800},
+        )
         self.assertEqual(self.client.get("/api/admin/wiki/media").status_code, 401)
 
         deleted = self.client.delete(f"/api/admin/wiki/media/{image['id']}", headers=self.admin)
