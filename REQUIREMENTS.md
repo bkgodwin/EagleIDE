@@ -9,21 +9,22 @@ browser-side CDN libraries) required to run Eagle IDE.
 
 | Program | Minimum Version | Purpose | Install |
 |---------|-----------------|---------|---------|
-| **Python** | **3.9** | Runs `app.py` and the student code sandbox. *(Python 3.8 is NOT supported — the code uses PEP 585 built-in generic types, e.g. `list[tuple[...]]`.)* | See below |
+| **Python** | **3.12** | Runs `app.py` and the student code sandbox. Python 3.12+ is required by the pinned NumPy runtime used by Matplotlib. | See below |
 | **Node.js** | **18** | Executes student `.js` files via the `node` subprocess runner. Not required for Python-only use, but `.js` file execution will fail without it. | See below |
+| **Linux kernel with Landlock ABI 3+** | **Linux 5.19+ recommended** | Required to enable native student modules (`sqlite3`, `inspect`, NumPy, and Matplotlib). They fail closed when the boundary is unavailable. | Included in current Debian/Ubuntu kernels |
 | **Ollama** | Any recent | *(Optional)* Serves the local LLM for AI Explain, AI Assistant, and Challenge Scoring features. Can run on the same machine or a separate server. | https://ollama.ai |
 
-### Installing Python 3.9+
+### Installing Python 3.12+
 
 ```bash
 # Ubuntu / Debian
-sudo apt install python3.9 python3-pip python3-venv
+sudo apt install python3.12 python3-pip python3-venv
 
 # Fedora / RHEL
-sudo dnf install python3.9
+sudo dnf install python3.12
 
 # macOS (Homebrew)
-brew install python@3.9
+brew install python@3.12
 
 # Windows
 # Download from https://www.python.org/downloads/
@@ -68,9 +69,27 @@ pip install -r requirements.txt
 | `requests` | HTTP client — used to call the Ollama AI API for code explain / assistant features |
 | `bcrypt` | Secure password hashing for student and admin accounts |
 | `cryptography` | Encrypts stored admin credentials in `config.txt` using Fernet |
+| `numpy` | Native numerical prerequisite used by Matplotlib inside contained Python workers |
+| `matplotlib` | Headless `Agg` chart rendering; `plt.show()` saves PNG artifacts to the student's workspace |
 
-> All packages are pure-Python or have pre-built wheels for common platforms.
-> No system-level C build tools are required.
+NumPy, Matplotlib, Pillow, bcrypt, and cryptography include native components.
+Pinned releases provide wheels for supported Python versions and common
+architectures, so a compiler is normally unnecessary. On an uncommon
+architecture without compatible wheels, review any requested source build and
+its toolchain before production deployment.
+
+### Native student-module boundary
+
+EagleIDE probes Linux Landlock at startup and applies a fresh filesystem
+ruleset inside every Python worker. The student workspace is read/write, while
+the interpreter and installed module files are read-only. The existing Python
+audit hook, import policy, process controls, resource limits, and path
+normalization remain active as defense in depth.
+
+`sqlite3`, `inspect`, NumPy, and Matplotlib are disabled automatically if
+Landlock ABI 3 or newer is unavailable. Pure standard-library exercises still
+run. Windows remains suitable for development and ordinary Python exercises,
+but production use of the native modules requires Linux.
 
 ---
 
@@ -113,7 +132,8 @@ Default: `http://127.0.0.1:11434` (same machine).
 
 ## 5. Quick Start Checklist
 
-- [ ] Python 3.9+ installed (`python3 --version`)
+- [ ] Python 3.12+ installed (`python3 --version`)
+- [ ] Linux Landlock ABI 3+ available for SQLite/Matplotlib (`Admin → Settings → Python Runtime`)
 - [ ] Node.js 18+ installed (`node --version`)  ← required for `.js` execution
 - [ ] `pip install -r requirements.txt` completed successfully
 - [ ] `python app.py` starts without errors

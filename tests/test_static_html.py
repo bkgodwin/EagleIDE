@@ -89,10 +89,15 @@ class StaticHtmlTestCase(unittest.TestCase):
             "wikiAdminPageStandardsClearBtn", "wikiAdminPageStandardsSummary",
             "wikiAdminPageStandardsNoMatches", "wikiFontSizeSelect",
             "wikiReaderShell", "wikiStandardDescriptionTooltip",
+            "fileArtifactPreview", "fileArtifactPreviewImage", "fileArtifactDatabaseInfo",
+            "pythonContainmentStatus", "pythonMemoryLimitModal",
+            "pythonConcurrencyLimitModal", "pythonModuleAccessList",
+            "pythonSecurityLockedModules", "pythonRuntimeRefreshBtn",
         }.issubset(ids))
         self.assertNotIn("wikiHomeTree", ids)
         self.assertIn('accept=".png,.jpg,.jpeg,.webp,.gif"', self.raw)
         self.assertIn('accept=".csv,text/csv"', self.raw)
+        self.assertIn('accept=".py,.js,.html,.css,.txt,.csv,.json,.md,.png,.jpg,.jpeg,.gif,.webp,.db,.sqlite,.sqlite3"', self.raw)
 
     def test_wiki_home_order_and_class_management_surfaces(self):
         ids = set(self.parser.ids)
@@ -135,6 +140,10 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn("|align=${placement}|width=${scale}", admin)
         self.assertIn('@app.get("/standards-coverage")', (BASE_DIR / "app.py").read_text(encoding="utf-8"))
         self.assertLess(self.raw.index('id="wikiPageStandards"'), self.raw.index('id="wikiTocContents"'))
+        app_core = (BASE_DIR / "static" / "js" / "app-core.js").read_text(encoding="utf-8")
+        self.assertIn("/api/admin/python-runtime", app_core)
+        self.assertIn("/api/files/preview", app_core)
+        self.assertIn("socket.on('run_artifacts'", app_core)
 
     def test_network_simulator_surfaces_are_modular_and_touch_ready(self):
         ids = set(self.parser.ids)

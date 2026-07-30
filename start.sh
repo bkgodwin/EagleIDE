@@ -4,9 +4,14 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Ensure Python 3 is available
+# Ensure a compatible Python is available. Current Matplotlib/NumPy wheels
+# require Python 3.12 or newer.
 if ! command -v python3 &>/dev/null; then
-  echo "ERROR: python3 not found. Please install Python 3.9+" >&2
+  echo "ERROR: python3 not found. Please install Python 3.12+" >&2
+  exit 1
+fi
+if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)'; then
+  echo "ERROR: EagleIDE requires Python 3.12+ for the secured Matplotlib runtime." >&2
   exit 1
 fi
 

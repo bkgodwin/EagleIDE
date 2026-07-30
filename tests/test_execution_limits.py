@@ -7,6 +7,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 _ORIGINAL_INPUT = builtins.input
@@ -87,6 +88,8 @@ class ExecutionLimitTestCase(unittest.TestCase):
         )
         self.http = eagle.app.test_client()
         self.socket_clients = []
+        self.admin_token = "runner-admin-token"
+        eagle._admin_tokens.add(self.admin_token)
 
     def tearDown(self):
         for client in self.socket_clients:
@@ -98,6 +101,7 @@ class ExecutionLimitTestCase(unittest.TestCase):
         eagle._stop_all_runners()
         eagle._student_tokens.pop(self.token, None)
         eagle._teacher_tokens.pop(self.teacher_token, None)
+        eagle._admin_tokens.discard(self.admin_token)
         eagle._teacher_code_snapshots.pop("owned-class", None)
         eagle._teacher_code_snapshots.pop("other-class", None)
         eagle._teacher_stream_last_emit.clear()
@@ -305,6 +309,100 @@ class ExecutionLimitTestCase(unittest.TestCase):
         self.assertFalse(second_admitted)
         self.assertIn("capacity is busy", error)
         eagle._release_execution_slot("first-sid")
+
+    def test_execution_slot_reserves_requested_memory(self):
+        requested = 321 * 1024 * 1024
+        context = {"identity": "account:memory@example.com", "role": "student", "guest_ip": ""}
+
+        admitted, error = eagle._try_acquire_execution_slot("memory-sid", context, requested)
+
+        self.assertTrue(admitted, error)
+        self.assertEqual(eagle._active_runs_by_sid["memory-sid"]["reserved_bytes"], requested)
+        eagle._release_execution_slot("memory-sid")
+
+    def test_admin_python_runtime_status_is_protected_and_bounded(self):
+        denied = self.http.get("/api/admin/python-runtime")
+        response = self.http.get(
+            "/api/admin/python-runtime",
+            headers={"X-Admin-Token": self.admin_token},
+        )
+
+        self.assertEqual(denied.status_code, 401)
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertGreaterEqual(payload["settings"]["python_memory_limit_mb"], 128)
+        self.assertLessEqual(
+            payload["settings"]["python_memory_limit_mb"],
+            payload["hard_limits"]["max_memory_mb"],
+        )
+        self.assertTrue(any(row["name"] == "sqlite3" for row in payload["module_catalog"]))
+        self.assertIn("subprocess", payload["security_locked_modules"])
+
+    def test_admin_disabled_module_is_rejected_by_worker(self):
+        client = self._socket()
+        settings = {
+            "python_memory_limit_mb": 750,
+            "python_max_concurrent_runs": 4,
+            "python_module_access": {"time": False},
+        }
+        with mock.patch.object(eagle, "_normalized_python_runtime_settings", return_value=settings):
+            client.emit("run_code", self._payload("import time\nprint('module bypassed')"))
+            events = self._collect_until_finished(client)
+
+        output = self._output(events)
+        self.assertIn("ImportError", output)
+        self.assertNotIn("module bypassed", output)
+
+    def test_file_browser_classifies_and_previews_generated_artifacts(self):
+        from PIL import Image
+
+        image_path = self.user_dir / "chart.png"
+        Image.new("RGB", (24, 12), "#4aa8d8").save(image_path, format="PNG")
+        database_path = self.user_dir / "lesson.sqlite3"
+        database_path.write_bytes(b"SQLite format 3\x00")
+
+        listing = self.http.get("/api/files/list", headers={"X-User-Token": self.token})
+        image_read = self.http.get(
+            "/api/files/read?path=chart.png",
+            headers={"X-User-Token": self.token},
+        )
+        database_read = self.http.get(
+            "/api/files/read?path=lesson.sqlite3",
+            headers={"X-User-Token": self.token},
+        )
+        preview = self.http.get(
+            "/api/files/preview?path=chart.png",
+            headers={"X-User-Token": self.token},
+        )
+
+        rows = {row["name"]: row for row in listing.get_json()["files"]}
+        self.assertEqual(rows["chart.png"]["kind"], "image")
+        self.assertEqual(rows["lesson.sqlite3"]["kind"], "database")
+        self.assertEqual(image_read.get_json()["kind"], "image")
+        self.assertEqual(database_read.get_json()["kind"], "database")
+        self.assertEqual(preview.status_code, 200)
+        self.assertEqual(preview.mimetype, "image/png")
+        self.assertEqual(preview.headers.get("X-Content-Type-Options"), "nosniff")
+        preview.close()
+
+    def test_image_preview_requires_auth_and_rejects_non_images(self):
+        text_path = self.user_dir / "not-an-image.txt"
+        text_path.write_text("plain text", encoding="utf-8")
+
+        denied = self.http.get("/api/files/preview?path=not-an-image.txt")
+        wrong_type = self.http.get(
+            "/api/files/preview?path=not-an-image.txt",
+            headers={"X-User-Token": self.token},
+        )
+        traversal = self.http.get(
+            "/api/files/preview?path=../outside.png",
+            headers={"X-User-Token": self.token},
+        )
+
+        self.assertEqual(denied.status_code, 401)
+        self.assertEqual(wrong_type.status_code, 415)
+        self.assertEqual(traversal.status_code, 404)
 
     def test_newline_free_output_is_bounded(self):
         eagle.MAX_OUTPUT_BYTES = 1024

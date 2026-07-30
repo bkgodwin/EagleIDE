@@ -12,7 +12,8 @@ There is no frontend build system, package manager, or separate API service. The
 
 Required runtime components:
 
-- Python 3.9+ and the packages in `requirements.txt` (including `simple-websocket` for threaded Socket.IO).
+- Python 3.12+ and the packages in `requirements.txt` (including `simple-websocket` for threaded Socket.IO and Matplotlib/NumPy for charts).
+- Linux Landlock ABI 3+ for native student modules (`sqlite3`, `inspect`, NumPy, and Matplotlib); those modules fail closed on unsupported hosts.
 - Node.js 18+ for running student JavaScript.
 - A modern browser with internet access at page load for CDN-hosted CodeMirror, Socket.IO client, DOMPurify, marked, highlight.js, and fonts.
 - Ollama only for AI explain, assistant, challenge grading, and mastery feedback features.
@@ -29,6 +30,8 @@ Required runtime components:
 |-- network_store.py             Validated simulator persistence, reachability, and lab grading
 |-- network_content.py           Source-controlled example topologies, labs, and CLI reference
 |-- sandbox_worker.py            Restricted Python execution worker launched by app.py
+|-- sandbox_policy.py            Student module catalog, ACL normalization, and locked imports
+|-- sandbox_containment.py       Per-worker Linux Landlock filesystem boundary
 |-- config.py                    Checked-in defaults and server constants
 |-- index.html                   Entire SPA document and DOM structure
 |-- static/
@@ -62,6 +65,7 @@ Required runtime components:
 |       `-- app-main.js          Migration-era source fragment; not loaded directly
 |-- tests/
 |   |-- test_execution_limits.py Execution admission, runner limits, files, and stream safeguards
+|   |-- test_python_sandbox.py   Module ACL, native containment, SQLite, and chart security
 |   |-- test_html_runtime.py     HTML runtime security, assets, bridge, and cleanup
 |   |-- test_notebook.py         Notebook prompts, locking, grading, and mastery integration
 |   |-- test_server_lifecycle.py Graceful shutdown state and false crash-alert regression coverage
@@ -71,6 +75,7 @@ Required runtime components:
 |-- tools/
 |   |-- migrate_ux.py            Historical one-time CSS/JS extraction script
 |   `-- apply_index_migration.py Historical one-time index migration script
+|-- .github/workflows/tests.yml  Linux/Landlock regression test workflow
 |-- challenges.csv               Checked-in coding challenge bank
 |-- exception_help.csv           Checked-in troubleshooting lookup data
 |-- background.jpg               Light background asset
@@ -113,9 +118,9 @@ Python and JavaScript runs begin with the Socket.IO `run_code` event. Output ret
 
 Run admission is centralized and bounded before a process is created. It enforces global capacity, one active run per authenticated account, constrained guest capacity, start/input rate limits, connection limits, and server memory/disk pressure checks. Finished, stopped, failed, and disconnected runs must release both runner state and their admission slot.
 
-- Python: `Runner` writes a temporary script, launches `sandbox_worker.py`, restricts filesystem access to the user's root, and applies import, CPU, process, memory, file, file descriptor, wall-time, write-budget, and output limits.
+- Python: `Runner` writes a temporary script, launches `sandbox_worker.py`, reserves the configured per-run memory, restricts filesystem access to the user's root, and applies import, CPU, process, memory, file, file descriptor, wall-time, write-budget, and output limits. `sandbox_policy.py` permits standard-library, reviewed chart-dependency, and student-workspace imports while keeping process/network/FFI modules locked. On Linux, `sandbox_containment.py` applies Landlock before enabling SQLite, Inspect, NumPy, or Matplotlib. `plt.show()` uses Agg and writes PNG artifacts under the user's `charts/` folder; new images are announced through `run_artifacts`.
 - JavaScript: `JsRunner` invokes Node with a restricted `vm` context and matching heap, CPU, process, wall-time, and output controls.
-- Operating-system containment: POSIX runners use process groups, resource limits, and lower priority; Windows runners are assigned to kill-on-close Job Objects with CPU, memory, and active-process limits.
+- Operating-system containment: POSIX runners use process groups, resource limits, lower priority, and per-worker Landlock for native Python modules; Windows runners are assigned to kill-on-close Job Objects with CPU, memory, and active-process limits but native modules fail closed because Landlock is unavailable.
 - HTML/CSS: `/api/html-runtime/*` serves files from the user's live workspace. JavaScript is enabled only through an operator-attested, cross-site preview origin; otherwise the preview applies `script-src 'none'` and safely renders HTML/CSS only. See `docs/HARDENING_AND_PERFORMANCE.md`.
 - Interactive input: `INPUT_TOKEN` must remain identical in `app.py`, `sandbox_worker.py`, and the browser runtime.
 
@@ -155,7 +160,7 @@ Network simulator definitions are source data in `network_content.py`; assignmen
 - DOM structure or third-party CDN versions: `index.html`.
 - Theme values: `tokens.css`; reusable UI primitives: `components.css`; feature visuals: the matching `features/*.css` file.
 - Defaults exposed through `/api/config`: update `config.py` and the fallback `DEFAULT_CONFIG` in `app.py` together.
-- Python execution policy: `sandbox_worker.py` and the `Runner` integration in `app.py`.
+- Python execution policy: `sandbox_policy.py`, `sandbox_containment.py`, `sandbox_worker.py`, and the `Runner`/admission integration in `app.py`. Keep native modules fail-closed without active Landlock.
 
 When a feature crosses the browser/server boundary, trace and update the full path: DOM element, event binding, request or socket payload, server validation, persistence, response/event, and render state.
 
@@ -219,6 +224,7 @@ Focused runs:
 
 ```bash
 python -m unittest discover -s tests -p test_execution_limits.py -v
+python -m unittest tests.test_python_sandbox -v
 python -m unittest tests.test_html_runtime -v
 python -m unittest tests.test_notebook -v
 python -m unittest tests.test_wiki -v
