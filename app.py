@@ -34,6 +34,13 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from classroom_features import merge_class_settings, register as register_classroom_features
 from network_features import register as register_network_features
+from sandbox_containment import landlock_status
+from sandbox_policy import (
+    SECURITY_LOCKED_MODULES,
+    disabled_module_roots,
+    normalize_module_access,
+    public_module_catalog,
+)
 from wiki_features import register as register_wiki_features
 
 _native_threading = threading
@@ -81,7 +88,8 @@ MAX_HTML_RUNTIME_HTML_BYTES = 2 * 1024 * 1024
 MAX_HTML_RUNTIME_SESSIONS = 256
 MAX_HTML_RUNTIME_SESSIONS_PER_USER = 3
 MAX_RUN_WRITE_BYTES = 10 * 1024 * 1024
-RUNNER_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024
+RUNNER_MEMORY_LIMIT_BYTES = 750 * 1024 * 1024
+MAX_RUNNER_MEMORY_LIMIT_MB = 2048
 RUNNER_CPU_PERCENT = 50
 
 
@@ -93,8 +101,9 @@ def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, value))
 
 
+MAX_RUNNER_MEMORY_LIMIT_MB = _env_int("EAGLE_MAX_RUNNER_MEMORY_MB", 2048, 128, 4096)
 _default_run_capacity = max(1, min(4, max(1, int(os.cpu_count() or 2) // 2)))
-MAX_CONCURRENT_RUNS = _env_int("EAGLE_MAX_CONCURRENT_RUNS", _default_run_capacity, 1, 32)
+MAX_CONCURRENT_RUNS = _env_int("EAGLE_MAX_CONCURRENT_RUNS", 8, 1, 32)
 MAX_GUEST_RUNS_PER_IP = _env_int("EAGLE_MAX_GUEST_RUNS_PER_IP", 2, 1, 16)
 MAX_RUN_STARTS_PER_WINDOW = _env_int("EAGLE_MAX_RUN_STARTS_PER_10_SECONDS", 6, 1, 60)
 RUN_START_RATE_WINDOW_SECONDS = 10.0
@@ -128,7 +137,10 @@ HTML_RUNTIME_PREVIEW_ISOLATED = os.environ.get("EAGLE_HTML_PREVIEW_ISOLATED", ""
 MAX_FILES_PER_FOLDER = 20
 MAX_FILES_PER_ACCOUNT = 100
 MAX_DUPLICATE_NAME_ATTEMPTS = 10_000
-ALLOWED_EXTENSIONS = {".py", ".js", ".html", ".css", ".txt", ".csv"}
+TEXT_EXTENSIONS = {".py", ".js", ".html", ".css", ".txt", ".csv", ".json", ".md"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+DATABASE_EXTENSIONS = {".db", ".sqlite", ".sqlite3"}
+ALLOWED_EXTENSIONS = TEXT_EXTENSIONS | IMAGE_EXTENSIONS | DATABASE_EXTENSIONS
 SIGN_IN_RETENTION_DAYS = 90
 MAX_SERVER_EVENTS = 500
 MAX_SIGN_IN_EVENTS = 10_000
@@ -207,6 +219,9 @@ except Exception:
         "topbar_color": "linear-gradient(90deg,#a5c8f0,#7fb2eb)",
         "registration_enabled": True,
         "network_sim_enabled": False,
+        "python_memory_limit_mb": 750,
+        "python_max_concurrent_runs": 4,
+        "python_module_access": {},
         "wiki_max_asset_mb": 1024,
         "wiki_total_asset_mb": 10240,
     }
@@ -347,6 +362,46 @@ def _update_config(partial: Dict[str, Any]) -> Dict[str, Any]:
     cfg.update(partial or {})
     _save_config(cfg)
     return cfg
+
+
+def _bounded_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
+def _normalized_python_runtime_settings(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    source = cfg if isinstance(cfg, dict) else _load_config()
+    return {
+        "python_memory_limit_mb": _bounded_int(
+            source.get("python_memory_limit_mb"),
+            750,
+            128,
+            MAX_RUNNER_MEMORY_LIMIT_MB,
+        ),
+        "python_max_concurrent_runs": _bounded_int(
+            source.get("python_max_concurrent_runs"),
+            _default_run_capacity,
+            1,
+            MAX_CONCURRENT_RUNS,
+        ),
+        "python_module_access": normalize_module_access(source.get("python_module_access")),
+    }
+
+
+def _normalize_config_partial(partial: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(partial or {})
+    if any(
+        key in normalized
+        for key in ("python_memory_limit_mb", "python_max_concurrent_runs", "python_module_access")
+    ):
+        candidate = _load_config()
+        candidate.update(normalized)
+        normalized.update(_normalized_python_runtime_settings(candidate))
+    return normalized
+
 
 CONFIG = _load_config()
 print(f"Configuration loaded successfully with {len(CONFIG)} settings")
@@ -1742,6 +1797,7 @@ def admin_login():
 def get_config():
     cfg = _load_config()
     sanitized = dict(cfg)
+    sanitized.update(_normalized_python_runtime_settings(cfg))
     sanitized.pop("admin_password_encrypted", None)
     return jsonify(ok=True, data=sanitized)
 
@@ -1754,9 +1810,48 @@ def save_config():
     if isinstance(partial, dict):
         partial.pop("admin_password_encrypted", None)
         partial.pop("admin_email", None)
+        partial = _normalize_config_partial(partial)
+    else:
+        return jsonify(ok=False, error="Settings data must be an object"), 400
     new_cfg = _update_config(partial)
+    new_cfg.update(_normalized_python_runtime_settings(new_cfg))
     new_cfg.pop("admin_password_encrypted", None)
     return jsonify(ok=True, data=new_cfg)
+
+
+@app.get("/api/admin/python-runtime")
+def admin_python_runtime():
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    cfg = _load_config()
+    settings = _normalized_python_runtime_settings(cfg)
+    containment = landlock_status()
+    with _execution_admission_lock:
+        active_runs = len(_active_runs_by_sid)
+        reserved_bytes = sum(
+            max(0, int(record.get("reserved_bytes") or 0))
+            for record in _active_runs_by_sid.values()
+        )
+    return jsonify(
+        ok=True,
+        settings=settings,
+        module_catalog=public_module_catalog(),
+        security_locked_modules=sorted(SECURITY_LOCKED_MODULES),
+        containment={
+            **containment,
+            "ready": bool(containment.get("available")),
+            "platform": sys.platform,
+        },
+        active_runs=active_runs,
+        reserved_memory_mb=round(reserved_bytes / (1024 * 1024), 1),
+        hard_limits={
+            "max_memory_mb": MAX_RUNNER_MEMORY_LIMIT_MB,
+            "max_concurrent_runs": MAX_CONCURRENT_RUNS,
+            "cpu_seconds": MAX_CPU_TIME_SECONDS,
+            "wall_seconds": MAX_WALL_TIME,
+            "write_mb": MAX_RUN_WRITE_BYTES // (1024 * 1024),
+        },
+    )
 
 # -------------------------
 # Student auth endpoints
@@ -1934,6 +2029,8 @@ def files_list():
             file_entries = []
             with os.scandir(directory) as entries:
                 for entry in entries:
+                    if entry.name == ".eagleide":
+                        continue
                     try:
                         if entry.is_dir(follow_symlinks=False):
                             folder_entries.append(entry)
@@ -1966,7 +2063,14 @@ def files_list():
                     "name": entry.name,
                     "path": rel,
                     "type": "file",
-                    "size": size
+                    "size": size,
+                    "kind": (
+                        "image"
+                        if entry_path.suffix.lower() in IMAGE_EXTENSIONS
+                        else "database"
+                        if entry_path.suffix.lower() in DATABASE_EXTENSIONS
+                        else "text"
+                    ),
                 })
         except PermissionError:
             pass
@@ -2026,7 +2130,10 @@ def files_create():
                 return jsonify(ok=False, error=f"Account limit reached (max {MAX_FILES_PER_ACCOUNT} files per account)"), 400
         target_validated.parent.mkdir(parents=True, exist_ok=True)
         if not target_validated.exists():
-            target_validated.write_text("", encoding="utf-8")
+            if suffix in TEXT_EXTENSIONS:
+                target_validated.write_text("", encoding="utf-8")
+            else:
+                target_validated.write_bytes(b"")
         return jsonify(ok=True, path=str(target_validated.relative_to(user_dir)))
 
 @app.get("/api/files/read")
@@ -2046,15 +2153,22 @@ def files_read():
     
     if target.suffix.lower() not in ALLOWED_EXTENSIONS:
         return jsonify(ok=False, error="File type not allowed"), 400
+    suffix = target.suffix.lower()
     try:
-        if target.stat().st_size > MAX_EDITOR_FILE_BYTES:
+        if suffix in TEXT_EXTENSIONS and target.stat().st_size > MAX_EDITOR_FILE_BYTES:
             return jsonify(ok=False, error=f"File exceeds the {MAX_EDITOR_FILE_BYTES // (1024 * 1024)}MB editor limit"), 413
     except OSError:
         return jsonify(ok=False, error="Could not inspect file"), 500
     
+    if suffix in IMAGE_EXTENSIONS:
+        return jsonify(ok=True, kind="image", path=path_str, size=target.stat().st_size)
+    if suffix in DATABASE_EXTENSIONS:
+        return jsonify(ok=True, kind="database", path=path_str, size=target.stat().st_size)
+    if suffix not in TEXT_EXTENSIONS:
+        return jsonify(ok=False, error="File cannot be opened in the text editor"), 415
     try:
         content = target.read_text(encoding="utf-8")
-        return jsonify(ok=True, content=content, path=path_str)
+        return jsonify(ok=True, kind="text", content=content, path=path_str)
     except Exception:
         return jsonify(ok=False, error="Could not read file"), 500
 
@@ -2078,8 +2192,8 @@ def files_write():
     if not target:
         return jsonify(ok=False, error="Invalid path"), 400
     
-    if target.suffix.lower() not in ALLOWED_EXTENSIONS:
-        return jsonify(ok=False, error="File type not allowed"), 400
+    if target.suffix.lower() not in TEXT_EXTENSIONS:
+        return jsonify(ok=False, error="Only text files can be edited"), 400
     
     # Check storage limit
     limit_bytes = USER_STORAGE_LIMIT_MB * 1024 * 1024
@@ -2097,6 +2211,56 @@ def files_write():
         return jsonify(ok=True)
     except Exception:
         return jsonify(ok=False, error="Could not write file"), 500
+
+
+@app.get("/api/files/preview")
+def files_preview():
+    user = _require_user_for_files(request)
+    if not user:
+        return jsonify(ok=False, error="Authentication required"), 401
+    path_str = request.args.get("path", "")
+    if not path_str:
+        return jsonify(ok=False, error="Path required"), 400
+    user_dir = _get_user_dir(user["email"])
+    target = _validate_user_path(user_dir, path_str)
+    if not target or not target.exists() or not target.is_file():
+        return jsonify(ok=False, error="File not found"), 404
+    suffix = target.suffix.lower()
+    if suffix not in IMAGE_EXTENSIONS:
+        return jsonify(ok=False, error="Only image files can be previewed"), 415
+    try:
+        file_size = target.stat().st_size
+        if file_size <= 0:
+            return jsonify(ok=False, error="Image file is empty"), 422
+        if file_size > MAX_EDITOR_FILE_BYTES:
+            return jsonify(ok=False, error="Image exceeds the preview size limit"), 413
+
+        from PIL import Image
+
+        with Image.open(target) as image:
+            width, height = image.size
+            image.verify()
+        if width <= 0 or height <= 0 or width > 16_384 or height > 16_384 or width * height > 25_000_000:
+            return jsonify(ok=False, error="Image dimensions exceed the safe preview limit"), 413
+    except Exception:
+        return jsonify(ok=False, error="Image could not be safely decoded"), 422
+
+    response = send_file(
+        str(target),
+        mimetype={
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".gif": "image/gif",
+            ".webp": "image/webp",
+        }.get(suffix, "application/octet-stream"),
+        conditional=True,
+        max_age=0,
+    )
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Content-Security-Policy"] = "default-src 'none'; sandbox"
+    return response
 
 @app.post("/api/files/rename")
 def files_rename():
@@ -2267,8 +2431,13 @@ def files_download():
         return jsonify(ok=False, error="File type not allowed"), 400
 
     try:
-        if target.stat().st_size > MAX_EDITOR_FILE_BYTES:
-            return jsonify(ok=False, error=f"File exceeds the {MAX_EDITOR_FILE_BYTES // (1024 * 1024)}MB download limit"), 413
+        max_download_bytes = (
+            USER_STORAGE_LIMIT_MB * 1024 * 1024
+            if target.suffix.lower() in DATABASE_EXTENSIONS
+            else MAX_EDITOR_FILE_BYTES
+        )
+        if target.stat().st_size > max_download_bytes:
+            return jsonify(ok=False, error="File exceeds the download limit"), 413
     except OSError:
         return jsonify(ok=False, error="Could not inspect file"), 500
 
@@ -2280,19 +2449,25 @@ def files_download():
         ".css": "text/css",
         ".txt": "text/plain",
         ".csv": "text/csv",
+        ".json": "application/json",
+        ".md": "text/markdown",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".db": "application/vnd.sqlite3",
+        ".sqlite": "application/vnd.sqlite3",
+        ".sqlite3": "application/vnd.sqlite3",
     }
-    mimetype = mimetypes_map.get(ext, "text/plain")
-
-    try:
-        data = target.read_bytes()
-    except Exception:
-        return jsonify(ok=False, error="Could not read file"), 500
-
-    from flask import Response
-    return Response(
-        data,
+    mimetype = mimetypes_map.get(ext, "application/octet-stream")
+    return send_file(
+        str(target),
         mimetype=mimetype,
-        headers={"Content-Disposition": f'attachment; filename="{target.name}"'}
+        as_attachment=True,
+        download_name=target.name,
+        conditional=True,
+        max_age=0,
     )
 
 @app.get("/api/files/storage")
@@ -4655,7 +4830,7 @@ def _popen_isolation_kwargs() -> dict[str, Any]:
     return {"start_new_session": True}
 
 
-def _attach_windows_job(proc: subprocess.Popen) -> Optional[int]:
+def _attach_windows_job(proc: subprocess.Popen, memory_limit_bytes: int) -> Optional[int]:
     """Put a Windows runner in a kill-on-close, CPU-, memory-, and process-limited Job Object."""
     if os.name != "nt":
         return None
@@ -4712,7 +4887,7 @@ def _attach_windows_job(proc: subprocess.Popen) -> Optional[int]:
         info = ExtendedLimits()
         info.BasicLimitInformation.LimitFlags = 0x00000008 | 0x00000100 | 0x00002000
         info.BasicLimitInformation.ActiveProcessLimit = 1
-        info.ProcessMemoryLimit = RUNNER_MEMORY_LIMIT_BYTES
+        info.ProcessMemoryLimit = max(128 * 1024 * 1024, int(memory_limit_bytes))
         if not kernel32.SetInformationJobObject(handle, 9, ctypes.byref(info), ctypes.sizeof(info)):
             raise ctypes.WinError(ctypes.get_last_error())
 
@@ -4735,7 +4910,7 @@ def _attach_windows_job(proc: subprocess.Popen) -> Optional[int]:
         return None
 
 
-def _apply_posix_process_limits(proc: subprocess.Popen) -> None:
+def _apply_posix_process_limits(proc: subprocess.Popen, memory_limit_bytes: int) -> None:
     if os.name == "nt":
         return
     try:
@@ -4744,6 +4919,7 @@ def _apply_posix_process_limits(proc: subprocess.Popen) -> None:
         return
     if hasattr(resource, "prlimit"):
         limits = [
+            (resource.RLIMIT_AS, (memory_limit_bytes, memory_limit_bytes)),
             (resource.RLIMIT_CPU, (MAX_CPU_TIME_SECONDS, MAX_CPU_TIME_SECONDS + 1)),
             (resource.RLIMIT_FSIZE, (MAX_EDITOR_FILE_BYTES, MAX_EDITOR_FILE_BYTES)),
             (resource.RLIMIT_NOFILE, (64, 64)),
@@ -4853,6 +5029,9 @@ class _ProcessRunnerBase:
         except Exception:
             pass
 
+    def _after_process(self, proc: subprocess.Popen, run_id: int) -> None:
+        return
+
     def _mark_waiting_for_input(self, proc: subprocess.Popen, run_id: int) -> None:
         with self._state_lock:
             if self.proc is not proc or self.run_id != run_id or self.waiting_for_input:
@@ -4867,6 +5046,7 @@ class _ProcessRunnerBase:
         env: dict[str, str],
         disk_root: Optional[Path] = None,
         disk_limit_bytes: int = 0,
+        memory_limit_bytes: int = RUNNER_MEMORY_LIMIT_BYTES,
     ) -> None:
         with self._state_lock:
             if self.proc and self.proc.poll() is None:
@@ -4885,9 +5065,9 @@ class _ProcessRunnerBase:
             close_fds=True,
             **_popen_isolation_kwargs(),
         )
-        _apply_posix_process_limits(proc)
+        _apply_posix_process_limits(proc, memory_limit_bytes)
         try:
-            job_handle = _attach_windows_job(proc)
+            job_handle = _attach_windows_job(proc, memory_limit_bytes)
         except Exception as exc:
             _terminate_isolated_process(proc, None, force=True)
             try:
@@ -5039,6 +5219,10 @@ class _ProcessRunnerBase:
             if reason:
                 self._emit_output(proc, run_id, f"\n[{reason}]\n")
             if self._is_current(proc, run_id):
+                try:
+                    self._after_process(proc, run_id)
+                except Exception:
+                    pass
                 with self._state_lock:
                     self.proc = None
                     self.job_handle = None
@@ -5088,12 +5272,85 @@ class _ProcessRunnerBase:
 
 
 class Runner(_ProcessRunnerBase):
-    def start(self, code: str, user_dir: Optional[Path] = None, allowed_root: Optional[Path] = None) -> None:
+    def __init__(self, sid: str):
+        super().__init__(sid)
+        self._artifact_root: Optional[Path] = None
+        self._artifact_before: dict[str, tuple[int, int]] = {}
+
+    @staticmethod
+    def _artifact_manifest(root: Optional[Path]) -> dict[str, tuple[int, int]]:
+        if not root or not root.exists():
+            return {}
+        manifest: dict[str, tuple[int, int]] = {}
+        try:
+            paths = root.rglob("*")
+            for path in paths:
+                try:
+                    relative = path.relative_to(root)
+                    if ".eagleide" in relative.parts or not path.is_file():
+                        continue
+                    if path.suffix.lower() not in IMAGE_EXTENSIONS:
+                        continue
+                    stat = path.stat()
+                    manifest[relative.as_posix()] = (stat.st_mtime_ns, stat.st_size)
+                except (OSError, ValueError):
+                    continue
+        except OSError:
+            return manifest
+        return manifest
+
+    def _after_process(self, proc: subprocess.Popen, run_id: int) -> None:
+        after = self._artifact_manifest(self._artifact_root)
+        changed = [
+            path
+            for path, signature in after.items()
+            if self._artifact_before.get(path) != signature
+        ]
+        if not changed:
+            return
+        changed.sort(key=str.casefold)
+        artifacts = [
+            {
+                "path": path,
+                "name": Path(path).name,
+                "kind": "image",
+            }
+            for path in changed[:20]
+        ]
+        try:
+            socketio.emit("run_artifacts", {"artifacts": artifacts}, to=self.sid)
+        except Exception:
+            pass
+        for artifact in artifacts:
+            self._emit_output(
+                proc,
+                run_id,
+                f"[Image saved: {artifact['path']} — open it from File Browser]\n",
+            )
+        if len(changed) > len(artifacts):
+            self._emit_output(
+                proc,
+                run_id,
+                f"[{len(changed) - len(artifacts)} additional image files were created]\n",
+            )
+
+    def start(
+        self,
+        code: str,
+        user_dir: Optional[Path] = None,
+        allowed_root: Optional[Path] = None,
+        *,
+        memory_limit_bytes: int = RUNNER_MEMORY_LIMIT_BYTES,
+        disabled_modules: frozenset[str] = frozenset(),
+        source_name: str = "python-chart.py",
+    ) -> None:
         sbox = _prepare_runner_sandbox("pyide", self.sid)
         runner_py = sbox / "runner.py"
         runner_py.write_text(code, encoding="utf-8")
         cwd_path = user_dir if user_dir and user_dir.exists() else sbox
         allowed_root_path = allowed_root.resolve() if allowed_root and allowed_root.exists() else cwd_path.resolve()
+        self._artifact_root = allowed_root_path if allowed_root else None
+        self._artifact_before = self._artifact_manifest(self._artifact_root)
         write_budget = MAX_RUN_WRITE_BYTES
         used = 0
         try:
@@ -5110,9 +5367,16 @@ class Runner(_ProcessRunnerBase):
             "TEMP": str(cwd_path),
             "TMP": str(cwd_path),
             "EAGLE_MAX_CPU_SECONDS": str(MAX_CPU_TIME_SECONDS),
-            "EAGLE_MAX_MEMORY_BYTES": str(RUNNER_MEMORY_LIMIT_BYTES),
+            "EAGLE_MAX_MEMORY_BYTES": str(memory_limit_bytes),
             "EAGLE_MAX_FILE_BYTES": str(max(1024, min(MAX_EDITOR_FILE_BYTES, write_budget or 1024))),
             "EAGLE_RUN_WRITE_BUDGET_BYTES": str(write_budget),
+            "EAGLE_DISABLED_MODULES": json.dumps(sorted(disabled_modules)),
+            "EAGLE_RUN_SOURCE_NAME": Path(source_name or "python-chart.py").name,
+            "MPLBACKEND": "Agg",
+            "OMP_NUM_THREADS": "1",
+            "OPENBLAS_NUM_THREADS": "1",
+            "MKL_NUM_THREADS": "1",
+            "NUMEXPR_NUM_THREADS": "1",
         })
         self._launch(
             [sys.executable, "-u", str(SANDBOX_WORKER), str(runner_py), str(allowed_root_path)],
@@ -5120,6 +5384,7 @@ class Runner(_ProcessRunnerBase):
             env,
             disk_root=allowed_root_path,
             disk_limit_bytes=min(USER_STORAGE_LIMIT_MB * 1024 * 1024, used + MAX_RUN_WRITE_BYTES),
+            memory_limit_bytes=memory_limit_bytes,
         )
 
 
@@ -5304,12 +5569,17 @@ def _resolve_execution_context(payload: dict, sid: str) -> tuple[Optional[dict],
     }, None
 
 
-def _try_acquire_execution_slot(sid: str, context: dict) -> tuple[bool, str]:
+def _try_acquire_execution_slot(
+    sid: str,
+    context: dict,
+    requested_memory_bytes: int = RUNNER_MEMORY_LIMIT_BYTES,
+) -> tuple[bool, str]:
     now = time.time()
     identity = str(context.get("identity") or "")
     rate_identity = str(context.get("rate_identity") or identity)
     guest_ip = str(context.get("guest_ip") or "")
-    pressure_reason = _execution_pressure_reason()
+    requested_memory_bytes = max(128 * 1024 * 1024, int(requested_memory_bytes))
+    pressure_reason = _execution_pressure_reason(requested_memory_bytes)
     if pressure_reason:
         _run_metrics["pressure_rejected"] += 1
         return False, pressure_reason
@@ -5338,9 +5608,24 @@ def _try_acquire_execution_slot(sid: str, context: dict) -> tuple[bool, str]:
         if len(history) >= MAX_RUN_STARTS_PER_WINDOW:
             _run_metrics["rate_rejected"] += 1
             return False, "Run rate limit reached; wait a few seconds before trying again"
-        if len(_active_runs_by_sid) >= MAX_CONCURRENT_RUNS:
+        configured_concurrency = _normalized_python_runtime_settings().get(
+            "python_max_concurrent_runs",
+            _default_run_capacity,
+        )
+        configured_concurrency = min(MAX_CONCURRENT_RUNS, int(configured_concurrency))
+        if len(_active_runs_by_sid) >= configured_concurrency:
             _run_metrics["capacity_rejected"] += 1
             return False, "Execution capacity is busy; try again shortly"
+        total_memory, _ = _system_memory_status()
+        if total_memory > 0:
+            reserved_memory = sum(
+                max(0, int(record.get("reserved_bytes") or 0))
+                for record in _active_runs_by_sid.values()
+            )
+            server_headroom = max(1024 * 1024 * 1024, int(total_memory * 0.20))
+            if reserved_memory + requested_memory_bytes > max(0, total_memory - server_headroom):
+                _run_metrics["pressure_rejected"] += 1
+                return False, "Execution memory capacity is busy; try again shortly"
         if guest_ip:
             guest_count = sum(1 for row in _active_runs_by_sid.values() if row.get("guest_ip") == guest_ip)
             if guest_count >= MAX_GUEST_RUNS_PER_IP:
@@ -5348,7 +5633,13 @@ def _try_acquire_execution_slot(sid: str, context: dict) -> tuple[bool, str]:
                 return False, "Guest execution capacity is busy; try again shortly"
 
         history.append(now)
-        record = {"identity": identity, "guest_ip": guest_ip, "started_at": now, "role": context.get("role", "guest")}
+        record = {
+            "identity": identity,
+            "guest_ip": guest_ip,
+            "started_at": now,
+            "role": context.get("role", "guest"),
+            "reserved_bytes": requested_memory_bytes,
+        }
         _active_runs_by_sid[sid] = record
         _active_sid_by_identity[identity] = sid
         _run_metrics["admitted"] += 1
@@ -5383,7 +5674,15 @@ def _windows_memory_status() -> tuple[int, int]:
     return 0, 0
 
 
-def _execution_pressure_reason() -> str:
+def _system_memory_status() -> tuple[int, int]:
+    total, used = _parse_meminfo_bytes()
+    available = max(0, total - used)
+    if total <= 0:
+        total, available = _windows_memory_status()
+    return total, available
+
+
+def _execution_pressure_reason(requested_memory_bytes: int = 0) -> str:
     try:
         disk = shutil.disk_usage(BASE_DIR)
         minimum_disk = max(256 * 1024 * 1024, int(disk.total * 0.02))
@@ -5392,11 +5691,10 @@ def _execution_pressure_reason() -> str:
     except Exception:
         pass
     try:
-        total, used = _parse_meminfo_bytes()
-        available = max(0, total - used)
-        if total <= 0:
-            total, available = _windows_memory_status()
-        if total > 0 and available < max(256 * 1024 * 1024, int(total * 0.08)):
+        total, available = _system_memory_status()
+        base_headroom = max(512 * 1024 * 1024, int(total * 0.08))
+        launch_headroom = min(max(0, int(requested_memory_bytes)), 256 * 1024 * 1024)
+        if total > 0 and available < base_headroom + launch_headroom:
             return "Server memory is below its execution safety threshold"
     except Exception:
         pass
@@ -5496,16 +5794,25 @@ def on_run_code(payload):
         emit("output", {"data": f"[{context_error or 'Run rejected'}]\n"})
         emit("finished", {})
         return
-    admitted, admission_error = _try_acquire_execution_slot(request.sid, context)
+
+    # Resolve language and resource reservation before admission so the server
+    # never admits more potential memory than it can safely sustain.
+    file_path = str(payload.get("file_path") or "")
+    language_hint = _normalize_language_hint(payload.get("language"), file_path)
+    is_js = language_hint == "javascript" or (Path(file_path).suffix.lower() == ".js" if file_path else False)
+    runtime_settings = _normalized_python_runtime_settings()
+    python_memory_bytes = int(runtime_settings["python_memory_limit_mb"]) * 1024 * 1024
+    requested_memory_bytes = RUNNER_MEMORY_LIMIT_BYTES if is_js else python_memory_bytes
+    admitted, admission_error = _try_acquire_execution_slot(
+        request.sid,
+        context,
+        requested_memory_bytes,
+    )
     if not admitted:
         emit("output", {"data": f"[Run rejected: {admission_error}]\n"})
         emit("finished", {})
         return
 
-    # Choose the appropriate runner based on language hint or file extension.
-    file_path = str(payload.get("file_path") or "")
-    language_hint = _normalize_language_hint(payload.get("language"), file_path)
-    is_js = language_hint == "javascript" or (Path(file_path).suffix.lower() == ".js" if file_path else False)
     if is_js:
         r = _get_js_runner(request.sid)
     else:
@@ -5514,7 +5821,14 @@ def on_run_code(payload):
         if isinstance(r, JsRunner):
             r.start(code, user_dir=context.get("run_dir"))
         else:
-            r.start(code, user_dir=context.get("run_dir"), allowed_root=context.get("allowed_root"))
+            r.start(
+                code,
+                user_dir=context.get("run_dir"),
+                allowed_root=context.get("allowed_root"),
+                memory_limit_bytes=python_memory_bytes,
+                disabled_modules=disabled_module_roots(runtime_settings.get("python_module_access")),
+                source_name=Path(file_path).name if file_path else "untitled.py",
+            )
     except Exception as e:
         _pop_runner(request.sid)
         _release_execution_slot(request.sid)
@@ -7406,9 +7720,23 @@ def admin_server_health():
     with _server_health_lock:
         event_feed = list(reversed(_read_json_list_file(SERVER_EVENTS_FILE)[-MAX_SERVER_HEALTH_ALERTS:]))
     with _execution_admission_lock:
+        python_runtime = _normalized_python_runtime_settings()
         execution_health = {
             "active": len(_active_runs_by_sid),
-            "capacity": MAX_CONCURRENT_RUNS,
+            "capacity": min(
+                MAX_CONCURRENT_RUNS,
+                int(python_runtime["python_max_concurrent_runs"]),
+            ),
+            "hard_capacity": MAX_CONCURRENT_RUNS,
+            "python_memory_limit_mb": int(python_runtime["python_memory_limit_mb"]),
+            "reserved_memory_mb": round(
+                sum(
+                    max(0, int(record.get("reserved_bytes") or 0))
+                    for record in _active_runs_by_sid.values()
+                )
+                / (1024 * 1024),
+                1,
+            ),
             "admitted_total": int(_run_metrics.get("admitted", 0)),
             "completed_total": int(_run_metrics.get("completed", 0)),
             "capacity_rejected_total": int(_run_metrics.get("capacity_rejected", 0)),
@@ -7502,6 +7830,24 @@ if __name__ == "__main__":
     except (AttributeError, OSError, ValueError):
         pass
     print(f"Async mode: {socketio.async_mode}", flush=True)
+    containment = landlock_status()
+    if containment.get("available"):
+        print(
+            f"Student native modules: Linux Landlock ABI {containment.get('abi')} ready "
+            "(applied per Python worker)",
+            flush=True,
+        )
+    else:
+        print(
+            "WARNING: SQLite, Inspect, NumPy, and Matplotlib will fail closed: "
+            f"{containment.get('reason') or 'Linux Landlock ABI 3+ is unavailable'}",
+            flush=True,
+        )
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        print(
+            "WARNING: Run EagleIDE as a dedicated unprivileged service account for defense in depth.",
+            flush=True,
+        )
     print(f"EagleIDE server starting on http://{host}:{port}", flush=True)
     print("Press Ctrl+C to stop.", flush=True)
     _append_server_log(f"Server listening on http://{host}:{port} (async={socketio.async_mode})", "INFO")

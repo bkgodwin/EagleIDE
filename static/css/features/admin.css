@@ -86,6 +86,35 @@
 .admin-wiki-settings-card span { color: var(--theme-text-dim); font-size: 12px; line-height: 1.45; }
 .admin-settings-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; min-height: 64px; padding: 12px 24px; border-top: 1px solid var(--theme-border-mid); background: var(--theme-panel-hdr); }
 .admin-settings-actions span { margin-right: auto; color: #7edb83; font-size: 12px; }
+.python-containment-status { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 4px 14px; margin-bottom: 18px; padding: 14px 16px; border: 1px solid var(--theme-border-mid); border-left: 4px solid #e6ad35; background: var(--theme-input-bg); }
+.python-containment-status strong { color: var(--theme-text); }
+.python-containment-status span { color: var(--theme-text-dim); font-size: 12px; }
+.python-containment-status.ready { border-left-color: #4bc56b; }
+.python-containment-status.ready strong { color: #79df92; }
+.python-containment-status.blocked { border-left-color: #e2404d; }
+.python-containment-status.blocked strong { color: #ff8d94; }
+.python-runtime-limit-grid { margin-bottom: 14px; }
+#adminSettingsModal .python-runtime-limit-grid label small { color: var(--theme-text-dim); line-height: 1.35; }
+.python-runtime-live-stats { min-height: 36px; margin-bottom: 18px; padding: 9px 12px; border: 1px solid var(--theme-border-mid); color: var(--theme-text-dim); font-size: 12px; }
+.python-module-access-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 4px 0 10px; }
+.python-module-access-heading > div { display: grid; gap: 3px; }
+.python-module-access-heading strong { color: var(--theme-text); }
+.python-module-access-heading span { color: var(--theme-text-dim); font-size: 11px; }
+.python-module-access-list { display: grid; gap: 14px; }
+.python-module-category { border: 1px solid var(--theme-border-mid); background: rgba(0,0,0,.08); }
+.python-module-category h5 { margin: 0; padding: 9px 12px; border-bottom: 1px solid var(--theme-border-mid); color: var(--columbia-blue); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.python-module-category-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }
+#adminSettingsModal .python-module-toggle { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 0 9px; min-height: 68px; margin: 0; padding: 10px 12px; border-right: 1px solid var(--theme-border-mid); border-bottom: 1px solid var(--theme-border-mid); cursor: pointer; }
+.python-module-toggle input { width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--columbia-blue); }
+.python-module-toggle span { display: grid; gap: 3px; }
+.python-module-toggle strong { color: var(--theme-text); font-size: 12px; }
+.python-module-toggle small { color: var(--theme-text-dim); font-size: 10px; line-height: 1.35; }
+.python-module-toggle em { color: #e6ad35; font-size: 9px; font-style: normal; text-transform: uppercase; }
+.python-security-locked-list { margin-top: 16px; border: 1px solid var(--theme-border-mid); padding: 10px 12px; }
+.python-security-locked-list summary { color: var(--theme-text); cursor: pointer; font-weight: 700; }
+.python-security-locked-list p { color: var(--theme-text-dim); font-size: 11px; line-height: 1.45; }
+#pythonSecurityLockedModules { display: flex; flex-wrap: wrap; gap: 6px; }
+#pythonSecurityLockedModules code { padding: 3px 6px; border: 1px solid rgba(226,64,77,.32); color: #ff9ba2; background: rgba(226,64,77,.08); }
 
 @media (max-width: 900px) {
   .admin-create-teacher { grid-template-columns: 1fr; }
@@ -93,6 +122,7 @@
   .admin-settings-workspace { grid-template-columns: 150px minmax(0,1fr); }
   .admin-settings-fields.three-column,
   .admin-runtime-permissions { grid-template-columns: 1fr 1fr; }
+  .python-module-category-grid { grid-template-columns: 1fr; }
 }
     .server-health-grid{ display:grid; gap:10px; grid-template-columns: repeat(4, minmax(120px, 1fr)); margin-bottom:12px; }
     .server-health-card{ border:1px solid var(--theme-border-mid); border-radius:10px; padding:10px; background:var(--theme-input-bg); }

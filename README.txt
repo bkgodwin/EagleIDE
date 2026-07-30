@@ -35,8 +35,10 @@ isolated HTML preview deployment, monitoring, and load-test guidance.
 ================================================================================
 
 Required:
-- Python 3.9 or higher  (uses PEP 585 built-in generics; 3.8 is NOT supported)
+- Python 3.12 or higher (required by the pinned Matplotlib/NumPy runtime)
 - Node.js 18 or higher (for JavaScript execution)
+- Linux with Landlock ABI 3+ for SQLite, Inspect, NumPy, and Matplotlib in
+  student sandboxes. These native modules fail closed on unsupported hosts.
 - Modern web browser (Chrome, Firefox, Edge, Safari)
 - Internet connection (for CDN resources; required at page load for CodeMirror,
   Socket.IO, marked, DOMPurify, highlight.js, and Google Fonts)
@@ -189,7 +191,7 @@ Students can:
 2. Run code with the "Run ▶" button
 3. Stop execution with "Stop ⏹"
 4. Create, save, and run .py, .js, and .html files
-5. Import/export .py, .js, .html, .css, or .txt files
+5. Import/export source, text, CSV, JSON, Markdown, image, and SQLite files
 6. Adjust font size with the slider
 7. View output in the terminal panel
 8. Provide input when programs use input()
@@ -204,6 +206,8 @@ Features:
 - Real-time code execution (30 second timeout)
 - Interactive input support (input() works in both Python and JavaScript)
 - Drag-and-drop file organization
+- Scaled previews for PNG, JPEG, GIF, and WebP images
+- Safe metadata views for .db, .sqlite, and .sqlite3 database artifacts
 
 Account and classroom defaults:
 - New student and teacher workspaces include an Examples folder with Python, JavaScript, HTML, CSS, CSV, and text starter files.
@@ -253,6 +257,48 @@ JAVASCRIPT SUPPORT
 - Output (console.log, console.error, etc.) appears in the shell
 - All shell input features work the same as with Python
 - JavaScript files are identified by the ⚡ icon in the file browser
+
+--------------------------------------------------
+PYTHON STANDARD LIBRARY, SQLITE, AND CHARTS
+--------------------------------------------------
+Classroom-safe standard-library modules are available, including dataclasses,
+collections.abc, contextlib, datetime, functools, inspect, itertools, logging,
+pathlib, statistics, time, timeit, typing, and unittest. Students may also
+import Python modules and packages saved in their own workspace.
+
+Process creation, raw networking, native-memory/FFI access, module reloads,
+and server-only packages stay blocked. The Admin Settings → Python Runtime
+page can disable managed classroom modules globally. Security-locked modules
+cannot be enabled from the dashboard.
+
+SQLite example:
+
+  import sqlite3
+
+  with sqlite3.connect("classwork.sqlite3") as connection:
+      connection.execute("CREATE TABLE IF NOT EXISTS scores (name TEXT, score INTEGER)")
+      connection.execute("INSERT INTO scores VALUES (?, ?)", ("Ava", 95))
+      rows = connection.execute("SELECT * FROM scores").fetchall()
+      print(rows)
+
+SQLite databases must be inside the student's workspace; ":memory:" is also
+supported. URI database paths, extension loading, and access outside the
+workspace are blocked. Database files appear in the File Browser and can be
+downloaded, renamed, moved, or deleted, but are not opened as editable text.
+
+Matplotlib example:
+
+  import matplotlib.pyplot as plt
+
+  plt.plot([1, 2, 3], [2, 4, 3])
+  plt.title("My chart")
+  plt.show()
+
+The non-interactive Agg backend is always used. plt.show() saves each open
+figure as a PNG under the workspace's charts folder. The shell reports the
+saved path, the File Browser refreshes, and clicking the PNG opens a scaled
+image preview in the editor area. Calling savefig() directly also creates a
+normal image artifact that appears after the run.
 
 ================================================================================
                          5A. PUBLIC CODING WIKI
@@ -428,6 +474,10 @@ ADMIN SETTINGS (⚙ button)
 - Edit page title and top bar color
 - Configure AI settings (Ollama URL, model, assistant preprompt)
 - Enable/disable AI features globally
+- Configure Python memory per run (750 MB by default)
+- Configure the site-wide concurrent run limit (4 by default)
+- Enable or disable managed Python modules through a dependency-aware access list
+- View live active-run, reserved-memory, and native-containment status
 - Configure HTML runtime settings
 - Enable/disable student self-registration
 - Create teacher accounts
@@ -542,14 +592,24 @@ Python:
 - Code runs in a dedicated sandbox worker process (sandbox_worker.py), separate
   from the web server interpreter
 - User code executes in a dedicated namespace with explicit safe builtins only
-- Blocked modules include: subprocess, multiprocessing, socket, socketserver,
-  ftplib, http, urllib, xmlrpc, smtplib, imaplib, poplib, nntplib, telnetlib,
-  ssl, ctypes, cffi, mmap, inspect, resource, fcntl, pty, asyncio.subprocess
+- Imports are restricted to the Python standard library, reviewed
+  Matplotlib prerequisites, and modules stored in the student's workspace.
+  Server-only packages are not exposed just because they are installed.
+- Security-locked modules include process, raw networking, FFI/native-memory,
+  GUI, and interpreter-control surfaces such as subprocess, multiprocessing,
+  socket, ssl, ctypes, cffi, mmap, resource, fcntl, pty, and tkinter.
+- Linux Landlock ABI 3+ provides the native filesystem boundary required by
+  sqlite3, inspect, NumPy, and Matplotlib. These modules fail closed without it.
 - File I/O is boundary-checked against the user's workspace root (realpath +
   normalized path checks to block traversal and symlink escapes)
 - os process-spawn APIs (fork/exec/spawn/system/popen) are blocked; sensitive
   os filesystem helpers are path-guarded to the same workspace boundary
-- Resource limits: 256 MB virtual memory, 64 open file descriptors (Linux)
+- Resource limits include 750 MB virtual memory by default, 64 open file
+  descriptors, bounded processes/threads, CPU time, file size, write budget,
+  output, and active wall time
+- SQLite URI paths and extension loading are blocked; native writes remain
+  subject to workspace, storage, per-file, and run limits
+- Matplotlib uses the Agg backend with one thread for common numerical runtimes
 - Wall-clock timeout enforced per execution
 - Output capped at a maximum byte limit to prevent flooding
 
@@ -581,7 +641,7 @@ All HTTP responses include:
 --------------------------------------------------
 STORAGE LIMITS
 --------------------------------------------------
-- Per-user storage cap (configurable in config.py, default 10 MB)
+- Per-user storage cap (configurable in config.py, default 250 MB)
 - Per-account file count limit (default 100 files)
 - Per-folder file count limit (default 20 files)
 
@@ -596,6 +656,9 @@ SECURITY RECOMMENDATIONS FOR PRODUCTION
 6. Regularly review access logs for suspicious patterns
 7. For JavaScript execution: network-isolate the server if students
    could abuse Node.js network APIs
+8. Run EagleIDE as a dedicated unprivileged service account, not root
+9. Confirm "Native containment ready" in Admin Settings → Python Runtime before
+   assigning SQLite, Inspect, NumPy, or Matplotlib work
 
 ================================================================================
                           11. FILE STRUCTURE
@@ -604,6 +667,8 @@ SECURITY RECOMMENDATIONS FOR PRODUCTION
 Core Files:
   app.py              - Main Flask application server
   sandbox_worker.py   - Isolated Python execution worker runtime
+  sandbox_policy.py   - Student module catalog and security-locked import policy
+  sandbox_containment.py - Linux Landlock filesystem containment
   config.py           - Configuration settings and defaults
   index.html          - Single-page web interface
   challenges.csv      - Coding challenge bank
@@ -629,8 +694,8 @@ Auto-Generated Files:
 WARNING: SECURITY
 --------------------------------------------------
 - Set a strong admin password at first startup
-- Python code runs in a sandboxed subprocess with import and filesystem
-  restrictions; JavaScript runs via Node.js (less sandboxed)
+- Python code runs in a sandboxed subprocess with import, native filesystem,
+  process, and resource restrictions; native modules require Linux Landlock
 - Execution timeouts prevent infinite loops
 - For public internet exposure: always use HTTPS via a reverse proxy
 - The .admin_key file must be kept secure; losing it requires re-running

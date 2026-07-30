@@ -1,12 +1,23 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import os
+import socket as _compat_socket
+import subprocess as _compat_subprocess
 from pathlib import Path
 from typing import Any
 
+from sandbox_containment import apply_landlock
+from sandbox_policy import (
+    CONTAINMENT_REQUIRED_MODULES,
+    SECURITY_LOCKED_EXACT_MODULES,
+    SECURITY_LOCKED_MODULES,
+    is_student_module_root,
+)
+
 INPUT_TOKEN = "[[_IDE_INPUT_]]"
-MAX_MEMORY_BYTES = max(32 * 1024 * 1024, int(os.environ.get("EAGLE_MAX_MEMORY_BYTES", 256 * 1024 * 1024)))
+MAX_MEMORY_BYTES = max(32 * 1024 * 1024, int(os.environ.get("EAGLE_MAX_MEMORY_BYTES", 750 * 1024 * 1024)))
 MAX_CPU_SECONDS = max(1, int(os.environ.get("EAGLE_MAX_CPU_SECONDS", 8)))
 MAX_FILE_BYTES = max(1024, int(os.environ.get("EAGLE_MAX_FILE_BYTES", 10 * 1024 * 1024)))
 MAX_WRITE_BYTES = max(0, int(os.environ.get("EAGLE_RUN_WRITE_BUDGET_BYTES", 10 * 1024 * 1024)))
@@ -14,36 +25,6 @@ MAX_NEW_FILES = 20
 MAX_PROCESSES_AND_THREADS = 16
 MAX_NOFILE = 64
 
-BLOCKED_ROOT_MODULES = frozenset(
-    {
-        "subprocess",
-        "multiprocessing",
-        "socket",
-        "socketserver",
-        "ftplib",
-        "http",
-        "urllib",
-        "xmlrpc",
-        "smtplib",
-        "imaplib",
-        "poplib",
-        "nntplib",
-        "telnetlib",
-        "ssl",
-        "ctypes",
-        "cffi",
-        "mmap",
-        "asyncio",
-        "inspect",
-        "resource",
-        "fcntl",
-        "pty",
-        "posix",
-        "nt",
-        "_posixsubprocess",
-    }
-)
-BLOCKED_EXACT_MODULES = frozenset({"asyncio.subprocess"})
 BLOCKED_OS_CALLS = (
     "system",
     "popen",
@@ -63,7 +44,8 @@ BLOCKED_OS_CALLS = (
     "spawnvpe",
     "chdir",
 )
-GUARDED_OS_PATH_CALLS = ("listdir", "scandir", "walk", "readlink", "remove", "unlink", "rmdir", "removedirs", "mkdir", "makedirs")
+READ_GUARDED_OS_PATH_CALLS = ("listdir", "scandir", "walk", "readlink")
+WRITE_GUARDED_OS_PATH_CALLS = ("remove", "unlink", "rmdir", "removedirs", "mkdir", "makedirs")
 
 
 class PathPolicy:
@@ -74,6 +56,8 @@ class PathPolicy:
         "_commonpath",
         "_fspath",
         "_isabs",
+        "_isdir",
+        "_isfile",
         "_join",
         "_realpath",
     )
@@ -83,6 +67,8 @@ class PathPolicy:
 
         self._fspath = os.fspath
         self._isabs = os.path.isabs
+        self._isdir = os.path.isdir
+        self._isfile = os.path.isfile
         self._join = os.path.join
         self._abspath = os.path.abspath
         self._realpath = os.path.realpath
@@ -110,6 +96,24 @@ class PathPolicy:
             raise PermissionError(f"Access to {original!r} is not allowed in this environment")
         if common != self.allowed_root:
             raise PermissionError(f"Access to {original!r} is not allowed in this environment")
+
+    def has_local_module(self, root: str) -> bool:
+        """Return whether a top-level import resolves to student workspace code."""
+
+        name = str(root or "").strip()
+        if not name or not name.isidentifier():
+            return False
+        for base in (self._cwd, self.allowed_root):
+            module_file = self._realpath(self._join(base, f"{name}.py"))
+            package_dir = self._realpath(self._join(base, name))
+            try:
+                self.assert_allowed(module_file, module_file)
+                self.assert_allowed(package_dir, package_dir)
+            except PermissionError:
+                continue
+            if self._isfile(module_file) or self._isdir(package_dir):
+                return True
+        return False
 
 
 class WriteBudget:
@@ -194,14 +198,35 @@ class SafeOpen:
 
 
 class SafeImport:
-    __slots__ = ("_blocked_exact", "_blocked_roots", "_harden_os_module", "_orig_import", "_safe_open")
+    __slots__ = (
+        "_artifact_manager",
+        "_blocked_exact",
+        "_blocked_roots",
+        "_harden_os_module",
+        "_is_allowed_module",
+        "_is_local_module",
+        "_orig_import",
+        "_safe_open",
+    )
 
-    def __init__(self, policy: PathPolicy, safe_open: SafeOpen):
+    def __init__(
+        self,
+        policy: PathPolicy,
+        safe_open: SafeOpen,
+        blocked_roots: frozenset[str],
+        blocked_exact: frozenset[str],
+        artifact_manager: "ChartArtifactManager",
+    ):
         self._orig_import = __import__
-        self._blocked_roots = BLOCKED_ROOT_MODULES
-        self._blocked_exact = BLOCKED_EXACT_MODULES
-        self._harden_os_module = _make_os_hardener(policy)
+        self._blocked_roots = blocked_roots
+        self._blocked_exact = blocked_exact
+        import sys
+
+        self._harden_os_module = _make_os_hardener(policy, (sys.base_prefix, sys.prefix))
+        self._is_allowed_module = is_student_module_root
+        self._is_local_module = policy.has_local_module
         self._safe_open = safe_open
+        self._artifact_manager = artifact_manager
 
     def __call__(
         self,
@@ -214,6 +239,8 @@ class SafeImport:
         root = name.split(".", 1)[0]
         if root in self._blocked_roots or name in self._blocked_exact:
             raise ImportError(f"Module {name!r} is not available in this environment")
+        if level <= 0 and root and not self._is_allowed_module(root) and not self._is_local_module(root):
+            raise ImportError(f"Module {name!r} is not available in this environment")
         module = self._orig_import(name, globals, locals, fromlist, level)
         if root == "os":
             self._harden_os_module(module)
@@ -224,6 +251,8 @@ class SafeImport:
                 return safe_open(path_obj, mode, buffering, encoding, errors, newline)
 
             module.Path.open = _path_open
+        if root == "matplotlib":
+            self._artifact_manager.patch_show()
         return module
 
 
@@ -231,11 +260,34 @@ def _blocked_call(*_args: Any, **_kwargs: Any):
     raise PermissionError("This operation is not allowed in this environment")
 
 
-def _make_os_hardener(policy: PathPolicy):
-    def _guarded_os_path_call(os_fn):
-        def _wrapper(path: Any = ".", *args: Any, **kwargs: Any):
-            normalized = policy.normalize(path)
+def _make_os_hardener(policy: PathPolicy, trusted_read_roots: tuple[str, ...] = ()):
+    realpath = os.path.realpath
+    abspath = os.path.abspath
+    commonpath = os.path.commonpath
+    read_roots = tuple(realpath(abspath(root)) for root in trusted_read_roots)
+
+    def _assert_read_allowed(path: Any) -> str:
+        normalized = policy.normalize(path)
+        try:
             policy.assert_allowed(normalized, path)
+            return normalized
+        except PermissionError:
+            pass
+        for root in read_roots:
+            try:
+                if commonpath([normalized, root]) == root:
+                    return normalized
+            except (TypeError, ValueError):
+                continue
+        raise PermissionError(f"Access to {path!r} is not allowed in this environment")
+
+    def _guarded_os_path_call(os_fn, *, writable: bool):
+        def _wrapper(path: Any = ".", *args: Any, **kwargs: Any):
+            if writable:
+                normalized = policy.normalize(path)
+                policy.assert_allowed(normalized, path)
+            else:
+                normalized = _assert_read_allowed(path)
             return os_fn(normalized, *args, **kwargs)
 
         return _wrapper
@@ -256,9 +308,12 @@ def _make_os_hardener(policy: PathPolicy):
         for fn_name in BLOCKED_OS_CALLS:
             if hasattr(module, fn_name):
                 setattr(module, fn_name, _blocked_call)
-        for fn_name in GUARDED_OS_PATH_CALLS:
+        for fn_name in READ_GUARDED_OS_PATH_CALLS:
             if hasattr(module, fn_name):
-                setattr(module, fn_name, _guarded_os_path_call(getattr(module, fn_name)))
+                setattr(module, fn_name, _guarded_os_path_call(getattr(module, fn_name), writable=False))
+        for fn_name in WRITE_GUARDED_OS_PATH_CALLS:
+            if hasattr(module, fn_name):
+                setattr(module, fn_name, _guarded_os_path_call(getattr(module, fn_name), writable=True))
         if hasattr(module, "rename"):
             setattr(module, "rename", _guarded_os_move(getattr(module, "rename")))
         if hasattr(module, "replace"):
@@ -283,6 +338,140 @@ def _safe_input(prompt: Any = "") -> str:
     return user_input
 
 
+class ChartArtifactManager:
+    """Turn ``plt.show()`` into deterministic PNG artifacts."""
+
+    __slots__ = ("_charts_dir", "_counter", "_patched", "_source_stem")
+
+    def __init__(self, workspace: str):
+        source_name = str(os.environ.get("EAGLE_RUN_SOURCE_NAME") or "python-chart")
+        source_stem = Path(source_name).stem or "python-chart"
+        safe_stem = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in source_stem).strip("-_")
+        self._source_stem = safe_stem[:80] or "python-chart"
+        self._charts_dir = Path(workspace) / "charts"
+        self._counter = 0
+        self._patched = False
+
+    def patch_show(self) -> None:
+        if self._patched:
+            return
+        import sys
+
+        pyplot = sys.modules.get("matplotlib.pyplot")
+        if pyplot is None:
+            return
+        self._patched = True
+
+        def save_open_figures(*_args: Any, **_kwargs: Any) -> None:
+            figure_numbers = list(pyplot.get_fignums())
+            if not figure_numbers:
+                print("[Matplotlib: no open figures to save]")
+                return
+            self._charts_dir.mkdir(parents=True, exist_ok=True)
+            for figure_number in figure_numbers:
+                self._counter += 1
+                figure = pyplot.figure(figure_number)
+                target = self._charts_dir / f"{self._source_stem}-figure-{self._counter}.png"
+                figure.savefig(target, format="png", dpi=120, bbox_inches="tight")
+                pyplot.close(figure)
+
+        pyplot.show = save_open_figures
+
+
+def _configured_disabled_modules() -> frozenset[str]:
+    raw_value = str(os.environ.get("EAGLE_DISABLED_MODULES") or "[]")
+    try:
+        parsed = json.loads(raw_value)
+    except Exception:
+        parsed = []
+    if not isinstance(parsed, list):
+        return frozenset()
+    return frozenset(
+        str(value).strip()
+        for value in parsed
+        if str(value).strip() and str(value).strip().replace("_", "").isalnum()
+    )
+
+
+def _apply_native_containment(allowed_root: str, code_path: Path) -> dict[str, Any]:
+    import sys
+
+    readonly_paths = {
+        code_path,
+        Path(__file__).resolve(),
+        Path(sys.base_prefix).resolve(),
+        Path(sys.prefix).resolve(),
+    }
+    return apply_landlock(allowed_root, readonly_paths=readonly_paths)
+
+
+def _purge_security_modules(policy: PathPolicy, disabled_modules: frozenset[str]) -> None:
+    """Remove privileged bootstrap modules before untrusted code can inspect them."""
+
+    import sys
+
+    blocked = set(SECURITY_LOCKED_MODULES | disabled_modules)
+    # The platform backend is imported by core stdlib modules such as shutil.
+    # Keep its already-loaded module object but harden it in place; direct
+    # student imports are still rejected by SafeImport.
+    platform_roots = {"nt", "posix"}
+    for platform_root in platform_roots:
+        module = sys.modules.get(platform_root)
+        if module is not None:
+            for call_name in BLOCKED_OS_CALLS:
+                if hasattr(module, call_name):
+                    setattr(module, call_name, _blocked_call)
+    subprocess_module = sys.modules.get("subprocess")
+    if subprocess_module is not None:
+        for call_name in (
+            "Popen",
+            "call",
+            "check_call",
+            "check_output",
+            "getoutput",
+            "getstatusoutput",
+            "run",
+            "_fork_exec",
+        ):
+            if hasattr(subprocess_module, call_name):
+                setattr(subprocess_module, call_name, _blocked_call)
+        try:
+            _make_os_hardener(policy, (sys.base_prefix, sys.prefix))(subprocess_module.os)
+        except Exception:
+            pass
+    socket_module = sys.modules.get("socket")
+    if socket_module is not None:
+        for call_name in (
+            "SocketType",
+            "create_connection",
+            "create_server",
+            "fromfd",
+            "getaddrinfo",
+            "getfqdn",
+            "gethostbyaddr",
+            "gethostbyname",
+            "gethostbyname_ex",
+            "socket",
+            "socketpair",
+        ):
+            if hasattr(socket_module, call_name):
+                setattr(socket_module, call_name, _blocked_call)
+    # Reloading an already-hardened module could restore privileged process or
+    # network functions without a normal import. Student programs do not need
+    # runtime module reloads, so remove that bypass while retaining the rest of
+    # importlib for normal standard-library dependencies.
+    import importlib
+
+    importlib.reload = _blocked_call
+    blocked.add("sandbox_containment")
+    for module_name in list(sys.modules):
+        root = module_name.split(".", 1)[0]
+        if root in platform_roots or root in {"socket", "subprocess"}:
+            continue
+        if module_name == "sandbox_containment" or root in blocked:
+            sys.modules.pop(module_name, None)
+
+
 def _apply_resource_limits() -> None:
     try:
         import resource
@@ -305,17 +494,29 @@ def _apply_resource_limits() -> None:
             pass
 
 
-def _build_safe_builtins(policy: PathPolicy, budget: WriteBudget) -> dict[str, Any]:
+def _build_safe_builtins(
+    policy: PathPolicy,
+    budget: WriteBudget,
+    blocked_roots: frozenset[str],
+    blocked_exact: frozenset[str],
+    artifact_manager: ChartArtifactManager,
+) -> dict[str, Any]:
     builtins_mod = __import__("builtins")
     safe = dict(builtins_mod.__dict__)
     safe_open = SafeOpen(policy, budget)
     safe["open"] = safe_open
-    safe["__import__"] = SafeImport(policy, safe_open)
+    safe["__import__"] = SafeImport(policy, safe_open, blocked_roots, blocked_exact, artifact_manager)
     safe["input"] = _safe_input
     return safe
 
 
-def _install_audit_hook(policy: PathPolicy, code_path: Path, budget: WriteBudget) -> None:
+def _install_audit_hook(
+    policy: PathPolicy,
+    code_path: Path,
+    budget: WriteBudget,
+    blocked_roots: frozenset[str],
+    blocked_exact: frozenset[str],
+) -> None:
     """Enforce the path/import/process boundary across alternate stdlib APIs."""
     import sys
 
@@ -323,6 +524,7 @@ def _install_audit_hook(policy: PathPolicy, code_path: Path, budget: WriteBudget
     abspath = os.path.abspath
     commonpath = os.path.commonpath
     exists = os.path.exists
+    module_root_allowed = is_student_module_root
     trusted_read_roots = {
         realpath(abspath(sys.base_prefix)),
         realpath(abspath(sys.prefix)),
@@ -387,9 +589,21 @@ def _install_audit_hook(policy: PathPolicy, code_path: Path, budget: WriteBudget
         if event == "import" and args:
             name = str(args[0] or "")
             root = name.split(".", 1)[0]
-            if root in BLOCKED_ROOT_MODULES or name in BLOCKED_EXACT_MODULES:
+            if root in blocked_roots or name in blocked_exact:
+                raise ImportError(f"Module {name!r} is not available in this environment")
+            if root and not module_root_allowed(root) and not policy.has_local_module(root):
                 raise ImportError(f"Module {name!r} is not available in this environment")
             return
+        if event == "sqlite3.connect" and args:
+            database = args[0]
+            if str(database) == ":memory:":
+                return
+            if str(database).strip().casefold().startswith("file:"):
+                raise PermissionError("SQLite URI database paths are not available in this environment")
+            _assert_workspace_path(database)
+            return
+        if event in {"sqlite3.enable_load_extension", "sqlite3.load_extension"}:
+            raise PermissionError("SQLite extension loading is not available in this environment")
         if event in blocked_events or event.startswith("socket."):
             raise PermissionError("This operation is not allowed in this environment")
         if event == "open" and args:
@@ -422,7 +636,18 @@ def _install_audit_hook(policy: PathPolicy, code_path: Path, budget: WriteBudget
 
 def _scrub_runtime_globals(safe_builtins: dict[str, Any]) -> None:
     globals()["__builtins__"] = safe_builtins
-    for name in ("Path", "Any"):
+    for name in (
+        "Path",
+        "Any",
+        "_compat_socket",
+        "_compat_subprocess",
+        "apply_landlock",
+        "json",
+        "os",
+        "_apply_native_containment",
+        "_purge_security_modules",
+        "is_student_module_root",
+    ):
         globals()[name] = None
 
 
@@ -434,6 +659,17 @@ def main() -> int:
         return 2
     code_path = Path(sys.argv[1]).resolve()
     allowed_root = str(Path(sys.argv[2]).resolve())
+    # The worker itself lives beside the server, so Python would otherwise use
+    # the server directory as sys.path[0]. Put the contained student workspace
+    # first so ordinary sibling modules and packages import as expected.
+    workspace_import_path = str(Path(os.getcwd()).resolve())
+    try:
+        PathPolicy(allowed_root).assert_allowed(workspace_import_path, workspace_import_path)
+    except PermissionError:
+        workspace_import_path = allowed_root
+    for import_path in (workspace_import_path, allowed_root):
+        if import_path not in sys.path:
+            sys.path.insert(0, import_path)
     try:
         user_code = code_path.read_text(encoding="utf-8", errors="replace")
     except Exception as exc:
@@ -442,9 +678,31 @@ def main() -> int:
 
     policy = PathPolicy(allowed_root)
     _apply_resource_limits()
+    containment = _apply_native_containment(allowed_root, code_path)
+    disabled_modules = _configured_disabled_modules()
+    blocked_roots = frozenset(SECURITY_LOCKED_MODULES | disabled_modules)
+    if not containment.get("active"):
+        blocked_roots = frozenset(blocked_roots | CONTAINMENT_REQUIRED_MODULES)
+    blocked_exact = SECURITY_LOCKED_EXACT_MODULES
+    _purge_security_modules(policy, disabled_modules)
+
+    matplotlib_cache = Path(allowed_root) / ".eagleide" / "matplotlib"
+    try:
+        matplotlib_cache.mkdir(parents=True, exist_ok=True)
+        os.environ["MPLCONFIGDIR"] = str(matplotlib_cache)
+    except OSError:
+        pass
+
     write_budget = WriteBudget(MAX_WRITE_BYTES, MAX_NEW_FILES)
-    safe_builtins = _build_safe_builtins(policy, write_budget)
-    _install_audit_hook(policy, code_path, write_budget)
+    artifact_manager = ChartArtifactManager(allowed_root)
+    safe_builtins = _build_safe_builtins(
+        policy,
+        write_budget,
+        blocked_roots,
+        blocked_exact,
+        artifact_manager,
+    )
+    _install_audit_hook(policy, code_path, write_budget, blocked_roots, blocked_exact)
     _scrub_runtime_globals(safe_builtins)
 
     sandbox_globals: dict[str, Any] = {
