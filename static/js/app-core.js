@@ -61,6 +61,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let fileArtifactPreviewActive = false;
     let fileArtifactObjectUrl = '';
     let fileArtifactPreviewRequestId = 0;
+    let fileArtifactDatabaseItem = null;
+    let fileArtifactDatabaseMetadata = {};
     let lastTeacherCodeSnapshot = '';
     let _pendingTeacherCode = null;
     let _pendingTeacherLanguage = '';
@@ -356,19 +358,32 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const preview = document.getElementById('fileArtifactPreview');
       const image = document.getElementById('fileArtifactPreviewImage');
       const database = document.getElementById('fileArtifactDatabaseInfo');
+      const databaseSelect = document.getElementById('fileArtifactDatabaseTable');
+      const databaseTableWrap = document.getElementById('fileArtifactDatabaseTableWrap');
+      const databaseHead = document.getElementById('fileArtifactDatabaseHead');
+      const databaseBody = document.getElementById('fileArtifactDatabaseBody');
+      const databaseNote = document.getElementById('fileArtifactDatabaseNote');
       const status = document.getElementById('fileArtifactPreviewStatus');
       if (fileArtifactObjectUrl) {
         URL.revokeObjectURL(fileArtifactObjectUrl);
         fileArtifactObjectUrl = '';
       }
       fileArtifactPreviewActive = false;
+      fileArtifactDatabaseItem = null;
+      fileArtifactDatabaseMetadata = {};
       preview?.classList.add('hidden');
+      document.querySelector('#editorPanel .student-editor-wrap')?.classList.remove('artifact-preview-active');
       if (image) {
         image.hidden = true;
         image.removeAttribute('src');
         image.alt = '';
       }
       if (database) database.hidden = true;
+      if (databaseSelect) databaseSelect.replaceChildren();
+      if (databaseTableWrap) databaseTableWrap.hidden = true;
+      if (databaseHead) databaseHead.replaceChildren();
+      if (databaseBody) databaseBody.replaceChildren();
+      if (databaseNote) databaseNote.textContent = '';
       if (status) {
         status.hidden = false;
         status.classList.remove('error');
@@ -379,6 +394,155 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (!csvEditorActive) {
         if (cmWrap) cmWrap.style.display = '';
         if (ta) ta.style.display = cmWrap ? 'none' : '';
+      }
+    }
+
+    function renderDatabaseArtifactPreview(data) {
+      const select = document.getElementById('fileArtifactDatabaseTable');
+      const refresh = document.getElementById('fileArtifactDatabaseRefresh');
+      const status = document.getElementById('fileArtifactDatabaseStatus');
+      const tableWrap = document.getElementById('fileArtifactDatabaseTableWrap');
+      const head = document.getElementById('fileArtifactDatabaseHead');
+      const body = document.getElementById('fileArtifactDatabaseBody');
+      const note = document.getElementById('fileArtifactDatabaseNote');
+      const tables = Array.isArray(data?.tables) ? data.tables : [];
+      const columns = Array.isArray(data?.columns) ? data.columns : [];
+      const rows = Array.isArray(data?.rows) ? data.rows : [];
+
+      if (select) {
+        select.replaceChildren();
+        tables.forEach(table => {
+          const option = document.createElement('option');
+          option.value = String(table?.name || '');
+          option.textContent = String(table?.name || '');
+          option.selected = option.value === String(data?.selected_table || '');
+          select.appendChild(option);
+        });
+        select.disabled = !tables.length;
+        select.onchange = () => {
+          if (fileArtifactDatabaseItem) {
+            loadDatabaseArtifactPreview(fileArtifactDatabaseItem, fileArtifactDatabaseMetadata, select.value);
+          }
+        };
+      }
+      if (refresh) {
+        refresh.disabled = false;
+        refresh.onclick = () => {
+          if (fileArtifactDatabaseItem) {
+            loadDatabaseArtifactPreview(
+              fileArtifactDatabaseItem,
+              fileArtifactDatabaseMetadata,
+              select?.value || ''
+            );
+          }
+        };
+      }
+      if (head) head.replaceChildren();
+      if (body) body.replaceChildren();
+
+      if (!tables.length) {
+        if (status) {
+          status.hidden = false;
+          status.classList.remove('error');
+          status.textContent = 'This database does not contain any user tables yet.';
+        }
+        if (tableWrap) tableWrap.hidden = true;
+        if (note) note.textContent = '';
+        return;
+      }
+
+      if (head) {
+        const headerRow = document.createElement('tr');
+        columns.forEach(column => {
+          const cell = document.createElement('th');
+          const name = String(column?.name || '');
+          const type = String(column?.type || '').trim();
+          cell.textContent = name;
+          cell.title = [
+            type || 'No declared type',
+            column?.primary_key ? 'Primary key' : '',
+            column?.not_null ? 'Not null' : '',
+          ].filter(Boolean).join(' · ');
+          headerRow.appendChild(cell);
+        });
+        head.appendChild(headerRow);
+      }
+      if (body) {
+        if (!rows.length) {
+          const row = document.createElement('tr');
+          const cell = document.createElement('td');
+          cell.colSpan = Math.max(1, columns.length);
+          cell.className = 'file-artifact-database-empty';
+          cell.textContent = 'This table has no rows.';
+          row.appendChild(cell);
+          body.appendChild(row);
+        } else {
+          rows.forEach(values => {
+            const row = document.createElement('tr');
+            columns.forEach((_column, index) => {
+              const cell = document.createElement('td');
+              const value = Array.isArray(values) ? values[index] : null;
+              cell.textContent = value === null ? 'NULL' : String(value ?? '');
+              if (value === null) cell.classList.add('database-null-value');
+              row.appendChild(cell);
+            });
+            body.appendChild(row);
+          });
+        }
+      }
+      if (tableWrap) tableWrap.hidden = false;
+      if (status) status.hidden = true;
+      if (note) {
+        const details = [`${rows.length} row${rows.length === 1 ? '' : 's'} shown`];
+        if (data?.rows_truncated) details.push('additional rows not loaded');
+        if (data?.columns_truncated) details.push('additional columns not loaded');
+        if (data?.tables_truncated) details.push('additional tables not listed');
+        details.push('read-only preview');
+        note.textContent = details.join(' · ');
+      }
+    }
+
+    async function loadDatabaseArtifactPreview(item, metadata = {}, tableName = '') {
+      const requestId = ++fileArtifactPreviewRequestId;
+      const status = document.getElementById('fileArtifactDatabaseStatus');
+      const tableWrap = document.getElementById('fileArtifactDatabaseTableWrap');
+      const refresh = document.getElementById('fileArtifactDatabaseRefresh');
+      if (status) {
+        status.hidden = false;
+        status.classList.remove('error');
+        status.textContent = 'Loading database…';
+      }
+      if (tableWrap) tableWrap.hidden = true;
+      if (refresh) refresh.disabled = true;
+      const params = new URLSearchParams({ path: item.path });
+      if (tableName) params.set('table', tableName);
+      try {
+        const response = await fetch('/api/files/database-preview?' + params.toString(), {
+          headers: fileAuthHeaders(),
+          cache: 'no-store'
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data?.ok) {
+          throw new Error(data?.error || 'Database preview failed');
+        }
+        if (requestId !== fileArtifactPreviewRequestId) return;
+        renderDatabaseArtifactPreview(data);
+        const meta = document.getElementById('fileArtifactPreviewMeta');
+        if (meta) {
+          meta.textContent = [
+            metadata.size ? _formatBytes(Number(metadata.size) || 0) : '',
+            `${(data.tables || []).length} table${(data.tables || []).length === 1 ? '' : 's'}`,
+            item.path,
+          ].filter(Boolean).join(' · ');
+        }
+      } catch (error) {
+        if (requestId !== fileArtifactPreviewRequestId) return;
+        if (refresh) refresh.disabled = false;
+        if (status) {
+          status.hidden = false;
+          status.classList.add('error');
+          status.textContent = error?.message || 'Database preview failed';
+        }
       }
     }
 
@@ -396,6 +560,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const meta = document.getElementById('fileArtifactPreviewMeta');
       const cmWrap = document.querySelector('#editorPanel .CodeMirror');
       const ta = document.getElementById('editor');
+      const studentEditorWrap = document.querySelector('#editorPanel .student-editor-wrap');
+      studentEditorWrap?.classList.add('artifact-preview-active');
       if (cmWrap) cmWrap.style.display = 'none';
       if (ta) ta.style.display = 'none';
       preview?.classList.remove('hidden');
@@ -406,6 +572,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         if (icon) icon.textContent = '🗄️';
         if (status) status.hidden = true;
         if (database) database.hidden = false;
+        fileArtifactDatabaseItem = { ...item };
+        fileArtifactDatabaseMetadata = { ...metadata };
+        await loadDatabaseArtifactPreview(fileArtifactDatabaseItem, fileArtifactDatabaseMetadata);
         return;
       }
 
