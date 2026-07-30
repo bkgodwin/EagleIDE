@@ -457,7 +457,10 @@ def _purge_security_modules(policy: PathPolicy, disabled_modules: frozenset[str]
             if hasattr(subprocess_module, call_name):
                 setattr(subprocess_module, call_name, _blocked_call)
         try:
-            _make_os_hardener(policy, (sys.base_prefix, sys.prefix))(subprocess_module.os)
+            _make_os_hardener(
+                policy,
+                (sys.base_prefix, sys.prefix, *SYSTEM_FONT_READONLY_PATHS),
+            )(subprocess_module.os)
         except Exception:
             pass
     socket_module = sys.modules.get("socket")
