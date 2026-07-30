@@ -1,6 +1,9 @@
 import builtins
 import getpass
+import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 
@@ -17,6 +20,7 @@ getpass.getpass = _ORIGINAL_GETPASS
 
 class _Response:
     headers = {}
+    status_code = 200
 
     def raise_for_status(self):
         return None
@@ -80,7 +84,86 @@ class AiLimitTestCase(unittest.TestCase):
         with eagle.app.test_request_context("/api/explain", method="POST"):
             result = eagle.call_ollama_generate("http://user:secret@127.0.0.1:11434", "model", "prompt")
         self.assertFalse(result["ok"])
-        self.assertIn("invalid", result["error"].lower())
+        self.assertIn("without embedded credentials", result["error"].lower())
+
+    def test_admin_model_setting_persists_and_drives_generation(self):
+        original_persist_file = eagle.PERSIST_FILE
+        original_cache = eagle._cfg_cache
+        original_cache_mtime = eagle._cfg_cache_mtime_ns
+        admin_token = "ai-settings-admin-token"
+        eagle._admin_tokens.add(admin_token)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                eagle.PERSIST_FILE = Path(tmp) / "config.txt"
+                eagle._cfg_cache = None
+                eagle._cfg_cache_mtime_ns = None
+                eagle._save_config(dict(eagle.DEFAULT_CONFIG))
+
+                saved = self.client.post(
+                    "/api/config/save",
+                    headers={"X-Admin-Token": admin_token},
+                    json={
+                        "data": {
+                            "ai_ollama_url": "http://127.0.0.1:11434/",
+                            "ai_model": "deepseek-coder:6.7b",
+                            "ai_request_timeout_seconds": 180,
+                        }
+                    },
+                )
+                self.assertEqual(saved.status_code, 200)
+                self.assertEqual(saved.get_json()["data"]["ai_model"], "deepseek-coder:6.7b")
+                stored = json.loads(eagle.PERSIST_FILE.read_text(encoding="utf-8"))
+                self.assertEqual(stored["ai_model"], "deepseek-coder:6.7b")
+                self.assertEqual(stored["ai_ollama_url"], "http://127.0.0.1:11434")
+                self.assertEqual(stored["ai_request_timeout_seconds"], 180)
+
+                with mock.patch.object(eagle.requests, "post", return_value=_Response()) as post:
+                    explained = self.client.post("/api/explain", json={"code": "print('hello')"})
+                self.assertEqual(explained.status_code, 200)
+                request_kwargs = post.call_args.kwargs
+                self.assertEqual(request_kwargs["json"]["model"], "deepseek-coder:6.7b")
+                self.assertEqual(request_kwargs["timeout"], (3.0, 180.0))
+        finally:
+            eagle._admin_tokens.discard(admin_token)
+            eagle.PERSIST_FILE = original_persist_file
+            eagle._cfg_cache = original_cache
+            eagle._cfg_cache_mtime_ns = original_cache_mtime
+
+    def test_ai_timeout_and_connection_errors_do_not_expose_server_details(self):
+        with eagle.app.test_request_context("/api/explain", method="POST"):
+            with mock.patch.object(
+                eagle.requests,
+                "post",
+                side_effect=eagle.requests.exceptions.Timeout("/root/EagleIDE/private"),
+            ):
+                result = eagle.call_ollama_generate(
+                    "http://127.0.0.1:11434",
+                    "deepseek-coder:6.7b",
+                    "prompt",
+                    timeout=30,
+                )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], 504)
+        self.assertNotIn("/root", result["error"])
+        self.assertIn("30 seconds", result["error"])
+
+    def test_admin_ai_test_validates_model_name(self):
+        token = "ai-test-admin-token"
+        eagle._admin_tokens.add(token)
+        try:
+            response = self.client.post(
+                "/api/admin/ai/test",
+                headers={"X-Admin-Token": token},
+                json={
+                    "ai_ollama_url": "http://127.0.0.1:11434",
+                    "ai_model": "../invalid model",
+                    "ai_request_timeout_seconds": 120,
+                },
+            )
+        finally:
+            eagle._admin_tokens.discard(token)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("valid ollama model", response.get_json()["error"].lower())
 
 
 if __name__ == "__main__":

@@ -70,11 +70,14 @@ class StaticHtmlTestCase(unittest.TestCase):
         main_css = (BASE_DIR / "static" / "css" / "main.css").read_text(encoding="utf-8")
         page_version = re.search(r'/static/css/main\.css\?v=([^"]+)', self.raw)
         editor_version = re.search(r'features/editor\.css\?v=([^"]+)', main_css)
+        admin_version = re.search(r'features/admin\.css\?v=([^"]+)', main_css)
         app_core_version = re.search(r'/static/js/app-core\.js\?v=([^"]+)', self.raw)
         self.assertIsNotNone(page_version)
         self.assertIsNotNone(editor_version)
+        self.assertIsNotNone(admin_version)
         self.assertIsNotNone(app_core_version)
         self.assertEqual(page_version.group(1), editor_version.group(1))
+        self.assertEqual(page_version.group(1), admin_version.group(1))
         self.assertEqual(page_version.group(1), app_core_version.group(1))
 
     def test_attribute_ampersands_are_html_escaped(self):
@@ -104,6 +107,7 @@ class StaticHtmlTestCase(unittest.TestCase):
             "fileArtifactDatabaseTable", "fileArtifactDatabaseRefresh",
             "fileArtifactDatabaseStatus", "fileArtifactDatabaseTableWrap",
             "fileArtifactDatabaseHead", "fileArtifactDatabaseBody", "fileArtifactDatabaseNote",
+            "aiTimeoutInputModal", "aiTestBtn", "aiTestStatus",
             "pythonContainmentStatus", "pythonMemoryLimitModal",
             "pythonConcurrencyLimitModal", "pythonModuleAccessList",
             "pythonSecurityLockedModules", "pythonRuntimeRefreshBtn",
@@ -158,6 +162,8 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn("/api/admin/python-runtime", app_core)
         self.assertIn("/api/files/preview", app_core)
         self.assertIn("/api/files/database-preview", app_core)
+        self.assertIn("/api/files/wiki-example", app_core)
+        self.assertIn("/api/admin/ai/test", app_core)
         self.assertIn("artifact-preview-active", app_core)
         self.assertIn("socket.on('run_artifacts'", app_core)
 
