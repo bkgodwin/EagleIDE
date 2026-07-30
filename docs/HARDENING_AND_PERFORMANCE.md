@@ -10,6 +10,36 @@ Socket.IO uses standard threaded mode with `simple-websocket`, exact same-origin
 
 Browser output is bounded and batched. Hidden tabs pause recovery polling, teacher editor updates are coalesced, notebook and shell output are capped, and static assets use short conditional browser caching.
 
+## Python native-module containment
+
+SQLite, Inspect, NumPy, and Matplotlib expand the code surface available to a
+student process. EagleIDE enables them only when Linux Landlock ABI 3 or newer
+is available. Every worker receives a new Landlock ruleset before user code
+runs: its student workspace is read/write and its Python interpreter/package
+paths are read-only. Unsupported hosts fail closed for these modules while
+ordinary pure-Python exercises continue to run.
+
+Landlock supplements rather than replaces the existing controls:
+
+- the Python audit hook rejects out-of-workspace paths, process creation,
+  networking, SQLite URI paths, and SQLite extension loading;
+- imports are limited to the standard library, reviewed Matplotlib
+  prerequisites, and the student's own workspace modules;
+- process, network, FFI/native-memory, GUI, and interpreter-control modules
+  remain security locked and cannot be enabled by an administrator;
+- Matplotlib may read only its installed package data and an enumerated set of
+  public system font directories; server configuration and user homes remain
+  outside both the audit and Landlock read boundaries;
+- POSIX resource limits or Windows Job Objects cap memory, CPU, process count,
+  open files, file size, and process lifetime;
+- parent admission control reserves each run's configured memory before launch.
+
+Run the server as a dedicated unprivileged account even though Landlock also
+applies `no_new_privs` inside each worker. Confirm **Native containment ready**
+under **Admin Settings → Python Runtime** after every kernel/container migration.
+The server startup log reports the same status. Do not work around a fail-closed
+status by removing the containment requirement.
+
 ## HTML preview isolation
 
 An iframe timeout cannot stop a synchronous infinite loop. EagleIDE therefore enables student JavaScript previews only when the operator configures a separate, cross-site preview origin. Without that origin, HTML and CSS still render, but the response enforces `script-src 'none'`.
@@ -33,7 +63,8 @@ Tune only after measuring the host under classroom load:
 
 | Variable | Default | Purpose |
 | --- | ---: | --- |
-| `EAGLE_MAX_CONCURRENT_RUNS` | half of CPU cores, capped at 4 | Global Python/JavaScript runner slots |
+| `EAGLE_MAX_CONCURRENT_RUNS` | 8 | Operator hard ceiling for global Python/JavaScript runner slots |
+| `EAGLE_MAX_RUNNER_MEMORY_MB` | 2048 | Operator hard ceiling for the admin-set Python per-run memory limit |
 | `EAGLE_MAX_GUEST_RUNS_PER_IP` | 2 | Guest runner slots per address |
 | `EAGLE_MAX_RUN_STARTS_PER_10_SECONDS` | 6 | Run-start burst limit per identity |
 | `EAGLE_MAX_SOCKET_CONNECTIONS` | 512 | Global realtime connections |
@@ -46,7 +77,22 @@ Tune only after measuring the host under classroom load:
 | `EAGLE_AI_CIRCUIT_FAILURES` | 3 | Failures before opening the AI circuit |
 | `EAGLE_AI_CIRCUIT_COOLDOWN_SECONDS` | 30 | Circuit-breaker recovery delay |
 
-Increasing runner or AI concurrency raises peak CPU and memory use. Change one setting at a time and repeat the same load test.
+The admin dashboard defaults to **4 concurrent runs** and **750 MB per Python
+run**. It may reduce those values without restarting, but it cannot exceed the
+operator hard ceilings above. Admission reserves the configured amount for
+each Python run, preserves at least 20% or 1 GB of host RAM (whichever is
+larger), and can therefore admit fewer runs than the numeric concurrency limit.
+JavaScript keeps a separately bounded 384 MB Node heap. On POSIX, its 1.5 GB
+virtual-address ceiling is intentionally larger than the heap because current
+V8 releases reserve additional address space during startup. Student code does
+not receive `require`, `process`, `Buffer`, or network APIs.
+
+For a 50–60 student class, begin with 4 concurrent runs and 750 MB per Python
+run. Normal edit/wiki traffic remains independent; students whose simultaneous
+runs exceed capacity receive a retry message. Measure a realistic lesson that
+imports Matplotlib before increasing concurrency. Increasing runner or AI
+concurrency raises peak CPU and memory use, so change one setting at a time and
+repeat the same load test.
 
 ## Reverse proxy requirements
 
@@ -65,9 +111,18 @@ The admin server-health response reports execution admission totals, active HTML
 5. HTML JavaScript runs only on the cross-site preview origin; the fallback sends `script-src 'none'`.
 6. Memory and disk pressure reject new execution before the host becomes unstable.
 7. Sign-in, files, assignments, notebooks, classroom streaming, quizzes, and AI recover normally after the stress period.
+8. SQLite cannot create or attach a database outside the student workspace,
+   and Matplotlib produces a bounded PNG artifact visible in the File Browser.
+9. Disabling a module in the admin access list rejects it on the next run and
+   disabling a dependency also disables its dependents.
 
 Record p50, p95, and p99 response time, rejected-work counts, process count, CPU, memory, disk, network throughput, and browser memory. A successful test has bounded resource use, no orphan processes, no server restart, and no loss of saved work.
 
 ## Rollback and incident response
 
-If load causes instability, first lower `EAGLE_MAX_CONCURRENT_RUNS` and `EAGLE_MAX_CONCURRENT_AI_REQUESTS`, then disable AI or HTML runtime through admin settings if necessary. Preserve logs and the admin health snapshot. Do not weaken sandbox, CSP, origin, process, or path restrictions as a recovery shortcut.
+If load causes instability, first lower **Maximum concurrent runs** in Admin
+Settings → Python Runtime. If necessary, lower Python memory only after
+confirming the assigned libraries still import successfully, then reduce
+`EAGLE_MAX_CONCURRENT_AI_REQUESTS` or disable AI/HTML runtime. Preserve logs and
+the admin health snapshot. Do not weaken sandbox, Landlock, CSP, origin,
+process, import, or path restrictions as a recovery shortcut.

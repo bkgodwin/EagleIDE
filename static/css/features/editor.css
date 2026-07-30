@@ -65,6 +65,68 @@
       font:inherit;
       outline:none;
     }
+    .file-artifact-preview{
+      height:100%;
+      min-height:0;
+      display:grid;
+      grid-template-rows:auto minmax(0,1fr);
+      background:var(--theme-output-bg);
+      color:var(--theme-text);
+    }
+    .file-artifact-preview.hidden{ display:none; }
+    .file-artifact-preview-heading{
+      display:flex;
+      align-items:center;
+      gap:12px;
+      min-height:54px;
+      padding:9px 14px;
+      border-bottom:1px solid var(--theme-border-mid);
+      background:var(--theme-panel-hdr);
+    }
+    .file-artifact-preview-heading > span{ font-size:24px; }
+    .file-artifact-preview-heading div{ min-width:0; display:grid; gap:2px; }
+    .file-artifact-preview-heading strong{
+      overflow:hidden;
+      color:var(--theme-text);
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .file-artifact-preview-heading small{ color:var(--theme-text-dim); }
+    .file-artifact-preview-stage{
+      position:relative;
+      min-height:0;
+      overflow:auto;
+      display:grid;
+      place-items:center;
+      padding:18px;
+      background:
+        linear-gradient(45deg,rgba(127,178,235,.035) 25%,transparent 25%,transparent 75%,rgba(127,178,235,.035) 75%),
+        linear-gradient(45deg,rgba(127,178,235,.035) 25%,transparent 25%,transparent 75%,rgba(127,178,235,.035) 75%);
+      background-position:0 0,12px 12px;
+      background-size:24px 24px;
+    }
+    .file-artifact-preview-stage img{
+      display:block;
+      width:auto;
+      height:auto;
+      max-width:100%;
+      max-height:100%;
+      object-fit:contain;
+      background:#fff;
+      box-shadow:0 8px 28px rgba(0,0,0,.28);
+    }
+    .file-artifact-preview-status{ color:var(--theme-text-dim); font-size:13px; }
+    .file-artifact-preview-status.error{ color:#ff8d94; }
+    .file-artifact-database-info{
+      width:min(520px,100%);
+      padding:28px;
+      border:1px solid var(--theme-border-mid);
+      background:var(--theme-panel-bg);
+      text-align:center;
+    }
+    .file-artifact-database-info > span{ display:block; margin-bottom:10px; font-size:48px; }
+    .file-artifact-database-info strong{ color:var(--columbia-blue); font-size:20px; }
+    .file-artifact-database-info p{ margin:10px 0 0; color:var(--theme-text-dim); line-height:1.55; }
     #editorPanel .content.editor-content-stack{
       flex:1;
       min-height:0;
