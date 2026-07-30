@@ -1368,7 +1368,7 @@
           <section class="admin-settings-pane" data-admin-settings-pane="python-runtime">
             <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Student execution</span><h4>Python Runtime</h4><p>Set bounded performance limits and control classroom module access. Security-locked modules cannot be enabled.</p></div>
             <div id="pythonContainmentStatus" class="python-containment-status" role="status">
-              <strong>Checking native containment…</strong><span>SQLite, Inspect, NumPy, and Matplotlib require Linux Landlock.</span>
+              <strong>Checking native containment…</strong><span>SQLite, Inspect, NumPy, Pillow, and Matplotlib require Linux Landlock.</span>
             </div>
             <div class="admin-settings-fields two-column python-runtime-limit-grid">
               <label><span>Memory per Python run (MB)</span><input type="number" id="pythonMemoryLimitModal" min="128" max="2048" step="32"><small id="pythonMemoryLimitHint">Default 750 MB</small></label>

@@ -403,6 +403,23 @@ def _configured_disabled_modules() -> frozenset[str]:
     )
 
 
+def _prepare_trusted_runtime_compatibility() -> None:
+    """Resolve safe lazy runtime types before locked modules are purged.
+
+    Python 3.13 exposes ``types.CapsuleType`` through ``types.__getattr__``,
+    which imports the security-locked ``_socket`` extension solely to inspect
+    the type of its C API capsule. Pillow imports this type annotation while
+    Matplotlib starts. Cache only the inert type object during trusted worker
+    bootstrap; the socket modules are still purged/blocked before student code.
+    """
+
+    import sys
+    import types
+
+    if sys.version_info >= (3, 13) and "CapsuleType" not in vars(types):
+        types.CapsuleType = types.CapsuleType
+
+
 def _apply_native_containment(allowed_root: str, code_path: Path) -> dict[str, Any]:
     import sys
 
@@ -480,6 +497,11 @@ def _purge_security_modules(policy: PathPolicy, disabled_modules: frozenset[str]
         ):
             if hasattr(socket_module, call_name):
                 setattr(socket_module, call_name, _blocked_call)
+        # ``socket`` retains the imported C extension in a private module
+        # attribute. Remove that reference as well as its public wrappers so a
+        # student cannot recover ``_socket.socket`` through sys.modules.
+        if hasattr(socket_module, "_socket"):
+            setattr(socket_module, "_socket", None)
     # Reloading an already-hardened module could restore privileged process or
     # network functions without a normal import. Student programs do not need
     # runtime module reloads, so remove that bypass while retaining the rest of
@@ -702,6 +724,7 @@ def _scrub_runtime_globals(safe_builtins: dict[str, Any]) -> None:
         "json",
         "os",
         "_apply_native_containment",
+        "_prepare_trusted_runtime_compatibility",
         "_purge_security_modules",
         "is_student_module_root",
     ):
@@ -746,6 +769,7 @@ def main() -> int:
     if not containment.get("active"):
         blocked_roots = frozenset(blocked_roots | CONTAINMENT_REQUIRED_MODULES)
     blocked_exact = SECURITY_LOCKED_EXACT_MODULES
+    _prepare_trusted_runtime_compatibility()
     _purge_security_modules(policy, disabled_modules)
 
     matplotlib_cache = Path(allowed_root) / ".eagleide" / "matplotlib"

@@ -66,8 +66,11 @@ SECURITY_LOCKED_EXACT_MODULES = frozenset({"asyncio.subprocess"})
 # policy.
 CONTAINMENT_REQUIRED_MODULES = frozenset(
     {
+        "PIL",
         "_sqlite3",
+        "contourpy",
         "inspect",
+        "kiwisolver",
         "matplotlib",
         "numpy",
         "sqlite3",

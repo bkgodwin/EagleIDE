@@ -2717,7 +2717,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const ready = !!containment.ready;
         containmentEl.className = `python-containment-status ${ready ? 'ready' : 'blocked'}`;
         containmentEl.innerHTML = ready
-          ? `<strong>Native containment ready</strong><span>Linux Landlock ABI ${escapeHtml(String(containment.abi || 'available'))} will confine SQLite, Inspect, NumPy, and Matplotlib to each student's workspace.</span>`
+          ? `<strong>Native containment ready</strong><span>Linux Landlock ABI ${escapeHtml(String(containment.abi || 'available'))} will confine SQLite, Inspect, NumPy, Pillow, and Matplotlib to each student's workspace.</span>`
           : `<strong>Native modules fail closed on this host</strong><span>${escapeHtml(containment.reason || 'Linux Landlock ABI 3 or newer is required.')} Safe pure-Python modules continue to work.</span>`;
       }
 
