@@ -277,9 +277,13 @@ Reader features:
   and second tap opens
 - Sanitized Markdown, stable section links, and a generated table of contents
 - Expandable standards-covered tags beneath each page's table of contents
+- A standards coverage report with root class-folder icons, folder filtering, and
+  a print/PDF layout that preserves the active filter in the report title
 - Copy and Open in IDE buttons on Python, JavaScript, HTML, and CSS code fences
 - Inline images, pre-encoded MP4 video, and PDF viewing; other allowed files can
-  be organized in the same tree and downloaded
+  be organized in the same tree and downloaded. Wiki images reserve their
+  dimensions and begin loading shortly before they enter the viewport to reduce
+  bandwidth without causing content to jump.
 
 Student and teacher workflow:
 - Signed-in students can add or remove personal bookmarks. They appear in the
@@ -296,7 +300,9 @@ Admin Wiki Manager:
 1. Sign in as admin and choose Wiki Manager in the top bar.
 2. Use the Home tab to change the landing-page title, supporting text, site footer,
    structured Standards, and External Resources table. Standards require an ID and
-   description and can be assigned to individual pages from Item settings. To add
+   description and can be assigned to individual pages from Item settings. The
+   page editor's standards browser searches full IDs and descriptions, can show
+   selected standards only, and keeps the complete description readable. To add
    standards in bulk, choose Import CSV and upload a UTF-8 file with Standard ID and
    Description headers. Existing matching IDs are updated and new IDs are appended.
 3. Use the Content tab to create folders and pages, or upload an existing .md

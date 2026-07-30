@@ -38,7 +38,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20260729-4">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260730-1">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -196,10 +196,14 @@
         <header class="wiki-coverage-header">
           <div>
             <span class="wiki-eyebrow">Curriculum map</span>
-            <h1>Standards Coverage</h1>
-            <p>Each dot represents a published wiki page tagged with that standard.</p>
+            <h1 id="wikiCoverageTitle">Standards Coverage</h1>
+            <p>Each class-folder icon represents a published wiki page tagged with that standard.</p>
+            <p class="wiki-coverage-print-meta" id="wikiCoveragePrintMeta"></p>
           </div>
-          <button class="btn secondary" id="wikiCoverageHomeBtn" type="button">Wiki Home</button>
+          <div class="wiki-coverage-header-actions">
+            <button class="btn secondary" id="wikiCoveragePrintBtn" type="button">Print / Save PDF</button>
+            <button class="btn secondary" id="wikiCoverageHomeBtn" type="button">Wiki Home</button>
+          </div>
         </header>
         <div class="wiki-coverage-controls">
           <label for="wikiCoverageFolderFilter">
@@ -210,9 +214,10 @@
           </label>
           <div class="wiki-coverage-meta">
             <p id="wikiCoverageSummary" role="status" aria-live="polite"></p>
-            <span class="wiki-coverage-legend"><i aria-hidden="true"></i> One dot per tagged page</span>
+            <span class="wiki-coverage-legend"><i aria-hidden="true">📁</i> One class icon per tagged page</span>
           </div>
         </div>
+        <div class="wiki-coverage-class-legend" id="wikiCoverageClassLegend" aria-label="Class folder icon legend"></div>
         <div class="wiki-coverage-table-wrap">
           <table class="wiki-coverage-table">
             <thead><tr><th>Standard ID</th><th>Description</th><th>Covered by wiki pages</th></tr></thead>
@@ -1195,7 +1200,19 @@
                   <label>Move to<select id="wikiAdminParent"></select></label>
                   <fieldset class="wiki-admin-field-wide wiki-admin-page-standards" id="wikiAdminPageStandardsWrap">
                     <legend>Standards covered by this page</legend>
-                    <div id="wikiAdminPageStandards"></div>
+                    <div class="wiki-admin-page-standards-toolbar">
+                      <label class="wiki-admin-standard-search" for="wikiAdminPageStandardsSearch">
+                        <span>Find a standard</span>
+                        <input id="wikiAdminPageStandardsSearch" type="search" autocomplete="off" placeholder="Search by ID or full description" />
+                      </label>
+                      <div class="wiki-admin-standard-filter-actions">
+                        <button class="btn secondary" id="wikiAdminPageStandardsSelectedBtn" type="button" aria-pressed="false">Selected only</button>
+                        <button class="btn secondary" id="wikiAdminPageStandardsClearBtn" type="button">Clear selected</button>
+                      </div>
+                    </div>
+                    <p class="wiki-admin-page-standards-summary" id="wikiAdminPageStandardsSummary" role="status" aria-live="polite"></p>
+                    <div id="wikiAdminPageStandards" role="group" aria-label="Available academic standards"></div>
+                    <p class="wiki-admin-standards-empty" id="wikiAdminPageStandardsNoMatches" hidden>No standards match this filter.</p>
                   </fieldset>
                 </div>
                 <div class="wiki-admin-node-actions">
@@ -1435,8 +1452,8 @@
   <script src="/static/js/app-core.js?v=20260714-8"></script>
 <script src="/static/js/network-sim.js?v=20260714-18"></script>
 <script src="/static/js/network-sim-advanced.js?v=20260714-4"></script>
-  <script src="/static/js/wiki-reader.js?v=20260729-4"></script>
-  <script src="/static/js/wiki-admin.js?v=20260729-4"></script>
+  <script src="/static/js/wiki-reader.js?v=20260730-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20260730-1"></script>
   <script src="/static/js/classroom-signals.js"></script>
   <script src="/static/js/classroom-files.js?v=20250608"></script>
   <script src="/static/js/student-notebook.js?v=20260714-7"></script>

@@ -76,6 +76,7 @@ AUTO_LINK_STOP_TERMS = {
 _HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 _HTML_RE = re.compile(r"<[^>]+>")
 _DIRECTIVE_ID_RE = re.compile(r"\{\{(?:image|video|file):([0-9a-f]{32})\b", re.I)
+_IMAGE_DIRECTIVE_ID_RE = re.compile(r"\{\{image:([0-9a-f]{32})\b", re.I)
 _WIKI_LINK_RE = re.compile(r"\]\(/wiki/([a-z0-9][a-z0-9-]{0,159})(?:#[^)]+)?\)", re.I)
 
 
@@ -278,6 +279,89 @@ def validate_asset_signature(path: Path, extension: str) -> bool:
     except Exception:
         return False
     return False
+
+
+def image_dimensions(path: Path) -> Optional[tuple[int, int]]:
+    """Read common image dimensions from headers without decoding the image."""
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(32)
+            dimensions: Optional[tuple[int, int]] = None
+            if head.startswith(b"\x89PNG\r\n\x1a\n") and len(head) >= 24:
+                dimensions = (
+                    int.from_bytes(head[16:20], "big"),
+                    int.from_bytes(head[20:24], "big"),
+                )
+            elif head.startswith((b"GIF87a", b"GIF89a")) and len(head) >= 10:
+                dimensions = (
+                    int.from_bytes(head[6:8], "little"),
+                    int.from_bytes(head[8:10], "little"),
+                )
+            elif head.startswith(b"\xff\xd8"):
+                handle.seek(2)
+                while handle.tell() < 1024 * 1024:
+                    marker_start = handle.read(1)
+                    if not marker_start:
+                        break
+                    if marker_start != b"\xff":
+                        continue
+                    marker = handle.read(1)
+                    while marker == b"\xff":
+                        marker = handle.read(1)
+                    if not marker or marker in {b"\x00", b"\x01"} or 0xD0 <= marker[0] <= 0xD9:
+                        continue
+                    length_raw = handle.read(2)
+                    if len(length_raw) != 2:
+                        break
+                    segment_length = int.from_bytes(length_raw, "big")
+                    if segment_length < 2:
+                        break
+                    if marker[0] in {
+                        0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+                        0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF,
+                    }:
+                        frame = handle.read(5)
+                        if len(frame) == 5:
+                            dimensions = (
+                                int.from_bytes(frame[3:5], "big"),
+                                int.from_bytes(frame[1:3], "big"),
+                            )
+                        break
+                    handle.seek(segment_length - 2, os.SEEK_CUR)
+            elif len(head) >= 12 and head.startswith(b"RIFF") and head[8:12] == b"WEBP":
+                handle.seek(12)
+                for _ in range(32):
+                    chunk_header = handle.read(8)
+                    if len(chunk_header) != 8:
+                        break
+                    chunk_type = chunk_header[:4]
+                    chunk_size = int.from_bytes(chunk_header[4:8], "little")
+                    payload = handle.read(min(chunk_size, 16))
+                    if chunk_type == b"VP8X" and len(payload) >= 10:
+                        dimensions = (
+                            1 + int.from_bytes(payload[4:7], "little"),
+                            1 + int.from_bytes(payload[7:10], "little"),
+                        )
+                    elif chunk_type == b"VP8L" and len(payload) >= 5 and payload[0] == 0x2F:
+                        bits = int.from_bytes(payload[1:5], "little")
+                        dimensions = (1 + (bits & 0x3FFF), 1 + ((bits >> 14) & 0x3FFF))
+                    elif chunk_type == b"VP8 " and len(payload) >= 10 and payload[3:6] == b"\x9d\x01\x2a":
+                        dimensions = (
+                            int.from_bytes(payload[6:8], "little") & 0x3FFF,
+                            int.from_bytes(payload[8:10], "little") & 0x3FFF,
+                        )
+                    if dimensions:
+                        break
+                    remaining = chunk_size - len(payload)
+                    if remaining > 0:
+                        handle.seek(remaining, os.SEEK_CUR)
+                    if chunk_size % 2:
+                        handle.seek(1, os.SEEK_CUR)
+            if dimensions and all(0 < value <= 100_000 for value in dimensions):
+                return dimensions
+    except (OSError, ValueError):
+        return None
+    return None
 
 
 class WikiStore:
@@ -637,7 +721,25 @@ class WikiStore:
 
         tree = self.get_tree(include_images=False)
         folders: list[dict[str, Any]] = []
+        class_folders: list[dict[str, str]] = []
+        root_folder_by_node: dict[str, Optional[dict[str, str]]] = {}
         selected_folder: Optional[dict[str, Any]] = None
+
+        def index_class_folders(
+            nodes: Iterable[dict[str, Any]],
+            class_folder: Optional[dict[str, str]] = None,
+        ) -> None:
+            for node in nodes:
+                current_class = class_folder
+                if node.get("kind") == "folder" and not node.get("parent_id"):
+                    current_class = {
+                        "id": node["id"],
+                        "title": str(node.get("title") or "Class folder"),
+                        "icon": str(node.get("icon") or "📁"),
+                    }
+                    class_folders.append(dict(current_class))
+                root_folder_by_node[node["id"]] = current_class
+                index_class_folders(node.get("children") or [], current_class)
 
         def visit_folders(nodes: Iterable[dict[str, Any]], path: list[str]) -> None:
             nonlocal selected_folder
@@ -651,11 +753,13 @@ class WikiStore:
                     "parent_id": node.get("parent_id"),
                     "depth": len(path),
                     "path": " / ".join(next_path),
+                    "icon": node.get("icon") or "📁",
                 })
                 if node["id"] == selected_folder_id:
                     selected_folder = node
                 visit_folders(node.get("children") or [], next_path)
 
+        index_class_folders(tree)
         visit_folders(tree, [])
         if selected_folder_id and selected_folder is None:
             raise ValueError("Published wiki folder not found")
@@ -666,10 +770,14 @@ class WikiStore:
         def visit_pages(nodes: Iterable[dict[str, Any]]) -> None:
             for node in nodes:
                 if node.get("kind") == "page":
+                    class_folder = root_folder_by_node.get(node["id"])
                     ordered_pages.append({
                         "id": node["id"],
                         "title": node.get("title") or "Untitled Page",
                         "slug": node.get("slug") or "",
+                        "root_folder_id": class_folder["id"] if class_folder else "",
+                        "root_folder_title": class_folder["title"] if class_folder else "Wiki root",
+                        "root_folder_icon": class_folder["icon"] if class_folder else "📄",
                     })
                 if node.get("children"):
                     visit_pages(node["children"])
@@ -699,6 +807,7 @@ class WikiStore:
         result = {
             "standards": coverage,
             "folders": folders,
+            "class_folders": class_folders,
             "folder_id": selected_folder_id,
             "folder_title": selected_folder.get("title") if selected_folder else "",
             "page_count": len(ordered_pages),
@@ -1285,6 +1394,33 @@ class WikiStore:
         items.reverse()
         return items
 
+    def _image_metadata_for_markdown(
+        self,
+        conn: sqlite3.Connection,
+        markdown: str,
+    ) -> dict[str, dict[str, int]]:
+        image_ids = list(dict.fromkeys(
+            image_id.lower() for image_id in _IMAGE_DIRECTIVE_ID_RE.findall(str(markdown or ""))
+        ))
+        metadata: dict[str, dict[str, int]] = {}
+        for start in range(0, len(image_ids), 200):
+            batch = image_ids[start:start + 200]
+            placeholders = ",".join("?" for _ in batch)
+            rows = conn.execute(
+                f"SELECT id,storage_name FROM nodes WHERE kind='image' "
+                f"AND deleted_at IS NULL AND id IN ({placeholders})",
+                batch,
+            )
+            for image in rows:
+                path = self.media_dir / Path(image["storage_name"]).name
+                dimensions = image_dimensions(path)
+                if dimensions:
+                    metadata[image["id"]] = {
+                        "width": dimensions[0],
+                        "height": dimensions[1],
+                    }
+        return metadata
+
     def get_node(
         self,
         identifier: str,
@@ -1332,6 +1468,11 @@ class WikiStore:
                     result["draft_updated_at"] = draft["updated_at"] if draft else ""
             else:
                 result["markdown"] = ""
+            if row["kind"] == "page" and include_content:
+                metadata_markdown = result["markdown"]
+                if include_drafts and result.get("draft_updated_at"):
+                    metadata_markdown = result.get("draft_markdown", "")
+                result["media_metadata"] = self._image_metadata_for_markdown(conn, metadata_markdown)
             result["media_url"] = f"/api/wiki/media/{row['id']}" if row["kind"] in {"image", "video", "pdf", "file"} else ""
             result["download_url"] = f"/api/wiki/media/{row['id']}?download=1" if row["kind"] in {"image", "video", "pdf", "file"} else ""
             if not include_drafts:

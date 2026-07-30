@@ -13,6 +13,8 @@
     managerSection: 'content',
     editorView: 'split',
     standards: [],
+    pageStandardsQuery: '',
+    pageStandardsSelectedOnly: false,
     emojiCategory: 'favorites',
     emojiVisible: 240,
     clipboardImageUpload: false,
@@ -138,6 +140,9 @@
     $('wikiAdminPreviewBtn').hidden = node.kind !== 'page';
     $('wikiAdminProperties').open = node.kind !== 'page';
     if (node.kind === 'page') {
+      state.pageStandardsQuery = '';
+      state.pageStandardsSelectedOnly = false;
+      if ($('wikiAdminPageStandardsSearch')) $('wikiAdminPageStandardsSearch').value = '';
       renderPageStandardOptions();
       $('wikiAdminContent').value = node.draft_markdown || node.markdown || '';
       setEditorView(state.editorView);
@@ -746,25 +751,75 @@
     if (!target) return;
     target.textContent = '';
     const selected = new Set(state.node?.standard_ids || []);
+    const search = $('wikiAdminPageStandardsSearch');
+    if (search) search.disabled = !state.standards.length;
     if (!state.standards.length) {
       const note = document.createElement('span');
       note.className = 'wiki-admin-standards-empty';
       note.textContent = 'Add standards in the Home tab before tagging pages.';
       target.appendChild(note);
+      updatePageStandardFilter();
       return;
     }
+    const fragment = document.createDocumentFragment();
     for (const standard of state.standards) {
       const label = document.createElement('label');
       label.className = 'wiki-admin-standard-option';
+      label.dataset.searchText = `${standard.standard_id || ''} ${standard.description || ''}`.toLocaleLowerCase();
       const input = document.createElement('input');
       input.type = 'checkbox';
       input.value = standard.id;
       input.checked = selected.has(standard.id);
+      input.addEventListener('change', updatePageStandardFilter);
       const text = document.createElement('span');
-      text.innerHTML = `<strong>${reader().escapeHtml(standard.standard_id)}</strong><small>${reader().escapeHtml(standard.description)}</small>`;
+      text.className = 'wiki-admin-standard-option-text';
+      const standardId = document.createElement('strong');
+      standardId.textContent = standard.standard_id || 'Standard';
+      const description = document.createElement('small');
+      description.textContent = standard.description || 'No description provided.';
+      text.append(standardId, description);
       label.append(input, text);
-      target.appendChild(label);
+      fragment.appendChild(label);
     }
+    target.appendChild(fragment);
+    updatePageStandardFilter();
+  }
+
+  function updatePageStandardFilter() {
+    const target = $('wikiAdminPageStandards');
+    if (!target) return;
+    const search = $('wikiAdminPageStandardsSearch');
+    state.pageStandardsQuery = String(search?.value || '').trim().toLocaleLowerCase();
+    const options = [...target.querySelectorAll('.wiki-admin-standard-option')];
+    let selectedCount = 0;
+    let visibleCount = 0;
+    for (const option of options) {
+      const input = option.querySelector('input[type="checkbox"]');
+      const isSelected = !!input?.checked;
+      selectedCount += isSelected ? 1 : 0;
+      option.classList.toggle('is-selected', isSelected);
+      const queryMatches = !state.pageStandardsQuery
+        || String(option.dataset.searchText || '').includes(state.pageStandardsQuery);
+      const visible = queryMatches && (!state.pageStandardsSelectedOnly || isSelected);
+      option.hidden = !visible;
+      visibleCount += visible ? 1 : 0;
+    }
+    const summary = $('wikiAdminPageStandardsSummary');
+    if (summary) {
+      summary.textContent = options.length
+        ? `${selectedCount} selected · showing ${visibleCount} of ${options.length} standards`
+        : '';
+    }
+    const selectedButton = $('wikiAdminPageStandardsSelectedBtn');
+    if (selectedButton) {
+      selectedButton.disabled = !options.length;
+      selectedButton.classList.toggle('is-active', state.pageStandardsSelectedOnly);
+      selectedButton.setAttribute('aria-pressed', String(state.pageStandardsSelectedOnly));
+    }
+    const clearButton = $('wikiAdminPageStandardsClearBtn');
+    if (clearButton) clearButton.disabled = selectedCount === 0;
+    const noMatches = $('wikiAdminPageStandardsNoMatches');
+    if (noMatches) noMatches.hidden = !options.length || visibleCount !== 0;
   }
 
   function addExternalResourceRow(resource = {}) {
@@ -973,6 +1028,16 @@
     $('wikiAdminEditor')?.addEventListener('submit', saveEditor);
     $('wikiAdminContent')?.addEventListener('input', scheduleDraftSave);
     $('wikiAdminContent')?.addEventListener('paste', pasteClipboardImages);
+    $('wikiAdminPageStandardsSearch')?.addEventListener('input', updatePageStandardFilter);
+    $('wikiAdminPageStandardsSelectedBtn')?.addEventListener('click', () => {
+      state.pageStandardsSelectedOnly = !state.pageStandardsSelectedOnly;
+      updatePageStandardFilter();
+    });
+    $('wikiAdminPageStandardsClearBtn')?.addEventListener('click', () => {
+      $('wikiAdminPageStandards')?.querySelectorAll('input[type="checkbox"]:checked')
+        .forEach(input => { input.checked = false; });
+      updatePageStandardFilter();
+    });
     $('wikiAdminPreviewBtn')?.addEventListener('click', renderPreview);
     $('wikiAdminMoveUpBtn')?.addEventListener('click', () => reorder('up'));
     $('wikiAdminMoveDownBtn')?.addEventListener('click', () => reorder('down'));
