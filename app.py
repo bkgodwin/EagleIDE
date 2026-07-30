@@ -15,6 +15,7 @@ import re
 import secrets
 import shutil
 import signal
+import sqlite3
 import string
 import subprocess
 import sys
@@ -83,6 +84,11 @@ MAX_HTTP_BODY_BYTES = 16 * 1024 * 1024
 MAX_SOCKET_MESSAGE_BYTES = 1_000_000
 MAX_EDITOR_FILE_BYTES = 10 * 1024 * 1024
 MAX_UPLOAD_FILE_BYTES = 10 * 1024 * 1024
+MAX_DATABASE_PREVIEW_BYTES = 64 * 1024 * 1024
+MAX_DATABASE_PREVIEW_TABLES = 100
+MAX_DATABASE_PREVIEW_COLUMNS = 50
+MAX_DATABASE_PREVIEW_ROWS = 100
+MAX_DATABASE_PREVIEW_CELL_CHARS = 500
 MAX_HTML_RUNTIME_ASSET_BYTES = 10 * 1024 * 1024
 MAX_HTML_RUNTIME_HTML_BYTES = 2 * 1024 * 1024
 MAX_HTML_RUNTIME_SESSIONS = 256
@@ -163,6 +169,24 @@ EXAMPLE_FILES: dict[str, str] = {
     "hello.py": 'print("Hello from EagleIDE!")\nname = input("What is your name? ")\nprint(f"Welcome, {name}!")\n',
     "hello.js": 'const name = input("What is your name? ");\nconsole.log(`Hello from EagleIDE, ${name}!`);\n',
     "sample.csv": "name,score\nAva,95\nNoah,88\n",
+    "matplotlib_3d.py": (
+        "import matplotlib.pyplot as plt\n"
+        "import numpy as np\n\n"
+        "x = np.linspace(-5, 5, 35)\n"
+        "y = np.linspace(-5, 5, 35)\n"
+        "x, y = np.meshgrid(x, y)\n"
+        "distance = np.sqrt(x ** 2 + y ** 2)\n"
+        "z = np.sin(distance)\n\n"
+        "figure = plt.figure(figsize=(8, 6))\n"
+        "axes = figure.add_subplot(111, projection=\"3d\")\n"
+        "surface = axes.plot_surface(x, y, z, cmap=\"viridis\", edgecolor=\"none\")\n"
+        "axes.set_title(\"3D wave surface\")\n"
+        "axes.set_xlabel(\"X\")\n"
+        "axes.set_ylabel(\"Y\")\n"
+        "axes.set_zlabel(\"Z\")\n"
+        "figure.colorbar(surface, ax=axes, shrink=0.65, label=\"Height\")\n"
+        "plt.show()\n"
+    ),
     "notes.txt": "Welcome to EagleIDE!\n\n- Open a file from Examples.\n- Edit the code.\n- Click Run.\n",
     "index.html": '<!doctype html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1">\n  <title>EagleIDE Example</title>\n  <link rel="stylesheet" href="styles.css">\n</head>\n<body>\n  <main class="card">\n    <h1>EagleIDE HTML Example</h1>\n    <p>Edit this file and <strong>Run</strong> it to see live changes.</p>\n  </main>\n</body>\n</html>\n',
     "styles.css": "body {\n  font-family: Arial, sans-serif;\n  background: #f2f6ff;\n  color: #102a43;\n  margin: 0;\n  min-height: 100vh;\n  display: grid;\n  place-items: center;\n}\n\n.card {\n  background: white;\n  border: 2px solid #7fb2eb;\n  border-radius: 12px;\n  padding: 20px;\n  max-width: 420px;\n  box-shadow: 0 8px 24px rgba(16, 42, 67, 0.12);\n}\n",
@@ -2264,6 +2288,172 @@ def files_preview():
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Content-Security-Policy"] = "default-src 'none'; sandbox"
     return response
+
+
+def _sqlite_identifier(value: str) -> str:
+    return '"' + str(value).replace('"', '""') + '"'
+
+
+def _database_preview_value(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if value == value and value not in {float("inf"), float("-inf")} else str(value)
+    if isinstance(value, bytes):
+        return f"<BLOB {len(value)} bytes>"
+    text = str(value)
+    if len(text) > MAX_DATABASE_PREVIEW_CELL_CHARS:
+        return text[:MAX_DATABASE_PREVIEW_CELL_CHARS] + "…"
+    return text
+
+
+@app.get("/api/files/database-preview")
+def files_database_preview():
+    """Return a bounded, read-only table preview for a workspace SQLite file."""
+
+    user = _require_user_for_files(request)
+    if not user:
+        return jsonify(ok=False, error="Authentication required"), 401
+    path_str = request.args.get("path", "")
+    selected_name = request.args.get("table", "").strip()
+    if not path_str:
+        return jsonify(ok=False, error="Path required"), 400
+    if len(selected_name) > 256:
+        return jsonify(ok=False, error="Table name is too long"), 400
+
+    user_dir = _get_user_dir(user["email"])
+    target = _validate_user_path(user_dir, path_str)
+    if not target or not target.exists() or not target.is_file():
+        return jsonify(ok=False, error="File not found"), 404
+    if target.suffix.lower() not in DATABASE_EXTENSIONS:
+        return jsonify(ok=False, error="Only SQLite database files can be previewed"), 415
+    try:
+        file_size = target.stat().st_size
+        if file_size <= 0:
+            return jsonify(ok=False, error="Database file is empty"), 422
+        if file_size > MAX_DATABASE_PREVIEW_BYTES:
+            return jsonify(
+                ok=False,
+                error=f"Database exceeds the {MAX_DATABASE_PREVIEW_BYTES // (1024 * 1024)}MB preview limit",
+            ), 413
+        with target.open("rb") as handle:
+            if handle.read(16) != b"SQLite format 3\x00":
+                return jsonify(ok=False, error="File is not a valid SQLite database"), 422
+    except OSError:
+        return jsonify(ok=False, error="Could not inspect database"), 500
+
+    connection: Optional[sqlite3.Connection] = None
+    try:
+        connection = sqlite3.connect(
+            target.resolve().as_uri() + "?mode=ro",
+            uri=True,
+            timeout=0.5,
+            check_same_thread=True,
+        )
+        connection.execute("PRAGMA query_only = ON")
+        connection.execute("PRAGMA trusted_schema = OFF")
+        deadline = time.monotonic() + 0.75
+        connection.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 1000)
+
+        raw_tables = connection.execute(
+            """
+            SELECT name
+            FROM sqlite_schema
+            WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+            ORDER BY name COLLATE NOCASE
+            LIMIT ?
+            """,
+            (MAX_DATABASE_PREVIEW_TABLES + 1,),
+        ).fetchall()
+        table_names = [str(row[0]) for row in raw_tables[:MAX_DATABASE_PREVIEW_TABLES]]
+        tables_truncated = len(raw_tables) > MAX_DATABASE_PREVIEW_TABLES
+        if selected_name and selected_name not in table_names:
+            return jsonify(ok=False, error="Table not found in this database"), 404
+        selected_name = selected_name or (table_names[0] if table_names else "")
+        payload: dict[str, Any] = {
+            "ok": True,
+            "kind": "database",
+            "path": path_str,
+            "size": file_size,
+            "tables": [{"name": name} for name in table_names],
+            "tables_truncated": tables_truncated,
+            "selected_table": selected_name or None,
+            "columns": [],
+            "rows": [],
+            "rows_truncated": False,
+            "columns_truncated": False,
+            "cell_text_limit": MAX_DATABASE_PREVIEW_CELL_CHARS,
+        }
+        if not selected_name:
+            return jsonify(payload)
+
+        table_identifier = _sqlite_identifier(selected_name)
+        raw_columns = connection.execute(f"PRAGMA table_info({table_identifier})").fetchall()
+        selected_columns = raw_columns[:MAX_DATABASE_PREVIEW_COLUMNS]
+        payload["columns_truncated"] = len(raw_columns) > MAX_DATABASE_PREVIEW_COLUMNS
+        payload["columns"] = [
+            {
+                "name": str(row[1]),
+                "type": str(row[2] or ""),
+                "not_null": bool(row[3]),
+                "primary_key": bool(row[5]),
+            }
+            for row in selected_columns
+        ]
+        if not selected_columns:
+            return jsonify(payload)
+
+        expressions = []
+        for column in selected_columns:
+            identifier = _sqlite_identifier(str(column[1]))
+            expressions.append(
+                "CASE typeof({column}) "
+                "WHEN 'blob' THEN printf('<BLOB %d bytes>', length({column})) "
+                "WHEN 'text' THEN substr({column}, 1, {limit}) "
+                "ELSE {column} END AS {column}".format(
+                    column=identifier,
+                    limit=MAX_DATABASE_PREVIEW_CELL_CHARS,
+                )
+            )
+
+        allowed_actions = {
+            sqlite3.SQLITE_FUNCTION,
+            sqlite3.SQLITE_READ,
+            sqlite3.SQLITE_SELECT,
+        }
+        connection.set_authorizer(
+            lambda action, _arg1, _arg2, _db_name, _trigger: (
+                sqlite3.SQLITE_OK if action in allowed_actions else sqlite3.SQLITE_DENY
+            )
+        )
+        raw_rows = connection.execute(
+            f"SELECT {', '.join(expressions)} FROM {table_identifier} LIMIT ?",
+            (MAX_DATABASE_PREVIEW_ROWS + 1,),
+        ).fetchall()
+        payload["rows_truncated"] = len(raw_rows) > MAX_DATABASE_PREVIEW_ROWS
+        payload["rows"] = [
+            [_database_preview_value(value) for value in row]
+            for row in raw_rows[:MAX_DATABASE_PREVIEW_ROWS]
+        ]
+        return jsonify(payload)
+    except sqlite3.OperationalError as exc:
+        message = str(exc).casefold()
+        if "locked" in message or "busy" in message:
+            return jsonify(ok=False, error="Database is busy; wait for the Python run to finish and try again"), 409
+        if "interrupted" in message:
+            return jsonify(ok=False, error="Database preview exceeded the safe query-time limit"), 422
+        return jsonify(ok=False, error="Database could not be previewed safely"), 422
+    except sqlite3.DatabaseError:
+        return jsonify(ok=False, error="Database could not be previewed safely"), 422
+    finally:
+        if connection is not None:
+            try:
+                connection.set_authorizer(None)
+                connection.set_progress_handler(None, 0)
+                connection.close()
+            except sqlite3.Error:
+                pass
+
 
 @app.post("/api/files/rename")
 def files_rename():

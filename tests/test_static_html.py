@@ -66,6 +66,17 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertEqual(page_version.group(1), reader_version.group(1))
         self.assertEqual(page_version.group(1), admin_version.group(1))
 
+    def test_ide_artifact_asset_cache_versions_stay_in_sync(self):
+        main_css = (BASE_DIR / "static" / "css" / "main.css").read_text(encoding="utf-8")
+        page_version = re.search(r'/static/css/main\.css\?v=([^"]+)', self.raw)
+        editor_version = re.search(r'features/editor\.css\?v=([^"]+)', main_css)
+        app_core_version = re.search(r'/static/js/app-core\.js\?v=([^"]+)', self.raw)
+        self.assertIsNotNone(page_version)
+        self.assertIsNotNone(editor_version)
+        self.assertIsNotNone(app_core_version)
+        self.assertEqual(page_version.group(1), editor_version.group(1))
+        self.assertEqual(page_version.group(1), app_core_version.group(1))
+
     def test_attribute_ampersands_are_html_escaped(self):
         unescaped = re.findall(r'(?:href|src)="[^"]*&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9A-Fa-f]+);)', self.raw)
         self.assertEqual(unescaped, [])
@@ -90,6 +101,9 @@ class StaticHtmlTestCase(unittest.TestCase):
             "wikiAdminPageStandardsNoMatches", "wikiFontSizeSelect",
             "wikiReaderShell", "wikiStandardDescriptionTooltip",
             "fileArtifactPreview", "fileArtifactPreviewImage", "fileArtifactDatabaseInfo",
+            "fileArtifactDatabaseTable", "fileArtifactDatabaseRefresh",
+            "fileArtifactDatabaseStatus", "fileArtifactDatabaseTableWrap",
+            "fileArtifactDatabaseHead", "fileArtifactDatabaseBody", "fileArtifactDatabaseNote",
             "pythonContainmentStatus", "pythonMemoryLimitModal",
             "pythonConcurrencyLimitModal", "pythonModuleAccessList",
             "pythonSecurityLockedModules", "pythonRuntimeRefreshBtn",
@@ -143,6 +157,8 @@ class StaticHtmlTestCase(unittest.TestCase):
         app_core = (BASE_DIR / "static" / "js" / "app-core.js").read_text(encoding="utf-8")
         self.assertIn("/api/admin/python-runtime", app_core)
         self.assertIn("/api/files/preview", app_core)
+        self.assertIn("/api/files/database-preview", app_core)
+        self.assertIn("artifact-preview-active", app_core)
         self.assertIn("socket.on('run_artifacts'", app_core)
 
     def test_network_simulator_surfaces_are_modular_and_touch_ready(self):
