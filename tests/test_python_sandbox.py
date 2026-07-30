@@ -43,6 +43,7 @@ class PythonSandboxPolicyTests(unittest.TestCase):
                 "EAGLE_RUN_WRITE_BUDGET_BYTES": str(10 * 1024 * 1024),
                 "EAGLE_DISABLED_MODULES": json.dumps(list(disabled_modules)),
                 "EAGLE_RUN_SOURCE_NAME": "student.py",
+                "EAGLE_NATIVE_CONTAINMENT_DIAGNOSTIC": "1",
                 "OMP_NUM_THREADS": "1",
                 "OPENBLAS_NUM_THREADS": "1",
                 "MKL_NUM_THREADS": "1",

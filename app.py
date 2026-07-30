@@ -91,6 +91,7 @@ MAX_RUN_WRITE_BYTES = 10 * 1024 * 1024
 RUNNER_MEMORY_LIMIT_BYTES = 750 * 1024 * 1024
 MAX_RUNNER_MEMORY_LIMIT_MB = 2048
 RUNNER_CPU_PERCENT = 50
+RUNNER_TASK_HEADROOM = 32
 
 
 def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -4925,7 +4926,8 @@ def _apply_posix_process_limits(proc: subprocess.Popen, memory_limit_bytes: int)
             (resource.RLIMIT_NOFILE, (64, 64)),
         ]
         if hasattr(resource, "RLIMIT_NPROC"):
-            limits.append((resource.RLIMIT_NPROC, (16, 16)))
+            task_limit = _posix_runner_task_limit()
+            limits.append((resource.RLIMIT_NPROC, (task_limit, task_limit)))
         if hasattr(resource, "RLIMIT_CORE"):
             limits.append((resource.RLIMIT_CORE, (0, 0)))
         for limit_name, values in limits:
@@ -4938,6 +4940,44 @@ def _apply_posix_process_limits(proc: subprocess.Popen, memory_limit_bytes: int)
             os.setpriority(os.PRIO_PROCESS, proc.pid, 10)
     except Exception:
         pass
+
+
+def _posix_runner_task_limit() -> int:
+    """Allow bounded child headroom above the service account's live tasks.
+
+    RLIMIT_NPROC is counted across the entire real UID, not per worker. An
+    absolute value such as 16 can prevent Node or NumPy from starting when the
+    threaded web server already owns that many tasks. Keep a small aggregate
+    headroom without making the limit depend on the host's unrelated users.
+    """
+
+    if os.name == "nt" or not hasattr(os, "getuid"):
+        return 64
+    live_tasks = 0
+    try:
+        uid = int(os.getuid())
+        proc_root = Path("/proc")
+        for entry in proc_root.iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                status_text = (entry / "status").read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            real_uid = None
+            threads = 1
+            for line in status_text.splitlines():
+                if line.startswith("Uid:"):
+                    fields = line.split()
+                    real_uid = int(fields[1]) if len(fields) > 1 else None
+                elif line.startswith("Threads:"):
+                    fields = line.split()
+                    threads = max(1, int(fields[1])) if len(fields) > 1 else 1
+            if real_uid == uid:
+                live_tasks += threads
+    except Exception:
+        live_tasks = 0
+    return max(64, live_tasks + RUNNER_TASK_HEADROOM)
 
 
 def _close_windows_job(handle: Optional[int]) -> None:

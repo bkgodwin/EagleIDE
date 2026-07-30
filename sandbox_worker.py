@@ -22,7 +22,7 @@ MAX_CPU_SECONDS = max(1, int(os.environ.get("EAGLE_MAX_CPU_SECONDS", 8)))
 MAX_FILE_BYTES = max(1024, int(os.environ.get("EAGLE_MAX_FILE_BYTES", 10 * 1024 * 1024)))
 MAX_WRITE_BYTES = max(0, int(os.environ.get("EAGLE_RUN_WRITE_BUDGET_BYTES", 10 * 1024 * 1024)))
 MAX_NEW_FILES = 20
-MAX_PROCESSES_AND_THREADS = 16
+RUNNER_TASK_HEADROOM = 32
 MAX_NOFILE = 64
 
 BLOCKED_OS_CALLS = (
@@ -484,7 +484,8 @@ def _apply_resource_limits() -> None:
         (resource.RLIMIT_NOFILE, (MAX_NOFILE, MAX_NOFILE)),
     ]
     if hasattr(resource, "RLIMIT_NPROC"):
-        limits.append((resource.RLIMIT_NPROC, (MAX_PROCESSES_AND_THREADS, MAX_PROCESSES_AND_THREADS)))
+        task_limit = _runner_task_limit()
+        limits.append((resource.RLIMIT_NPROC, (task_limit, task_limit)))
     if hasattr(resource, "RLIMIT_CORE"):
         limits.append((resource.RLIMIT_CORE, (0, 0)))
     for limit_name, values in limits:
@@ -492,6 +493,37 @@ def _apply_resource_limits() -> None:
             resource.setrlimit(limit_name, values)
         except Exception:
             pass
+
+
+def _runner_task_limit() -> int:
+    """Bound worker-created tasks without colliding with the server's UID."""
+
+    if os.name == "nt" or not hasattr(os, "getuid"):
+        return 64
+    live_tasks = 0
+    try:
+        uid = int(os.getuid())
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                status_text = (entry / "status").read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            real_uid = None
+            threads = 1
+            for line in status_text.splitlines():
+                if line.startswith("Uid:"):
+                    fields = line.split()
+                    real_uid = int(fields[1]) if len(fields) > 1 else None
+                elif line.startswith("Threads:"):
+                    fields = line.split()
+                    threads = max(1, int(fields[1])) if len(fields) > 1 else 1
+            if real_uid == uid:
+                live_tasks += threads
+    except Exception:
+        live_tasks = 0
+    return max(64, live_tasks + RUNNER_TASK_HEADROOM)
 
 
 def _build_safe_builtins(
@@ -679,6 +711,11 @@ def main() -> int:
     policy = PathPolicy(allowed_root)
     _apply_resource_limits()
     containment = _apply_native_containment(allowed_root, code_path)
+    if not containment.get("active") and os.environ.get("EAGLE_NATIVE_CONTAINMENT_DIAGNOSTIC") == "1":
+        print(
+            f"[Native containment unavailable: {containment.get('reason') or 'unknown error'}]",
+            file=sys.stderr,
+        )
     disabled_modules = _configured_disabled_modules()
     blocked_roots = frozenset(SECURITY_LOCKED_MODULES | disabled_modules)
     if not containment.get("active"):
