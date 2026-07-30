@@ -402,6 +402,16 @@ def _apply_native_containment(allowed_root: str, code_path: Path) -> dict[str, A
         Path(sys.base_prefix).resolve(),
         Path(sys.prefix).resolve(),
     }
+    # CPython extension modules commonly depend on distribution-provided
+    # shared libraries outside sys.prefix (for example libsqlite3.so). These
+    # locations contain executable/runtime assets rather than private server
+    # data, and remain strictly read-only under Landlock.
+    if sys.platform == "linux":
+        readonly_paths.update(
+            Path(path)
+            for path in ("/lib", "/lib64", "/usr/lib", "/usr/lib64", "/usr/local/lib")
+            if Path(path).exists()
+        )
     return apply_landlock(allowed_root, readonly_paths=readonly_paths)
 
 

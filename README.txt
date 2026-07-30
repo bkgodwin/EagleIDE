@@ -615,7 +615,10 @@ Python:
 
 JavaScript:
 - Code runs in a Node.js subprocess
-- Network operations are available in Node (consider network isolation)
+- Student code runs in a restricted VM context without require(), process,
+  Buffer, or network APIs
+- The V8 heap is capped at 384 MB; POSIX also applies a separate 1.5 GB
+  virtual-address ceiling because V8 reserves address space beyond its heap
 - Standard execution timeout applies
 
 --------------------------------------------------

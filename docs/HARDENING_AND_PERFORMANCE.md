@@ -79,7 +79,10 @@ run**. It may reduce those values without restarting, but it cannot exceed the
 operator hard ceilings above. Admission reserves the configured amount for
 each Python run, preserves at least 20% or 1 GB of host RAM (whichever is
 larger), and can therefore admit fewer runs than the numeric concurrency limit.
-JavaScript keeps its separately bounded Node heap.
+JavaScript keeps a separately bounded 384 MB Node heap. On POSIX, its 1.5 GB
+virtual-address ceiling is intentionally larger than the heap because current
+V8 releases reserve additional address space during startup. Student code does
+not receive `require`, `process`, `Buffer`, or network APIs.
 
 For a 50–60 student class, begin with 4 concurrent runs and 750 MB per Python
 run. Normal edit/wiki traffic remains independent; students whose simultaneous
