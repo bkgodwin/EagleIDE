@@ -427,6 +427,21 @@
         <div class="student-editor-wrap">
           <textarea id="editor" style="display:none; resize:none;"></textarea>
           <div id="csvEditor" class="csv-editor hidden"></div>
+          <section id="fileArtifactPreview" class="file-artifact-preview hidden" aria-live="polite">
+            <div class="file-artifact-preview-heading">
+              <span id="fileArtifactPreviewIcon" aria-hidden="true">🖼️</span>
+              <div><strong id="fileArtifactPreviewName">Preview</strong><small id="fileArtifactPreviewMeta"></small></div>
+            </div>
+            <div class="file-artifact-preview-stage">
+              <div id="fileArtifactPreviewStatus" class="file-artifact-preview-status">Loading preview…</div>
+              <img id="fileArtifactPreviewImage" alt="" hidden />
+              <div id="fileArtifactDatabaseInfo" class="file-artifact-database-info" hidden>
+                <span aria-hidden="true">🗄️</span>
+                <strong>SQLite database</strong>
+                <p>This binary database is available to Python through <code>sqlite3</code>. Run queries from a Python file; the database is not opened as editable text.</p>
+              </div>
+            </div>
+          </section>
         </div>
         <div class="editor-stream-splitter" id="editorStreamSplitter" role="separator" aria-orientation="horizontal" title="Drag to resize teacher stream"></div>
         <section class="teacher-stream-pane" id="teacherStreamPane" aria-label="Teacher code stream">
@@ -454,7 +469,7 @@
               <button class="file-action-btn" id="newFileBtn" title="Create a new file">📄 New File</button>
               <button class="file-action-btn" id="newFolderBtn" title="Create a new folder">📁 New Folder</button>
               <button class="file-action-btn" id="uploadFileBtn" title="Upload a file from your computer">⬆️ Upload</button>
-              <input type="file" id="sidebarFileInput" accept=".py,.js,.html,.css,.txt,.csv" style="display:none;">
+              <input type="file" id="sidebarFileInput" accept=".py,.js,.html,.css,.txt,.csv,.json,.md,.png,.jpg,.jpeg,.gif,.webp,.db,.sqlite,.sqlite3" style="display:none;">
               <button class="file-action-btn" id="refreshFilesBtn" title="Refresh file list">🔄 Refresh</button>
               <button class="file-action-btn" id="duplicateSelectedBtn" title="Duplicate selected files and folders">📑 Duplicate</button>
               <button class="file-action-btn danger" id="deleteSelectedBtn" title="Delete selected files and folders">🗑️ Delete</button>
@@ -1310,6 +1325,7 @@
           <button type="button" data-admin-settings-section="wiki">Wiki</button>
           <button type="button" data-admin-settings-section="network">Network Sim</button>
           <button type="button" data-admin-settings-section="ai">AI</button>
+          <button type="button" data-admin-settings-section="python-runtime">Python Runtime</button>
           <button type="button" data-admin-settings-section="runtime">Web Runtime</button>
           <button type="button" data-admin-settings-section="access">Access</button>
         </nav>
@@ -1348,6 +1364,27 @@
               <label><span>Model</span><input type="text" id="aiModelInputModal" placeholder="gemma3:4b"></label>
               <label class="full-width"><span>Assistant preprompt</span><textarea id="assistantPromptInputModal" placeholder="You are a helpful programming tutor..."></textarea></label>
             </div>
+          </section>
+          <section class="admin-settings-pane" data-admin-settings-pane="python-runtime">
+            <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Student execution</span><h4>Python Runtime</h4><p>Set bounded performance limits and control classroom module access. Security-locked modules cannot be enabled.</p></div>
+            <div id="pythonContainmentStatus" class="python-containment-status" role="status">
+              <strong>Checking native containment…</strong><span>SQLite, Inspect, NumPy, and Matplotlib require Linux Landlock.</span>
+            </div>
+            <div class="admin-settings-fields two-column python-runtime-limit-grid">
+              <label><span>Memory per Python run (MB)</span><input type="number" id="pythonMemoryLimitModal" min="128" max="2048" step="32"><small id="pythonMemoryLimitHint">Default 750 MB</small></label>
+              <label><span>Maximum concurrent runs</span><input type="number" id="pythonConcurrencyLimitModal" min="1" max="8" step="1"><small id="pythonConcurrencyLimitHint">Applies across students, teachers, admins, and guests.</small></label>
+            </div>
+            <div class="python-runtime-live-stats" id="pythonRuntimeLiveStats"></div>
+            <div class="python-module-access-heading">
+              <div><strong>Module access control</strong><span>Turning off a dependency also turns off modules that require it.</span></div>
+              <button class="btn secondary" id="pythonRuntimeRefreshBtn" type="button">Refresh status</button>
+            </div>
+            <div id="pythonModuleAccessList" class="python-module-access-list"></div>
+            <details class="python-security-locked-list">
+              <summary>Security-locked modules</summary>
+              <p>These modules expose processes, raw networking, native memory, or operating-system control and cannot be enabled from the dashboard.</p>
+              <div id="pythonSecurityLockedModules"></div>
+            </details>
           </section>
           <section class="admin-settings-pane" data-admin-settings-pane="runtime">
             <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Security boundary</span><h4>HTML Runtime</h4><p>Control browser preview capabilities and resource limits for student HTML projects.</p></div>

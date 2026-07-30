@@ -50,6 +50,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let auditEditorBackup = null;
     let registerMode = false;
     let currentConfig = null;
+    let pythonRuntimeAdminData = null;
     let mySid = null;
     let isProgramRunning = false;
     let activeRunSource = null;
@@ -57,6 +58,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let csvEditorActive = false;
     let csvEditorRows = [];
     let csvAutosaveTimer = null;
+    let fileArtifactPreviewActive = false;
+    let fileArtifactObjectUrl = '';
+    let fileArtifactPreviewRequestId = 0;
     let lastTeacherCodeSnapshot = '';
     let _pendingTeacherCode = null;
     let _pendingTeacherLanguage = '';
@@ -344,6 +348,112 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         if (cmWrap) cmWrap.style.display = '';
         if (ta) ta.style.display = cmWrap ? 'none' : '';
         syncEditorLanguage();
+      }
+    }
+
+    function clearFileArtifactPreview() {
+      fileArtifactPreviewRequestId += 1;
+      const preview = document.getElementById('fileArtifactPreview');
+      const image = document.getElementById('fileArtifactPreviewImage');
+      const database = document.getElementById('fileArtifactDatabaseInfo');
+      const status = document.getElementById('fileArtifactPreviewStatus');
+      if (fileArtifactObjectUrl) {
+        URL.revokeObjectURL(fileArtifactObjectUrl);
+        fileArtifactObjectUrl = '';
+      }
+      fileArtifactPreviewActive = false;
+      preview?.classList.add('hidden');
+      if (image) {
+        image.hidden = true;
+        image.removeAttribute('src');
+        image.alt = '';
+      }
+      if (database) database.hidden = true;
+      if (status) {
+        status.hidden = false;
+        status.classList.remove('error');
+        status.textContent = 'Loading preview…';
+      }
+      const cmWrap = document.querySelector('#editorPanel .CodeMirror');
+      const ta = document.getElementById('editor');
+      if (!csvEditorActive) {
+        if (cmWrap) cmWrap.style.display = '';
+        if (ta) ta.style.display = cmWrap ? 'none' : '';
+      }
+    }
+
+    async function showFileArtifactPreview(kind, item, metadata = {}) {
+      clearFileArtifactPreview();
+      const requestId = ++fileArtifactPreviewRequestId;
+      setCsvMode(false);
+      fileArtifactPreviewActive = true;
+      const preview = document.getElementById('fileArtifactPreview');
+      const image = document.getElementById('fileArtifactPreviewImage');
+      const database = document.getElementById('fileArtifactDatabaseInfo');
+      const status = document.getElementById('fileArtifactPreviewStatus');
+      const icon = document.getElementById('fileArtifactPreviewIcon');
+      const name = document.getElementById('fileArtifactPreviewName');
+      const meta = document.getElementById('fileArtifactPreviewMeta');
+      const cmWrap = document.querySelector('#editorPanel .CodeMirror');
+      const ta = document.getElementById('editor');
+      if (cmWrap) cmWrap.style.display = 'none';
+      if (ta) ta.style.display = 'none';
+      preview?.classList.remove('hidden');
+      if (name) name.textContent = item.name || item.path || 'File';
+      if (meta) meta.textContent = metadata.size ? `${_formatBytes(Number(metadata.size) || 0)} · ${item.path}` : item.path;
+
+      if (kind === 'database') {
+        if (icon) icon.textContent = '🗄️';
+        if (status) status.hidden = true;
+        if (database) database.hidden = false;
+        return;
+      }
+
+      if (icon) icon.textContent = '🖼️';
+      try {
+        const response = await fetch('/api/files/preview?path=' + encodeURIComponent(item.path), {
+          headers: fileAuthHeaders(),
+          cache: 'no-store'
+        });
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({}));
+          throw new Error(error.error || 'Image preview failed');
+        }
+        const blob = await response.blob();
+        if (requestId !== fileArtifactPreviewRequestId) return;
+        if (!String(blob.type || '').startsWith('image/')) throw new Error('Invalid image response');
+        fileArtifactObjectUrl = URL.createObjectURL(blob);
+        if (image) {
+          image.onload = () => {
+            if (requestId !== fileArtifactPreviewRequestId) return;
+            if (status) status.hidden = true;
+            if (meta) {
+              const dimensions = image.naturalWidth && image.naturalHeight
+                ? `${image.naturalWidth} × ${image.naturalHeight}`
+                : '';
+              meta.textContent = [dimensions, metadata.size ? _formatBytes(Number(metadata.size) || 0) : '', item.path]
+                .filter(Boolean).join(' · ');
+            }
+          };
+          image.onerror = () => {
+            if (requestId !== fileArtifactPreviewRequestId) return;
+            if (status) {
+              status.hidden = false;
+              status.classList.add('error');
+              status.textContent = 'The browser could not decode this image.';
+            }
+          };
+          image.alt = `Preview of ${item.name || 'image'}`;
+          image.src = fileArtifactObjectUrl;
+          image.hidden = false;
+        }
+      } catch (error) {
+        if (requestId !== fileArtifactPreviewRequestId) return;
+        if (status) {
+          status.hidden = false;
+          status.classList.add('error');
+          status.textContent = error?.message || 'Image preview failed';
+        }
       }
     }
 
@@ -1222,6 +1332,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             appendOut(s);
           }
         });
+        socket.on('run_artifacts', msg => {
+          const artifacts = Array.isArray(msg?.artifacts) ? msg.artifacts : [];
+          if (artifacts.length && (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN)) loadFileTree();
+        });
         socket.on('finished', () => {
           if (activeRunSource === 'notebook') {
             notebookRunHandlers?.onFinished?.();
@@ -1558,6 +1672,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         appendOut('[Run skipped: CSV files use spreadsheet editing only.]\n');
         return;
       }
+      if (fileArtifactPreviewActive || (currentOpenFile?.kind && currentOpenFile.kind !== 'text')) {
+        appendOut('[Run skipped: images and database files are workspace artifacts, not executable code.]\n');
+        return;
+      }
       if (isHtmlRuntimeFile(currentOpenFile?.name || '')) {
         if (!currentOpenFile?.path) {
           appendOut('[HTML Runtime] Open an HTML file first.\n');
@@ -1681,6 +1799,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const normItemPath = _normalizeTreePath(item.path);
       if (currentOpenFile?.path && _normalizeTreePath(currentOpenFile.path) === normItemPath) {
         currentOpenFile = null;
+        clearFileArtifactPreview();
         setCsvMode(false);
         editor.setValue('');
         updateActiveFileName();
@@ -1844,7 +1963,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const res = await fetch('/api/config/save', { method:'POST', headers, body:JSON.stringify({data: partial}) });
       const j = await res.json().catch(()=>({}));
       if (!j?.ok){ alert(j?.error || 'Save failed'); }
-      else { currentConfig = {...(currentConfig||{}), ...partial}; }
+      else { currentConfig = {...(currentConfig||{}), ...(j.data || partial)}; }
+      return j;
     }
     // Feature modules loaded after app-core share this request instead of each
     // issuing their own /api/config fetch during startup.
@@ -2327,6 +2447,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         teacherStreamLiveClasses = {};
         currentOpenFile = null;
         setRunButtonState(false);
+        clearFileArtifactPreview();
         setCsvMode(false);
         editor.setValue('');
         if (typeof updateActiveFileName === 'function') updateActiveFileName();
@@ -2343,6 +2464,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         document.body.classList.remove('admin-mode');
         currentOpenFile = null;
         setRunButtonState(false);
+        clearFileArtifactPreview();
         setCsvMode(false);
         editor.setValue('');
         if (typeof updateActiveFileName === 'function') updateActiveFileName();
@@ -2367,6 +2489,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         document.getElementById('adminUsersModal').style.display = 'none';
         document.getElementById('serverHealthModal').style.display = 'none';
         currentOpenFile = null;
+        clearFileArtifactPreview();
         hideFileBrowser();
         editor.setValue('');
         if (typeof updateActiveFileName === 'function') updateActiveFileName();
@@ -2555,6 +2678,110 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     });
     updateStreamingToggleButton();
 
+    function renderPythonRuntimeAdmin(data) {
+      pythonRuntimeAdminData = data || null;
+      const containmentEl = document.getElementById('pythonContainmentStatus');
+      const memoryInput = document.getElementById('pythonMemoryLimitModal');
+      const concurrencyInput = document.getElementById('pythonConcurrencyLimitModal');
+      const memoryHint = document.getElementById('pythonMemoryLimitHint');
+      const concurrencyHint = document.getElementById('pythonConcurrencyLimitHint');
+      const stats = document.getElementById('pythonRuntimeLiveStats');
+      const list = document.getElementById('pythonModuleAccessList');
+      const locked = document.getElementById('pythonSecurityLockedModules');
+      if (!data?.ok) {
+        if (containmentEl) {
+          containmentEl.className = 'python-containment-status blocked';
+          containmentEl.innerHTML = `<strong>Runtime status unavailable</strong><span>${escapeHtml(data?.error || 'Could not load Python runtime settings.')}</span>`;
+        }
+        return;
+      }
+
+      const settings = data.settings || {};
+      const hard = data.hard_limits || {};
+      if (memoryInput) {
+        memoryInput.max = String(hard.max_memory_mb || 2048);
+        memoryInput.value = String(settings.python_memory_limit_mb || 750);
+      }
+      if (concurrencyInput) {
+        concurrencyInput.max = String(hard.max_concurrent_runs || 8);
+        concurrencyInput.value = String(settings.python_max_concurrent_runs || 4);
+      }
+      if (memoryHint) memoryHint.textContent = `Allowed range 128–${hard.max_memory_mb || 2048} MB.`;
+      if (concurrencyHint) concurrencyHint.textContent = `Hard ceiling ${hard.max_concurrent_runs || 8} runs; memory reservations may reduce live capacity.`;
+      if (stats) {
+        stats.textContent = `${Number(data.active_runs || 0)} active run(s) · ${Number(data.reserved_memory_mb || 0).toFixed(1)} MB reserved · CPU ${hard.cpu_seconds || 8}s · wall ${hard.wall_seconds || 30}s · write budget ${hard.write_mb || 10} MB`;
+      }
+
+      const containment = data.containment || {};
+      if (containmentEl) {
+        const ready = !!containment.ready;
+        containmentEl.className = `python-containment-status ${ready ? 'ready' : 'blocked'}`;
+        containmentEl.innerHTML = ready
+          ? `<strong>Native containment ready</strong><span>Linux Landlock ABI ${escapeHtml(String(containment.abi || 'available'))} will confine SQLite, Inspect, NumPy, and Matplotlib to each student's workspace.</span>`
+          : `<strong>Native modules fail closed on this host</strong><span>${escapeHtml(containment.reason || 'Linux Landlock ABI 3 or newer is required.')} Safe pure-Python modules continue to work.</span>`;
+      }
+
+      if (locked) {
+        locked.innerHTML = (data.security_locked_modules || [])
+          .map(name => `<code>${escapeHtml(name)}</code>`).join('');
+      }
+      if (!list) return;
+      const categories = new Map();
+      (data.module_catalog || []).forEach(row => {
+        const category = row.category || 'Other';
+        if (!categories.has(category)) categories.set(category, []);
+        categories.get(category).push(row);
+      });
+      const access = settings.python_module_access || {};
+      list.innerHTML = Array.from(categories.entries()).map(([category, rows]) => `
+        <section class="python-module-category">
+          <h5>${escapeHtml(category)}</h5>
+          <div class="python-module-category-grid">
+            ${rows.map(row => {
+              const dependencyText = (row.depends_on || []).length
+                ? ` Depends on ${row.depends_on.join(', ')}.`
+                : '';
+              const containmentText = row.requires_containment
+                ? '<em>Native containment required</em>'
+                : '';
+              return `<label class="python-module-toggle">
+                <input type="checkbox" data-python-module="${escapeHtml(row.name)}" ${access[row.name] !== false ? 'checked' : ''}>
+                <span><strong>${escapeHtml(row.label || row.name)}</strong><small>${escapeHtml((row.description || '') + dependencyText)}</small>${containmentText}</span>
+              </label>`;
+            }).join('')}
+          </div>
+        </section>
+      `).join('');
+    }
+
+    async function loadPythonRuntimeAdmin() {
+      if (!ADMIN_TOKEN) return;
+      const containmentEl = document.getElementById('pythonContainmentStatus');
+      if (containmentEl) {
+        containmentEl.className = 'python-containment-status';
+        containmentEl.innerHTML = '<strong>Checking native containment…</strong><span>Reading live runner limits and module policy.</span>';
+      }
+      try {
+        const response = await fetch('/api/admin/python-runtime', {
+          headers: { 'X-Admin-Token': ADMIN_TOKEN },
+          cache: 'no-store'
+        });
+        const data = await response.json().catch(() => ({}));
+        renderPythonRuntimeAdmin(data);
+      } catch {
+        renderPythonRuntimeAdmin({ ok: false, error: 'Network error while loading runtime status.' });
+      }
+    }
+
+    function collectPythonModuleAccess() {
+      const access = {};
+      const inputs = document.querySelectorAll('[data-python-module]');
+      inputs.forEach(input => {
+        access[input.dataset.pythonModule] = !!input.checked;
+      });
+      return inputs.length ? access : { ...(currentConfig?.python_module_access || {}) };
+    }
+
     // Admin settings modal handlers
     document.getElementById('adminSettingsBtn').addEventListener('click', () => {
       if (!ADMIN_TOKEN) return;
@@ -2590,6 +2817,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       // Registration setting
       document.getElementById('registrationEnabledModal').checked = currentConfig?.registration_enabled !== false;
       document.getElementById('networkSimEnabledModal').checked = !!currentConfig?.network_sim_enabled;
+      document.getElementById('pythonMemoryLimitModal').value = Number(currentConfig?.python_memory_limit_mb || 750);
+      document.getElementById('pythonConcurrencyLimitModal').value = Number(currentConfig?.python_max_concurrent_runs || 4);
+      loadPythonRuntimeAdmin();
 
       const status = document.getElementById('adminSettingsStatus');
       if (status) status.textContent = '';
@@ -2600,8 +2830,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const section = button.dataset.adminSettingsSection;
         document.querySelectorAll('[data-admin-settings-section]').forEach(item => item.classList.toggle('active', item === button));
         document.querySelectorAll('[data-admin-settings-pane]').forEach(pane => pane.classList.toggle('active', pane.dataset.adminSettingsPane === section));
+        if (section === 'python-runtime') loadPythonRuntimeAdmin();
       });
     });
+
+    document.getElementById('pythonRuntimeRefreshBtn')?.addEventListener('click', loadPythonRuntimeAdmin);
 
     document.getElementById('settingsOpenWikiManagerBtn')?.addEventListener('click', () => {
       document.getElementById('adminSettingsModal').style.display = 'none';
@@ -2932,12 +3165,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const html_runtime_memory_limit_mb = parseInt(document.getElementById('htmlMemoryLimitModal').value, 10) || 128;
       const html_runtime_max_dom_nodes = parseInt(document.getElementById('htmlMaxDomNodesModal').value, 10) || 3000;
       const html_runtime_max_popups = parseInt(document.getElementById('htmlMaxPopupSpawnModal').value, 10) || 2;
+      const python_memory_limit_mb = parseInt(document.getElementById('pythonMemoryLimitModal').value, 10) || 750;
+      const python_max_concurrent_runs = parseInt(document.getElementById('pythonConcurrencyLimitModal').value, 10) || 4;
+      const python_module_access = collectPythonModuleAccess();
       
       const registration_enabled = document.getElementById('registrationEnabledModal').checked;
       const network_sim_enabled = document.getElementById('networkSimEnabledModal').checked;
       const status = document.getElementById('adminSettingsStatus');
       if (status) status.textContent = 'Saving…';
-      await saveConfig({
+      const settingsResult = await saveConfig({
         page_title, 
         topbar_color, 
         ai_explainer_enabled, 
@@ -2953,8 +3189,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         html_runtime_memory_limit_mb,
         html_runtime_max_dom_nodes,
         html_runtime_max_popups,
+        python_memory_limit_mb,
+        python_max_concurrent_runs,
+        python_module_access,
         network_sim_enabled
       });
+      if (!settingsResult?.ok) {
+        if (status) status.textContent = settingsResult?.error || 'Could not save system settings.';
+        return;
+      }
       const registrationResponse = await fetch('/api/admin/registration', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
@@ -2969,6 +3212,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
       applyConfig(currentConfig);
       if (status) status.textContent = 'Settings saved.';
+      loadPythonRuntimeAdmin();
     });
 
     // ---- Admin Users Management ----
@@ -4635,11 +4879,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           row.appendChild(arrow);
         } else {
           icon.textContent =
-            item.name.endsWith('.py') ? '🐍' :
-            item.name.endsWith('.js') ? '⚡' :
-            item.name.endsWith('.html') ? '🌐' :
-            item.name.endsWith('.css') ? '🎨' :
-            item.name.endsWith('.csv') ? '📊' : '📄';
+            item.kind === 'image' ? '🖼️' :
+            item.kind === 'database' ? '🗄️' :
+            item.name.toLowerCase().endsWith('.py') ? '🐍' :
+            item.name.toLowerCase().endsWith('.js') ? '⚡' :
+            item.name.toLowerCase().endsWith('.html') ? '🌐' :
+            item.name.toLowerCase().endsWith('.css') ? '🎨' :
+            item.name.toLowerCase().endsWith('.csv') ? '📊' :
+            item.name.toLowerCase().endsWith('.json') ? '🔧' :
+            item.name.toLowerCase().endsWith('.md') ? '📝' : '📄';
         }
 
         row.appendChild(checkbox);
@@ -4871,6 +5119,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (auditPreviewActive || currentOpenFile?.audit) return true;
       if (currentOpenFile?.notebook) return true;
       if (currentOpenFile?.draft) return true;
+      if (fileArtifactPreviewActive || (currentOpenFile?.kind && currentOpenFile.kind !== 'text')) return true;
       if (!currentOpenFile || (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN)) return true;
       syncEditorBridge();
       const content = csvEditorActive ? stringifyCsvRows(csvEditorRows) : editor.getValue();
@@ -4895,7 +5144,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (el) el.textContent = currentOpenFile ? currentOpenFile.name : '';
       const saveDraftBtn = document.getElementById('saveDraftBtn');
       if (saveDraftBtn) saveDraftBtn.style.display = currentOpenFile?.draft && isAuthenticated() ? '' : 'none';
-      if (!csvEditorActive) syncEditorLanguage();
+      if (!csvEditorActive && !fileArtifactPreviewActive) syncEditorLanguage();
     }
 
     async function saveDraftAsFile() {
@@ -5006,6 +5255,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         auditEditorBackup = null;
       } else {
         currentOpenFile = null;
+        clearFileArtifactPreview();
         setCsvMode(false);
         editor.setValue('');
       }
@@ -5113,7 +5363,20 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const res = await fetch('/api/files/read?path=' + encodeURIComponent(item.path), { headers: fileAuthHeaders() });
       const j = await res.json().catch(() => ({}));
       if (!j.ok) { alert(j.error || 'Cannot open file'); return; }
-      currentOpenFile = { path: item.path, name: item.name };
+      const kind = j.kind || item.kind || 'text';
+      currentOpenFile = { path: item.path, name: item.name, kind };
+      clearFileArtifactPreview();
+      if (kind === 'image' || kind === 'database') {
+        editor.setValue('');
+        currentBufferDirty = false;
+        await showFileArtifactPreview(kind, item, j);
+        updateActiveFileName();
+        updateEditorOverlay();
+        setWorkspaceTab('editor');
+        renderCurrentFolder();
+        updateSendFileButtonVisibility();
+        return;
+      }
       const isCsv = String(item.name || '').toLowerCase().endsWith('.csv');
       if (isCsv) {
         setCsvMode(true, j.content || '');
@@ -5227,6 +5490,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (j.ok) {
         if (currentOpenFile?.path === item.path) {
           currentOpenFile = null;
+          clearFileArtifactPreview();
           setCsvMode(false);
           editor.setValue('');
           updateActiveFileName();

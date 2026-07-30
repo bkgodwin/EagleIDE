@@ -1,4 +1,4 @@
-# Eagle IDE Python dependencies
+# Eagle IDE Python dependencies (Python 3.12+)
 # Install with: pip install -r requirements.txt
 
 flask            # Web framework (HTTP routes + template serving)
@@ -7,3 +7,5 @@ simple-websocket # WebSocket transport for Flask-SocketIO threading mode
 requests         # HTTP client used for Ollama AI API calls
 bcrypt           # Password hashing for student and admin accounts
 cryptography==48.0.1  # Fernet encryption for stored admin credentials
+numpy==2.5.1         # Native numerical runtime required by Matplotlib
+matplotlib==3.11.1   # Headless student chart generation (Agg backend)
