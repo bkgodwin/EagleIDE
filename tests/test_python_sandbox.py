@@ -8,7 +8,10 @@ from pathlib import Path
 
 from sandbox_containment import landlock_status
 from sandbox_policy import (
+    CONTAINMENT_REQUIRED_MODULES,
+    MODULE_CATALOG,
     SECURITY_LOCKED_MODULES,
+    STUDENT_THIRD_PARTY_MODULES,
     disabled_module_roots,
     normalize_module_access,
 )
@@ -70,6 +73,11 @@ class PythonSandboxPolicyTests(unittest.TestCase):
         self.assertIn("subprocess", SECURITY_LOCKED_MODULES)
         self.assertIn("ctypes", SECURITY_LOCKED_MODULES)
         self.assertIn("_socket", SECURITY_LOCKED_MODULES)
+        self.assertTrue(
+            {"PIL", "contourpy", "kiwisolver", "matplotlib", "numpy"}.issubset(
+                CONTAINMENT_REQUIRED_MODULES
+            )
+        )
 
     def test_worker_honors_admin_acl_and_allows_workspace_modules(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -101,7 +109,7 @@ class PythonSandboxPolicyTests(unittest.TestCase):
                 workspace,
                 (
                     "import importlib, sys\n"
-                    "for name in ('flask', 'ctypes', 'subprocess', 'socket'):\n"
+                    "for name in ('flask', 'ctypes', 'subprocess', 'socket', '_socket'):\n"
                     "    try:\n"
                     "        __import__(name)\n"
                     "    except ImportError:\n"
@@ -126,6 +134,8 @@ class PythonSandboxPolicyTests(unittest.TestCase):
                     "    print('socket blocked')\n"
                     "else:\n"
                     "    raise AssertionError('cached socket bypassed hardening')\n"
+                    "assert sys.modules['socket']._socket is None\n"
+                    "print('nested socket extension removed')\n"
                 ),
             )
 
@@ -134,6 +144,8 @@ class PythonSandboxPolicyTests(unittest.TestCase):
         self.assertIn("reload blocked", result.stdout)
         self.assertIn("process blocked", result.stdout)
         self.assertIn("socket blocked", result.stdout)
+        self.assertIn("_socket blocked", result.stdout)
+        self.assertIn("nested socket extension removed", result.stdout)
         self.assertNotIn("unsafe", result.stdout)
 
     @unittest.skipUnless(sys.platform == "linux", "Landlock is a Linux security boundary")
@@ -146,9 +158,31 @@ class PythonSandboxPolicyTests(unittest.TestCase):
             workspace.mkdir()
             escaped_database = test_root / "outside.sqlite3"
             escaped_literal = repr(str(escaped_database))
+            managed_imports = "\n".join(
+                f"import {row['name']}"
+                for row in MODULE_CATALOG
+            )
+            dependency_imports = "\n".join(
+                f"import {name}"
+                for name in sorted(STUDENT_THIRD_PARTY_MODULES)
+            )
             result = self._run_worker(
                 workspace,
                 (
+                    "import sys\n"
+                    "if sys.version_info >= (3, 13):\n"
+                    "    from types import CapsuleType\n"
+                    "    assert CapsuleType.__name__ == 'PyCapsule'\n"
+                    "for locked_name in ('socket', '_socket'):\n"
+                    "    try:\n"
+                    "        __import__(locked_name)\n"
+                    "    except ImportError:\n"
+                    "        pass\n"
+                    "    else:\n"
+                    "        raise AssertionError(locked_name + ' became importable')\n"
+                    f"{managed_imports}\n"
+                    f"{dependency_imports}\n"
+                    "from PIL import Image\n"
                     "from dataclasses import dataclass\n"
                     "import inspect, sqlite3\n"
                     "@dataclass\n"
@@ -171,7 +205,7 @@ class PythonSandboxPolicyTests(unittest.TestCase):
                     "plt.plot([1, 2, 3], [2, 4, 3])\n"
                     "plt.title('Contained chart')\n"
                     "plt.show()\n"
-                    "print('native modules complete')\n"
+                    "print('managed and native modules complete')\n"
                 ),
             )
 
@@ -179,7 +213,7 @@ class PythonSandboxPolicyTests(unittest.TestCase):
             database = workspace / "lesson.sqlite3"
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("attach blocked", result.stdout)
-            self.assertIn("native modules complete", result.stdout)
+            self.assertIn("managed and native modules complete", result.stdout)
             self.assertTrue(database.is_file())
             self.assertEqual(database.read_bytes()[:16], b"SQLite format 3\x00")
             self.assertTrue(chart.is_file())
@@ -192,17 +226,20 @@ class PythonSandboxPolicyTests(unittest.TestCase):
             result = self._run_worker(
                 Path(tmp),
                 (
-                    "try:\n"
-                    "    import sqlite3\n"
-                    "except ImportError:\n"
-                    "    print('sqlite fail closed')\n"
-                    "else:\n"
-                    "    raise AssertionError('SQLite enabled without native containment')\n"
+                    "for name in ('PIL', 'contourpy', 'inspect', 'kiwisolver', "
+                    "'matplotlib', 'numpy', 'sqlite3'):\n"
+                    "    try:\n"
+                    "        __import__(name)\n"
+                    "    except ImportError:\n"
+                    "        print(name, 'fail closed')\n"
+                    "    else:\n"
+                    "        raise AssertionError(name + ' enabled without native containment')\n"
                 ),
             )
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("sqlite fail closed", result.stdout)
+        self.assertIn("PIL fail closed", result.stdout)
+        self.assertIn("sqlite3 fail closed", result.stdout)
 
 
 if __name__ == "__main__":
