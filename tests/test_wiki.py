@@ -113,35 +113,72 @@ class WikiStoreTests(unittest.TestCase):
         self.assertEqual(self.store.search("Replacement")[0]["id"], page["id"])
 
     def test_backup_excludes_bookmarks_and_restore_preserves_live_bookmarks(self):
-        page = self.store.create_page("Backup Page", "# Backup Page", status="published")
+        folder = self.store.create_folder("Course Folder", icon="🖧")
+        sibling = self.store.create_page("Earlier Page", "# Earlier Page", folder["id"], status="published")
+        page = self.store.create_page("Backup Page", "# Backup Page", folder["id"], status="published")
+        self.store.position_node(page["id"], sibling["id"], "before")
+        image_bytes = b"\x89PNG\r\n\x1a\nportable-image"
+        source = self.root / "diagram.png"
+        source.write_bytes(image_bytes)
+        image = self.store.create_asset_from_file(source, "diagram.png", title="diagram.png")
+        directive = f"{{{{image:{image['id']}|alt=diagram.png|caption=|align=center|width=original}}}}"
+        published_markdown = f"# Backup Page\n\n{directive}\n\nPublished lesson."
+        self.store.update_node(page["id"], content=published_markdown, status="published")
         self.store.add_personal_bookmark("student@example.com", page["id"])
-        self.store.save_page_draft(page["id"], "# Backup Page\nDraft")
+        self.store.save_page_draft(page["id"], f"# Backup Page\n\n{directive}\n\nDraft lesson.")
         settings = self.store.update_home_settings(
             "Course Knowledge Base",
             "Everything students need for class.",
             external_resources=[{"title": "Reference", "url": "https://example.org/reference", "description": "Course reference."}],
             standards=[{"standard_id": "CS.1", "description": "Analyze algorithms."}],
+            footer_text="Computer Science Department",
         )
         self.store.update_node(page["id"], standard_ids=[settings["standards"][0]["id"]])
+        self.store.set_class_feature("class-1", page["id"], "teacher@example.com")
+        self.store.record_analytics("page_view", page["id"])
         backup = self.store.create_backup(self.root / "portable.zip")
 
         with zipfile.ZipFile(backup) as archive:
             manifest = json.loads(archive.read("manifest.json"))
             self.assertFalse(manifest["bookmarks_included"])
             self.assertNotIn("bookmarks", manifest)
+            self.assertIn("content_organization", manifest["components"])
+            self.assertIn("uploaded_media", manifest["components"])
+            self.assertIn("home_settings", manifest["components"])
             self.assertTrue(manifest["page_drafts"])
             self.assertTrue(any(name.startswith("drafts/") for name in archive.namelist()))
+            self.assertIn(f"media/{image['storage_name']}", archive.namelist())
+            self.assertEqual(archive.read(f"media/{image['storage_name']}"), image_bytes)
+            self.assertIn(directive, archive.read(f"content/{page['storage_name']}").decode("utf-8"))
 
         self.store.update_node(page["id"], title="Changed")
+        self.store.move_node(page["id"], None)
         self.store.update_home_settings("Changed", "Changed")
+        self.store.remove_class_feature("class-1", page["id"])
+        _, changed_media_path = self.store.media_path(image["id"], include_drafts=True)
+        changed_media_path.write_bytes(b"\x89PNG\r\n\x1a\nchanged")
         result = self.store.restore_archive(backup)
         self.assertTrue(result["ok"])
-        self.assertEqual(self.store.get_node(page["id"])["title"], "Backup Page")
+        restored_page = self.store.get_node(page["id"], include_drafts=True)
+        self.assertEqual(restored_page["title"], "Backup Page")
+        self.assertEqual(restored_page["parent_id"], folder["id"])
+        self.assertIn(directive, restored_page["markdown"])
+        self.assertIn(directive, restored_page["draft_markdown"])
+        restored_folder = self.store.get_node(folder["id"], include_drafts=True)
+        self.assertEqual(restored_folder["icon"], "🖧")
+        tree_folder = next(item for item in self.store.get_tree(include_drafts=True) if item["id"] == folder["id"])
+        self.assertEqual([item["id"] for item in tree_folder["children"][:2]], [page["id"], sibling["id"]])
+        restored_image, restored_media_path = self.store.media_path(image["id"], include_drafts=True)
+        self.assertEqual(restored_image["file_name"], "diagram.png")
+        self.assertEqual(restored_media_path.read_bytes(), image_bytes)
         self.assertEqual(len(self.store.list_bookmarks("student@example.com")), 1)
         self.assertEqual(self.store.home_settings()["title"], "Course Knowledge Base")
+        self.assertEqual(self.store.home_settings()["footer_text"], "Computer Science Department")
         self.assertEqual(self.store.home_settings()["standards"][0]["standard_id"], "CS.1")
         self.assertEqual(self.store.get_node(page["id"])["standards"][0]["standard_id"], "CS.1")
         self.assertEqual(self.store.home_settings()["external_resources"][0]["title"], "Reference")
+        self.assertEqual(self.store.list_class_features("class-1")[0]["node_id"], page["id"])
+        self.assertEqual(self.store.analytics_summary()["totals"]["page_views"], 1)
 
     def test_restore_rejects_path_traversal(self):
         archive_path = self.root / "unsafe.zip"
