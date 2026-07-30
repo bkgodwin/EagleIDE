@@ -27,6 +27,9 @@ Landlock supplements rather than replaces the existing controls:
   prerequisites, and the student's own workspace modules;
 - process, network, FFI/native-memory, GUI, and interpreter-control modules
   remain security locked and cannot be enabled by an administrator;
+- Matplotlib may read only its installed package data and an enumerated set of
+  public system font directories; server configuration and user homes remain
+  outside both the audit and Landlock read boundaries;
 - POSIX resource limits or Windows Job Objects cap memory, CPU, process count,
   open files, file size, and process lifetime;
 - parent admission control reserves each run's configured memory before launch.

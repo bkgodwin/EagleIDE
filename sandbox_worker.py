@@ -24,6 +24,13 @@ MAX_WRITE_BYTES = max(0, int(os.environ.get("EAGLE_RUN_WRITE_BUDGET_BYTES", 10 *
 MAX_NEW_FILES = 20
 RUNNER_TASK_HEADROOM = 32
 MAX_NOFILE = 64
+SYSTEM_FONT_READONLY_PATHS = (
+    "/usr/share/fonts",
+    "/usr/local/share/fonts",
+    "/usr/X11R6/lib/X11/fonts",
+    "/usr/X11/lib/X11/fonts",
+    "/usr/lib/openoffice/share/fonts/truetype",
+)
 
 BLOCKED_OS_CALLS = (
     "system",
@@ -222,7 +229,10 @@ class SafeImport:
         self._blocked_exact = blocked_exact
         import sys
 
-        self._harden_os_module = _make_os_hardener(policy, (sys.base_prefix, sys.prefix))
+        self._harden_os_module = _make_os_hardener(
+            policy,
+            (sys.base_prefix, sys.prefix, *SYSTEM_FONT_READONLY_PATHS),
+        )
         self._is_allowed_module = is_student_module_root
         self._is_local_module = policy.has_local_module
         self._safe_open = safe_open
@@ -412,6 +422,7 @@ def _apply_native_containment(allowed_root: str, code_path: Path) -> dict[str, A
             for path in ("/lib", "/lib64", "/usr/lib", "/usr/lib64", "/usr/local/lib")
             if Path(path).exists()
         )
+        readonly_paths.update(Path(path) for path in SYSTEM_FONT_READONLY_PATHS if Path(path).exists())
     return apply_landlock(allowed_root, readonly_paths=readonly_paths)
 
 
@@ -570,6 +581,7 @@ def _install_audit_hook(
     trusted_read_roots = {
         realpath(abspath(sys.base_prefix)),
         realpath(abspath(sys.prefix)),
+        *(realpath(abspath(path)) for path in SYSTEM_FONT_READONLY_PATHS),
     }
     code_file = realpath(abspath(str(code_path)))
     write_flags = 0
