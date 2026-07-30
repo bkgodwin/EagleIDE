@@ -26,10 +26,12 @@
     treeDragId: '',
     drawerResizeFrame: 0,
     standardTooltipTarget: null,
+    wikiReturn: null,
   };
 
   const $ = (id) => document.getElementById(id);
   const WIKI_FONT_SIZE_KEY = 'eagleide-wiki-font-size';
+  const WIKI_RETURN_KEY = 'eagleide-wiki-return-v1';
   const WIKI_FONT_SIZES = new Set([14, 16, 18, 20]);
 
   function context() {
@@ -101,6 +103,7 @@
 
   function setView(mode, { push = true, path = '' } = {}) {
     const wiki = mode === 'wiki';
+    if (wiki) clearWikiReturn();
     document.body.classList.toggle('wiki-mode', wiki);
     document.body.classList.remove('network-mode');
     document.body.classList.remove('wiki-drawer-open');
@@ -119,6 +122,94 @@
   function showIDE(push = true) {
     setView('ide', { push });
     try { window.eagleEditor?.refresh?.(); } catch {}
+  }
+
+  function readWikiReturn() {
+    if (state.wikiReturn) return state.wikiReturn;
+    try {
+      const value = JSON.parse(sessionStorage.getItem(WIKI_RETURN_KEY) || 'null');
+      const url = new URL(String(value?.path || ''), location.origin);
+      const scrollTop = Number(value?.scrollTop);
+      if (
+        url.origin !== location.origin
+        || !url.pathname.startsWith('/wiki/')
+        || !String(value?.identifier || '').trim()
+        || !Number.isFinite(scrollTop)
+      ) return null;
+      state.wikiReturn = {
+        identifier: String(value.identifier).trim().slice(0, 200),
+        path: `${url.pathname}${url.search}${url.hash}`,
+        scrollTop: Math.max(0, scrollTop),
+        title: String(value.title || 'the wiki lesson').trim().slice(0, 200),
+      };
+      return state.wikiReturn;
+    } catch {
+      return null;
+    }
+  }
+
+  function syncWikiReturnButton() {
+    const saved = readWikiReturn();
+    const button = $('wikiReturnBtn');
+    if (button) {
+      button.hidden = !saved;
+      button.title = saved ? `Return to ${saved.title}` : '';
+    }
+    if ($('wikiViewBtn')) $('wikiViewBtn').hidden = !!saved;
+  }
+
+  function captureWikiReturn(node) {
+    if (!document.body.classList.contains('wiki-mode') || !location.pathname.startsWith('/wiki/')) return null;
+    return {
+      identifier: String(node?.slug || node?.id || '').trim(),
+      path: `${location.pathname}${location.search}${location.hash}`,
+      scrollTop: Math.max(0, Number($('wikiReaderShell')?.scrollTop || 0)),
+      title: String(node?.title || 'the wiki lesson').trim(),
+    };
+  }
+
+  function rememberWikiReturn(value) {
+    if (!value?.identifier || !value?.path) return;
+    state.wikiReturn = value;
+    try { sessionStorage.setItem(WIKI_RETURN_KEY, JSON.stringify(value)); } catch {}
+    syncWikiReturnButton();
+  }
+
+  function clearWikiReturn() {
+    state.wikiReturn = null;
+    try { sessionStorage.removeItem(WIKI_RETURN_KEY); } catch {}
+    const button = $('wikiReturnBtn');
+    if (button) {
+      button.hidden = true;
+      button.title = '';
+    }
+    if ($('wikiViewBtn')) $('wikiViewBtn').hidden = false;
+  }
+
+  async function returnToWiki() {
+    const saved = readWikiReturn();
+    if (!saved) {
+      await showHome();
+      return;
+    }
+    const button = $('wikiReturnBtn');
+    if (button) button.disabled = true;
+    try {
+      const node = await openNode(saved.identifier, { push: false });
+      if (!node) {
+        await showHome();
+        return;
+      }
+      const current = `${location.pathname}${location.search}${location.hash}`;
+      if (current !== saved.path) {
+        history.pushState({ eagleView: 'wiki', node: node.id }, '', saved.path);
+      }
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      $('wikiReaderShell')?.scrollTo?.({ top: saved.scrollTop, behavior: 'auto' });
+    } finally {
+      clearWikiReturn();
+      if (button) button.disabled = false;
+    }
   }
 
   function applyWikiFontSize(value, { persist = true } = {}) {
@@ -740,7 +831,9 @@
       const description = document.createElement('td');
       description.textContent = standard.description || '';
       const pages = document.createElement('td');
-      pages.className = 'wiki-coverage-dots';
+      pages.className = 'wiki-coverage-pages';
+      const dots = document.createElement('div');
+      dots.className = 'wiki-coverage-dots';
       for (const page of standard.pages || []) {
         const link = document.createElement('a');
         link.href = `/wiki/${encodeURIComponent(page.slug || page.id)}`;
@@ -748,11 +841,12 @@
         link.title = page.title || 'Open wiki page';
         link.setAttribute('aria-label', `Open ${page.title || 'wiki page'}`);
         link.textContent = '●';
-        pages.appendChild(link);
+        dots.appendChild(link);
       }
-      if (!pages.childElementCount) {
-        pages.setAttribute('aria-label', 'No published wiki pages are tagged with this standard');
+      if (!dots.childElementCount) {
+        dots.setAttribute('aria-label', 'No published wiki pages are tagged with this standard');
       }
+      pages.appendChild(dots);
       row.append(id, description, pages);
       target.appendChild(row);
     }
@@ -1000,9 +1094,14 @@
       const options = directiveOptions(raw);
       if (type.toLowerCase() === 'image') {
         const align = ['left', 'right', 'center', 'full'].includes(options.align) ? options.align : 'center';
-        let width = Math.round((parseInt(options.width, 10) || 70) / 10) * 10;
-        width = Math.max(20, Math.min(100, width));
-        return `<figure class="wiki-image align-${align} width-${width}"><img src="/api/wiki/media/${id}" alt="${escapeHtml(options.alt || '')}" loading="lazy">${options.caption ? `<figcaption>${escapeHtml(options.caption)}</figcaption>` : ''}</figure>`;
+        const requestedWidth = String(options.width || '').trim().toLowerCase();
+        let widthClass = 'width-original';
+        if (requestedWidth !== 'original') {
+          let width = Math.round((parseInt(requestedWidth, 10) || 70) / 10) * 10;
+          width = Math.max(20, Math.min(100, width));
+          widthClass = `width-${width}`;
+        }
+        return `<figure class="wiki-image align-${align} ${widthClass}"><img src="/api/wiki/media/${id}" alt="${escapeHtml(options.alt || '')}" loading="lazy">${options.caption ? `<figcaption>${escapeHtml(options.caption)}</figcaption>` : ''}</figure>`;
       }
       if (type.toLowerCase() === 'video') {
         return `<figure class="wiki-embedded-media"><video src="/api/wiki/media/${id}" controls preload="metadata" playsinline></video>${options.caption ? `<figcaption>${escapeHtml(options.caption)}</figcaption>` : ''}</figure>`;
@@ -1136,6 +1235,7 @@
         open.type = 'button';
         open.textContent = 'Open in IDE';
         open.addEventListener('click', async () => {
+          const wikiReturn = captureWikiReturn(node);
           const fileName = String(meta.filename || `${node.slug || 'wiki'}-example-${index + 1}${info.extension}`)
             .split(/[\\/]/).pop().replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
           const result = await context().setEditorSnapshot?.({
@@ -1146,7 +1246,10 @@
             draft: true,
             wikiSource: { id: node.id, slug: node.slug, title: node.title },
           });
-          if (result !== false) showIDE(true);
+          if (result !== false) {
+            rememberWikiReturn(wikiReturn);
+            showIDE(true);
+          }
         });
         toolbar.appendChild(open);
       }
@@ -1730,6 +1833,7 @@
     });
     $('wikiHeroIdeBtn')?.addEventListener('click', () => showIDE());
     $('ideViewBtn')?.addEventListener('click', () => showIDE());
+    $('wikiReturnBtn')?.addEventListener('click', returnToWiki);
     $('wikiViewBtn')?.addEventListener('click', () => showHome());
     $('wikiTreeFilter')?.addEventListener('input', () => renderAllTrees());
     window.addEventListener('resize', scheduleContentsDrawerResize, { passive: true });
@@ -1843,6 +1947,7 @@
   async function initialize() {
     restoreWikiFontSize();
     attachEvents();
+    syncWikiReturnButton();
     syncSidebarControls();
     refreshContext();
     await loadHome({ quiet: true }).catch(() => {});
