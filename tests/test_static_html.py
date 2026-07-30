@@ -57,11 +57,14 @@ class StaticHtmlTestCase(unittest.TestCase):
         page_version = re.search(r'/static/css/main\.css\?v=([^"]+)', self.raw)
         import_version = re.search(r'features/wiki\.css\?v=([^"]+)', main_css)
         reader_version = re.search(r'/static/js/wiki-reader\.js\?v=([^"]+)', self.raw)
+        admin_version = re.search(r'/static/js/wiki-admin\.js\?v=([^"]+)', self.raw)
         self.assertIsNotNone(page_version)
         self.assertIsNotNone(import_version)
         self.assertIsNotNone(reader_version)
+        self.assertIsNotNone(admin_version)
         self.assertEqual(page_version.group(1), import_version.group(1))
         self.assertEqual(page_version.group(1), reader_version.group(1))
+        self.assertEqual(page_version.group(1), admin_version.group(1))
 
     def test_attribute_ampersands_are_html_escaped(self):
         unescaped = re.findall(r'(?:href|src)="[^"]*&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9A-Fa-f]+);)', self.raw)
@@ -75,7 +78,7 @@ class StaticHtmlTestCase(unittest.TestCase):
             "wikiAdminExternalResources", "wikiAdminAddResourceBtn", "wikiAdminMediaPanel",
             "wikiAdminMediaGrid", "wikiAdminMediaInput", "wikiAdminContentPanel",
             "wikiAdminEditorOnlyBtn", "wikiAdminSplitViewBtn", "wikiAdminPreviewOnlyBtn",
-            "wikiSearchSubmitBtn", "wikiViewBtn", "wikiPageStandardsList",
+            "wikiSearchSubmitBtn", "wikiViewBtn", "wikiReturnBtn", "wikiPageStandardsList",
             "wikiAdminAddStandardBtn", "wikiAdminStandardsCsvInput", "wikiAdminPageStandards",
             "wikiSiteFooter", "wikiAdminFooterText", "wikiAdminFolderIcon",
             "wikiEmojiPickerModal", "studentNotebookWikiLinkBtn", "studentNotebookWikiLinkModal",
@@ -118,6 +121,14 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn("style.setProperty('font-size', `${size}px`, 'important')", reader)
         self.assertIn("showStandardDescriptionTooltip", reader)
         self.assertNotIn("Not yet covered", reader)
+        self.assertIn("returnToWiki", reader)
+        self.assertIn("sessionStorage.setItem(WIKI_RETURN_KEY", reader)
+        self.assertIn("wiki-coverage-pages", reader)
+        admin = (BASE_DIR / "static" / "js" / "wiki-admin.js").read_text(encoding="utf-8")
+        self.assertIn("addEventListener('paste', pasteClipboardImages)", admin)
+        self.assertIn("align: 'center'", admin)
+        self.assertIn("width: 'original'", admin)
+        self.assertIn("|align=${placement}|width=${scale}", admin)
         self.assertIn('@app.get("/standards-coverage")', (BASE_DIR / "app.py").read_text(encoding="utf-8"))
         self.assertLess(self.raw.index('id="wikiPageStandards"'), self.raw.index('id="wikiTocContents"'))
 

@@ -2063,6 +2063,18 @@ class WikiStore:
                 "settings": self._table_rows(conn, "settings"),
                 "analytics_daily": self._table_rows(conn, "analytics_daily"),
                 "bookmarks_included": False,
+                "components": [
+                    "content_organization",
+                    "published_markdown",
+                    "uploaded_media",
+                    "drafts",
+                    "revisions",
+                    "home_settings",
+                    "standards",
+                    "page_standard_tags",
+                    "class_features",
+                    "analytics",
+                ],
             }
         with zipfile.ZipFile(temp, "w", allowZip64=True) as archive:
             for root_name, directory in (("content", self.content_dir), ("media", self.media_dir), ("revisions", self.revisions_dir), ("drafts", self.drafts_dir)):
@@ -2106,6 +2118,26 @@ class WikiStore:
         checksums = manifest.get("checksums")
         if not isinstance(checksums, dict):
             raise ValueError("Backup checksums are missing")
+        components = manifest.get("components")
+        if components is not None:
+            required_components = {
+                "content_organization",
+                "published_markdown",
+                "uploaded_media",
+                "drafts",
+                "revisions",
+                "home_settings",
+                "standards",
+                "page_standard_tags",
+                "class_features",
+                "analytics",
+            }
+            if (
+                not isinstance(components, list)
+                or any(not isinstance(item, str) for item in components)
+                or not required_components.issubset(set(components))
+            ):
+                raise ValueError("Backup component inventory is incomplete")
         for name, size in file_sizes.items():
             if name == "manifest.json":
                 continue

@@ -38,7 +38,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20260729-3">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260729-4">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -56,6 +56,7 @@
           <input id="wikiSearchInput" type="search" placeholder="Search the wiki" autocomplete="off" spellcheck="false" aria-label="Search the wiki" aria-controls="wikiSearchResults" />
           <button id="wikiSearchSubmitBtn" type="button">Search</button>
         </div>
+        <button class="site-nav-link site-nav-link--return ide-only" id="wikiReturnBtn" type="button" hidden>← Return to Wiki</button>
         <button class="site-nav-link site-nav-link--wiki ide-only" id="wikiViewBtn" type="button">Wiki</button>
         <button class="site-nav-link site-nav-link--network" id="networkViewBtn" type="button" hidden>Network Sim</button>
         <button class="site-nav-link site-nav-link--ide" id="ideViewBtn" type="button">Open IDE</button>
@@ -1122,7 +1123,7 @@
             <button class="btn secondary" id="wikiAdminMediaTabBtn" type="button">Media</button>
             <button class="btn secondary" id="wikiAdminAnalyticsBtn" type="button">Analytics</button>
           </nav>
-          <button class="btn secondary" id="wikiAdminBackupBtn" type="button">Download Backup</button>
+          <button class="btn secondary" id="wikiAdminBackupBtn" type="button" title="Includes wiki settings, structure, Markdown, media, drafts, revisions, standards, class features, and analytics. Bookmarks are intentionally excluded.">Download Backup</button>
           <label class="btn secondary wiki-file-label" for="wikiAdminRestoreInput">Restore Backup</label>
           <input id="wikiAdminRestoreInput" type="file" accept=".zip,application/zip" />
           <button class="wiki-icon-btn" id="wikiAdminCloseBtn" type="button" aria-label="Close Wiki Manager">×</button>
@@ -1212,6 +1213,7 @@
                 <button type="button" data-md-wrap="`">Code</button>
                 <button type="button" data-md-prefix="- ">List</button>
                 <button type="button" id="wikiAdminInsertImageBtn">Insert Image</button>
+                <span class="wiki-clipboard-image-hint">Tip: paste an image from the clipboard to insert it at the cursor.</span>
                 <span class="wiki-editor-view-controls" aria-label="Editor view">
                   <button type="button" id="wikiAdminEditorOnlyBtn">Editor</button>
                   <button type="button" id="wikiAdminSplitViewBtn" class="is-active">Split</button>
@@ -1249,7 +1251,7 @@
   <div id="wikiImageInsertModal" class="modal" style="display:none;">
     <div class="modal-content wiki-image-insert-modal">
       <h3>Insert an image</h3>
-      <p class="wiki-image-insert-help">Choose an image from this device, then set its placement and size. Supported formats: PNG, JPEG, WebP, and GIF.</p>
+      <p class="wiki-image-insert-help">Choose an image from this device, then set its placement and scale. You can also paste an image directly into the Markdown editor. Supported formats: PNG, JPEG, WebP, and GIF.</p>
       <label for="wikiImageInsertFile">Image</label>
       <input id="wikiImageInsertFile" type="file" accept=".png,.jpg,.jpeg,.webp,.gif" />
       <label for="wikiImageInsertAlt">Alternative text</label>
@@ -1258,8 +1260,19 @@
       <input id="wikiImageInsertCaption" maxlength="300" placeholder="Optional caption" />
       <label for="wikiImageInsertAlign">Placement</label>
       <select id="wikiImageInsertAlign"><option value="center">Centered</option><option value="left">Float left</option><option value="right">Float right</option><option value="full">Full width</option></select>
-      <label for="wikiImageInsertWidth">Width: <span id="wikiImageInsertWidthValue">70%</span></label>
-      <input id="wikiImageInsertWidth" type="range" min="20" max="100" step="10" value="70" />
+      <label for="wikiImageInsertWidth">Scale</label>
+      <select id="wikiImageInsertWidth">
+        <option value="original" selected>Original size</option>
+        <option value="20">20%</option>
+        <option value="30">30%</option>
+        <option value="40">40%</option>
+        <option value="50">50%</option>
+        <option value="60">60%</option>
+        <option value="70">70%</option>
+        <option value="80">80%</option>
+        <option value="90">90%</option>
+        <option value="100">100%</option>
+      </select>
       <div class="modal-actions">
         <button class="btn secondary" id="wikiImageInsertCancelBtn" type="button">Cancel</button>
         <button class="btn run" id="wikiImageInsertConfirmBtn" type="button">Upload and Insert</button>
@@ -1422,8 +1435,8 @@
   <script src="/static/js/app-core.js?v=20260714-8"></script>
 <script src="/static/js/network-sim.js?v=20260714-18"></script>
 <script src="/static/js/network-sim-advanced.js?v=20260714-4"></script>
-  <script src="/static/js/wiki-reader.js?v=20260729-3"></script>
-  <script src="/static/js/wiki-admin.js?v=20260729-1"></script>
+  <script src="/static/js/wiki-reader.js?v=20260729-4"></script>
+  <script src="/static/js/wiki-admin.js?v=20260729-4"></script>
   <script src="/static/js/classroom-signals.js"></script>
   <script src="/static/js/classroom-files.js?v=20250608"></script>
   <script src="/static/js/student-notebook.js?v=20260714-7"></script>
