@@ -92,6 +92,8 @@ RUNNER_MEMORY_LIMIT_BYTES = 750 * 1024 * 1024
 MAX_RUNNER_MEMORY_LIMIT_MB = 2048
 RUNNER_CPU_PERCENT = 50
 RUNNER_TASK_HEADROOM = 32
+JS_HEAP_LIMIT_MB = 384
+JS_ADDRESS_SPACE_LIMIT_BYTES = 1536 * 1024 * 1024
 
 
 def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -5480,9 +5482,14 @@ try {{
 }}
 """
         self._launch(
-            [NODE_EXECUTABLE, f"--max-old-space-size={RUNNER_MEMORY_LIMIT_BYTES // (1024 * 1024)}", "-e", wrapper_code],
+            [NODE_EXECUTABLE, f"--max-old-space-size={JS_HEAP_LIMIT_MB}", "-e", wrapper_code],
             str(cwd_path),
             _runner_environment({"NODE_DISABLE_COLORS": "1"}),
+            # V8 reserves substantially more virtual address space than its
+            # managed heap. Keep the student-visible heap small while leaving
+            # enough address space for Node to initialize; the VM context does
+            # not expose Buffer, require, process, or other native allocators.
+            memory_limit_bytes=JS_ADDRESS_SPACE_LIMIT_BYTES,
         )
 
 
