@@ -173,6 +173,21 @@ class ExecutionLimitTestCase(unittest.TestCase):
         self.assertLess(names.index("run_ack"), names.index("finished"))
         self.assertNotIn(client.eio_sid, eagle._active_runs_by_sid)
 
+    def test_python_traceback_keeps_lesson_details_without_server_paths(self):
+        client = self._socket()
+        client.emit(
+            "run_code",
+            self._payload("def lesson_error():\n    raise ValueError('check your value')\nlesson_error()"),
+        )
+        output = self._output(self._collect_until_finished(client))
+
+        self.assertIn('File "untitled.py"', output)
+        self.assertIn("ValueError: check your value", output)
+        self.assertNotIn(str(self.sandbox_dir), output)
+        self.assertNotIn(str(Path(eagle.__file__).resolve().parent), output)
+        self.assertNotIn("sandbox_worker.py", output)
+        self.assertNotIn("runner.py", output)
+
     @unittest.skipUnless(eagle.NODE_EXECUTABLE != "node" or shutil.which("node"), "Node.js is not installed")
     def test_valid_javascript_run_finishes_and_releases_capacity(self):
         client = self._socket()
@@ -471,6 +486,45 @@ class ExecutionLimitTestCase(unittest.TestCase):
         self.assertEqual(payload["selected_table"], "odd table")
         self.assertEqual(payload["rows"], [["Ava", 97]])
         self.assertEqual((database_path.stat().st_mtime_ns, database_path.stat().st_size), original_signature)
+
+    def test_wiki_examples_are_unique_typed_and_never_replace_open_files(self):
+        existing = self.user_dir / "active.py"
+        existing.write_text("keep this lesson", encoding="utf-8")
+        headers = {"X-User-Token": self.token}
+
+        denied = self.http.post(
+            "/api/files/wiki-example",
+            json={"code": "console.log('no')", "language": "javascript", "page_title": "Loops"},
+        )
+        first = self.http.post(
+            "/api/files/wiki-example",
+            headers=headers,
+            json={"code": "console.log('first')", "language": "javascript", "page_title": "Loops"},
+        )
+        second = self.http.post(
+            "/api/files/wiki-example",
+            headers=headers,
+            json={"code": "console.log('second')", "language": "js", "page_title": "Loops"},
+        )
+        html = self.http.post(
+            "/api/files/wiki-example",
+            headers=headers,
+            json={"code": "<h1>Example</h1>", "language": "html", "page_title": "Web Basics"},
+        )
+
+        self.assertEqual(denied.status_code, 401)
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(html.status_code, 200)
+        first_data = first.get_json()
+        second_data = second.get_json()
+        html_data = html.get_json()
+        self.assertEqual(first_data["path"], "Wiki Examples/Wiki Example - Loops - 1.js")
+        self.assertEqual(second_data["path"], "Wiki Examples/Wiki Example - Loops - 2.js")
+        self.assertEqual(html_data["path"], "Wiki Examples/Wiki Example - Web Basics - 1.html")
+        self.assertEqual((self.user_dir / first_data["path"]).read_text(encoding="utf-8"), "console.log('first')")
+        self.assertEqual((self.user_dir / second_data["path"]).read_text(encoding="utf-8"), "console.log('second')")
+        self.assertEqual(existing.read_text(encoding="utf-8"), "keep this lesson")
 
     def test_newline_free_output_is_bounded(self):
         eagle.MAX_OUTPUT_BYTES = 1024

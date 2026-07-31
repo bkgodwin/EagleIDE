@@ -73,6 +73,13 @@
 #adminSettingsModal .admin-settings-shell .admin-settings-fields input,
 #adminSettingsModal .admin-settings-shell .admin-settings-fields textarea { width: 100%; padding: 10px; border: 1px solid var(--theme-border-mid); border-radius: 0; background: var(--theme-input-bg); color: var(--theme-text); }
 .admin-settings-fields textarea { min-height: 150px; resize: vertical; font-family: ui-monospace, monospace; }
+.admin-ai-runtime-test { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.admin-ai-runtime-test .btn { min-height: 40px; flex: 0 0 auto; }
+.admin-ai-runtime-test span { min-width: 0; color: var(--theme-text-dim); font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
+.admin-ai-runtime-test span.success { color: #79df92; }
+.admin-ai-runtime-test span.error { color: #ff8d94; }
+.admin-setting-help { grid-column: 1 / -1; margin: -4px 0 0; color: var(--theme-text-dim); font-size: 11px; line-height: 1.5; }
+.admin-setting-help code { color: var(--columbia-blue); }
 #adminSettingsModal .admin-settings-shell .admin-setting-toggle { display: flex; align-items: flex-start; gap: 10px; padding: 14px; margin: 0 0 18px; border: 1px solid var(--theme-border-mid); background: var(--theme-input-bg); cursor: pointer; }
 .admin-setting-toggle input { margin-top: 3px; accent-color: #c62828; }
 .admin-setting-toggle span { display: flex; flex-direction: column; gap: 3px; }
@@ -123,6 +130,17 @@
   .admin-settings-fields.three-column,
   .admin-runtime-permissions { grid-template-columns: 1fr 1fr; }
   .python-module-category-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .admin-settings-workspace { grid-template-columns: 1fr; }
+  .admin-settings-nav { flex-direction: row; overflow-x: auto; padding: 0; border-right: 0; border-bottom: 1px solid var(--theme-border-mid); }
+  .admin-settings-nav button { flex: 0 0 auto; min-height: 42px; padding: 0 12px; border-left: 0; border-bottom: 3px solid transparent; }
+  .admin-settings-nav button.active { border-left-color: transparent; border-bottom-color: var(--columbia-blue); }
+  .admin-settings-content { padding: 16px; }
+  .admin-settings-fields.two-column,
+  .admin-settings-fields.three-column,
+  .admin-runtime-permissions { grid-template-columns: 1fr; }
+  .admin-ai-runtime-test { align-items: flex-start; flex-direction: column; }
 }
     .server-health-grid{ display:grid; gap:10px; grid-template-columns: repeat(4, minmax(120px, 1fr)); margin-bottom:12px; }
     .server-health-card{ border:1px solid var(--theme-border-mid); border-radius:10px; padding:10px; background:var(--theme-input-bg); }

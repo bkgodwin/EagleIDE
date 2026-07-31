@@ -132,6 +132,9 @@ MAX_AI_RESPONSE_CHARS = _env_int("EAGLE_MAX_AI_RESPONSE_CHARS", 64_000, 2_000, 2
 MAX_AI_HTTP_RESPONSE_BYTES = _env_int("EAGLE_MAX_AI_HTTP_RESPONSE_BYTES", 2 * 1024 * 1024, 64 * 1024, 16 * 1024 * 1024)
 AI_CIRCUIT_FAILURE_THRESHOLD = _env_int("EAGLE_AI_CIRCUIT_FAILURES", 3, 1, 20)
 AI_CIRCUIT_COOLDOWN_SECONDS = _env_int("EAGLE_AI_CIRCUIT_COOLDOWN_SECONDS", 30, 5, 300)
+AI_DEFAULT_TIMEOUT_SECONDS = 120
+AI_MIN_TIMEOUT_SECONDS = 15
+AI_MAX_TIMEOUT_SECONDS = 300
 
 # HTML runtime defaults/safeguards
 HTML_RUNTIME_DEFAULT_TIMEOUT = 30
@@ -226,6 +229,7 @@ except Exception:
         "ai_explainer_enabled": True,
         "ai_ollama_url": "http://127.0.0.1:11434",
         "ai_model": "gemma3:4b",
+        "ai_request_timeout_seconds": AI_DEFAULT_TIMEOUT_SECONDS,
         "ai_assistant_preprompt": (
             "You are a safe coding tutor for students. Only support Python, JavaScript, and HTML questions. "
             "For direct skill questions, give one short paragraph explanation plus one short example code snippet. "
@@ -418,8 +422,47 @@ def _normalized_python_runtime_settings(cfg: Optional[Dict[str, Any]] = None) ->
     }
 
 
+_OLLAMA_MODEL_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,158}(?::[A-Za-z0-9][A-Za-z0-9._-]{0,38})?$")
+
+
+def _normalize_ollama_url(value: Any) -> str:
+    normalized = str(value or "").strip().rstrip("/")
+    parsed = urlsplit(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("Enter a valid Ollama HTTP or HTTPS URL without embedded credentials")
+    return normalized
+
+
+def _normalize_ollama_model(value: Any) -> str:
+    normalized = str(value or "").strip()
+    if not normalized or not _OLLAMA_MODEL_PATTERN.fullmatch(normalized):
+        raise ValueError("Enter a valid Ollama model name, such as deepseek-coder:6.7b")
+    return normalized
+
+
+def _configured_ai_timeout(cfg: Optional[Dict[str, Any]] = None) -> int:
+    source = cfg if isinstance(cfg, dict) else _load_config()
+    return _bounded_int(
+        source.get("ai_request_timeout_seconds"),
+        AI_DEFAULT_TIMEOUT_SECONDS,
+        AI_MIN_TIMEOUT_SECONDS,
+        AI_MAX_TIMEOUT_SECONDS,
+    )
+
+
 def _normalize_config_partial(partial: Dict[str, Any]) -> Dict[str, Any]:
     normalized = dict(partial or {})
+    if "ai_ollama_url" in normalized:
+        normalized["ai_ollama_url"] = _normalize_ollama_url(normalized["ai_ollama_url"])
+    if "ai_model" in normalized:
+        normalized["ai_model"] = _normalize_ollama_model(normalized["ai_model"])
+    if "ai_request_timeout_seconds" in normalized:
+        normalized["ai_request_timeout_seconds"] = _bounded_int(
+            normalized["ai_request_timeout_seconds"],
+            AI_DEFAULT_TIMEOUT_SECONDS,
+            AI_MIN_TIMEOUT_SECONDS,
+            AI_MAX_TIMEOUT_SECONDS,
+        )
     if any(
         key in normalized
         for key in ("python_memory_limit_mb", "python_max_concurrent_runs", "python_module_access")
@@ -597,6 +640,7 @@ _skills_lock = threading.Lock()
 _default_skills_seed_lock = threading.Lock()
 _notebooks_lock = threading.Lock()
 _server_health_lock = threading.Lock()
+_wiki_example_lock = threading.Lock()
 _users_cache: Optional[tuple[str, int, dict]] = None
 _classes_cache: Optional[tuple[str, int, dict]] = None
 _skills_cache: Optional[tuple[str, int, dict]] = None
@@ -1826,6 +1870,7 @@ def get_config():
     sanitized = dict(cfg)
     sanitized.update(_normalized_python_runtime_settings(cfg))
     sanitized.pop("admin_password_encrypted", None)
+    sanitized.pop("admin_email", None)
     return jsonify(ok=True, data=sanitized)
 
 @app.post("/api/config/save")
@@ -1837,12 +1882,20 @@ def save_config():
     if isinstance(partial, dict):
         partial.pop("admin_password_encrypted", None)
         partial.pop("admin_email", None)
-        partial = _normalize_config_partial(partial)
+        try:
+            partial = _normalize_config_partial(partial)
+        except ValueError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
     else:
         return jsonify(ok=False, error="Settings data must be an object"), 400
     new_cfg = _update_config(partial)
+    if any(key in partial for key in ("ai_ollama_url", "ai_model", "ai_request_timeout_seconds")):
+        resetter = globals().get("_reset_ai_runtime_state")
+        if callable(resetter):
+            resetter()
     new_cfg.update(_normalized_python_runtime_settings(new_cfg))
     new_cfg.pop("admin_password_encrypted", None)
+    new_cfg.pop("admin_email", None)
     return jsonify(ok=True, data=new_cfg)
 
 
@@ -2162,6 +2215,92 @@ def files_create():
             else:
                 target_validated.write_bytes(b"")
         return jsonify(ok=True, path=str(target_validated.relative_to(user_dir)))
+
+
+@app.post("/api/files/wiki-example")
+def files_create_wiki_example():
+    """Atomically save a wiki code block as a new, correctly typed workspace file."""
+
+    user = _require_user_for_files(request)
+    if not user:
+        return jsonify(ok=False, error="Authentication required"), 401
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify(ok=False, error="Request data must be an object"), 400
+    code = data.get("code", "")
+    if not isinstance(code, str):
+        return jsonify(ok=False, error="Wiki example code must be text"), 400
+    encoded = code.encode("utf-8")
+    if len(encoded) > MAX_EDITOR_FILE_BYTES:
+        return jsonify(
+            ok=False,
+            error=f"Wiki example exceeds the {MAX_EDITOR_FILE_BYTES // (1024 * 1024)}MB editor limit",
+        ), 413
+
+    language = _normalize_language_hint(data.get("language"), "")
+    extension = {
+        "python": ".py",
+        "javascript": ".js",
+        "html": ".html",
+        "css": ".css",
+    }.get(language, ".py")
+    page_title = _sanitize_storage_component(
+        str(data.get("page_title") or data.get("pageTitle") or "Wiki Page"),
+        fallback="Wiki Page",
+        max_length=72,
+    )
+    page_title = re.sub(r"\s+", " ", page_title).strip() or "Wiki Page"
+    base_name = f"Wiki Example - {page_title}"
+    user_dir = _get_user_dir(user["email"])
+    user_dir.mkdir(parents=True, exist_ok=True)
+    examples_dir = _validate_user_path(user_dir, "Wiki Examples")
+    if not examples_dir:
+        return jsonify(ok=False, error="Could not prepare the Wiki Examples folder"), 400
+
+    with _wiki_example_lock:
+        try:
+            if examples_dir.exists() and not examples_dir.is_dir():
+                return jsonify(ok=False, error="A file named Wiki Examples blocks the examples folder"), 409
+            examples_dir.mkdir(parents=True, exist_ok=True)
+            if _count_files_in_folder(examples_dir) >= MAX_FILES_PER_FOLDER:
+                return jsonify(
+                    ok=False,
+                    error=f"Wiki Examples is full. Remove an older example before adding another (limit {MAX_FILES_PER_FOLDER}).",
+                ), 409
+            if _count_all_files_for_user(user_dir) >= MAX_FILES_PER_ACCOUNT:
+                return jsonify(ok=False, error="Account file limit reached"), 409
+            if _get_user_storage_used(user_dir) + len(encoded) > USER_STORAGE_LIMIT_MB * 1024 * 1024:
+                return jsonify(ok=False, error="Account storage limit reached"), 413
+
+            existing_numbers = []
+            prefix = f"{base_name} - "
+            for path in examples_dir.glob(f"{base_name} - *{extension}"):
+                number_text = path.name[len(prefix):-len(extension)]
+                if number_text.isdigit():
+                    existing_numbers.append(int(number_text))
+            next_number = max(existing_numbers, default=0) + 1
+            for number in range(next_number, next_number + MAX_FILES_PER_FOLDER + 1):
+                filename = f"{base_name} - {number}{extension}"
+                target = _validate_user_path(user_dir, f"Wiki Examples/{filename}")
+                if not target:
+                    return jsonify(ok=False, error="Could not create a safe wiki example path"), 400
+                try:
+                    with target.open("x", encoding="utf-8", newline="") as handle:
+                        handle.write(code)
+                except FileExistsError:
+                    continue
+                relative_path = target.relative_to(user_dir).as_posix()
+                return jsonify(
+                    ok=True,
+                    path=relative_path,
+                    name=filename,
+                    kind="text",
+                    language=language,
+                )
+        except OSError:
+            return jsonify(ok=False, error="Could not save the wiki example"), 500
+    return jsonify(ok=False, error="Could not allocate a unique wiki example name"), 409
+
 
 @app.get("/api/files/read")
 def files_read():
@@ -4027,6 +4166,23 @@ AI_CACHE_TTL_SECONDS = 60.0
 AI_CACHE_MAX_ENTRIES = 128
 
 
+def _reset_ai_runtime_state() -> None:
+    global _ai_consecutive_failures, _ai_circuit_open_until
+    with _ai_lock:
+        _ai_cache.clear()
+        _ai_consecutive_failures = 0
+        _ai_circuit_open_until = 0.0
+
+
+def _record_ai_failure() -> None:
+    global _ai_consecutive_failures, _ai_circuit_open_until
+    with _ai_lock:
+        _ai_metrics["failures"] += 1
+        _ai_consecutive_failures += 1
+        if _ai_consecutive_failures >= AI_CIRCUIT_FAILURE_THRESHOLD:
+            _ai_circuit_open_until = time.monotonic() + AI_CIRCUIT_COOLDOWN_SECONDS
+
+
 def _ai_request_identity() -> str:
     user = _require_user(request)
     if user:
@@ -4055,20 +4211,39 @@ def _prune_ai_state(now: float) -> None:
             _ai_cache.pop(key, None)
 
 
-def call_ollama_generate(ollama_url: str, model: str, prompt: str, timeout: float = 25.0) -> Dict[str, Any]:
+def call_ollama_generate(
+    ollama_url: str,
+    model: str,
+    prompt: str,
+    timeout: float = AI_DEFAULT_TIMEOUT_SECONDS,
+    *,
+    num_predict: int = 2048,
+    use_cache: bool = True,
+) -> Dict[str, Any]:
     global _ai_consecutive_failures, _ai_circuit_open_until
     prompt = str(prompt or "")
     if not prompt:
-        return {"ok": False, "error": "AI prompt is empty"}
+        return {"ok": False, "error": "AI prompt is empty", "status": 400}
     if len(prompt) > MAX_AI_PROMPT_CHARS:
-        return {"ok": False, "error": f"AI prompt exceeds {MAX_AI_PROMPT_CHARS} characters"}
-    parsed = urlsplit(str(ollama_url or "").strip())
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
-        return {"ok": False, "error": "AI service URL is invalid"}
+        return {
+            "ok": False,
+            "error": f"AI prompt exceeds {MAX_AI_PROMPT_CHARS} characters",
+            "status": 413,
+        }
+    try:
+        ollama_url = _normalize_ollama_url(ollama_url)
+        model = _normalize_ollama_model(model)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc), "status": 422}
 
     url = ollama_url.rstrip("/") + "/api/generate"
-    model = str(model or "").strip()[:200]
-    payload = {"model": model, "prompt": prompt, "stream": False, "options": {"num_predict": 2048}}
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "keep_alive": "15m",
+        "options": {"num_predict": _bounded_int(num_predict, 2048, 1, 4096)},
+    }
     cache_key = hashlib.sha256(f"{url}\0{model}\0{prompt}".encode("utf-8")).hexdigest()
     identity = _ai_request_identity()
     now = time.monotonic()
@@ -4076,8 +4251,13 @@ def call_ollama_generate(ollama_url: str, model: str, prompt: str, timeout: floa
         _prune_ai_state(now)
         if now < _ai_circuit_open_until:
             _ai_metrics["circuit_rejected"] += 1
-            return {"ok": False, "error": "AI service is temporarily unavailable; retry shortly"}
-        cached = _ai_cache.get(cache_key)
+            return {
+                "ok": False,
+                "error": "AI service is temporarily unavailable; retry shortly",
+                "status": 503,
+                "retry_after": max(1, int(_ai_circuit_open_until - now)),
+            }
+        cached = _ai_cache.get(cache_key) if use_cache else None
         if cached and cached[0] > now:
             _ai_metrics["cache_hits"] += 1
             return {"ok": True, "text": cached[1], "cached": True}
@@ -4086,21 +4266,34 @@ def call_ollama_generate(ollama_url: str, model: str, prompt: str, timeout: floa
             history.popleft()
         if len(history) >= MAX_AI_REQUESTS_PER_MINUTE:
             _ai_metrics["rate_rejected"] += 1
-            return {"ok": False, "error": "AI request limit reached; wait before trying again"}
+            return {
+                "ok": False,
+                "error": "AI request limit reached; wait before trying again",
+                "status": 429,
+                "retry_after": max(1, int(60 - (now - history[0]))),
+            }
         history.append(now)
 
     if not _ai_slots.acquire(blocking=False):
         with _ai_lock:
             _ai_metrics["capacity_rejected"] += 1
-        return {"ok": False, "error": "AI service is busy; retry shortly"}
+        return {"ok": False, "error": "AI service is busy; retry shortly", "status": 503, "retry_after": 5}
     with _ai_lock:
         _ai_metrics["active"] += 1
         _ai_metrics["accepted"] += 1
     r = None
     try:
-        bounded_timeout = max(2.0, min(float(timeout), 60.0))
+        bounded_timeout = max(AI_MIN_TIMEOUT_SECONDS, min(float(timeout), AI_MAX_TIMEOUT_SECONDS))
         r = requests.post(url, json=payload, timeout=(3.0, bounded_timeout), stream=True)
-        r.raise_for_status()
+        if not 200 <= int(r.status_code) < 300:
+            if int(r.status_code) == 404:
+                error = f"Ollama could not find model '{model}'. Pull it on the Ollama server or select an installed model."
+            elif int(r.status_code) in {401, 403}:
+                error = "Ollama rejected the request. Check the server URL and access policy."
+            else:
+                error = f"Ollama rejected the request (HTTP {int(r.status_code)})."
+            _record_ai_failure()
+            return {"ok": False, "error": error, "status": 502}
         declared_size = int(r.headers.get("Content-Length", "0") or 0)
         if declared_size > MAX_AI_HTTP_RESPONSE_BYTES:
             raise ValueError("AI service response exceeds the configured byte limit")
@@ -4112,26 +4305,50 @@ def call_ollama_generate(ollama_url: str, model: str, prompt: str, timeout: floa
             if len(response_bytes) > MAX_AI_HTTP_RESPONSE_BYTES:
                 raise ValueError("AI service response exceeds the configured byte limit")
         j = json.loads(response_bytes.decode("utf-8"))
-        text = str(j.get("response") or j.get("data") or "")[:MAX_AI_RESPONSE_CHARS]
+        if not isinstance(j, dict):
+            raise ValueError("AI service returned an invalid response")
+        if j.get("error"):
+            _record_ai_failure()
+            return {"ok": False, "error": "Ollama could not generate a response for this request.", "status": 502}
+        message = j.get("message") if isinstance(j.get("message"), dict) else {}
+        text = str(j.get("response") or message.get("content") or j.get("data") or "").strip()
+        if not text:
+            _record_ai_failure()
+            return {"ok": False, "error": "Ollama returned an empty response. Check that the selected model supports text generation.", "status": 502}
+        text = text[:MAX_AI_RESPONSE_CHARS]
         with _ai_lock:
             _ai_consecutive_failures = 0
-            _ai_cache[cache_key] = (time.monotonic() + AI_CACHE_TTL_SECONDS, text)
+            _ai_circuit_open_until = 0.0
+            if use_cache:
+                _ai_cache[cache_key] = (time.monotonic() + AI_CACHE_TTL_SECONDS, text)
             _prune_ai_state(time.monotonic())
         return {"ok": True, "text": text}
-    except requests.exceptions.RequestException as e:
-        with _ai_lock:
-            _ai_metrics["failures"] += 1
-            _ai_consecutive_failures += 1
-            if _ai_consecutive_failures >= AI_CIRCUIT_FAILURE_THRESHOLD:
-                _ai_circuit_open_until = time.monotonic() + AI_CIRCUIT_COOLDOWN_SECONDS
-        return {"ok": False, "error": f"Ollama connection failed: {e}"}
-    except Exception as e:
-        with _ai_lock:
-            _ai_metrics["failures"] += 1
-            _ai_consecutive_failures += 1
-            if _ai_consecutive_failures >= AI_CIRCUIT_FAILURE_THRESHOLD:
-                _ai_circuit_open_until = time.monotonic() + AI_CIRCUIT_COOLDOWN_SECONDS
-        return {"ok": False, "error": f"Ollama error: {e}"}
+    except requests.exceptions.Timeout:
+        _record_ai_failure()
+        return {
+            "ok": False,
+            "error": (
+                f"The AI model did not respond within {int(bounded_timeout)} seconds. "
+                "The model may still be loading; try again or increase the AI timeout in Admin Settings."
+            ),
+            "status": 504,
+        }
+    except requests.exceptions.ConnectionError:
+        _record_ai_failure()
+        return {
+            "ok": False,
+            "error": "The Ollama service could not be reached. Check its URL and confirm Ollama is listening for this server.",
+            "status": 502,
+        }
+    except requests.exceptions.RequestException:
+        _record_ai_failure()
+        return {"ok": False, "error": "The Ollama request failed. Check the AI service and try again.", "status": 502}
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        _record_ai_failure()
+        return {"ok": False, "error": "Ollama returned an invalid or oversized response.", "status": 502}
+    except Exception:
+        _record_ai_failure()
+        return {"ok": False, "error": "The AI request could not be completed.", "status": 502}
     finally:
         if r is not None:
             try:
@@ -4141,6 +4358,40 @@ def call_ollama_generate(ollama_url: str, model: str, prompt: str, timeout: floa
         with _ai_lock:
             _ai_metrics["active"] = max(0, _ai_metrics["active"] - 1)
         _ai_slots.release()
+
+
+@app.post("/api/admin/ai/test")
+def admin_test_ai():
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify(ok=False, error="Settings data must be an object"), 400
+    try:
+        ollama_url = _normalize_ollama_url(data.get("ai_ollama_url"))
+        model = _normalize_ollama_model(data.get("ai_model"))
+        timeout = _bounded_int(
+            data.get("ai_request_timeout_seconds"),
+            AI_DEFAULT_TIMEOUT_SECONDS,
+            AI_MIN_TIMEOUT_SECONDS,
+            AI_MAX_TIMEOUT_SECONDS,
+        )
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    # A model/URL test must not inherit a circuit opened by a previously
+    # mistyped model. Ordinary student requests still use the circuit breaker.
+    _reset_ai_runtime_state()
+    result = call_ollama_generate(
+        ollama_url,
+        model,
+        "Reply with exactly: EagleIDE AI ready",
+        timeout=timeout,
+        num_predict=16,
+        use_cache=False,
+    )
+    if not result.get("ok"):
+        return jsonify(ok=False, error=result.get("error", "AI test failed")), int(result.get("status") or 502)
+    return jsonify(ok=True, model=model, message=f"Connected successfully to {model}.")
 
 
 def _normalize_language_hint(language: Any, file_name: str = "") -> str:
@@ -4197,9 +4448,18 @@ def api_explain():
         "Keep your response brief and focused. "
         "If it is clearly not {language} code, say that briefly.\n\n"
     ).format(language=language_label)
-    res = call_ollama_generate(cfg.get("ai_ollama_url", ""), cfg.get("ai_model", "gemma3:4b"), pretext + code)
+    res = call_ollama_generate(
+        cfg.get("ai_ollama_url", ""),
+        cfg.get("ai_model", "gemma3:4b"),
+        pretext + code,
+        timeout=_configured_ai_timeout(cfg),
+    )
     if not res.get("ok"):
-        return jsonify(ok=False, error=res.get("error", "AI error"))
+        return jsonify(
+            ok=False,
+            error=res.get("error", "AI error"),
+            cooldown=res.get("retry_after", 0),
+        ), int(res.get("status") or 502)
     return jsonify(ok=True, text=res.get("text", ""), cooldown=random.randint(30, 90))
 
 # -------------------------
@@ -4353,9 +4613,14 @@ def challenge_score():
         "Student code:\n{code}\n"
     ).format(language=language_label, max_points=points, challenge=challenge_text, code=code)
 
-    res = call_ollama_generate(cfg.get("ai_ollama_url", ""), cfg.get("ai_model", "gemma3:4b"), prompt)
+    res = call_ollama_generate(
+        cfg.get("ai_ollama_url", ""),
+        cfg.get("ai_model", "gemma3:4b"),
+        prompt,
+        timeout=_configured_ai_timeout(cfg),
+    )
     if not res.get("ok"):
-        return jsonify(ok=False, error=res.get("error", "AI error"))
+        return jsonify(ok=False, error=res.get("error", "AI error")), int(res.get("status") or 502)
     raw = (res.get("text") or "").strip()
 
     score = None
@@ -4507,9 +4772,18 @@ def assistant_chat():
     prompt_parts.append("\n".join(transcript_lines))
     prompt = "\n\n".join(prompt_parts) + "\n\nAssistant:"
 
-    res = call_ollama_generate(cfg.get("ai_ollama_url", ""), cfg.get("ai_model", "gemma3:4b"), prompt)
+    res = call_ollama_generate(
+        cfg.get("ai_ollama_url", ""),
+        cfg.get("ai_model", "gemma3:4b"),
+        prompt,
+        timeout=_configured_ai_timeout(cfg),
+    )
     if not res.get("ok"):
-        return jsonify(ok=False, error=res.get("error", "AI error"))
+        return jsonify(
+            ok=False,
+            error=res.get("error", "AI error"),
+            cooldown=res.get("retry_after", 0),
+        ), int(res.get("status") or 502)
 
     with _ASSISTANT_LOCK:
         _ASSISTANT_LAST[sid] = time.time()
@@ -6066,10 +6340,19 @@ def on_run_code(payload):
                 disabled_modules=disabled_module_roots(runtime_settings.get("python_module_access")),
                 source_name=Path(file_path).name if file_path else "untitled.py",
             )
-    except Exception as e:
+    except Exception as exc:
         _pop_runner(request.sid)
         _release_execution_slot(request.sid)
-        emit("output", {"data": f"[Error starting process] {e}\n"})
+        _append_server_log(f"Runner start failure ({type(exc).__name__}): {exc}", "ERROR")
+        emit(
+            "output",
+            {
+                "data": (
+                    "[The program could not be started. "
+                    "Ask your teacher or administrator to check the server log.]\n"
+                )
+            },
+        )
         emit("finished", {})
 
 @socketio.on("send_input")
@@ -7074,9 +7357,14 @@ def grade_assignment_ai():
     else:
         rigor = 5
     
-    res = call_ollama_generate(cfg.get("ai_ollama_url", ""), cfg.get("ai_model", "gemma3:4b"), prompt, timeout=30.0)
+    res = call_ollama_generate(
+        cfg.get("ai_ollama_url", ""),
+        cfg.get("ai_model", "gemma3:4b"),
+        prompt,
+        timeout=_configured_ai_timeout(cfg),
+    )
     if not res.get("ok"):
-        return jsonify(ok=False, error=res.get("error", "AI error"))
+        return jsonify(ok=False, error=res.get("error", "AI error")), int(res.get("status") or 502)
     
     raw = (res.get("text") or "").strip()
     
@@ -7491,9 +7779,14 @@ def grade_written_response():
         f"Score (0-{max_points}):"
     )
     
-    res = call_ollama_generate(cfg.get("ai_ollama_url", ""), cfg.get("ai_model", "gemma3:4b"), prompt, timeout=30.0)
+    res = call_ollama_generate(
+        cfg.get("ai_ollama_url", ""),
+        cfg.get("ai_model", "gemma3:4b"),
+        prompt,
+        timeout=_configured_ai_timeout(cfg),
+    )
     if not res.get("ok"):
-        return jsonify(ok=False, error=res.get("error", "AI error"))
+        return jsonify(ok=False, error=res.get("error", "AI error")), int(res.get("status") or 502)
     
     raw = (res.get("text") or "").strip()
     
@@ -7908,7 +8201,12 @@ def teacher_class_mastery_feedback(class_id: str):
         f"Focus tag (if provided): {focus_tag or 'None'}\n\n"
         f"Dataset JSON:\n{json.dumps(dataset, ensure_ascii=False)}"
     )
-    res = call_ollama_generate(cfg.get("ai_ollama_url", ""), cfg.get("ai_model", "gemma3:4b"), prompt, timeout=45.0)
+    res = call_ollama_generate(
+        cfg.get("ai_ollama_url", ""),
+        cfg.get("ai_model", "gemma3:4b"),
+        prompt,
+        timeout=_configured_ai_timeout(cfg),
+    )
     if not res.get("ok"):
         return jsonify(ok=False, error="AI service unavailable"), 502
     return jsonify(ok=True, feedback=_sanitize_ai_feedback_text(res.get("text") or ""))
