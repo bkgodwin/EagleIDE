@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket as _compat_socket
 import subprocess as _compat_subprocess
 from pathlib import Path
@@ -22,6 +23,7 @@ MAX_CPU_SECONDS = max(1, int(os.environ.get("EAGLE_MAX_CPU_SECONDS", 8)))
 MAX_FILE_BYTES = max(1024, int(os.environ.get("EAGLE_MAX_FILE_BYTES", 10 * 1024 * 1024)))
 MAX_WRITE_BYTES = max(0, int(os.environ.get("EAGLE_RUN_WRITE_BUDGET_BYTES", 10 * 1024 * 1024)))
 MAX_NEW_FILES = 20
+MAX_CHART_ARTIFACTS_PER_SOURCE = 20
 RUNNER_TASK_HEADROOM = 32
 MAX_NOFILE = 64
 SYSTEM_FONT_READONLY_PATHS = (
@@ -349,7 +351,7 @@ def _safe_input(prompt: Any = "") -> str:
 
 
 class ChartArtifactManager:
-    """Turn ``plt.show()`` into deterministic PNG artifacts."""
+    """Turn ``plt.show()`` into bounded, uniquely indexed PNG artifacts."""
 
     __slots__ = ("_artifact_dir", "_counter", "_patched", "_source_stem")
 
@@ -365,8 +367,30 @@ class ChartArtifactManager:
             self._artifact_dir = current_directory
         except (OSError, ValueError):
             self._artifact_dir = workspace_path
-        self._counter = 0
+        self._counter = max((index for index, _path in self._existing_artifacts()), default=0)
         self._patched = False
+
+    def _existing_artifacts(self) -> list[tuple[int, Path]]:
+        prefix = f"{self._source_stem}-figure-"
+        artifacts: list[tuple[int, Path]] = []
+        try:
+            candidates = self._artifact_dir.glob(f"{prefix}*.png")
+            for path in candidates:
+                suffix = path.name[len(prefix):-4]
+                if suffix.isdigit() and path.is_file():
+                    artifacts.append((int(suffix), path))
+        except OSError:
+            return []
+        artifacts.sort(key=lambda item: item[0])
+        return artifacts
+
+    def _reserve_target(self) -> Path:
+        artifacts = self._existing_artifacts()
+        while len(artifacts) >= MAX_CHART_ARTIFACTS_PER_SOURCE:
+            _index, oldest = artifacts.pop(0)
+            oldest.unlink()
+        self._counter = max(self._counter, max((index for index, _path in artifacts), default=0)) + 1
+        return self._artifact_dir / f"{self._source_stem}-figure-{self._counter}.png"
 
     def patch_show(self) -> None:
         if self._patched:
@@ -384,10 +408,17 @@ class ChartArtifactManager:
                 print("[Matplotlib: no open figures to save]")
                 return
             for figure_number in figure_numbers:
-                self._counter += 1
                 figure = pyplot.figure(figure_number)
-                target = self._artifact_dir / f"{self._source_stem}-figure-{self._counter}.png"
-                figure.savefig(target, format="png", dpi=120, bbox_inches="tight")
+                try:
+                    target = self._reserve_target()
+                    figure.savefig(target, format="png", dpi=120, bbox_inches="tight")
+                except OSError:
+                    print(
+                        "[Matplotlib: chart history is full and an older image could not be removed. "
+                        "Delete an older chart and try again.]"
+                    )
+                    pyplot.close(figure)
+                    continue
                 pyplot.close(figure)
 
         pyplot.show = save_open_figures
@@ -736,6 +767,54 @@ def _scrub_runtime_globals(safe_builtins: dict[str, Any]) -> None:
         globals()[name] = None
 
 
+def _safe_exception_text(
+    exc: BaseException,
+    traceback_obj: Any,
+    *,
+    allowed_root: str,
+    runtime_root: str,
+    runtime_file: str,
+    display_name: str,
+    _os=os,
+    _re=re,
+) -> str:
+    """Keep educational traceback details without exposing server paths."""
+
+    import traceback
+
+    while traceback_obj and str(traceback_obj.tb_frame.f_code.co_filename) == runtime_file:
+        traceback_obj = traceback_obj.tb_next
+    rendered = "".join(traceback.format_exception(type(exc), exc, traceback_obj))
+
+    def replace_frame(match: re.Match[str]) -> str:
+        raw_name = match.group(1)
+        if raw_name == display_name:
+            safe_name = display_name
+        else:
+            try:
+                relative = _os.path.relpath(raw_name, allowed_root)
+                safe_name = (
+                    relative.replace("\\", "/")
+                    if relative != ".." and not relative.startswith("../")
+                    else _os.path.basename(raw_name)
+                )
+            except (TypeError, ValueError, OSError):
+                safe_name = _os.path.basename(raw_name)
+            safe_name = safe_name or "<runtime>"
+        return f'File "{safe_name}"'
+
+    rendered = _re.sub(r'File "([^"]+)"', replace_frame, rendered)
+    replacements = (
+        (runtime_file, display_name),
+        (runtime_root, "<runtime>"),
+        (allowed_root, "<workspace>"),
+    )
+    for raw_path, replacement in replacements:
+        if raw_path:
+            rendered = rendered.replace(raw_path, replacement)
+    return rendered
+
+
 def main() -> int:
     import sys
 
@@ -744,6 +823,9 @@ def main() -> int:
         return 2
     code_path = Path(sys.argv[1]).resolve()
     allowed_root = str(Path(sys.argv[2]).resolve())
+    runtime_file = str(Path(__file__).resolve())
+    runtime_root = str(Path(__file__).resolve().parent)
+    display_name = Path(str(os.environ.get("EAGLE_RUN_SOURCE_NAME") or "student.py")).name or "student.py"
     # The worker itself lives beside the server, so Python would otherwise use
     # the server directory as sys.path[0]. Put the contained student workspace
     # first so ordinary sibling modules and packages import as expected.
@@ -757,18 +839,15 @@ def main() -> int:
             sys.path.insert(0, import_path)
     try:
         user_code = code_path.read_text(encoding="utf-8", errors="replace")
-    except Exception as exc:
-        print(f"Failed to read code from {code_path}: {exc}", file=sys.stderr)
+    except Exception:
+        print("The Python program could not be prepared. Ask an administrator to check the server log.", file=sys.stderr)
         return 1
 
     policy = PathPolicy(allowed_root)
     _apply_resource_limits()
     containment = _apply_native_containment(allowed_root, code_path)
     if not containment.get("active") and os.environ.get("EAGLE_NATIVE_CONTAINMENT_DIAGNOSTIC") == "1":
-        print(
-            f"[Native containment unavailable: {containment.get('reason') or 'unknown error'}]",
-            file=sys.stderr,
-        )
+        print("[Native containment is unavailable; protected native modules are disabled.]", file=sys.stderr)
     disabled_modules = _configured_disabled_modules()
     blocked_roots = frozenset(SECURITY_LOCKED_MODULES | disabled_modules)
     if not containment.get("active"):
@@ -799,17 +878,26 @@ def main() -> int:
     sandbox_globals: dict[str, Any] = {
         "__builtins__": safe_builtins,
         "__name__": "__main__",
-        "__file__": str(code_path),
+        "__file__": display_name,
         "__package__": None,
     }
     try:
-        exec(compile(user_code, str(code_path), "exec"), sandbox_globals, sandbox_globals)
+        exec(compile(user_code, display_name, "exec"), sandbox_globals, sandbox_globals)
     except SystemExit:
         raise
-    except Exception:
-        import traceback
-
-        traceback.print_exc()
+    except Exception as exc:
+        print(
+            _safe_exception_text(
+                exc,
+                exc.__traceback__,
+                allowed_root=allowed_root,
+                runtime_root=runtime_root,
+                runtime_file=runtime_file,
+                display_name=display_name,
+            ),
+            file=sys.stderr,
+            end="",
+        )
         return 1
     return 0
 

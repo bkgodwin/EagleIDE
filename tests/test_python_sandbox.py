@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from sandbox_containment import landlock_status
 from sandbox_policy import (
@@ -15,6 +16,7 @@ from sandbox_policy import (
     disabled_module_roots,
     normalize_module_access,
 )
+from sandbox_worker import ChartArtifactManager, MAX_CHART_ARTIFACTS_PER_SOURCE
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -82,6 +84,22 @@ class PythonSandboxPolicyTests(unittest.TestCase):
                 CONTAINMENT_REQUIRED_MODULES
             )
         )
+
+    def test_chart_artifacts_increment_and_rotate_at_the_history_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            for index in range(1, MAX_CHART_ARTIFACTS_PER_SOURCE + 1):
+                (workspace / f"lesson-figure-{index}.png").write_bytes(b"old")
+            with mock.patch.dict(os.environ, {"EAGLE_RUN_SOURCE_NAME": "lesson.py"}):
+                manager = ChartArtifactManager(str(workspace))
+                target = manager._reserve_target()
+            target.write_bytes(b"new")
+
+            artifacts = sorted(workspace.glob("lesson-figure-*.png"))
+            self.assertEqual(target.name, "lesson-figure-21.png")
+            self.assertEqual(len(artifacts), MAX_CHART_ARTIFACTS_PER_SOURCE)
+            self.assertFalse((workspace / "lesson-figure-1.png").exists())
+            self.assertTrue((workspace / "lesson-figure-20.png").exists())
 
     def test_worker_honors_admin_acl_and_allows_workspace_modules(self):
         with tempfile.TemporaryDirectory() as tmp:

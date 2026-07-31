@@ -111,7 +111,10 @@ The server should start on http://0.0.0.0:8000
                              3. CONFIGURATION
 ================================================================================
 
-Configuration is managed through config.py. Key settings include:
+Configuration defaults are defined in config.py. Runtime settings changed in
+the Admin Dashboard are persisted to config.txt and take effect immediately;
+the dashboard intentionally does not rewrite the source-controlled config.py.
+Key settings include:
 
 --------------------------------------------------
 ADMIN CREDENTIALS (ENCRYPTED ON FIRST START)
@@ -128,6 +131,7 @@ AI/OLLAMA CONFIGURATION
 "ai_explainer_enabled": True          # Master toggle for all AI features
 "ai_ollama_url": "http://192.168.0.105:11434"  # Ollama server URL
 "ai_model": "gemma3:4b"              # AI model name
+"ai_request_timeout_seconds": 120    # Bounded 15-300 second model timeout
 
 Ollama URL Examples:
 - Local installation: "http://127.0.0.1:11434" or "http://localhost:11434"
@@ -135,6 +139,10 @@ Ollama URL Examples:
 - Remote server: "http://your-server-ip:11434"
 
 To disable AI features: Set "ai_explainer_enabled": False
+
+The Admin Dashboard includes "Test Ollama & Model". It runs a short generation
+against the values currently in the form, so the URL, selected model, model
+loading time, and response format can be checked before a class uses it.
 
 --------------------------------------------------
 LESSON CONFIGURATION
@@ -323,6 +331,10 @@ the saved path, the File Browser refreshes, and clicking the PNG opens a
 scaled image preview in the editor area. Calling savefig() directly also
 creates a normal image artifact that appears after the run.
 
+Repeated plt.show() runs use increasing file numbers instead of replacing the
+previous image. EagleIDE retains the newest 20 automatically generated charts
+per Python source file and removes the oldest when the limit is reached.
+
 Static 3D Matplotlib projections are supported through projection="3d" and
 render through the same safe PNG workflow. Open Examples/matplotlib_3d.py for
 a surface-plot starter. Static rendering was chosen instead of an interactive
@@ -354,7 +366,11 @@ Reader features:
 - Expandable standards-covered tags beneath each page's table of contents
 - A standards coverage report with root class-folder icons, folder filtering, and
   a print/PDF layout that preserves the active filter in the report title
-- Copy and Open in IDE buttons on Python, JavaScript, HTML, and CSS code fences
+- Copy and Open in IDE buttons on Python, JavaScript, HTML, and CSS code fences.
+  For signed-in users, every click atomically creates a new correctly typed file
+  such as "Wiki Examples/Wiki Example - Loops - 1.py"; an existing editor file
+  or prior wiki example is never replaced. Guests continue to use a temporary
+  unsaved editor buffer.
 - Inline images, pre-encoded MP4 video, and PDF viewing; other allowed files can
   be organized in the same tree and downloaded. Wiki images reserve their
   dimensions and begin loading shortly before they enter the viewport to reduce
@@ -788,9 +804,12 @@ Solution:
 Problem: AI features not working
 Solution:
 - Verify Ollama is running: ollama serve
-- Check Ollama URL in config.py
+- Open Admin Settings > AI Features and check the runtime URL/model values
+- Use "Test Ollama & Model"; the first load of a larger model can take longer
 - Verify model is installed: ollama list
 - Check ai_explainer_enabled is True
+- Increase the bounded response timeout if the selected model loads slowly
+- Runtime dashboard values are stored in config.txt; config.py is defaults only
 
 Problem: Code won't execute
 Solution:
@@ -838,7 +857,7 @@ For classroom or multi-user deployment:
 4. Configure firewall to allow port 8000
 
 5. If using Ollama on a different machine:
-   - Update ai_ollama_url in config.py
+   - Update the Ollama URL in Admin Settings (persisted to config.txt)
    - Ensure Ollama server is accessible on network
 
 6. For HTTPS (strongly recommended for internet-facing deployments):

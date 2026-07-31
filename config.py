@@ -20,10 +20,13 @@ DEFAULT_CONFIG = {
     "lesson_use_local": False,
     "lesson_html": "<p>(No local lesson yet)</p>",
 
-    # AI master toggle + model/endpoint (used by Explain, Challenge, and Assistant)
+    # AI factory defaults (used by Explain, Challenge, and Assistant).
+    # Admin Dashboard changes are runtime data saved in config.txt; this
+    # source-controlled file is intentionally not rewritten by the dashboard.
     "ai_explainer_enabled": True,
     "ai_ollama_url": "http://192.168.0.105:11434",
     "ai_model": "gemma3:4b",
+    "ai_request_timeout_seconds": 120,
 
     # NEW: AI Assistant preprompt (editable in Admin)
     "ai_assistant_preprompt": (

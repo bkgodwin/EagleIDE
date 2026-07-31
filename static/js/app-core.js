@@ -1038,14 +1038,16 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }));
     }
 
-    function fileNameForLanguage(language, fallbackName) {
+    function fileNameForLanguage(language, fallbackName, enforceExtension = false) {
       const name = String(fallbackName || '').trim();
-      if (name) return name;
       const mode = String(language || '').toLowerCase();
-      if (mode.includes('javascript') || mode === 'js') return 'notebook-snippet.js';
-      if (mode.includes('html')) return 'notebook-snippet.html';
-      if (mode.includes('css')) return 'notebook-snippet.css';
-      return 'notebook-snippet.py';
+      const extension =
+        mode.includes('javascript') || mode === 'js' ? '.js' :
+        mode.includes('html') ? '.html' :
+        mode.includes('css') ? '.css' : '.py';
+      if (name && !enforceExtension) return name;
+      if (name) return name.replace(/\.[a-zA-Z0-9]+$/, '') + extension;
+      return 'notebook-snippet' + extension;
     }
 
     function notifyRunState() {
@@ -1072,7 +1074,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     async function setEditorSnapshot(snapshot = {}) {
       syncEditorBridge();
       if (auditPreviewActive) closeAuditPreview();
-      if (currentBufferDirty && (currentOpenFile?.draft || !isAuthenticated())) {
+      const draftHasContent = Boolean(currentOpenFile?.draft && String(editor.getValue() || '').trim());
+      if (draftHasContent || (currentBufferDirty && !isAuthenticated())) {
         const replace = window.confirm('The current editor contains unsaved work. Replace it with this wiki example?');
         if (!replace) return false;
       }
@@ -1082,8 +1085,33 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         return false;
       }
       const language = String(snapshot.language || 'python').toLowerCase();
-      const fileName = fileNameForLanguage(language, snapshot.fileName);
-      currentOpenFile = {
+      const fileName = fileNameForLanguage(language, snapshot.fileName, snapshot.source === 'wiki');
+      let createdWikiFile = null;
+      if (isAuthenticated() && snapshot.source === 'wiki') {
+        try {
+          const response = await fetch('/api/files/wiki-example', {
+            method: 'POST',
+            headers: fileJsonHeaders(),
+            body: JSON.stringify({
+              code: String(snapshot.code || ''),
+              language,
+              page_title: snapshot.wikiSource?.title || 'Wiki Page',
+            }),
+          });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok || !result?.ok) throw new Error(result?.error || 'Could not save the wiki example.');
+          createdWikiFile = result;
+        } catch (error) {
+          window.alert(error?.message || 'The wiki example could not be saved.');
+          return false;
+        }
+      }
+      currentOpenFile = createdWikiFile ? {
+        path: createdWikiFile.path,
+        name: createdWikiFile.name,
+        kind: 'text',
+        wikiSource: snapshot.wikiSource || null,
+      } : {
         path: '',
         name: fileName,
         draft: true,
@@ -1104,6 +1132,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       updateEditorOverlay();
       setWorkspaceTab('editor');
       refreshEditors();
+      if (createdWikiFile) await loadFileTree();
       return true;
     }
 
@@ -2127,13 +2156,23 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       applyClassTabVisibility();
     }
     async function saveConfig(partial){
-      const headers = {'Content-Type':'application/json'};
-      if (ADMIN_TOKEN) headers['X-Admin-Token'] = ADMIN_TOKEN;
-      const res = await fetch('/api/config/save', { method:'POST', headers, body:JSON.stringify({data: partial}) });
-      const j = await res.json().catch(()=>({}));
-      if (!j?.ok){ alert(j?.error || 'Save failed'); }
-      else { currentConfig = {...(currentConfig||{}), ...(j.data || partial)}; }
-      return j;
+      try {
+        const headers = {'Content-Type':'application/json'};
+        if (ADMIN_TOKEN) headers['X-Admin-Token'] = ADMIN_TOKEN;
+        const res = await fetch('/api/config/save', { method:'POST', headers, body:JSON.stringify({data: partial}) });
+        const j = await res.json().catch(()=>({}));
+        if (!res.ok || !j?.ok){
+          const result = { ok: false, error: j?.error || 'Save failed' };
+          alert(result.error);
+          return result;
+        }
+        currentConfig = {...(currentConfig||{}), ...(j.data || partial)};
+        return j;
+      } catch {
+        const result = { ok: false, error: 'Network error while saving settings.' };
+        alert(result.error);
+        return result;
+      }
     }
     // Feature modules loaded after app-core share this request instead of each
     // issuing their own /api/config fetch during startup.
@@ -2970,7 +3009,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       document.getElementById('aiEnabledModal').checked = currentConfig?.ai_explainer_enabled || false;
       document.getElementById('aiUrlInputModal').value = currentConfig?.ai_ollama_url || 'http://127.0.0.1:11434';
       document.getElementById('aiModelInputModal').value = currentConfig?.ai_model || 'gemma3:4b';
+      document.getElementById('aiTimeoutInputModal').value = Number(currentConfig?.ai_request_timeout_seconds || 120);
       document.getElementById('assistantPromptInputModal').value = currentConfig?.ai_assistant_preprompt || '';
+      const aiTestStatus = document.getElementById('aiTestStatus');
+      if (aiTestStatus) {
+        aiTestStatus.textContent = '';
+        aiTestStatus.className = '';
+      }
 
       // HTML runtime settings
       document.getElementById('htmlRuntimeEnabledModal').checked = currentConfig?.html_runtime_enabled !== false;
@@ -3001,6 +3046,42 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         document.querySelectorAll('[data-admin-settings-pane]').forEach(pane => pane.classList.toggle('active', pane.dataset.adminSettingsPane === section));
         if (section === 'python-runtime') loadPythonRuntimeAdmin();
       });
+    });
+
+    document.getElementById('aiTestBtn')?.addEventListener('click', async () => {
+      if (!ADMIN_TOKEN) return;
+      const button = document.getElementById('aiTestBtn');
+      const status = document.getElementById('aiTestStatus');
+      const payload = {
+        ai_ollama_url: document.getElementById('aiUrlInputModal').value.trim(),
+        ai_model: document.getElementById('aiModelInputModal').value.trim(),
+        ai_request_timeout_seconds: parseInt(document.getElementById('aiTimeoutInputModal').value, 10) || 120,
+      };
+      button.disabled = true;
+      if (status) {
+        status.className = '';
+        status.textContent = 'Loading and testing the selected model…';
+      }
+      try {
+        const response = await fetch('/api/admin/ai/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+          body: JSON.stringify(payload),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result?.ok) throw new Error(result?.error || 'AI test failed.');
+        if (status) {
+          status.className = 'success';
+          status.textContent = result.message || 'Ollama and the selected model are ready.';
+        }
+      } catch (error) {
+        if (status) {
+          status.className = 'error';
+          status.textContent = error?.message || 'Could not test the AI service.';
+        }
+      } finally {
+        button.disabled = false;
+      }
     });
 
     document.getElementById('pythonRuntimeRefreshBtn')?.addEventListener('click', loadPythonRuntimeAdmin);
@@ -3322,6 +3403,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const ai_explainer_enabled = document.getElementById('aiEnabledModal').checked;
       const ai_ollama_url = document.getElementById('aiUrlInputModal').value.trim();
       const ai_model = document.getElementById('aiModelInputModal').value.trim();
+      const ai_request_timeout_seconds = parseInt(document.getElementById('aiTimeoutInputModal').value, 10) || 120;
       const ai_assistant_preprompt = document.getElementById('assistantPromptInputModal').value.trim();
 
       // HTML runtime settings
@@ -3348,6 +3430,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         ai_explainer_enabled, 
         ai_ollama_url, 
         ai_model, 
+        ai_request_timeout_seconds,
         ai_assistant_preprompt,
         html_runtime_enabled,
         html_runtime_timeout_seconds,
@@ -5762,8 +5845,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const ai_ollama_url = document.getElementById('aiUrlInput').value.trim();
       const ai_model = document.getElementById('aiModelInput').value.trim();
       const ai_assistant_preprompt = document.getElementById('assistantPromptInput').value.trim();
-      await saveConfig({ ai_explainer_enabled, ai_ollama_url, ai_model, ai_assistant_preprompt });
-      applyConfig(currentConfig);
+      const result = await saveConfig({ ai_explainer_enabled, ai_ollama_url, ai_model, ai_assistant_preprompt });
+      if (result?.ok) applyConfig(currentConfig);
     });
 
     // === AI Explain with cooldown (renders Markdown) ===
@@ -5812,10 +5895,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         } else {
           out.textContent = '';
           status.textContent = (j?.error ? 'Error: ' + j.error : 'Error');
-          startExplainCooldown(45);
+          const retryAfter = Number(j?.cooldown || 0);
+          if (retryAfter > 0) startExplainCooldown(retryAfter);
+          else btn.disabled = false;
         }
       } catch (e) {
-        out.textContent = ''; status.textContent = 'Network error'; startExplainCooldown(45);
+        out.textContent = '';
+        status.textContent = 'Network error while contacting the AI service.';
+        btn.disabled = false;
       }
     });
 
@@ -5899,7 +5986,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         });
         const result = await response.json().catch(() => ({}));
         if (!result?.ok) {
-          if (response.status === 429) startAssistantCooldown(result.cooldown ?? 15);
+          if (Number(result?.cooldown || 0) > 0) startAssistantCooldown(result.cooldown);
           assistantMessages.push({ role: 'assistant', content: result?.error || 'Assistant error.' });
         } else {
           assistantMessages.push({ role: 'assistant', content: result.reply || '(No response)' });

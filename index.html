@@ -38,7 +38,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20260730-2">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260730-3">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -1376,7 +1376,13 @@
             <div class="admin-settings-fields two-column">
               <label><span>Ollama URL</span><input type="text" id="aiUrlInputModal" placeholder="http://127.0.0.1:11434"></label>
               <label><span>Model</span><input type="text" id="aiModelInputModal" placeholder="gemma3:4b"></label>
+              <label><span>Response timeout (seconds)</span><input type="number" id="aiTimeoutInputModal" min="15" max="300" step="5" inputmode="numeric"></label>
+              <div class="admin-ai-runtime-test">
+                <button class="btn secondary" id="aiTestBtn" type="button">Test Ollama &amp; Model</button>
+                <span id="aiTestStatus" role="status" aria-live="polite"></span>
+              </div>
               <label class="full-width"><span>Assistant preprompt</span><textarea id="assistantPromptInputModal" placeholder="You are a helpful programming tutor..."></textarea></label>
+              <p class="admin-setting-help full-width">Changes are saved immediately to the runtime <code>config.txt</code>. <code>config.py</code> contains factory defaults and is not rewritten by the dashboard.</p>
             </div>
           </section>
           <section class="admin-settings-pane" data-admin-settings-pane="python-runtime">
@@ -1500,11 +1506,11 @@
   <script src="/static/js/editor-init.js"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js"></script>
-  <script src="/static/js/app-core.js?v=20260730-2"></script>
+  <script src="/static/js/app-core.js?v=20260730-3"></script>
 <script src="/static/js/network-sim.js?v=20260714-18"></script>
 <script src="/static/js/network-sim-advanced.js?v=20260714-4"></script>
-  <script src="/static/js/wiki-reader.js?v=20260730-2"></script>
-  <script src="/static/js/wiki-admin.js?v=20260730-2"></script>
+  <script src="/static/js/wiki-reader.js?v=20260730-3"></script>
+  <script src="/static/js/wiki-admin.js?v=20260730-3"></script>
   <script src="/static/js/classroom-signals.js"></script>
   <script src="/static/js/classroom-files.js?v=20250608"></script>
   <script src="/static/js/student-notebook.js?v=20260714-7"></script>
