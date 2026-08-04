@@ -725,6 +725,9 @@
     if (featuredSection) featuredSection.hidden = !(data.featured || []).length;
     renderCards($('wikiFeaturedList'), data.featured || []);
     renderEmbeddedHome();
+    window.dispatchEvent(new CustomEvent('wiki-home-rendered', {
+      detail: { classId: state.selectedClassId },
+    }));
   }
 
   function syncClassSelector() {
