@@ -120,7 +120,27 @@ def register(
         plan = store.get_plan(str(cls.get("id") or ""), selected)
         if plan is None and include_empty:
             plan = empty_plan(selected)
-        nav = store.navigation(str(cls.get("id") or ""), selected, through=through)
+        if through is None:
+            nav = store.navigation(str(cls.get("id") or ""), selected)
+        else:
+            latest = normalize_week_start(through)
+            selected_date = date.fromisoformat(selected)
+            try:
+                previous_week = (selected_date - timedelta(days=7)).isoformat()
+            except OverflowError:
+                previous_week = None
+            try:
+                following_week = (selected_date + timedelta(days=7)).isoformat()
+            except OverflowError:
+                following_week = None
+            nav = {
+                "previous_week": previous_week,
+                "next_week": (
+                    following_week
+                    if selected < latest and following_week
+                    else None
+                ),
+            }
         return {
             "ok": True,
             "class": class_summary(cls),
@@ -134,11 +154,15 @@ def register(
         root = request.host_url.rstrip("/")
         public_url = f"{root}/lesson-plans/public/{token}"
         embed_url = f"{root}/lesson-plans/embed/{token}"
+        public_path = f"/lesson-plans/public/{token}"
+        embed_path = f"/lesson-plans/embed/{token}"
         return {
             "ok": True,
             "class": class_summary(cls),
             "public_url": public_url,
             "embed_url": embed_url,
+            "public_path": public_path,
+            "embed_path": embed_path,
             "embed_code": (
                 f'<iframe src="{embed_url}" title="{html_escape(class_summary(cls)["name"], quote=True)} lesson plan" '
                 'style="width:100%;aspect-ratio:16/9;border:0" loading="lazy"></iframe>'
@@ -212,7 +236,7 @@ def register(
             selected = normalize_week_start(request.args.get("week"))
             if selected > current:
                 return error("Future lesson plans are not available", 404)
-            return jsonify(**response_payload(cls, selected, include_empty=False, through=current))
+            return jsonify(**response_payload(cls, selected, include_empty=True, through=current))
         except LessonPlanDataError as exc:
             return error(str(exc))
 
@@ -227,7 +251,7 @@ def register(
             selected = normalize_week_start(request.args.get("week"))
             if selected > current:
                 return error("Future lesson plans are not available", 404)
-            return jsonify(**response_payload(cls, selected, include_empty=False, through=current))
+            return jsonify(**response_payload(cls, selected, include_empty=True, through=current))
         except LessonPlanDataError as exc:
             return error(str(exc))
 

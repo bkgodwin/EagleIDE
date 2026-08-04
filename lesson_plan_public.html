@@ -8,26 +8,29 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&amp;display=swap">
-  <link rel="stylesheet" href="/static/css/main.css?v=20260804-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260804-2">
   <script src="https://cdn.jsdelivr.net/npm/marked@18.0.7/lib/marked.umd.js" integrity="sha384-7njNzKcJUBdezPGfqUrIFizi2QkXJH0M6wF3o1h9GE/nce6X4YdecMwh31B19yTi" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.7/dist/purify.min.js" integrity="sha384-C5g1ZoYBpnvKyArNZI21kaBEk3egHOYfHj/cUOHmyJ7CSDMyNMyM+STqfkBt8m2Y" crossorigin="anonymous"></script>
 </head>
-<body class="lesson-plan-public-page light-mode">
+<body class="lesson-plan-public-page">
   <main class="lesson-plan-public-shell">
-    <nav class="lesson-plan-public-toolbar" aria-label="Lesson plan week navigation">
-      <strong>Weekly lesson plan</strong>
-      <div class="lesson-plan-week-nav">
+    <header class="lesson-plan-site-header">
+      <a class="lesson-plan-site-brand" href="/" target="_blank" rel="noopener" aria-label="Open EagleIDE">
+        <img src="/static/favicon.svg" alt="">
+        <span><strong>EagleIDE</strong><small>Weekly lesson plans</small></span>
+      </a>
+      <nav class="lesson-plan-public-toolbar" aria-label="Lesson plan week navigation">
         <button class="btn secondary" id="publicLessonPlanPrevious" type="button">← Previous</button>
         <button class="btn secondary lesson-plan-current-btn" id="publicLessonPlanCurrent" type="button">Current week</button>
         <button class="btn secondary" id="publicLessonPlanNext" type="button">Next →</button>
         <button class="btn run lesson-plan-print-btn" id="publicLessonPlanPrint" type="button">Print / Save PDF</button>
-      </div>
-    </nav>
+      </nav>
+    </header>
     <div id="publicLessonPlanStatus" class="lesson-plan-status" role="status" aria-live="polite"></div>
     <div id="publicLessonPlanHost"></div>
   </main>
   <aside class="wiki-standard-description-tooltip" id="wikiStandardDescriptionTooltip" role="tooltip" hidden></aside>
-  <script src="/static/js/lesson-plan-renderer.js?v=20260804-1"></script>
-  <script src="/static/js/lesson-plan-public.js?v=20260804-1"></script>
+  <script src="/static/js/lesson-plan-renderer.js?v=20260804-2"></script>
+  <script src="/static/js/lesson-plan-public.js?v=20260804-2"></script>
 </body>
 </html>

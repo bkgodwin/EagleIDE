@@ -9,8 +9,6 @@
     teacherLoading: false,
     teacherRequest: 0,
     pickerDay: '',
-    pickerTimer: null,
-    pickerAbort: null,
     studentClassId: '',
     studentData: null,
     studentRequest: 0,
@@ -41,7 +39,7 @@
     friday.setDate(friday.getDate() + 4);
     const start = monday.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     const end = friday.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-    return `${start} – ${end}`;
+    return `${start} - ${end}`;
   }
 
   function dayDate(week, index) {
@@ -285,6 +283,28 @@
     });
   }
 
+  function escapeAttribute(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function browserSharingPayload(data) {
+    const publicPath = data.public_path || new URL(data.public_url).pathname;
+    const embedPath = data.embed_path || new URL(data.embed_url).pathname;
+    const publicUrl = new URL(publicPath, window.location.origin).toString();
+    const embedUrl = new URL(embedPath, window.location.origin).toString();
+    const title = escapeAttribute(`${data.class?.name || 'Class'} lesson plan`);
+    return {
+      ...data,
+      public_url: publicUrl,
+      embed_url: embedUrl,
+      embed_code: `<iframe src="${escapeAttribute(embedUrl)}" title="${title}" style="width:100%;aspect-ratio:16/9;border:0" loading="lazy"></iframe>`,
+    };
+  }
+
   async function copyText(value) {
     if (navigator.clipboard?.writeText) {
       try { await navigator.clipboard.writeText(value); return; } catch (_error) { /* fallback below */ }
@@ -296,7 +316,11 @@
 
   async function copySharing(field, message) {
     if (!state.teacherClassId) return;
-    try { const data = await sharing(); await copyText(data[field]); setTeacherStatus(message); }
+    try {
+      const data = browserSharingPayload(await sharing());
+      await copyText(data[field]);
+      setTeacherStatus(message);
+    }
     catch (error) { setTeacherStatus(error.message || 'Could not copy link.', true); }
   }
 
@@ -305,7 +329,7 @@
     const printWindow = window.open('about:blank', '_blank');
     if (printWindow) printWindow.opener = null;
     try {
-      const data = await sharing();
+      const data = browserSharingPayload(await sharing());
       const url = new URL(data.public_url);
       url.searchParams.set('week', state.teacherWeek);
       url.searchParams.set('print', '1');
@@ -329,41 +353,76 @@
   function openPicker(day) {
     captureEditorDraft();
     state.pickerDay = day;
-    $('lessonPlanWikiPickerTitle').textContent = `Add Wiki Content – ${day.charAt(0).toUpperCase() + day.slice(1)}`;
-    $('lessonPlanWikiPickerSearch').value = '';
-    $('lessonPlanWikiPickerResults').innerHTML = '<p>Type at least two characters to search published wiki pages.</p>';
+    $('lessonPlanWikiPickerTitle').textContent = `Add Wiki Content - ${day.charAt(0).toUpperCase() + day.slice(1)}`;
+    $('lessonPlanWikiPickerTree').innerHTML = '<p class="lesson-plan-picker-message">Loading wiki contents…</p>';
     $('lessonPlanWikiPickerModal').style.display = 'flex';
-    setTimeout(() => $('lessonPlanWikiPickerSearch').focus(), 0);
+    loadPickerTree();
   }
 
   function closePicker() {
-    state.pickerAbort?.abort?.();
     $('lessonPlanWikiPickerModal').style.display = 'none';
     state.pickerDay = '';
   }
 
-  async function searchPicker(query) {
-    const target = $('lessonPlanWikiPickerResults');
-    if (query.length < 2) { target.innerHTML = '<p>Type at least two characters to search published wiki pages.</p>'; return; }
-    state.pickerAbort?.abort?.();
-    state.pickerAbort = new AbortController();
-    target.textContent = 'Searching…';
+  function treeHasPage(node) {
+    return node?.kind === 'page' || (node?.children || []).some(treeHasPage);
+  }
+
+  function renderPickerNodes(nodes, target, depth = 0) {
+    (nodes || []).filter(treeHasPage).forEach((node) => {
+      if (node.kind === 'folder') {
+        const folder = document.createElement('details');
+        folder.className = 'lesson-plan-picker-folder';
+        folder.open = depth < 1;
+        const summary = document.createElement('summary');
+        const icon = document.createElement('span');
+        icon.className = 'lesson-plan-picker-icon';
+        icon.textContent = node.icon || '📁';
+        const title = document.createElement('strong');
+        title.textContent = node.title || 'Folder';
+        summary.append(icon, title);
+        const children = document.createElement('div');
+        children.className = 'lesson-plan-picker-children';
+        renderPickerNodes(node.children || [], children, depth + 1);
+        folder.append(summary, children);
+        target.appendChild(folder);
+        return;
+      }
+      if (node.kind !== 'page') return;
+      const selected = state.teacherData?.plan?.days?.[state.pickerDay]?.wiki_pages || [];
+      const alreadyLinked = selected.some((page) => page.id === node.id);
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'lesson-plan-picker-page';
+      button.disabled = alreadyLinked;
+      button.setAttribute('role', 'treeitem');
+      const icon = document.createElement('span');
+      icon.className = 'lesson-plan-picker-icon';
+      icon.textContent = node.icon || '📄';
+      const copy = document.createElement('span');
+      const title = document.createElement('strong');
+      title.textContent = node.title || 'Wiki page';
+      const description = document.createElement('small');
+      description.textContent = alreadyLinked ? 'Already linked to this day' : (node.description || 'Published wiki page');
+      copy.append(title, description);
+      button.append(icon, copy);
+      button.addEventListener('click', () => addWikiPage(node.id));
+      target.appendChild(button);
+    });
+  }
+
+  async function loadPickerTree() {
+    const target = $('lessonPlanWikiPickerTree');
+    target.classList.remove('is-error');
     try {
-      const data = await fetchJson(`/api/wiki/search?q=${encodeURIComponent(query)}&limit=20`, { signal: state.pickerAbort.signal });
-      const pages = (data.results || []).filter((item) => item.kind === 'page');
+      const data = await fetchJson('/api/wiki/tree');
+      if (!state.pickerDay || $('lessonPlanWikiPickerModal').style.display === 'none') return;
       target.textContent = '';
-      if (!pages.length) { target.textContent = 'No published wiki pages found.'; return; }
-      pages.forEach((result) => {
-        const button = document.createElement('button');
-        button.type = 'button'; button.className = 'lesson-plan-picker-result';
-        const title = document.createElement('strong'); title.textContent = result.title || 'Wiki page';
-        const description = document.createElement('span'); description.textContent = result.description || result.excerpt || '';
-        button.append(title, description);
-        button.addEventListener('click', () => addWikiPage(result.id));
-        target.appendChild(button);
-      });
+      renderPickerNodes(data.tree || [], target);
+      if (!target.children.length) target.innerHTML = '<p class="lesson-plan-picker-message">No published wiki pages are available yet.</p>';
     } catch (error) {
-      if (error.name !== 'AbortError') target.textContent = error.message || 'Search failed.';
+      target.textContent = error.message || 'Could not load wiki contents.';
+      target.classList.add('is-error');
     }
   }
 
@@ -383,7 +442,7 @@
       item.wiki_node_ids = item.wiki_pages.map((page) => page.id);
       item.standards = mergedStandards(item.wiki_pages);
       closePicker(); renderTeacherEditor();
-    } catch (error) { $('lessonPlanWikiPickerResults').textContent = error.message || 'Could not add wiki page.'; }
+    } catch (error) { $('lessonPlanWikiPickerTree').textContent = error.message || 'Could not add wiki page.'; }
   }
 
   function selectedStudentClass() {
@@ -431,11 +490,6 @@
       if (!state.teacherData || state.teacherData.class?.id !== state.teacherClassId) loadTeacherPlan();
     });
     $('lessonPlanWikiPickerCancel')?.addEventListener('click', closePicker);
-    $('lessonPlanWikiPickerSearch')?.addEventListener('input', (event) => {
-      clearTimeout(state.pickerTimer);
-      const query = String(event.target.value || '').trim();
-      state.pickerTimer = setTimeout(() => searchPicker(query), 250);
-    });
     $('lessonPlanWikiPickerModal')?.addEventListener('click', (event) => { if (event.target === $('lessonPlanWikiPickerModal')) closePicker(); });
     $('studentLessonPlanPrevious')?.addEventListener('click', () => state.studentData?.previous_week && loadStudentPlan(state.studentData.previous_week));
     $('studentLessonPlanNext')?.addEventListener('click', () => state.studentData?.next_week && loadStudentPlan(state.studentData.next_week));
