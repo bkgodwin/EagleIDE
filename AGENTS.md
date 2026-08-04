@@ -24,6 +24,8 @@ Required runtime components:
 .
 |-- app.py                       Main Flask/Socket.IO app, APIs, auth, persistence, and runners
 |-- classroom_features.py        Classroom signals, file sharing, audit routes, and socket events
+|-- lesson_plan_features.py      Lesson-plan APIs, public links, and embed page routes
+|-- lesson_plan_store.py         Atomic weekly plan persistence and share-token catalog
 |-- wiki_features.py             Public wiki and protected admin/teacher/student HTTP routes
 |-- wiki_store.py                Wiki SQLite catalog, search, assets, drafts, revisions, and backups
 |-- network_features.py          Optional simulator auth, topology, class access, and lab HTTP routes
@@ -34,6 +36,7 @@ Required runtime components:
 |-- sandbox_containment.py       Per-worker Linux Landlock filesystem boundary
 |-- config.py                    Checked-in defaults and server constants
 |-- index.html                   Entire SPA document and DOM structure
+|-- lesson_plan_public.html      Public and embeddable lesson-plan document
 |-- static/
 |   |-- css/
 |   |   |-- main.css             Ordered stylesheet import entry point
@@ -55,6 +58,9 @@ Required runtime components:
 |       |-- classroom-files.js   Sharing and teacher file-audit UI
 |       |-- student-notebook.js  Notebook tabs, blocks, prompts, saving, and grading UI
 |       |-- student-dashboard.js Student mastery dashboard and achievements
+|       |-- lesson-plans.js      Teacher editing and student home lesson-plan controller
+|       |-- lesson-plan-renderer.js Shared safe weekly-plan renderer
+|       |-- lesson-plan-public.js Public/embed navigation and print controller
 |       |-- wiki-reader.js       Public/embedded wiki reader, tree, search, links, and IDE handoff
 |       |-- wiki-admin.js        Admin authoring, uploads, ordering, analytics, and recovery UI
 |       |-- network-sim.js       Browser topology engine, packet tools, CLI, labs, and teacher UI
@@ -134,6 +140,7 @@ Checked-in seed/reference data is limited to files such as `challenges.csv` and 
 - `config.txt` and `.admin_key`
 - `users.json`, `classes.json`, and `skills.json`
 - `assignments/`, `notebooks/`, `user_files/`, and `sandboxes/`
+- `lesson_plans/` (weekly plans and revocable public-link tokens)
 - `wiki_data/` (SQLite catalog, Markdown, media, drafts, and revisions) and `wiki_backups/`
 - `network_data/` (class access, lab assignments/progress, and per-account saved topologies)
 - `challenge_scores.json` and `leaderboard.csv`
@@ -155,6 +162,7 @@ Network simulator definitions are source data in `network_content.py`; assignmen
 - Raise hand, classroom questions, file sharing, or teacher audit: `classroom_features.py`, `classroom-signals.js`, and/or `classroom-files.js`.
 - Notebook prompts and student notes: notebook helpers/routes in `app.py`, `student-notebook.js`, and `features/student-notebook.css`.
 - Student mastery dashboard: mastery routes in `app.py`, `student-dashboard.js`, and `features/student-dashboard.css`.
+- Weekly lesson plans: `lesson_plan_features.py`, `lesson_plan_store.py`, `lesson-plans.js`, `lesson-plan-renderer.js`, `lesson-plan-public.js`, `lesson_plan_public.html`, and `features/lesson-plans.css`.
 - Wiki catalog/search/assets/backup or HTTP authorization: `wiki_store.py` and `wiki_features.py`; reader/teacher actions: `wiki-reader.js`; admin authoring: `wiki-admin.js`; visuals: `features/wiki.css`.
 - Editor initialization or teacher stream editor: `editor-init.js`; most run/open/save behavior remains in `app-core.js`.
 - Virtual shell parsing: `shell-commands.js`; it must call workspace APIs and must never expose an operating-system shell.
