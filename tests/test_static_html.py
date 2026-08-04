@@ -133,17 +133,22 @@ class StaticHtmlTestCase(unittest.TestCase):
         ids = set(self.parser.ids)
         self.assertTrue({
             "studentLessonPlanSection", "studentLessonPlanHost", "lessonPlanTeacherHost",
-            "lessonPlanWikiPickerModal", "lessonPlanWikiPickerSearch",
+            "lessonPlanWikiPickerModal", "lessonPlanWikiPickerTree",
         }.issubset(ids))
         self.assertIn('data-view="dash-lesson-plans"', self.raw)
-        self.assertIn('/static/js/lesson-plan-renderer.js?v=20260804-1', self.raw)
-        self.assertIn('/static/js/lesson-plans.js?v=20260804-1', self.raw)
+        self.assertIn('/static/js/lesson-plan-renderer.js?v=20260804-2', self.raw)
+        self.assertIn('/static/js/lesson-plans.js?v=20260804-2', self.raw)
         css = (BASE_DIR / "static" / "css" / "features" / "lesson-plans.css").read_text(encoding="utf-8")
         self.assertIn("overflow-y:auto", css.replace(" ", ""))
         self.assertIn("@page { size:landscape", css)
+        controller = (BASE_DIR / "static" / "js" / "lesson-plans.js").read_text(encoding="utf-8")
+        self.assertIn("fetchJson('/api/wiki/tree')", controller)
+        self.assertNotIn("/api/wiki/search?q=", controller)
+        self.assertIn("window.location.origin", controller)
         public_html = (BASE_DIR / "lesson_plan_public.html").read_text(encoding="utf-8")
         self.assertIn('id="publicLessonPlanHost"', public_html)
-        self.assertIn('/static/js/lesson-plan-public.js?v=20260804-1', public_html)
+        self.assertIn('class="lesson-plan-site-header"', public_html)
+        self.assertIn('/static/js/lesson-plan-public.js?v=20260804-2', public_html)
 
     def test_ide_search_does_not_force_wiki_mode_and_hides_contents_toggle(self):
         reader = (BASE_DIR / "static" / "js" / "wiki-reader.js").read_text(encoding="utf-8")

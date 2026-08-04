@@ -85,7 +85,7 @@
     const monday = new Date(`${plan.week_start}T12:00:00`);
     const friday = new Date(monday);
     friday.setDate(friday.getDate() + 4);
-    week.textContent = `Week of ${monday.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })} – ${friday.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}`;
+    week.textContent = `Week of ${monday.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })} - ${friday.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}`;
     heading.append(title, week);
     header.appendChild(heading);
     frame.appendChild(header);
