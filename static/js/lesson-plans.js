@@ -1,0 +1,449 @@
+(function () {
+  'use strict';
+
+  const DAYS = window.LessonPlanRenderer?.DAYS || ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
+  const state = {
+    teacherClassId: '',
+    teacherWeek: mondayFor(new Date()),
+    teacherData: null,
+    teacherLoading: false,
+    teacherRequest: 0,
+    pickerDay: '',
+    pickerTimer: null,
+    pickerAbort: null,
+    studentClassId: '',
+    studentData: null,
+    studentRequest: 0,
+  };
+  const $ = (id) => document.getElementById(id);
+
+  function context() {
+    try { return window.EagleIDE?.getContext?.() || {}; } catch { return {}; }
+  }
+
+  function mondayFor(value) {
+    const parsed = value instanceof Date ? new Date(value) : new Date(`${value}T12:00:00`);
+    parsed.setHours(12, 0, 0, 0);
+    const day = parsed.getDay() || 7;
+    parsed.setDate(parsed.getDate() - day + 1);
+    return parsed.toISOString().slice(0, 10);
+  }
+
+  function shiftWeek(week, amount) {
+    const parsed = new Date(`${week}T12:00:00`);
+    parsed.setDate(parsed.getDate() + amount * 7);
+    return parsed.toISOString().slice(0, 10);
+  }
+
+  function readableWeek(week) {
+    const monday = new Date(`${week}T12:00:00`);
+    const friday = new Date(monday);
+    friday.setDate(friday.getDate() + 4);
+    const start = monday.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const end = friday.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    return `${start} – ${end}`;
+  }
+
+  function dayDate(week, index) {
+    const parsed = new Date(`${week}T12:00:00`);
+    parsed.setDate(parsed.getDate() + index);
+    return parsed.toISOString().slice(0, 10);
+  }
+
+  function authHeaders(role, json = false) {
+    const ctx = context();
+    const headers = json ? { 'Content-Type': 'application/json' } : {};
+    if (role === 'teacher' && ctx.TEACHER_TOKEN) headers['X-Teacher-Token'] = ctx.TEACHER_TOKEN;
+    if (role === 'student' && ctx.USER_TOKEN) headers['X-User-Token'] = ctx.USER_TOKEN;
+    return headers;
+  }
+
+  async function fetchJson(url, options = {}) {
+    const response = await fetch(url, options);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) throw new Error(data.error || `Request failed (${response.status})`);
+    return data;
+  }
+
+  function setTeacherStatus(message, error = false) {
+    const target = $('lessonPlanTeacherStatus');
+    if (!target) return;
+    target.textContent = message || '';
+    target.classList.toggle('is-error', !!error);
+  }
+
+  function teacherClasses() { return context().teacherClasses || []; }
+
+  function buildTeacherShell() {
+    const host = $('lessonPlanTeacherHost');
+    if (!host || host.dataset.ready) return;
+    host.dataset.ready = 'true';
+    host.innerHTML = `
+      <div class="lesson-plan-teacher-shell">
+        <div class="lesson-plan-teacher-toolbar">
+          <div class="lesson-plan-week-nav">
+            <label>Class <select id="lessonPlanTeacherClass"></select></label>
+            <button class="btn secondary" id="lessonPlanTeacherPrevious" type="button">← Previous</button>
+            <button class="btn secondary" id="lessonPlanTeacherCurrent" type="button">Current week</button>
+            <span class="lesson-plan-week-label" id="lessonPlanTeacherWeekLabel"></span>
+            <button class="btn secondary" id="lessonPlanTeacherNext" type="button">Next →</button>
+          </div>
+          <div class="lesson-plan-week-nav">
+            <button class="btn secondary" id="lessonPlanCopyPublic" type="button">Copy Public Link</button>
+            <button class="btn secondary" id="lessonPlanCopyEmbed" type="button">Copy Embed</button>
+            <button class="btn secondary" id="lessonPlanPrint" type="button">Print / Save PDF</button>
+            <button class="btn secondary" id="lessonPlanResetLink" type="button" title="Disable the old public and embed links">Reset Link</button>
+          </div>
+        </div>
+        <div class="lesson-plan-editor-scroll"><div class="lesson-plan-editor-grid" id="lessonPlanEditorGrid"></div></div>
+        <div>
+          <label class="lesson-plan-notes-editor"><strong>Additional notes</strong><textarea id="lessonPlanNotes" maxlength="20000" placeholder="Notes for the whole week (Markdown supported)"></textarea></label>
+          <div class="lesson-plan-editor-actions" style="margin-top:10px;">
+            <span class="lesson-plan-status" id="lessonPlanTeacherStatus" role="status" aria-live="polite"></span>
+            <button class="btn run" id="lessonPlanPublish" type="button">Apply &amp; Publish</button>
+          </div>
+        </div>
+      </div>`;
+    $('lessonPlanTeacherClass').addEventListener('change', (event) => {
+      state.teacherClassId = event.target.value || '';
+      loadTeacherPlan();
+    });
+    $('lessonPlanTeacherPrevious').addEventListener('click', () => changeTeacherWeek(-1));
+    $('lessonPlanTeacherNext').addEventListener('click', () => changeTeacherWeek(1));
+    $('lessonPlanTeacherCurrent').addEventListener('click', () => { state.teacherWeek = mondayFor(new Date()); loadTeacherPlan(); });
+    $('lessonPlanPublish').addEventListener('click', saveTeacherPlan);
+    $('lessonPlanCopyPublic').addEventListener('click', () => copySharing('public_url', 'Public link copied.'));
+    $('lessonPlanCopyEmbed').addEventListener('click', () => copySharing('embed_code', 'Embed code copied.'));
+    $('lessonPlanPrint').addEventListener('click', printTeacherPlan);
+    $('lessonPlanResetLink').addEventListener('click', resetSharing);
+    syncTeacherClasses();
+  }
+
+  function syncTeacherClasses() {
+    buildTeacherShell();
+    const select = $('lessonPlanTeacherClass');
+    if (!select) return;
+    const classes = teacherClasses();
+    const preferred = state.teacherClassId || context().currentTeacherClassId;
+    state.teacherClassId = classes.some((item) => item.id === preferred) ? preferred : (classes[0]?.id || '');
+    select.textContent = '';
+    classes.forEach((item) => {
+      const option = document.createElement('option');
+      option.value = item.id;
+      option.textContent = item.name || 'Class';
+      option.selected = item.id === state.teacherClassId;
+      select.appendChild(option);
+    });
+    $('lessonPlanPublish').disabled = !state.teacherClassId;
+  }
+
+  function changeTeacherWeek(amount) {
+    state.teacherWeek = shiftWeek(state.teacherWeek, amount);
+    loadTeacherPlan();
+  }
+
+  async function loadTeacherPlan() {
+    if (!state.teacherClassId) return;
+    const classId = state.teacherClassId;
+    const week = state.teacherWeek;
+    const requestId = ++state.teacherRequest;
+    state.teacherLoading = true;
+    setTeacherStatus('Loading…');
+    try {
+      const data = await fetchJson(`/api/teacher/classes/${encodeURIComponent(classId)}/lesson-plans?week=${encodeURIComponent(week)}`, { headers: authHeaders('teacher') });
+      if (requestId !== state.teacherRequest || classId !== state.teacherClassId) return;
+      state.teacherData = data;
+      state.teacherWeek = state.teacherData.selected_week;
+      renderTeacherEditor();
+      setTeacherStatus(state.teacherData.plan?.published_at ? 'Published plan loaded.' : 'Start a new weekly plan.');
+    } catch (error) {
+      if (requestId !== state.teacherRequest) return;
+      setTeacherStatus(error.message || 'Could not load lesson plan.', true);
+    } finally {
+      if (requestId === state.teacherRequest) state.teacherLoading = false;
+    }
+  }
+
+  function renderTeacherEditor() {
+    const plan = state.teacherData?.plan;
+    const grid = $('lessonPlanEditorGrid');
+    if (!plan || !grid) return;
+    $('lessonPlanTeacherWeekLabel').textContent = readableWeek(plan.week_start);
+    $('lessonPlanNotes').value = plan.notes_markdown || '';
+    grid.textContent = '';
+    DAYS.forEach((day, index) => {
+      const item = plan.days?.[day] || {};
+      const column = document.createElement('section');
+      column.className = 'lesson-plan-editor-day';
+      column.dataset.day = day;
+      const date = new Date(`${item.date || dayDate(plan.week_start, index)}T12:00:00`);
+      column.innerHTML = `<header><strong>${day.charAt(0).toUpperCase() + day.slice(1)}</strong><time>${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</time></header>`;
+      const textarea = document.createElement('textarea');
+      textarea.dataset.lessonPlanDay = day;
+      textarea.maxLength = 20000;
+      textarea.placeholder = '- Learning objective\n- Activity or assignment\n- Assessment';
+      textarea.value = item.markdown || '';
+      column.appendChild(textarea);
+      const pages = document.createElement('div');
+      pages.className = 'lesson-plan-editor-pages';
+      (item.wiki_pages || []).forEach((page) => pages.appendChild(editorPageRow(day, page)));
+      column.appendChild(pages);
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.className = 'btn secondary lesson-plan-editor-add';
+      add.textContent = '+ Add Wiki Page';
+      add.addEventListener('click', () => openPicker(day));
+      column.appendChild(add);
+      if (item.standards?.length) {
+        const standards = window.LessonPlanRenderer.createStandardsPopover(
+          day.charAt(0).toUpperCase() + day.slice(1), item.standards,
+        );
+        standards.classList.add('lesson-plan-editor-standards');
+        column.appendChild(standards);
+      } else {
+        const standards = document.createElement('div');
+        standards.className = 'lesson-plan-editor-standards';
+        standards.textContent = '0 standards from linked pages';
+        column.appendChild(standards);
+      }
+      grid.appendChild(column);
+    });
+  }
+
+  function editorPageRow(day, page) {
+    const row = document.createElement('div');
+    row.className = 'lesson-plan-editor-page';
+    row.dataset.nodeId = page.id;
+    const label = document.createElement('span');
+    label.textContent = page.title || 'Wiki page';
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = '×';
+    remove.title = `Remove ${label.textContent}`;
+    remove.addEventListener('click', () => {
+      captureEditorDraft();
+      const item = state.teacherData.plan.days[day];
+      item.wiki_pages = (item.wiki_pages || []).filter((entry) => entry.id !== page.id);
+      item.wiki_node_ids = item.wiki_pages.map((entry) => entry.id);
+      item.standards = mergedStandards(item.wiki_pages);
+      renderTeacherEditor();
+    });
+    row.append(label, remove);
+    return row;
+  }
+
+  function mergedStandards(pages) {
+    const seen = new Set();
+    const standards = [];
+    (pages || []).forEach((page) => (page.standards || []).forEach((standard) => {
+      const key = standard.id || String(standard.standard_id || '').toLowerCase();
+      if (key && !seen.has(key)) { seen.add(key); standards.push(standard); }
+    }));
+    return standards;
+  }
+
+  function captureEditorDraft() {
+    const plan = state.teacherData?.plan;
+    if (!plan) return;
+    DAYS.forEach((day) => {
+      const textarea = document.querySelector(`[data-lesson-plan-day="${day}"]`);
+      if (textarea && plan.days?.[day]) plan.days[day].markdown = textarea.value || '';
+    });
+    if ($('lessonPlanNotes')) plan.notes_markdown = $('lessonPlanNotes').value || '';
+  }
+
+  async function saveTeacherPlan() {
+    const plan = state.teacherData?.plan;
+    if (!plan || !state.teacherClassId) return;
+    captureEditorDraft();
+    setTeacherStatus('Publishing…');
+    $('lessonPlanPublish').disabled = true;
+    try {
+      state.teacherData = await fetchJson(`/api/teacher/classes/${encodeURIComponent(state.teacherClassId)}/lesson-plans/${encodeURIComponent(state.teacherWeek)}`, {
+        method: 'PUT', headers: authHeaders('teacher', true), body: JSON.stringify({
+          expected_version: plan.version,
+          days: Object.fromEntries(DAYS.map((day) => [day, {
+            markdown: plan.days[day].markdown,
+            wiki_node_ids: (plan.days[day].wiki_pages || []).map((page) => page.id),
+          }])),
+          notes_markdown: plan.notes_markdown,
+        }),
+      });
+      renderTeacherEditor();
+      setTeacherStatus('Published. Students and public viewers now see these changes.');
+      if (state.studentClassId === state.teacherClassId) loadStudentPlan();
+    } catch (error) {
+      setTeacherStatus(error.message || 'Could not publish lesson plan.', true);
+    } finally {
+      $('lessonPlanPublish').disabled = false;
+    }
+  }
+
+  async function sharing(reset = false) {
+    return fetchJson(`/api/teacher/classes/${encodeURIComponent(state.teacherClassId)}/lesson-plans/sharing${reset ? '/reset' : ''}`, {
+      method: 'POST', headers: authHeaders('teacher', true), body: '{}',
+    });
+  }
+
+  async function copyText(value) {
+    if (navigator.clipboard?.writeText) {
+      try { await navigator.clipboard.writeText(value); return; } catch (_error) { /* fallback below */ }
+    }
+    const textarea = document.createElement('textarea');
+    textarea.value = value; textarea.style.position = 'fixed'; textarea.style.opacity = '0';
+    document.body.appendChild(textarea); textarea.select(); document.execCommand('copy'); textarea.remove();
+  }
+
+  async function copySharing(field, message) {
+    if (!state.teacherClassId) return;
+    try { const data = await sharing(); await copyText(data[field]); setTeacherStatus(message); }
+    catch (error) { setTeacherStatus(error.message || 'Could not copy link.', true); }
+  }
+
+  async function printTeacherPlan() {
+    if (!state.teacherClassId) return;
+    const printWindow = window.open('about:blank', '_blank');
+    if (printWindow) printWindow.opener = null;
+    try {
+      const data = await sharing();
+      const url = new URL(data.public_url);
+      url.searchParams.set('week', state.teacherWeek);
+      url.searchParams.set('print', '1');
+      if (printWindow) printWindow.location.href = url.toString();
+      else await copyText(url.toString());
+      setTeacherStatus(printWindow
+        ? 'Opened the landscape print view. Choose “Save as PDF” in the print dialog.'
+        : 'The print link was copied because the browser blocked the new window.');
+    } catch (error) {
+      printWindow?.close?.();
+      setTeacherStatus(error.message || 'Could not open print view.', true);
+    }
+  }
+
+  async function resetSharing() {
+    if (!state.teacherClassId || !window.confirm('Reset the public link? Existing public and embed links will stop working.')) return;
+    try { await sharing(true); setTeacherStatus('Public and embed links reset. Copy the new links when ready.'); }
+    catch (error) { setTeacherStatus(error.message || 'Could not reset link.', true); }
+  }
+
+  function openPicker(day) {
+    captureEditorDraft();
+    state.pickerDay = day;
+    $('lessonPlanWikiPickerTitle').textContent = `Add Wiki Content – ${day.charAt(0).toUpperCase() + day.slice(1)}`;
+    $('lessonPlanWikiPickerSearch').value = '';
+    $('lessonPlanWikiPickerResults').innerHTML = '<p>Type at least two characters to search published wiki pages.</p>';
+    $('lessonPlanWikiPickerModal').style.display = 'flex';
+    setTimeout(() => $('lessonPlanWikiPickerSearch').focus(), 0);
+  }
+
+  function closePicker() {
+    state.pickerAbort?.abort?.();
+    $('lessonPlanWikiPickerModal').style.display = 'none';
+    state.pickerDay = '';
+  }
+
+  async function searchPicker(query) {
+    const target = $('lessonPlanWikiPickerResults');
+    if (query.length < 2) { target.innerHTML = '<p>Type at least two characters to search published wiki pages.</p>'; return; }
+    state.pickerAbort?.abort?.();
+    state.pickerAbort = new AbortController();
+    target.textContent = 'Searching…';
+    try {
+      const data = await fetchJson(`/api/wiki/search?q=${encodeURIComponent(query)}&limit=20`, { signal: state.pickerAbort.signal });
+      const pages = (data.results || []).filter((item) => item.kind === 'page');
+      target.textContent = '';
+      if (!pages.length) { target.textContent = 'No published wiki pages found.'; return; }
+      pages.forEach((result) => {
+        const button = document.createElement('button');
+        button.type = 'button'; button.className = 'lesson-plan-picker-result';
+        const title = document.createElement('strong'); title.textContent = result.title || 'Wiki page';
+        const description = document.createElement('span'); description.textContent = result.description || result.excerpt || '';
+        button.append(title, description);
+        button.addEventListener('click', () => addWikiPage(result.id));
+        target.appendChild(button);
+      });
+    } catch (error) {
+      if (error.name !== 'AbortError') target.textContent = error.message || 'Search failed.';
+    }
+  }
+
+  async function addWikiPage(nodeId) {
+    const day = state.pickerDay;
+    const item = state.teacherData?.plan?.days?.[day];
+    if (!item) return;
+    if ((item.wiki_pages || []).some((page) => page.id === nodeId)) { closePicker(); return; }
+    try {
+      const data = await fetchJson(`/api/wiki/nodes/${encodeURIComponent(nodeId)}`);
+      const node = data.node;
+      if (!node || node.kind !== 'page') throw new Error('That wiki page is unavailable.');
+      item.wiki_pages = [...(item.wiki_pages || []), {
+        id: node.id, title: node.title, slug: node.slug, url: `/wiki/${node.slug}`,
+        description: node.description || '', standards: node.standards || [],
+      }];
+      item.wiki_node_ids = item.wiki_pages.map((page) => page.id);
+      item.standards = mergedStandards(item.wiki_pages);
+      closePicker(); renderTeacherEditor();
+    } catch (error) { $('lessonPlanWikiPickerResults').textContent = error.message || 'Could not add wiki page.'; }
+  }
+
+  function selectedStudentClass() {
+    const ctx = context();
+    const wikiSelected = window.WikiReader?.getState?.().selectedClassId;
+    const classes = ctx.studentClasses || [];
+    const preferred = wikiSelected || ctx.currentStudentClassId;
+    return classes.some((item) => item.id === preferred) ? preferred : (classes[0]?.id || '');
+  }
+
+  async function loadStudentPlan(week = '') {
+    const ctx = context();
+    const section = $('studentLessonPlanSection');
+    if (!section) return;
+    const isStudent = !!ctx.USER_TOKEN && !ctx.TEACHER_TOKEN && !ctx.ADMIN_TOKEN;
+    section.hidden = !isStudent;
+    if (!isStudent) return;
+    const classId = selectedStudentClass();
+    state.studentClassId = classId;
+    if (!classId) { section.hidden = true; return; }
+    const requestId = ++state.studentRequest;
+    $('studentLessonPlanStatus').textContent = 'Loading lesson plan…';
+    try {
+      const suffix = week ? `?week=${encodeURIComponent(week)}` : '';
+      const data = await fetchJson(`/api/classes/${encodeURIComponent(classId)}/lesson-plans${suffix}`, { headers: authHeaders('student') });
+      if (requestId !== state.studentRequest) return;
+      state.studentData = data;
+      $('studentLessonPlanStatus').textContent = '';
+      $('studentLessonPlanHeading').textContent = `${data.class?.name || 'Class'} Lesson Plan`;
+      $('studentLessonPlanWeekLabel').textContent = readableWeek(data.selected_week);
+      $('studentLessonPlanPrevious').disabled = !data.previous_week;
+      $('studentLessonPlanNext').disabled = !data.next_week;
+      window.LessonPlanRenderer.render($('studentLessonPlanHost'), data);
+    } catch (error) {
+      if (requestId !== state.studentRequest) return;
+      $('studentLessonPlanStatus').textContent = error.message || 'Could not load lesson plan.';
+      $('studentLessonPlanStatus').classList.add('is-error');
+    }
+  }
+
+  function attach() {
+    buildTeacherShell();
+    document.querySelector('[data-view="dash-lesson-plans"]')?.addEventListener('click', () => {
+      syncTeacherClasses();
+      if (!state.teacherData || state.teacherData.class?.id !== state.teacherClassId) loadTeacherPlan();
+    });
+    $('lessonPlanWikiPickerCancel')?.addEventListener('click', closePicker);
+    $('lessonPlanWikiPickerSearch')?.addEventListener('input', (event) => {
+      clearTimeout(state.pickerTimer);
+      const query = String(event.target.value || '').trim();
+      state.pickerTimer = setTimeout(() => searchPicker(query), 250);
+    });
+    $('lessonPlanWikiPickerModal')?.addEventListener('click', (event) => { if (event.target === $('lessonPlanWikiPickerModal')) closePicker(); });
+    $('studentLessonPlanPrevious')?.addEventListener('click', () => state.studentData?.previous_week && loadStudentPlan(state.studentData.previous_week));
+    $('studentLessonPlanNext')?.addEventListener('click', () => state.studentData?.next_week && loadStudentPlan(state.studentData.next_week));
+    window.addEventListener('eagle-context-updated', () => { syncTeacherClasses(); loadStudentPlan(); });
+    window.addEventListener('wiki-home-rendered', (event) => loadStudentPlan('', event.detail?.classId));
+    loadStudentPlan();
+  }
+
+  attach();
+  window.LessonPlans = { loadStudentPlan, loadTeacherPlan };
+})();
