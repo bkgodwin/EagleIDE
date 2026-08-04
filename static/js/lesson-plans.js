@@ -9,9 +9,9 @@
     teacherLoading: false,
     teacherRequest: 0,
     pickerDay: '',
-    studentClassId: '',
-    studentData: null,
-    studentRequest: 0,
+    homeClassId: '',
+    homeData: null,
+    homeRequest: 0,
   };
   const $ = (id) => document.getElementById(id);
 
@@ -269,7 +269,7 @@
       });
       renderTeacherEditor();
       setTeacherStatus('Published. Students and public viewers now see these changes.');
-      if (state.studentClassId === state.teacherClassId) loadStudentPlan();
+      if (state.homeClassId === state.teacherClassId) loadHomePlan(state.homeData?.selected_week || '');
     } catch (error) {
       setTeacherStatus(error.message || 'Could not publish lesson plan.', true);
     } finally {
@@ -329,10 +329,11 @@
     const printWindow = window.open('about:blank', '_blank');
     if (printWindow) printWindow.opener = null;
     try {
-      const data = browserSharingPayload(await sharing());
-      const url = new URL(data.public_url);
-      url.searchParams.set('week', state.teacherWeek);
-      url.searchParams.set('print', '1');
+      const data = await fetchJson(
+        `/api/teacher/classes/${encodeURIComponent(state.teacherClassId)}/lesson-plans/${encodeURIComponent(state.teacherWeek)}/print`,
+        { method: 'POST', headers: authHeaders('teacher', true), body: '{}' },
+      );
+      const url = new URL(data.print_path, window.location.origin);
       if (printWindow) printWindow.location.href = url.toString();
       else await copyText(url.toString());
       setTeacherStatus(printWindow
@@ -445,31 +446,37 @@
     } catch (error) { $('lessonPlanWikiPickerTree').textContent = error.message || 'Could not add wiki page.'; }
   }
 
-  function selectedStudentClass() {
+  function selectedHomeClass(classIdHint = '') {
     const ctx = context();
     const wikiSelected = window.WikiReader?.getState?.().selectedClassId;
-    const classes = ctx.studentClasses || [];
-    const preferred = wikiSelected || ctx.currentStudentClassId;
+    const teacher = !!ctx.TEACHER_TOKEN && !ctx.USER_TOKEN && !ctx.ADMIN_TOKEN;
+    const classes = teacher ? (ctx.teacherClasses || []) : (ctx.studentClasses || []);
+    const preferred = classIdHint || wikiSelected || (teacher ? ctx.currentTeacherClassId : ctx.currentStudentClassId);
     return classes.some((item) => item.id === preferred) ? preferred : (classes[0]?.id || '');
   }
 
-  async function loadStudentPlan(week = '') {
+  async function loadHomePlan(week = '', classIdHint = '') {
     const ctx = context();
     const section = $('studentLessonPlanSection');
     if (!section) return;
     const isStudent = !!ctx.USER_TOKEN && !ctx.TEACHER_TOKEN && !ctx.ADMIN_TOKEN;
-    section.hidden = !isStudent;
-    if (!isStudent) return;
-    const classId = selectedStudentClass();
-    state.studentClassId = classId;
+    const isTeacher = !!ctx.TEACHER_TOKEN && !ctx.USER_TOKEN && !ctx.ADMIN_TOKEN;
+    section.hidden = !isStudent && !isTeacher;
+    if (!isStudent && !isTeacher) return;
+    const classId = selectedHomeClass(classIdHint);
+    state.homeClassId = classId;
     if (!classId) { section.hidden = true; return; }
-    const requestId = ++state.studentRequest;
+    const requestId = ++state.homeRequest;
     $('studentLessonPlanStatus').textContent = 'Loading lesson plan…';
+    $('studentLessonPlanStatus').classList.remove('is-error');
     try {
       const suffix = week ? `?week=${encodeURIComponent(week)}` : '';
-      const data = await fetchJson(`/api/classes/${encodeURIComponent(classId)}/lesson-plans${suffix}`, { headers: authHeaders('student') });
-      if (requestId !== state.studentRequest) return;
-      state.studentData = data;
+      const endpoint = isTeacher
+        ? `/api/teacher/classes/${encodeURIComponent(classId)}/lesson-plans${suffix}`
+        : `/api/classes/${encodeURIComponent(classId)}/lesson-plans${suffix}`;
+      const data = await fetchJson(endpoint, { headers: authHeaders(isTeacher ? 'teacher' : 'student') });
+      if (requestId !== state.homeRequest) return;
+      state.homeData = data;
       $('studentLessonPlanStatus').textContent = '';
       $('studentLessonPlanHeading').textContent = `${data.class?.name || 'Class'} Lesson Plan`;
       $('studentLessonPlanWeekLabel').textContent = readableWeek(data.selected_week);
@@ -477,7 +484,7 @@
       $('studentLessonPlanNext').disabled = !data.next_week;
       window.LessonPlanRenderer.render($('studentLessonPlanHost'), data);
     } catch (error) {
-      if (requestId !== state.studentRequest) return;
+      if (requestId !== state.homeRequest) return;
       $('studentLessonPlanStatus').textContent = error.message || 'Could not load lesson plan.';
       $('studentLessonPlanStatus').classList.add('is-error');
     }
@@ -491,13 +498,13 @@
     });
     $('lessonPlanWikiPickerCancel')?.addEventListener('click', closePicker);
     $('lessonPlanWikiPickerModal')?.addEventListener('click', (event) => { if (event.target === $('lessonPlanWikiPickerModal')) closePicker(); });
-    $('studentLessonPlanPrevious')?.addEventListener('click', () => state.studentData?.previous_week && loadStudentPlan(state.studentData.previous_week));
-    $('studentLessonPlanNext')?.addEventListener('click', () => state.studentData?.next_week && loadStudentPlan(state.studentData.next_week));
-    window.addEventListener('eagle-context-updated', () => { syncTeacherClasses(); loadStudentPlan(); });
-    window.addEventListener('wiki-home-rendered', (event) => loadStudentPlan('', event.detail?.classId));
-    loadStudentPlan();
+    $('studentLessonPlanPrevious')?.addEventListener('click', () => state.homeData?.previous_week && loadHomePlan(state.homeData.previous_week));
+    $('studentLessonPlanNext')?.addEventListener('click', () => state.homeData?.next_week && loadHomePlan(state.homeData.next_week));
+    window.addEventListener('eagle-context-updated', () => { syncTeacherClasses(); loadHomePlan(); });
+    window.addEventListener('wiki-home-rendered', (event) => loadHomePlan('', event.detail?.classId));
+    loadHomePlan();
   }
 
   attach();
-  window.LessonPlans = { loadStudentPlan, loadTeacherPlan };
+  window.LessonPlans = { loadHomePlan, loadStudentPlan: loadHomePlan, loadTeacherPlan };
 })();

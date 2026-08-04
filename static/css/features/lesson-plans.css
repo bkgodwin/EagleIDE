@@ -100,6 +100,7 @@ body.lesson-plan-embed-page { padding:0; overflow:hidden; background:#08131f; }
 .lesson-plan-embed-page .lesson-plan-public-toolbar { gap:5px; }
 .lesson-plan-embed-page .lesson-plan-public-toolbar button { min-height:30px; padding:4px 7px; font-size:10px; }
 .lesson-plan-embed-page .lesson-plan-frame--embed { width:100%; height:100%; min-height:0; border:0; border-radius:0; box-shadow:none; }
+.lesson-plan-print-export-page .lesson-plan-public-toolbar { display:none; }
 
 @media (max-width:900px) {
   .lesson-plan-week-grid { grid-template-columns:1fr; }
@@ -143,7 +144,7 @@ body.lesson-plan-embed-page { padding:0; overflow:hidden; background:#08131f; }
   .lesson-plan-standards-list { position:static; display:flex; flex-wrap:wrap; max-height:none; overflow:visible; gap:3px; padding:5px; border:0; box-shadow:none; }
   .lesson-plan-standard-row { display:block; }
   .lesson-plan-standard-row .wiki-standard-id { min-height:0; padding:3px 5px; font-size:7px; }
-  .lesson-plan-standard-row span { display:none; }
+  body.lesson-plan-public-page .lesson-plan-standard-row span { display:none !important; }
   .lesson-plan-notes { padding:7px 11px; font-size:8px; }
   .lesson-plan-frame-header { color:#fff !important; background:linear-gradient(120deg,#17486d,#2d789e) !important; print-color-adjust:exact; -webkit-print-color-adjust:exact; }
 }
