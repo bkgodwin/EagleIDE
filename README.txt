@@ -20,6 +20,7 @@ isolated HTML preview deployment, monitoring, and load-test guidance.
 4. Running the Application
 5. Using the IDE
 5A. Public Coding Wiki
+5B. Weekly Lesson Plans
 6. AI Features
 7. Assignment System
 8. Admin Panel
@@ -438,6 +439,29 @@ Wiki backup and restore:
 
 Default limits are 1 GB per asset and 10 GB total wiki media. Operators can change
 wiki_max_asset_mb and wiki_total_asset_mb in the application configuration.
+
+================================================================================
+                         5B. WEEKLY LESSON PLANS
+================================================================================
+
+Teachers open Lesson Plans from their dashboard, choose one of their classes and
+a Monday-through-Friday week, write each day's plan in Markdown, attach published
+wiki pages, add weekly notes, and choose Apply & Publish. Standards assigned to
+linked wiki pages are collected separately for each day and shown in a bounded,
+scrollable standards popout. Long daily content scrolls inside that day only.
+
+Signed-in students see the selected class's current weekly plan on the wiki home
+page and can move back through published weeks. Teachers can also copy an unlisted
+public link or a responsive 16:9 iframe embed code for families, principals, and
+other nonusers. Public and embed views show the current week by default, expose
+previous/next published-week controls, and never list themselves on the wiki home.
+Reset Link immediately revokes old public and embed URLs.
+
+Choose Print / Save PDF in the teacher dashboard to open the current plan's
+landscape print view, then select Save as PDF in the browser print dialog. Screen
+views preserve independent day scrolling; print expands content for a readable,
+printer-friendly landscape document. Runtime data is stored in lesson_plans/ and
+can be relocated with EAGLEIDE_LESSON_PLAN_DATA_DIR.
 
 ================================================================================
                             6. AI FEATURES

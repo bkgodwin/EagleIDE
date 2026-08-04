@@ -129,6 +129,22 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertNotIn("lessonUseLocalModal", ids)
         self.assertNotIn('class="cls-wiki-url"', self.raw)
 
+    def test_lesson_plan_surfaces_and_print_layout_are_wired(self):
+        ids = set(self.parser.ids)
+        self.assertTrue({
+            "studentLessonPlanSection", "studentLessonPlanHost", "lessonPlanTeacherHost",
+            "lessonPlanWikiPickerModal", "lessonPlanWikiPickerSearch",
+        }.issubset(ids))
+        self.assertIn('data-view="dash-lesson-plans"', self.raw)
+        self.assertIn('/static/js/lesson-plan-renderer.js?v=20260804-1', self.raw)
+        self.assertIn('/static/js/lesson-plans.js?v=20260804-1', self.raw)
+        css = (BASE_DIR / "static" / "css" / "features" / "lesson-plans.css").read_text(encoding="utf-8")
+        self.assertIn("overflow-y:auto", css.replace(" ", ""))
+        self.assertIn("@page { size:landscape", css)
+        public_html = (BASE_DIR / "lesson_plan_public.html").read_text(encoding="utf-8")
+        self.assertIn('id="publicLessonPlanHost"', public_html)
+        self.assertIn('/static/js/lesson-plan-public.js?v=20260804-1', public_html)
+
     def test_ide_search_does_not_force_wiki_mode_and_hides_contents_toggle(self):
         reader = (BASE_DIR / "static" / "js" / "wiki-reader.js").read_text(encoding="utf-8")
         wiki_css = (BASE_DIR / "static" / "css" / "features" / "wiki.css").read_text(encoding="utf-8")

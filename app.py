@@ -34,6 +34,7 @@ from collections import defaultdict, deque
 from cryptography.fernet import Fernet, InvalidToken
 
 from classroom_features import merge_class_settings, register as register_classroom_features
+from lesson_plan_features import register as register_lesson_plan_features
 from network_features import register as register_network_features
 from sandbox_containment import landlock_status
 from sandbox_policy import (
@@ -62,6 +63,9 @@ NOTEBOOKS_DIR = BASE_DIR / "notebooks"
 WIKI_DATA_DIR = Path(os.environ.get("EAGLEIDE_WIKI_DATA_DIR", str(BASE_DIR / "wiki_data"))).expanduser().resolve()
 WIKI_BACKUP_DIR = Path(os.environ.get("EAGLEIDE_WIKI_BACKUP_DIR", str(BASE_DIR / "wiki_backups"))).expanduser().resolve()
 NETWORK_DATA_DIR = Path(os.environ.get("EAGLEIDE_NETWORK_DATA_DIR", str(BASE_DIR / "network_data"))).expanduser().resolve()
+LESSON_PLAN_DATA_DIR = Path(
+    os.environ.get("EAGLEIDE_LESSON_PLAN_DATA_DIR", str(BASE_DIR / "lesson_plans"))
+).expanduser().resolve()
 
 INPUT_TOKEN = "[[_IDE_INPUT_]]"
 MAX_WALL_TIME = 30.0       # seconds (hard kill for user code)
@@ -327,8 +331,20 @@ def _request_too_large(_error):
 @app.after_request
 def _add_security_headers(response):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
-    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    if request.path.startswith("/lesson-plans/embed/"):
+        response.headers.pop("X-Frame-Options", None)
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; "
+            "connect-src 'self'; frame-ancestors *; base-uri 'none'; form-action 'none'"
+        )
+        response.headers["Referrer-Policy"] = "no-referrer"
+    else:
+        response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    if request.path.startswith("/lesson-plans/public/") or request.path.startswith("/lesson-plans/embed/"):
+        response.headers.setdefault("X-Robots-Tag", "noindex, nofollow")
     response.headers.setdefault("Permissions-Policy", "geolocation=(), camera=(), microphone=()")
     if request.path.startswith("/static/"):
         # Flask's default static response is ``no-cache``. Override it so a classroom
@@ -3815,6 +3831,12 @@ def teacher_delete_class():
             changed = True
     if changed:
         _save_skills(skills_data)
+    lesson_plan_store = app.extensions.get("eagle_lesson_plan_store")
+    if lesson_plan_store:
+        try:
+            lesson_plan_store.delete_class(class_id)
+        except (OSError, ValueError):
+            pass
     return jsonify(ok=True, deletedClassId=class_id, unassignedStudents=len(student_emails))
 
 
@@ -8328,7 +8350,7 @@ def admin_server_health():
 def health():
     return jsonify(ok=True)
 
-register_wiki_features(
+_wiki_store = register_wiki_features(
     app,
     base_dir=WIKI_DATA_DIR,
     backup_dir=WIKI_BACKUP_DIR,
@@ -8339,6 +8361,17 @@ register_wiki_features(
     get_user_class_ids=_get_user_class_ids,
     find_class=_find_class_by_id,
     config_provider=_load_config,
+)
+register_lesson_plan_features(
+    app,
+    base_dir=LESSON_PLAN_DATA_DIR,
+    public_dir=BASE_DIR,
+    wiki_store=_wiki_store,
+    require_teacher=_require_teacher,
+    require_user=_require_user,
+    find_user=_find_user,
+    get_user_class_ids=_get_user_class_ids,
+    find_class=_find_class_by_id,
 )
 register_network_features(
     app,

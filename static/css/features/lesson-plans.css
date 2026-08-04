@@ -1,0 +1,100 @@
+.lesson-plan-home-section { margin-top: 24px; }
+.lesson-plan-home-heading,
+.lesson-plan-public-toolbar,
+.lesson-plan-teacher-toolbar,
+.lesson-plan-editor-actions { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.lesson-plan-week-nav { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.lesson-plan-week-label { color:var(--theme-text-dim); font-size:13px; font-weight:700; min-width:170px; text-align:center; }
+.lesson-plan-render-host { min-width:0; }
+.lesson-plan-frame { --plan-accent:#2d6f9f; display:flex; flex-direction:column; min-width:0; color:var(--theme-text); background:var(--theme-panel); border:1px solid var(--theme-border-mid); border-radius:16px; box-shadow:0 14px 34px rgba(5,31,54,.12); overflow:hidden; }
+.lesson-plan-frame-header { padding:14px 18px; color:#fff; background:linear-gradient(120deg,#17486d,#2d789e); }
+.lesson-plan-frame-header h1 { margin:0; font-size:clamp(18px,2vw,26px); color:inherit; }
+.lesson-plan-frame-header p { margin:4px 0 0; font-size:12px; opacity:.88; }
+.lesson-plan-week-grid { flex:1; min-height:0; display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); }
+.lesson-plan-frame:not(.lesson-plan-frame--embed) .lesson-plan-week-grid { min-height:350px; }
+.lesson-plan-day { min-width:0; min-height:0; overflow:hidden; display:grid; grid-template-rows:auto minmax(0,1fr) auto; border-right:1px solid var(--theme-border-mid); background:color-mix(in srgb,var(--theme-panel) 95%,var(--plan-accent)); }
+.lesson-plan-day:last-child { border-right:0; }
+.lesson-plan-day > header { padding:10px 12px; background:color-mix(in srgb,var(--theme-panel) 84%,var(--plan-accent)); border-bottom:1px solid var(--theme-border-mid); }
+.lesson-plan-day > header strong,.lesson-plan-day > header time { display:block; }
+.lesson-plan-day > header strong { font-size:14px; }
+.lesson-plan-day > header time { color:var(--theme-text-dim); font-size:11px; margin-top:2px; }
+.lesson-plan-day-scroll { min-height:0; overflow-y:auto; overflow-x:hidden; padding:12px; overscroll-behavior:contain; scrollbar-width:thin; }
+.lesson-plan-markdown { font-size:13px; line-height:1.45; overflow-wrap:anywhere; }
+.lesson-plan-markdown > :first-child { margin-top:0; }
+.lesson-plan-markdown > :last-child { margin-bottom:0; }
+.lesson-plan-markdown ul,.lesson-plan-markdown ol { padding-left:20px; }
+.lesson-plan-day-empty { color:var(--theme-text-dim); font-style:italic; }
+.lesson-plan-resources { border-top:1px dashed var(--theme-border-mid); margin-top:14px; padding-top:10px; display:grid; gap:5px; }
+.lesson-plan-resources strong { color:var(--theme-text-dim); font-size:10px; letter-spacing:.08em; text-transform:uppercase; }
+.lesson-plan-resources a { color:var(--columbia-blue); font-size:12px; font-weight:700; overflow-wrap:anywhere; }
+.lesson-plan-standards-popout { position:relative; border-top:1px solid var(--theme-border-mid); padding:7px 10px; }
+.lesson-plan-standards-popout summary { cursor:pointer; color:var(--columbia-blue); font-size:11px; font-weight:800; list-style:none; }
+.lesson-plan-standards-popout summary::-webkit-details-marker { display:none; }
+.lesson-plan-standards-popout[open] .lesson-plan-standards-list { display:grid; }
+.lesson-plan-standards-list { display:none; position:absolute; z-index:20; left:7px; right:7px; bottom:calc(100% + 4px); max-height:190px; overflow-y:auto; gap:7px; padding:10px; color:var(--theme-text); background:var(--theme-panel); border:1px solid var(--theme-border-mid); border-radius:10px; box-shadow:0 14px 34px rgba(0,0,0,.28); }
+.lesson-plan-standard-row { display:grid; gap:4px; }
+.lesson-plan-standard-row span { color:var(--theme-text-dim); font-size:10px; line-height:1.35; }
+.lesson-plan-standard-row .wiki-standard-id { justify-self:start; cursor:help; }
+.lesson-plan-notes { display:grid; grid-template-columns:auto 1fr; gap:14px; padding:11px 16px; border-top:1px solid var(--theme-border-mid); background:color-mix(in srgb,var(--theme-panel) 92%,#e8c36b); }
+.lesson-plan-notes > strong { font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
+.lesson-plan-empty { min-height:170px; display:grid; place-content:center; gap:5px; text-align:center; color:var(--theme-text-dim); border:1px dashed var(--theme-border-mid); border-radius:14px; }
+.lesson-plan-empty strong { color:var(--theme-text); }
+
+.lesson-plan-teacher-shell { height:100%; display:grid; grid-template-rows:auto minmax(0,1fr) auto; gap:12px; }
+.lesson-plan-teacher-toolbar select { min-width:190px; }
+.lesson-plan-editor-scroll { min-height:0; overflow:auto; }
+.lesson-plan-editor-grid { display:grid; grid-template-columns:repeat(5,minmax(220px,1fr)); gap:10px; min-width:1120px; }
+.lesson-plan-editor-day { min-width:0; display:flex; flex-direction:column; border:1px solid var(--theme-border-mid); background:var(--theme-panel); border-radius:12px; overflow:hidden; }
+.lesson-plan-editor-day > header { padding:10px 12px; background:color-mix(in srgb,var(--theme-panel) 82%,#2d789e); }
+.lesson-plan-editor-day > header strong,.lesson-plan-editor-day > header time { display:block; }
+.lesson-plan-editor-day > header time { color:var(--theme-text-dim); font-size:11px; }
+.lesson-plan-editor-day textarea { resize:vertical; min-height:210px; max-height:50vh; border:0; border-bottom:1px solid var(--theme-border-mid); border-radius:0; padding:12px; background:var(--theme-input-bg); color:var(--theme-text); font:13px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; }
+.lesson-plan-editor-pages { display:grid; gap:6px; padding:10px; }
+.lesson-plan-editor-page { display:flex; justify-content:space-between; align-items:center; gap:6px; padding:6px 8px; background:var(--theme-input-bg); border-radius:7px; font-size:11px; }
+.lesson-plan-editor-page button { border:0; background:none; color:#d05252; cursor:pointer; }
+.lesson-plan-editor-add { margin:0 10px 10px; }
+.lesson-plan-editor-standards { margin-top:auto; border-top:1px solid var(--theme-border-mid); padding:8px 10px; color:var(--theme-text-dim); font-size:11px; }
+.lesson-plan-notes-editor { display:grid; gap:5px; }
+.lesson-plan-notes-editor textarea { min-height:72px; resize:vertical; }
+.lesson-plan-status { color:var(--theme-text-dim); font-size:12px; }
+.lesson-plan-status.is-error { color:#d05252; }
+.lesson-plan-picker-results { max-height:50vh; overflow:auto; display:grid; gap:7px; margin:12px 0; }
+.lesson-plan-picker-result { text-align:left; display:grid; gap:3px; padding:10px; border:1px solid var(--theme-border-mid); border-radius:9px; color:var(--theme-text); background:var(--theme-input-bg); cursor:pointer; }
+.lesson-plan-picker-result span { color:var(--theme-text-dim); font-size:11px; }
+
+body.lesson-plan-public-page { margin:0; padding:14px; min-height:100vh; overflow:auto; background:#eef3f6; font-family:Inter,Arial,sans-serif; }
+.lesson-plan-public-shell { max-width:1500px; margin:0 auto; }
+.lesson-plan-public-toolbar { margin-bottom:10px; }
+.lesson-plan-public-toolbar strong { color:#17394f; }
+.lesson-plan-public-page .lesson-plan-frame { height:min(calc(100vh - 78px),calc((100vw - 28px) * 9 / 16)); min-height:520px; }
+body.lesson-plan-embed-page { padding:0; overflow:hidden; background:transparent; }
+.lesson-plan-embed-page .lesson-plan-public-shell,.lesson-plan-embed-page #publicLessonPlanHost { width:100vw; height:100vh; }
+.lesson-plan-embed-page .lesson-plan-public-toolbar { position:absolute; z-index:30; right:8px; top:8px; margin:0; }
+.lesson-plan-embed-page .lesson-plan-public-toolbar > strong,
+.lesson-plan-embed-page .lesson-plan-public-toolbar .lesson-plan-current-btn,
+.lesson-plan-embed-page .lesson-plan-public-toolbar .lesson-plan-print-btn { display:none; }
+.lesson-plan-embed-page .lesson-plan-public-toolbar button { padding:4px 7px; opacity:.82; }
+.lesson-plan-embed-page .lesson-plan-frame--embed { width:100%; height:100vh; min-height:0; border:0; border-radius:0; box-shadow:none; }
+
+@media (max-width:900px) {
+  .lesson-plan-week-grid { grid-template-columns:1fr; }
+  .lesson-plan-day { min-height:260px; border-right:0; border-bottom:1px solid var(--theme-border-mid); }
+  .lesson-plan-day:last-child { border-bottom:0; }
+  .lesson-plan-public-page .lesson-plan-frame { height:auto; }
+  .lesson-plan-notes { grid-template-columns:1fr; }
+}
+
+@page { size:landscape; margin:0.35in; }
+@media print {
+  html,body.lesson-plan-public-page { width:auto; height:auto; margin:0; padding:0; overflow:visible; background:#fff; }
+  .lesson-plan-public-toolbar,.wiki-standard-description-tooltip { display:none !important; }
+  .lesson-plan-public-shell { max-width:none; }
+  .lesson-plan-public-page .lesson-plan-frame { width:100%; height:auto; min-height:0; border:1px solid #aaa; box-shadow:none; break-inside:avoid-page; }
+  .lesson-plan-week-grid { grid-template-columns:repeat(5,minmax(0,1fr)); min-height:0; }
+  .lesson-plan-day-scroll { overflow:visible; }
+  .lesson-plan-standards-popout { break-inside:avoid; }
+  .lesson-plan-standards-popout summary { display:none; }
+  .lesson-plan-standards-list { position:static; display:grid; max-height:none; overflow:visible; padding:6px; border:0; box-shadow:none; }
+  .lesson-plan-standard-row span { display:none; }
+  .lesson-plan-frame-header { color:#fff !important; print-color-adjust:exact; -webkit-print-color-adjust:exact; }
+}
