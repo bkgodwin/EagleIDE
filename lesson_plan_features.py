@@ -5,6 +5,9 @@ from __future__ import annotations
 from datetime import date, timedelta
 from html import escape as html_escape
 from pathlib import Path
+from secrets import token_urlsafe
+from threading import Lock
+from time import monotonic
 from typing import Any, Callable, Optional
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -32,6 +35,34 @@ def register(
 ) -> LessonPlanStore:
     store = LessonPlanStore(Path(base_dir))
     app.extensions["eagle_lesson_plan_store"] = store
+    print_exports: dict[str, dict[str, Any]] = {}
+    print_exports_lock = Lock()
+
+    def purge_print_exports(now: float) -> None:
+        for token, export in list(print_exports.items()):
+            if float(export.get("expires_at") or 0) <= now:
+                print_exports.pop(token, None)
+
+    def create_print_export(class_id: str, week: str) -> str:
+        now = monotonic()
+        with print_exports_lock:
+            purge_print_exports(now)
+            while len(print_exports) >= 256:
+                print_exports.pop(next(iter(print_exports)))
+            token = token_urlsafe(32)
+            print_exports[token] = {
+                "class_id": class_id,
+                "week": week,
+                "expires_at": now + 600,
+            }
+        return token
+
+    def get_print_export(token: str) -> Optional[dict[str, Any]]:
+        now = monotonic()
+        with print_exports_lock:
+            purge_print_exports(now)
+            export = print_exports.get(token)
+            return dict(export) if export else None
 
     def error(message: str, status: int = 400):
         return jsonify(ok=False, error=message), status
@@ -222,6 +253,22 @@ def register(
             return failure
         return jsonify(**sharing_payload(cls, store.reset_public_token(class_id)))
 
+    @app.post("/api/teacher/classes/<class_id>/lesson-plans/<week>/print")
+    def teacher_lesson_plan_print(class_id: str, week: str):
+        cls, failure = teacher_class(class_id)
+        if failure:
+            return failure
+        try:
+            selected = normalize_week_start(week)
+        except LessonPlanDataError as exc:
+            return error(str(exc))
+        token = create_print_export(str(cls.get("id") or ""), selected)
+        return jsonify(
+            ok=True,
+            print_path=f"/lesson-plans/print/{token}",
+            expires_in_seconds=600,
+        )
+
     @app.get("/api/classes/<class_id>/lesson-plans")
     def student_get_lesson_plan(class_id: str):
         user = require_user(request)
@@ -255,11 +302,29 @@ def register(
         except LessonPlanDataError as exc:
             return error(str(exc))
 
+    @app.get("/api/lesson-plans/print/<token>")
+    def teacher_print_lesson_plan_data(token: str):
+        export = get_print_export(token)
+        cls = find_class(str(export.get("class_id") or "")) if export else None
+        if not export or not cls:
+            return error("Print export not found or expired", 404)
+        payload = response_payload(cls, export["week"], include_empty=True)
+        payload["previous_week"] = None
+        payload["next_week"] = None
+        return jsonify(**payload)
+
     @app.get("/lesson-plans/public/<token>")
     @app.get("/lesson-plans/embed/<token>")
     def public_lesson_plan_page(token: str):
         class_id = store.class_id_for_token(token)
         if not class_id or not find_class(class_id):
+            return send_from_directory(public_dir, "lesson_plan_public.html"), 404
+        return send_from_directory(public_dir, "lesson_plan_public.html")
+
+    @app.get("/lesson-plans/print/<token>")
+    def teacher_print_lesson_plan_page(token: str):
+        export = get_print_export(token)
+        if not export or not find_class(str(export.get("class_id") or "")):
             return send_from_directory(public_dir, "lesson_plan_public.html"), 404
         return send_from_directory(public_dir, "lesson_plan_public.html")
 

@@ -447,24 +447,25 @@ wiki_max_asset_mb and wiki_total_asset_mb in the application configuration.
 Teachers open Lesson Plans from their dashboard, choose one of their classes and
 a Monday-through-Friday week, write each day's plan in Markdown, browse the full
 published wiki contents tree to attach pages, add weekly notes, and choose Apply &
-Publish. Standards assigned to
-linked wiki pages are collected separately for each day and shown in a bounded,
-scrollable standards popout. Long daily content scrolls inside that day only.
+Publish. Standards assigned to linked wiki pages are collected separately for
+each day and shown in a bounded, scrollable standards popout. Long daily content
+scrolls inside that day only.
 
-Signed-in students see the selected class's current weekly plan on the wiki home
-page and can move backward one calendar week at a time, including weeks without a
-published plan, then move forward again through the current week. Teachers can
-also copy an unlisted public link or a responsive 16:9 iframe embed code for
-families, principals, and other nonusers. Public and embed views show the current
-week by default, expose previous/next calendar-week controls, and never list
-themselves on the wiki home. Reset Link immediately revokes old public and embed
-URLs.
+Signed-in students and teachers see the selected class's current weekly plan on
+the wiki home. Students can move backward one calendar week at a time, including
+weeks without a published plan, then move forward again through the current week.
+Teachers can also copy an unlisted public link or a responsive 16:9 iframe embed
+code for families, principals, and other nonusers. Public and embed views show the
+current week by default, expose previous/next calendar-week controls, and never
+list themselves on the wiki home. Reset Link immediately revokes old public and
+embed URLs.
 
-Choose Print / Save PDF in the teacher dashboard to open the current plan's
-landscape print view, then select Save as PDF in the browser print dialog. Screen
-views preserve independent day scrolling; print expands content for a readable,
-printer-friendly landscape document. Runtime data is stored in lesson_plans/ and
-can be relocated with EAGLEIDE_LESSON_PLAN_DATA_DIR.
+Choose Print / Save PDF in the teacher dashboard to open the selected past,
+current, or future week in a short-lived, teacher-only landscape print view. Then
+select Save as PDF in the browser print dialog. Screen views preserve independent
+day scrolling; print expands content for a readable, printer-friendly document
+and shows standard IDs without full descriptions. Runtime data is stored in
+lesson_plans/ and can be relocated with EAGLEIDE_LESSON_PLAN_DATA_DIR.
 
 ================================================================================
                             6. AI FEATURES

@@ -187,6 +187,37 @@ class LessonPlanRouteTests(unittest.TestCase):
         self.assertIn("Programming &quot;A&quot; &lt;Lab&gt; lesson plan", shared["embed_code"])
         self.assertNotIn('<Lab>', shared["embed_code"])
 
+    def test_teacher_can_create_short_lived_print_export_for_future_week(self):
+        future = (date.fromisoformat(self.current_week) + timedelta(days=7)).isoformat()
+        self.assertEqual(self.publish(future).status_code, 200)
+        endpoint = f"/api/teacher/classes/class-1/lesson-plans/{future}/print"
+        self.assertEqual(self.client.post(endpoint).status_code, 401)
+        export = self.client.post(endpoint, headers=self.teacher_headers)
+        self.assertEqual(export.status_code, 200)
+        self.assertEqual(export.json["expires_in_seconds"], 600)
+        print_path = export.json["print_path"]
+        self.assertTrue(print_path.startswith("/lesson-plans/print/"))
+        token = print_path.rsplit("/", 1)[-1]
+        data = self.client.get(f"/api/lesson-plans/print/{token}")
+        self.assertEqual(data.status_code, 200)
+        self.assertEqual(data.json["selected_week"], future)
+        self.assertEqual(data.json["plan"]["version"], 1)
+        self.assertIsNone(data.json["previous_week"])
+        self.assertIsNone(data.json["next_week"])
+        page = self.client.get(print_path)
+        self.assertEqual(page.status_code, 200)
+        page.close()
+
+        shared = self.client.post(
+            "/api/teacher/classes/class-1/lesson-plans/sharing",
+            headers=self.teacher_headers,
+        ).json
+        public_token = shared["public_path"].rsplit("/", 1)[-1]
+        self.assertEqual(
+            self.client.get(f"/api/lesson-plans/public/{public_token}?week={future}").status_code,
+            404,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
