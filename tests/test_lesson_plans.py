@@ -156,13 +156,24 @@ class LessonPlanRouteTests(unittest.TestCase):
 
     def test_public_link_is_unlisted_navigable_and_revocable(self):
         previous = (date.fromisoformat(self.current_week) - timedelta(days=7)).isoformat()
-        self.publish(previous)
+        older_published = (date.fromisoformat(self.current_week) - timedelta(days=14)).isoformat()
+        self.publish(older_published)
         self.publish(self.current_week)
         shared = self.client.post("/api/teacher/classes/class-1/lesson-plans/sharing", headers=self.teacher_headers).json
+        self.assertTrue(shared["public_path"].startswith("/lesson-plans/public/"))
+        self.assertTrue(shared["embed_path"].startswith("/lesson-plans/embed/"))
         token = shared["public_url"].rsplit("/", 1)[-1]
         response = self.client.get(f"/api/lesson-plans/public/{token}?week={self.current_week}")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["previous_week"], previous)
+        empty_week = self.client.get(f"/api/lesson-plans/public/{token}?week={previous}")
+        self.assertEqual(empty_week.status_code, 200)
+        self.assertEqual(empty_week.json["plan"]["version"], 0)
+        self.assertEqual(empty_week.json["next_week"], self.current_week)
+        self.assertEqual(
+            empty_week.json["previous_week"],
+            (date.fromisoformat(previous) - timedelta(days=7)).isoformat(),
+        )
         reset = self.client.post("/api/teacher/classes/class-1/lesson-plans/sharing/reset", headers=self.teacher_headers)
         self.assertEqual(reset.status_code, 200)
         self.assertEqual(self.client.get(f"/api/lesson-plans/public/{token}").status_code, 404)
