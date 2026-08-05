@@ -50,12 +50,14 @@
     $('publicLessonPlanCurrent').addEventListener('click', () => load(state.data?.current_week || ''));
     $('publicLessonPlanPrint').addEventListener('click', () => window.print());
     window.addEventListener('beforeprint', () => {
+      document.body.classList.add('lesson-plan-printing');
       document.querySelectorAll('.lesson-plan-standards-popout').forEach((details) => {
         details.dataset.printWasOpen = details.open ? '1' : '0';
         details.open = true;
       });
     });
     window.addEventListener('afterprint', () => {
+      document.body.classList.remove('lesson-plan-printing');
       document.querySelectorAll('.lesson-plan-standards-popout').forEach((details) => {
         if (details.dataset.printWasOpen !== '1') details.open = false;
         delete details.dataset.printWasOpen;

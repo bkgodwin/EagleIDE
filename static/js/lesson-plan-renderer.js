@@ -35,6 +35,33 @@
     });
   }
 
+  function positionStandardsPopover(details) {
+    const summary = details.querySelector('summary');
+    const list = details.querySelector('.lesson-plan-standards-list');
+    if (!summary || !list || !details.open || document.body.classList.contains('lesson-plan-printing') || window.matchMedia?.('print')?.matches) return;
+    const rect = summary.getBoundingClientRect();
+    const width = Math.min(380, Math.max(230, rect.width + 80));
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+    list.style.width = `${width}px`;
+    list.style.left = `${left}px`;
+    list.style.right = 'auto';
+    const roomBelow = window.innerHeight - rect.bottom;
+    if (roomBelow >= 210 || roomBelow >= rect.top) {
+      list.style.top = `${Math.min(rect.bottom + 5, window.innerHeight - 8)}px`;
+      list.style.bottom = 'auto';
+    } else {
+      list.style.top = 'auto';
+      list.style.bottom = `${Math.max(8, window.innerHeight - rect.top + 5)}px`;
+    }
+  }
+
+  function closeScreenStandards(except = null) {
+    if (document.body.classList.contains('lesson-plan-printing') || window.matchMedia?.('print')?.matches) return;
+    document.querySelectorAll('.lesson-plan-standards-popout[open]').forEach((details) => {
+      if (details !== except) details.open = false;
+    });
+  }
+
   function standardsPopover(dayName, standards) {
     const details = document.createElement('details');
     details.className = 'lesson-plan-standards-popout';
@@ -44,9 +71,10 @@
     details.appendChild(summary);
     const list = document.createElement('div');
     list.className = 'lesson-plan-standards-list';
-    standards.forEach((standard) => {
+    standards.forEach((standard, index) => {
       const item = document.createElement('div');
       item.className = 'lesson-plan-standard-row';
+      if (index >= 12) item.classList.add('lesson-plan-standard-overflow');
       const tag = document.createElement('button');
       tag.type = 'button';
       tag.className = 'wiki-standard-id';
@@ -57,7 +85,18 @@
       item.append(tag, description);
       list.appendChild(item);
     });
+    if (standards.length > 12) {
+      const more = document.createElement('div');
+      more.className = 'lesson-plan-standard-more';
+      more.textContent = `+ ${standards.length - 12} more`;
+      list.appendChild(more);
+    }
     details.appendChild(list);
+    details.addEventListener('toggle', () => {
+      if (!details.open) return;
+      closeScreenStandards(details);
+      positionStandardsPopover(details);
+    });
     return details;
   }
 
@@ -106,11 +145,11 @@
       content.innerHTML = safeMarkdown(item.markdown);
       if (!String(item.markdown || '').trim()) content.innerHTML = '<p class="lesson-plan-day-empty">No activities listed.</p>';
       scroll.appendChild(content);
-      if (item.wiki_pages?.length) {
+      if (item.wiki_pages?.length || item.external_links?.length) {
         const resources = document.createElement('div');
         resources.className = 'lesson-plan-resources';
         const caption = document.createElement('strong');
-        caption.textContent = 'Wiki content';
+        caption.textContent = item.external_links?.length ? 'Resources' : 'Wiki content';
         resources.appendChild(caption);
         item.wiki_pages.forEach((page) => {
           const link = document.createElement('a');
@@ -118,6 +157,14 @@
           link.textContent = page.title || 'Wiki page';
           if (options.publicPage) link.target = '_blank';
           if (options.publicPage) link.rel = 'noopener';
+          resources.appendChild(link);
+        });
+        (item.external_links || []).forEach((resource) => {
+          const link = document.createElement('a');
+          link.href = resource.url;
+          link.textContent = resource.title || resource.url;
+          link.target = '_blank';
+          link.rel = 'noopener';
           resources.appendChild(link);
         });
         scroll.appendChild(resources);
@@ -143,4 +190,9 @@
   }
 
   window.LessonPlanRenderer = { DAYS, createStandardsPopover: standardsPopover, render, safeMarkdown };
+  window.addEventListener('resize', () => closeScreenStandards());
+  window.addEventListener('scroll', (event) => {
+    if (event.target?.closest?.('.lesson-plan-standards-list')) return;
+    closeScreenStandards();
+  }, true);
 })();

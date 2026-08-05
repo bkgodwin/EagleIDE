@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from html import escape as html_escape
+from html import escape as html_escape, unescape as html_unescape
+from ipaddress import ip_address
 from pathlib import Path
+import re
 from secrets import token_urlsafe
+import socket
 from threading import Lock
 from time import monotonic
 from typing import Any, Callable, Optional
+from urllib.error import HTTPError, URLError
+from urllib.parse import urljoin, urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from flask import Flask, jsonify, request, send_from_directory
 
@@ -17,8 +23,80 @@ from lesson_plan_store import (
     LessonPlanConflictError,
     LessonPlanDataError,
     LessonPlanStore,
+    normalize_external_url,
     normalize_week_start,
 )
+
+
+LINK_PREVIEW_MAX_BYTES = 131_072
+LINK_TITLE_RE = re.compile(r"<title\b[^>]*>(.*?)</title\s*>", re.IGNORECASE | re.DOTALL)
+HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _public_link_url(value: Any) -> str:
+    url = normalize_external_url(value)
+    parsed = urlsplit(url)
+    host = str(parsed.hostname or "")
+    port = parsed.port or (443 if parsed.scheme.casefold() == "https" else 80)
+    try:
+        addresses = {
+            item[4][0].split("%", 1)[0]
+            for item in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        }
+    except OSError as exc:
+        raise LessonPlanDataError("Could not resolve that external link") from exc
+    if not addresses:
+        raise LessonPlanDataError("Could not resolve that external link")
+    try:
+        if any(not ip_address(address).is_global for address in addresses):
+            raise LessonPlanDataError("External link previews cannot access private networks")
+    except ValueError as exc:
+        raise LessonPlanDataError("Could not resolve that external link") from exc
+    return url
+
+
+class _SafeLinkRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        safe_url = _public_link_url(urljoin(req.full_url, newurl))
+        return super().redirect_request(req, fp, code, msg, headers, safe_url)
+
+
+def fetch_external_link_metadata(value: Any) -> dict[str, str]:
+    url = _public_link_url(value)
+    parsed = urlsplit(url)
+    fallback = str(parsed.hostname or "External link").removeprefix("www.")
+    request_data = Request(
+        url,
+        headers={
+            "Accept": "text/html,application/xhtml+xml;q=0.9,text/plain;q=0.5",
+            "Accept-Encoding": "identity",
+            "User-Agent": "EagleIDE-LinkPreview/1.0",
+        },
+    )
+    try:
+        with build_opener(_SafeLinkRedirectHandler()).open(request_data, timeout=4) as response:
+            final_url = _public_link_url(response.geturl())
+            content_type = str(response.headers.get_content_type() or "").casefold()
+            charset = response.headers.get_content_charset() or "utf-8"
+            body = response.read(LINK_PREVIEW_MAX_BYTES + 1)
+            if len(body) > LINK_PREVIEW_MAX_BYTES:
+                raise LessonPlanDataError("That page is too large to preview")
+    except LessonPlanDataError:
+        raise
+    except (HTTPError, URLError, OSError, TimeoutError) as exc:
+        raise LessonPlanDataError("Could not read that external page") from exc
+    title = fallback
+    if content_type in {"text/html", "application/xhtml+xml"}:
+        try:
+            text = body.decode(charset, errors="replace")
+        except LookupError:
+            text = body.decode("utf-8", errors="replace")
+        match = LINK_TITLE_RE.search(text)
+        if match:
+            title = " ".join(
+                html_unescape(HTML_TAG_RE.sub("", match.group(1))).replace("\x00", "").split()
+            )[:200] or fallback
+    return {"url": final_url, "title": title}
 
 
 def register(
@@ -83,6 +161,14 @@ def register(
             "name": str(cls.get("name") or "Class"),
         }
 
+    def plan_source_class(cls: dict) -> dict:
+        class_id = str(cls.get("id") or "")
+        source_id = store.resolve_plan_source(class_id)
+        source = find_class(source_id) if source_id and source_id != class_id else cls
+        target_owner = str(cls.get("teacher_email") or "").strip().casefold()
+        source_owner = str((source or {}).get("teacher_email") or "").strip().casefold()
+        return source if source and target_owner and source_owner == target_owner else cls
+
     def empty_plan(week: Any) -> dict[str, Any]:
         week_start = normalize_week_start(week)
         return {
@@ -92,7 +178,7 @@ def register(
             "published_at": "",
             "updated_at": "",
             "days": {
-                day: {"markdown": "", "wiki_node_ids": []}
+                day: {"markdown": "", "wiki_node_ids": [], "external_links": []}
                 for day in DAYS
             },
             "notes_markdown": "",
@@ -141,18 +227,35 @@ def register(
                 "markdown": str(stored_day.get("markdown") or ""),
                 "wiki_node_ids": [page["id"] for page in pages],
                 "wiki_pages": pages,
+                "external_links": [
+                    {
+                        "url": str(link.get("url") or ""),
+                        "title": str(link.get("title") or "External link"),
+                    }
+                    for link in stored_day.get("external_links") or []
+                    if isinstance(link, dict)
+                ],
                 "standards": standards,
             }
         result["days"] = result_days
         return result
 
-    def response_payload(cls: dict, week: Any, *, include_empty: bool, through: Any = None):
+    def response_payload(
+        cls: dict,
+        week: Any,
+        *,
+        include_empty: bool,
+        through: Any = None,
+        include_source: bool = False,
+    ):
         selected = normalize_week_start(week)
-        plan = store.get_plan(str(cls.get("id") or ""), selected)
+        source_class = plan_source_class(cls)
+        source_class_id = str(source_class.get("id") or "")
+        plan = store.get_plan(source_class_id, selected)
         if plan is None and include_empty:
             plan = empty_plan(selected)
         if through is None:
-            nav = store.navigation(str(cls.get("id") or ""), selected)
+            nav = store.navigation(source_class_id, selected)
         else:
             latest = normalize_week_start(through)
             selected_date = date.fromisoformat(selected)
@@ -172,7 +275,7 @@ def register(
                     else None
                 ),
             }
-        return {
+        payload = {
             "ok": True,
             "class": class_summary(cls),
             "plan": hydrate_plan(plan) if plan else None,
@@ -180,6 +283,9 @@ def register(
             "current_week": normalize_week_start(),
             **nav,
         }
+        if include_source:
+            payload["plan_source"] = class_summary(source_class)
+        return payload
 
     def sharing_payload(cls: dict, token: str) -> dict[str, Any]:
         root = request.host_url.rstrip("/")
@@ -206,7 +312,14 @@ def register(
         if failure:
             return failure
         try:
-            return jsonify(**response_payload(cls, request.args.get("week"), include_empty=True))
+            return jsonify(
+                **response_payload(
+                    cls,
+                    request.args.get("week"),
+                    include_empty=True,
+                    include_source=True,
+                )
+            )
         except LessonPlanDataError as exc:
             return error(str(exc))
 
@@ -225,18 +338,64 @@ def register(
             ):
                 raise LessonPlanDataError("expected_version must be an integer")
             teacher = require_teacher(request) or {}
+            source_class = plan_source_class(cls)
             saved = store.save_plan(
-                class_id,
+                str(source_class.get("id") or class_id),
                 week,
                 body,
                 expected_version=expected_version,
                 updated_by=str(teacher.get("email") or ""),
             )
-            payload = response_payload(cls, saved["week_start"], include_empty=True)
+            payload = response_payload(
+                cls,
+                saved["week_start"],
+                include_empty=True,
+                include_source=True,
+            )
             return jsonify(**payload)
         except LessonPlanConflictError as exc:
             return error(str(exc), 409)
         except (LessonPlanDataError, ValueError) as exc:
+            return error(str(exc))
+
+    @app.put("/api/teacher/classes/<class_id>/lesson-plans/source")
+    def teacher_put_lesson_plan_source(class_id: str):
+        cls, failure = teacher_class(class_id)
+        if failure:
+            return failure
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return error("Lesson plan source data must be an object")
+        source_id = str(body.get("source_class_id") or "").strip()
+        if source_id:
+            source = find_class(source_id)
+            owner = str(cls.get("teacher_email") or "").strip().casefold()
+            source_owner = str((source or {}).get("teacher_email") or "").strip().casefold()
+            if not source or source_owner != owner:
+                return error("Source class not found", 404)
+        try:
+            store.set_plan_source(class_id, source_id)
+            return jsonify(
+                **response_payload(
+                    cls,
+                    body.get("week") or request.args.get("week"),
+                    include_empty=True,
+                    include_source=True,
+                )
+            )
+        except LessonPlanDataError as exc:
+            return error(str(exc))
+
+    @app.post("/api/teacher/lesson-plans/link-preview")
+    def teacher_lesson_plan_link_preview():
+        if not require_teacher(request):
+            return error("Teacher token required", 401)
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return error("External link data must be an object")
+        try:
+            return jsonify(ok=True, link=fetch_external_link_metadata(body.get("url")))
+        except LessonPlanDataError as exc:
             return error(str(exc))
 
     @app.post("/api/teacher/classes/<class_id>/lesson-plans/sharing")

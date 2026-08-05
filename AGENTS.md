@@ -24,8 +24,8 @@ Required runtime components:
 .
 |-- app.py                       Main Flask/Socket.IO app, APIs, auth, persistence, and runners
 |-- classroom_features.py        Classroom signals, file sharing, audit routes, and socket events
-|-- lesson_plan_features.py      Lesson-plan APIs, public links, and embed page routes
-|-- lesson_plan_store.py         Atomic weekly plan persistence and share-token catalog
+|-- lesson_plan_features.py      Lesson-plan APIs, source linking, link previews, and public routes
+|-- lesson_plan_store.py         Atomic plans, external links, source mappings, and share tokens
 |-- wiki_features.py             Public wiki and protected admin/teacher/student HTTP routes
 |-- wiki_store.py                Wiki SQLite catalog, search, assets, drafts, revisions, and backups
 |-- network_features.py          Optional simulator auth, topology, class access, and lab HTTP routes
@@ -140,7 +140,7 @@ Checked-in seed/reference data is limited to files such as `challenges.csv` and 
 - `config.txt` and `.admin_key`
 - `users.json`, `classes.json`, and `skills.json`
 - `assignments/`, `notebooks/`, `user_files/`, and `sandboxes/`
-- `lesson_plans/` (weekly plans and revocable public-link tokens)
+- `lesson_plans/` (weekly plans, class-source mappings, and revocable public-link tokens)
 - `wiki_data/` (SQLite catalog, Markdown, media, drafts, and revisions) and `wiki_backups/`
 - `network_data/` (class access, lab assignments/progress, and per-account saved topologies)
 - `challenge_scores.json` and `leaderboard.csv`

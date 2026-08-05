@@ -31,10 +31,11 @@
 .lesson-plan-standards-popout summary { cursor:pointer; color:var(--columbia-blue); font-size:11px; font-weight:800; list-style:none; }
 .lesson-plan-standards-popout summary::-webkit-details-marker { display:none; }
 .lesson-plan-standards-popout[open] .lesson-plan-standards-list { display:grid; }
-.lesson-plan-standards-list { display:none; position:absolute; z-index:20; left:7px; right:7px; bottom:calc(100% + 4px); max-height:190px; overflow-y:auto; gap:7px; padding:10px; color:var(--theme-text); background:var(--theme-panel); border:1px solid var(--theme-border-mid); border-radius:10px; box-shadow:0 14px 34px rgba(0,0,0,.28); }
+.lesson-plan-standards-list { display:none; position:fixed; z-index:10050; max-height:190px; overflow-y:auto; gap:7px; padding:10px; color:var(--theme-text); background:var(--theme-panel); border:1px solid var(--theme-border-mid); border-radius:10px; box-shadow:0 14px 34px rgba(0,0,0,.38); }
 .lesson-plan-standard-row { display:grid; gap:4px; }
 .lesson-plan-standard-row span { color:var(--theme-text-dim); font-size:10px; line-height:1.35; }
 .lesson-plan-standard-row .wiki-standard-id { justify-self:start; cursor:help; }
+.lesson-plan-standard-more { display:none; color:var(--theme-text-dim); font-size:8px; font-weight:800; text-align:center; }
 .lesson-plan-notes { display:grid; grid-template-columns:auto 1fr; gap:14px; padding:11px 16px; border-top:1px solid var(--theme-border-mid); background:color-mix(in srgb,var(--theme-panel) 92%,#e8c36b); }
 .lesson-plan-notes > strong { font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
 .lesson-plan-empty { min-height:170px; display:grid; place-content:center; gap:5px; text-align:center; color:var(--theme-text-dim); border:1px dashed var(--theme-border-mid); border-radius:14px; }
@@ -42,6 +43,9 @@
 
 .lesson-plan-teacher-shell { height:100%; display:grid; grid-template-rows:auto minmax(0,1fr) auto; gap:12px; }
 .lesson-plan-teacher-toolbar select { min-width:190px; }
+.lesson-plan-teacher-toolbar #lessonPlanTeacherSource { min-width:230px; }
+.lesson-plan-source-note { margin-top:-5px; padding:7px 10px; color:var(--theme-text-dim); background:var(--theme-input-bg); border:1px solid var(--theme-border-mid); border-radius:9px; font-size:11px; }
+.lesson-plan-source-note.is-shared { color:var(--columbia-blue); border-color:color-mix(in srgb,var(--columbia-blue) 50%,var(--theme-border-mid)); }
 .lesson-plan-editor-scroll { min-height:0; overflow:auto; }
 .lesson-plan-editor-grid { display:grid; grid-template-columns:repeat(5,minmax(220px,1fr)); gap:10px; min-width:1120px; }
 .lesson-plan-editor-day { min-width:0; display:flex; flex-direction:column; border:1px solid var(--theme-border-mid); background:var(--theme-panel); border-radius:12px; overflow:hidden; }
@@ -52,7 +56,9 @@
 .lesson-plan-editor-pages { display:grid; gap:6px; padding:10px; }
 .lesson-plan-editor-page { display:flex; justify-content:space-between; align-items:center; gap:6px; padding:6px 8px; background:var(--theme-input-bg); border-radius:7px; font-size:11px; }
 .lesson-plan-editor-page button { border:0; background:none; color:#d05252; cursor:pointer; }
+.lesson-plan-editor-link a { min-width:0; overflow:hidden; color:var(--columbia-blue); font-weight:700; text-overflow:ellipsis; white-space:nowrap; }
 .lesson-plan-editor-add { margin:0 10px 10px; }
+.lesson-plan-editor-add--external { margin-top:-5px; }
 .lesson-plan-editor-standards { margin-top:auto; border-top:1px solid var(--theme-border-mid); padding:8px 10px; color:var(--theme-text-dim); font-size:11px; }
 .lesson-plan-notes-editor { display:grid; gap:5px; }
 .lesson-plan-notes-editor textarea { min-height:72px; resize:vertical; }
@@ -141,9 +147,11 @@ body.lesson-plan-embed-page { padding:0; overflow:hidden; background:#08131f; }
   .lesson-plan-resources a { font-size:8px; }
   .lesson-plan-standards-popout { break-inside:avoid; }
   .lesson-plan-standards-popout summary { display:none; }
-  .lesson-plan-standards-list { position:static; display:flex; flex-wrap:wrap; max-height:none; overflow:visible; gap:3px; padding:5px; border:0; box-shadow:none; }
+  .lesson-plan-standards-list { position:static; display:grid !important; grid-template-columns:repeat(2,minmax(0,1fr)); width:100% !important; max-height:none; overflow:visible; gap:3px; padding:5px; border:0; box-shadow:none; }
   .lesson-plan-standard-row { display:block; }
-  .lesson-plan-standard-row .wiki-standard-id { min-height:0; padding:3px 5px; font-size:7px; }
+  .lesson-plan-standard-row .wiki-standard-id { width:100%; min-height:0; justify-content:center; padding:3px 4px; overflow-wrap:anywhere; white-space:normal; font-size:6.5px; line-height:1.15; }
+  .lesson-plan-standard-overflow { display:none !important; }
+  .lesson-plan-standard-more { display:block; grid-column:1 / -1; padding-top:2px; }
   body.lesson-plan-public-page .lesson-plan-standard-row span { display:none !important; }
   .lesson-plan-notes { padding:7px 11px; font-size:8px; }
   .lesson-plan-frame-header { color:#fff !important; background:linear-gradient(120deg,#17486d,#2d789e) !important; print-color-adjust:exact; -webkit-print-color-adjust:exact; }
