@@ -13,13 +13,17 @@ import threading
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DAYS = ("monday", "tuesday", "wednesday", "thursday", "friday")
 MAX_DAY_MARKDOWN_CHARS = 20_000
 MAX_NOTES_MARKDOWN_CHARS = 20_000
 MAX_WIKI_PAGES_PER_DAY = 30
+MAX_EXTERNAL_LINKS_PER_DAY = 20
+MAX_EXTERNAL_URL_CHARS = 2_048
+MAX_EXTERNAL_TITLE_CHARS = 200
 MAX_WEEKS_PER_CLASS = 520
 WIKI_NODE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
@@ -77,6 +81,51 @@ def _wiki_node_ids(value: Any) -> list[str]:
     return result
 
 
+def normalize_external_url(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw or len(raw) > MAX_EXTERNAL_URL_CHARS or any(char.isspace() for char in raw):
+        raise LessonPlanDataError("External links require a valid HTTP or HTTPS URL")
+    try:
+        parsed = urlsplit(raw)
+        port = parsed.port
+    except ValueError as exc:
+        raise LessonPlanDataError("External links require a valid HTTP or HTTPS URL") from exc
+    if parsed.scheme.casefold() not in {"http", "https"} or not parsed.hostname:
+        raise LessonPlanDataError("External links require a valid HTTP or HTTPS URL")
+    if parsed.username or parsed.password:
+        raise LessonPlanDataError("External link URLs cannot contain credentials")
+    if port is not None and port not in {80, 443}:
+        raise LessonPlanDataError("External link URLs must use the standard HTTP or HTTPS port")
+    return raw
+
+
+def _external_links(value: Any) -> list[dict[str, str]]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise LessonPlanDataError("External links must be a list")
+    result: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for raw in value:
+        if not isinstance(raw, dict):
+            raise LessonPlanDataError("Each external link must be an object")
+        url = normalize_external_url(raw.get("url"))
+        title = " ".join(str(raw.get("title") or "").replace("\x00", "").split())
+        if not title or len(title) > MAX_EXTERNAL_TITLE_CHARS:
+            raise LessonPlanDataError(
+                f"External link titles must be 1 to {MAX_EXTERNAL_TITLE_CHARS} characters"
+            )
+        identity = url.casefold()
+        if identity not in seen:
+            seen.add(identity)
+            result.append({"url": url, "title": title})
+        if len(result) > MAX_EXTERNAL_LINKS_PER_DAY:
+            raise LessonPlanDataError(
+                f"Each day may include at most {MAX_EXTERNAL_LINKS_PER_DAY} external links"
+            )
+    return result
+
+
 def normalize_plan_payload(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise LessonPlanDataError("Lesson plan data must be an object")
@@ -95,6 +144,7 @@ def normalize_plan_payload(raw: Any) -> dict[str, Any]:
                 item.get("markdown"), MAX_DAY_MARKDOWN_CHARS, f"{day.title()} content"
             ),
             "wiki_node_ids": _wiki_node_ids(item.get("wiki_node_ids")),
+            "external_links": _external_links(item.get("external_links")),
         }
     return {
         "days": days,
@@ -111,7 +161,10 @@ class LessonPlanStore:
         self.catalog_path = self.base_dir / "catalog.json"
         self._lock = threading.RLock()
         if not self.catalog_path.exists():
-            self._write_json(self.catalog_path, {"schema_version": SCHEMA_VERSION, "tokens": {}})
+            self._write_json(
+                self.catalog_path,
+                {"schema_version": SCHEMA_VERSION, "tokens": {}, "plan_sources": {}},
+            )
 
     @staticmethod
     def _class_key(class_id: str) -> str:
@@ -224,12 +277,54 @@ class LessonPlanStore:
 
     def _catalog(self) -> dict[str, Any]:
         data = self._read_json(
-            self.catalog_path, {"schema_version": SCHEMA_VERSION, "tokens": {}}
+            self.catalog_path,
+            {"schema_version": SCHEMA_VERSION, "tokens": {}, "plan_sources": {}},
         )
         if not isinstance(data.get("tokens"), dict):
             data["tokens"] = {}
+        if not isinstance(data.get("plan_sources"), dict):
+            data["plan_sources"] = {}
         data["schema_version"] = SCHEMA_VERSION
         return data
+
+    def resolve_plan_source(self, class_id: str) -> str:
+        origin = str(class_id or "").strip()
+        self._class_key(origin)
+        with self._lock:
+            sources = self._catalog().get("plan_sources", {})
+            current = origin
+            seen: set[str] = set()
+            while current not in seen:
+                seen.add(current)
+                source = str(sources.get(current) or "").strip()
+                if not source:
+                    return current
+                current = source
+            return origin
+
+    def set_plan_source(self, class_id: str, source_class_id: Any = None) -> str:
+        target = str(class_id or "").strip()
+        source = str(source_class_id or "").strip()
+        self._class_key(target)
+        if source:
+            self._class_key(source)
+        with self._lock:
+            catalog = self._catalog()
+            sources = catalog.setdefault("plan_sources", {})
+            if not source or source == target:
+                sources.pop(target, None)
+                self._write_json(self.catalog_path, catalog)
+                return target
+            current = source
+            seen = {target}
+            while current:
+                if current in seen:
+                    raise LessonPlanDataError("Lesson plan links cannot form a cycle")
+                seen.add(current)
+                current = str(sources.get(current) or "").strip()
+            sources[target] = source
+            self._write_json(self.catalog_path, catalog)
+            return self.resolve_plan_source(target)
 
     def ensure_public_token(self, class_id: str) -> str:
         with self._lock:
@@ -288,5 +383,10 @@ class LessonPlanStore:
             catalog = self._catalog()
             if token:
                 catalog["tokens"].pop(token, None)
-                self._write_json(self.catalog_path, catalog)
+            sources = catalog.setdefault("plan_sources", {})
+            sources.pop(str(class_id), None)
+            for target, source in list(sources.items()):
+                if str(source) == str(class_id):
+                    sources.pop(target, None)
+            self._write_json(self.catalog_path, catalog)
             self._class_path(class_id).unlink(missing_ok=True)
