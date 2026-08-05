@@ -1073,7 +1073,7 @@
       $('wikiArticleTitle').textContent = `${node.icon ? `${node.icon} ` : ''}${node.title || 'Wiki'}`;
       $('wikiArticleKind').textContent = node.kind || 'Topic';
       $('wikiArticleDescription').textContent = node.description || '';
-      $('wikiArticleBookmarkBtn').hidden = (!isStudent() && !isTeacher()) || (node.kind === 'folder' && !(node.children || []).length);
+      $('wikiArticleBookmarkBtn').hidden = !isStudent() || (node.kind === 'folder' && !(node.children || []).length);
       $('wikiArticleFeatureBtn').hidden = !isTeacher();
     }
     if (node.kind === 'page') {
@@ -1635,7 +1635,7 @@
     if (!isSignedIn() || isAdmin()) {
       const p = document.createElement('p');
       p.style.padding = '12px';
-      p.textContent = isAdmin() ? 'Student and teacher accounts have bookmarks.' : 'Sign in to bookmark pages and see Lesson Material from your teacher.';
+      p.textContent = isAdmin() ? 'Students can bookmark pages, and teachers can feature content for a class.' : 'Sign in to bookmark pages and see content featured by your teacher.';
       target.appendChild(p);
       if (!isSignedIn()) {
         const button = document.createElement('button');
@@ -1668,13 +1668,13 @@
     }
   }
 
-  function openClassAction(type, node = state.currentNode) {
+  function openClassAction(_type, node = state.currentNode) {
     const classes = availableClasses();
     if (!isTeacher() || !classes.length) {
       showStatus('A teacher account with a class is required.', true);
       return;
     }
-    state.classAction = { type, node, marked: false };
+    state.classAction = { type: 'feature', node, marked: false };
     const select = $('wikiClassActionSelect');
     select.textContent = '';
     for (const cls of classes) {
@@ -1684,10 +1684,8 @@
       option.selected = cls.id === (state.selectedClassId || defaultClassId());
       select.appendChild(option);
     }
-    $('wikiClassActionTitle').textContent = type === 'bookmark' ? 'Lesson Material bookmark' : 'Feature content for a class';
-    $('wikiClassActionDescription').textContent = type === 'bookmark'
-      ? 'Choose the class whose students should see this page under Lesson Material.'
-      : 'Choose the class that should feature this page or folder. Featured folders automatically include future children.';
+    $('wikiClassActionTitle').textContent = 'Feature content for a class';
+    $('wikiClassActionDescription').textContent = 'Choose the class that should feature this page or folder. Featured folders automatically include future children.';
     $('wikiClassActionModal').style.display = 'flex';
     refreshClassActionState();
   }
@@ -1706,23 +1704,13 @@
     confirm.disabled = true;
     try {
       const nodeId = action.node.id || action.node.node_id;
-      if (action.type === 'bookmark') {
-        const existing = await fetchJson(`/api/wiki/bookmarks?class_id=${encodeURIComponent(classId)}`, { headers: authHeaders() });
-        if (state.classAction !== action || action.statusRequest !== requestKey) return;
-        action.marked = !!existing.bookmarks?.some(item => item.node_id === nodeId && item.labels?.includes('Lesson Material') && item.lesson_classes?.some(itemClass => itemClass.id === classId));
-        status.textContent = action.marked
-          ? `Currently shared as Lesson Material with ${cls?.name || 'this class'}.`
-          : `Not currently Lesson Material for ${cls?.name || 'this class'}.`;
-        confirm.textContent = action.marked ? 'Remove Lesson Material' : 'Add Lesson Material';
-      } else {
-        const existing = await fetchJson(`/api/wiki/classes/${encodeURIComponent(classId)}/features`, { headers: authHeaders() });
-        if (state.classAction !== action || action.statusRequest !== requestKey) return;
-        action.marked = !!existing.featured?.some(item => item.node_id === nodeId);
-        status.textContent = action.marked
-          ? `Currently featured for ${cls?.name || 'this class'}.`
-          : `Not currently featured for ${cls?.name || 'this class'}.`;
-        confirm.textContent = action.marked ? 'Remove from Featured' : 'Add to Featured';
-      }
+      const existing = await fetchJson(`/api/wiki/classes/${encodeURIComponent(classId)}/features`, { headers: authHeaders() });
+      if (state.classAction !== action || action.statusRequest !== requestKey) return;
+      action.marked = !!existing.featured?.some(item => item.node_id === nodeId);
+      status.textContent = action.marked
+        ? `Currently featured for ${cls?.name || 'this class'}.`
+        : `Not currently featured for ${cls?.name || 'this class'}.`;
+      confirm.textContent = action.marked ? 'Remove from Featured' : 'Add to Featured';
       status.classList.toggle('is-selected', action.marked);
       confirm.classList.toggle('btn--danger', action.marked);
       confirm.classList.toggle('run', !action.marked);
@@ -1742,19 +1730,11 @@
     const headers = authHeaders(true);
     try {
       $('wikiClassActionConfirmBtn').disabled = true;
-      if (action.type === 'bookmark') {
-        const marked = !!action.marked;
-        await fetchJson(`/api/wiki/bookmarks/${nodeId}`, {
-          method: marked ? 'DELETE' : 'PUT', headers, body: JSON.stringify({ class_id: classId }),
-        });
-        showStatus(marked ? 'Lesson Material bookmark removed.' : 'Lesson Material shared with the selected class.');
-      } else {
-        const featured = !!action.marked;
-        await fetchJson(`/api/wiki/classes/${encodeURIComponent(classId)}/features/${nodeId}`, {
-          method: featured ? 'DELETE' : 'PUT', headers,
-        });
-        showStatus(featured ? 'Content removed from class features.' : 'Content featured for the selected class.');
-      }
+      const featured = !!action.marked;
+      await fetchJson(`/api/wiki/classes/${encodeURIComponent(classId)}/features/${nodeId}`, {
+        method: featured ? 'DELETE' : 'PUT', headers,
+      });
+      showStatus(featured ? 'Content removed from class features.' : 'Content featured for the selected class.');
       state.selectedClassId = classId;
       $('wikiClassActionModal').style.display = 'none';
       await loadHome({ quiet: true });
@@ -1769,8 +1749,7 @@
     const node = state.currentNode;
     if (!node) return;
     if (!isStudent()) {
-      if (isTeacher()) openClassAction('bookmark', node);
-      else $('loginBtn')?.click();
+      if (!isTeacher()) $('loginBtn')?.click();
       return;
     }
     const existing = state.home?.bookmarks?.some(item => item.node_id === node.id && item.labels?.includes('Bookmarked'));
@@ -1794,17 +1773,13 @@
     const node = state.currentNode;
     if (!node) return;
     const personal = state.home?.bookmarks?.some(item => item.node_id === node.id && item.labels?.includes('Bookmarked'));
-    const lesson = state.home?.bookmarks?.some(item => item.node_id === node.id && item.labels?.includes('Lesson Material'));
     const bookmark = $('wikiArticleBookmarkBtn');
     if (bookmark) {
-      bookmark.hidden = (!isStudent() && !isTeacher()) || (node.kind === 'folder' && !(node.children || []).length);
-      if (isTeacher()) bookmark.textContent = lesson ? '✓ Lesson Material added' : '+ Add Lesson Material';
-      else bookmark.textContent = personal ? '★ Bookmarked' : '☆ Bookmark';
-      bookmark.classList.toggle('is-selected', !!(isTeacher() ? lesson : personal));
-      bookmark.setAttribute('aria-pressed', String(!!(isTeacher() ? lesson : personal)));
-      bookmark.title = isTeacher()
-        ? (lesson ? 'This is Lesson Material for the selected class. Open to remove it.' : 'Add this page as Lesson Material for a class.')
-        : (personal ? 'This page is bookmarked. Select to remove it.' : 'Bookmark this page.');
+      bookmark.hidden = !isStudent() || (node.kind === 'folder' && !(node.children || []).length);
+      bookmark.textContent = personal ? '★ Bookmarked' : '☆ Bookmark';
+      bookmark.classList.toggle('is-selected', !!personal);
+      bookmark.setAttribute('aria-pressed', String(!!personal));
+      bookmark.title = personal ? 'This page is bookmarked. Select to remove it.' : 'Bookmark this page.';
     }
     const feature = $('wikiArticleFeatureBtn');
     if (feature) {

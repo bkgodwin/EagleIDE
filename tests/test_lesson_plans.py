@@ -2,10 +2,11 @@ import tempfile
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from flask import Flask
 
-from lesson_plan_features import register
+from lesson_plan_features import fetch_external_link_metadata, register
 from lesson_plan_store import (
     LessonPlanConflictError,
     LessonPlanDataError,
@@ -89,6 +90,36 @@ class LessonPlanStoreTests(unittest.TestCase):
         self.store.delete_class("class-1")
         self.assertIsNone(self.store.class_id_for_token(second))
 
+    def test_external_links_are_validated_deduplicated_and_limited(self):
+        payload = plan_payload()
+        payload["days"]["monday"]["external_links"] = [
+            {"url": "https://example.org/loops", "title": "Loops Reference"},
+            {"url": "https://example.org/loops", "title": "Duplicate"},
+        ]
+        saved = self.store.save_plan("class-1", "2026-08-03", payload)
+        self.assertEqual(
+            saved["days"]["monday"]["external_links"],
+            [{"url": "https://example.org/loops", "title": "Loops Reference"}],
+        )
+        payload["days"]["monday"]["external_links"] = [
+            {"url": "javascript:alert(1)", "title": "Unsafe"}
+        ]
+        with self.assertRaises(LessonPlanDataError):
+            self.store.save_plan("class-1", "2026-08-10", payload)
+
+    def test_plan_sources_resolve_reject_cycles_and_clear_on_delete(self):
+        self.store.set_plan_source("class-2", "class-1")
+        self.store.set_plan_source("class-3", "class-2")
+        self.assertEqual(self.store.resolve_plan_source("class-3"), "class-1")
+        with self.assertRaises(LessonPlanDataError):
+            self.store.set_plan_source("class-1", "class-3")
+        self.store.delete_class("class-1")
+        self.assertEqual(self.store.resolve_plan_source("class-2"), "class-2")
+
+    def test_link_preview_rejects_private_networks_before_fetch(self):
+        with self.assertRaises(LessonPlanDataError):
+            fetch_external_link_metadata("http://127.0.0.1/private")
+
 
 class LessonPlanRouteTests(unittest.TestCase):
     def setUp(self):
@@ -97,6 +128,7 @@ class LessonPlanRouteTests(unittest.TestCase):
         self.classes = {
             "class-1": {"id": "class-1", "name": "Computer Science", "teacher_email": "teacher@example.com"},
             "class-2": {"id": "class-2", "name": "Other Class", "teacher_email": "other@example.com"},
+            "class-3": {"id": "class-3", "name": "Computer Science - Section 2", "teacher_email": "teacher@example.com"},
         }
         self.users = {
             "student@example.com": {"email": "student@example.com", "role": "student", "class_ids": ["class-1"]},
@@ -216,6 +248,101 @@ class LessonPlanRouteTests(unittest.TestCase):
         self.assertEqual(
             self.client.get(f"/api/lesson-plans/public/{public_token}?week={future}").status_code,
             404,
+        )
+
+    def test_teacher_can_link_sections_to_one_canonical_plan(self):
+        published = self.publish()
+        self.assertEqual(published.status_code, 200)
+        linked = self.client.put(
+            "/api/teacher/classes/class-3/lesson-plans/source",
+            json={"source_class_id": "class-1", "week": self.current_week},
+            headers=self.teacher_headers,
+        )
+        self.assertEqual(linked.status_code, 200)
+        self.assertEqual(linked.json["class"]["id"], "class-3")
+        self.assertEqual(linked.json["plan_source"]["id"], "class-1")
+        self.assertEqual(linked.json["plan"]["version"], 1)
+
+        changed = plan_payload("a" * 32)
+        changed["days"]["monday"]["markdown"] = "- Shared update"
+        saved = self.client.put(
+            f"/api/teacher/classes/class-3/lesson-plans/{self.current_week}",
+            json={"expected_version": 1, **changed},
+            headers=self.teacher_headers,
+        )
+        self.assertEqual(saved.status_code, 200)
+        source = self.client.get(
+            f"/api/teacher/classes/class-1/lesson-plans?week={self.current_week}",
+            headers=self.teacher_headers,
+        )
+        self.assertEqual(source.json["plan"]["version"], 2)
+        self.assertEqual(source.json["plan"]["days"]["monday"]["markdown"], "- Shared update")
+
+        self.users["student@example.com"]["class_ids"].append("class-3")
+        student = self.client.get(
+            f"/api/classes/class-3/lesson-plans?week={self.current_week}",
+            headers=self.student_headers,
+        )
+        self.assertEqual(student.status_code, 200)
+        self.assertEqual(student.json["class"]["id"], "class-3")
+        self.assertEqual(student.json["plan"]["days"]["monday"]["markdown"], "- Shared update")
+        self.assertNotIn("plan_source", student.json)
+        shared = self.client.post(
+            "/api/teacher/classes/class-3/lesson-plans/sharing",
+            headers=self.teacher_headers,
+        ).json
+        public_token = shared["public_path"].rsplit("/", 1)[-1]
+        public = self.client.get(
+            f"/api/lesson-plans/public/{public_token}?week={self.current_week}"
+        )
+        self.assertEqual(public.status_code, 200)
+        self.assertEqual(public.json["class"]["id"], "class-3")
+        self.assertEqual(public.json["plan"]["days"]["monday"]["markdown"], "- Shared update")
+        self.assertNotIn("plan_source", public.json)
+
+        denied = self.client.put(
+            "/api/teacher/classes/class-3/lesson-plans/source",
+            json={"source_class_id": "class-2"},
+            headers=self.teacher_headers,
+        )
+        self.assertEqual(denied.status_code, 404)
+        cycle = self.client.put(
+            "/api/teacher/classes/class-1/lesson-plans/source",
+            json={"source_class_id": "class-3"},
+            headers=self.teacher_headers,
+        )
+        self.assertEqual(cycle.status_code, 400)
+
+    def test_external_link_preview_and_storage(self):
+        self.assertEqual(
+            self.client.post(
+                "/api/teacher/lesson-plans/link-preview",
+                json={"url": "https://example.org/lesson"},
+            ).status_code,
+            401,
+        )
+        with patch(
+            "lesson_plan_features.fetch_external_link_metadata",
+            return_value={"url": "https://example.org/lesson", "title": "Example Lesson"},
+        ):
+            preview = self.client.post(
+                "/api/teacher/lesson-plans/link-preview",
+                json={"url": "https://example.org/lesson"},
+                headers=self.teacher_headers,
+            )
+        self.assertEqual(preview.status_code, 200)
+        self.assertEqual(preview.json["link"]["title"], "Example Lesson")
+        payload = plan_payload()
+        payload["days"]["monday"]["external_links"] = [preview.json["link"]]
+        saved = self.client.put(
+            f"/api/teacher/classes/class-1/lesson-plans/{self.current_week}",
+            json={"expected_version": 0, **payload},
+            headers=self.teacher_headers,
+        )
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(
+            saved.json["plan"]["days"]["monday"]["external_links"][0]["title"],
+            "Example Lesson",
         )
 
 
