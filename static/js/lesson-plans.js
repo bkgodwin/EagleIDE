@@ -9,6 +9,7 @@
     teacherLoading: false,
     teacherRequest: 0,
     pickerDay: '',
+    externalLinkDay: '',
     homeClassId: '',
     homeData: null,
     homeRequest: 0,
@@ -81,6 +82,7 @@
         <div class="lesson-plan-teacher-toolbar">
           <div class="lesson-plan-week-nav">
             <label>Class <select id="lessonPlanTeacherClass"></select></label>
+            <label>Plan source <select id="lessonPlanTeacherSource"></select></label>
             <button class="btn secondary" id="lessonPlanTeacherPrevious" type="button">← Previous</button>
             <button class="btn secondary" id="lessonPlanTeacherCurrent" type="button">Current week</button>
             <span class="lesson-plan-week-label" id="lessonPlanTeacherWeekLabel"></span>
@@ -93,6 +95,7 @@
             <button class="btn secondary" id="lessonPlanResetLink" type="button" title="Disable the old public and embed links">Reset Link</button>
           </div>
         </div>
+        <div class="lesson-plan-source-note" id="lessonPlanTeacherSourceNote"></div>
         <div class="lesson-plan-editor-scroll"><div class="lesson-plan-editor-grid" id="lessonPlanEditorGrid"></div></div>
         <div>
           <label class="lesson-plan-notes-editor"><strong>Additional notes</strong><textarea id="lessonPlanNotes" maxlength="20000" placeholder="Notes for the whole week (Markdown supported)"></textarea></label>
@@ -106,6 +109,7 @@
       state.teacherClassId = event.target.value || '';
       loadTeacherPlan();
     });
+    $('lessonPlanTeacherSource').addEventListener('change', changePlanSource);
     $('lessonPlanTeacherPrevious').addEventListener('click', () => changeTeacherWeek(-1));
     $('lessonPlanTeacherNext').addEventListener('click', () => changeTeacherWeek(1));
     $('lessonPlanTeacherCurrent').addEventListener('click', () => { state.teacherWeek = mondayFor(new Date()); loadTeacherPlan(); });
@@ -133,6 +137,70 @@
       select.appendChild(option);
     });
     $('lessonPlanPublish').disabled = !state.teacherClassId;
+    syncPlanSourceControl();
+  }
+
+  function syncPlanSourceControl() {
+    const select = $('lessonPlanTeacherSource');
+    const note = $('lessonPlanTeacherSourceNote');
+    if (!select) return;
+    const sourceId = state.teacherData?.class?.id === state.teacherClassId
+      ? state.teacherData?.plan_source?.id || state.teacherClassId
+      : state.teacherClassId;
+    select.textContent = '';
+    const own = document.createElement('option');
+    own.value = '';
+    own.textContent = 'This class (independent plan)';
+    select.appendChild(own);
+    teacherClasses().filter((item) => item.id !== state.teacherClassId).forEach((item) => {
+      const option = document.createElement('option');
+      option.value = item.id;
+      option.textContent = `Use ${item.name || 'class'} plan`;
+      select.appendChild(option);
+    });
+    select.value = sourceId && sourceId !== state.teacherClassId ? sourceId : '';
+    select.disabled = !state.teacherClassId;
+    if (note) {
+      const sourceName = state.teacherData?.plan_source?.name || 'this class';
+      note.textContent = select.value
+        ? `Shared plan: this section uses ${sourceName}. Publishing from either section updates the same weekly plan.`
+        : 'Independent plan: link this section to another class to reuse one weekly plan across sections.';
+      note.classList.toggle('is-shared', !!select.value);
+    }
+  }
+
+  async function changePlanSource(event) {
+    if (!state.teacherClassId) return;
+    const select = event.currentTarget;
+    const previous = state.teacherData?.plan_source?.id !== state.teacherClassId
+      ? state.teacherData?.plan_source?.id || ''
+      : '';
+    const next = select.value || '';
+    if (next === previous) return;
+    if (!window.confirm('Switch this class to a different lesson plan source? Any unsaved editor changes will be discarded.')) {
+      select.value = previous;
+      return;
+    }
+    select.disabled = true;
+    setTeacherStatus('Linking lesson plans…');
+    try {
+      state.teacherData = await fetchJson(
+        `/api/teacher/classes/${encodeURIComponent(state.teacherClassId)}/lesson-plans/source`,
+        {
+          method: 'PUT',
+          headers: authHeaders('teacher', true),
+          body: JSON.stringify({ source_class_id: next, week: state.teacherWeek }),
+        },
+      );
+      state.teacherWeek = state.teacherData.selected_week;
+      renderTeacherEditor();
+      setTeacherStatus(next ? 'Lesson plans linked. Both sections now use the same plan.' : 'This class now has an independent lesson plan.');
+    } catch (error) {
+      select.value = previous;
+      setTeacherStatus(error.message || 'Could not link lesson plans.', true);
+    } finally {
+      select.disabled = false;
+    }
   }
 
   function changeTeacherWeek(amount) {
@@ -167,6 +235,7 @@
     const grid = $('lessonPlanEditorGrid');
     if (!plan || !grid) return;
     $('lessonPlanTeacherWeekLabel').textContent = readableWeek(plan.week_start);
+    syncPlanSourceControl();
     $('lessonPlanNotes').value = plan.notes_markdown || '';
     grid.textContent = '';
     DAYS.forEach((day, index) => {
@@ -185,6 +254,7 @@
       const pages = document.createElement('div');
       pages.className = 'lesson-plan-editor-pages';
       (item.wiki_pages || []).forEach((page) => pages.appendChild(editorPageRow(day, page)));
+      (item.external_links || []).forEach((link) => pages.appendChild(editorExternalLinkRow(day, link)));
       column.appendChild(pages);
       const add = document.createElement('button');
       add.type = 'button';
@@ -192,6 +262,12 @@
       add.textContent = '+ Add Wiki Page';
       add.addEventListener('click', () => openPicker(day));
       column.appendChild(add);
+      const addExternal = document.createElement('button');
+      addExternal.type = 'button';
+      addExternal.className = 'btn secondary lesson-plan-editor-add lesson-plan-editor-add--external';
+      addExternal.textContent = '+ Add External Link';
+      addExternal.addEventListener('click', () => openExternalLinkModal(day));
+      column.appendChild(addExternal);
       if (item.standards?.length) {
         const standards = window.LessonPlanRenderer.createStandardsPopover(
           day.charAt(0).toUpperCase() + day.slice(1), item.standards,
@@ -224,6 +300,28 @@
       item.wiki_pages = (item.wiki_pages || []).filter((entry) => entry.id !== page.id);
       item.wiki_node_ids = item.wiki_pages.map((entry) => entry.id);
       item.standards = mergedStandards(item.wiki_pages);
+      renderTeacherEditor();
+    });
+    row.append(label, remove);
+    return row;
+  }
+
+  function editorExternalLinkRow(day, link) {
+    const row = document.createElement('div');
+    row.className = 'lesson-plan-editor-page lesson-plan-editor-link';
+    const label = document.createElement('a');
+    label.href = link.url;
+    label.target = '_blank';
+    label.rel = 'noopener';
+    label.textContent = link.title || link.url;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = '×';
+    remove.title = `Remove ${label.textContent}`;
+    remove.addEventListener('click', () => {
+      captureEditorDraft();
+      const item = state.teacherData.plan.days[day];
+      item.external_links = (item.external_links || []).filter((entry) => entry.url !== link.url);
       renderTeacherEditor();
     });
     row.append(label, remove);
@@ -263,6 +361,7 @@
           days: Object.fromEntries(DAYS.map((day) => [day, {
             markdown: plan.days[day].markdown,
             wiki_node_ids: (plan.days[day].wiki_pages || []).map((page) => page.id),
+            external_links: plan.days[day].external_links || [],
           }])),
           notes_markdown: plan.notes_markdown,
         }),
@@ -446,6 +545,58 @@
     } catch (error) { $('lessonPlanWikiPickerTree').textContent = error.message || 'Could not add wiki page.'; }
   }
 
+  function openExternalLinkModal(day) {
+    captureEditorDraft();
+    state.externalLinkDay = day;
+    $('lessonPlanExternalLinkTitle').textContent = `Add External Link - ${day.charAt(0).toUpperCase() + day.slice(1)}`;
+    $('lessonPlanExternalLinkUrl').value = '';
+    $('lessonPlanExternalLinkStatus').textContent = '';
+    $('lessonPlanExternalLinkStatus').classList.remove('is-error');
+    $('lessonPlanExternalLinkModal').style.display = 'flex';
+    setTimeout(() => $('lessonPlanExternalLinkUrl').focus(), 0);
+  }
+
+  function closeExternalLinkModal() {
+    $('lessonPlanExternalLinkModal').style.display = 'none';
+    state.externalLinkDay = '';
+  }
+
+  async function addExternalLink() {
+    const day = state.externalLinkDay;
+    const input = $('lessonPlanExternalLinkUrl');
+    const status = $('lessonPlanExternalLinkStatus');
+    const submit = $('lessonPlanExternalLinkAdd');
+    const url = String(input?.value || '').trim();
+    if (!day || !url) {
+      status.textContent = 'Enter an HTTP or HTTPS link.';
+      status.classList.add('is-error');
+      return;
+    }
+    submit.disabled = true;
+    status.textContent = 'Reading the page title…';
+    status.classList.remove('is-error');
+    try {
+      const data = await fetchJson('/api/teacher/lesson-plans/link-preview', {
+        method: 'POST',
+        headers: authHeaders('teacher', true),
+        body: JSON.stringify({ url }),
+      });
+      const item = state.teacherData?.plan?.days?.[day];
+      if (!item) throw new Error('Reload the lesson plan and try again.');
+      item.external_links = item.external_links || [];
+      if (!item.external_links.some((entry) => entry.url === data.link.url)) {
+        item.external_links.push(data.link);
+      }
+      closeExternalLinkModal();
+      renderTeacherEditor();
+    } catch (error) {
+      status.textContent = error.message || 'Could not add that external link.';
+      status.classList.add('is-error');
+    } finally {
+      submit.disabled = false;
+    }
+  }
+
   function selectedHomeClass(classIdHint = '') {
     const ctx = context();
     const wikiSelected = window.WikiReader?.getState?.().selectedClassId;
@@ -498,6 +649,14 @@
     });
     $('lessonPlanWikiPickerCancel')?.addEventListener('click', closePicker);
     $('lessonPlanWikiPickerModal')?.addEventListener('click', (event) => { if (event.target === $('lessonPlanWikiPickerModal')) closePicker(); });
+    $('lessonPlanExternalLinkCancel')?.addEventListener('click', closeExternalLinkModal);
+    $('lessonPlanExternalLinkAdd')?.addEventListener('click', addExternalLink);
+    $('lessonPlanExternalLinkUrl')?.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') { event.preventDefault(); addExternalLink(); }
+    });
+    $('lessonPlanExternalLinkModal')?.addEventListener('click', (event) => {
+      if (event.target === $('lessonPlanExternalLinkModal')) closeExternalLinkModal();
+    });
     $('studentLessonPlanPrevious')?.addEventListener('click', () => state.homeData?.previous_week && loadHomePlan(state.homeData.previous_week));
     $('studentLessonPlanNext')?.addEventListener('click', () => state.homeData?.next_week && loadHomePlan(state.homeData.next_week));
     window.addEventListener('eagle-context-updated', () => { syncTeacherClasses(); loadHomePlan(); });

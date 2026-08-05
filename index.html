@@ -38,7 +38,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20260804-3">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260805-1">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -897,6 +897,21 @@
     </div>
   </div>
 
+  <div id="lessonPlanExternalLinkModal" class="modal" style="display:none;">
+    <div class="modal-content" style="max-width:560px;">
+      <h3 id="lessonPlanExternalLinkTitle">Add External Link</h3>
+      <p style="font-size:12px;color:var(--theme-text-dim);">Paste a public webpage URL. EagleIDE will use the page title as the link label.</p>
+      <label for="lessonPlanExternalLinkUrl" style="display:grid;gap:6px;font-size:12px;font-weight:700;">Web address
+        <input id="lessonPlanExternalLinkUrl" type="url" inputmode="url" placeholder="https://example.org/lesson" autocomplete="off">
+      </label>
+      <div id="lessonPlanExternalLinkStatus" class="lesson-plan-status" role="status" aria-live="polite"></div>
+      <div class="modal-actions">
+        <button class="btn secondary" id="lessonPlanExternalLinkCancel" type="button">Cancel</button>
+        <button class="btn run" id="lessonPlanExternalLinkAdd" type="button">Add Link</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Student Dashboard Modal -->
   <div id="studentDashboardModal" class="modal teacher-dash-modal glass-modal teacher-dash-fullscreen" style="display:none;">
     <div class="modal-content">
@@ -1398,13 +1413,13 @@
             </div>
           </section>
           <section class="admin-settings-pane" data-admin-settings-pane="wiki">
-            <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Public knowledge base</span><h4>Coding Wiki</h4><p>The built-in wiki is the landing page. Teachers feature existing pages for their classes and mark daily pages as Lesson Material.</p></div>
+            <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Public knowledge base</span><h4>Coding Wiki</h4><p>The built-in wiki is the landing page. Teachers feature existing pages and folders for their classes.</p></div>
             <div class="admin-wiki-settings-card">
               <div><strong>Content and home page</strong><span>Create folders, edit Markdown, upload media, standards, and external resources.</span></div>
               <button class="btn run" id="settingsOpenWikiManagerBtn" type="button">Open Wiki Manager</button>
             </div>
             <div class="admin-wiki-settings-card">
-              <div><strong>Teacher workflow</strong><span>Teachers open the wiki from their Classes dashboard to feature content or bookmark Lesson Material for one selected class.</span></div>
+              <div><strong>Teacher workflow</strong><span>Teachers open the wiki from their Classes dashboard and use Feature for class for the selected class.</span></div>
               <button class="btn secondary" id="settingsOpenWikiHomeBtn" type="button">Open Wiki Home</button>
             </div>
           </section>
@@ -1544,13 +1559,13 @@
   <script src="/static/js/editor-init.js"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js"></script>
-  <script src="/static/js/app-core.js?v=20260804-3"></script>
+  <script src="/static/js/app-core.js?v=20260805-1"></script>
 <script src="/static/js/network-sim.js?v=20260714-18"></script>
 <script src="/static/js/network-sim-advanced.js?v=20260714-4"></script>
-  <script src="/static/js/wiki-reader.js?v=20260804-3"></script>
-  <script src="/static/js/lesson-plan-renderer.js?v=20260804-3"></script>
-  <script src="/static/js/lesson-plans.js?v=20260804-3"></script>
-  <script src="/static/js/wiki-admin.js?v=20260804-3"></script>
+  <script src="/static/js/wiki-reader.js?v=20260805-1"></script>
+  <script src="/static/js/lesson-plan-renderer.js?v=20260805-1"></script>
+  <script src="/static/js/lesson-plans.js?v=20260805-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20260805-1"></script>
   <script src="/static/js/classroom-signals.js"></script>
   <script src="/static/js/classroom-files.js?v=20250608"></script>
   <script src="/static/js/student-notebook.js?v=20260714-7"></script>

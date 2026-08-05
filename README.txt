@@ -380,11 +380,9 @@ Reader features:
 Student and teacher workflow:
 - Signed-in students can add or remove personal bookmarks. They appear in the
   Bookmarks menu.
-- A teacher's Lesson Material bookmark is assigned to one teacher-owned class.
-  Students in that class see it with the Lesson Material label. The class picker
-  is shown whenever the teacher bookmarks or features an item.
-- Teachers can feature a page or folder for one class. A featured folder always
-  includes its current descendants, including children added later.
+- Teachers use Feature for class to select a page or folder for one owned class.
+  A featured folder always includes its current descendants, including children
+  added later.
 - Guests see the complete published tree in the order chosen by the admin, with
   no class-specific featured section.
 
@@ -446,10 +444,16 @@ wiki_max_asset_mb and wiki_total_asset_mb in the application configuration.
 
 Teachers open Lesson Plans from their dashboard, choose one of their classes and
 a Monday-through-Friday week, write each day's plan in Markdown, browse the full
-published wiki contents tree to attach pages, add weekly notes, and choose Apply &
-Publish. Standards assigned to linked wiki pages are collected separately for
-each day and shown in a bounded, scrollable standards popout. Long daily content
-scrolls inside that day only.
+published wiki contents tree to attach pages, add external webpage links with
+automatically detected titles, add weekly notes, and choose Apply & Publish.
+Standards assigned to linked wiki pages are collected separately for each day and
+shown in a layered, scrollable standards popout. Long daily content scrolls inside
+that day only.
+
+Use Plan source to link sections owned by the same teacher. A linked section uses
+the selected source class's canonical weekly plans, so publishing from either
+section updates one shared plan while each class keeps its own title, students,
+public link, and embed link. Choose This class (independent plan) to unlink it.
 
 Signed-in students and teachers see the selected class's current weekly plan on
 the wiki home. Students can move backward one calendar week at a time, including
@@ -464,8 +468,10 @@ Choose Print / Save PDF in the teacher dashboard to open the selected past,
 current, or future week in a short-lived, teacher-only landscape print view. Then
 select Save as PDF in the browser print dialog. Screen views preserve independent
 day scrolling; print expands content for a readable, printer-friendly document
-and shows standard IDs without full descriptions. Runtime data is stored in
-lesson_plans/ and can be relocated with EAGLEIDE_LESSON_PLAN_DATA_DIR.
+and shows standard IDs without full descriptions. Printed standards use two
+columns per day, show at most 12 IDs, and summarize the remainder as "+ n more."
+Runtime data is stored in lesson_plans/ and can be relocated with
+EAGLEIDE_LESSON_PLAN_DATA_DIR.
 
 ================================================================================
                             6. AI FEATURES
