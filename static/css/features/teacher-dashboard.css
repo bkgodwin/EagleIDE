@@ -163,6 +163,18 @@
       color: var(--columbia-blue);
       margin-bottom: 8px;
     }
+
+    .account-debug-setting {
+      margin-top: 24px;
+      padding-top: 20px;
+      border-top: 1px solid var(--theme-border-mid);
+    }
+
+    .account-debug-setting h4 {
+      margin: 0 0 12px;
+      color: var(--columbia-blue);
+      font-size: 15px;
+    }
     .teacher-dash-feature-grid {
       margin-bottom: 10px;
     }
