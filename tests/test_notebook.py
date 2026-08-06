@@ -216,6 +216,38 @@ class NotebookTestCase(unittest.TestCase):
         self.assertTrue(saved_assignments["locked"])
         self.assertEqual(saved_assignments["blocks"][0]["promptId"], prompt["id"])
 
+    def test_prompt_skill_tags_use_teacher_catalog_and_attach_to_class(self):
+        self.skills_file.write_text(json.dumps({
+            "skills": [{
+                "id": "skill-conditionals",
+                "teacher_email": self.teacher_email,
+                "name": "Conditionals",
+                "description": "Choose a branch using boolean conditions.",
+                "order": 0,
+                "class_ids": [],
+            }],
+            "default_skills_seeded_for": [self.teacher_email],
+        }), encoding="utf-8")
+        eagle._skills_cache = None
+
+        prompt = self._create_prompt(skill_tags=["Conditionals"])
+
+        self.assertEqual(prompt["skillTags"], ["Conditionals"])
+        skills = self.client.get(
+            "/api/teacher/skills", headers={"X-Teacher-Token": self.teacher_token}
+        ).get_json()["skills"]
+        selected = next(skill for skill in skills if skill["name"] == "Conditionals")
+        self.assertEqual(selected["description"], "Choose a branch using boolean conditions.")
+        self.assertIn(self.class_id, selected["class_ids"])
+
+        unknown = self.client.post(
+            "/api/teacher/notebook-prompts/create",
+            headers={"X-Teacher-Token": self.teacher_token},
+            json={"classId": self.class_id, "prompt": "Test", "skillTags": ["Not In Catalog"]},
+        )
+        self.assertEqual(unknown.status_code, 400)
+        self.assertIn("unknown skill", unknown.get_json()["error"].lower())
+
     def test_notebook_tab_metadata_and_limit_are_normalized(self):
         raw_tabs = [
             {

@@ -28,6 +28,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let ADMIN_TOKEN = null;
     let TEACHER_TOKEN = null;
     let USER_TOKEN = null;
+    const SHELL_DEBUG_STORAGE_KEY = 'eagleide-shell-debug-messages-v1';
     let currentUser = null;   // { email, name }
     let currentTeacher = null;
     let teacherClasses = [];
@@ -117,6 +118,30 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     function isAuthenticated() {
       return !!(USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN || currentUser || currentTeacher);
+    }
+
+    function canUseShellDebugMessages() {
+      return !!(TEACHER_TOKEN || ADMIN_TOKEN);
+    }
+
+    function showSystemShellMessages() {
+      if (!canUseShellDebugMessages()) return false;
+      try { return localStorage.getItem(SHELL_DEBUG_STORAGE_KEY) === '1'; } catch { return false; }
+    }
+
+    function syncShellDebugSettings() {
+      const enabled = showSystemShellMessages();
+      const teacherToggle = document.getElementById('teacherShellDebugMessages');
+      const adminToggle = document.getElementById('adminShellDebugMessages');
+      if (teacherToggle) teacherToggle.checked = enabled;
+      if (adminToggle) adminToggle.checked = enabled;
+      refreshEagleIDEContext();
+    }
+
+    function setShellDebugMessages(enabled) {
+      if (!canUseShellDebugMessages()) return;
+      try { localStorage.setItem(SHELL_DEBUG_STORAGE_KEY, enabled ? '1' : '0'); } catch {}
+      syncShellDebugSettings();
     }
 
     function clearAuthStateMemory() {
@@ -639,6 +664,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     const SYSTEM_MESSAGE_PATTERN = /^\[.*?\]/;
+    const SHELL_DEBUG_MESSAGE_PATTERN = /^\[(?:Connected|Socket error|Sending code|Run acknowledged|Process started|Process finished|Stopped|Could not start run)\](?:\s|$)/;
     const TRACEBACK_START_PATTERN = /^Traceback \(most recent call last\):/;
     const TRACEBACK_EXCEPTION_LINE_PATTERN = /^\w[\w.]*(?:Error|Exception|Warning|Interrupt)[:\s]/;
     const TRACEBACK_SPECIAL_END_PATTERN = /^(KeyboardInterrupt|SystemExit|StopIteration|GeneratorExit)\s*$/;
@@ -754,7 +780,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     // --- File auth helpers ---
     function fileAuthHeaders() {
-      if (USER_TOKEN) return { 'X-User-Token': USER_TOKEN };
+      if (USER_TOKEN) {
+        const headers = { 'X-User-Token': USER_TOKEN };
+        const classId = getCurrentClassContext()?.id || '';
+        if (classId) headers['X-Class-ID'] = classId;
+        return headers;
+      }
       if (TEACHER_TOKEN) return { 'X-Teacher-Token': TEACHER_TOKEN };
       if (ADMIN_TOKEN) return { 'X-Admin-Token': ADMIN_TOKEN };
       return {};
@@ -869,7 +900,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     function presentTeacherStreamForStudent(forceOpen) {
-      if (!isStudentViewer()) return;
+      if (!isStudentViewer() || !canCurrentUserAccessIDE()) return;
       const classId = getCurrentClassContext()?.id;
       if (!classId || !teacherStreamLiveClasses[classId]) return;
       if (!teacherPaneEnabled) updateTeacherStreamPaneVisibility();
@@ -999,12 +1030,23 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       return studentClasses.find(c => c.id === getSelectedStudentClassId()) || studentClassData || null;
     }
 
+    function canCurrentUserAccessIDE() {
+      if (ADMIN_TOKEN || TEACHER_TOKEN) return true;
+      if (USER_TOKEN) {
+        const classCtx = getCurrentClassContext();
+        return !classCtx || classCtx.settings?.student_ide_access_enabled !== false;
+      }
+      return currentConfig?.guest_ide_access_enabled !== false;
+    }
+
     function mergeClassroomSettings(settings) {
       const s = settings || {};
       return {
         ...s,
         ai_enabled: s.ai_enabled !== false,
         wiki_enabled: s.wiki_enabled !== false,
+        challenges_enabled: s.challenges_enabled !== false,
+        student_ide_access_enabled: s.student_ide_access_enabled !== false,
         raise_hand_enabled: s.raise_hand_enabled !== false,
         teacher_file_send_enabled: s.teacher_file_send_enabled !== false,
         student_send_to_teacher_enabled: s.student_send_to_teacher_enabled !== false,
@@ -1072,6 +1114,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     async function setEditorSnapshot(snapshot = {}) {
+      if (!canCurrentUserAccessIDE()) return false;
       syncEditorBridge();
       if (auditPreviewActive) closeAuditPreview();
       const draftHasContent = Boolean(currentOpenFile?.draft && String(editor.getValue() || '').trim());
@@ -1150,6 +1193,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         user_token: USER_TOKEN || '',
         teacher_token: TEACHER_TOKEN || '',
         admin_token: ADMIN_TOKEN || '',
+        class_id: getCurrentClassContext()?.id || '',
         file_path: '',
       });
       return true;
@@ -1184,6 +1228,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           studentClasses,
           studentClassData,
           getCurrentClassContext,
+          canAccessIDE: canCurrentUserAccessIDE(),
           loadFileTree,
           openAuditPreview,
           closeAuditPreview,
@@ -1194,6 +1239,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           stopNotebookRun,
           isProgramRunning,
           activeRunSource,
+          showSystemShellMessages: showSystemShellMessages(),
         }),
       };
       window.dispatchEvent(new CustomEvent('eagle-context-updated', { detail: window.EagleIDE.getContext() }));
@@ -1202,7 +1248,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     function updateTeacherStreamPaneVisibility() {
       const classCtx = getCurrentClassContext();
-      const isStudentInClass = !!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && !!classCtx;
+      const isStudentInClass = !!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && !!classCtx && canCurrentUserAccessIDE();
       setTeacherPaneEnabled(isStudentInClass);
       updateTeacherStreamToggleState();
       if (isStudentInClass) syncEditorLanguage(currentOpenFile?.name || '');
@@ -1214,6 +1260,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const isGuest = !isAuthenticatedUser;
       const isStudentNoClass = !!USER_TOKEN && !!currentUser && !classCtx;
       const aiEnabledForClass = !!classCtx?.settings?.ai_enabled;
+      const challengesEnabledForClass = classCtx?.settings?.challenges_enabled !== false;
       const wikiEnabledForClass = !!classCtx?.settings?.wiki_enabled;
       const tExplain = document.getElementById('aiTabBtn');
       const tChal = document.getElementById('aiChallengeTabBtn');
@@ -1229,7 +1276,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const canSeeAssignments = !!TEACHER_TOKEN || (!!USER_TOKEN && !!classCtx);
       if (tAssignment) tAssignment.style.display = canSeeAssignments ? '' : 'none';
       if (tExplain) tExplain.style.display = (!shouldHideAiTabs && effectiveAiEnabled) ? '' : 'none';
-      if (tChal) tChal.style.display = (!shouldHideAiTabs && effectiveAiEnabled) ? '' : 'none';
+      const effectiveChallengesEnabled = effectiveAiEnabled && (ADMIN_TOKEN || TEACHER_TOKEN || challengesEnabledForClass);
+      if (tChal) tChal.style.display = (!shouldHideAiTabs && effectiveChallengesEnabled) ? '' : 'none';
       if (tAssist) tAssist.style.display = (!shouldHideAiTabs && effectiveAiEnabled) ? '' : 'none';
       if (tWiki) tWiki.style.display = canShowWikiTab ? '' : 'none';
       const classJoinNotice = document.getElementById('classJoinNotice');
@@ -1298,6 +1346,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (!line) return; // skip null, undefined, and empty string
       // System messages: [Connected], [Process started], etc.
       if (SYSTEM_MESSAGE_PATTERN.test(line)) {
+        if (SHELL_DEBUG_MESSAGE_PATTERN.test(line) && !showSystemShellMessages()) return;
         const span = document.createElement('span');
         span.className = 'sys-msg';
         span.textContent = line;
@@ -1397,11 +1446,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       // Split into lines while preserving newlines at end of each segment
       const segments = s.split(/(?<=\n)/);
       const fragment = document.createDocumentFragment();
+      let visibleChars = 0;
       for (const seg of segments) {
+        if (SHELL_DEBUG_MESSAGE_PATTERN.test(seg) && !showSystemShellMessages()) continue;
         _appendLine(seg, fragment);
+        visibleChars += seg.length;
       }
       outputEl.appendChild(fragment);
-      shellOutputChars += String(s).length;
+      shellOutputChars += visibleChars;
       trimShellOutput();
       scheduleShellScroll();
     };
@@ -1926,6 +1978,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           user_token: USER_TOKEN || '',
           teacher_token: TEACHER_TOKEN || '',
           admin_token: ADMIN_TOKEN || '',
+          class_id: getCurrentClassContext()?.id || '',
           file_path: currentOpenFile ? currentOpenFile.path : ''
         });
       } else {
@@ -1988,6 +2041,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         user_token: USER_TOKEN || '',
         teacher_token: TEACHER_TOKEN || '',
         admin_token: ADMIN_TOKEN || '',
+        class_id: getCurrentClassContext()?.id || '',
         file_path: filePath,
       });
       return true;
@@ -2154,6 +2208,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const ap = document.getElementById('assistantPromptInput'); if (ap) ap.value = cfg.ai_assistant_preprompt || '';
       window.NetworkSim?.applyConfig?.(cfg);
       applyClassTabVisibility();
+      refreshEagleIDEContext();
     }
     async function saveConfig(partial){
       try {
@@ -2994,6 +3049,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     document.getElementById('adminSettingsBtn').addEventListener('click', () => {
       if (!ADMIN_TOKEN) return;
       document.getElementById('adminSettingsModal').style.display = 'flex';
+      syncShellDebugSettings();
       document.querySelectorAll('[data-admin-settings-section]').forEach(button => {
         button.classList.toggle('active', button.dataset.adminSettingsSection === 'general');
       });
@@ -3030,6 +3086,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
       // Registration setting
       document.getElementById('registrationEnabledModal').checked = currentConfig?.registration_enabled !== false;
+      document.getElementById('guestIdeAccessEnabledModal').checked = currentConfig?.guest_ide_access_enabled !== false;
       document.getElementById('networkSimEnabledModal').checked = !!currentConfig?.network_sim_enabled;
       document.getElementById('pythonMemoryLimitModal').value = Number(currentConfig?.python_memory_limit_mb || 750);
       document.getElementById('pythonConcurrencyLimitModal').value = Number(currentConfig?.python_max_concurrent_runs || 4);
@@ -3046,6 +3103,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         document.querySelectorAll('[data-admin-settings-pane]').forEach(pane => pane.classList.toggle('active', pane.dataset.adminSettingsPane === section));
         if (section === 'python-runtime') loadPythonRuntimeAdmin();
       });
+    });
+
+    document.getElementById('teacherShellDebugMessages')?.addEventListener('change', event => {
+      setShellDebugMessages(!!event.currentTarget.checked);
+    });
+    document.getElementById('adminShellDebugMessages')?.addEventListener('change', event => {
+      setShellDebugMessages(!!event.currentTarget.checked);
     });
 
     document.getElementById('aiTestBtn')?.addEventListener('click', async () => {
@@ -3278,6 +3342,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       document.getElementById('teacherPasswordStatus').textContent = '';
       document.getElementById('teacherCurrentPassword').value = '';
       document.getElementById('teacherNewPassword').value = '';
+      syncShellDebugSettings();
     }
 
     function populateTeacherReportsClassSelect() {
@@ -3421,6 +3486,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const python_module_access = collectPythonModuleAccess();
       
       const registration_enabled = document.getElementById('registrationEnabledModal').checked;
+      const guest_ide_access_enabled = document.getElementById('guestIdeAccessEnabledModal').checked;
       const network_sim_enabled = document.getElementById('networkSimEnabledModal').checked;
       const status = document.getElementById('adminSettingsStatus');
       if (status) status.textContent = 'Saving…';
@@ -3444,7 +3510,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         python_memory_limit_mb,
         python_max_concurrent_runs,
         python_module_access,
-        network_sim_enabled
+        network_sim_enabled,
+        guest_ide_access_enabled
       });
       if (!settingsResult?.ok) {
         if (status) status.textContent = settingsResult?.error || 'Could not save system settings.';
@@ -3949,6 +4016,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             <div class="teacher-dash-classroom-settings-title">Classroom features</div>
             <div class="choice-grid teacher-dash-feature-grid">
               ${aiToggleTemplate(activeClass)}
+              <label class="choice-item"><input type="checkbox" class="cls-student-ide" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.student_ide_access_enabled !== false ? 'checked' : ''}><span class="choice-text">Student IDE access</span></label>
+              <label class="choice-item"><input type="checkbox" class="cls-challenges" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.challenges_enabled !== false ? 'checked' : ''}><span class="choice-text">Student challenges</span></label>
               <label class="choice-item"><input type="checkbox" class="cls-raise-hand" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.raise_hand_enabled !== false ? 'checked' : ''}><span class="choice-text">Raise hand &amp; questions</span></label>
               <label class="choice-item"><input type="checkbox" class="cls-teacher-send" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.teacher_file_send_enabled !== false ? 'checked' : ''}><span class="choice-text">Teacher can send files</span></label>
               <label class="choice-item"><input type="checkbox" class="cls-student-send" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.student_send_to_teacher_enabled !== false ? 'checked' : ''}><span class="choice-text">Students send to teacher</span></label>
@@ -3961,10 +4030,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             <input type="range" min="1" max="10" value="${activeClass.settings?.ai_grading_rigor || 5}" class="cls-rigor" data-class="${escapeHtml(activeClass.id)}" style="width:100%;">
           </div>
           <section class="teacher-class-wiki-card" aria-label="Wiki material for ${escapeHtml(activeClass.name)}">
-            <div class="teacher-class-wiki-copy"><span class="teacher-class-wiki-kicker">Coding Wiki</span><strong>Class material lives in the shared wiki</strong><p>Open a page and choose <b>Feature for Class</b> to place it on this class home, or bookmark it as <b>Lesson Material</b> for the day. The class is selected before the action is saved.</p></div>
+            <div class="teacher-class-wiki-copy"><span class="teacher-class-wiki-kicker">Coding Wiki</span><strong>Class material lives in the shared wiki</strong><p>Open a page or folder and choose <b>Feature for class</b> to place it on this class home. The class is selected before the action is saved.</p></div>
             <div class="teacher-class-wiki-actions">
               <button class="btn run open-class-wiki-btn" type="button">Open Wiki</button>
-              <button class="btn secondary open-class-bookmarks-btn" type="button">View Lesson Material</button>
             </div>
           </section>
           <div style="font-size:13px; font-weight:600; color:var(--columbia-blue); margin-bottom:6px;">Students</div>
@@ -3994,12 +4062,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         if (window.WikiReader?.selectClass) await window.WikiReader.selectClass(currentTeacherClassId, { show: true }).catch(() => {});
         else window.WikiReader?.showHome?.();
       }));
-      wrap.querySelectorAll('.open-class-bookmarks-btn').forEach(btn => btn.addEventListener('click', async () => {
-        document.getElementById('teacherDashboardModal').style.display = 'none';
-        if (window.WikiReader?.selectClass) await window.WikiReader.selectClass(currentTeacherClassId, { show: true }).catch(() => {});
-        else window.WikiReader?.showHome?.();
-        document.getElementById('wikiBookmarksBtn')?.click();
-      }));
       wrap.querySelectorAll('.delete-class-btn').forEach(btn => btn.addEventListener('click', async () => {
         const classId = btn.dataset.class;
         const className = btn.dataset.name || 'this class';
@@ -4023,6 +4085,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const rigor = parseInt(wrap.querySelector(`.cls-rigor[data-class="${CSS.escape(classId)}"]`)?.value || '5', 10) || 5;
         const settingsPayload = {
           ai_grading_rigor: rigor,
+          student_ide_access_enabled: !!wrap.querySelector(`.cls-student-ide[data-class="${CSS.escape(classId)}"]`)?.checked,
+          challenges_enabled: !!wrap.querySelector(`.cls-challenges[data-class="${CSS.escape(classId)}"]`)?.checked,
           raise_hand_enabled: !!wrap.querySelector(`.cls-raise-hand[data-class="${CSS.escape(classId)}"]`)?.checked,
           teacher_file_send_enabled: !!wrap.querySelector(`.cls-teacher-send[data-class="${CSS.escape(classId)}"]`)?.checked,
           student_send_to_teacher_enabled: !!wrap.querySelector(`.cls-student-send[data-class="${CSS.escape(classId)}"]`)?.checked,
@@ -4865,7 +4929,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     document.getElementById('workspaceFilesTabBtn')?.addEventListener('click', () => setWorkspaceTab(WORKSPACE_TAB_FILES));
 
     async function showFileBrowser() {
-      if (!isAuthenticated()) return;
+      if (!isAuthenticated() || !canCurrentUserAccessIDE()) {
+        hideFileBrowser();
+        return;
+      }
       setWorkspaceTab(WORKSPACE_TAB_FILES);
       try {
         await loadFileTree();
@@ -4949,6 +5016,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     async function fetchFileTreeData() {
       if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return false;
+      if (!canCurrentUserAccessIDE()) return false;
       const res = await fetch('/api/files/list', { headers: fileAuthHeaders() });
       const j = await res.json().catch(() => ({}));
       if (!j.ok) {
@@ -6013,6 +6081,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let currentChallenge = { id: '', text: '', difficulty: 1, points: 3 };
     let lastScore = null;
 
+    function challengeHeaders(json = false) {
+      const headers = json ? { 'Content-Type': 'application/json' } : {};
+      if (USER_TOKEN) headers['X-User-Token'] = USER_TOKEN;
+      else if (TEACHER_TOKEN) headers['X-Teacher-Token'] = TEACHER_TOKEN;
+      else if (ADMIN_TOKEN) headers['X-Admin-Token'] = ADMIN_TOKEN;
+      return headers;
+    }
+
     function renderChallengeLeaderboard(rows) {
       const tb = document.querySelector('#lbTable tbody');
       if (!tb) return;
@@ -6034,7 +6110,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     async function refreshLeaderboard() {
       try {
-        const r = await fetch('/api/challenge/leaderboard');
+        const classId = getCurrentClassContext()?.id || '';
+        const r = await fetch(`/api/challenge/leaderboard?classId=${encodeURIComponent(classId)}`, { headers: challengeHeaders() });
         const j = await r.json().catch(() => ({}));
         if (j?.ok) renderChallengeLeaderboard(j.leaderboard || j.top || []);
       } catch {}
@@ -6044,11 +6121,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const label = document.getElementById('challengeAccountStatus');
       const scoreBtn = document.getElementById('scoreBtn');
       const saveBtn = document.getElementById('saveScoreBtn');
-      const canSubmit = !!USER_TOKEN && !!currentUser;
+      const classChallengesEnabled = getCurrentClassContext()?.settings?.challenges_enabled !== false;
+      const canSubmit = !!USER_TOKEN && !!currentUser && classChallengesEnabled;
       if (label) {
-        label.textContent = canSubmit
-          ? `Signed in as ${currentUser.name || currentUser.email}`
-          : 'Sign in with a student account to submit challenge scores.';
+        if (USER_TOKEN && currentUser && !classChallengesEnabled) label.textContent = 'Challenges are disabled for this class.';
+        else if (canSubmit) label.textContent = `Signed in as ${currentUser.name || currentUser.email}`;
+        else if (TEACHER_TOKEN || ADMIN_TOKEN) label.textContent = 'Preview mode. Student scoring is unavailable.';
+        else label.textContent = 'Sign in with a student account to submit challenge scores.';
       }
       if (scoreBtn) scoreBtn.disabled = !canSubmit || !currentChallenge.text;
       if (saveBtn) saveBtn.disabled = !canSubmit || lastScore == null;
@@ -6062,8 +6141,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       try {
         const r = await fetch('/api/challenge/random', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ difficulty: parseInt(diff, 10) })
+          headers: challengeHeaders(true),
+          body: JSON.stringify({ difficulty: parseInt(diff, 10), classId: getCurrentClassContext()?.id || '' })
         });
         const j = await r.json().catch(() => ({}));
         if (j?.ok) {
@@ -6105,7 +6184,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       try {
         const r = await fetch('/api/challenge/score', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
+          headers: challengeHeaders(true),
           body: JSON.stringify(buildAiContext({ code: editor.getValue(), challenge: currentChallenge.text, points: currentChallenge.points }))
         });
         const j = await r.json().catch(() => ({}));
@@ -6138,8 +6217,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       try {
         const r = await fetch('/api/challenge/submit', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
-          body: JSON.stringify({ challengeId: currentChallenge.id, score: lastScore })
+          headers: challengeHeaders(true),
+          body: JSON.stringify({ challengeId: currentChallenge.id, score: lastScore, classId: getCurrentClassContext()?.id || '' })
         });
         const j = await r.json().catch(() => ({}));
         if (j?.ok) {

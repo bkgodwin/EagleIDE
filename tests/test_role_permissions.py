@@ -94,6 +94,25 @@ class RolePermissionTestCase(unittest.TestCase):
         )
         eagle._classes_cache = None
 
+    def _set_disabled_challenges_class(self):
+        eagle.USERS_FILE.write_text(json.dumps({"users": [{
+            "email": self.student_email,
+            "name": "Student",
+            "role": "student",
+            "class_id": "class-one",
+            "class_ids": ["class-one"],
+            "enabled": True,
+        }]}), encoding="utf-8")
+        eagle.CLASSES_FILE.write_text(json.dumps({"classes": [{
+            "id": "class-one",
+            "name": "Class One",
+            "teacher_email": self.teacher_email,
+            "students": [self.student_email],
+            "settings": {"challenges_enabled": False},
+        }]}), encoding="utf-8")
+        eagle._users_cache = None
+        eagle._classes_cache = None
+
     def test_admin_file_listing_repairs_missing_examples(self):
         response = self.http.get("/api/files/list", headers={"X-Admin-Token": self.admin_token})
 
@@ -195,6 +214,81 @@ class RolePermissionTestCase(unittest.TestCase):
         self.assertIn("disabled", student_error.lower())
         self.assertTrue(teacher_allowed)
         self.assertIsNone(teacher_error)
+
+    def test_class_challenge_switch_restricts_students_but_not_teachers(self):
+        self._set_disabled_challenges_class()
+        with patch("app._read_challenges", return_value=[{
+            "difficulty": 1, "points": 3, "text": "Print hello"
+        }]):
+            student = self.http.post(
+                "/api/challenge/random",
+                headers={"X-User-Token": self.student_token},
+                json={"classId": "class-one", "difficulty": 1},
+            )
+            teacher = self.http.post(
+                "/api/challenge/random",
+                headers={"X-Teacher-Token": self.teacher_token},
+                json={"classId": "class-one", "difficulty": 1},
+            )
+            anonymous = self.http.post(
+                "/api/challenge/random", json={"classId": "class-one", "difficulty": 1}
+            )
+
+        self.assertEqual(student.status_code, 403)
+        self.assertIn("disabled", student.get_json()["error"].lower())
+        self.assertEqual(teacher.status_code, 200)
+        self.assertEqual(anonymous.status_code, 403)
+
+    def test_teacher_can_update_class_challenge_access(self):
+        self._set_disabled_challenges_class()
+        response = self.http.post(
+            "/api/teacher/classes/settings",
+            headers={"X-Teacher-Token": self.teacher_token},
+            json={"classId": "class-one", "settings": {"challenges_enabled": True}},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["classData"]["settings"]["challenges_enabled"])
+        saved = json.loads(eagle.CLASSES_FILE.read_text(encoding="utf-8"))
+        self.assertTrue(saved["classes"][0]["settings"]["challenges_enabled"])
+
+    def test_teacher_can_update_class_student_ide_access(self):
+        self._set_disabled_challenges_class()
+        response = self.http.post(
+            "/api/teacher/classes/settings",
+            headers={"X-Teacher-Token": self.teacher_token},
+            json={"classId": "class-one", "settings": {"student_ide_access_enabled": False}},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        settings = response.get_json()["classData"]["settings"]
+        self.assertFalse(settings["student_ide_access_enabled"])
+        student = eagle._student_tokens[self.student_token]
+        allowed, error = eagle._student_ide_access_allowed(student, "class-one")
+        self.assertFalse(allowed)
+        self.assertIn("disabled", error.lower())
+
+    def test_student_ai_uses_selected_class_membership(self):
+        eagle.USERS_FILE.write_text(json.dumps({"users": [{
+            "email": self.student_email,
+            "name": "Student",
+            "role": "student",
+            "class_id": "class-one",
+            "class_ids": ["class-one", "class-two"],
+            "enabled": True,
+        }]}), encoding="utf-8")
+        eagle.CLASSES_FILE.write_text(json.dumps({"classes": [
+            {"id": "class-one", "settings": {"ai_enabled": False}},
+            {"id": "class-two", "settings": {"ai_enabled": True}},
+        ]}), encoding="utf-8")
+        eagle._users_cache = None
+        eagle._classes_cache = None
+        with patch("app._load_config", return_value={"ai_explainer_enabled": True}):
+            with eagle.app.test_request_context(headers={"X-User-Token": self.student_token}):
+                allowed, error = eagle._effective_ai_enabled(eagle.request, {"classId": "class-two"})
+
+        self.assertTrue(allowed)
+        self.assertIsNone(error)
 
     def test_admin_cannot_publish_teacher_stream(self):
         self._set_disabled_ai_class()

@@ -38,7 +38,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20260805-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260806-2">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -878,6 +878,10 @@
                 <button class="btn run" id="teacherChangePasswordBtn">Update Password</button>
                 <div id="teacherPasswordStatus" style="font-size:12px; margin-top:10px; color:var(--theme-text-dim);"></div>
               </div>
+              <section class="account-debug-setting" aria-labelledby="teacherShellDebugHeading">
+                <h4 id="teacherShellDebugHeading">Shell Debugging</h4>
+                <label class="admin-setting-toggle compact"><input type="checkbox" id="teacherShellDebugMessages"><span><strong>Show IDE system messages</strong><small>Show connection and run lifecycle messages such as Sending code and Process finished in this browser.</small></span></label>
+              </section>
             </div>
           </div>
         </div>
@@ -1027,20 +1031,31 @@
 
   <!-- Teacher Notebook Prompt Composer -->
   <div id="teacherNotebookPromptModal" class="modal glass-modal" style="display:none;">
-    <div class="modal-content" style="max-width:560px;">
+    <div class="modal-content teacher-notebook-prompt-composer">
       <h3>Send Notebook Prompt</h3>
       <p id="teacherNotebookPromptClassLabel" style="color:var(--theme-text-dim); font-size:13px; margin-top:-4px;"></p>
-      <label style="display:block; margin:8px 0 10px; font-size:13px; color:var(--theme-text-dim);">Assignment Title</label>
-      <input id="teacherNotebookPromptTitleInput" type="text" maxlength="80" placeholder="Notebook assignment title" style="width:100%; padding:10px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; margin-bottom:10px;">
-      <div class="teacher-notebook-response-type" role="radiogroup" aria-label="Notebook response type" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
-        <label><input type="radio" name="teacherNotebookResponseType" value="written" checked> Written response</label>
-        <label><input type="radio" name="teacherNotebookResponseType" value="code"> Code response</label>
+      <div class="teacher-notebook-composer-layout">
+        <div class="teacher-notebook-composer-main">
+          <label for="teacherNotebookPromptTitleInput">Assignment Title</label>
+          <input id="teacherNotebookPromptTitleInput" type="text" maxlength="80" placeholder="Notebook assignment title">
+          <div class="teacher-notebook-response-type" role="radiogroup" aria-label="Notebook response type">
+            <label><input type="radio" name="teacherNotebookResponseType" value="written" checked> Written response</label>
+            <label><input type="radio" name="teacherNotebookResponseType" value="code"> Code response</label>
+          </div>
+          <label for="teacherNotebookPromptMaxScoreInput">Maximum Score</label>
+          <input id="teacherNotebookPromptMaxScoreInput" type="number" min="0" max="1000" step="1" value="10">
+          <label for="teacherNotebookPromptInput">Prompt</label>
+          <textarea id="teacherNotebookPromptInput" placeholder="Type the reflection or notebook prompt for your selected class..."></textarea>
+        </div>
+        <aside class="teacher-notebook-skill-sidebar" aria-labelledby="teacherNotebookSkillsHeading">
+          <div class="teacher-notebook-skill-sidebar-heading">
+            <div><strong id="teacherNotebookSkillsHeading">Skill Tags</strong><span id="teacherNotebookSkillSummary">0 selected</span></div>
+            <div class="teacher-notebook-skill-actions"><button class="btn secondary" id="teacherNotebookSelectVisibleSkills" type="button">Select visible</button><button class="btn secondary" id="teacherNotebookClearSkills" type="button">Clear</button></div>
+          </div>
+          <input id="teacherNotebookSkillSearch" type="search" placeholder="Filter skills" autocomplete="off" aria-label="Filter skill tags">
+          <div id="teacherNotebookSkillTags" class="teacher-notebook-skill-picker"></div>
+        </aside>
       </div>
-      <label style="display:block; margin:8px 0 10px; font-size:13px; color:var(--theme-text-dim);">Maximum Score</label>
-      <input id="teacherNotebookPromptMaxScoreInput" type="number" min="0" max="1000" step="1" value="10" style="width:100%; padding:10px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; margin-bottom:10px;">
-      <label style="display:block; margin:8px 0 10px; font-size:13px; color:var(--theme-text-dim);">Skill Tags</label>
-      <div id="teacherNotebookSkillTags" class="teacher-notebook-skill-picker"></div>
-      <textarea id="teacherNotebookPromptInput" placeholder="Type the reflection or notebook prompt for your selected class..." style="width:100%; min-height:150px; resize:vertical; padding:10px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;"></textarea>
       <div id="teacherNotebookPromptStatus" style="font-size:12px; margin-top:8px; color:var(--theme-text-dim);"></div>
       <div class="modal-actions">
         <button class="btn secondary" id="teacherNotebookPromptCancelBtn">Cancel</button>
@@ -1389,6 +1404,7 @@
       <div class="admin-settings-workspace">
         <nav class="admin-settings-nav" aria-label="Settings sections">
           <button type="button" class="active" data-admin-settings-section="general">General</button>
+          <button type="button" data-admin-settings-section="account">Account</button>
           <button type="button" data-admin-settings-section="wiki">Wiki</button>
           <button type="button" data-admin-settings-section="network">Network Sim</button>
           <button type="button" data-admin-settings-section="ai">AI</button>
@@ -1403,6 +1419,10 @@
               <label><span>Page title</span><input type="text" id="pageTitleInput" placeholder="Eagles Web IDE (Python)"></label>
               <label><span>Top bar CSS color or gradient</span><input type="text" id="topBarColorInput" placeholder="linear-gradient(90deg,#a5c8f0,#7fb2eb)"></label>
             </div>
+          </section>
+          <section class="admin-settings-pane" data-admin-settings-pane="account">
+            <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Local preferences</span><h4>Account Settings</h4><p>Control administrator diagnostics for this browser.</p></div>
+            <label class="admin-setting-toggle"><input type="checkbox" id="adminShellDebugMessages"><span><strong>Show IDE system messages</strong><small>Show connection and run lifecycle messages such as Sending code and Process finished in the shell.</small></span></label>
           </section>
           <section class="admin-settings-pane" data-admin-settings-pane="network">
             <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Optional learning app</span><h4>Network Simulator</h4><p>Enable the separate topology, lab, packet inspection, wireless, VLAN, and cybersecurity workspace.</p></div>
@@ -1477,6 +1497,7 @@
           </section>
           <section class="admin-settings-pane" data-admin-settings-pane="access">
             <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Accounts</span><h4>Access</h4><p>Control self-registration and open the dedicated account-management workspace.</p></div>
+            <label class="admin-setting-toggle"><input type="checkbox" id="guestIdeAccessEnabledModal"><span><strong>Allow guest IDE access</strong><small>Unsigned visitors can open the editor and run code. The public wiki remains available when this is off.</small></span></label>
             <label class="admin-setting-toggle"><input type="checkbox" id="registrationEnabledModal"><span><strong>Allow student registration</strong><small>Students can create their own account from the sign-in dialog.</small></span></label>
             <div class="admin-wiki-settings-card"><div><strong>Users and teachers</strong><span>Create teacher accounts, review class memberships, reset passwords, and manage storage.</span></div><button class="btn secondary" id="settingsOpenUsersBtn" type="button">Open User Management</button></div>
           </section>
@@ -1559,16 +1580,16 @@
   <script src="/static/js/editor-init.js"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js"></script>
-  <script src="/static/js/app-core.js?v=20260805-1"></script>
+  <script src="/static/js/app-core.js?v=20260806-2"></script>
 <script src="/static/js/network-sim.js?v=20260714-18"></script>
 <script src="/static/js/network-sim-advanced.js?v=20260714-4"></script>
-  <script src="/static/js/wiki-reader.js?v=20260805-1"></script>
+  <script src="/static/js/wiki-reader.js?v=20260806-2"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260805-1"></script>
   <script src="/static/js/lesson-plans.js?v=20260805-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20260805-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20260806-2"></script>
   <script src="/static/js/classroom-signals.js"></script>
   <script src="/static/js/classroom-files.js?v=20250608"></script>
-  <script src="/static/js/student-notebook.js?v=20260714-7"></script>
+  <script src="/static/js/student-notebook.js?v=20260806-1"></script>
   <script src="/static/js/student-dashboard.js?v=20260714-6"></script>
 
 </body>

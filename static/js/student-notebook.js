@@ -28,6 +28,8 @@
   const boundCodeBlocks = new WeakSet();
   let colorPaletteOpen = false;
   let teacherNotebookSkills = [];
+  let teacherNotebookSkillQuery = '';
+  const teacherNotebookSelectedSkills = new Set();
   let wikiLinkRange = null;
 
   function ctx() {
@@ -905,6 +907,10 @@
       waitingForNotebookInput = true;
       setTimeout(() => shell.querySelector('input')?.focus(), 0);
     }
+    if (!ctx().showSystemShellMessages) {
+      s = s.replace(/^\[(?:Process started|Sending code|Run acknowledged|Process finished|Could not start run|Stopped)\][ \t]*\r?\n?/gm, '');
+    }
+    if (!s) return;
     let textNode = out.lastChild;
     if (!textNode || textNode.nodeType !== Node.TEXT_NODE) {
       textNode = document.createTextNode('');
@@ -948,7 +954,7 @@
     const codeId = block.dataset.codeId;
     const shell = block.querySelector('.student-notebook-inline-shell');
     shell.hidden = false;
-    shell.querySelector('.notebook-shell-output').textContent = '[Sending code]\n';
+    shell.querySelector('.notebook-shell-output').textContent = ctx().showSystemShellMessages ? '[Sending code]\n' : '';
     waitingForNotebookInput = false;
     runningCodeId = codeId;
     const ok = c.runNotebookCode?.({
@@ -1299,23 +1305,38 @@
   function renderTeacherNotebookSkillPicker(classId, selectedTags = []) {
     const box = document.getElementById('teacherNotebookSkillTags');
     if (!box) return;
-    const selected = new Set(selectedTags || []);
+    if (selectedTags.length) {
+      teacherNotebookSelectedSkills.clear();
+      selectedTags.forEach(tag => teacherNotebookSelectedSkills.add(tag));
+    }
+    const query = teacherNotebookSkillQuery.trim().toLocaleLowerCase();
     const skills = teacherNotebookSkills.filter(skill => {
-      const classIds = Array.isArray(skill.class_ids) ? skill.class_ids : [];
-      return classIds.includes(classId);
+      const haystack = `${skill.name || ''} ${skill.description || ''}`.toLocaleLowerCase();
+      return !query || haystack.includes(query);
     });
     box.innerHTML = skills.length ? skills.map(skill => `
       <label class="teacher-notebook-skill-option">
-        <input type="checkbox" class="teacher-notebook-skill-check" value="${escapeHtml(skill.name || '')}" ${selected.has(skill.name) ? 'checked' : ''}>
-        <span>#${escapeHtml(skill.name || '')}</span>
+        <input type="checkbox" class="teacher-notebook-skill-check" value="${escapeHtml(skill.name || '')}" ${teacherNotebookSelectedSkills.has(skill.name) ? 'checked' : ''}>
+        <span><strong>#${escapeHtml(skill.name || '')}</strong><small>${escapeHtml(skill.description || 'No description provided.')}</small></span>
       </label>
-    `).join('') : '<div class="teacher-notebook-skill-empty">No skill tags are attached to this class yet.</div>';
+    `).join('') : `<div class="teacher-notebook-skill-empty">${teacherNotebookSkills.length ? 'No skills match this filter.' : 'No skill tags are available. Create them from Dashboard > Skills.'}</div>`;
+    box.querySelectorAll('.teacher-notebook-skill-check').forEach(input => {
+      input.addEventListener('change', () => {
+        if (input.checked) teacherNotebookSelectedSkills.add(input.value);
+        else teacherNotebookSelectedSkills.delete(input.value);
+        updateTeacherNotebookSkillSummary();
+      });
+    });
+    updateTeacherNotebookSkillSummary();
+  }
+
+  function updateTeacherNotebookSkillSummary() {
+    const summary = document.getElementById('teacherNotebookSkillSummary');
+    if (summary) summary.textContent = `${teacherNotebookSelectedSkills.size} selected`;
   }
 
   function selectedTeacherNotebookSkillTags() {
-    return Array.from(document.querySelectorAll('.teacher-notebook-skill-check:checked'))
-      .map(input => input.value)
-      .filter(Boolean);
+    return Array.from(teacherNotebookSelectedSkills).filter(Boolean);
   }
 
   function openTeacherPromptModal() {
@@ -1330,6 +1351,10 @@
     document.getElementById('teacherNotebookPromptInput').value = '';
     const maxScoreInput = document.getElementById('teacherNotebookPromptMaxScoreInput');
     if (maxScoreInput) maxScoreInput.value = '10';
+    teacherNotebookSelectedSkills.clear();
+    teacherNotebookSkillQuery = '';
+    const skillSearch = document.getElementById('teacherNotebookSkillSearch');
+    if (skillSearch) skillSearch.value = '';
     renderTeacherNotebookSkillPicker(classId);
     loadTeacherNotebookSkills().then(() => renderTeacherNotebookSkillPicker(classId));
     const written = document.querySelector('input[name="teacherNotebookResponseType"][value="written"]');
@@ -1577,6 +1602,23 @@
       document.getElementById('teacherNotebookPromptModal').style.display = 'none';
     });
     document.getElementById('teacherNotebookPromptSubmitBtn')?.addEventListener('click', submitTeacherPrompt);
+    document.getElementById('teacherNotebookSkillSearch')?.addEventListener('input', event => {
+      teacherNotebookSkillQuery = event.target.value || '';
+      const c = ctx();
+      renderTeacherNotebookSkillPicker(c.currentTeacherClassId || c.teacherClasses?.[0]?.id || '');
+    });
+    document.getElementById('teacherNotebookSelectVisibleSkills')?.addEventListener('click', () => {
+      document.querySelectorAll('.teacher-notebook-skill-check').forEach(input => {
+        input.checked = true;
+        teacherNotebookSelectedSkills.add(input.value);
+      });
+      updateTeacherNotebookSkillSummary();
+    });
+    document.getElementById('teacherNotebookClearSkills')?.addEventListener('click', () => {
+      teacherNotebookSelectedSkills.clear();
+      document.querySelectorAll('.teacher-notebook-skill-check').forEach(input => { input.checked = false; });
+      updateTeacherNotebookSkillSummary();
+    });
     document.getElementById('teacherNotebookPromptModal')?.addEventListener('click', e => {
       if (e.target.id === 'teacherNotebookPromptModal') e.currentTarget.style.display = 'none';
     });
