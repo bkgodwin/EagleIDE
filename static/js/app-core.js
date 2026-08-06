@@ -33,6 +33,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let currentTeacher = null;
     let teacherClasses = [];
     let teacherSkills = [];
+    const selectedTeacherSkillIds = new Set();
     let editingSkillId = null;
     let currentTeacherClassId = null;
     let activeAssignmentsClassId = null;
@@ -1011,13 +1012,23 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     async function loadTeacherSkills() {
-      if (!TEACHER_TOKEN) { teacherSkills = []; editingSkillId = null; return []; }
+      if (!TEACHER_TOKEN) {
+        teacherSkills = [];
+        selectedTeacherSkillIds.clear();
+        editingSkillId = null;
+        return [];
+      }
       try {
         const res = await fetch('/api/teacher/skills', { headers: { 'X-Teacher-Token': TEACHER_TOKEN } });
         const j = await res.json().catch(() => ({}));
         teacherSkills = j?.skills || [];
+        const availableIds = new Set(teacherSkills.map(skill => skill.id));
+        [...selectedTeacherSkillIds].forEach(skillId => {
+          if (!availableIds.has(skillId)) selectedTeacherSkillIds.delete(skillId);
+        });
       } catch {
         teacherSkills = [];
+        selectedTeacherSkillIds.clear();
       }
       return teacherSkills;
     }
@@ -3308,6 +3319,16 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         });
         document.getElementById('saveSkillBtn')?.addEventListener('click', saveTeacherSkillFromForm);
         document.getElementById('clearSkillFormBtn')?.addEventListener('click', resetSkillForm);
+        document.getElementById('teacherSkillSelectAll')?.addEventListener('change', (event) => {
+          selectedTeacherSkillIds.clear();
+          if (event.target.checked) {
+            teacherSkills.forEach(skill => selectedTeacherSkillIds.add(skill.id));
+          }
+          renderTeacherSkillsPage();
+        });
+        document.getElementById('bulkSkillClassChecklist')?.addEventListener('change', syncTeacherSkillBulkControls);
+        document.getElementById('bulkAssignSkillsBtn')?.addEventListener('click', bulkAssignTeacherSkills);
+        document.getElementById('bulkDeleteSkillsBtn')?.addEventListener('click', bulkDeleteTeacherSkills);
       }
 
       // Switch to requested view
@@ -4194,6 +4215,108 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         .filter(Boolean);
     }
 
+    function selectedBulkSkillClassIds() {
+      return [...document.querySelectorAll('#bulkSkillClassChecklist .bulk-skill-class-check:checked')]
+        .map(cb => cb.value)
+        .filter(Boolean);
+    }
+
+    function renderBulkSkillClassChecklist() {
+      const wrap = document.getElementById('bulkSkillClassChecklist');
+      if (!wrap) return;
+      const selectedClassIds = new Set(selectedBulkSkillClassIds());
+      if (!teacherClasses.length) {
+        wrap.innerHTML = '<div class="teacher-skill-bulk-empty">Create a class first.</div>';
+        return;
+      }
+      wrap.innerHTML = teacherClasses.map(cls => `
+        <label class="choice-item">
+          <input type="checkbox" class="bulk-skill-class-check" value="${escapeHtml(cls.id)}" ${selectedClassIds.has(cls.id) ? 'checked' : ''}>
+          <span class="choice-text">${escapeHtml(cls.name)} <span>(${escapeHtml(cls.join_code)})</span></span>
+        </label>
+      `).join('');
+    }
+
+    function setTeacherSkillBulkStatus(message = '', isError = false) {
+      const status = document.getElementById('teacherSkillBulkStatus');
+      if (!status) return;
+      status.textContent = message;
+      status.classList.toggle('is-error', !!isError);
+    }
+
+    function syncTeacherSkillBulkControls() {
+      const selectedCount = selectedTeacherSkillIds.size;
+      const totalCount = teacherSkills.length;
+      const selectAll = document.getElementById('teacherSkillSelectAll');
+      if (selectAll) {
+        selectAll.disabled = totalCount === 0;
+        selectAll.checked = totalCount > 0 && selectedCount === totalCount;
+        selectAll.indeterminate = selectedCount > 0 && selectedCount < totalCount;
+      }
+      const summary = document.getElementById('teacherSkillSelectionSummary');
+      if (summary) summary.textContent = `${selectedCount} selected${totalCount ? ` of ${totalCount}` : ''}`;
+      const assignBtn = document.getElementById('bulkAssignSkillsBtn');
+      const deleteBtn = document.getElementById('bulkDeleteSkillsBtn');
+      if (assignBtn) assignBtn.disabled = selectedCount === 0 || selectedBulkSkillClassIds().length === 0;
+      if (deleteBtn) deleteBtn.disabled = selectedCount === 0;
+    }
+
+    async function bulkAssignTeacherSkills() {
+      const skillIds = [...selectedTeacherSkillIds];
+      const classIds = selectedBulkSkillClassIds();
+      if (!skillIds.length || !classIds.length) return;
+      setTeacherSkillBulkStatus('Assigning selected skill tags...');
+      try {
+        const res = await fetch('/api/teacher/skills/bulk-assign', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Teacher-Token': TEACHER_TOKEN },
+          body: JSON.stringify({ skillIds, classIds })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!data?.ok) {
+          setTeacherSkillBulkStatus(data?.error || 'Failed to assign selected skills.', true);
+          return;
+        }
+        selectedTeacherSkillIds.clear();
+        await loadTeacherSkills();
+        renderTeacherSkillsPage();
+        setTeacherSkillBulkStatus(
+          data.updatedCount
+            ? `Assigned ${skillIds.length} skill tag${skillIds.length === 1 ? '' : 's'} to the selected classes.`
+            : 'Those skill tags were already assigned to the selected classes.'
+        );
+      } catch {
+        setTeacherSkillBulkStatus('Could not reach the server. Try again.', true);
+      }
+    }
+
+    async function bulkDeleteTeacherSkills() {
+      const skillIds = [...selectedTeacherSkillIds];
+      if (!skillIds.length) return;
+      const noun = skillIds.length === 1 ? 'skill tag' : 'skill tags';
+      if (!confirm(`Delete ${skillIds.length} selected ${noun}? This cannot be undone.`)) return;
+      setTeacherSkillBulkStatus(`Deleting ${skillIds.length} ${noun}...`);
+      try {
+        const res = await fetch('/api/teacher/skills/bulk-delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Teacher-Token': TEACHER_TOKEN },
+          body: JSON.stringify({ skillIds })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!data?.ok) {
+          setTeacherSkillBulkStatus(data?.error || 'Failed to delete selected skills.', true);
+          return;
+        }
+        if (editingSkillId && selectedTeacherSkillIds.has(editingSkillId)) resetSkillForm();
+        selectedTeacherSkillIds.clear();
+        await loadTeacherSkills();
+        renderTeacherSkillsPage();
+        setTeacherSkillBulkStatus(`Deleted ${data.deletedCount || skillIds.length} ${noun}.`);
+      } catch {
+        setTeacherSkillBulkStatus('Could not reach the server. Try again.', true);
+      }
+    }
+
     function resetSkillForm() {
       editingSkillId = null;
       const saveBtn = document.getElementById('saveSkillBtn');
@@ -4241,13 +4364,18 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const editingSkill = editingSkillId ? teacherSkills.find(s => s.id === editingSkillId) : null;
       const selectedClassIds = editingSkill?.class_ids || [];
       renderSkillClassChecklist(selectedClassIds);
+      renderBulkSkillClassChecklist();
       if (!teacherSkills.length) {
         list.innerHTML = '<div style="color:#888; font-size:12px;">No skill tags created yet.</div>';
+        syncTeacherSkillBulkControls();
         return;
       }
       list.innerHTML = teacherSkills.map(skill => `
-        <div class="skill-card" data-skill-id="${escapeHtml(skill.id)}" draggable="true">
-          <div style="display:flex; align-items:center;">
+        <div class="skill-card ${selectedTeacherSkillIds.has(skill.id) ? 'is-selected' : ''}" data-skill-id="${escapeHtml(skill.id)}" draggable="true">
+          <div class="skill-card-heading">
+            <label class="skill-card-selector" title="Select ${escapeHtml(skill.name || 'skill tag')}">
+              <input type="checkbox" class="skill-select-check" data-id="${escapeHtml(skill.id)}" ${selectedTeacherSkillIds.has(skill.id) ? 'checked' : ''} aria-label="Select ${escapeHtml(skill.name || 'skill tag')}">
+            </label>
             <span class="skill-card-handle" title="Drag to reorder">↕</span>
             <h4 style="margin:0;">${escapeHtml(skill.name || '')}</h4>
           </div>
@@ -4300,6 +4428,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           setAssignmentStatus('Skill order updated');
         });
       });
+      list.querySelectorAll('.skill-select-check').forEach(checkbox => checkbox.addEventListener('change', () => {
+        const skillId = checkbox.dataset.id;
+        if (checkbox.checked) selectedTeacherSkillIds.add(skillId);
+        else selectedTeacherSkillIds.delete(skillId);
+        checkbox.closest('.skill-card')?.classList.toggle('is-selected', checkbox.checked);
+        syncTeacherSkillBulkControls();
+      }));
       list.querySelectorAll('.skill-edit-btn').forEach(btn => btn.addEventListener('click', () => editSkill(btn.dataset.id)));
       list.querySelectorAll('.skill-delete-btn').forEach(btn => btn.addEventListener('click', async () => {
         if (!confirm('Delete this skill tag?')) return;
@@ -4314,6 +4449,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         resetSkillForm();
         renderTeacherSkillsPage();
       }));
+      syncTeacherSkillBulkControls();
     }
 
     async function saveTeacherSkillFromForm() {

@@ -147,6 +147,96 @@ class NotebookTestCase(unittest.TestCase):
         saved = json.loads(self.skills_file.read_text(encoding="utf-8"))
         self.assertIn(self.teacher_email, saved["default_skills_seeded_for"])
 
+    def test_teacher_can_bulk_assign_skills_to_owned_classes(self):
+        headers = {"X-Teacher-Token": self.teacher_token}
+        skills = self.client.get("/api/teacher/skills", headers=headers).get_json()["skills"]
+        selected_ids = [skills[0]["id"], skills[1]["id"]]
+        classes = json.loads(self.classes_file.read_text(encoding="utf-8"))
+        classes["classes"].extend([
+            {
+                "id": "class-notebook-two",
+                "name": "Notebook Class Two",
+                "teacher_email": self.teacher_email,
+                "join_code": "DEF456",
+                "settings": {},
+                "students": [],
+                "created_at": "2026-08-06 00:00:00",
+            },
+            {
+                "id": "foreign-class",
+                "name": "Another Teacher's Class",
+                "teacher_email": "other@example.com",
+                "join_code": "NOPE12",
+                "settings": {},
+                "students": [],
+                "created_at": "2026-08-06 00:00:00",
+            },
+        ])
+        self.classes_file.write_text(json.dumps(classes), encoding="utf-8")
+        eagle._classes_cache = None
+
+        response = self.client.post(
+            "/api/teacher/skills/bulk-assign",
+            headers=headers,
+            json={"skillIds": selected_ids, "classIds": [self.class_id, "class-notebook-two"]},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["updatedCount"], 2)
+        refreshed = self.client.get("/api/teacher/skills", headers=headers).get_json()["skills"]
+        selected = {skill["id"]: skill for skill in refreshed if skill["id"] in selected_ids}
+        self.assertEqual(set(selected[selected_ids[0]]["class_ids"]), {self.class_id, "class-notebook-two"})
+        self.assertEqual(set(selected[selected_ids[1]]["class_ids"]), {self.class_id, "class-notebook-two"})
+
+        rejected = self.client.post(
+            "/api/teacher/skills/bulk-assign",
+            headers=headers,
+            json={"skillIds": selected_ids, "classIds": ["foreign-class"]},
+        )
+        self.assertEqual(rejected.status_code, 404)
+        after_rejection = self.client.get("/api/teacher/skills", headers=headers).get_json()["skills"]
+        selected_after_rejection = {skill["id"]: skill for skill in after_rejection if skill["id"] in selected_ids}
+        self.assertNotIn("foreign-class", selected_after_rejection[selected_ids[0]]["class_ids"])
+        self.assertNotIn("foreign-class", selected_after_rejection[selected_ids[1]]["class_ids"])
+
+    def test_teacher_bulk_delete_is_atomic_and_scoped_to_owned_skills(self):
+        headers = {"X-Teacher-Token": self.teacher_token}
+        skills = self.client.get("/api/teacher/skills", headers=headers).get_json()["skills"]
+        selected_ids = [skills[0]["id"], skills[1]["id"]]
+        skills_data = json.loads(self.skills_file.read_text(encoding="utf-8"))
+        skills_data["skills"].append({
+            "id": "foreign-skill",
+            "teacher_email": "other@example.com",
+            "name": "Foreign Skill",
+            "description": "Owned by another teacher.",
+            "class_ids": [],
+            "order": 0,
+            "created_at": "2026-08-06 00:00:00",
+            "updated_at": "2026-08-06 00:00:00",
+        })
+        self.skills_file.write_text(json.dumps(skills_data), encoding="utf-8")
+        eagle._skills_cache = None
+
+        rejected = self.client.post(
+            "/api/teacher/skills/bulk-delete",
+            headers=headers,
+            json={"skillIds": [selected_ids[0], "foreign-skill"]},
+        )
+        self.assertEqual(rejected.status_code, 404)
+        after_rejection = json.loads(self.skills_file.read_text(encoding="utf-8"))["skills"]
+        self.assertTrue({selected_ids[0], "foreign-skill"}.issubset({skill["id"] for skill in after_rejection}))
+
+        response = self.client.post(
+            "/api/teacher/skills/bulk-delete",
+            headers=headers,
+            json={"skillIds": selected_ids},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["deletedCount"], 2)
+        remaining = json.loads(self.skills_file.read_text(encoding="utf-8"))["skills"]
+        remaining_ids = {skill["id"] for skill in remaining}
+        self.assertTrue(set(selected_ids).isdisjoint(remaining_ids))
+        self.assertIn("foreign-skill", remaining_ids)
+
     def _create_prompt(
         self,
         prompt="Reflect on today's loop practice.",
