@@ -251,6 +251,17 @@ SCREEN LAYOUT AND SCROLLING
 - The workspace stays fitted to the visible browser area; the browser page itself does not scroll.
 - The editor side and the shell/resources side scroll independently.
 - Shell output remains inside its panel, scrolls automatically to the newest output, and can still be scrolled manually to review earlier output.
+- Connection and run lifecycle messages are hidden by default so the shell focuses
+  on program output, input, warnings, and errors. Teachers can restore those
+  diagnostics from Dashboard > Account; admins use Settings > Account. This is a
+  browser-local debugging preference.
+- Admins can allow or block unsigned visitors from opening the IDE under Settings
+  > Access. Disabling guest IDE access leaves the public wiki available and also
+  rejects anonymous execution requests at the server.
+- Teachers can allow or block student IDE access for each class from Dashboard >
+  Classes > Classroom features. The selected class controls navigation, program
+  execution, workspace file APIs, and starting HTML previews; teacher and admin
+  access is unchanged.
 - On tablets and phones, use the bottom Editor, Shell, and Resources buttons to switch panels.
 - Touch scrolling and drag handles use larger touch targets on touch-capable devices.
 - When an on-screen keyboard changes the visible browser height, the workspace resizes to keep the active panel and shell controls on screen.
@@ -495,6 +506,9 @@ CODING CHALLENGES
 - Submit solution for AI grading while signed in
 - Each account keeps one latest score per challenge
 - Leaderboard totals all challenge scores for every account
+- Teachers can enable or disable student challenge access per class from the
+  Classes dashboard. The switch hides the Challenge tab and is enforced by the
+  challenge APIs; teachers and admins retain preview access.
 
 --------------------------------------------------
 AI ASSISTANT (TUTOR)
@@ -540,6 +554,12 @@ FOR TEACHERS
 8. Open submitted files directly from the assignment owner workspace
 9. Grade from the left sidebar with auto-saving score changes or AI grading
 10. Review alphabetized score tables and download scores as CSV
+
+Notebook assignments use the same teacher-owned skill catalog shown in Dashboard
+> Skills. The prompt composer includes a searchable, scrollable skill sidebar
+with each tag's description plus Select visible and Clear actions. Selecting a
+skill for a notebook assignment attaches it to that class automatically so the
+tag, description, and notebook scores appear consistently in mastery reports.
 
 ================================================================================
                             8. ADMIN PANEL
