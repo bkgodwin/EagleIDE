@@ -80,6 +80,21 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertEqual(page_version.group(1), admin_version.group(1))
         self.assertEqual(page_version.group(1), app_core_version.group(1))
 
+    def test_teacher_skill_dashboard_has_bulk_selection_controls(self):
+        ids = set(self.parser.ids)
+        self.assertTrue({
+            "teacherSkillSelectAll",
+            "teacherSkillSelectionSummary",
+            "bulkSkillClassChecklist",
+            "bulkAssignSkillsBtn",
+            "bulkDeleteSkillsBtn",
+            "teacherSkillBulkStatus",
+        }.issubset(ids))
+        app_core = (BASE_DIR / "static" / "js" / "app-core.js").read_text(encoding="utf-8")
+        self.assertIn("selectedTeacherSkillIds", app_core)
+        self.assertIn("/api/teacher/skills/bulk-assign", app_core)
+        self.assertIn("/api/teacher/skills/bulk-delete", app_core)
+
     def test_attribute_ampersands_are_html_escaped(self):
         unescaped = re.findall(r'(?:href|src)="[^"]*&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9A-Fa-f]+);)', self.raw)
         self.assertEqual(unescaped, [])

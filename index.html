@@ -38,7 +38,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20260806-2">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260806-6">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -762,7 +762,7 @@
             </div>
           </div>
           <div class="teacher-dash-scroll">
-            <div style="display:grid; grid-template-columns:minmax(260px, 1fr) minmax(300px, 1fr); gap:12px;">
+            <div class="teacher-skills-layout">
               <div class="teacher-panel-card">
                 <h4>Create Skill Tag</h4>
                 <label style="font-size:12px;">Skill Name</label>
@@ -776,8 +776,26 @@
                   <button class="btn secondary" id="clearSkillFormBtn">Clear</button>
                 </div>
               </div>
-              <div>
-                <div style="font-size:12px; color:var(--theme-text-dim); margin-bottom:6px;">Existing skill tags</div>
+              <div class="teacher-skill-library">
+                <div class="teacher-skill-library-heading">
+                  <div>
+                    <strong>Existing skill tags</strong>
+                    <span id="teacherSkillSelectionSummary" aria-live="polite">0 selected</span>
+                  </div>
+                  <label class="teacher-skill-select-all"><input id="teacherSkillSelectAll" type="checkbox"> Select all</label>
+                </div>
+                <div class="teacher-skill-bulk-toolbar" aria-label="Bulk skill actions">
+                  <div>
+                    <span class="teacher-skill-bulk-label">Assign selected tags to classes</span>
+                    <div id="bulkSkillClassChecklist" class="choice-list teacher-skill-bulk-classes"></div>
+                    <small>New classes are added without removing existing assignments.</small>
+                  </div>
+                  <div class="teacher-skill-bulk-buttons">
+                    <button class="btn run" id="bulkAssignSkillsBtn" type="button" disabled>Assign selected</button>
+                    <button class="btn stop" id="bulkDeleteSkillsBtn" type="button" disabled>Delete selected</button>
+                  </div>
+                  <div id="teacherSkillBulkStatus" class="teacher-skill-bulk-status" aria-live="polite"></div>
+                </div>
                 <div id="teacherSkillList" class="skill-list-grid"></div>
               </div>
             </div>
@@ -1580,13 +1598,13 @@
   <script src="/static/js/editor-init.js"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js"></script>
-  <script src="/static/js/app-core.js?v=20260806-2"></script>
+  <script src="/static/js/app-core.js?v=20260806-6"></script>
 <script src="/static/js/network-sim.js?v=20260714-18"></script>
 <script src="/static/js/network-sim-advanced.js?v=20260714-4"></script>
-  <script src="/static/js/wiki-reader.js?v=20260806-2"></script>
+  <script src="/static/js/wiki-reader.js?v=20260806-6"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260805-1"></script>
   <script src="/static/js/lesson-plans.js?v=20260805-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20260806-2"></script>
+  <script src="/static/js/wiki-admin.js?v=20260806-6"></script>
   <script src="/static/js/classroom-signals.js"></script>
   <script src="/static/js/classroom-files.js?v=20250608"></script>
   <script src="/static/js/student-notebook.js?v=20260806-1"></script>
