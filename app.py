@@ -4075,6 +4075,90 @@ def teacher_delete_skill():
     return jsonify(ok=True)
 
 
+@app.post("/api/teacher/skills/bulk-assign")
+def teacher_bulk_assign_skills():
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    teacher_email = (teacher.get("email") or "").strip().lower()
+    payload = request.get_json(silent=True) or {}
+    raw_skill_ids = payload.get("skillIds")
+    raw_class_ids = payload.get("classIds")
+    if not isinstance(raw_skill_ids, list) or not isinstance(raw_class_ids, list):
+        return jsonify(ok=False, error="skillIds and classIds must be lists"), 400
+    skill_ids = list(dict.fromkeys(str(value or "").strip() for value in raw_skill_ids if str(value or "").strip()))
+    class_ids = list(dict.fromkeys(str(value or "").strip() for value in raw_class_ids if str(value or "").strip()))
+    if not skill_ids:
+        return jsonify(ok=False, error="Select at least one skill"), 400
+    if not class_ids:
+        return jsonify(ok=False, error="Select at least one class"), 400
+    if len(skill_ids) > 500 or len(class_ids) > 100:
+        return jsonify(ok=False, error="Too many skills or classes selected"), 400
+
+    valid_class_ids = {str(cls.get("id") or "") for cls in _get_teacher_classes(teacher_email)}
+    if any(class_id not in valid_class_ids for class_id in class_ids):
+        return jsonify(ok=False, error="One or more classes were not found"), 404
+
+    skills_data = _load_skills()
+    teacher_skill_map = {
+        str(row.get("id") or ""): row
+        for row in skills_data.get("skills", [])
+        if (row.get("teacher_email") or "").lower() == teacher_email
+    }
+    if any(skill_id not in teacher_skill_map for skill_id in skill_ids):
+        return jsonify(ok=False, error="One or more skills were not found"), 404
+
+    now = _current_timestamp()
+    updated_count = 0
+    for skill_id in skill_ids:
+        row = teacher_skill_map[skill_id]
+        existing_ids = list(row.get("class_ids") or [])
+        merged_ids = existing_ids + [class_id for class_id in class_ids if class_id not in existing_ids]
+        if merged_ids != existing_ids:
+            row["class_ids"] = merged_ids
+            row["updated_at"] = now
+            updated_count += 1
+    if updated_count:
+        _save_skills(skills_data)
+    return jsonify(ok=True, selectedCount=len(skill_ids), updatedCount=updated_count)
+
+
+@app.post("/api/teacher/skills/bulk-delete")
+def teacher_bulk_delete_skills():
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    teacher_email = (teacher.get("email") or "").strip().lower()
+    payload = request.get_json(silent=True) or {}
+    raw_skill_ids = payload.get("skillIds")
+    if not isinstance(raw_skill_ids, list):
+        return jsonify(ok=False, error="skillIds must be a list"), 400
+    skill_ids = list(dict.fromkeys(str(value or "").strip() for value in raw_skill_ids if str(value or "").strip()))
+    if not skill_ids:
+        return jsonify(ok=False, error="Select at least one skill"), 400
+    if len(skill_ids) > 500:
+        return jsonify(ok=False, error="Too many skills selected"), 400
+
+    skills_data = _load_skills()
+    teacher_skill_ids = {
+        str(row.get("id") or "")
+        for row in skills_data.get("skills", [])
+        if (row.get("teacher_email") or "").lower() == teacher_email
+    }
+    if any(skill_id not in teacher_skill_ids for skill_id in skill_ids):
+        return jsonify(ok=False, error="One or more skills were not found"), 404
+    selected_ids = set(skill_ids)
+    skills_data["skills"] = [
+        row for row in skills_data.get("skills", [])
+        if not (
+            (row.get("teacher_email") or "").lower() == teacher_email
+            and str(row.get("id") or "") in selected_ids
+        )
+    ]
+    _save_skills(skills_data)
+    return jsonify(ok=True, deletedCount=len(skill_ids))
+
+
 @app.post("/api/teacher/skills/reorder")
 def teacher_reorder_skills():
     teacher = _require_teacher(request)
