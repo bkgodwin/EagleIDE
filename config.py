@@ -55,6 +55,10 @@ DEFAULT_CONFIG = {
     # Registration toggle
     "registration_enabled": True,
 
+    # Anonymous visitors may browse the wiki regardless of this setting. This
+    # switch controls access to the code editor and execution runtime.
+    "guest_ide_access_enabled": True,
+
     # Optional network simulator. Teachers can further restrict enabled access
     # class-by-class; admins may privately preview it while this is disabled.
     "network_sim_enabled": False,

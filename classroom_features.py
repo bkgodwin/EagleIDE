@@ -24,6 +24,8 @@ MAX_OPEN_QUESTIONS_PER_STUDENT = 3
 SHARED_DIR = "Shared"
 
 DEFAULT_CLASSROOM_SETTINGS: dict[str, bool] = {
+    "challenges_enabled": True,
+    "student_ide_access_enabled": True,
     "raise_hand_enabled": True,
     "student_send_to_teacher_enabled": True,
     "student_peer_sharing_enabled": False,

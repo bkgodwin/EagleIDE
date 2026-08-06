@@ -53,6 +53,20 @@
   function isStudent() { return !!context().USER_TOKEN; }
   function isAdmin() { return !!context().ADMIN_TOKEN; }
   function isSignedIn() { return isTeacher() || isStudent() || isAdmin(); }
+  function canAccessIDE() { return context().canAccessIDE !== false; }
+
+  function ideAccessMessage() {
+    if (!isSignedIn()) return 'Guest IDE access is disabled. Sign in to use the editor.';
+    if (isStudent()) return 'IDE access is disabled for the selected class.';
+    return 'IDE access is unavailable.';
+  }
+
+  function syncIdeAccessControls() {
+    const allowed = canAccessIDE();
+    $('ideViewBtn').hidden = !allowed;
+    $('wikiHeroIdeBtn').hidden = !allowed;
+    document.querySelectorAll('.wiki-code-open-ide').forEach(button => { button.hidden = !allowed; });
+  }
 
   function availableClasses() {
     const ctx = context();
@@ -121,8 +135,15 @@
   }
 
   function showIDE(push = true) {
+    if (!canAccessIDE()) {
+      showHome({ push: false }).catch(() => {});
+      history.replaceState({ eagleView: 'wiki' }, '', '/');
+      showStatus(ideAccessMessage(), true);
+      return false;
+    }
     setView('ide', { push });
     try { window.eagleEditor?.refresh?.(); } catch {}
+    return true;
   }
 
   function readWikiReturn() {
@@ -1349,8 +1370,14 @@
       if (info) {
         const open = document.createElement('button');
         open.type = 'button';
+        open.className = 'wiki-code-open-ide';
         open.textContent = 'Open in IDE';
+        open.hidden = !canAccessIDE();
         open.addEventListener('click', async () => {
+          if (!canAccessIDE()) {
+            showStatus(ideAccessMessage(), true);
+            return;
+          }
           const wikiReturn = captureWikiReturn(node);
           const fileName = String(meta.filename || `${node.slug || 'wiki'}-example-${index + 1}${info.extension}`)
             .split(/[\\/]/).pop().replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
@@ -1884,10 +1911,17 @@
 
   function refreshContext() {
     const ctx = context();
+    syncIdeAccessControls();
+    if (!canAccessIDE() && !document.body.classList.contains('wiki-mode') && !document.body.classList.contains('network-mode')) {
+      showHome({ push: false }).catch(() => {});
+      history.replaceState({ eagleView: 'wiki' }, '', '/');
+      showStatus(ideAccessMessage(), true);
+    }
     const signature = JSON.stringify({
       user: ctx.currentUser?.email || '', teacher: ctx.currentTeacher?.email || '',
       admin: !!ctx.ADMIN_TOKEN, classes: availableClasses().map(cls => cls.id),
       selected: defaultClassId(),
+      ideAccess: canAccessIDE(),
     });
     $('adminWikiBtn').style.display = isAdmin() ? '' : 'none';
     $('wikiArticleFeatureBtn').hidden = !isTeacher();

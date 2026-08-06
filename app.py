@@ -253,6 +253,7 @@ except Exception:
         "page_title": "Eagle IDE (Python + JavaScript + HTML + CSS)",
         "topbar_color": "linear-gradient(90deg,#a5c8f0,#7fb2eb)",
         "registration_enabled": True,
+        "guest_ide_access_enabled": True,
         "network_sim_enabled": False,
         "python_memory_limit_mb": 750,
         "python_max_concurrent_runs": 4,
@@ -468,6 +469,8 @@ def _configured_ai_timeout(cfg: Optional[Dict[str, Any]] = None) -> int:
 
 def _normalize_config_partial(partial: Dict[str, Any]) -> Dict[str, Any]:
     normalized = dict(partial or {})
+    if "guest_ide_access_enabled" in normalized:
+        normalized["guest_ide_access_enabled"] = bool(normalized["guest_ide_access_enabled"])
     if "ai_ollama_url" in normalized:
         normalized["ai_ollama_url"] = _normalize_ollama_url(normalized["ai_ollama_url"])
     if "ai_model" in normalized:
@@ -1627,6 +1630,51 @@ def _require_user_for_files(req) -> Optional[dict]:
         return {"email": ADMIN_ACCOUNT_EMAIL, "name": "Admin", "role": "admin"}
     return None
 
+
+def _student_ide_access_allowed(student: Optional[dict], class_id: str = "") -> tuple[bool, Optional[str]]:
+    """Resolve the IDE switch for a student's selected class.
+
+    Students who have not joined a class retain their personal IDE. Once a
+    student belongs to classes, an explicitly selected class must be one of
+    those memberships and its teacher-controlled setting applies.
+    """
+    if not student:
+        return False, "Student session required"
+    student_record = student
+    selected_class_id = str(class_id or "").strip()
+    if selected_class_id and not _user_in_class(student_record, selected_class_id):
+        return False, "IDE class not found"
+    if not selected_class_id:
+        selected_class_id = str(student.get("class_id") or student_record.get("class_id") or "").strip()
+    if not selected_class_id:
+        class_ids = _get_user_class_ids(student_record)
+        selected_class_id = next((value for value in class_ids if value), "")
+    if not selected_class_id:
+        return True, None
+    cls = _find_class_by_id(selected_class_id)
+    if not cls or not _user_in_class(student_record, selected_class_id):
+        return False, "IDE class not found"
+    if not merge_class_settings(cls.get("settings", {})).get("student_ide_access_enabled", True):
+        return False, "IDE access is disabled for this class"
+    return True, None
+
+
+@app.before_request
+def _enforce_student_ide_http_access():
+    """Protect workspace APIs even when a student bypasses the browser UI."""
+    if not (
+        request.path.startswith("/api/files/")
+        or request.path == "/api/html-runtime/start"
+    ):
+        return None
+    student = _require_user(request)
+    if not student:
+        return None
+    allowed, error = _student_ide_access_allowed(student, request.headers.get("X-Class-ID", ""))
+    if not allowed:
+        return jsonify(ok=False, error=error or "IDE access unavailable"), 403
+    return None
+
 def _get_user_storage_used(user_dir: Path) -> int:
     """Return total bytes used in user directory"""
     total = 0
@@ -1832,9 +1880,12 @@ def _effective_ai_enabled(req, payload: Optional[dict] = None) -> tuple[bool, Op
         return False, "AI features disabled by admin"
     user = _require_user(req)
     if user:
-        class_id = user.get("class_id") or (_find_user(user.get("email", "")) or {}).get("class_id")
+        user_record = _find_user(user.get("email", "")) or user
+        class_id = str((payload or {}).get("classId") or user.get("class_id") or "").strip()
         if not class_id:
             return False, "Join a class to use AI features"
+        if not _user_in_class(user_record, class_id):
+            return False, "Class not found"
         cls = _find_class_by_id(class_id)
         if not cls:
             return False, "Class not found"
@@ -1851,6 +1902,26 @@ def _effective_ai_enabled(req, payload: Optional[dict] = None) -> tuple[bool, Op
         # The class switch controls student access only. Teachers retain AI
         # tools for instruction, grading, and reporting for their own classes.
         return True, None
+    return True, None
+
+
+def _effective_challenges_enabled(req, payload: Optional[dict] = None) -> tuple[bool, Optional[str]]:
+    if _require_admin(req) or _require_teacher(req):
+        return True, None
+    user = _require_user(req)
+    if not user:
+        return False, "Sign in to use challenges"
+    user_record = _find_user(user.get("email", "")) or user
+    class_id = str((payload or {}).get("classId") or user.get("class_id") or "").strip()
+    if not class_id:
+        return False, "Join a class to use challenges"
+    if not _user_in_class(user_record, class_id):
+        return False, "Challenge class not found"
+    cls = _find_class_by_id(class_id)
+    if not cls:
+        return False, "Challenge class not found"
+    if not merge_class_settings(cls.get("settings", {})).get("challenges_enabled", True):
+        return False, "Challenges are disabled for this class"
     return True, None
 
 # -------------------------
@@ -3394,7 +3465,7 @@ def teacher_create_notebook_prompt():
     title = _sanitize_notebook_prompt_title(data.get("title") or prompt_text[:MAX_NOTEBOOK_PROMPT_TITLE_CHARS])
     response_type = _sanitize_notebook_response_type(data.get("responseType"))
     max_score = _sanitize_notebook_max_score(data.get("maxScore"))
-    skill_tags = _normalize_skill_tags(data.get("skillTags") or [])
+    requested_skill_tags = _normalize_skill_tags(data.get("skillTags") or [])
     if not class_id:
         return jsonify(ok=False, error="classId is required"), 400
     if not prompt_text:
@@ -3403,6 +3474,30 @@ def teacher_create_notebook_prompt():
     cls = _teacher_owns_class(teacher_email, class_id)
     if not cls:
         return jsonify(ok=False, error="Class not found"), 404
+    _ensure_default_teacher_skills(teacher_email)
+    skills_data = _load_skills()
+    teacher_skill_lookup = {
+        str(skill.get("name") or "").casefold(): skill
+        for skill in skills_data.get("skills", [])
+        if (skill.get("teacher_email") or "").lower() == teacher_email and skill.get("name")
+    }
+    skill_tags = []
+    skills_changed = False
+    for requested_tag in requested_skill_tags:
+        skill = teacher_skill_lookup.get(requested_tag.casefold())
+        if not skill:
+            return jsonify(ok=False, error=f"Unknown skill tag: {requested_tag}"), 400
+        canonical_name = str(skill.get("name") or "")
+        if canonical_name and canonical_name not in skill_tags:
+            skill_tags.append(canonical_name)
+        class_ids = list(skill.get("class_ids") or [])
+        if class_id not in class_ids:
+            class_ids.append(class_id)
+            skill["class_ids"] = class_ids
+            skill["updated_at"] = _current_timestamp()
+            skills_changed = True
+    if skills_changed:
+        _save_skills(skills_data)
     prompt = {
         "id": uuid.uuid4().hex,
         "classId": class_id,
@@ -3723,6 +3818,8 @@ def teacher_update_class_settings():
                         next_tags.append(cleaned[:MAX_SKILL_NAME_CHARS])
                 current["skill_tags"] = next_tags
             for classroom_key in (
+                "challenges_enabled",
+                "student_ide_access_enabled",
                 "raise_hand_enabled",
                 "student_send_to_teacher_enabled",
                 "student_peer_sharing_enabled",
@@ -4593,6 +4690,9 @@ def _build_challenge_leaderboard() -> list[dict]:
 @app.post("/api/challenge/random")
 def challenge_random():
     data = request.get_json(silent=True) or {}
+    allowed, access_error = _effective_challenges_enabled(request, data)
+    if not allowed:
+        return jsonify(ok=False, error=access_error or "Challenges unavailable"), 403
     try:
         target = int(data.get("difficulty", 1))
     except (ValueError, TypeError):
@@ -4611,6 +4711,9 @@ def challenge_score():
         return jsonify(ok=False, error="Student login required"), 401
 
     data = request.get_json(silent=True) or {}
+    challenges_allowed, challenges_error = _effective_challenges_enabled(request, data)
+    if not challenges_allowed:
+        return jsonify(ok=False, error=challenges_error or "Challenges unavailable"), 403
     cfg = _load_config()
     allowed, error = _effective_ai_enabled(request, data)
     if not allowed:
@@ -4666,6 +4769,9 @@ def challenge_submit():
         return jsonify(ok=False, error="Student login required"), 401
 
     data = request.get_json(silent=True) or {}
+    challenges_allowed, challenges_error = _effective_challenges_enabled(request, data)
+    if not challenges_allowed:
+        return jsonify(ok=False, error=challenges_error or "Challenges unavailable"), 403
     challenge_id = (data.get("challengeId") or "").strip()
     try:
         score = int(data.get("score", 0))
@@ -4705,6 +4811,9 @@ def challenge_submit():
 
 @app.get("/api/challenge/leaderboard")
 def challenge_leaderboard():
+    allowed, access_error = _effective_challenges_enabled(request, request.args)
+    if not allowed:
+        return jsonify(ok=False, error=access_error or "Challenges unavailable"), 403
     with _lb_lock:
         leaderboard = _build_challenge_leaderboard()
     return jsonify(ok=True, leaderboard=leaderboard, top=leaderboard)
@@ -6070,6 +6179,11 @@ def _resolve_execution_context(payload: dict, sid: str) -> tuple[Optional[dict],
         role = "admin"
 
     if info:
+        if role == "student":
+            selected_class_id = str(payload.get("classId") or payload.get("class_id") or "").strip()
+            allowed, access_error = _student_ide_access_allowed(info, selected_class_id)
+            if not allowed:
+                return None, access_error or "Run rejected: IDE access unavailable"
         email = str(info.get("email") or "").strip().lower()
         if not email:
             return None, "Run rejected: account identity is unavailable"
@@ -6090,6 +6204,8 @@ def _resolve_execution_context(payload: dict, sid: str) -> tuple[Optional[dict],
             "guest_ip": "",
         }, None
 
+    if not _load_config().get("guest_ide_access_enabled", True):
+        return None, "IDE access is disabled for guests; sign in to continue"
     guest_ip = _socket_sid_ips.get(sid) or _get_request_ip(request)
     return {
         "identity": f"guest:{guest_ip}:{sid}",

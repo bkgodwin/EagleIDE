@@ -219,6 +219,45 @@ class ExecutionLimitTestCase(unittest.TestCase):
         self.assertNotIn("must not run", output)
         self.assertFalse(eagle._active_runs_by_sid)
 
+    def test_admin_can_disable_guest_ide_execution(self):
+        client = self._socket()
+        payload = self._payload("print('guest must not run')", token="")
+        with mock.patch("app._load_config", return_value={"guest_ide_access_enabled": False}):
+            client.emit("run_code", payload)
+            events = self._collect_until_finished(client)
+
+        output = self._output(events)
+        self.assertIn("IDE access is disabled for guests", output)
+        self.assertNotIn("guest must not run", output)
+        self.assertFalse(eagle._active_runs_by_sid)
+
+    def test_class_setting_blocks_student_execution_and_file_access(self):
+        eagle._student_tokens[self.token].update({
+            "class_id": "owned-class",
+            "class_ids": ["owned-class"],
+        })
+        classes = json.loads(eagle.CLASSES_FILE.read_text(encoding="utf-8"))
+        classes["classes"][0]["students"] = [self.email]
+        classes["classes"][0]["settings"] = {"student_ide_access_enabled": False}
+        eagle.CLASSES_FILE.write_text(json.dumps(classes), encoding="utf-8")
+        eagle._classes_cache = None
+
+        client = self._socket()
+        payload = self._payload("print('student must not run')")
+        payload["class_id"] = "owned-class"
+        client.emit("run_code", payload)
+        events = self._collect_until_finished(client)
+
+        output = self._output(events)
+        self.assertIn("IDE access is disabled for this class", output)
+        self.assertNotIn("student must not run", output)
+        files = self.http.get(
+            "/api/files/list",
+            headers={"X-User-Token": self.token, "X-Class-ID": "owned-class"},
+        )
+        self.assertEqual(files.status_code, 403)
+        self.assertIn("disabled", files.get_json()["error"].lower())
+
     def test_alternate_file_api_cannot_read_outside_workspace(self):
         secret = self.root / "outside-secret.txt"
         secret.write_text("OUTSIDE_SECRET_VALUE", encoding="utf-8")

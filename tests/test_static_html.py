@@ -108,6 +108,10 @@ class StaticHtmlTestCase(unittest.TestCase):
             "fileArtifactDatabaseStatus", "fileArtifactDatabaseTableWrap",
             "fileArtifactDatabaseHead", "fileArtifactDatabaseBody", "fileArtifactDatabaseNote",
             "aiTimeoutInputModal", "aiTestBtn", "aiTestStatus",
+            "teacherShellDebugMessages", "adminShellDebugMessages",
+            "guestIdeAccessEnabledModal",
+            "teacherNotebookSkillSearch", "teacherNotebookSkillSummary",
+            "teacherNotebookSelectVisibleSkills", "teacherNotebookClearSkills",
             "pythonContainmentStatus", "pythonMemoryLimitModal",
             "pythonConcurrencyLimitModal", "pythonModuleAccessList",
             "pythonSecurityLockedModules", "pythonRuntimeRefreshBtn",
@@ -165,6 +169,18 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn('id="publicLessonPlanHost"', public_html)
         self.assertIn('class="lesson-plan-site-header"', public_html)
         self.assertIn('/static/js/lesson-plan-public.js?v=20260805-1', public_html)
+
+    def test_teacher_notebook_shell_and_challenge_controls_are_wired(self):
+        core = (BASE_DIR / "static" / "js" / "app-core.js").read_text(encoding="utf-8")
+        notebook = (BASE_DIR / "static" / "js" / "student-notebook.js").read_text(encoding="utf-8")
+        self.assertIn("SHELL_DEBUG_MESSAGE_PATTERN", core)
+        self.assertIn("challenges_enabled", core)
+        self.assertIn("guest_ide_access_enabled", core)
+        self.assertIn("student_ide_access_enabled", core)
+        self.assertIn("X-Class-ID", core)
+        self.assertIn("skill.description", notebook)
+        self.assertIn("teacherNotebookSelectedSkills", notebook)
+        self.assertNotIn("open-class-bookmarks-btn", core)
 
     def test_ide_search_does_not_force_wiki_mode_and_hides_contents_toggle(self):
         reader = (BASE_DIR / "static" / "js" / "wiki-reader.js").read_text(encoding="utf-8")
