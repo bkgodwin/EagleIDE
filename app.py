@@ -5,6 +5,7 @@ import csv
 import hashlib
 import heapq
 import hmac
+from io import BytesIO
 import ipaddress
 import json
 import copy
@@ -66,6 +67,9 @@ NETWORK_DATA_DIR = Path(os.environ.get("EAGLEIDE_NETWORK_DATA_DIR", str(BASE_DIR
 LESSON_PLAN_DATA_DIR = Path(
     os.environ.get("EAGLEIDE_LESSON_PLAN_DATA_DIR", str(BASE_DIR / "lesson_plans"))
 ).expanduser().resolve()
+BACKGROUND_ASSETS_DIR = Path(
+    os.environ.get("EAGLEIDE_BACKGROUND_ASSETS_DIR", str(BASE_DIR / "background_assets"))
+).expanduser().resolve()
 
 INPUT_TOKEN = "[[_IDE_INPUT_]]"
 MAX_WALL_TIME = 30.0       # seconds (hard kill for user code)
@@ -88,6 +92,7 @@ MAX_HTTP_BODY_BYTES = 16 * 1024 * 1024
 MAX_SOCKET_MESSAGE_BYTES = 1_000_000
 MAX_EDITOR_FILE_BYTES = 10 * 1024 * 1024
 MAX_UPLOAD_FILE_BYTES = 10 * 1024 * 1024
+MAX_BACKGROUND_PIXELS = 25_000_000
 MAX_DATABASE_PREVIEW_BYTES = 64 * 1024 * 1024
 MAX_DATABASE_PREVIEW_TABLES = 100
 MAX_DATABASE_PREVIEW_COLUMNS = 50
@@ -202,6 +207,7 @@ EXAMPLE_FILES: dict[str, str] = {
 os.makedirs(SANDBOX_DIR, exist_ok=True)
 os.makedirs(ASSIGNMENTS_DIR, exist_ok=True)
 os.makedirs(NOTEBOOKS_DIR, exist_ok=True)
+os.makedirs(BACKGROUND_ASSETS_DIR, exist_ok=True)
 
 USERS_FILE = BASE_DIR / "users.json"
 USER_FILES_DIR = BASE_DIR / "user_files"
@@ -490,6 +496,75 @@ def _normalize_config_partial(partial: Dict[str, Any]) -> Dict[str, Any]:
         candidate.update(normalized)
         normalized.update(_normalized_python_runtime_settings(candidate))
     return normalized
+
+
+_BACKGROUND_ASSET_RE = re.compile(r"^[0-9a-f]{32}\.(?:jpg|png|webp)$")
+_BACKGROUND_CONFIG_KEYS = {
+    "ide-light": "ide_background_light_asset",
+    "ide-dark": "ide_background_dark_asset",
+    "home": "home_background_asset",
+}
+
+
+def _background_asset_url(filename: Any) -> str:
+    name = str(filename or "").strip().lower()
+    return f"/api/background-assets/{name}" if _BACKGROUND_ASSET_RE.fullmatch(name) else ""
+
+
+def _config_with_background_urls(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    decorated = dict(cfg)
+    light_asset = decorated.get("ide_background_light_asset")
+    dark_asset = decorated.get("ide_background_dark_asset")
+    home_asset = decorated.get("home_background_asset")
+    decorated["ide_background_light_url"] = _background_asset_url(light_asset) or "/api/background"
+    decorated["ide_background_dark_url"] = _background_asset_url(dark_asset) or "/api/background_dark"
+    decorated["home_background_url"] = _background_asset_url(home_asset) or "/api/home-background"
+    return decorated
+
+
+def _store_background_upload(upload: Any) -> str:
+    if not upload or not str(getattr(upload, "filename", "") or "").strip():
+        raise ValueError("Choose an image to upload")
+    payload = upload.stream.read(MAX_UPLOAD_FILE_BYTES + 1)
+    if not payload:
+        raise ValueError("The uploaded image is empty")
+    if len(payload) > MAX_UPLOAD_FILE_BYTES:
+        raise ValueError(f"Background images must be {MAX_UPLOAD_FILE_BYTES // (1024 * 1024)} MB or smaller")
+    try:
+        from PIL import Image
+
+        with Image.open(BytesIO(payload)) as image:
+            width, height = image.size
+            image_format = str(image.format or "").upper()
+            image.verify()
+    except Exception as exc:
+        raise ValueError("The uploaded file is not a valid background image") from exc
+    if image_format not in {"JPEG", "PNG", "WEBP"}:
+        raise ValueError("Background images must be JPEG, PNG, or WebP files")
+    if width <= 0 or height <= 0 or width > 16_384 or height > 16_384 or width * height > MAX_BACKGROUND_PIXELS:
+        raise ValueError("Background image dimensions exceed the safe limit")
+    suffix = {"JPEG": "jpg", "PNG": "png", "WEBP": "webp"}[image_format]
+    filename = f"{uuid.uuid4().hex}.{suffix}"
+    BACKGROUND_ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+    target = BACKGROUND_ASSETS_DIR / filename
+    temporary = target.with_suffix(target.suffix + ".tmp")
+    temporary.write_bytes(payload)
+    temporary.replace(target)
+    return filename
+
+
+def _delete_background_asset(filename: Any) -> None:
+    name = str(filename or "").strip().lower()
+    if not _BACKGROUND_ASSET_RE.fullmatch(name):
+        return
+    root = BACKGROUND_ASSETS_DIR.resolve()
+    target = (root / name).resolve()
+    if target.parent != root:
+        return
+    try:
+        target.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 CONFIG = _load_config()
@@ -1954,7 +2029,7 @@ def admin_login():
 @app.get("/api/config")
 def get_config():
     cfg = _load_config()
-    sanitized = dict(cfg)
+    sanitized = _config_with_background_urls(cfg)
     sanitized.update(_normalized_python_runtime_settings(cfg))
     sanitized.pop("admin_password_encrypted", None)
     sanitized.pop("admin_email", None)
@@ -1969,6 +2044,8 @@ def save_config():
     if isinstance(partial, dict):
         partial.pop("admin_password_encrypted", None)
         partial.pop("admin_email", None)
+        for protected_key in _BACKGROUND_CONFIG_KEYS.values():
+            partial.pop(protected_key, None)
         try:
             partial = _normalize_config_partial(partial)
         except ValueError as exc:
@@ -1981,9 +2058,47 @@ def save_config():
         if callable(resetter):
             resetter()
     new_cfg.update(_normalized_python_runtime_settings(new_cfg))
+    new_cfg = _config_with_background_urls(new_cfg)
     new_cfg.pop("admin_password_encrypted", None)
     new_cfg.pop("admin_email", None)
     return jsonify(ok=True, data=new_cfg)
+
+
+@app.post("/api/admin/backgrounds/<kind>")
+def admin_upload_background(kind: str):
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    config_key = _BACKGROUND_CONFIG_KEYS.get(str(kind or "").strip().lower())
+    if not config_key:
+        return jsonify(ok=False, error="Unknown background type"), 404
+    try:
+        new_asset = _store_background_upload(request.files.get("image"))
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    previous_asset = str(_load_config().get(config_key) or "")
+    try:
+        cfg = _update_config({config_key: new_asset})
+    except OSError:
+        _delete_background_asset(new_asset)
+        return jsonify(ok=False, error="Could not save the background setting"), 500
+    _delete_background_asset(previous_asset)
+    return jsonify(ok=True, data=_config_with_background_urls(cfg), asset=new_asset)
+
+
+@app.delete("/api/admin/backgrounds/<kind>")
+def admin_reset_background(kind: str):
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    config_key = _BACKGROUND_CONFIG_KEYS.get(str(kind or "").strip().lower())
+    if not config_key:
+        return jsonify(ok=False, error="Unknown background type"), 404
+    previous_asset = str(_load_config().get(config_key) or "")
+    try:
+        cfg = _update_config({config_key: ""})
+    except OSError:
+        return jsonify(ok=False, error="Could not reset the background setting"), 500
+    _delete_background_asset(previous_asset)
+    return jsonify(ok=True, data=_config_with_background_urls(cfg))
 
 
 @app.get("/api/admin/python-runtime")
@@ -3019,9 +3134,28 @@ def files_duplicate():
 # -------------------------
 # Background image
 # -------------------------
+@app.get("/api/background-assets/<filename>")
+def serve_background_asset(filename: str):
+    name = str(filename or "").strip().lower()
+    if not _BACKGROUND_ASSET_RE.fullmatch(name):
+        return jsonify(ok=False, error="Background image not found"), 404
+    target = BACKGROUND_ASSETS_DIR / name
+    if not target.is_file():
+        return jsonify(ok=False, error="Background image not found"), 404
+    response = send_file(str(target), conditional=True, max_age=31536000)
+    response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
 @app.get("/api/background")
 def serve_background():
     """Serve the background image if it exists"""
+    configured = _background_asset_url(_load_config().get("ide_background_light_asset"))
+    if configured:
+        target = BACKGROUND_ASSETS_DIR / configured.rsplit("/", 1)[-1]
+        if target.is_file():
+            return send_file(str(target), conditional=True, max_age=0)
     for ext in ("png", "jpg", "jpeg", "webp", "gif"):
         img = BASE_DIR / f"background.{ext}"
         if img.exists():
@@ -3031,12 +3165,32 @@ def serve_background():
 @app.get("/api/background_dark")
 def serve_background_dark():
     """Serve the dark-mode background image; falls back to the regular background"""
+    configured = _background_asset_url(_load_config().get("ide_background_dark_asset"))
+    if configured:
+        target = BACKGROUND_ASSETS_DIR / configured.rsplit("/", 1)[-1]
+        if target.is_file():
+            return send_file(str(target), conditional=True, max_age=0)
     for ext in ("png", "jpg", "jpeg", "webp", "gif"):
         img = BASE_DIR / f"background_dark.{ext}"
         if img.exists():
             return send_file(str(img))
     # Fallback to regular background
     return serve_background()
+
+
+@app.get("/api/home-background")
+def serve_home_background():
+    configured = _background_asset_url(_load_config().get("home_background_asset"))
+    if configured:
+        target = BACKGROUND_ASSETS_DIR / configured.rsplit("/", 1)[-1]
+        if target.is_file():
+            return send_file(str(target), conditional=True, max_age=0)
+    # The checked-in light IDE background is also the factory home background.
+    for ext in ("png", "jpg", "jpeg", "webp"):
+        img = BASE_DIR / f"background.{ext}"
+        if img.exists():
+            return send_file(str(img), conditional=True, max_age=300)
+    return jsonify(ok=False, error="No home background image found"), 404
 
 # -------------------------
 # Admin user management
@@ -3842,6 +3996,73 @@ def teacher_update_class_settings():
     return jsonify(ok=True, classData=target)
 
 
+@app.post("/api/teacher/classes/<class_id>/home-background")
+def teacher_upload_class_home_background(class_id: str):
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    classes_data = _load_classes()
+    teacher_email = str(teacher.get("email") or "").strip().lower()
+    target = next((
+        cls for cls in classes_data.get("classes", [])
+        if cls.get("id") == class_id
+        and str(cls.get("teacher_email") or "").strip().lower() == teacher_email
+    ), None)
+    if not target:
+        return jsonify(ok=False, error="Class not found"), 404
+    try:
+        new_asset = _store_background_upload(request.files.get("image"))
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    settings = target.setdefault("settings", {})
+    previous_asset = str(settings.get("home_background_asset") or "")
+    settings["home_background_asset"] = new_asset
+    try:
+        _save_classes(classes_data)
+    except OSError:
+        _delete_background_asset(new_asset)
+        return jsonify(ok=False, error="Could not save the class background setting"), 500
+    _delete_background_asset(previous_asset)
+    target["settings"] = merge_class_settings(settings)
+    socketio.emit(
+        "classroom_settings_updated",
+        {"class_id": class_id, "settings": target["settings"]},
+        room=f"class_{class_id}",
+    )
+    return jsonify(ok=True, classData=target, background_url=_background_asset_url(new_asset))
+
+
+@app.delete("/api/teacher/classes/<class_id>/home-background")
+def teacher_reset_class_home_background(class_id: str):
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    classes_data = _load_classes()
+    teacher_email = str(teacher.get("email") or "").strip().lower()
+    target = next((
+        cls for cls in classes_data.get("classes", [])
+        if cls.get("id") == class_id
+        and str(cls.get("teacher_email") or "").strip().lower() == teacher_email
+    ), None)
+    if not target:
+        return jsonify(ok=False, error="Class not found"), 404
+    settings = target.setdefault("settings", {})
+    previous_asset = str(settings.get("home_background_asset") or "")
+    settings["home_background_asset"] = ""
+    try:
+        _save_classes(classes_data)
+    except OSError:
+        return jsonify(ok=False, error="Could not reset the class background setting"), 500
+    _delete_background_asset(previous_asset)
+    target["settings"] = merge_class_settings(settings)
+    socketio.emit(
+        "classroom_settings_updated",
+        {"class_id": class_id, "settings": target["settings"]},
+        room=f"class_{class_id}",
+    )
+    return jsonify(ok=True, classData=target)
+
+
 @app.post("/api/teacher/classes/remove-student")
 def teacher_remove_student():
     teacher = _require_teacher(request)
@@ -3898,6 +4119,7 @@ def teacher_delete_class():
         remaining_classes.append(cls)
     if not target_class:
         return jsonify(ok=False, error="Class not found"), 404
+    class_background_asset = str((target_class.get("settings") or {}).get("home_background_asset") or "")
     student_emails = [str(email).strip().lower() for email in target_class.get("students", []) if str(email).strip()]
     users_data = _load_users()
     for user in users_data.get("users", []):
@@ -3909,6 +4131,7 @@ def teacher_delete_class():
     classes_data["classes"] = remaining_classes
     _save_classes(classes_data)
     _save_users(users_data)
+    _delete_background_asset(class_background_asset)
     for info in list(_student_tokens.values()):
         if (info.get("email") or "").strip().lower() in student_emails:
             next_class_ids = [cid for cid in _get_user_class_ids(info) if cid != class_id]

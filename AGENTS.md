@@ -141,6 +141,7 @@ Checked-in seed/reference data is limited to files such as `challenges.csv` and 
 - `users.json`, `classes.json`, and `skills.json`
 - `assignments/`, `notebooks/`, `user_files/`, and `sandboxes/`
 - `lesson_plans/` (weekly plans, class-source mappings, and revocable public-link tokens)
+- `background_assets/` (administrator IDE/home backgrounds and per-class home backgrounds)
 - `wiki_data/` (SQLite catalog, Markdown, media, drafts, and revisions) and `wiki_backups/`
 - `network_data/` (class access, lab assignments/progress, and per-account saved topologies)
 - `challenge_scores.json` and `leaderboard.csv`

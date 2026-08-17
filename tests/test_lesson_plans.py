@@ -193,11 +193,18 @@ class LessonPlanRouteTests(unittest.TestCase):
         self.publish(self.current_week)
         shared = self.client.post("/api/teacher/classes/class-1/lesson-plans/sharing", headers=self.teacher_headers).json
         self.assertTrue(shared["public_path"].startswith("/lesson-plans/public/"))
+        self.assertTrue(shared["current_path"].startswith("/lesson-plans/current/"))
         self.assertTrue(shared["embed_path"].startswith("/lesson-plans/embed/"))
         token = shared["public_url"].rsplit("/", 1)[-1]
         response = self.client.get(f"/api/lesson-plans/public/{token}?week={self.current_week}")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["previous_week"], previous)
+        rolling = self.client.get(f"/api/lesson-plans/current/{token}?week={older_published}")
+        self.assertEqual(rolling.status_code, 200)
+        self.assertEqual(rolling.json["selected_week"], self.current_week)
+        current_page = self.client.get(shared["current_path"])
+        self.assertEqual(current_page.status_code, 200)
+        current_page.close()
         empty_week = self.client.get(f"/api/lesson-plans/public/{token}?week={previous}")
         self.assertEqual(empty_week.status_code, 200)
         self.assertEqual(empty_week.json["plan"]["version"], 0)
@@ -209,6 +216,7 @@ class LessonPlanRouteTests(unittest.TestCase):
         reset = self.client.post("/api/teacher/classes/class-1/lesson-plans/sharing/reset", headers=self.teacher_headers)
         self.assertEqual(reset.status_code, 200)
         self.assertEqual(self.client.get(f"/api/lesson-plans/public/{token}").status_code, 404)
+        self.assertEqual(self.client.get(f"/api/lesson-plans/current/{token}").status_code, 404)
 
     def test_embed_code_escapes_class_name(self):
         self.classes["class-1"]["name"] = 'Programming "A" <Lab>'

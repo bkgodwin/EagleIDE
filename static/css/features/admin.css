@@ -91,6 +91,12 @@
 .admin-wiki-settings-card > div { display: flex; flex-direction: column; gap: 4px; }
 .admin-wiki-settings-card strong { color: var(--theme-text); }
 .admin-wiki-settings-card span { color: var(--theme-text-dim); font-size: 12px; line-height: 1.45; }
+.background-upload-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-top: 20px; }
+.background-upload-card { display: flex; flex-direction: column; gap: 9px; min-width: 0; padding: 14px; border: 1px solid var(--theme-border-mid); background: var(--theme-input-bg); }
+.background-upload-card strong { color: var(--theme-text); }
+.background-upload-card small,.background-upload-status { color: var(--theme-text-dim); font-size: 10px; line-height: 1.4; }
+.background-upload-card input[type="file"] { width: 100%; color: var(--theme-text-dim); font-size: 11px; }
+.background-upload-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .admin-settings-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; min-height: 64px; padding: 12px 24px; border-top: 1px solid var(--theme-border-mid); background: var(--theme-panel-hdr); }
 .admin-settings-actions span { margin-right: auto; color: #7edb83; font-size: 12px; }
 .python-containment-status { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 4px 14px; margin-bottom: 18px; padding: 14px 16px; border: 1px solid var(--theme-border-mid); border-left: 4px solid #e6ad35; background: var(--theme-input-bg); }
@@ -130,6 +136,7 @@
   .admin-settings-fields.three-column,
   .admin-runtime-permissions { grid-template-columns: 1fr 1fr; }
   .python-module-category-grid { grid-template-columns: 1fr; }
+  .background-upload-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 640px) {
   .admin-settings-workspace { grid-template-columns: 1fr; }

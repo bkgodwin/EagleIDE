@@ -80,6 +80,26 @@
     return classes.some(item => item.id === preferred) ? preferred : (classes[0]?.id || '');
   }
 
+  function syncHomeBackground(active) {
+    document.body.classList.toggle('wiki-home-active', !!active && document.body.classList.contains('wiki-mode'));
+    if (!active) return;
+    const ctx = context();
+    const selectedClass = isStudent()
+      ? availableClasses().find(item => item.id === state.selectedClassId)
+      : null;
+    const asset = String(selectedClass?.settings?.home_background_asset || '');
+    const requested = /^[0-9a-f]{32}\.(?:jpg|png|webp)$/.test(asset)
+      ? `/api/background-assets/${asset}`
+      : (ctx.currentConfig?.home_background_url || '/api/home-background');
+    try {
+      const safe = new URL(requested, location.origin);
+      if (safe.origin !== location.origin) throw new Error('Cross-origin background');
+      document.documentElement.style.setProperty('--wiki-home-bg-image', `url("${safe.pathname}${safe.search}")`);
+    } catch {
+      document.documentElement.style.setProperty('--wiki-home-bg-image', 'url("/api/home-background")');
+    }
+  }
+
   function escapeHtml(value) {
     return String(value ?? '')
       .replace(/&/g, '&amp;')
@@ -120,6 +140,7 @@
     const wiki = mode === 'wiki';
     if (wiki) clearWikiReturn();
     document.body.classList.toggle('wiki-mode', wiki);
+    if (!wiki) syncHomeBackground(false);
     document.body.classList.remove('network-mode');
     document.body.classList.remove('wiki-drawer-open');
     syncSidebarControls();
@@ -781,6 +802,7 @@
       state.home = await fetchJson(`/api/wiki/home${suffix}`, { headers: authHeaders() });
       state.tree = state.home.tree || [];
       renderHomeData();
+      if ($('wikiHomePanel')?.hidden === false) syncHomeBackground(true);
       if (!quiet) showStatus('');
       return state.home;
     } catch (error) {
@@ -804,6 +826,7 @@
     $('wikiHomePanel').hidden = false;
     $('wikiStandardsCoveragePanel').hidden = true;
     $('wikiArticlePanel').hidden = true;
+    syncHomeBackground(true);
     $('wikiHomeBtn')?.setAttribute('aria-current', 'page');
     if (!state.home) await loadHome().catch(() => {});
     else renderHomeData();
@@ -937,6 +960,7 @@
   }
 
   async function showStandardsCoverage({ push = true, folderId = '' } = {}) {
+    syncHomeBackground(false);
     const directFolderId = !push ? new URLSearchParams(location.search).get('folder_id') : '';
     const selectedFolderId = String(folderId || directFolderId || '').trim();
     const path = selectedFolderId
@@ -984,6 +1008,7 @@
   }
 
   async function openNode(identifier, { push = true, anchor = '', highlight = '' } = {}) {
+    syncHomeBackground(false);
     state.coverageAbort?.abort?.();
     setView('wiki', { push: false });
     showStatus('Loading topic…', false, 0);
@@ -1922,6 +1947,9 @@
       admin: !!ctx.ADMIN_TOKEN, classes: availableClasses().map(cls => cls.id),
       selected: defaultClassId(),
       ideAccess: canAccessIDE(),
+      homeBackground: isStudent()
+        ? availableClasses().find(cls => cls.id === state.selectedClassId)?.settings?.home_background_asset || ''
+        : '',
     });
     $('adminWikiBtn').style.display = isAdmin() ? '' : 'none';
     $('wikiArticleFeatureBtn').hidden = !isTeacher();
