@@ -368,6 +368,8 @@
     .teacher-class-wiki-copy p { margin: 2px 0 0; color: var(--theme-text-dim); font-size: 12px; line-height: 1.5; }
     .teacher-class-wiki-kicker { color: var(--columbia-blue); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
     .teacher-class-wiki-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+    .teacher-class-background-input { max-width: 280px; color: var(--theme-text-dim); font-size: 11px; }
+    .teacher-class-background-status { min-height: 1.4em; color: var(--theme-text-dim); font-size: 11px; }
     @media (max-width: 850px) {
       .teacher-class-wiki-card { grid-template-columns: 1fr; }
       .teacher-class-wiki-actions { justify-content: flex-start; }

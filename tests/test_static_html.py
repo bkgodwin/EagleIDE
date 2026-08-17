@@ -156,8 +156,8 @@ class StaticHtmlTestCase(unittest.TestCase):
             "lessonPlanExternalLinkModal", "lessonPlanExternalLinkUrl",
         }.issubset(ids))
         self.assertIn('data-view="dash-lesson-plans"', self.raw)
-        self.assertIn('/static/js/lesson-plan-renderer.js?v=20260805-1', self.raw)
-        self.assertIn('/static/js/lesson-plans.js?v=20260805-1', self.raw)
+        self.assertIn('/static/js/lesson-plan-renderer.js?v=20260816-1', self.raw)
+        self.assertIn('/static/js/lesson-plans.js?v=20260816-1', self.raw)
         css = (BASE_DIR / "static" / "css" / "features" / "lesson-plans.css").read_text(encoding="utf-8")
         self.assertIn("overflow-y:auto", css.replace(" ", ""))
         self.assertIn("@page { size:landscape", css)
@@ -183,7 +183,27 @@ class StaticHtmlTestCase(unittest.TestCase):
         public_html = (BASE_DIR / "lesson_plan_public.html").read_text(encoding="utf-8")
         self.assertIn('id="publicLessonPlanHost"', public_html)
         self.assertIn('class="lesson-plan-site-header"', public_html)
-        self.assertIn('/static/js/lesson-plan-public.js?v=20260805-1', public_html)
+        self.assertIn('/static/js/lesson-plan-public.js?v=20260816-1', public_html)
+        self.assertIn('lessonPlanCopyCurrent', controller)
+        self.assertIn("publicUrlObject.searchParams.set('week', state.teacherWeek)", controller)
+        self.assertIn("/api/lesson-plans/current/", public_script)
+
+    def test_background_controls_and_ipad_navigation_are_wired(self):
+        ids = set(self.parser.ids)
+        self.assertTrue({
+            "adminIdeLightBackgroundInput",
+            "adminIdeDarkBackgroundInput",
+            "adminHomeBackgroundInput",
+        }.issubset(ids))
+        app_core = (BASE_DIR / "static" / "js" / "app-core.js").read_text(encoding="utf-8")
+        wiki_reader = (BASE_DIR / "static" / "js" / "wiki-reader.js").read_text(encoding="utf-8")
+        wiki_css = (BASE_DIR / "static" / "css" / "features" / "wiki.css").read_text(encoding="utf-8")
+        self.assertIn("/api/admin/backgrounds/", app_core)
+        self.assertIn("/home-background", app_core)
+        self.assertIn("wiki-home-active", wiki_reader)
+        self.assertIn("@media (pointer: coarse)", wiki_css)
+        self.assertIn("#wikiReturnBtn { order: -5; }", wiki_css)
+        self.assertIn("#ideViewBtn { order: -3;", wiki_css)
 
     def test_teacher_notebook_shell_and_challenge_controls_are_wired(self):
         core = (BASE_DIR / "static" / "js" / "app-core.js").read_text(encoding="utf-8")

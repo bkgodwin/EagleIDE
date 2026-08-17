@@ -2120,13 +2120,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       try { isLight = localStorage.getItem(THEME_KEY) === 'light'; } catch {}
 
       function applyTheme() {
+        const lightBackground = currentConfig?.ide_background_light_url || '/api/background';
+        const darkBackground = currentConfig?.ide_background_dark_url || '/api/background_dark';
         if (isLight) {
           document.body.classList.add('light-mode');
-          document.documentElement.style.setProperty('--theme-bg-image', 'url(/api/background)');
+          document.documentElement.style.setProperty('--theme-bg-image', `url("${lightBackground}")`);
           btn.textContent = '☀️';
         } else {
           document.body.classList.remove('light-mode');
-          document.documentElement.style.setProperty('--theme-bg-image', 'url(/api/background_dark)');
+          document.documentElement.style.setProperty('--theme-bg-image', `url("${darkBackground}")`);
           btn.textContent = '🌙';
         }
         // Clear any inline backgroundImage so the CSS variable takes effect
@@ -2143,6 +2145,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
       applyTheme();
       btn.addEventListener('click', () => { isLight = !isLight; applyTheme(); });
+      window.addEventListener('eagle-backgrounds-updated', applyTheme);
     })();
 
     // Tabs switching (refresh leaderboard when opening Challenge)
@@ -2187,6 +2190,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (cfg.topbar_color) {
         document.documentElement.style.setProperty('--theme-topbar', cfg.topbar_color);
       }
+      document.documentElement.style.setProperty(
+        '--wiki-home-bg-image',
+        `url("${cfg.home_background_url || '/api/home-background'}")`,
+      );
+      window.dispatchEvent(new CustomEvent('eagle-backgrounds-updated'));
 
       const iframe = document.getElementById('lessonFrame');
       const localDiv = document.getElementById('lessonLocal');
@@ -3114,6 +3122,45 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         document.querySelectorAll('[data-admin-settings-pane]').forEach(pane => pane.classList.toggle('active', pane.dataset.adminSettingsPane === section));
         if (section === 'python-runtime') loadPythonRuntimeAdmin();
       });
+    });
+
+    async function updateAdminBackground(kind, { file = null, reset = false } = {}) {
+      const status = document.querySelector(`[data-background-status="${CSS.escape(kind)}"]`);
+      if (!ADMIN_TOKEN) return;
+      if (!reset && !file) {
+        if (status) status.textContent = 'Choose an image first.';
+        return;
+      }
+      if (status) status.textContent = reset ? 'Restoring default…' : 'Uploading…';
+      try {
+        const options = {
+          method: reset ? 'DELETE' : 'POST',
+          headers: { 'X-Admin-Token': ADMIN_TOKEN },
+        };
+        if (!reset) {
+          const form = new FormData();
+          form.append('image', file);
+          options.body = form;
+        }
+        const response = await fetch(`/api/admin/backgrounds/${encodeURIComponent(kind)}`, options);
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.ok) throw new Error(result.error || 'Could not update the background.');
+        currentConfig = { ...(currentConfig || {}), ...(result.data || {}) };
+        applyConfig(currentConfig);
+        if (status) status.textContent = reset ? 'Default restored.' : 'Background applied for everyone.';
+      } catch (error) {
+        if (status) status.textContent = error?.message || 'Could not update the background.';
+      }
+    }
+
+    document.querySelectorAll('[data-background-upload]').forEach(button => {
+      button.addEventListener('click', () => {
+        const input = document.getElementById(button.dataset.backgroundInput || '');
+        updateAdminBackground(button.dataset.backgroundUpload, { file: input?.files?.[0] || null });
+      });
+    });
+    document.querySelectorAll('[data-background-reset]').forEach(button => {
+      button.addEventListener('click', () => updateAdminBackground(button.dataset.backgroundReset, { reset: true }));
     });
 
     document.getElementById('teacherShellDebugMessages')?.addEventListener('change', event => {
@@ -4050,6 +4097,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             <label style="font-size:12px; margin:0 0 4px; display:block;">AI Grading Rigor: <span class="cls-rigor-label" data-class="${escapeHtml(activeClass.id)}">${rigorLevelLabel(activeClass.settings?.ai_grading_rigor || 5)}</span> (${activeClass.settings?.ai_grading_rigor || 5}/10)</label>
             <input type="range" min="1" max="10" value="${activeClass.settings?.ai_grading_rigor || 5}" class="cls-rigor" data-class="${escapeHtml(activeClass.id)}" style="width:100%;">
           </div>
+          <section class="teacher-class-wiki-card" aria-label="Home background for ${escapeHtml(activeClass.name)}">
+            <div class="teacher-class-wiki-copy"><span class="teacher-class-wiki-kicker">Student Home</span><strong>Custom class background</strong><p>Students in this class see this image on the home page. The site default is used when no class image is set.</p><span class="teacher-class-background-status" data-class-background-status="${escapeHtml(activeClass.id)}">${activeClass.settings?.home_background_asset ? 'Custom image active' : 'Using site default'}</span></div>
+            <div class="teacher-class-wiki-actions">
+              <input class="teacher-class-background-input" data-class-background-input="${escapeHtml(activeClass.id)}" type="file" accept="image/jpeg,image/png,image/webp">
+              <button class="btn secondary upload-class-background-btn" data-class="${escapeHtml(activeClass.id)}" type="button">Upload image</button>
+              <button class="btn secondary reset-class-background-btn" data-class="${escapeHtml(activeClass.id)}" type="button" ${activeClass.settings?.home_background_asset ? '' : 'disabled'}>Use site default</button>
+            </div>
+          </section>
           <section class="teacher-class-wiki-card" aria-label="Wiki material for ${escapeHtml(activeClass.name)}">
             <div class="teacher-class-wiki-copy"><span class="teacher-class-wiki-kicker">Coding Wiki</span><strong>Class material lives in the shared wiki</strong><p>Open a page or folder and choose <b>Feature for class</b> to place it on this class home. The class is selected before the action is saved.</p></div>
             <div class="teacher-class-wiki-actions">
@@ -4082,6 +4137,49 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         document.getElementById('teacherDashboardModal').style.display = 'none';
         if (window.WikiReader?.selectClass) await window.WikiReader.selectClass(currentTeacherClassId, { show: true }).catch(() => {});
         else window.WikiReader?.showHome?.();
+      }));
+      wrap.querySelectorAll('.upload-class-background-btn').forEach(btn => btn.addEventListener('click', async () => {
+        const classId = btn.dataset.class;
+        const input = wrap.querySelector(`[data-class-background-input="${CSS.escape(classId)}"]`);
+        const status = wrap.querySelector(`[data-class-background-status="${CSS.escape(classId)}"]`);
+        const file = input?.files?.[0];
+        if (!file) { if (status) status.textContent = 'Choose an image first.'; return; }
+        btn.disabled = true;
+        if (status) status.textContent = 'Uploading…';
+        try {
+          const form = new FormData();
+          form.append('image', file);
+          const response = await fetch(`/api/teacher/classes/${encodeURIComponent(classId)}/home-background`, {
+            method: 'POST', headers: { 'X-Teacher-Token': TEACHER_TOKEN }, body: form,
+          });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok || !result.ok) throw new Error(result.error || 'Could not upload the class background.');
+          await loadTeacherClasses();
+          renderTeacherClassManagement();
+          window.WikiReader?.loadHome?.({ quiet: true }).catch(() => {});
+        } catch (error) {
+          if (status) status.textContent = error?.message || 'Could not upload the class background.';
+          btn.disabled = false;
+        }
+      }));
+      wrap.querySelectorAll('.reset-class-background-btn').forEach(btn => btn.addEventListener('click', async () => {
+        const classId = btn.dataset.class;
+        const status = wrap.querySelector(`[data-class-background-status="${CSS.escape(classId)}"]`);
+        btn.disabled = true;
+        if (status) status.textContent = 'Restoring site default…';
+        try {
+          const response = await fetch(`/api/teacher/classes/${encodeURIComponent(classId)}/home-background`, {
+            method: 'DELETE', headers: { 'X-Teacher-Token': TEACHER_TOKEN },
+          });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok || !result.ok) throw new Error(result.error || 'Could not reset the class background.');
+          await loadTeacherClasses();
+          renderTeacherClassManagement();
+          window.WikiReader?.loadHome?.({ quiet: true }).catch(() => {});
+        } catch (error) {
+          if (status) status.textContent = error?.message || 'Could not reset the class background.';
+          btn.disabled = false;
+        }
       }));
       wrap.querySelectorAll('.delete-class-btn').forEach(btn => btn.addEventListener('click', async () => {
         const classId = btn.dataset.class;

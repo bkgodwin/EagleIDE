@@ -36,13 +36,14 @@ _classroom_events_lock = threading.Lock()
 _classroom_signals_lock = threading.Lock()
 
 
-def merge_class_settings(settings: Optional[dict]) -> dict:
+def merge_class_settings(settings: Optional[dict]) -> dict[str, Any]:
     out = dict(settings or {})
     for key, default in DEFAULT_CLASSROOM_SETTINGS.items():
         if key not in out:
             out[key] = default
         else:
             out[key] = bool(out[key])
+    out["home_background_asset"] = str(out.get("home_background_asset") or "")
     return out
 
 

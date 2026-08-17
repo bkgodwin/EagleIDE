@@ -51,6 +51,11 @@ DEFAULT_CONFIG = {
     # Page customization settings
     "page_title": "Eagle IDE (Python + JavaScript + HTML + CSS)",
     "topbar_color": "linear-gradient(90deg,#a5c8f0,#7fb2eb)",
+    # Uploaded appearance assets are stored as generated filenames in the
+    # runtime background_assets directory. Empty values use checked-in defaults.
+    "ide_background_light_asset": "",
+    "ide_background_dark_asset": "",
+    "home_background_asset": "",
 
     # Registration toggle
     "registration_enabled": True,
