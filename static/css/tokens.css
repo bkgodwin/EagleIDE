@@ -56,6 +56,7 @@
   --theme-splitter-a: rgba(255, 255, 255, 0.08);
   --theme-splitter-b: rgba(255, 255, 255, 0.04);
   --theme-bg-image: url(/api/background_dark);
+  --wiki-home-bg-image: url(/api/home-background);
 
   --splitter-size: 4px;
   --vsplitter-size: 4px;

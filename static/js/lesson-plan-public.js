@@ -3,6 +3,7 @@
 
   const embed = location.pathname.startsWith('/lesson-plans/embed/');
   const printExport = location.pathname.startsWith('/lesson-plans/print/');
+  const rollingCurrent = location.pathname.startsWith('/lesson-plans/current/');
   const token = decodeURIComponent(location.pathname.split('/').filter(Boolean).pop() || '');
   const params = new URLSearchParams(location.search);
   const state = { week: params.get('week') || '', data: null, printing: printExport || params.get('print') === '1' };
@@ -14,7 +15,9 @@
       const query = week ? `?week=${encodeURIComponent(week)}` : '';
       const endpoint = printExport
         ? `/api/lesson-plans/print/${encodeURIComponent(token)}`
-        : `/api/lesson-plans/public/${encodeURIComponent(token)}${query}`;
+        : rollingCurrent && !week
+          ? `/api/lesson-plans/current/${encodeURIComponent(token)}`
+          : `/api/lesson-plans/public/${encodeURIComponent(token)}${query}`;
       const response = await fetch(endpoint, { headers: { Accept: 'application/json' } });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.ok) throw new Error(data.error || 'Lesson plan unavailable.');
@@ -27,7 +30,8 @@
       $('publicLessonPlanNext').disabled = !data.next_week;
       if (!printExport) {
         const nextUrl = new URL(location.href);
-        nextUrl.searchParams.set('week', state.week);
+        if (rollingCurrent && !week) nextUrl.searchParams.delete('week');
+        else nextUrl.searchParams.set('week', state.week);
         if (!state.printing) nextUrl.searchParams.delete('print');
         history.replaceState({}, '', nextUrl);
       }
@@ -47,7 +51,7 @@
     document.body.classList.toggle('lesson-plan-print-export-page', printExport);
     $('publicLessonPlanPrevious').addEventListener('click', () => state.data?.previous_week && load(state.data.previous_week));
     $('publicLessonPlanNext').addEventListener('click', () => state.data?.next_week && load(state.data.next_week));
-    $('publicLessonPlanCurrent').addEventListener('click', () => load(state.data?.current_week || ''));
+    $('publicLessonPlanCurrent').addEventListener('click', () => load(rollingCurrent ? '' : (state.data?.current_week || '')));
     $('publicLessonPlanPrint').addEventListener('click', () => window.print());
     window.addEventListener('beforeprint', () => {
       document.body.classList.add('lesson-plan-printing');

@@ -290,15 +290,19 @@ def register(
     def sharing_payload(cls: dict, token: str) -> dict[str, Any]:
         root = request.host_url.rstrip("/")
         public_url = f"{root}/lesson-plans/public/{token}"
+        current_url = f"{root}/lesson-plans/current/{token}"
         embed_url = f"{root}/lesson-plans/embed/{token}"
         public_path = f"/lesson-plans/public/{token}"
+        current_path = f"/lesson-plans/current/{token}"
         embed_path = f"/lesson-plans/embed/{token}"
         return {
             "ok": True,
             "class": class_summary(cls),
             "public_url": public_url,
+            "current_url": current_url,
             "embed_url": embed_url,
             "public_path": public_path,
+            "current_path": current_path,
             "embed_path": embed_path,
             "embed_code": (
                 f'<iframe src="{embed_url}" title="{html_escape(class_summary(cls)["name"], quote=True)} lesson plan" '
@@ -461,6 +465,15 @@ def register(
         except LessonPlanDataError as exc:
             return error(str(exc))
 
+    @app.get("/api/lesson-plans/current/<token>")
+    def public_get_current_lesson_plan(token: str):
+        class_id = store.class_id_for_token(token)
+        cls = find_class(class_id) if class_id else None
+        if not cls:
+            return error("Lesson plan not found", 404)
+        current = normalize_week_start()
+        return jsonify(**response_payload(cls, current, include_empty=True, through=current))
+
     @app.get("/api/lesson-plans/print/<token>")
     def teacher_print_lesson_plan_data(token: str):
         export = get_print_export(token)
@@ -473,6 +486,7 @@ def register(
         return jsonify(**payload)
 
     @app.get("/lesson-plans/public/<token>")
+    @app.get("/lesson-plans/current/<token>")
     @app.get("/lesson-plans/embed/<token>")
     def public_lesson_plan_page(token: str):
         class_id = store.class_id_for_token(token)
