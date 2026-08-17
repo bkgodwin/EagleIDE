@@ -90,6 +90,7 @@
           </div>
           <div class="lesson-plan-week-nav">
             <button class="btn secondary" id="lessonPlanCopyPublic" type="button">Copy Public Link</button>
+            <button class="btn secondary" id="lessonPlanCopyCurrent" type="button" title="This link always opens whichever lesson plan week is current">Copy Current Week Link</button>
             <button class="btn secondary" id="lessonPlanCopyEmbed" type="button">Copy Embed</button>
             <button class="btn secondary" id="lessonPlanPrint" type="button">Print / Save PDF</button>
             <button class="btn secondary" id="lessonPlanResetLink" type="button" title="Disable the old public and embed links">Reset Link</button>
@@ -115,6 +116,7 @@
     $('lessonPlanTeacherCurrent').addEventListener('click', () => { state.teacherWeek = mondayFor(new Date()); loadTeacherPlan(); });
     $('lessonPlanPublish').addEventListener('click', saveTeacherPlan);
     $('lessonPlanCopyPublic').addEventListener('click', () => copySharing('public_url', 'Public link copied.'));
+    $('lessonPlanCopyCurrent').addEventListener('click', () => copySharing('current_url', 'Current-week link copied.'));
     $('lessonPlanCopyEmbed').addEventListener('click', () => copySharing('embed_code', 'Embed code copied.'));
     $('lessonPlanPrint').addEventListener('click', printTeacherPlan);
     $('lessonPlanResetLink').addEventListener('click', resetSharing);
@@ -392,13 +394,18 @@
 
   function browserSharingPayload(data) {
     const publicPath = data.public_path || new URL(data.public_url).pathname;
+    const currentPath = data.current_path || new URL(data.current_url).pathname;
     const embedPath = data.embed_path || new URL(data.embed_url).pathname;
-    const publicUrl = new URL(publicPath, window.location.origin).toString();
+    const publicUrlObject = new URL(publicPath, window.location.origin);
+    publicUrlObject.searchParams.set('week', state.teacherWeek);
+    const publicUrl = publicUrlObject.toString();
+    const currentUrl = new URL(currentPath, window.location.origin).toString();
     const embedUrl = new URL(embedPath, window.location.origin).toString();
     const title = escapeAttribute(`${data.class?.name || 'Class'} lesson plan`);
     return {
       ...data,
       public_url: publicUrl,
+      current_url: currentUrl,
       embed_url: embedUrl,
       embed_code: `<iframe src="${escapeAttribute(embedUrl)}" title="${title}" style="width:100%;aspect-ratio:16/9;border:0" loading="lazy"></iframe>`,
     };

@@ -38,7 +38,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20260806-6">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260816-1">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -1437,6 +1437,26 @@
               <label><span>Page title</span><input type="text" id="pageTitleInput" placeholder="Eagles Web IDE (Python)"></label>
               <label><span>Top bar CSS color or gradient</span><input type="text" id="topBarColorInput" placeholder="linear-gradient(90deg,#a5c8f0,#7fb2eb)"></label>
             </div>
+            <div class="background-upload-grid" aria-label="Site background images">
+              <section class="background-upload-card">
+                <strong>IDE light-mode background</strong><small>JPEG, PNG, or WebP, up to 10 MB.</small>
+                <input id="adminIdeLightBackgroundInput" type="file" accept="image/jpeg,image/png,image/webp">
+                <div class="background-upload-actions"><button class="btn secondary" type="button" data-background-upload="ide-light" data-background-input="adminIdeLightBackgroundInput">Upload</button><button class="btn secondary" type="button" data-background-reset="ide-light">Use default</button></div>
+                <span class="background-upload-status" data-background-status="ide-light" role="status"></span>
+              </section>
+              <section class="background-upload-card">
+                <strong>IDE dark-mode background</strong><small>Applied to every user in dark mode.</small>
+                <input id="adminIdeDarkBackgroundInput" type="file" accept="image/jpeg,image/png,image/webp">
+                <div class="background-upload-actions"><button class="btn secondary" type="button" data-background-upload="ide-dark" data-background-input="adminIdeDarkBackgroundInput">Upload</button><button class="btn secondary" type="button" data-background-reset="ide-dark">Use default</button></div>
+                <span class="background-upload-status" data-background-status="ide-dark" role="status"></span>
+              </section>
+              <section class="background-upload-card">
+                <strong>Default home-page background</strong><small>Shown only on the wiki home behind the blue contrast pane.</small>
+                <input id="adminHomeBackgroundInput" type="file" accept="image/jpeg,image/png,image/webp">
+                <div class="background-upload-actions"><button class="btn secondary" type="button" data-background-upload="home" data-background-input="adminHomeBackgroundInput">Upload</button><button class="btn secondary" type="button" data-background-reset="home">Use default</button></div>
+                <span class="background-upload-status" data-background-status="home" role="status"></span>
+              </section>
+            </div>
           </section>
           <section class="admin-settings-pane" data-admin-settings-pane="account">
             <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Local preferences</span><h4>Account Settings</h4><p>Control administrator diagnostics for this browser.</p></div>
@@ -1598,13 +1618,13 @@
   <script src="/static/js/editor-init.js"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js"></script>
-  <script src="/static/js/app-core.js?v=20260806-6"></script>
+  <script src="/static/js/app-core.js?v=20260816-1"></script>
 <script src="/static/js/network-sim.js?v=20260714-18"></script>
 <script src="/static/js/network-sim-advanced.js?v=20260714-4"></script>
-  <script src="/static/js/wiki-reader.js?v=20260806-6"></script>
-  <script src="/static/js/lesson-plan-renderer.js?v=20260805-1"></script>
-  <script src="/static/js/lesson-plans.js?v=20260805-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20260806-6"></script>
+  <script src="/static/js/wiki-reader.js?v=20260816-1"></script>
+  <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
+  <script src="/static/js/lesson-plans.js?v=20260816-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20260816-1"></script>
   <script src="/static/js/classroom-signals.js"></script>
   <script src="/static/js/classroom-files.js?v=20250608"></script>
   <script src="/static/js/student-notebook.js?v=20260806-1"></script>
