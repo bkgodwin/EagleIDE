@@ -194,16 +194,23 @@ class StaticHtmlTestCase(unittest.TestCase):
             "adminIdeLightBackgroundInput",
             "adminIdeDarkBackgroundInput",
             "adminHomeBackgroundInput",
+            "teacherDashMobileCloseBtn",
+            "studentDashMobileCloseBtn",
         }.issubset(ids))
         app_core = (BASE_DIR / "static" / "js" / "app-core.js").read_text(encoding="utf-8")
         wiki_reader = (BASE_DIR / "static" / "js" / "wiki-reader.js").read_text(encoding="utf-8")
         wiki_css = (BASE_DIR / "static" / "css" / "features" / "wiki.css").read_text(encoding="utf-8")
+        legacy_css = (BASE_DIR / "static" / "css" / "legacy.css").read_text(encoding="utf-8")
         self.assertIn("/api/admin/backgrounds/", app_core)
         self.assertIn("/home-background", app_core)
+        self.assertIn("function selectTeacherClass", app_core)
+        self.assertIn("teacherDashMobileCloseBtn", app_core)
         self.assertIn("wiki-home-active", wiki_reader)
         self.assertIn("@media (pointer: coarse)", wiki_css)
         self.assertIn("#wikiReturnBtn { order: -5; }", wiki_css)
         self.assertIn("#ideViewBtn { order: -3;", wiki_css)
+        self.assertIn("var(--app-height, 100dvh)", legacy_css)
+        self.assertIn(".teacher-dash-mobile-close", legacy_css)
 
     def test_teacher_notebook_shell_and_challenge_controls_are_wired(self):
         core = (BASE_DIR / "static" / "js" / "app-core.js").read_text(encoding="utf-8")
