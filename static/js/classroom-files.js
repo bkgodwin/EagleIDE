@@ -40,7 +40,7 @@
     const c = ctx();
     const classCtx = getClassContext();
     if (!classCtx) return false;
-    if (c.TEACHER_TOKEN) return true;
+    if (c.TEACHER_TOKEN) return classCtx.settings?.teacher_file_send_enabled !== false;
     if (c.USER_TOKEN && !c.ADMIN_TOKEN) {
       const settings = classCtx.settings || {};
       return settings.student_send_to_teacher_enabled !== false

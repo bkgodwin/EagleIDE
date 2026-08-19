@@ -189,6 +189,7 @@
       overflow: hidden;
       border-radius: 16px;
     }
+    .teacher-dash-mobile-close { display: none; }
     .teacher-dash-sidebar {
       width: 220px;
       flex-shrink: 0;

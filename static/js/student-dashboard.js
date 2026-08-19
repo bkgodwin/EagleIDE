@@ -257,6 +257,7 @@
 
     document.getElementById('studentDashboardBtn')?.addEventListener('click', openDashboard);
     document.getElementById('studentDashCloseBtn')?.addEventListener('click', closeDashboard);
+    document.getElementById('studentDashMobileCloseBtn')?.addEventListener('click', closeDashboard);
     document.querySelectorAll('#studentDashboardModal .teacher-dash-navbtn').forEach(button => {
       button.addEventListener('click', () => {
         const viewId = button.dataset.view;

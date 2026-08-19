@@ -3,6 +3,7 @@ import getpass
 import json
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,6 +14,7 @@ builtins.input = lambda _prompt="": "admin@eagleide.local"
 getpass.getpass = lambda _prompt="": "password"
 
 import app as eagle  # noqa: E402
+import classroom_features  # noqa: E402
 
 builtins.input = _ORIGINAL_INPUT
 getpass.getpass = _ORIGINAL_GETPASS
@@ -37,6 +39,10 @@ class RolePermissionTestCase(unittest.TestCase):
         eagle._users_cache = None
         eagle._classes_cache = None
         eagle._reg_rate_limit.clear()
+        eagle._login_rate_limit.clear()
+        eagle._login_account_rate_limit.clear()
+        eagle._admin_login_rate_limit.clear()
+        self.generated_tokens = []
 
         self.admin_token = "role-admin-token"
         self.teacher_token = "role-teacher-token"
@@ -66,6 +72,9 @@ class RolePermissionTestCase(unittest.TestCase):
         eagle._admin_tokens.discard(self.admin_token)
         eagle._teacher_tokens.pop(self.teacher_token, None)
         eagle._student_tokens.pop(self.student_token, None)
+        for token in self.generated_tokens:
+            eagle._student_tokens.pop(token, None)
+            eagle._teacher_tokens.pop(token, None)
         eagle._teacher_code_snapshots.clear()
         eagle._teacher_stream_last_emit.clear()
         eagle._live_teacher_stream_sids_by_class.clear()
@@ -77,6 +86,9 @@ class RolePermissionTestCase(unittest.TestCase):
         eagle._users_cache = None
         eagle._classes_cache = None
         eagle._reg_rate_limit.clear()
+        eagle._login_rate_limit.clear()
+        eagle._login_account_rate_limit.clear()
+        eagle._admin_login_rate_limit.clear()
         self.tmp.cleanup()
 
     def _set_disabled_ai_class(self):
@@ -195,6 +207,194 @@ class RolePermissionTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         examples_dir = eagle._get_user_dir("new.student@example.com") / eagle.EXAMPLES_DIR_NAME
         self.assertEqual({path.name for path in examples_dir.iterdir()}, set(eagle.EXAMPLE_FILES))
+
+    def test_sixty_students_can_register_sign_in_and_join_from_one_network(self):
+        shared_ip = "10.20.30.40"
+        student_count = 60
+
+        def register(index):
+            with eagle.app.test_client() as client:
+                response = client.post(
+                    "/api/auth/register",
+                    json={
+                        "email": f"student{index}@school.test",
+                        "name": f"Student {index}",
+                        "password": "ClassPass123",
+                    },
+                    environ_base={"REMOTE_ADDR": shared_ip},
+                )
+                return response.status_code, response.get_json()
+
+        with patch("app._load_config", return_value={"registration_enabled": True}), \
+             patch("app.bcrypt.hashpw", return_value=b"test-password-hash"), \
+             patch("app._seed_example_files"), \
+             patch("app._record_sign_in_event"):
+            with ThreadPoolExecutor(max_workers=20) as pool:
+                registrations = list(pool.map(register, range(student_count)))
+
+        self.assertTrue(all(status == 200 for status, _ in registrations), registrations)
+        self.generated_tokens.extend(payload["token"] for _, payload in registrations)
+        saved_users = eagle._load_users()["users"]
+        self.assertEqual(len(saved_users), student_count)
+        self.assertEqual(len({user["email"] for user in saved_users}), student_count)
+
+        eagle._save_classes({"classes": [{
+            "id": "rapid-class",
+            "name": "Rapid Class",
+            "join_code": "RAPID1",
+            "teacher_email": self.teacher_email,
+            "students": [],
+            "settings": {},
+        }]})
+
+        def join(registration):
+            _, payload = registration
+            with eagle.app.test_client() as client:
+                response = client.post(
+                    "/api/classes/join",
+                    headers={"X-User-Token": payload["token"]},
+                    json={"joinCode": "RAPID1"},
+                    environ_base={"REMOTE_ADDR": shared_ip},
+                )
+                return response.status_code, response.get_json()
+
+        with ThreadPoolExecutor(max_workers=20) as pool:
+            joins = list(pool.map(join, registrations))
+
+        self.assertTrue(all(status == 200 for status, _ in joins), joins)
+        joined_class = eagle._find_class_by_id("rapid-class")
+        self.assertEqual(len(joined_class["students"]), student_count)
+        self.assertTrue(all("rapid-class" in user["class_ids"] for user in eagle._load_users()["users"]))
+
+        def sign_in(index):
+            with eagle.app.test_client() as client:
+                response = client.post(
+                    "/api/auth/login",
+                    json={"email": f"student{index}@school.test", "password": "ClassPass123"},
+                    environ_base={"REMOTE_ADDR": shared_ip},
+                )
+                return response.status_code, response.get_json()
+
+        with patch("app._verify_user_password", return_value=True), \
+             patch("app._seed_example_files"), \
+             patch("app._record_sign_in_event"):
+            with ThreadPoolExecutor(max_workers=20) as pool:
+                sign_ins = list(pool.map(sign_in, range(student_count)))
+
+        self.assertTrue(all(status == 200 for status, _ in sign_ins), sign_ins)
+        self.generated_tokens.extend(payload["token"] for _, payload in sign_ins)
+
+    def test_teacher_file_send_setting_is_enforced_for_the_selected_class(self):
+        eagle.CLASSES_FILE.write_text(json.dumps({"classes": [
+            {
+                "id": "class-one",
+                "name": "Class One",
+                "teacher_email": self.teacher_email,
+                "students": [self.student_email],
+                "settings": {"teacher_file_send_enabled": False},
+            },
+            {
+                "id": "class-two",
+                "name": "Class Two",
+                "teacher_email": self.teacher_email,
+                "students": [self.student_email],
+                "settings": {"teacher_file_send_enabled": True},
+            },
+        ]}), encoding="utf-8")
+        eagle._classes_cache = None
+
+        response = self.http.post(
+            "/api/classroom/send-file",
+            headers={"X-Teacher-Token": self.teacher_token},
+            json={"classId": "class-one", "sourcePath": "lesson.py", "recipients": "all"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("disabled", response.get_json()["error"].lower())
+
+    def test_raise_hand_and_streaming_stay_in_the_selected_class(self):
+        eagle.USERS_FILE.write_text(json.dumps({"users": [{
+            "email": self.student_email,
+            "name": "Student",
+            "role": "student",
+            "class_id": "class-two",
+            "class_ids": ["class-two"],
+            "enabled": True,
+        }]}), encoding="utf-8")
+        eagle.CLASSES_FILE.write_text(json.dumps({"classes": [
+            {
+                "id": "class-one",
+                "name": "Class One",
+                "teacher_email": self.teacher_email,
+                "students": [],
+                "settings": {"raise_hand_enabled": True},
+            },
+            {
+                "id": "class-two",
+                "name": "Class Two",
+                "teacher_email": self.teacher_email,
+                "students": [self.student_email],
+                "settings": {"raise_hand_enabled": True},
+            },
+        ]}), encoding="utf-8")
+        eagle._users_cache = None
+        eagle._classes_cache = None
+        signals_file = self.root / "classroom_signals.json"
+        events_file = self.root / "classroom_events.json"
+
+        teacher_client = eagle.socketio.test_client(eagle.app, flask_test_client=self.http)
+        student_client = eagle.socketio.test_client(eagle.app, flask_test_client=self.http)
+        self.socket_clients.extend([teacher_client, student_client])
+        teacher_client.get_received()
+        student_client.get_received()
+
+        with patch.object(classroom_features, "CLASSROOM_SIGNALS_FILE", signals_file), \
+             patch.object(classroom_features, "CLASSROOM_EVENTS_FILE", events_file):
+            teacher_client.emit("join_class_room", {
+                "role": "teacher", "token": self.teacher_token, "class_id": "class-two",
+            })
+            student_client.emit("join_class_room", {
+                "role": "student", "token": self.student_token, "class_id": "class-two",
+            })
+            teacher_client.get_received()
+            student_client.get_received()
+
+            student_client.emit("classroom_hand_raise", {
+                "token": self.student_token, "class_id": "class-two",
+            })
+            teacher_events = teacher_client.get_received()
+            hands_updates = [event for event in teacher_events if event.get("name") == "classroom_hands_update"]
+            self.assertTrue(hands_updates)
+            hands_payload = hands_updates[-1]["args"][0]
+            self.assertEqual(hands_payload["class_id"], "class-two")
+            self.assertEqual(hands_payload["hands"][0]["student_email"], self.student_email)
+
+            student_client.emit("classroom_hand_raise", {
+                "token": self.student_token, "class_id": "class-one",
+            })
+            signals = json.loads(signals_file.read_text(encoding="utf-8"))
+            self.assertNotIn("class-one", signals["classes"])
+
+            teacher_client.emit("teacher_stream_status", {
+                "role": "teacher", "token": self.teacher_token, "class_id": "class-two", "active": True,
+            })
+            teacher_client.emit("teacher_code_update", {
+                "role": "teacher", "token": self.teacher_token, "class_id": "class-two",
+                "code": "print('selected')", "language": "python",
+            })
+            student_events = student_client.get_received()
+            code_events = [event for event in student_events if event.get("name") == "teacher_code"]
+            self.assertTrue(code_events)
+            self.assertEqual(code_events[-1]["args"][0]["class_id"], "class-two")
+
+            teacher_client.emit("teacher_code_update", {
+                "role": "teacher", "token": self.teacher_token, "class_id": "class-one",
+                "code": "print('other')", "language": "python",
+            })
+            self.assertFalse(any(
+                event.get("name") == "teacher_code" and event["args"][0].get("class_id") == "class-one"
+                for event in student_client.get_received()
+            ))
 
     def test_class_ai_switch_restricts_student_but_not_owner_teacher(self):
         self._set_disabled_ai_class()

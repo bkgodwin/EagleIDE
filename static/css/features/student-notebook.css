@@ -47,7 +47,7 @@
   top: 0;
   right: 0;
   width: min(860px, 98vw);
-  height: 100vh;
+  height: var(--app-height, 100dvh);
   z-index: 1510;
   transform: translateX(calc(100% + 28px));
   transition: transform 260ms ease;
