@@ -38,7 +38,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20260816-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260819-1">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -671,6 +671,7 @@
   <!-- Teacher Dashboard Modal -->
   <div id="teacherDashboardModal" class="modal teacher-dash-modal glass-modal teacher-dash-fullscreen" style="display:none;">
     <div class="modal-content">
+      <button class="teacher-dash-mobile-close" id="teacherDashMobileCloseBtn" type="button" aria-label="Close teacher dashboard">✕</button>
       <!-- Left Sidebar Navigation -->
       <aside class="teacher-dash-sidebar">
         <div class="teacher-dash-brand">
@@ -937,6 +938,7 @@
   <!-- Student Dashboard Modal -->
   <div id="studentDashboardModal" class="modal teacher-dash-modal glass-modal teacher-dash-fullscreen" style="display:none;">
     <div class="modal-content">
+      <button class="teacher-dash-mobile-close" id="studentDashMobileCloseBtn" type="button" aria-label="Close student dashboard">✕</button>
       <aside class="teacher-dash-sidebar">
         <div class="teacher-dash-brand">
           <span class="teacher-dash-eagle">🦅</span>
@@ -1618,17 +1620,17 @@
   <script src="/static/js/editor-init.js"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js"></script>
-  <script src="/static/js/app-core.js?v=20260816-1"></script>
+  <script src="/static/js/app-core.js?v=20260819-1"></script>
 <script src="/static/js/network-sim.js?v=20260714-18"></script>
 <script src="/static/js/network-sim-advanced.js?v=20260714-4"></script>
-  <script src="/static/js/wiki-reader.js?v=20260816-1"></script>
+  <script src="/static/js/wiki-reader.js?v=20260819-1"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
   <script src="/static/js/lesson-plans.js?v=20260816-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20260816-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20260819-1"></script>
   <script src="/static/js/classroom-signals.js"></script>
-  <script src="/static/js/classroom-files.js?v=20250608"></script>
+  <script src="/static/js/classroom-files.js?v=20260819-1"></script>
   <script src="/static/js/student-notebook.js?v=20260806-1"></script>
-  <script src="/static/js/student-dashboard.js?v=20260714-6"></script>
+  <script src="/static/js/student-dashboard.js?v=20260819-1"></script>
 
 </body>
 </html>
