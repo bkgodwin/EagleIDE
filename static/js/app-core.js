@@ -199,14 +199,19 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     async function validateRestoredAuthSession() {
+      const rejectRestoredSession = () => {
+        clearAuthStateMemory();
+        saveAuthSession();
+        return false;
+      };
       try {
         if (USER_TOKEN) {
           const res = await fetch('/api/auth/me', { headers: { 'X-User-Token': USER_TOKEN } });
+          if (res.status === 401 || res.status === 403) return rejectRestoredSession();
+          if (!res.ok) return true;
           const j = await res.json().catch(() => ({}));
           if (!j?.ok || (j.user?.role && j.user.role !== 'student')) {
-            clearAuthStateMemory();
-            saveAuthSession();
-            return false;
+            return rejectRestoredSession();
           }
           currentUser = j.user || currentUser;
           currentTeacher = null;
@@ -217,11 +222,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         }
         if (TEACHER_TOKEN) {
           const res = await fetch('/api/auth/me', { headers: { 'X-Teacher-Token': TEACHER_TOKEN } });
+          if (res.status === 401 || res.status === 403) return rejectRestoredSession();
+          if (!res.ok) return true;
           const j = await res.json().catch(() => ({}));
           if (!j?.ok || j.user?.role !== 'teacher') {
-            clearAuthStateMemory();
-            saveAuthSession();
-            return false;
+            return rejectRestoredSession();
           }
           currentTeacher = j.user || currentTeacher;
           currentUser = null;
@@ -232,11 +237,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         }
         if (ADMIN_TOKEN) {
           const res = await fetch('/api/admin/server-health', { headers: { 'X-Admin-Token': ADMIN_TOKEN } });
-          if (!res.ok) {
-            clearAuthStateMemory();
-            saveAuthSession();
-            return false;
-          }
+          if (res.status === 401 || res.status === 403) return rejectRestoredSession();
+          if (!res.ok) return true;
           currentUser = null;
           currentTeacher = null;
           USER_TOKEN = null;
@@ -246,10 +248,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         }
       } catch (err) {
         console.warn('Failed to validate restored auth session.', err);
+        // A suspended iPad tab or a brief server/network interruption is not
+        // proof that the token is invalid. Keep the saved session and retry
+        // naturally on the next page load/API request.
+        return !!(USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN);
       }
-      clearAuthStateMemory();
-      saveAuthSession();
-      return false;
+      return rejectRestoredSession();
     }
 
     function getActiveLanguageInfo() {
@@ -1352,6 +1356,43 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       window.StudentDashboard?.onClassChanged?.();
     }
 
+    function selectTeacherClass(classId) {
+      const nextId = String(classId || '').trim();
+      if (!TEACHER_TOKEN || !nextId || !teacherClasses.some(cls => cls.id === nextId)) return false;
+      const previousId = currentTeacherClassId;
+      const changed = !!previousId && previousId !== nextId;
+      if (changed) {
+        emitLeaveClassRoom(previousId);
+        if (teacherStreamingEnabled && socket) {
+          socket.emit('teacher_stream_status', {
+            token: TEACHER_TOKEN,
+            role: 'teacher',
+            class_id: previousId,
+            active: false,
+          });
+        }
+      }
+      currentTeacherClassId = nextId;
+      activeAssignmentsClassId = nextId;
+      refreshEagleIDEContext();
+      syncTeacherDashboardClassSelectors();
+      emitJoinClassRoom('teacher', TEACHER_TOKEN, nextId);
+      window.ClassroomSignals?.onAuthChanged?.();
+      window.ClassroomSignals?.loadTeacherSignals?.();
+      updateSendFileButtonVisibility();
+      if (teacherStreamingEnabled && socket) {
+        socket.emit('teacher_stream_status', {
+          token: TEACHER_TOKEN,
+          role: 'teacher',
+          class_id: nextId,
+          active: true,
+        });
+      }
+      if (teacherStreamingEnabled && !teacherBroadcastActive) startTeacherBroadcast();
+      if (teacherStreamingEnabled) scheduleTeacherBroadcastFlush(true);
+      return true;
+    }
+
     // Append a single line (no embedded newlines) to the shell output with correct coloring.
     function _appendLine(line, parent = outputEl) {
       if (!line) return; // skip null, undefined, and empty string
@@ -1668,31 +1709,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     document.getElementById('classSelector')?.addEventListener('change', (e) => {
       const nextId = e.target.value;
       if (TEACHER_TOKEN) {
-        if (currentTeacherClassId && currentTeacherClassId !== nextId) emitLeaveClassRoom(currentTeacherClassId);
-        if (teacherStreamingEnabled && currentTeacherClassId && currentTeacherClassId !== nextId && socket) {
-          socket.emit('teacher_stream_status', {
-            token: TEACHER_TOKEN,
-            role: 'teacher',
-            class_id: currentTeacherClassId,
-            active: false
-          });
-        }
-        currentTeacherClassId = nextId || null;
-        activeAssignmentsClassId = currentTeacherClassId;
-        syncTeacherDashboardClassSelectors();
-        if (currentTeacherClassId) emitJoinClassRoom('teacher', TEACHER_TOKEN, currentTeacherClassId);
-        refreshEagleIDEContext();
-        window.ClassroomSignals?.loadTeacherSignals?.();
-        if (teacherStreamingEnabled && currentTeacherClassId && socket) {
-          socket.emit('teacher_stream_status', {
-            token: TEACHER_TOKEN,
-            role: 'teacher',
-            class_id: currentTeacherClassId,
-            active: true
-          });
-        }
-        if (teacherStreamingEnabled && !teacherBroadcastActive && currentTeacherClassId) startTeacherBroadcast();
-        if (teacherStreamingEnabled) scheduleTeacherBroadcastFlush(true);
+        if (!selectTeacherClass(nextId)) return;
         refreshActiveStudentsForClass(currentTeacherClassId);
         renderTeacherClassManagement();
         renderClassReports().catch(() => {});
@@ -3274,11 +3291,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (!teacherDashListenersAttached) {
         teacherDashListenersAttached = true;
 
-        // Close button
-        document.getElementById('teacherDashCloseBtn')?.addEventListener('click', () => {
+        const closeTeacherDashboard = () => {
           modal.style.display = 'none';
           stopTeacherDashboardRosterPolling();
-        });
+        };
+        document.getElementById('teacherDashCloseBtn')?.addEventListener('click', closeTeacherDashboard);
+        document.getElementById('teacherDashMobileCloseBtn')?.addEventListener('click', closeTeacherDashboard);
         modal.addEventListener('click', (e) => {
           if (e.target === modal) {
             modal.style.display = 'none';
@@ -3333,27 +3351,22 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
         // Reports – class selector change
         document.getElementById('teacherReportsClassSelect')?.addEventListener('change', async (e) => {
-          currentTeacherClassId = e.target.value || null;
+          if (!selectTeacherClass(e.target.value)) return;
           renderClassSelector();
-          syncTeacherDashboardClassSelectors();
           await refreshActiveStudentsForClass(currentTeacherClassId);
           await renderClassReports();
           ensureTeacherDashboardRosterPolling();
         });
         document.getElementById('teacherAssignmentsClassSelect')?.addEventListener('change', async (e) => {
-          activeAssignmentsClassId = e.target.value || null;
-          currentTeacherClassId = activeAssignmentsClassId;
+          if (!selectTeacherClass(e.target.value)) return;
           renderClassSelector();
-          syncTeacherDashboardClassSelectors();
           await refreshActiveStudentsForClass(currentTeacherClassId);
           renderAdminAssignments();
           ensureTeacherDashboardRosterPolling();
         });
         document.getElementById('teacherClassesActiveSelect')?.addEventListener('change', async (e) => {
-          currentTeacherClassId = e.target.value || null;
-          refreshEagleIDEContext();
+          if (!selectTeacherClass(e.target.value)) return;
           renderClassSelector();
-          syncTeacherDashboardClassSelectors();
           await refreshActiveStudentsForClass(currentTeacherClassId);
           renderTeacherClassManagement();
           renderAdminAssignments();

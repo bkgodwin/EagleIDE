@@ -128,8 +128,19 @@ RUN_START_RATE_WINDOW_SECONDS = 10.0
 RUN_RATE_IDENTITY_STALE_SECONDS = 3600.0
 MAX_RUN_RATE_IDENTITIES = 4096
 MAX_SOCKET_CONNECTIONS = _env_int("EAGLE_MAX_SOCKET_CONNECTIONS", 512, 16, 4096)
-MAX_SOCKET_CONNECTIONS_PER_IP = _env_int("EAGLE_MAX_SOCKET_CONNECTIONS_PER_IP", 128, 8, 1024)
+MAX_SOCKET_CONNECTIONS_PER_IP = _env_int("EAGLE_MAX_SOCKET_CONNECTIONS_PER_IP", 256, 8, 1024)
 REQUIRE_WINDOWS_JOB_LIMITS = os.environ.get("EAGLE_REQUIRE_WINDOWS_JOB_LIMITS", "1").strip().lower() not in {"0", "false", "no"}
+
+# School devices commonly share one public/NAT address. These network-wide
+# ceilings are deliberately large enough for several classes to sign in at
+# once; targeted account limits still protect individual credentials.
+REGISTRATION_IP_LIMIT = _env_int("EAGLE_REGISTRATIONS_PER_HOUR_PER_IP", 120, 20, 1000)
+REGISTRATION_RATE_WINDOW_SECONDS = 3600.0
+STUDENT_LOGIN_IP_LIMIT = _env_int("EAGLE_LOGINS_PER_15_MINUTES_PER_IP", 300, 40, 2000)
+STUDENT_LOGIN_ACCOUNT_FAILURE_LIMIT = _env_int("EAGLE_LOGIN_FAILURES_PER_ACCOUNT", 12, 5, 100)
+LOGIN_RATE_WINDOW_SECONDS = 900.0
+ADMIN_LOGIN_IP_LIMIT = 10
+MAX_AUTH_RATE_LIMIT_KEYS = 8192
 
 MAX_TEACHER_STREAM_CODE_BYTES = 200_000
 TEACHER_STREAM_MIN_INTERVAL_SECONDS = 0.25
@@ -719,7 +730,7 @@ def _html_preview_request_is_isolated() -> bool:
 # -------------------------
 # User account management
 # -------------------------
-_users_lock = threading.Lock()
+_users_lock = threading.RLock()
 _student_tokens: Dict[str, dict] = {}  # token -> user info dict
 _teacher_tokens: Dict[str, dict] = {}  # token -> teacher info dict
 _teacher_code_snapshots: Dict[str, str] = {}
@@ -727,9 +738,12 @@ _teacher_code_languages: Dict[str, str] = {}
 _teacher_stream_last_emit: Dict[str, float] = {}
 _live_teacher_stream_sids_by_class: Dict[str, set[str]] = {}
 _socket_live_class_ids: Dict[str, set[str]] = {}
-_reg_rate_limit: dict = defaultdict(list)  # ip -> list of timestamps
-_login_rate_limit: dict = defaultdict(list)  # ip -> list of timestamps
-_classes_lock = threading.Lock()
+_reg_rate_limit: dict = defaultdict(list)  # ip -> successful/well-formed registration attempts
+_login_rate_limit: dict = defaultdict(list)  # ip -> student/teacher login attempts
+_login_account_rate_limit: dict = defaultdict(list)  # normalized email -> failed attempts
+_admin_login_rate_limit: dict = defaultdict(list)  # ip -> admin login attempts
+_auth_rate_limit_lock = threading.Lock()
+_classes_lock = threading.RLock()
 _skills_lock = threading.Lock()
 _default_skills_seed_lock = threading.Lock()
 _notebooks_lock = threading.Lock()
@@ -1141,6 +1155,54 @@ def _get_request_ip(req) -> str:
     if remote:
         return remote
     return "unknown"
+
+
+def _rate_limit_is_blocked(store: dict, key: str, limit: int, window_seconds: float, now: Optional[float] = None) -> bool:
+    """Check a small in-memory sliding window without consuming an attempt."""
+    timestamp = time.time() if now is None else float(now)
+    cutoff = timestamp - float(window_seconds)
+    normalized_key = str(key or "unknown")
+    with _auth_rate_limit_lock:
+        recent = [value for value in store.get(normalized_key, []) if value >= cutoff]
+        if recent:
+            store[normalized_key] = recent
+        else:
+            store.pop(normalized_key, None)
+        return len(recent) >= int(limit)
+
+
+def _consume_rate_limit(store: dict, key: str, limit: int, window_seconds: float, now: Optional[float] = None) -> bool:
+    """Atomically reserve an attempt; return False when the window is full."""
+    timestamp = time.time() if now is None else float(now)
+    cutoff = timestamp - float(window_seconds)
+    normalized_key = str(key or "unknown")
+    with _auth_rate_limit_lock:
+        recent = [value for value in store.get(normalized_key, []) if value >= cutoff]
+        if len(recent) >= int(limit):
+            store[normalized_key] = recent
+            return False
+        recent.append(timestamp)
+        store[normalized_key] = recent
+        if len(store) > MAX_AUTH_RATE_LIMIT_KEYS:
+            stale_keys = [
+                stored_key for stored_key, values in store.items()
+                if not values or max(values) < cutoff
+            ]
+            for stale_key in stale_keys:
+                store.pop(stale_key, None)
+            if len(store) > MAX_AUTH_RATE_LIMIT_KEYS:
+                oldest_keys = sorted(
+                    store,
+                    key=lambda stored_key: max(store.get(stored_key) or [0]),
+                )[:len(store) - MAX_AUTH_RATE_LIMIT_KEYS]
+                for oldest_key in oldest_keys:
+                    store.pop(oldest_key, None)
+        return True
+
+
+def _clear_rate_limit(store: dict, key: str) -> None:
+    with _auth_rate_limit_lock:
+        store.pop(str(key or "unknown"), None)
 
 def _parse_meminfo_bytes() -> tuple[int, int]:
     total = 0
@@ -1615,19 +1677,20 @@ def _notebook_response_is_present(block: Optional[dict]) -> bool:
 
 
 def _record_user_sign_in(email: str, ip: str = "") -> Optional[str]:
-    users_data = _load_users()
-    timestamp = _current_timestamp()
-    changed = False
-    for user in users_data.get("users", []):
-        if user.get("email", "").lower() == email.lower():
-            user["last_sign_in"] = timestamp
-            if ip:
-                user["last_ip"] = ip
-            changed = True
-            break
-    if changed:
-        _save_users(users_data)
-        return timestamp
+    with _users_lock:
+        users_data = _load_users()
+        timestamp = _current_timestamp()
+        changed = False
+        for user in users_data.get("users", []):
+            if user.get("email", "").lower() == email.lower():
+                user["last_sign_in"] = timestamp
+                if ip:
+                    user["last_ip"] = ip
+                changed = True
+                break
+        if changed:
+            _save_users(users_data)
+            return timestamp
     return None
 
 def _sorted_assignment_submissions(submissions: list[dict]) -> list[dict]:
@@ -2006,11 +2069,13 @@ def _effective_challenges_enabled(req, payload: Optional[dict] = None) -> tuple[
 def admin_login():
     # Rate limiting: max 10 admin login attempts per 15 minutes per IP
     ip = _get_request_ip(request)
-    now = time.time()
-    _login_rate_limit[ip] = [t for t in _login_rate_limit[ip] if now - t < 900]
-    if len(_login_rate_limit[ip]) >= 10:
+    if not _consume_rate_limit(
+        _admin_login_rate_limit,
+        ip,
+        ADMIN_LOGIN_IP_LIMIT,
+        LOGIN_RATE_WINDOW_SECONDS,
+    ):
         return jsonify(ok=False, error="Too many login attempts. Please wait and try again."), 429
-    _login_rate_limit[ip].append(now)
 
     data = request.get_json(silent=True) or {}
     email = str(data.get("email", "")).strip()
@@ -2144,21 +2209,7 @@ def auth_register():
     if not cfg.get("registration_enabled", True):
         return jsonify(ok=False, error="Registration is currently disabled"), 403
     
-    # Rate limiting: max 5 registrations per hour per IP
     ip = _get_request_ip(request)
-    now = time.time()
-    timestamps = _reg_rate_limit[ip]
-    # Clean old entries for this IP
-    _reg_rate_limit[ip] = [t for t in timestamps if now - t < 3600]
-    if len(_reg_rate_limit[ip]) >= 5:
-        return jsonify(ok=False, error="Too many registration attempts. Try again later."), 429
-    # Probabilistically evict IPs with no recent activity (~5 % of requests)
-    # to prevent unbounded dict growth without paying full scan cost every time.
-    if random.random() < 0.05:
-        stale_ips = [k for k, v in list(_reg_rate_limit.items()) if not v]
-        for stale_ip in stale_ips:
-            _reg_rate_limit.pop(stale_ip, None)
-    
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
     password = (data.get("password") or "")
@@ -2177,9 +2228,13 @@ def auth_register():
     dot_idx = email.find('.', at_idx)
     if dot_idx <= at_idx + 1 or dot_idx == len(email) - 1:
         return jsonify(ok=False, error="Invalid email address"), 400
-    
-    if _find_user(email):
-        return jsonify(ok=False, error="Email already registered"), 409
+    if _rate_limit_is_blocked(
+        _reg_rate_limit,
+        ip,
+        REGISTRATION_IP_LIMIT,
+        REGISTRATION_RATE_WINDOW_SECONDS,
+    ):
+        return jsonify(ok=False, error="Too many registrations from this network. Please wait and try again."), 429
     
     password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     timestamp = _current_timestamp()
@@ -2196,10 +2251,22 @@ def auth_register():
         "enabled": True
     }
     
-    users_data = _load_users()
-    users_data["users"].append(user)
-    _save_users(users_data)
-    _reg_rate_limit[ip].append(now)
+    # Keep the duplicate check and write in one transaction. The server is
+    # threaded, and a class registering simultaneously must not overwrite
+    # records loaded by another request.
+    with _users_lock:
+        users_data = _load_users()
+        if any((row.get("email") or "").lower() == email for row in users_data.get("users", [])):
+            return jsonify(ok=False, error="Email already registered"), 409
+        if not _consume_rate_limit(
+            _reg_rate_limit,
+            ip,
+            REGISTRATION_IP_LIMIT,
+            REGISTRATION_RATE_WINDOW_SECONDS,
+        ):
+            return jsonify(ok=False, error="Too many registrations from this network. Please wait and try again."), 429
+        users_data["users"].append(user)
+        _save_users(users_data)
     
     # Create user directory
     user_dir = _get_user_dir(email)
@@ -2216,27 +2283,36 @@ def auth_register():
 
 @app.post("/api/auth/login")
 def auth_login():
-    # Rate limiting: max 20 login attempts per 15 minutes per IP
     ip = _get_request_ip(request)
-    now = time.time()
-    _login_rate_limit[ip] = [t for t in _login_rate_limit[ip] if now - t < 900]
-    if len(_login_rate_limit[ip]) >= 20:
-        return jsonify(ok=False, error="Too many login attempts. Please wait and try again."), 429
-    _login_rate_limit[ip].append(now)
-    if random.random() < 0.05:
-        stale = [k for k, v in list(_login_rate_limit.items()) if not v]
-        for k in stale:
-            _login_rate_limit.pop(k, None)
-
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
     password = (data.get("password") or "")
     
     if not email or not password:
         return jsonify(ok=False, error="Email and password required"), 400
+    if not _consume_rate_limit(
+        _login_rate_limit,
+        ip,
+        STUDENT_LOGIN_IP_LIMIT,
+        LOGIN_RATE_WINDOW_SECONDS,
+    ):
+        return jsonify(ok=False, error="Too many login attempts from this network. Please wait and try again."), 429
+    if _rate_limit_is_blocked(
+        _login_account_rate_limit,
+        email,
+        STUDENT_LOGIN_ACCOUNT_FAILURE_LIMIT,
+        LOGIN_RATE_WINDOW_SECONDS,
+    ):
+        return jsonify(ok=False, error="Too many login attempts for this account. Please wait and try again."), 429
     
     user = _find_user(email)
     if not user:
+        _consume_rate_limit(
+            _login_account_rate_limit,
+            email,
+            STUDENT_LOGIN_ACCOUNT_FAILURE_LIMIT,
+            LOGIN_RATE_WINDOW_SECONDS,
+        )
         return jsonify(ok=False, error="Invalid email or password"), 401
     if not user.get("enabled", True):
         return jsonify(ok=False, error="Account is disabled"), 403
@@ -2244,7 +2320,14 @@ def auth_login():
     pw_ok = _verify_user_password(user, password)
     
     if not pw_ok:
+        _consume_rate_limit(
+            _login_account_rate_limit,
+            email,
+            STUDENT_LOGIN_ACCOUNT_FAILURE_LIMIT,
+            LOGIN_RATE_WINDOW_SECONDS,
+        )
         return jsonify(ok=False, error="Invalid email or password"), 401
+    _clear_rate_limit(_login_account_rate_limit, email)
     
     # Ensure user directory exists
     user_dir = _get_user_dir(email)
@@ -3537,35 +3620,36 @@ def join_class():
     user = _require_user(request)
     if not user:
         return jsonify(ok=False, error="Student login required"), 401
-    join_code = (request.get_json(silent=True) or {}).get("joinCode", "")
-    target = _find_class_by_code(join_code)
-    if not target:
-        return jsonify(ok=False, error="Invalid join code"), 404
-    users_data = _load_users()
+    join_code = str((request.get_json(silent=True) or {}).get("joinCode", "")).strip().upper()
     target_email = (user.get("email") or "").strip().lower()
-    student = next((u for u in users_data.get("users", []) if (u.get("email") or "").lower() == target_email), None)
-    if not student:
-        return jsonify(ok=False, error="Student not found"), 404
-    if student.get("role") != "student":
-        return jsonify(ok=False, error="Only student accounts can join classes"), 400
-    existing_class_ids = _get_user_class_ids(student)
-    if target.get("id") in existing_class_ids:
-        return jsonify(ok=False, error="You have already joined this class"), 409
-    classes_data = _load_classes()
-    joined = None
-    for c in classes_data.get("classes", []):
-        if c.get("id") == target.get("id"):
-            students = c.setdefault("students", [])
-            if target_email not in students:
-                students.append(target_email)
-            joined = c
-            break
-    if not joined:
-        return jsonify(ok=False, error="Class not found"), 404
-    next_class_ids = existing_class_ids + [joined.get("id")]
-    _set_user_classes(student, next_class_ids, joined.get("id"))
-    _save_users(users_data)
-    _save_classes(classes_data)
+    # Both files form one membership record. Hold their locks for the entire
+    # read-modify-write operation so simultaneous class joins cannot erase one
+    # another. All multi-store transactions use users -> classes lock order.
+    with _users_lock, _classes_lock:
+        users_data = _load_users()
+        classes_data = _load_classes()
+        target = next((
+            cls for cls in classes_data.get("classes", [])
+            if str(cls.get("join_code") or "").strip().upper() == join_code
+        ), None)
+        if not target:
+            return jsonify(ok=False, error="Invalid join code"), 404
+        student = next((u for u in users_data.get("users", []) if (u.get("email") or "").lower() == target_email), None)
+        if not student:
+            return jsonify(ok=False, error="Student not found"), 404
+        if student.get("role") != "student":
+            return jsonify(ok=False, error="Only student accounts can join classes"), 400
+        existing_class_ids = _get_user_class_ids(student)
+        if target.get("id") in existing_class_ids:
+            return jsonify(ok=False, error="You have already joined this class"), 409
+        students = target.setdefault("students", [])
+        if target_email not in students:
+            students.append(target_email)
+        next_class_ids = existing_class_ids + [target.get("id")]
+        _set_user_classes(student, next_class_ids, target.get("id"))
+        _save_users(users_data)
+        _save_classes(classes_data)
+        joined = copy.deepcopy(target)
     user["class_id"] = joined.get("id")
     user["class_ids"] = next_class_ids
     return jsonify(ok=True, **_student_class_response(student))
