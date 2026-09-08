@@ -31,6 +31,31 @@
 .file-tree-skeleton { height: 120px; margin: 12px; }
 .file-tree-more-btn { margin: 8px 12px; width: calc(100% - 24px); }
 
+.file-tree { min-height: 0; overscroll-behavior: contain; }
+.file-tree-item:focus-visible { outline: 2px solid var(--columbia-blue); outline-offset: -2px; }
+.file-item-actions, .file-sidebar-breadcrumb button.crumb {
+  border: 1px solid var(--theme-border-mid);
+  border-radius: 8px;
+  background: var(--theme-input-bg);
+  color: var(--theme-text);
+  min-height: 36px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font: inherit;
+  touch-action: manipulation;
+}
+.file-item-actions { flex: 0 0 40px; font-size: 20px; }
+.file-sidebar-actions { flex-shrink: 0; max-height: 45%; overflow: auto; }
+.file-sidebar-actions-right { display: flex; flex-wrap: wrap; gap: 8px; white-space: normal; }
+.file-context-menu { max-height: calc(var(--app-height, 100dvh) - 16px); overflow-y: auto; }
+.file-context-menu button { min-height: 40px; }
+.file-name-dialog .modal-content { max-width: 520px; display: flex; flex-direction: column; gap: 12px; }
+.file-name-dialog h3, .file-name-dialog p { margin: 0; }
+.file-name-dialog input { width: 100%; min-height: 44px; box-sizing: border-box; font-size: 16px; padding: 10px; color: var(--theme-text); background: var(--theme-input-bg); border: 1px solid var(--theme-border-mid); border-radius: 8px; }
+.file-name-hint { color: var(--theme-text-dim); overflow-wrap: anywhere; }
+.file-name-error { color: var(--theme-danger, #ef6b73); }
+.file-name-dialog .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
 @media (max-width: 1200px) {
   .embedded-file-browser { flex-direction: column; }
   .file-sidebar-actions {

@@ -607,6 +607,17 @@ body:not(.wiki-mode) .wiki-top-search input::placeholder { color: rgba(11, 37, 6
   border-width: 0 1px 0 0;
 }
 body.wiki-sidebar-hidden .wiki-nav-drawer { display: block; transform: translateX(-105%); }
+/* Desktop and landscape tablets reserve space for open contents. The drawer
+   must not cover the lesson plan or article underneath it. */
+@media (min-width: 821px) {
+  .wiki-nav-drawer {
+    position: relative;
+    inset: auto;
+    flex: 0 0 min(var(--wiki-nav-drawer-width, 400px), 32vw);
+    width: min(var(--wiki-nav-drawer-width, 400px), 32vw);
+  }
+  body.wiki-sidebar-hidden .wiki-nav-drawer { display: none; }
+}
 .wiki-nav-drawer .wiki-tree-link { font-size: 13px; }
 .wiki-nav-drawer .wiki-tree-title {
   overflow: visible;
@@ -863,7 +874,7 @@ body.wiki-mode .topbar-primary *,
   .wiki-article { width: calc(100% - 16px); margin-right: 8px; margin-left: 8px; padding: 24px 18px; }
   .wiki-standards-coverage { width: calc(100% - 40px); margin-right: 20px; margin-left: 20px; }
   .wiki-article-layout { grid-template-columns: minmax(0,1fr) minmax(190px,220px); gap: 20px; }
-  .wiki-manager-modal { width: 100vw !important; height: var(--app-height, 100dvh); max-height: var(--app-height, 100dvh) !important; border-radius: 0 !important; }
+  .wiki-manager-modal { width: 100% !important; height: 100%; max-height: 100% !important; border-radius: 0 !important; }
   .wiki-manager-layout { grid-template-columns: minmax(260px, 32vw) 1fr; }
   .wiki-admin-fields-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }

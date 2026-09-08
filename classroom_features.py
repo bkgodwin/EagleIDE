@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Optional
 
@@ -99,6 +100,18 @@ def _save_class_bucket(class_id: str, bucket: dict) -> None:
     with _classroom_signals_lock:
         store = _read_signals_store()
         store.setdefault("classes", {})[class_id] = bucket
+        _write_signals_store(store)
+
+
+@contextmanager
+def _edit_class_bucket(class_id: str):
+    """Keep each read/modify/write atomic when a classroom acts together."""
+    with _classroom_signals_lock:
+        store = _read_signals_store()
+        bucket = store.setdefault("classes", {}).setdefault(class_id, {"hands": [], "questions": []})
+        bucket.setdefault("hands", [])
+        bucket.setdefault("questions", [])
+        yield bucket
         _write_signals_store(store)
 
 
@@ -635,16 +648,14 @@ def register(app, socketio) -> None:
             return
         email = (student.get("email") or "").strip().lower()
         name = student.get("name") or email
-        bucket = _class_bucket(class_id)
-        hands = bucket.get("hands", [])
-        if not any((h.get("student_email") or "").lower() == email for h in hands):
-            hands.append({
-                "student_email": email,
-                "student_name": name,
-                "raised_at": M._current_timestamp(),
-            })
-        bucket["hands"] = hands
-        _save_class_bucket(class_id, bucket)
+        with _edit_class_bucket(class_id) as bucket:
+            hands = bucket["hands"]
+            if not any((h.get("student_email") or "").lower() == email for h in hands):
+                hands.append({
+                    "student_email": email,
+                    "student_name": name,
+                    "raised_at": M._current_timestamp(),
+                })
         append_classroom_event("hand_raise", class_id, email, "student", {})
         _emit_classroom_signal_updates(socketio, class_id)
 
@@ -656,12 +667,11 @@ def register(app, socketio) -> None:
         if not student:
             return
         email = (student.get("email") or "").strip().lower()
-        bucket = _class_bucket(class_id)
-        bucket["hands"] = [
-            h for h in bucket.get("hands", [])
-            if (h.get("student_email") or "").lower() != email
-        ]
-        _save_class_bucket(class_id, bucket)
+        with _edit_class_bucket(class_id) as bucket:
+            bucket["hands"] = [
+                h for h in bucket["hands"]
+                if (h.get("student_email") or "").lower() != email
+            ]
         append_classroom_event("hand_lower", class_id, email, "student", {})
         _emit_classroom_signal_updates(socketio, class_id)
 
@@ -678,30 +688,28 @@ def register(app, socketio) -> None:
             return
         email = (student.get("email") or "").strip().lower()
         name = student.get("name") or email
-        bucket = _class_bucket(class_id)
-        questions = bucket.get("questions", [])
-        open_count = sum(
-            1 for q in questions
-            if (q.get("student_email") or "").lower() == email and q.get("status") == "open"
-        )
-        if open_count >= MAX_OPEN_QUESTIONS_PER_STUDENT:
-            socketio.emit(
-                "classroom_question_error",
-                {"class_id": class_id, "error": f"Maximum {MAX_OPEN_QUESTIONS_PER_STUDENT} open questions allowed"},
-                to=request.sid,
+        with _edit_class_bucket(class_id) as bucket:
+            questions = bucket["questions"]
+            open_count = sum(
+                1 for q in questions
+                if (q.get("student_email") or "").lower() == email and q.get("status") == "open"
             )
-            return
-        question = {
-            "id": uuid.uuid4().hex,
-            "student_email": email,
-            "student_name": name,
-            "text": text,
-            "created_at": M._current_timestamp(),
-            "status": "open",
-        }
-        questions.append(question)
-        bucket["questions"] = questions
-        _save_class_bucket(class_id, bucket)
+            if open_count >= MAX_OPEN_QUESTIONS_PER_STUDENT:
+                socketio.emit(
+                    "classroom_question_error",
+                    {"class_id": class_id, "error": f"Maximum {MAX_OPEN_QUESTIONS_PER_STUDENT} open questions allowed"},
+                    to=request.sid,
+                )
+                return
+            question = {
+                "id": uuid.uuid4().hex,
+                "student_email": email,
+                "student_name": name,
+                "text": text,
+                "created_at": M._current_timestamp(),
+                "status": "open",
+            }
+            questions.append(question)
         append_classroom_event("question_submit", class_id, email, "student", {"question_id": question["id"]})
         _emit_classroom_signal_updates(socketio, class_id)
 
@@ -713,12 +721,11 @@ def register(app, socketio) -> None:
         teacher = _auth_class_teacher(token, class_id)
         if not teacher or not student_email:
             return
-        bucket = _class_bucket(class_id)
-        bucket["hands"] = [
-            h for h in bucket.get("hands", [])
-            if (h.get("student_email") or "").lower() != student_email
-        ]
-        _save_class_bucket(class_id, bucket)
+        with _edit_class_bucket(class_id) as bucket:
+            bucket["hands"] = [
+                h for h in bucket["hands"]
+                if (h.get("student_email") or "").lower() != student_email
+            ]
         append_classroom_event(
             "hand_ack",
             class_id,
@@ -736,11 +743,10 @@ def register(app, socketio) -> None:
         teacher = _auth_class_teacher(token, class_id)
         if not teacher or not question_id:
             return
-        bucket = _class_bucket(class_id)
-        for q in bucket.get("questions", []):
-            if q.get("id") == question_id and q.get("status") == "open":
-                q["status"] = "dismissed"
-        _save_class_bucket(class_id, bucket)
+        with _edit_class_bucket(class_id) as bucket:
+            for q in bucket["questions"]:
+                if q.get("id") == question_id and q.get("status") == "open":
+                    q["status"] = "dismissed"
         append_classroom_event(
             "question_dismiss",
             class_id,
@@ -759,18 +765,17 @@ def register(app, socketio) -> None:
         teacher = _auth_class_teacher(token, class_id)
         if not teacher or not question_id or not response:
             return
-        bucket = _class_bucket(class_id)
         target_q = None
-        for q in bucket.get("questions", []):
-            if q.get("id") == question_id and q.get("status") == "open":
-                q["status"] = "responded"
-                q["response"] = response
-                q["responded_at"] = M._current_timestamp()
-                target_q = q
-                break
-        if not target_q:
-            return
-        _save_class_bucket(class_id, bucket)
+        with _edit_class_bucket(class_id) as bucket:
+            for q in bucket["questions"]:
+                if q.get("id") == question_id and q.get("status") == "open":
+                    q["status"] = "responded"
+                    q["response"] = response
+                    q["responded_at"] = M._current_timestamp()
+                    target_q = q
+                    break
+            if not target_q:
+                return
         append_classroom_event(
             "question_respond",
             class_id,

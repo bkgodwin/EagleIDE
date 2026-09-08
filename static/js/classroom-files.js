@@ -5,6 +5,8 @@
   'use strict';
 
   let sendFileItem = null;
+  let sendFileContext = null;
+  let sendInProgress = false;
   let auditStudentEmail = null;
   let auditClassId = null;
 
@@ -78,19 +80,20 @@
     const classCtx = getClassContext();
     if (!canSendFile(item)) return;
     sendFileItem = item;
+    const selection = { classId: classCtx.id, token: c.TEACHER_TOKEN || c.USER_TOKEN };
+    sendFileContext = selection;
     const modal = document.getElementById('classroomSendFileModal');
     const title = document.getElementById('classroomSendFileTitle');
     const recipientsWrap = document.getElementById('classroomSendRecipients');
     const peerRow = document.getElementById('classroomSendPeerRow');
     if (!modal || !recipientsWrap) return;
 
-    title.textContent = `Send "${item.name}"`;
+    title.textContent = `Send "${item.name}" — ${classCtx.name || 'Selected class'}`;
     recipientsWrap.innerHTML = '';
     if (peerRow) peerRow.style.display = 'none';
 
     if (c.TEACHER_TOKEN) {
-      const students = (ctx().teacherClasses || [])
-        .find(cls => cls.id === ctx().currentTeacherClassId)?.students || [];
+      const students = classCtx.students || [];
       recipientsWrap.innerHTML = `
         <label class="choice-item choice-item--emphasis">
           <input type="checkbox" id="classroomSendSelectAll">
@@ -128,6 +131,8 @@
         const selfEmail = String(c.currentUser?.email || '').toLowerCase();
         const peers = (await fetchStudentRoster(classCtx.id))
           .filter(s => String(s.email || '').toLowerCase() !== selfEmail);
+        if (sendFileContext !== selection || getClassContext()?.id !== selection.classId
+            || (ctx().TEACHER_TOKEN || ctx().USER_TOKEN) !== selection.token) return;
         peers.forEach(s => {
           html += `
             <label class="choice-item">
@@ -144,12 +149,17 @@
   }
 
   async function submitSendFile() {
+    if (sendInProgress) return;
     const c = ctx();
     const classCtx = getClassContext();
-    if (!sendFileItem || !classCtx) return;
-    const classId = c.TEACHER_TOKEN
-      ? (c.currentTeacherClassId || classCtx.id || c.teacherClasses?.[0]?.id)
-      : classCtx.id;
+    if (!sendFileItem || !classCtx || !sendFileContext) return;
+    if (classCtx.id !== sendFileContext.classId || (c.TEACHER_TOKEN || c.USER_TOKEN) !== sendFileContext.token) {
+      document.getElementById('classroomSendFileModal').style.display = 'none';
+      sendFileItem = null;
+      sendFileContext = null;
+      return alert('Your class or account changed. Open Send File again to choose recipients for the selected class.');
+    }
+    const classId = sendFileContext.classId;
     const body = {
       classId,
       sourcePath: sendFileItem.path,
@@ -171,20 +181,28 @@
     if (c.TEACHER_TOKEN) headers['X-Teacher-Token'] = c.TEACHER_TOKEN;
     else headers['X-User-Token'] = c.USER_TOKEN;
 
-    const res = await fetch('/api/classroom/send-file', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-    });
-    const j = await res.json().catch(() => ({}));
-    if (!j?.ok) return alert(j?.error || 'Send failed');
-    const copied = j.copied?.length || 0;
-    const errors = j.errors?.length || 0;
-    let msg = `File sent to ${copied} recipient(s).`;
-    if (errors) msg += ` ${errors} failed.`;
-    alert(msg);
-    document.getElementById('classroomSendFileModal').style.display = 'none';
-    sendFileItem = null;
+    sendInProgress = true;
+    try {
+      const res = await fetch('/api/classroom/send-file', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!j?.ok) return alert(j?.error || 'Send failed');
+      const copied = j.copied?.length || 0;
+      const errors = j.errors?.length || 0;
+      let msg = `File sent to ${copied} recipient(s).`;
+      if (errors) msg += ` ${errors} failed.`;
+      alert(msg);
+      document.getElementById('classroomSendFileModal').style.display = 'none';
+      sendFileItem = null;
+      sendFileContext = null;
+    } catch {
+      alert('Could not send the file. Check your connection and try again.');
+    } finally {
+      sendInProgress = false;
+    }
   }
 
   function renderAuditTree(items, indent) {
