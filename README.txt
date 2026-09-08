@@ -881,9 +881,17 @@ Solution:
 
 Problem: Getting "Too many login attempts" error
 Solution:
-- Wait 15 minutes for the rate limit window to expire
-- This limit applies per IP: up to 20 student/teacher attempts or 10
-  admin attempts per 15-minute window
+- Sign-in attempts are no longer limited by IP or account. Students,
+  teachers, and administrators can retry immediately on a shared school network.
+- Deploy the latest server code and restart the server if an older instance
+  still returns this message; also check any external proxy/authentication rules.
+- New-account registration has a separate default allowance of 120 successful
+  registrations per hour per network (EAGLE_REGISTRATIONS_PER_HOUR_PER_IP).
+  Sign-ins and incorrect passwords do not count against it.
+- Removing sign-in throttles also removes application-level brute-force
+  lockouts. Use strong passwords and appropriate school network protection.
+- Sessions survive reloads and temporary network failures within the same tab.
+  Closing the tab or restarting the server still requires signing in again.
 
 Problem: Input() not working
 Solution:

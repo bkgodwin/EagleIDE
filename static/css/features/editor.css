@@ -28,7 +28,7 @@
 
     .editor-content-stack{
       display:grid;
-      grid-template-rows: 1fr 0 0;
+      grid-template-rows: minmax(0, 1fr) 0 0;
       grid-template-areas: "workspace" "splitter" "teacher";
       height:100%;
       min-height:0;
@@ -52,7 +52,7 @@
       overflow:hidden;
       flex-direction:column;
     }
-    .editor-content-stack.file-browser-active{ grid-template-rows: 1fr 0 0; }
+    .editor-content-stack.file-browser-active{ grid-template-rows: minmax(0, 1fr) 0 0; }
     .editor-content-stack.file-browser-active .student-editor-wrap,
     .editor-content-stack.file-browser-active .editor-stream-splitter,
     .editor-content-stack.file-browser-active .teacher-stream-pane{ display:none !important; }
@@ -199,7 +199,7 @@
     .editor-stream-splitter,
     .teacher-stream-pane{ display:none; }
     .editor-content-stack.teacher-stream-enabled.teacher-stream-open{
-      grid-template-rows: minmax(120px, calc(100% - var(--teacher-pane-size) - var(--splitter-size))) var(--splitter-size) minmax(120px, var(--teacher-pane-size));
+      grid-template-rows: minmax(0, 1fr) var(--splitter-size) minmax(0, var(--teacher-pane-size));
     }
     .editor-content-stack.teacher-stream-enabled.teacher-stream-open .editor-stream-splitter{
       display:block;
