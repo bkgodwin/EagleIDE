@@ -38,7 +38,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20260819-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260908-3">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -498,12 +498,16 @@
               <button class="file-action-btn" id="uploadFileBtn" title="Upload a file from your computer">⬆️ Upload</button>
               <input type="file" id="sidebarFileInput" accept=".py,.js,.html,.css,.txt,.csv,.json,.md,.png,.jpg,.jpeg,.gif,.webp,.db,.sqlite,.sqlite3" style="display:none;">
               <button class="file-action-btn" id="refreshFilesBtn" title="Refresh file list">🔄 Refresh</button>
+              <button class="file-action-btn" id="selectAllFilesBtn" title="Select all items in this folder">☑ Select All</button>
+              <button class="file-action-btn" id="renameSelectedBtn" title="Rename one selected item" disabled>✏️ Rename</button>
+              <button class="file-action-btn" id="downloadSelectedBtn" title="Download one selected file" disabled>⬇️ Download</button>
               <button class="file-action-btn" id="duplicateSelectedBtn" title="Duplicate selected files and folders">📑 Duplicate</button>
               <button class="file-action-btn danger" id="deleteSelectedBtn" title="Delete selected files and folders">🗑️ Delete</button>
               <button class="file-action-btn" id="moveSelectedBtn" title="Move selected files and folders">📦 Move</button>
               <button class="file-action-btn" id="sendFileBtn" title="Select one file to send" style="display:none;">📤 Send File</button>
             </div>
             <div class="file-sidebar-actions-right">
+              <span id="fileSelectionStats" role="status" aria-live="polite">0 selected</span>
               <span id="fileStorageStats">Storage: —</span>
             </div>
           </div>
@@ -1616,21 +1620,21 @@
   <script src="/static/js/app.js"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20250608"></script>
-  <script src="/static/js/layout.js?v=20260711-1"></script>
-  <script src="/static/js/editor-init.js"></script>
+  <script src="/static/js/layout.js?v=20260908-3"></script>
+  <script src="/static/js/editor-init.js?v=20260908-3"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js"></script>
-  <script src="/static/js/app-core.js?v=20260819-1"></script>
+  <script src="/static/js/app-core.js?v=20260908-3"></script>
 <script src="/static/js/network-sim.js?v=20260714-18"></script>
 <script src="/static/js/network-sim-advanced.js?v=20260714-4"></script>
-  <script src="/static/js/wiki-reader.js?v=20260819-1"></script>
+  <script src="/static/js/wiki-reader.js?v=20260908-3"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
   <script src="/static/js/lesson-plans.js?v=20260816-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20260819-1"></script>
-  <script src="/static/js/classroom-signals.js"></script>
-  <script src="/static/js/classroom-files.js?v=20260819-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20260908-3"></script>
+  <script src="/static/js/classroom-signals.js?v=20260908-3"></script>
+  <script src="/static/js/classroom-files.js?v=20260908-3"></script>
   <script src="/static/js/student-notebook.js?v=20260806-1"></script>
-  <script src="/static/js/student-dashboard.js?v=20260819-1"></script>
+  <script src="/static/js/student-dashboard.js?v=20260908-3"></script>
 
 </body>
 </html>

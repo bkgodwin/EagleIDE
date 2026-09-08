@@ -71,6 +71,11 @@ Required runtime components:
 |       `-- app-main.js          Migration-era source fragment; not loaded directly
 |-- tests/
 |   |-- test_execution_limits.py Execution admission, runner limits, files, and stream safeguards
+|   |-- test_file_browser.py     Student file operations, creation races, and workspace path safety
+|   |-- test_auth_frontend.py    Session restoration and sign-in/class-refresh JavaScript checks
+|   |-- test_layout_runtime.py   Pointer/keyboard resize and visual-viewport JavaScript checks
+|   |-- test_classroom_signals.py Atomic simultaneous classroom signal persistence
+|   |-- *_ui.test.js            Dependency-free Node tests for classroom/file UI state races
 |   |-- test_python_sandbox.py   Module ACL, native containment, SQLite, and chart security
 |   |-- test_startup.py          Launcher safety, dependency pinning, and environment checks
 |   |-- test_html_runtime.py     HTML runtime security, assets, bridge, and cleanup
@@ -240,6 +245,7 @@ Run the automated suite from the repository root:
 
 ```bash
 python -m unittest discover -s tests -v
+node --test tests/*_ui.test.js
 ```
 
 Focused runs:
@@ -254,7 +260,9 @@ python -m unittest tests.test_wiki -v
 
 The tests patch application globals to temporary directories and restore token maps during teardown. New persistence tests should do the same so real local accounts and classroom data are never touched.
 
-There is no configured linter or frontend unit-test runner. For browser-facing changes, also start the server and verify:
+There is no configured linter or frontend build system. Dependency-free frontend
+regressions use Node's built-in test runner and Python wrappers; put Node on PATH
+to include those checks in the full suite. For browser-facing changes, also start the server and verify:
 
 1. `GET /health` returns `{"ok": true}`.
 2. Sign-in and the affected student, teacher, or admin view work.

@@ -181,8 +181,8 @@
 .teacher-dash-fullscreen .modal-content {
       width: 98vw;
       max-width: 1800px;
-      height: 96vh;
-      max-height: 96vh;
+      height: calc(var(--app-height, 100dvh) - 24px);
+      max-height: calc(var(--app-height, 100dvh) - 24px);
       padding: 0;
       display: flex;
       flex-direction: row;
@@ -199,6 +199,7 @@
       flex-direction: column;
       padding: 0;
       overflow: hidden;
+      min-height: 0;
     }
     .teacher-dash-brand {
       display: flex;
@@ -213,6 +214,7 @@
     .teacher-dash-brand-sub { font-size: 11px; color: var(--theme-text-dim); letter-spacing: .5px; text-transform: uppercase; margin-top: 2px; }
     .teacher-dash-nav {
       flex: 1;
+      min-height: 0;
       display: flex;
       flex-direction: column;
       gap: 4px;
@@ -234,6 +236,7 @@
       cursor: pointer;
       transition: background .15s, color .15s;
       text-align: left;
+      flex-shrink: 0;
     }
     .teacher-dash-navbtn:hover { background: rgba(165,200,240,.12); color: var(--theme-text); }
     .teacher-dash-navbtn.active { background: rgba(165,200,240,.18); color: var(--columbia-blue); }
@@ -246,6 +249,7 @@
     .teacher-dash-main {
       flex: 1;
       min-width: 0;
+      min-height: 0;
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -255,6 +259,7 @@
       display: none;
       flex-direction: column;
       height: 100%;
+      min-height: 0;
       overflow: hidden;
     }
     .teacher-dash-view.active { display: flex; }
@@ -271,7 +276,7 @@
     }
     .teacher-dash-view-title { margin: 0; font-size: 18px; color: var(--columbia-blue); font-weight: 800; letter-spacing: .2px; }
     .teacher-dash-view-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .teacher-dash-scroll { flex: 1; overflow-y: auto; padding: 20px; }
+    .teacher-dash-scroll { flex: 1; min-height: 0; min-width: 0; overflow: auto; padding: 20px; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
     .teacher-dash-class-card {
       background: var(--theme-input-bg);
       border: 1px solid var(--theme-border-mid);

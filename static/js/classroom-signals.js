@@ -8,6 +8,8 @@
   let teacherHands = [];
   let teacherQuestions = [];
   let menuOpen = false;
+  let signalContext = '';
+  let signalRequest = 0;
 
   function ctx() {
     return window.EagleIDE?.getContext?.() || {};
@@ -170,12 +172,15 @@
     const c = ctx();
     const classId = getClassId();
     if (!c.TEACHER_TOKEN || !classId) return;
+    const requestId = ++signalRequest;
+    const token = c.TEACHER_TOKEN;
     try {
       const res = await fetch(`/api/teacher/classroom/signals?classId=${encodeURIComponent(classId)}`, {
         headers: { 'X-Teacher-Token': c.TEACHER_TOKEN },
       });
       const j = await res.json().catch(() => ({}));
-      if (j?.ok) {
+      if (requestId !== signalRequest || getClassId() !== classId || ctx().TEACHER_TOKEN !== token) return;
+      if (res.ok && j?.ok) {
         teacherHands = j.hands || [];
         teacherQuestions = j.questions || [];
         renderTeacherStrip();
@@ -190,6 +195,7 @@
     socket.on('classroom_hands_update', msg => {
       if (!msg || msg.class_id !== getClassId()) return;
       if (isTeacherView()) {
+        ++signalRequest; // A live update is newer than an outstanding HTTP snapshot.
         teacherHands = msg.hands || [];
         renderTeacherStrip();
       }
@@ -204,6 +210,7 @@
     socket.on('classroom_questions_update', msg => {
       if (!msg || msg.class_id !== getClassId()) return;
       if (isTeacherView()) {
+        ++signalRequest;
         teacherQuestions = msg.questions || [];
         renderTeacherStrip();
       }
@@ -307,10 +314,22 @@
   }
 
   function onAuthChanged() {
+    const c = ctx();
+    const nextContext = `${c.TEACHER_TOKEN || c.USER_TOKEN || ''}:${getClassId() || ''}`;
+    if (nextContext !== signalContext) {
+      signalContext = nextContext;
+      ++signalRequest;
+      handRaised = false;
+      teacherHands = [];
+      teacherQuestions = [];
+      setMenuOpen(false);
+      const questionModal = document.getElementById('classroomQuestionModal');
+      if (questionModal) questionModal.style.display = 'none';
+    }
     updateFabVisibility();
     updateFabState();
+    renderTeacherStrip();
     if (isTeacherView()) loadTeacherSignals();
-    else renderTeacherStrip();
   }
 
   window.ClassroomSignals = {

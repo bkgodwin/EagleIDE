@@ -131,15 +131,11 @@ MAX_SOCKET_CONNECTIONS = _env_int("EAGLE_MAX_SOCKET_CONNECTIONS", 512, 16, 4096)
 MAX_SOCKET_CONNECTIONS_PER_IP = _env_int("EAGLE_MAX_SOCKET_CONNECTIONS_PER_IP", 256, 8, 1024)
 REQUIRE_WINDOWS_JOB_LIMITS = os.environ.get("EAGLE_REQUIRE_WINDOWS_JOB_LIMITS", "1").strip().lower() not in {"0", "false", "no"}
 
-# School devices commonly share one public/NAT address. These network-wide
-# ceilings are deliberately large enough for several classes to sign in at
-# once; targeted account limits still protect individual credentials.
+# Sign-in attempts are intentionally not rate-limited: classrooms share a
+# public/NAT address. Registration still limits creation of new accounts;
+# ordinary sign-ins and password mistakes never consume that allowance.
 REGISTRATION_IP_LIMIT = _env_int("EAGLE_REGISTRATIONS_PER_HOUR_PER_IP", 120, 20, 1000)
 REGISTRATION_RATE_WINDOW_SECONDS = 3600.0
-STUDENT_LOGIN_IP_LIMIT = _env_int("EAGLE_LOGINS_PER_15_MINUTES_PER_IP", 300, 40, 2000)
-STUDENT_LOGIN_ACCOUNT_FAILURE_LIMIT = _env_int("EAGLE_LOGIN_FAILURES_PER_ACCOUNT", 12, 5, 100)
-LOGIN_RATE_WINDOW_SECONDS = 900.0
-ADMIN_LOGIN_IP_LIMIT = 10
 MAX_AUTH_RATE_LIMIT_KEYS = 8192
 
 MAX_TEACHER_STREAM_CODE_BYTES = 200_000
@@ -739,9 +735,6 @@ _teacher_stream_last_emit: Dict[str, float] = {}
 _live_teacher_stream_sids_by_class: Dict[str, set[str]] = {}
 _socket_live_class_ids: Dict[str, set[str]] = {}
 _reg_rate_limit: dict = defaultdict(list)  # ip -> successful/well-formed registration attempts
-_login_rate_limit: dict = defaultdict(list)  # ip -> student/teacher login attempts
-_login_account_rate_limit: dict = defaultdict(list)  # normalized email -> failed attempts
-_admin_login_rate_limit: dict = defaultdict(list)  # ip -> admin login attempts
 _auth_rate_limit_lock = threading.Lock()
 _classes_lock = threading.RLock()
 _skills_lock = threading.Lock()
@@ -890,22 +883,24 @@ def _find_user(email: str) -> Optional[dict]:
 
 def _upgrade_legacy_password_if_needed(email: str, password: str) -> None:
     """Upgrade legacy plaintext password field to bcrypt hash."""
-    users_data = _load_users()
-    changed = False
-    for u in users_data.get("users", []):
-        if (u.get("email") or "").lower() != (email or "").lower():
-            continue
-        legacy_password = u.get("password")
-        if not isinstance(legacy_password, str):
+    # bcrypt 5 rejects passwords over 72 bytes. Preserve access to older
+    # accounts without silently truncating their password during migration.
+    if len(password.encode("utf-8")) > 72:
+        return
+    password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    # Hash outside the lock, then reload and recheck inside the transaction.
+    # Concurrent registrations/joins must not be overwritten by a stale copy.
+    with _users_lock:
+        users_data = _load_users()
+        for u in users_data.get("users", []):
+            if (u.get("email") or "").lower() != (email or "").lower():
+                continue
+            if u.get("password") != password:
+                break
+            u["password_hash"] = password_hash
+            u.pop("password", None)
+            _save_users(users_data)
             break
-        if legacy_password != password:
-            break
-        u["password_hash"] = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-        u.pop("password", None)
-        changed = True
-        break
-    if changed:
-        _save_users(users_data)
 
 
 def _verify_user_password(user: dict, password: str) -> bool:
@@ -1199,10 +1194,6 @@ def _consume_rate_limit(store: dict, key: str, limit: int, window_seconds: float
                     store.pop(oldest_key, None)
         return True
 
-
-def _clear_rate_limit(store: dict, key: str) -> None:
-    with _auth_rate_limit_lock:
-        store.pop(str(key or "unknown"), None)
 
 def _parse_meminfo_bytes() -> tuple[int, int]:
     total = 0
@@ -1928,6 +1919,31 @@ def _validate_user_path(user_dir: Path, path_str: str) -> Optional[Path]:
         return None
 
 
+def _valid_workspace_name(name) -> bool:
+    """A portable single filename, never a path or private metadata folder."""
+    return (
+        isinstance(name, str) and bool(name) and name not in (".", "..")
+        and name.casefold() != ".eagleide"
+        and not re.search(r'[\\/<>:"|?*\x00-\x1f]', name)
+        and not name.endswith((".", " ")) and len(name.encode("utf-8")) <= 255
+    )
+
+
+def _validate_workspace_path(user_dir: Path, path_str, *, allow_root=False) -> Optional[Path]:
+    """Keep file-browser mutations away from the account root and metadata."""
+    if not isinstance(path_str, str):
+        return None
+    normalized = path_str.replace("\\", "/")
+    if normalized.startswith("/") or re.match(r"^[A-Za-z]:", normalized):
+        return None
+    if any(part.casefold() == ".eagleide" for part in normalized.split("/")):
+        return None
+    target = _validate_user_path(user_dir, normalized)
+    if not target or (not allow_root and target == user_dir.resolve()):
+        return None
+    return target
+
+
 def _assignment_actor(req) -> Optional[dict]:
     teacher = _require_teacher(req)
     if teacher:
@@ -2067,22 +2083,17 @@ def _effective_challenges_enabled(req, payload: Optional[dict] = None) -> tuple[
 # -------------------------
 @app.post("/api/admin/login")
 def admin_login():
-    # Rate limiting: max 10 admin login attempts per 15 minutes per IP
     ip = _get_request_ip(request)
-    if not _consume_rate_limit(
-        _admin_login_rate_limit,
-        ip,
-        ADMIN_LOGIN_IP_LIMIT,
-        LOGIN_RATE_WINDOW_SECONDS,
-    ):
-        return jsonify(ok=False, error="Too many login attempts. Please wait and try again."), 429
-
     data = request.get_json(silent=True) or {}
-    email = str(data.get("email", "")).strip()
-    pw = str(data.get("password", ""))
+    if not isinstance(data, dict) or not isinstance(data.get("email"), str) or not isinstance(data.get("password"), str):
+        return jsonify(ok=False, error="Email and password required"), 400
+    email = data["email"].strip()
+    pw = data["password"]
+    if not email or not pw:
+        return jsonify(ok=False, error="Email and password required"), 400
     # Constant-time comparison to prevent timing attacks
-    email_ok = hmac.compare_digest(email.lower(), ADMIN_ACCOUNT_EMAIL.lower())
-    pw_ok = hmac.compare_digest(pw, ADMIN_ACCOUNT_PASSWORD)
+    email_ok = hmac.compare_digest(email.lower().encode("utf-8"), ADMIN_ACCOUNT_EMAIL.lower().encode("utf-8"))
+    pw_ok = hmac.compare_digest(pw.encode("utf-8"), ADMIN_ACCOUNT_PASSWORD.encode("utf-8"))
     if email_ok and pw_ok:
         token = uuid.uuid4().hex
         _admin_tokens.add(token)
@@ -2211,6 +2222,8 @@ def auth_register():
     
     ip = _get_request_ip(request)
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict) or any(not isinstance(data.get(key), str) for key in ("email", "password", "name")):
+        return jsonify(ok=False, error="Email, password, and name are required"), 400
     email = (data.get("email") or "").strip().lower()
     password = (data.get("password") or "")
     name = (data.get("name") or "").strip()
@@ -2219,6 +2232,8 @@ def auth_register():
         return jsonify(ok=False, error="Email, password, and name are required"), 400
     if len(password) < 6:
         return jsonify(ok=False, error="Password must be at least 6 characters"), 400
+    if len(password.encode("utf-8")) > 72:
+        return jsonify(ok=False, error="Password must be at most 72 UTF-8 bytes"), 400
     if len(name) > 100:
         name = name[:100]
     # Basic email validation (simple, non-backtracking)
@@ -2285,34 +2300,15 @@ def auth_register():
 def auth_login():
     ip = _get_request_ip(request)
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict) or not isinstance(data.get("email"), str) or not isinstance(data.get("password"), str):
+        return jsonify(ok=False, error="Email and password required"), 400
     email = (data.get("email") or "").strip().lower()
     password = (data.get("password") or "")
     
     if not email or not password:
         return jsonify(ok=False, error="Email and password required"), 400
-    if not _consume_rate_limit(
-        _login_rate_limit,
-        ip,
-        STUDENT_LOGIN_IP_LIMIT,
-        LOGIN_RATE_WINDOW_SECONDS,
-    ):
-        return jsonify(ok=False, error="Too many login attempts from this network. Please wait and try again."), 429
-    if _rate_limit_is_blocked(
-        _login_account_rate_limit,
-        email,
-        STUDENT_LOGIN_ACCOUNT_FAILURE_LIMIT,
-        LOGIN_RATE_WINDOW_SECONDS,
-    ):
-        return jsonify(ok=False, error="Too many login attempts for this account. Please wait and try again."), 429
-    
     user = _find_user(email)
     if not user:
-        _consume_rate_limit(
-            _login_account_rate_limit,
-            email,
-            STUDENT_LOGIN_ACCOUNT_FAILURE_LIMIT,
-            LOGIN_RATE_WINDOW_SECONDS,
-        )
         return jsonify(ok=False, error="Invalid email or password"), 401
     if not user.get("enabled", True):
         return jsonify(ok=False, error="Account is disabled"), 403
@@ -2320,14 +2316,7 @@ def auth_login():
     pw_ok = _verify_user_password(user, password)
     
     if not pw_ok:
-        _consume_rate_limit(
-            _login_account_rate_limit,
-            email,
-            STUDENT_LOGIN_ACCOUNT_FAILURE_LIMIT,
-            LOGIN_RATE_WINDOW_SECONDS,
-        )
         return jsonify(ok=False, error="Invalid email or password"), 401
-    _clear_rate_limit(_login_account_rate_limit, email)
     
     # Ensure user directory exists
     user_dir = _get_user_dir(email)
@@ -2357,8 +2346,10 @@ def auth_login():
 def auth_logout():
     token = request.headers.get("X-User-Token", "").strip()
     teacher_token = request.headers.get("X-Teacher-Token", "").strip()
+    admin_token = request.headers.get("X-Admin-Token", "").strip()
     _student_tokens.pop(token, None)
     _teacher_tokens.pop(teacher_token, None)
+    _admin_tokens.discard(admin_token)
     return jsonify(ok=True)
 
 @app.get("/api/auth/me")
@@ -2452,54 +2443,49 @@ def files_create():
         return jsonify(ok=False, error="Authentication required"), 401
     
     data = request.get_json(silent=True) or {}
-    name = (data.get("name") or "").strip()
-    file_type = (data.get("type") or "file")
-    parent = (data.get("parent") or "").strip()
-    
-    if not name:
-        return jsonify(ok=False, error="Name required"), 400
-    
-    user_dir = _get_user_dir(user["email"])
-    
-    if parent:
-        parent_path = _validate_user_path(user_dir, parent)
-        if not parent_path:
-            return jsonify(ok=False, error="Invalid parent path"), 400
-        target = parent_path / name
-    else:
-        target = user_dir / name
-    
-    # Validate target is within user dir
+    if not isinstance(data, dict):
+        return jsonify(ok=False, error="Request data must be an object"), 400
+    name = data.get("name", "")
+    name = name.strip() if isinstance(name, str) else name
+    file_type = data.get("type", "file")
+    parent = data.get("parent", "") or ""
+    if not _valid_workspace_name(name):
+        return jsonify(ok=False, error="Enter a file or folder name without slashes or special characters"), 400
+    if file_type not in ("file", "folder"):
+        return jsonify(ok=False, error="Type must be file or folder"), 400
     try:
-        rel = target.relative_to(user_dir.resolve())
-        target_validated = _validate_user_path(user_dir, str(rel))
-    except ValueError:
-        target_validated = _validate_user_path(user_dir, name)
-    if not target_validated:
-        return jsonify(ok=False, error="Invalid path"), 400
-    
-    if file_type == "folder":
-        target_validated.mkdir(parents=True, exist_ok=True)
-        return jsonify(ok=True, path=str(target_validated.relative_to(user_dir)))
-    else:
-        # File - check extension
-        suffix = Path(name).suffix.lower()
-        if suffix not in ALLOWED_EXTENSIONS:
-            return jsonify(ok=False, error=f"Only {', '.join(ALLOWED_EXTENSIONS)} files allowed"), 400
-        # Check file count limits (only for new files)
-        if not target_validated.exists():
-            parent_dir = target_validated.parent
-            if _count_files_in_folder(parent_dir) >= MAX_FILES_PER_FOLDER:
+        user_dir = _get_user_dir(user["email"])
+        user_dir.mkdir(parents=True, exist_ok=True)
+        # Resolve only after first-use directory creation. On Windows, racing
+        # resolution of a not-yet-existing path can disagree with its canonical
+        # spelling once another request creates it, rejecting a valid parent.
+        user_dir = user_dir.resolve()
+        parent_path = _validate_workspace_path(user_dir, parent, allow_root=True)
+        if not parent_path:
+            return jsonify(ok=False, error="Invalid parent directory"), 400
+        if not parent_path.is_dir():
+            return jsonify(ok=False, error="Parent folder no longer exists. Refresh the file browser."), 404
+        target = _validate_workspace_path(user_dir, (parent_path / name).relative_to(user_dir).as_posix())
+        if not target:
+            return jsonify(ok=False, error="Invalid path"), 400
+        if target.exists():
+            return jsonify(ok=False, error="A file or folder with that name already exists"), 409
+        if file_type == "folder":
+            target.mkdir()
+        else:
+            if target.suffix.lower() not in ALLOWED_EXTENSIONS:
+                return jsonify(ok=False, error=f"Only {', '.join(sorted(ALLOWED_EXTENSIONS))} files allowed"), 400
+            if _count_files_in_folder(parent_path) >= MAX_FILES_PER_FOLDER:
                 return jsonify(ok=False, error=f"Folder limit reached (max {MAX_FILES_PER_FOLDER} files per folder)"), 400
             if _count_all_files_for_user(user_dir) >= MAX_FILES_PER_ACCOUNT:
                 return jsonify(ok=False, error=f"Account limit reached (max {MAX_FILES_PER_ACCOUNT} files per account)"), 400
-        target_validated.parent.mkdir(parents=True, exist_ok=True)
-        if not target_validated.exists():
-            if suffix in TEXT_EXTENSIONS:
-                target_validated.write_text("", encoding="utf-8")
-            else:
-                target_validated.write_bytes(b"")
-        return jsonify(ok=True, path=str(target_validated.relative_to(user_dir)))
+            with target.open("xb"):
+                pass
+        return jsonify(ok=True, path=target.relative_to(user_dir).as_posix(), name=name, type=file_type)
+    except FileExistsError:
+        return jsonify(ok=False, error="A file or folder with that name already exists"), 409
+    except OSError:
+        return jsonify(ok=False, error="Could not create item. Check storage permissions and try again."), 500
 
 
 @app.post("/api/files/wiki-example")
@@ -2630,7 +2616,9 @@ def files_write():
         return jsonify(ok=False, error="Authentication required"), 401
     
     data = request.get_json(silent=True) or {}
-    path_str = (data.get("path") or "").strip()
+    if not isinstance(data, dict) or not isinstance(data.get("path"), str):
+        return jsonify(ok=False, error="A file path is required"), 400
+    path_str = data["path"].strip()
     content = data.get("content", "")
     if not isinstance(content, str):
         return jsonify(ok=False, error="File content must be text"), 400
@@ -2639,7 +2627,7 @@ def files_write():
         return jsonify(ok=False, error="Path required"), 400
     
     user_dir = _get_user_dir(user["email"])
-    target = _validate_user_path(user_dir, path_str)
+    target = _validate_workspace_path(user_dir, path_str)
     if not target:
         return jsonify(ok=False, error="Invalid path"), 400
     
@@ -2652,14 +2640,27 @@ def files_write():
     content_bytes = len(content.encode("utf-8"))
     if content_bytes > MAX_EDITOR_FILE_BYTES:
         return jsonify(ok=False, error=f"File exceeds the {MAX_EDITOR_FILE_BYTES // (1024 * 1024)}MB editor limit"), 413
+    if target.exists() and not target.is_file():
+        return jsonify(ok=False, error="The selected path is a folder"), 409
+    if data.get("require_existing") and not target.is_file():
+        return jsonify(ok=False, error="This file was moved or deleted. Refresh the file browser before saving."), 404
     existing_size = target.stat().st_size if target.exists() else 0
     if used - existing_size + content_bytes > limit_bytes:
         return jsonify(ok=False, error=f"Storage limit of {USER_STORAGE_LIMIT_MB}MB exceeded"), 413
     
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        if data.get("require_existing"):
+            # Opening without O_CREAT also closes the delete/autosave race:
+            # a deleted file or parent must never be recreated by autosave.
+            with target.open("r+", encoding="utf-8", newline="") as handle:
+                handle.write(content)
+                handle.truncate()
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
         return jsonify(ok=True)
+    except FileNotFoundError:
+        return jsonify(ok=False, error="This file was moved or deleted. Refresh the file browser before saving."), 404
     except Exception:
         return jsonify(ok=False, error="Could not write file"), 500
 
@@ -2886,19 +2887,26 @@ def files_rename():
         return jsonify(ok=False, error="Authentication required"), 401
     
     data = request.get_json(silent=True) or {}
-    old_path = (data.get("old_path") or "").strip()
-    new_name = (data.get("new_name") or "").strip()
+    if not isinstance(data, dict):
+        return jsonify(ok=False, error="Request data must be an object"), 400
+    old_path = data.get("old_path", "")
+    new_name = data.get("new_name", "")
+    new_name = new_name.strip() if isinstance(new_name, str) else new_name
     
     if not old_path or not new_name:
         return jsonify(ok=False, error="old_path and new_name required"), 400
     
-    user_dir = _get_user_dir(user["email"])
-    old = _validate_user_path(user_dir, old_path)
+    if not _valid_workspace_name(new_name):
+        return jsonify(ok=False, error="Enter a name without slashes or special characters"), 400
+    user_dir = _get_user_dir(user["email"]).resolve()
+    old = _validate_workspace_path(user_dir, old_path)
     if not old or not old.exists():
         return jsonify(ok=False, error="File not found"), 404
+    if old.is_file() and Path(new_name).suffix.lower() not in ALLOWED_EXTENSIONS:
+        return jsonify(ok=False, error="Keep a supported file extension when renaming a file"), 400
     
     new = old.parent / new_name
-    new_validated = _validate_user_path(user_dir, str(new.relative_to(user_dir.resolve())))
+    new_validated = _validate_workspace_path(user_dir, new.relative_to(user_dir).as_posix())
     if not new_validated:
         return jsonify(ok=False, error="Invalid new name"), 400
     
@@ -2907,7 +2915,7 @@ def files_rename():
     
     try:
         old.rename(new_validated)
-        return jsonify(ok=True, new_path=str(new_validated.relative_to(user_dir)))
+        return jsonify(ok=True, new_path=new_validated.relative_to(user_dir).as_posix())
     except Exception:
         return jsonify(ok=False, error="Could not rename item"), 500
 
@@ -2918,13 +2926,15 @@ def files_delete():
         return jsonify(ok=False, error="Authentication required"), 401
     
     data = request.get_json(silent=True) or {}
-    path_str = (data.get("path") or "").strip()
+    if not isinstance(data, dict):
+        return jsonify(ok=False, error="Request data must be an object"), 400
+    path_str = data.get("path", "")
     
     if not path_str:
         return jsonify(ok=False, error="Path required"), 400
     
     user_dir = _get_user_dir(user["email"])
-    target = _validate_user_path(user_dir, path_str)
+    target = _validate_workspace_path(user_dir, path_str)
     if not target or not target.exists():
         return jsonify(ok=False, error="File not found"), 404
     
@@ -2954,24 +2964,28 @@ def files_upload():
         return jsonify(ok=False, error="No filename"), 400
     
     # Sanitize filename
-    filename = Path(filename).name  # Strip path components
+    filename = filename.replace("\\", "/").rsplit("/", 1)[-1]
+    if not _valid_workspace_name(filename):
+        return jsonify(ok=False, error="Invalid filename"), 400
     suffix = Path(filename).suffix.lower()
     if suffix not in ALLOWED_EXTENSIONS:
         return jsonify(ok=False, error=f"Only {', '.join(ALLOWED_EXTENSIONS)} files allowed"), 400
     
-    user_dir = _get_user_dir(user["email"])
+    user_dir = _get_user_dir(user["email"]).resolve()
     
     if parent:
-        parent_path = _validate_user_path(user_dir, parent)
+        parent_path = _validate_workspace_path(user_dir, parent, allow_root=True)
         if not parent_path or not parent_path.is_dir():
             return jsonify(ok=False, error="Invalid parent directory"), 400
         target = parent_path / filename
     else:
         target = user_dir / filename
     
-    target_validated = _validate_user_path(user_dir, str(target.relative_to(user_dir.resolve())))
+    target_validated = _validate_workspace_path(user_dir, target.relative_to(user_dir).as_posix())
     if not target_validated:
         return jsonify(ok=False, error="Invalid path"), 400
+    if target_validated.exists() and not target_validated.is_file():
+        return jsonify(ok=False, error="A folder with that name already exists"), 409
     
     if request.content_length and request.content_length > MAX_HTTP_BODY_BYTES:
         return jsonify(ok=False, error="Upload request is too large"), 413
@@ -3106,19 +3120,21 @@ def files_move():
         return jsonify(ok=False, error="Authentication required"), 401
 
     data = request.get_json(silent=True) or {}
-    src_path = (data.get("src") or "").strip()
-    dest_folder = (data.get("dest") or "").strip()  # destination folder path ("" = root)
+    if not isinstance(data, dict):
+        return jsonify(ok=False, error="Request data must be an object"), 400
+    src_path = data.get("src", "")
+    dest_folder = data.get("dest", "") or ""  # destination folder path ("" = root)
 
     if not src_path:
         return jsonify(ok=False, error="src path required"), 400
 
     user_dir = _get_user_dir(user["email"])
-    src = _validate_user_path(user_dir, src_path)
+    src = _validate_workspace_path(user_dir, src_path)
     if not src or not src.exists():
         return jsonify(ok=False, error="Source not found"), 404
 
     if dest_folder:
-        dest_dir = _validate_user_path(user_dir, dest_folder)
+        dest_dir = _validate_workspace_path(user_dir, dest_folder, allow_root=True)
         if not dest_dir or not dest_dir.is_dir():
             return jsonify(ok=False, error="Destination folder not found"), 404
     else:
@@ -3145,10 +3161,12 @@ def files_move():
 
     if new_validated.exists():
         return jsonify(ok=False, error="A file or folder with that name already exists in the destination"), 409
+    if src.is_file() and _count_files_in_folder(dest_dir) >= MAX_FILES_PER_FOLDER:
+        return jsonify(ok=False, error=f"Folder limit reached (max {MAX_FILES_PER_FOLDER} files per folder)"), 400
 
     try:
         src.rename(new_validated)
-        return jsonify(ok=True, new_path=str(new_validated.relative_to(user_dir.resolve())))
+        return jsonify(ok=True, new_path=new_validated.relative_to(user_dir.resolve()).as_posix())
     except Exception:
         return jsonify(ok=False, error="Could not move item"), 500
 
@@ -3159,12 +3177,14 @@ def files_duplicate():
         return jsonify(ok=False, error="Authentication required"), 401
 
     data = request.get_json(silent=True) or {}
-    src_path = (data.get("src") or "").strip()
+    if not isinstance(data, dict):
+        return jsonify(ok=False, error="Request data must be an object"), 400
+    src_path = data.get("src", "")
     if not src_path:
         return jsonify(ok=False, error="src path required"), 400
 
     user_dir = _get_user_dir(user["email"])
-    src = _validate_user_path(user_dir, src_path)
+    src = _validate_workspace_path(user_dir, src_path)
     if not src or not src.exists():
         return jsonify(ok=False, error="Source not found"), 404
 
@@ -3210,7 +3230,7 @@ def files_duplicate():
             shutil.copytree(src, duplicate_validated)
         else:
             shutil.copy2(src, duplicate_validated)
-        return jsonify(ok=True, new_path=str(duplicate_validated.relative_to(user_dir.resolve())))
+        return jsonify(ok=True, new_path=duplicate_validated.relative_to(user_dir.resolve()).as_posix())
     except Exception:
         return jsonify(ok=False, error="Could not duplicate item"), 500
 

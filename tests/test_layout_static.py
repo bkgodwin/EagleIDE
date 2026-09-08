@@ -49,7 +49,9 @@ class LayoutStaticTestCase(unittest.TestCase):
         self.assertIn("window.visualViewport", layout_js)
         self.assertIn("--app-height", layout_js)
         self.assertNotIn("scrollIntoView", layout_js)
-        self.assertIn("output.scrollTop = output.scrollHeight", layout_js)
+        self.assertNotIn("output.scrollTop = output.scrollHeight", layout_js)
+        self.assertIn("ResizeObserver", layout_js)
+        self.assertIn("workspace-resizing", app_core)
         self.assertIn("outputEl.scrollTop = outputEl.scrollHeight", app_core)
 
 
