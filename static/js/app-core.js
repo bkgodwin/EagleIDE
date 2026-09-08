@@ -51,6 +51,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let auditPreviewMeta = null;
     let auditEditorBackup = null;
     let registerMode = false;
+    let authSubmitPending = false;
     let currentConfig = null;
     let pythonRuntimeAdminData = null;
     let mySid = null;
@@ -199,53 +200,48 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     async function validateRestoredAuthSession() {
+      const role = USER_TOKEN ? 'student' : TEACHER_TOKEN ? 'teacher' : ADMIN_TOKEN ? 'admin' : null;
+      const token = USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN;
+      const isSameSession = () => token === (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN);
       const rejectRestoredSession = () => {
+        if (!isSameSession()) return isAuthenticated();
         clearAuthStateMemory();
         saveAuthSession();
         return false;
       };
+      if (!token) return false;
       try {
-        if (USER_TOKEN) {
-          const res = await fetch('/api/auth/me', { headers: { 'X-User-Token': USER_TOKEN } });
-          if (res.status === 401 || res.status === 403) return rejectRestoredSession();
-          if (!res.ok) return true;
-          const j = await res.json().catch(() => ({}));
-          if (!j?.ok || (j.user?.role && j.user.role !== 'student')) {
-            return rejectRestoredSession();
-          }
-          currentUser = j.user || currentUser;
+        const header = role === 'student' ? 'X-User-Token' : role === 'teacher' ? 'X-Teacher-Token' : 'X-Admin-Token';
+        const res = await fetch(role === 'admin' ? '/api/admin/server-health' : '/api/auth/me', {
+          headers: { [header]: token }
+        });
+        if (!isSameSession()) return isAuthenticated();
+        if (res.status === 401 || res.status === 403) return rejectRestoredSession();
+        if (!res.ok) return true;
+        const j = await res.json();
+        if (!isSameSession()) return isAuthenticated();
+        // Invalid proxy responses and incomplete JSON are not proof of an
+        // expired session. Only reject a server-confirmed authentication error.
+        if (!j?.ok || (role !== 'admin' && (!j.user || typeof j.user !== 'object'))) return true;
+        if (role !== 'admin' && j.user.role !== role) return rejectRestoredSession();
+        if (role === 'student') {
+          currentUser = j.user;
           currentTeacher = null;
           TEACHER_TOKEN = null;
           ADMIN_TOKEN = null;
-          saveAuthSession();
-          return true;
-        }
-        if (TEACHER_TOKEN) {
-          const res = await fetch('/api/auth/me', { headers: { 'X-Teacher-Token': TEACHER_TOKEN } });
-          if (res.status === 401 || res.status === 403) return rejectRestoredSession();
-          if (!res.ok) return true;
-          const j = await res.json().catch(() => ({}));
-          if (!j?.ok || j.user?.role !== 'teacher') {
-            return rejectRestoredSession();
-          }
-          currentTeacher = j.user || currentTeacher;
+        } else if (role === 'teacher') {
+          currentTeacher = j.user;
           currentUser = null;
           USER_TOKEN = null;
           ADMIN_TOKEN = null;
-          saveAuthSession();
-          return true;
-        }
-        if (ADMIN_TOKEN) {
-          const res = await fetch('/api/admin/server-health', { headers: { 'X-Admin-Token': ADMIN_TOKEN } });
-          if (res.status === 401 || res.status === 403) return rejectRestoredSession();
-          if (!res.ok) return true;
+        } else {
           currentUser = null;
           currentTeacher = null;
           USER_TOKEN = null;
           TEACHER_TOKEN = null;
-          saveAuthSession();
-          return true;
         }
+        saveAuthSession();
+        return true;
       } catch (err) {
         console.warn('Failed to validate restored auth session.', err);
         // A suspended iPad tab or a brief server/network interruption is not
@@ -253,7 +249,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         // naturally on the next page load/API request.
         return !!(USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN);
       }
-      return rejectRestoredSession();
     }
 
     function getActiveLanguageInfo() {
@@ -972,22 +967,26 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         currentStudentClassId = null;
         return null;
       }
+      const token = USER_TOKEN;
       try {
-        const res = await fetch('/api/classes/current', { headers: { 'X-User-Token': USER_TOKEN } });
-        const j = await res.json().catch(() => ({}));
-        studentClasses = (Array.isArray(j?.classList) ? j.classList : []).map((c) => ({
+        const res = await fetch('/api/classes/current', { headers: { 'X-User-Token': token } });
+        const j = await res.json();
+        if (token !== USER_TOKEN) return studentClassData;
+        if (!res.ok || !j?.ok || !Array.isArray(j.classList)) throw new Error(j?.error || 'Class data unavailable');
+        studentClasses = j.classList.map((c) => ({
           ...c,
           settings: mergeClassroomSettings(c.settings),
         }));
-        currentStudentClassId = j?.classData?.id || currentStudentClassId;
+        if (!studentClasses.some(c => c.id === currentStudentClassId)) {
+          currentStudentClassId = j?.classData?.id || null;
+        }
         syncStudentClassSelection(false);
         studentClasses.forEach(cls => {
           if (cls?.id) emitJoinClassRoom('student', USER_TOKEN, cls.id);
         });
-      } catch {
-        studentClasses = [];
-        studentClassData = null;
-        currentStudentClassId = null;
+      } catch (err) {
+        // A failed refresh must not erase the selected class or its controls.
+        console.warn('Could not refresh student classes; retaining current class.', err);
       }
       refreshEagleIDEContext();
       window.StudentNotebook?.onAuthChanged?.();
@@ -996,10 +995,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     async function loadTeacherClasses() {
       if (!TEACHER_TOKEN) { teacherClasses = []; currentTeacherClassId = null; activeAssignmentsClassId = null; return []; }
+      const token = TEACHER_TOKEN;
       try {
-        const res = await fetch('/api/teacher/classes', { headers: { 'X-Teacher-Token': TEACHER_TOKEN } });
-        const j = await res.json().catch(() => ({}));
-        teacherClasses = normalizeTeacherClasses(j?.classes || []);
+        const res = await fetch('/api/teacher/classes', { headers: { 'X-Teacher-Token': token } });
+        const j = await res.json();
+        if (token !== TEACHER_TOKEN) return teacherClasses;
+        if (!res.ok || !j?.ok || !Array.isArray(j.classes)) throw new Error(j?.error || 'Class data unavailable');
+        teacherClasses = normalizeTeacherClasses(j.classes);
         if (!currentTeacherClassId || !teacherClasses.some(c => c.id === currentTeacherClassId)) {
           currentTeacherClassId = teacherClasses[0]?.id || null;
         }
@@ -1009,8 +1011,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         if (!activeAssignmentsClassId || !teacherClasses.some(c => c.id === activeAssignmentsClassId)) {
           activeAssignmentsClassId = currentTeacherClassId;
         }
-      } catch {
-        teacherClasses = [];
+      } catch (err) {
+        console.warn('Could not refresh teacher classes; retaining current class.', err);
       }
       return teacherClasses;
     }
@@ -2076,22 +2078,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     function handleShellItemDeleted(item) {
-      const normItemPath = _normalizeTreePath(item.path);
-      if (currentOpenFile?.path && _normalizeTreePath(currentOpenFile.path) === normItemPath) {
-        currentOpenFile = null;
-        clearFileArtifactPreview();
-        setCsvMode(false);
-        editor.setValue('');
-        updateActiveFileName();
-        updateEditorOverlay();
-      }
-      const normCwd = _normalizeTreePath(_shellCwd);
-      if (item.type === 'folder' && normCwd && (normCwd === normItemPath || normCwd.startsWith(normItemPath + '/'))) {
-        _shellCwd = normItemPath.includes('/')
-          ? normItemPath.substring(0, normItemPath.lastIndexOf('/'))
-          : '';
-        _currentFolderPath = _shellCwd;
-      }
+      applyFilePathChange(item.path, null);
     }
 
     function shellCommandModeActive() {
@@ -2354,6 +2341,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       function setLeftWidth(percent, persist = true) {
         const normalized = clamp(percent, 20, 80);
         root.style.setProperty('--left-width', `${normalized}%`);
+        hsplitter?.setAttribute('aria-valuenow', String(Math.round(normalized)));
+        window.EagleIDE?.layout?.refreshEditors?.();
         if (persist) {
           try { localStorage.setItem(LEFT_WIDTH_KEY, String(normalized)); } catch {}
         }
@@ -2362,6 +2351,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       function setShellSize(percent, persist = true) {
         const normalized = clamp(percent, 15, 75);
         root.style.setProperty('--shell-size', `${normalized}%`);
+        vsplitter?.setAttribute('aria-valuenow', String(Math.round(normalized)));
         if (persist) {
           try { localStorage.setItem(SHELL_SIZE_KEY, String(normalized)); } catch {}
         }
@@ -2377,6 +2367,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         if (persist) {
           try { localStorage.setItem(RIGHT_COLLAPSE_KEY, collapsed ? '1' : '0'); } catch {}
         }
+        window.EagleIDE?.layout?.refreshEditors?.();
       }
 
       if (rightEdgeToggleBtn) {
@@ -2407,29 +2398,68 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       function attachPointerDrag(element, canStart, onMove) {
         if (!element) return;
         element.addEventListener('pointerdown', (event) => {
-          if (!canStart()) return;
+          if (!canStart() || !event.isPrimary || event.button !== 0) return;
           event.preventDefault();
           const pointerId = event.pointerId;
+          document.body.classList.add('workspace-resizing');
           try { element.setPointerCapture(pointerId); } catch (err) { console.debug('Pointer capture unavailable:', err); }
-          const move = (moveEvent) => onMove(moveEvent);
-          const up = (upEvent) => {
-            if (upEvent.pointerId !== pointerId) return;
-            try { element.releasePointerCapture(pointerId); } catch (err) { console.debug('Pointer release unavailable:', err); }
-            element.removeEventListener('pointermove', move);
-            element.removeEventListener('pointerup', up);
-            element.removeEventListener('pointercancel', up);
+          const move = (moveEvent) => {
+            if (moveEvent.pointerId === pointerId) onMove(moveEvent);
           };
-          element.addEventListener('pointermove', move);
-          element.addEventListener('pointerup', up);
-          element.addEventListener('pointercancel', up);
+          const up = (upEvent) => {
+            if (upEvent.pointerId != null && upEvent.pointerId !== pointerId) return;
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', up);
+            window.removeEventListener('pointercancel', up);
+            window.removeEventListener('blur', up);
+            element.removeEventListener('lostpointercapture', up);
+            try { element.releasePointerCapture(pointerId); } catch (err) { console.debug('Pointer release unavailable:', err); }
+            document.body.classList.remove('workspace-resizing');
+            window.EagleIDE?.layout?.refreshEditors?.();
+          };
+          window.addEventListener('pointermove', move);
+          window.addEventListener('pointerup', up);
+          window.addEventListener('pointercancel', up);
+          window.addEventListener('blur', up);
+          element.addEventListener('lostpointercapture', up);
         }, { passive: false });
       }
+
+      function attachKeyboardResize(element, variable, setter, min, max, defaultValue, reversed = false) {
+        if (!element) return;
+        element.tabIndex = 0;
+        element.setAttribute('aria-label', element.title || 'Resize panel');
+        element.setAttribute('aria-valuemin', String(min));
+        element.setAttribute('aria-valuemax', String(max));
+        const currentValue = () => parseFloat(getComputedStyle(root).getPropertyValue(variable)) || defaultValue;
+        element.setAttribute('aria-valuenow', String(Math.round(currentValue())));
+        element.addEventListener('keydown', (event) => {
+          const horizontal = element.getAttribute('aria-orientation') === 'horizontal';
+          const decrease = horizontal ? 'ArrowUp' : 'ArrowLeft';
+          const increase = horizontal ? 'ArrowDown' : 'ArrowRight';
+          let next;
+          if (event.key === 'Home') next = min;
+          else if (event.key === 'End') next = max;
+          else if (event.key === decrease || event.key === increase) {
+            const direction = (event.key === increase ? 1 : -1) * (reversed ? -1 : 1);
+            next = currentValue() + direction * (event.shiftKey ? 10 : 2);
+          } else return;
+          event.preventDefault();
+          setter(next);
+        });
+        element.addEventListener('dblclick', () => setter(defaultValue));
+      }
+
+      attachKeyboardResize(hsplitter, '--left-width', setLeftWidth, 20, 80, 50);
+      attachKeyboardResize(vsplitter, '--shell-size', setShellSize, 15, 75, 35);
+      attachKeyboardResize(editorStreamSplitter, '--teacher-pane-size', setTeacherPaneSize, 25, 70, 50, true);
 
       attachPointerDrag(hsplitter,
         () => !document.body.classList.contains('right-collapsed'),
         (moveEvent) => {
           const rect = outer.getBoundingClientRect();
           const relativeX = moveEvent.clientX - rect.left;
+          if (!rect.width) return;
           const next = (relativeX / rect.width) * 100;
           setLeftWidth(next);
         }
@@ -2440,6 +2470,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         (moveEvent) => {
           const rect = rightstack.getBoundingClientRect();
           const relativeY = moveEvent.clientY - rect.top;
+          if (!rect.height) return;
           const next = (relativeY / rect.height) * 100;
           setShellSize(next);
         }
@@ -2450,6 +2481,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         (moveEvent) => {
           const rect = editorContentStack.getBoundingClientRect();
           const relativeY = moveEvent.clientY - rect.top;
+          if (!rect.height) return;
           const bottomPercent = ((rect.height - relativeY) / rect.height) * 100;
           setTeacherPaneSize(bottomPercent);
           try { window.eagleEditor?.refresh?.(); } catch {}
@@ -2656,6 +2688,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         studentClassData = null;
         currentStudentClassId = null;
         document.body.classList.add('admin-mode');
+        saveAuthSession();
         await loadTeacherClasses();
         renderClassSelector();
         setTeacherStreamingEnabled(false);
@@ -2668,6 +2701,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         teacherClasses = [];
         currentTeacherClassId = null;
         document.body.classList.remove('admin-mode');
+        saveAuthSession();
         await loadStudentClassData().catch((err) => {
           console.warn('Failed to refresh student class data after login.', err);
           alert('Signed in, but class data failed to load. Please refresh the page and try again.');
@@ -2689,9 +2723,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           body: JSON.stringify({ email, password })
         });
         const authJson = await authRes.json().catch(() => ({}));
-        if (authJson?.ok) {
+        if (authRes.ok && authJson?.ok && authJson.token && authJson.user) {
           await applyAuthLoginPayload(authJson);
           return { ok: true };
+        }
+        // Only invalid credentials warrant trying the administrator endpoint.
+        // Preserve disabled-account and server/network errors instead of
+        // masking them with the result of a second, unrelated request.
+        if (authRes.status !== 401) {
+          return { ok: false, error: authJson?.error || 'Sign-in is temporarily unavailable. Please try again.' };
         }
         const adminRes = await fetch('/api/admin/login', {
           method: 'POST',
@@ -2699,7 +2739,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           body: JSON.stringify({ email, password })
         });
         const adminJson = await adminRes.json().catch(() => ({}));
-        if (adminJson?.ok) {
+        if (adminRes.ok && adminJson?.ok && adminJson.token) {
           ADMIN_TOKEN = adminJson.token;
           USER_TOKEN = null;
           TEACHER_TOKEN = null;
@@ -2774,6 +2814,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
       if (ADMIN_TOKEN) {
         setTeacherStreamingEnabled(false);
+        await fetch('/api/auth/logout', { method: 'POST', headers: { 'X-Admin-Token': ADMIN_TOKEN } }).catch(() => {});
         ADMIN_TOKEN = null;
         document.body.classList.remove('admin-mode');
         teacherStreamLiveClasses = {};
@@ -2805,41 +2846,43 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     });
     document.getElementById('loginCancelBtn').addEventListener('click', closeLoginModal);
     document.getElementById('loginSubmitBtn').addEventListener('click', async () => {
+      if (authSubmitPending) return;
       const errEl = document.getElementById('authError');
       errEl.textContent = '';
       const email = document.getElementById('authEmailInput').value.trim();
       const password = document.getElementById('authPasswordInput').value;
       if (!email || !password) { errEl.textContent = 'Email and password required.'; return; }
-      if (registerMode) {
-        const name = document.getElementById('regName').value.trim();
-        if (!name) { errEl.textContent = 'Name is required.'; return; }
-        const res = await fetch('/api/auth/register', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password, name })
-        });
-        const j = await res.json().catch(() => ({}));
-        if (!j?.ok) { errEl.textContent = j.error || 'Registration failed'; return; }
-        USER_TOKEN = j.token;
-        currentUser = j.user;
-        TEACHER_TOKEN = null;
-        ADMIN_TOKEN = null;
-        currentTeacher = null;
-        document.body.classList.remove('admin-mode');
-        await loadStudentClassData().catch((err) => {
-          console.warn('Failed to refresh student class data after registration.', err);
-          alert('Account created, but class data failed to load. Please refresh the page and try again.');
-          return null;
-        });
-        setTeacherPaneOpen(false);
-        saveAuthSession();
-        closeLoginModal();
-        updateAuthUI();
-        await showFileBrowser();
-        return;
+      const name = registerMode ? document.getElementById('regName').value.trim() : '';
+      if (registerMode && !name) { errEl.textContent = 'Name is required.'; return; }
+      const submitBtn = document.getElementById('loginSubmitBtn');
+      const toggleBtn = document.getElementById('toggleRegisterBtn');
+      authSubmitPending = true;
+      submitBtn.disabled = true;
+      toggleBtn.disabled = true;
+      submitBtn.textContent = registerMode ? 'Creating account…' : 'Signing in…';
+      try {
+        if (registerMode) {
+          const res = await fetch('/api/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password, name })
+          });
+          const j = await res.json().catch(() => ({}));
+          if (!res.ok || !j?.ok || !j.token || !j.user) { errEl.textContent = j.error || 'Registration failed'; return; }
+          await applyAuthLoginPayload(j);
+          return;
+        }
+        const signInResult = await tryUnifiedSignIn(email, password);
+        if (!signInResult.ok) errEl.textContent = signInResult.error || 'Invalid email or password';
+      } catch (err) {
+        console.warn('Could not complete sign-in request.', err);
+        errEl.textContent = 'Network error. Please try again.';
+      } finally {
+        authSubmitPending = false;
+        submitBtn.disabled = false;
+        toggleBtn.disabled = false;
+        updateLoginModeUI();
       }
-      const signInResult = await tryUnifiedSignIn(email, password);
-      if (!signInResult.ok) errEl.textContent = signInResult.error || 'Invalid email or password';
     });
     document.getElementById('authPasswordInput').addEventListener('keypress', (e) => {
       if (e.key === 'Enter') document.getElementById('loginSubmitBtn').click();
@@ -5196,6 +5239,53 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       return String(path || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
     }
 
+    function applyFilePathChange(oldPath, newPath) {
+      const old = _normalizeTreePath(oldPath);
+      const next = newPath == null ? null : _normalizeTreePath(newPath);
+      const matches = (path) => path === old || path.startsWith(old + '/');
+      const remap = (path) => next + path.slice(old.length);
+      const parent = old.includes('/') ? old.slice(0, old.lastIndexOf('/')) : '';
+      if (currentOpenFile?.path && !currentOpenFile.audit && !currentOpenFile.notebook && matches(_normalizeTreePath(currentOpenFile.path))) {
+        if (next != null) {
+          const path = remap(_normalizeTreePath(currentOpenFile.path));
+          currentOpenFile = { ...currentOpenFile, path, name: path.split('/').pop() };
+        } else {
+          clearTimeout(_autosaveTimer);
+          clearTimeout(csvAutosaveTimer);
+          currentOpenFile = null;
+          clearFileArtifactPreview();
+          setCsvMode(false);
+          editor.setValue('');
+          currentBufferDirty = false;
+        }
+        updateActiveFileName();
+        updateEditorOverlay();
+      }
+      if (matches(_normalizeTreePath(_currentFolderPath))) _currentFolderPath = next == null ? parent : remap(_normalizeTreePath(_currentFolderPath));
+      if (matches(_normalizeTreePath(_shellCwd))) _shellCwd = next == null ? parent : remap(_normalizeTreePath(_shellCwd));
+      _selectedFileItems = new Set(Array.from(_selectedFileItems).flatMap(path => matches(path) ? (next == null ? [] : [remap(path)]) : [path]));
+    }
+
+    function updateFileActionButtons() {
+      const selected = getSelectedTreeItems();
+      for (const id of ['duplicateSelectedBtn', 'deleteSelectedBtn', 'moveSelectedBtn']) {
+        const button = document.getElementById(id);
+        if (button) button.disabled = selected.length === 0;
+      }
+      const rename = document.getElementById('renameSelectedBtn');
+      if (rename) rename.disabled = selected.length !== 1;
+      const download = document.getElementById('downloadSelectedBtn');
+      if (download) download.disabled = selected.length !== 1 || selected[0]?.type !== 'file';
+      const status = document.getElementById('fileSelectionStats');
+      if (status) status.textContent = `${selected.length} selected`;
+      const items = _getItemsAtPath(_allFileTree, _currentFolderPath);
+      const selectAll = document.getElementById('selectAllFilesBtn');
+      if (selectAll) {
+        selectAll.disabled = items.length === 0;
+        selectAll.textContent = items.length && items.every(item => _selectedFileItems.has(item.path)) ? '☐ Clear Selection' : '☑ Select All';
+      }
+    }
+
     function _findItemByPath(items, path) {
       const want = _normalizeTreePath(path);
       for (const item of (items || [])) {
@@ -5260,12 +5350,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     let _fileTreeLoadPromise = null;
+    let _fileTreeLoadContext = null;
 
     async function fetchFileTreeData() {
       if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return false;
       if (!canCurrentUserAccessIDE()) return false;
+      const requestContext = JSON.stringify(fileAuthHeaders());
       const res = await fetch('/api/files/list', { headers: fileAuthHeaders() });
       const j = await res.json().catch(() => ({}));
+      if (requestContext !== JSON.stringify(fileAuthHeaders())) return false;
       if (!j.ok) {
         if (res.status === 401) {
           clearAuthStateMemory();
@@ -5275,6 +5368,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         return false;
       }
       _allFileTree = j.files || [];
+      // Stale folders after a delete, rename, or a different account sign-in
+      // must not become invisible targets for subsequent New File actions.
+      while (_currentFolderPath && !_findItemByPath(_allFileTree, _currentFolderPath)) {
+        _currentFolderPath = _currentFolderPath.includes('/') ? _currentFolderPath.slice(0, _currentFolderPath.lastIndexOf('/')) : '';
+      }
+      if (_shellCwd && !_findItemByPath(_allFileTree, _shellCwd)) _shellCwd = _currentFolderPath;
       const existingPaths = _collectTreePaths(_allFileTree);
       for (const path of _selectedFileItems) {
         if (!existingPaths.has(path)) _selectedFileItems.delete(path);
@@ -5286,11 +5385,18 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     async function loadFileTree() {
       if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return;
-      if (_fileTreeLoadPromise) return _fileTreeLoadPromise;
+      const requestContext = JSON.stringify(fileAuthHeaders());
+      if (_fileTreeLoadPromise) {
+        if (_fileTreeLoadContext === requestContext) return _fileTreeLoadPromise;
+        await _fileTreeLoadPromise.catch(() => {});
+        return loadFileTree();
+      }
+      _fileTreeLoadContext = requestContext;
       const treeEl = document.getElementById('fileTree');
       if (treeEl) treeEl.innerHTML = '<div class="skeleton file-tree-skeleton" aria-hidden="true"></div>';
       _fileTreeLoadPromise = (async () => {
         const ok = await fetchFileTreeData();
+        if (requestContext !== JSON.stringify(fileAuthHeaders())) return;
         if (!ok) {
           if (treeEl) {
             treeEl.innerHTML = '<div style="padding:12px;color:#ef5350;">Error loading files</div>';
@@ -5301,6 +5407,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       })();
       try {
         await _fileTreeLoadPromise;
+      } catch (error) {
+        if (treeEl && requestContext === JSON.stringify(fileAuthHeaders())) treeEl.innerHTML = '<div class="file-tree-empty" role="alert">Could not load files. Check your connection and choose Refresh.</div>';
       } finally {
         _fileTreeLoadPromise = null;
       }
@@ -5353,6 +5461,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       treeEl.innerHTML = '';
       const items = _getItemsAtPath(_allFileTree, _currentFolderPath);
       updateBreadcrumb();
+      updateFileActionButtons();
       if (!items.length) {
         treeEl.innerHTML = '<div class="file-tree-empty">No files here. Create one!</div>';
         updateSendFileButtonVisibility();
@@ -5379,12 +5488,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       bc.innerHTML = '';
 
       // Home crumb
-      const home = document.createElement('span');
+      const home = document.createElement('button');
+      home.type = 'button';
       home.className = 'crumb';
       home.dataset.path = '';
       home.textContent = '🏠 Home';
       home.title = 'Go to root';
       home.addEventListener('click', () => {
+        _selectedFileItems.clear();
         _currentFolderPath = '';
         _shellCwd = '';
         renderCurrentFolder();
@@ -5398,12 +5509,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           built = built ? built + '/' + part : part;
           const sep = document.createTextNode(' › ');
           bc.appendChild(sep);
-          const crumb = document.createElement('span');
+          const crumb = document.createElement('button');
+          crumb.type = 'button';
           crumb.className = 'crumb';
           const pathSnap = built;
           crumb.textContent = part;
           crumb.title = pathSnap;
           crumb.addEventListener('click', () => {
+            _selectedFileItems.clear();
             _currentFolderPath = pathSnap;
             _shellCwd = _normalizeTreePath(pathSnap);
             renderCurrentFolder();
@@ -5425,6 +5538,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         row.dataset.type = item.type;
         row.dataset.name = item.name;
         row.dataset.selected = isSelected ? '1' : '0';
+        row.tabIndex = 0;
+        row.setAttribute('aria-label', `${item.type === 'folder' ? 'Folder' : 'File'}: ${item.name}`);
 
         const icon = document.createElement('span');
         icon.className = 'icon';
@@ -5460,6 +5575,18 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         row.appendChild(checkbox);
         row.appendChild(icon);
         row.appendChild(fname);
+        const actions = document.createElement('button');
+        actions.type = 'button';
+        actions.className = 'file-item-actions';
+        actions.textContent = '⋯';
+        actions.setAttribute('aria-label', `Actions for ${item.name}`);
+        actions.setAttribute('aria-haspopup', 'menu');
+        actions.addEventListener('click', (event) => {
+          event.stopPropagation();
+          const rect = actions.getBoundingClientRect();
+          showCtxMenu(rect.right, rect.bottom, item);
+        });
+        row.appendChild(actions);
 
         checkbox.addEventListener('click', (e) => e.stopPropagation());
         checkbox.addEventListener('change', () => {
@@ -5472,12 +5599,18 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         row.addEventListener('click', (e) => {
           e.stopPropagation();
           if (item.type === 'folder') {
+            _selectedFileItems.clear();
             _currentFolderPath = _normalizeTreePath(item.path);
             _shellCwd = _currentFolderPath;
             renderCurrentFolder();
           } else {
             openFile(item);
           }
+        });
+        row.addEventListener('keydown', (event) => {
+          if (event.target !== row || !['Enter', ' '].includes(event.key)) return;
+          event.preventDefault();
+          row.click();
         });
 
         // Context menu
@@ -5539,7 +5672,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       });
       const j = await res.json().catch(() => ({}));
       if (j.ok) {
-        if (currentOpenFile?.path === srcPath) currentOpenFile = { path: j.new_path, name: currentOpenFile.name };
+        applyFilePathChange(srcPath, j.new_path);
         loadFileTree();
       } else {
         alert(j.error || 'Move failed');
@@ -5552,7 +5685,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const found = _findItemByPath(_allFileTree, path);
         if (found) items.push(found);
       }
-      return items;
+      // Selecting a folder already includes descendants; do not mutate a
+      // child again after its parent was moved/deleted/duplicated.
+      return items.filter(item => !items.some(parent => parent.type === 'folder' && item.path.startsWith(parent.path + '/')));
     }
 
     async function duplicateSelectedItems() {
@@ -5596,6 +5731,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           });
           const j = await res.json().catch(() => ({}));
           if (!j?.ok) failures.push(`${item.name}: ${j?.error || 'Delete failed'}`);
+          else applyFilePathChange(item.path, null);
         } catch {
           failures.push(`${item.name}: Network error`);
         }
@@ -5609,8 +5745,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       return new Promise((resolve) => {
         const modal = document.createElement('div');
         modal.className = 'modal glass-modal';
+        modal.style.display = 'flex';
         const options = folders
-          .filter(f => !excludedPaths.has(f.path))
+          .filter(f => !Array.from(excludedPaths).some(path => f.path === path || f.path.startsWith(path + '/')))
           .map(f => `<option value="${escapeHtml(f.path)}">${escapeHtml(`${'↳ '.repeat(Math.max(0, f.depth))}${f.path || '/'}`)}</option>`)
           .join('');
         modal.innerHTML = `
@@ -5671,6 +5808,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           });
           const j = await res.json().catch(() => ({}));
           if (!j?.ok) failures.push(`${srcPath}: ${j?.error || 'Move failed'}`);
+          else applyFilePathChange(srcPath, j.new_path);
         } catch {
           failures.push(`${srcPath}: Network error`);
         }
@@ -5690,15 +5828,18 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (!currentOpenFile || (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN)) return true;
       syncEditorBridge();
       const content = csvEditorActive ? stringifyCsvRows(csvEditorRows) : editor.getValue();
+      const savedFile = currentOpenFile;
+      const savedContext = JSON.stringify(fileAuthHeaders());
       try {
         const res = await fetch('/api/files/write', {
           method: 'POST',
           headers: fileJsonHeaders(),
-          body: JSON.stringify({ path: currentOpenFile.path, content })
+          body: JSON.stringify({ path: savedFile.path, content, require_existing: true })
         });
         if (!res.ok) return false;
         const j = await res.json().catch(() => ({}));
-        if (j.ok) currentBufferDirty = false;
+        if (j.ok && currentOpenFile === savedFile && savedContext === JSON.stringify(fileAuthHeaders())
+            && content === (csvEditorActive ? stringifyCsvRows(csvEditorRows) : editor.getValue())) currentBufferDirty = false;
         return !!j.ok;
       } catch (e) {
         return false;
@@ -5926,7 +6067,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (auditPreviewActive) closeAuditPreview();
       syncEditorBridge();
       // Save the currently open file before switching
-      await saveCurrentFile();
+      if (!await saveCurrentFile()) {
+        alert('Your current file could not be saved. Check your connection before opening another file.');
+        return;
+      }
       const res = await fetch('/api/files/read?path=' + encodeURIComponent(item.path), { headers: fileAuthHeaders() });
       const j = await res.json().catch(() => ({}));
       if (!j.ok) { alert(j.error || 'Cannot open file'); return; }
@@ -5963,10 +6107,31 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     // Context menu
     let _ctxMenu = null;
+    async function downloadFileItem(item) {
+      try {
+        const response = await fetch('/api/files/download?path=' + encodeURIComponent(item.path), { headers: fileAuthHeaders() });
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.error || 'Download failed');
+        }
+        const url = URL.createObjectURL(await response.blob());
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = item.name;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 30000);
+      } catch (error) {
+        alert(error.message || 'Download failed. Check your connection.');
+      }
+    }
+
     function showCtxMenu(x, y, item) {
       if (_ctxMenu) _ctxMenu.remove();
       _ctxMenu = document.createElement('div');
-      _ctxMenu.className = 'ctx-menu';
+      _ctxMenu.className = 'ctx-menu file-context-menu';
+      _ctxMenu.setAttribute('role', 'menu');
       _ctxMenu.style.left = x + 'px';
       _ctxMenu.style.top = y + 'px';
       if (item.type === 'file') {
@@ -5980,23 +6145,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         dlBtn.textContent = '⬇️ Download';
         dlBtn.onclick = () => {
           _ctxMenu.remove();
-          const a = document.createElement('a');
-          a.href = '/api/files/download?path=' + encodeURIComponent(item.path);
-          a.setAttribute('download', item.name);
-          // Pass auth token via a temporary fetch/blob approach
-          fetch(a.href, { headers: fileAuthHeaders() })
-            .then(r => r.ok ? r.blob() : Promise.reject(r.statusText))
-            .then(blob => {
-              const url = URL.createObjectURL(blob);
-              const link = document.createElement('a');
-              link.href = url;
-              link.download = item.name;
-              document.body.appendChild(link);
-              link.click();
-              link.remove();
-              setTimeout(() => URL.revokeObjectURL(url), 1000);
-            })
-            .catch(err => alert('Download failed: ' + err));
+          downloadFileItem(item);
         };
         _ctxMenu.appendChild(dlBtn);
         if (window.ClassroomFiles?.addCtxMenuItems) {
@@ -6017,33 +6166,126 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       renameBtn.textContent = '✏️ Rename';
       renameBtn.onclick = () => { _ctxMenu.remove(); renameItem(item); };
       _ctxMenu.appendChild(renameBtn);
+      for (const [label, action] of [['📑 Duplicate', duplicateSelectedItems], ['📦 Move', moveSelectedItems]]) {
+        const button = document.createElement('button');
+        button.textContent = label;
+        button.onclick = () => {
+          _ctxMenu.remove();
+          _selectedFileItems = new Set([item.path]);
+          renderCurrentFolder();
+          action();
+        };
+        _ctxMenu.appendChild(button);
+      }
       const delBtn = document.createElement('button');
       delBtn.textContent = '🗑️ Delete';
       delBtn.className = 'danger';
       delBtn.onclick = () => { _ctxMenu.remove(); deleteItem(item); };
       _ctxMenu.appendChild(delBtn);
       document.body.appendChild(_ctxMenu);
-      document.addEventListener('click', () => { if (_ctxMenu) { _ctxMenu.remove(); _ctxMenu = null; } }, { once: true });
+      const menu = _ctxMenu;
+      const view = window.visualViewport;
+      const left = view?.offsetLeft || 0;
+      const top = view?.offsetTop || 0;
+      menu.style.left = Math.max(left + 8, Math.min(x, left + (view?.width || innerWidth) - menu.offsetWidth - 8)) + 'px';
+      menu.style.top = Math.max(top + 8, Math.min(y, top + (view?.height || innerHeight) - menu.offsetHeight - 8)) + 'px';
+      menu.querySelectorAll('button').forEach(button => button.setAttribute('role', 'menuitem'));
+      menu.addEventListener('keydown', event => { if (event.key === 'Escape') menu.remove(); });
+      // Do not let the same tap that opened this menu immediately close it.
+      setTimeout(() => document.addEventListener('click', () => {
+        menu.remove();
+        if (_ctxMenu === menu) _ctxMenu = null;
+      }, { once: true }), 0);
     }
 
-
-    async function renameItem(item) {
-      const newName = prompt('New name:', item.name);
-      if (!newName || newName === item.name) return;
-      const res = await fetch('/api/files/rename', {
-        method: 'POST',
-        headers: fileJsonHeaders(),
-        body: JSON.stringify({ old_path: item.path, new_name: newName })
-      });
-      const j = await res.json().catch(() => ({}));
-      if (j.ok) {
-        if (currentOpenFile?.path === item.path) {
-          currentOpenFile = { path: j.new_path, name: newName };
-          if (!String(newName).toLowerCase().endsWith('.csv') && csvEditorActive) setCsvMode(false);
-          updateActiveFileName();
+    function showFileNameDialog({ title, initialName = '', submitLabel, hint, onSubmit }) {
+      const previousFocus = document.activeElement;
+      const overlay = document.createElement('div');
+      overlay.className = 'modal glass-modal file-name-dialog';
+      overlay.style.display = 'flex';
+      overlay.innerHTML = `<form class="modal-content" role="dialog" aria-modal="true" aria-labelledby="fileNameDialogTitle">
+        <h3 id="fileNameDialogTitle"></h3>
+        <p class="file-name-hint"></p>
+        <label for="fileNameInput">Name</label>
+        <input id="fileNameInput" name="file-name" type="text" required maxlength="255" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+        <p class="file-name-error" role="alert"></p>
+        <div class="modal-actions"><button type="button" class="btn secondary">Cancel</button><button type="submit" class="btn run"></button></div>
+      </form>`;
+      const form = overlay.querySelector('form');
+      const input = overlay.querySelector('input');
+      const cancel = overlay.querySelector('button[type="button"]');
+      const submit = overlay.querySelector('button[type="submit"]');
+      const error = overlay.querySelector('.file-name-error');
+      overlay.querySelector('h3').textContent = title;
+      overlay.querySelector('.file-name-hint').textContent = hint || '';
+      input.value = initialName;
+      submit.textContent = submitLabel;
+      let pending = false;
+      const close = () => {
+        if (pending) return;
+        overlay.remove();
+        previousFocus?.focus?.({ preventScroll: true });
+      };
+      cancel.addEventListener('click', close);
+      overlay.addEventListener('click', event => { if (event.target === overlay) close(); });
+      overlay.addEventListener('keydown', event => {
+        if (event.key === 'Escape') { event.preventDefault(); close(); }
+        if (event.key === 'Tab') {
+          const controls = [input, cancel, submit].filter(control => !control.disabled);
+          if (event.shiftKey && document.activeElement === controls[0]) { event.preventDefault(); controls.at(-1).focus(); }
+          else if (!event.shiftKey && document.activeElement === controls.at(-1)) { event.preventDefault(); controls[0].focus(); }
         }
-        loadFileTree();
-      } else alert(j.error || 'Rename failed');
+      });
+      form.addEventListener('submit', async event => {
+        event.preventDefault();
+        if (pending) return;
+        const name = input.value.trim();
+        if (!name) { error.textContent = 'Enter a name.'; input.focus(); return; }
+        if (/[\\/<>:"|?*\x00-\x1f]/.test(name) || ['.', '..', '.eagleide'].includes(name.toLowerCase())) {
+          error.textContent = 'Use a name without slashes or special characters.';
+          return;
+        }
+        pending = true;
+        submit.disabled = true;
+        cancel.disabled = true;
+        error.textContent = '';
+        try {
+          await onSubmit(name);
+          pending = false;
+          close();
+        } catch (failure) {
+          error.textContent = failure.message || 'Could not save. Check your connection and try again.';
+        } finally {
+          pending = false;
+          submit.disabled = false;
+          cancel.disabled = false;
+        }
+      });
+      document.body.appendChild(overlay);
+      input.focus();
+      input.select();
+    }
+
+    function renameItem(item) {
+      showFileNameDialog({
+        title: 'Rename ' + (item.type === 'folder' ? 'folder' : 'file'),
+        initialName: item.name,
+        submitLabel: 'Rename',
+        hint: item.type === 'file' ? 'Keep a supported extension such as .py, .js, .html, or .txt.' : '',
+        onSubmit: async newName => {
+          if (newName === item.name) return;
+          if (!await saveCurrentFile()) throw new Error('Save your open file before renaming. Check your connection.');
+          const res = await fetch('/api/files/rename', {
+            method: 'POST', headers: fileJsonHeaders(),
+            body: JSON.stringify({ old_path: item.path, new_name: newName })
+          });
+          const j = await res.json().catch(() => ({}));
+          if (!res.ok || !j.ok) throw new Error(j.error || 'Rename failed');
+          applyFilePathChange(item.path, j.new_path);
+          if (!String(newName).toLowerCase().endsWith('.csv') && item.type === 'file' && csvEditorActive) setCsvMode(false);
+          await loadFileTree();
+        }
+      });
     }
 
     async function deleteItem(item) {
@@ -6055,52 +6297,34 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       });
       const j = await res.json().catch(() => ({}));
       if (j.ok) {
-        if (currentOpenFile?.path === item.path) {
-          currentOpenFile = null;
-          clearFileArtifactPreview();
-          setCsvMode(false);
-          editor.setValue('');
-          updateActiveFileName();
-          updateEditorOverlay();
-        }
-        // If we deleted the folder we're currently in, go up
-        const normCwd = _normalizeTreePath(_currentFolderPath);
-      const normItemPath = _normalizeTreePath(item.path);
-      if (item.type === 'folder' && normCwd && (normCwd === normItemPath || normCwd.startsWith(normItemPath + '/'))) {
-          _currentFolderPath = normItemPath.includes('/') ? normItemPath.substring(0, normItemPath.lastIndexOf('/')) : '';
-        }
+        applyFilePathChange(item.path, null);
         loadFileTree();
       } else alert(j.error || 'Delete failed');
     }
 
-    document.getElementById('newFileBtn').addEventListener('click', async () => {
-      let name = prompt('New file name (e.g. main.py, script.js, index.html, styles.css):');
-      if (!name) return;
-      name = name.trim();
-      // Auto-add .py extension if no extension is provided
-      if (name && !name.includes('.')) name += '.py';
-      const res = await fetch('/api/files/create', {
-        method: 'POST',
-        headers: fileJsonHeaders(),
-        body: JSON.stringify({ name, type: 'file', parent: _currentFolderPath })
+    function createWorkspaceItem(type) {
+      if (!isAuthenticated()) { alert('Sign in to create files and folders.'); return; }
+      const parent = _normalizeTreePath(_currentFolderPath);
+      showFileNameDialog({
+        title: type === 'folder' ? 'New Folder' : 'New File',
+        submitLabel: 'Create',
+        hint: `Location: ${parent || 'Home'}. ` + (type === 'file' ? 'Examples: main.py, script.js, index.html, styles.css. No extension adds .py.' : ''),
+        onSubmit: async name => {
+          if (type === 'file' && !name.includes('.')) name += '.py';
+          const res = await fetch('/api/files/create', {
+            method: 'POST', headers: fileJsonHeaders(),
+            body: JSON.stringify({ name, type, parent })
+          });
+          const j = await res.json().catch(() => ({}));
+          if (!res.ok || !j.ok) throw new Error(j.error || 'Could not create item');
+          _currentFolderPath = parent;
+          _selectedFileItems = new Set([_normalizeTreePath(j.path)]);
+          await loadFileTree();
+        }
       });
-      const j = await res.json().catch(() => ({}));
-      if (j.ok) loadFileTree();
-      else alert(j.error || 'Failed to create file');
-    });
-
-    document.getElementById('newFolderBtn').addEventListener('click', async () => {
-      const name = prompt('New folder name:');
-      if (!name) return;
-      const res = await fetch('/api/files/create', {
-        method: 'POST',
-        headers: fileJsonHeaders(),
-        body: JSON.stringify({ name, type: 'folder', parent: _currentFolderPath })
-      });
-      const j = await res.json().catch(() => ({}));
-      if (j.ok) loadFileTree();
-      else alert(j.error || 'Failed to create folder');
-    });
+    }
+    document.getElementById('newFileBtn').addEventListener('click', () => createWorkspaceItem('file'));
+    document.getElementById('newFolderBtn').addEventListener('click', () => createWorkspaceItem('folder'));
 
     document.getElementById('uploadFileBtn').addEventListener('click', () => {
       document.getElementById('sidebarFileInput').click();
@@ -6127,6 +6351,21 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     document.getElementById('deleteSelectedBtn')?.addEventListener('click', deleteSelectedItems);
     document.getElementById('duplicateSelectedBtn')?.addEventListener('click', duplicateSelectedItems);
     document.getElementById('moveSelectedBtn')?.addEventListener('click', moveSelectedItems);
+    document.getElementById('renameSelectedBtn')?.addEventListener('click', () => {
+      const selected = getSelectedTreeItems();
+      if (selected.length === 1) renameItem(selected[0]);
+    });
+    document.getElementById('downloadSelectedBtn')?.addEventListener('click', () => {
+      const selected = getSelectedTreeItems();
+      if (selected.length === 1 && selected[0].type === 'file') downloadFileItem(selected[0]);
+    });
+    document.getElementById('selectAllFilesBtn')?.addEventListener('click', () => {
+      const items = _getItemsAtPath(_allFileTree, _currentFolderPath);
+      const allSelected = items.every(item => _selectedFileItems.has(item.path));
+      _selectedFileItems.clear();
+      if (!allSelected) items.forEach(item => _selectedFileItems.add(item.path));
+      renderCurrentFolder();
+    });
 
     // Home controls (admin)
     document.getElementById('notesEditBtn').addEventListener('click', () => {

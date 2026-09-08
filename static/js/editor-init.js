@@ -29,6 +29,7 @@ function initEditor() {
         };
       } else {
         // Fallback textarea: keep tab characters on Enter after colon
+        ta.style.display = 'block';
         ta.style.width = "100%"; ta.style.height = "100%"; ta.style.background = "var(--bg-dark)";
         ta.style.color = "var(--text-light)"; ta.style.border = "0"; ta.style.outline = "none";
         ta.addEventListener("keydown", (e) => {
@@ -70,6 +71,8 @@ function initEditor() {
     function setTeacherPaneSize(percent, persist = true) {
       const next = Math.min(70, Math.max(25, Number(percent) || 50));
       document.documentElement.style.setProperty('--teacher-pane-size', `${next}%`);
+      document.getElementById('editorStreamSplitter')?.setAttribute('aria-valuenow', String(Math.round(next)));
+      window.EagleIDE?.layout?.refreshEditors?.();
       if (persist) {
         try { localStorage.setItem(TEACHER_PANE_SIZE_KEY, String(next)); } catch {}
       }
@@ -136,11 +139,9 @@ function initEditor() {
         window.ensureEditorTabForTeacherStream?.();
         initTeacherViewer();
         window.applyPendingTeacherStream?.();
-        requestAnimationFrame(() => {
-          try { window.eagleEditor?.refresh?.(); } catch {}
-          try { teacherEditor?.refresh?.(); } catch {}
-        });
       }
+      // Closing/stopping a stream also changes the student's editor height.
+      window.EagleIDE?.layout?.refreshEditors?.();
     }
 
     function setTeacherPaneEnabled(enabled) {

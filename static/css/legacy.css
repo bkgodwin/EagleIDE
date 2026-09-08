@@ -142,6 +142,28 @@
     }
     .live-indicator.on{ display:inline-block; }
 
+    /* All dialogs track the visible viewport, including desktop zoom and the
+       iPad software keyboard. The dialog body scrolls, not an offscreen page. */
+    .modal {
+      top: var(--app-offset-top, 0px);
+      bottom: auto;
+      height: var(--app-height, 100dvh);
+    }
+    .modal-content {
+      min-width: 0;
+      max-height: calc(var(--app-height, 100dvh) - 24px);
+    }
+    .modal-actions { flex-wrap: wrap; }
+    .workspace-modal .modal-content {
+      min-height: min(72vh, calc(var(--app-height, 100dvh) - 24px));
+      max-height: calc(var(--app-height, 100dvh) - 24px);
+    }
+    .role-menu-panel {
+      max-height: calc(var(--app-height, 100dvh) - 80px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+
     /* Keep modal controls inside the visual viewport on iPadOS, including
        landscape mode and the reduced viewport shown above the software keyboard. */
     @media (max-width: 1200px), (max-height: 820px) {
@@ -172,7 +194,8 @@
         max-height: 100%;
         border-radius: 10px;
       }
-      .teacher-dash-fullscreen .teacher-dash-sidebar { padding-right: 56px; }
+      .teacher-dash-fullscreen .teacher-dash-sidebar { width: 190px; }
+      .teacher-dash-fullscreen .teacher-dash-view-hdr { padding-right: 62px; }
       .teacher-dash-mobile-close {
         position: absolute;
         top: 8px;
@@ -185,11 +208,49 @@
         padding: 0;
         border: 1px solid var(--theme-border-mid);
         border-radius: 9px;
-        background: var(--theme-panel);
+        background: var(--theme-input-bg);
         color: var(--theme-text);
         font: inherit;
         font-size: 18px;
         cursor: pointer;
         touch-action: manipulation;
       }
+    }
+
+    @media (max-width: 600px) {
+      .teacher-dash-fullscreen .modal-content { flex-direction: column; }
+      .teacher-dash-fullscreen .teacher-dash-sidebar {
+        width: 100%;
+        max-height: 170px;
+        border-right: 0;
+        border-bottom: 1px solid var(--theme-border-mid);
+      }
+      .teacher-dash-sidebar .teacher-dash-brand { padding: 10px 62px 10px 12px; }
+      .teacher-dash-sidebar .teacher-dash-nav { flex-direction: row; overflow: auto; padding: 8px; }
+      .teacher-dash-sidebar .teacher-dash-navbtn { width: auto; white-space: nowrap; }
+      .teacher-dash-sidebar .teacher-dash-close-area { display: none; }
+      .teacher-dash-scroll { padding: 12px; }
+    }
+
+    /* Keep every desktop command available without overlapping the Run,
+       filename, or account controls in portrait/landscape tablet widths. */
+    @media (max-width: 1100px) {
+      header.topbar.topbar-primary {
+        grid-template-columns: auto minmax(0, 1fr);
+        grid-template-areas: "leading actions" "navigation navigation";
+        gap: 6px 12px;
+      }
+      .topbar-primary-left { grid-area: leading; }
+      .topbar-primary-actions { grid-area: actions; min-width: 0; max-width: 100%; }
+      .topbar-primary-center { grid-area: navigation; width: 100%; min-width: 0; justify-self: stretch; }
+      .topbar-primary .site-primary-nav {
+        flex: 1 1 0;
+        min-width: 0;
+        max-width: none;
+        justify-content: flex-start;
+        overflow-x: auto;
+      }
+      .topbar-primary .site-primary-nav > * { flex-shrink: 0; }
+      .topbar-primary .run-btn-hero { flex: 0 0 auto; min-width: 110px; margin-left: 8px; padding: 8px 20px; }
+      .topbar-primary .file-chip { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
     }
