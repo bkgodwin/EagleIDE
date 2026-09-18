@@ -35,6 +35,7 @@ Required runtime components:
 |-- sandbox_policy.py            Student module catalog, ACL normalization, and locked imports
 |-- sandbox_containment.py       Per-worker Linux Landlock filesystem boundary
 |-- config.py                    Checked-in defaults and server constants
+|-- autocomplete_metadata.csv   Editable Python completion signatures, return types, and descriptions
 |-- index.html                   Entire SPA document and DOM structure
 |-- lesson_plan_public.html      Public and embeddable lesson-plan document
 |-- static/
@@ -50,6 +51,7 @@ Required runtime components:
 |       |-- app.js               Creates the `window.EagleIDE` namespace
 |       |-- app-core.js          Active main UI state, APIs, sockets, auth, files, quizzes, admin
 |       |-- editor-init.js       CodeMirror setup and textarea fallback
+|       |-- autocomplete.js      Bounded code analysis, catalog-backed suggestions, and completion UI
 |       |-- layout.js            Responsive panels and layout controls
 |       |-- lazy-libs.js         Lazy browser dependency helpers
 |       |-- markdown.js          Sanitized Markdown rendering helpers
@@ -171,6 +173,7 @@ Network simulator definitions are source data in `network_content.py`; assignmen
 - Weekly lesson plans: `lesson_plan_features.py`, `lesson_plan_store.py`, `lesson-plans.js`, `lesson-plan-renderer.js`, `lesson-plan-public.js`, `lesson_plan_public.html`, and `features/lesson-plans.css`.
 - Wiki catalog/search/assets/backup or HTTP authorization: `wiki_store.py` and `wiki_features.py`; reader/teacher actions: `wiki-reader.js`; admin authoring: `wiki-admin.js`; visuals: `features/wiki.css`.
 - Editor initialization or teacher stream editor: `editor-init.js`; most run/open/save behavior remains in `app-core.js`.
+- Autocomplete analysis, popup lifecycle, and user-symbol inference: `autocomplete.js`; editable Python member help belongs in `autocomplete_metadata.csv`, served read-only by `app.py`.
 - Virtual shell parsing: `shell-commands.js`; it must call workspace APIs and must never expose an operating-system shell.
 - DOM structure or third-party CDN versions: `index.html`.
 - Theme values: `tokens.css`; reusable UI primitives: `components.css`; feature visuals: the matching `features/*.css` file.

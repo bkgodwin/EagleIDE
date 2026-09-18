@@ -56,6 +56,7 @@ BASE_DIR = Path(__file__).resolve().parent
 PERSIST_FILE = BASE_DIR / "config.txt"        # persisted settings (JSON)
 CHALLENGE_CSV = BASE_DIR / "challenges.csv"   # optional challenge bank
 EXCEPTION_HELP_CSV = BASE_DIR / "exception_help.csv"
+AUTOCOMPLETE_METADATA_CSV = BASE_DIR / "autocomplete_metadata.csv"
 LEADERBOARD_CSV = BASE_DIR / "leaderboard.csv"
 CHALLENGE_SCORE_FILE = BASE_DIR / "challenge_scores.json"
 SANDBOX_DIR = BASE_DIR / "sandboxes"
@@ -5250,6 +5251,52 @@ _lb_lock = threading.Lock()
 _exception_help_lock = threading.Lock()
 _exception_help_cache_mtime: Optional[float] = None
 _exception_help_cache_rows: list[dict] = []
+_autocomplete_metadata_lock = threading.Lock()
+_autocomplete_metadata_cache_mtime: Optional[float] = None
+_autocomplete_metadata_cache_rows: list[dict] = []
+
+
+def _read_autocomplete_metadata() -> list[dict]:
+    """Load the editable completion catalog once per file revision."""
+    global _autocomplete_metadata_cache_mtime, _autocomplete_metadata_cache_rows
+    if not AUTOCOMPLETE_METADATA_CSV.exists():
+        raise FileNotFoundError("autocomplete_metadata.csv not found")
+    with _autocomplete_metadata_lock:
+        mtime = AUTOCOMPLETE_METADATA_CSV.stat().st_mtime
+        if _autocomplete_metadata_cache_mtime == mtime:
+            return list(_autocomplete_metadata_cache_rows)
+
+        rows = []
+        with AUTOCOMPLETE_METADATA_CSV.open("r", newline="", encoding="utf-8-sig") as handle:
+            for raw in csv.DictReader(handle):
+                language = (raw.get("language") or "").strip().lower()
+                owner = (raw.get("owner") or "").strip()
+                name = (raw.get("name") or "").strip()
+                if language not in {"python", "javascript"} or not owner or not name:
+                    continue
+                rows.append({
+                    "language": language[:20],
+                    "owner": owner[:80],
+                    "name": name[:100],
+                    "kind": (raw.get("kind") or "method").strip()[:30],
+                    "signature": (raw.get("signature") or "").strip()[:500],
+                    "returns": (raw.get("returns") or "Any").strip()[:200],
+                    "description": (raw.get("description") or "").strip()[:2000],
+                })
+        _autocomplete_metadata_cache_mtime = mtime
+        _autocomplete_metadata_cache_rows = rows
+        return list(rows)
+
+
+@app.get("/api/autocomplete/catalog")
+def api_autocomplete_catalog():
+    try:
+        rows = _read_autocomplete_metadata()
+    except FileNotFoundError:
+        return jsonify(ok=False, error="autocomplete_metadata.csv not found"), 404
+    response = jsonify(ok=True, entries=rows)
+    response.headers["Cache-Control"] = "private, max-age=0, must-revalidate"
+    return response
 
 def _read_exception_help_rows() -> list[dict]:
     global _exception_help_cache_mtime, _exception_help_cache_rows
