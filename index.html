@@ -38,7 +38,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20260918-2">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260918-5">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -46,7 +46,6 @@
     <div class="topbar-primary-left">
       <div class="brand"><div>EagleIDE</div></div>
       <button class="btn btn--ghost wiki-nav-btn" id="wikiNavBtn" type="button" aria-expanded="true" aria-controls="wikiNavDrawer" title="Hide wiki contents"><span aria-hidden="true">☰</span><span class="wiki-nav-label">Hide Contents</span></button>
-      <button class="btn btn--ghost topbar-tools-btn ide-only" id="topbarToolsBtn" type="button" aria-expanded="true" aria-controls="toolTray" title="Show or hide editor tools">Tools ▾</button>
     </div>
     <div class="topbar-primary-center">
       <nav class="site-primary-nav" aria-label="Primary navigation">
@@ -62,7 +61,36 @@
         <button class="site-nav-link site-nav-link--ide" id="ideViewBtn" type="button">Open IDE</button>
         <button class="site-nav-link" id="wikiBookmarksBtn" type="button" aria-expanded="false" aria-controls="wikiBookmarksPanel">Bookmarks</button>
       </nav>
-      <button class="btn run run-btn-hero ide-only" id="runBtn">Run ▶</button>
+      <div class="ide-topbar-tools ide-only" id="ideTopbarTools" aria-label="IDE tools">
+        <button class="btn run run-btn-hero" id="runBtn">Run ▶</button>
+        <div class="control-group" id="modeSelectorWrap">
+          <label class="control-label" for="languageSelector">Mode</label>
+          <select id="languageSelector" class="select">
+            <option value="auto">Auto</option>
+            <option value="python">Python</option>
+            <option value="javascript">JavaScript</option>
+            <option value="html">HTML</option>
+            <option value="css">CSS</option>
+          </select>
+        </div>
+        <button class="btn secondary" id="themeToggleBtn" title="Toggle light/dark mode" aria-label="Toggle light or dark mode">🌙</button>
+        <label class="control-group topbar-font-control" for="fontRange" title="Editor text size">
+          <span class="control-label">Editor</span>
+          <input id="fontRange" type="range" min="12" max="50" value="14" step="1" class="font-range">
+          <span id="fontVal" class="font-val">14</span>
+        </label>
+        <button class="btn secondary" id="guidesBtn" title="Show or hide indent guides">Guides: On</button>
+        <button class="btn secondary" id="autocompleteBtn" title="Toggle autocomplete">Autocomplete: On</button>
+        <button class="btn secondary guest-hidden" id="resourcesToggleBtn" type="button" aria-expanded="true" aria-controls="rightStackPanel" title="Show or hide wiki, assignments, and other resources">Hide Resources</button>
+        <div id="classSelectorWrap" class="guest-hidden">
+          <div class="class-selector-row">
+            <label class="control-label" for="classSelector">Class</label>
+            <select id="classSelector" class="select"></select>
+          </div>
+        </div>
+        <button class="btn secondary guest-hidden" id="streamingToggleBtn" title="Toggle code streaming to students" style="display:none;">📡 Streaming: Off</button>
+        <button class="btn secondary guest-hidden" id="teacherNotebookPromptBtn" title="Send a notebook prompt to the selected class" style="display:none;">📝 Notebook Prompt</button>
+      </div>
     </div>
     <div class="topbar-primary-actions">
       <label class="wiki-font-size-control" for="wikiFontSizeSelect">
@@ -95,35 +123,6 @@
       </div>
     </div>
   </header>
-  <div class="tool-tray" id="toolTray">
-    <div class="control-group" id="modeSelectorWrap">
-      <span class="control-label">Mode</span>
-      <select id="languageSelector" class="select">
-        <option value="auto">Auto</option>
-        <option value="python">Python</option>
-        <option value="javascript">JavaScript</option>
-        <option value="html">HTML</option>
-        <option value="css">CSS</option>
-      </select>
-    </div>
-    <button class="btn secondary" id="themeToggleBtn" title="Toggle light/dark mode">🌙</button>
-    <div class="control-group">
-      <span class="control-label">A</span>
-      <input id="fontRange" type="range" min="12" max="40" value="14" step="1" class="font-range">
-      <span id="fontVal" class="font-val">14</span>
-    </div>
-    <button class="btn secondary" id="guidesBtn" title="Show/Hide indent guides">Guides: On</button>
-    <button class="btn secondary" id="autocompleteBtn" title="Toggle autocomplete">Autocomplete: On</button>
-    <button class="btn secondary guest-hidden" id="resourcesToggleBtn" type="button" aria-expanded="true" aria-controls="rightStackPanel" title="Show or hide wiki, assignments, and other resources">Hide Resources</button>
-    <div id="classSelectorWrap" class="guest-hidden">
-      <div class="class-selector-row">
-        <span class="control-label">Class</span>
-        <select id="classSelector" class="select"></select>
-      </div>
-    </div>
-    <button class="btn secondary guest-hidden" id="streamingToggleBtn" title="Toggle code streaming to students" style="display:none;">📡 Streaming: Off</button>
-    <button class="btn secondary guest-hidden" id="teacherNotebookPromptBtn" title="Send a notebook prompt to the selected class" style="display:none;">📝 Notebook Prompt</button>
-  </div>
   <main class="wiki-view" id="wikiView" aria-label="EagleIDE coding wiki">
     <button class="wiki-drawer-scrim" id="wikiDrawerScrim" type="button" aria-label="Close topic navigation"></button>
     <aside class="wiki-nav-drawer glass-surface" id="wikiNavDrawer" aria-label="Wiki topic navigation">
@@ -425,19 +424,15 @@
   <div class="outer no-sidebar" id="outer">
     <!-- Left: Editor -->
     <section class="panel" id="editorPanel">
-      <header aria-label="Code editor with Python syntax highlighting">
-        <h3><span id="workspaceTitle">Editor</span></h3>
-        <div class="workspace-tabs" role="tablist" aria-label="Workspace tabs">
-          <button class="workspace-tab-btn active" id="workspaceEditorTabBtn" data-workspace-tab="editor" role="tab" aria-selected="true">Editor</button>
-          <button class="workspace-tab-btn" id="workspaceFilesTabBtn" data-workspace-tab="files" role="tab" aria-selected="false">File Browser</button>
-        </div>
-        <button class="btn secondary" id="clearErrorsBtn" style="display:none; font-size:12px; padding:4px 8px;">Clear Error Highlights</button>
-      </header>
       <div id="classroomAuditBanner" class="classroom-audit-banner" role="status" hidden>
         <span id="classroomAuditBannerText">Viewing student file (read-only)</span>
         <button type="button" class="btn secondary" id="classroomAuditCloseBannerBtn" style="font-size:12px;padding:4px 10px;">Exit audit view</button>
       </div>
       <div class="content editor-content-stack" id="editorContentStack">
+        <div class="workspace-floating-controls" aria-label="Editor workspace controls">
+          <button class="btn secondary" id="clearErrorsBtn" type="button" hidden>Clear Errors</button>
+          <button class="workspace-switch-btn" id="workspaceSwitchBtn" type="button" aria-controls="fileBrowserTabPane" aria-pressed="false" title="Open file browser"><span aria-hidden="true">📁</span><span id="workspaceSwitchLabel">Files</span></button>
+        </div>
         <div class="student-editor-wrap">
           <textarea id="editor" style="display:none; resize:none;"></textarea>
           <div id="csvEditor" class="csv-editor hidden"></div>
@@ -524,8 +519,13 @@
       <div class="rightstack" id="rightstack">
         <!-- Shell -->
         <section class="panel" id="shellPanel" style="grid-row:1 / 2; grid-column:1;">
-          <header>
+          <header class="shell-panel-header">
             <h3>Shell:</h3>
+            <label class="shell-font-control" for="shellFontRange" title="Shell text size">
+              <span>Text</span>
+              <input id="shellFontRange" type="range" min="12" max="50" value="14" step="1">
+              <output id="shellFontVal" for="shellFontRange">14</output>
+            </label>
           </header>
           <div class="content"><div id="output"></div></div>
           <div class="shell-input-bar">
@@ -1469,6 +1469,10 @@
               <label><span>Page title</span><input type="text" id="pageTitleInput" placeholder="Eagles Web IDE (Python)"></label>
               <label><span>Top bar CSS color or gradient</span><input type="text" id="topBarColorInput" placeholder="linear-gradient(90deg,#a5c8f0,#7fb2eb)"></label>
             </div>
+            <div class="admin-solid-background-setting">
+              <label class="admin-setting-toggle"><input type="checkbox" id="ideSolidBackgroundEnabled"><span><strong>Use a solid IDE background</strong><small>Stops IDE background images from loading, which can improve performance on slower devices and networks. The wiki background is unchanged.</small></span></label>
+              <label class="admin-color-setting" for="ideSolidBackgroundColor"><span>IDE background color</span><input type="color" id="ideSolidBackgroundColor" value="#101827"></label>
+            </div>
             <div class="background-upload-grid" aria-label="Site background images">
               <section class="background-upload-card">
                 <strong>IDE light-mode background</strong><small>JPEG, PNG, or WebP, up to 10 MB.</small>
@@ -1646,21 +1650,21 @@
   <script src="/static/js/app.js"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20250608"></script>
-  <script src="/static/js/layout.js?v=20260918-2"></script>
-  <script src="/static/js/editor-init.js?v=20260918-2"></script>
+  <script src="/static/js/layout.js?v=20260918-5"></script>
+  <script src="/static/js/editor-init.js?v=20260918-5"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js"></script>
-  <script src="/static/js/app-core.js?v=20260918-2"></script>
+  <script src="/static/js/app-core.js?v=20260918-5"></script>
 <script src="/static/js/network-sim.js?v=20260714-18"></script>
 <script src="/static/js/network-sim-advanced.js?v=20260714-4"></script>
-  <script src="/static/js/wiki-reader.js?v=20260918-2"></script>
+  <script src="/static/js/wiki-reader.js?v=20260918-5"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
   <script src="/static/js/lesson-plans.js?v=20260816-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20260918-2"></script>
-  <script src="/static/js/classroom-signals.js?v=20260918-2"></script>
-  <script src="/static/js/classroom-files.js?v=20260918-2"></script>
+  <script src="/static/js/wiki-admin.js?v=20260918-5"></script>
+  <script src="/static/js/classroom-signals.js?v=20260918-5"></script>
+  <script src="/static/js/classroom-files.js?v=20260918-5"></script>
   <script src="/static/js/student-notebook.js?v=20260806-1"></script>
-  <script src="/static/js/student-dashboard.js?v=20260918-2"></script>
+  <script src="/static/js/student-dashboard.js?v=20260918-5"></script>
 
 </body>
 </html>

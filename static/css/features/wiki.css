@@ -47,7 +47,6 @@ body.wiki-home-active .wiki-view::before {
 body.wiki-home-active .wiki-reader-shell { position: relative; z-index: 1; }
 
 body.wiki-mode .wiki-view { display: flex; }
-body.wiki-mode .tool-tray,
 body.wiki-mode .outer,
 body.wiki-mode .edge-toggle,
 body.wiki-mode .teacher-pane-toggle,
@@ -165,6 +164,23 @@ body:not(.wiki-mode) .wiki-nav-btn {
 body:not(.wiki-mode) #wikiNavBtn { display: none !important; }
 body:not(.wiki-mode) #ideViewBtn { display: none !important; }
 body:not(.wiki-mode) #wikiHomeBtn { display: none !important; }
+body:not(.wiki-mode) .wiki-top-search,
+body:not(.wiki-mode) #wikiBookmarksBtn { display: none !important; }
+body:not(.wiki-mode) #wikiViewBtn {
+  min-width: 58px;
+  border-color: #102d46;
+  background: #173f61;
+  color: #fff;
+  box-shadow: 0 2px 7px rgba(4,20,36,.32);
+}
+body:not(.wiki-mode) #wikiViewBtn:hover,
+body:not(.wiki-mode) #wikiViewBtn:focus-visible {
+  border-color: #d7ecfb;
+  background: #0f304c;
+  color: #fff;
+  outline: 2px solid rgba(255,255,255,.8);
+  outline-offset: 1px;
+}
 
 .site-nav-link--ide {
   border-color: rgba(228, 71, 71, 0.72);

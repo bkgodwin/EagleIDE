@@ -269,6 +269,11 @@ except Exception:
         "html_runtime_max_popups": HTML_RUNTIME_DEFAULT_MAX_POPUPS,
         "page_title": "Eagle IDE (Python + JavaScript + HTML + CSS)",
         "topbar_color": "linear-gradient(90deg,#a5c8f0,#7fb2eb)",
+        "ide_background_light_asset": "",
+        "ide_background_dark_asset": "",
+        "home_background_asset": "",
+        "ide_solid_background_enabled": False,
+        "ide_solid_background_color": "#101827",
         "registration_enabled": True,
         "guest_ide_access_enabled": True,
         "network_sim_enabled": False,
@@ -488,6 +493,13 @@ def _normalize_config_partial(partial: Dict[str, Any]) -> Dict[str, Any]:
     normalized = dict(partial or {})
     if "guest_ide_access_enabled" in normalized:
         normalized["guest_ide_access_enabled"] = bool(normalized["guest_ide_access_enabled"])
+    if "ide_solid_background_enabled" in normalized:
+        normalized["ide_solid_background_enabled"] = bool(normalized["ide_solid_background_enabled"])
+    if "ide_solid_background_color" in normalized:
+        color = str(normalized["ide_solid_background_color"] or "").strip().lower()
+        if not re.fullmatch(r"#[0-9a-f]{6}", color):
+            raise ValueError("IDE solid background color must be a six-digit hex color")
+        normalized["ide_solid_background_color"] = color
     if "ai_ollama_url" in normalized:
         normalized["ai_ollama_url"] = _normalize_ollama_url(normalized["ai_ollama_url"])
     if "ai_model" in normalized:

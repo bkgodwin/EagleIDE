@@ -92,6 +92,11 @@
 .admin-wiki-settings-card strong { color: var(--theme-text); }
 .admin-wiki-settings-card span { color: var(--theme-text-dim); font-size: 12px; line-height: 1.45; }
 .background-upload-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-top: 20px; }
+.admin-solid-background-setting { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: stretch; gap: 12px; margin-top: 18px; }
+#adminSettingsModal .admin-settings-shell .admin-solid-background-setting .admin-setting-toggle { margin: 0; }
+.admin-color-setting { display: flex; flex-direction: column; justify-content: center; gap: 7px; min-width: 170px; padding: 12px 14px; border: 1px solid var(--theme-border-mid); background: var(--theme-input-bg); color: var(--theme-text-dim); font-size: 11px; }
+.admin-color-setting input[type="color"] { width: 100%; min-height: 38px; padding: 2px; border: 1px solid var(--theme-border-mid); background: var(--theme-panel); cursor: pointer; }
+.admin-color-setting input[type="color"]:disabled { cursor: not-allowed; opacity: .45; }
 .background-upload-card { display: flex; flex-direction: column; gap: 9px; min-width: 0; padding: 14px; border: 1px solid var(--theme-border-mid); background: var(--theme-input-bg); }
 .background-upload-card strong { color: var(--theme-text); }
 .background-upload-card small,.background-upload-status { color: var(--theme-text-dim); font-size: 10px; line-height: 1.4; }
@@ -148,6 +153,7 @@
   .admin-settings-fields.three-column,
   .admin-runtime-permissions { grid-template-columns: 1fr; }
   .admin-ai-runtime-test { align-items: flex-start; flex-direction: column; }
+  .admin-solid-background-setting { grid-template-columns: 1fr; }
 }
     .server-health-grid{ display:grid; gap:10px; grid-template-columns: repeat(4, minmax(120px, 1fr)); margin-bottom:12px; }
     .server-health-card{ border:1px solid var(--theme-border-mid); border-radius:10px; padding:10px; background:var(--theme-input-bg); }

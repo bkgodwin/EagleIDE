@@ -107,6 +107,31 @@ class BackgroundRouteTests(unittest.TestCase):
         )
         self.assertEqual(invalid.status_code, 400)
 
+    def test_admin_can_enable_validated_solid_ide_background(self):
+        headers = {"X-Admin-Token": self.admin_token}
+        saved = self.client.post(
+            "/api/config/save",
+            headers=headers,
+            json={"data": {
+                "ide_solid_background_enabled": True,
+                "ide_solid_background_color": "#123abc",
+            }},
+        )
+        self.assertEqual(saved.status_code, 200)
+        self.assertTrue(saved.json["data"]["ide_solid_background_enabled"])
+        self.assertEqual(saved.json["data"]["ide_solid_background_color"], "#123abc")
+        stored = json.loads(eagle.PERSIST_FILE.read_text(encoding="utf-8"))
+        self.assertTrue(stored["ide_solid_background_enabled"])
+        self.assertEqual(stored["ide_solid_background_color"], "#123abc")
+
+        rejected = self.client.post(
+            "/api/config/save",
+            headers=headers,
+            json={"data": {"ide_solid_background_color": "url(https://example.test)"}},
+        )
+        self.assertEqual(rejected.status_code, 400)
+        self.assertIn("six-digit hex", rejected.json["error"])
+
     def test_teacher_can_replace_and_reset_only_owned_class_background(self):
         headers = {"X-Teacher-Token": self.teacher_token}
         uploaded = self.client.post(
