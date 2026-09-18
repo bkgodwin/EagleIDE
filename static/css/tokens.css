@@ -31,7 +31,6 @@
   --radius-lg: 16px;
   --touch-min: 44px;
   --topbar-h: 52px;
-  --tool-tray-h: 44px;
 
   /* Semantic theme — dark (default) */
   --theme-bg: #141414;
@@ -55,7 +54,7 @@
   --theme-cm-bg: rgba(20, 20, 20, 0.45);
   --theme-splitter-a: rgba(255, 255, 255, 0.08);
   --theme-splitter-b: rgba(255, 255, 255, 0.04);
-  --theme-bg-image: url(/api/background_dark);
+  --theme-bg-image: none;
   --wiki-home-bg-image: url(/api/home-background);
 
   --splitter-size: 4px;
@@ -66,6 +65,8 @@
   --splitter-hit: 16px;
 
   --cm-font-size: 14px;
+  --shell-font-size: 14px;
+  --ide-solid-background-color: #101827;
   --indent-ch: 4;
   --indent-tabs: 4;
 
@@ -102,7 +103,7 @@ body.light-mode {
   --theme-cm-bg: rgba(255, 255, 255, 0.7);
   --theme-splitter-a: rgba(0, 0, 0, 0.08);
   --theme-splitter-b: rgba(0, 0, 0, 0.04);
-  --theme-bg-image: url(/api/background);
+  --theme-bg-image: none;
   --bg-dark: #f0f2f5;
   --text-light: #1a2030;
   --panel-dark: #f0f2f5;

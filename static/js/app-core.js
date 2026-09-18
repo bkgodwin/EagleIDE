@@ -1527,13 +1527,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       errorLineMarkers.push(marker);
       
       // Show the clear button
-      document.getElementById('clearErrorsBtn').style.display = '';
+      document.getElementById('clearErrorsBtn').hidden = false;
     }
 
     function clearErrorHighlights() {
       errorLineMarkers.forEach(marker => marker.clear());
       errorLineMarkers = [];
-      document.getElementById('clearErrorsBtn').style.display = 'none';
+      document.getElementById('clearErrorsBtn').hidden = true;
     }
 
     // Shell toggle button - moved before Socket.IO to ensure it always works
@@ -2127,15 +2127,20 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       try { isLight = localStorage.getItem(THEME_KEY) === 'light'; } catch {}
 
       function applyTheme() {
+        const configLoaded = !!currentConfig;
+        const useSolidBackground = !!currentConfig?.ide_solid_background_enabled;
+        const solidBackgroundColor = currentConfig?.ide_solid_background_color || '#101827';
         const lightBackground = currentConfig?.ide_background_light_url || '/api/background';
         const darkBackground = currentConfig?.ide_background_dark_url || '/api/background_dark';
+        document.body.classList.toggle('ide-solid-background', useSolidBackground);
+        document.documentElement.style.setProperty('--ide-solid-background-color', solidBackgroundColor);
         if (isLight) {
           document.body.classList.add('light-mode');
-          document.documentElement.style.setProperty('--theme-bg-image', `url("${lightBackground}")`);
+          document.documentElement.style.setProperty('--theme-bg-image', configLoaded && !useSolidBackground ? `url("${lightBackground}")` : 'none');
           btn.textContent = '☀️';
         } else {
           document.body.classList.remove('light-mode');
-          document.documentElement.style.setProperty('--theme-bg-image', `url("${darkBackground}")`);
+          document.documentElement.style.setProperty('--theme-bg-image', configLoaded && !useSolidBackground ? `url("${darkBackground}")` : 'none');
           btn.textContent = '🌙';
         }
         // Clear any inline backgroundImage so the CSS variable takes effect
@@ -2261,13 +2266,16 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     (function initEditorControls() {
       const MIN_FONT_SIZE = 12;
-      const MAX_FONT_SIZE = 40;
+      const MAX_FONT_SIZE = 50;
       const DEFAULT_FONT_SIZE = 14;
       const FONT_KEY = 'eagleide-font-size';
+      const SHELL_FONT_KEY = 'eagleide-shell-font-size';
       const GUIDES_KEY = 'eagleide-indent-guides';
       const AUTOCOMPLETE_KEY = 'eagleide-autocomplete';
       const fontRange = document.getElementById('fontRange');
       const fontVal = document.getElementById('fontVal');
+      const shellFontRange = document.getElementById('shellFontRange');
+      const shellFontVal = document.getElementById('shellFontVal');
       const guidesBtn = document.getElementById('guidesBtn');
       const autocompleteBtn = document.getElementById('autocompleteBtn');
       let guidesEnabled = true;
@@ -2286,6 +2294,16 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         });
         if (persist) {
           try { localStorage.setItem(FONT_KEY, String(next)); } catch {}
+        }
+      }
+
+      function applyShellFontSize(value, persist = true) {
+        const next = clampFontSize(value);
+        shellFontRange.value = String(next);
+        shellFontVal.textContent = String(next);
+        document.documentElement.style.setProperty('--shell-font-size', `${next}px`);
+        if (persist) {
+          try { localStorage.setItem(SHELL_FONT_KEY, String(next)); } catch {}
         }
       }
 
@@ -2309,15 +2327,18 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
       try {
         applyFontSize(localStorage.getItem(FONT_KEY) || fontRange.value, false);
+        applyShellFontSize(localStorage.getItem(SHELL_FONT_KEY) || shellFontRange.value, false);
         applyGuides(localStorage.getItem(GUIDES_KEY) !== '0', false);
         applyAutocomplete(localStorage.getItem(AUTOCOMPLETE_KEY) !== '0', false);
       } catch {
         applyFontSize(fontRange.value, false);
+        applyShellFontSize(shellFontRange.value, false);
         applyGuides(true, false);
         applyAutocomplete(true, false);
       }
 
       fontRange.addEventListener('input', (e) => applyFontSize(e.target.value));
+      shellFontRange.addEventListener('input', (e) => applyShellFontSize(e.target.value));
       guidesBtn.addEventListener('click', () => applyGuides(!guidesEnabled));
       autocompleteBtn.addEventListener('click', () => applyAutocomplete(!autocompleteEnabled));
       document.getElementById('languageSelector')?.addEventListener('change', () => syncEditorLanguage());
@@ -2544,7 +2565,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const rightEdgeToggleBtn = document.getElementById('rightEdgeToggleBtn');
       const loginBtn = document.getElementById('loginBtn');
       const signOutBtn = document.getElementById('signOutBtn');
-      const workspaceFilesTabBtn = document.getElementById('workspaceFilesTabBtn');
+      const workspaceSwitchBtn = document.getElementById('workspaceSwitchBtn');
       const adminSettingsBtn = document.getElementById('adminSettingsBtn');
       const adminUsersBtn = document.getElementById('adminUsersBtn');
       const serverHealthBtn = document.getElementById('serverHealthBtn');
@@ -2556,7 +2577,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       guestBadge.style.display = isLoggedIn ? 'none' : '';
       if (modeWrap) modeWrap.style.display = isLoggedIn ? 'none' : 'inline-flex';
       if (rightEdgeToggleBtn) rightEdgeToggleBtn.style.display = isLoggedIn ? 'flex' : 'none';
-      if (workspaceFilesTabBtn) workspaceFilesTabBtn.style.display = isLoggedIn ? '' : 'none';
+      if (workspaceSwitchBtn) workspaceSwitchBtn.style.display = isLoggedIn ? '' : 'none';
       if (!isLoggedIn) {
         hideFileBrowser();
       }
@@ -3214,6 +3235,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       return inputs.length ? access : { ...(currentConfig?.python_module_access || {}) };
     }
 
+    function syncSolidBackgroundControl() {
+      const enabled = document.getElementById('ideSolidBackgroundEnabled');
+      const color = document.getElementById('ideSolidBackgroundColor');
+      if (color) color.disabled = !enabled?.checked;
+    }
+    document.getElementById('ideSolidBackgroundEnabled')?.addEventListener('change', syncSolidBackgroundControl);
+
     // Admin settings modal handlers
     document.getElementById('adminSettingsBtn').addEventListener('click', () => {
       if (!ADMIN_TOKEN) return;
@@ -3229,6 +3257,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       // Page settings
       document.getElementById('pageTitleInput').value = currentConfig?.page_title || 'Eagles Web IDE (Python)';
       document.getElementById('topBarColorInput').value = currentConfig?.topbar_color || 'linear-gradient(90deg,#a5c8f0,#7fb2eb)';
+      document.getElementById('ideSolidBackgroundEnabled').checked = !!currentConfig?.ide_solid_background_enabled;
+      document.getElementById('ideSolidBackgroundColor').value = currentConfig?.ide_solid_background_color || '#101827';
+      syncSolidBackgroundControl();
       
       // AI settings
       document.getElementById('aiEnabledModal').checked = currentConfig?.ai_explainer_enabled || false;
@@ -3677,6 +3708,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       // Page settings
       const page_title = document.getElementById('pageTitleInput').value.trim();
       const topbar_color = document.getElementById('topBarColorInput').value.trim();
+      const ide_solid_background_enabled = document.getElementById('ideSolidBackgroundEnabled').checked;
+      const ide_solid_background_color = document.getElementById('ideSolidBackgroundColor').value;
       
       // AI settings
       const ai_explainer_enabled = document.getElementById('aiEnabledModal').checked;
@@ -3707,6 +3740,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const settingsResult = await saveConfig({
         page_title, 
         topbar_color, 
+        ide_solid_background_enabled,
+        ide_solid_background_color,
         ai_explainer_enabled, 
         ai_ollama_url, 
         ai_model, 
@@ -5276,24 +5311,21 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let _allFileTree = [];       // full flat tree from server
     let _selectedFileItems = new Set();
     function setWorkspaceTab(tabName) {
-      const editorTabBtn = document.getElementById('workspaceEditorTabBtn');
-      const filesTabBtn = document.getElementById('workspaceFilesTabBtn');
+      const switchBtn = document.getElementById('workspaceSwitchBtn');
+      const switchLabel = document.getElementById('workspaceSwitchLabel');
       const editorContentStack = document.getElementById('editorContentStack');
-      const title = document.getElementById('workspaceTitle');
       const isLoggedIn = isAuthenticated();
       _workspaceTab = tabName === WORKSPACE_TAB_FILES && isLoggedIn ? WORKSPACE_TAB_FILES : WORKSPACE_TAB_EDITOR;
       if (editorContentStack) editorContentStack.classList.toggle('file-browser-active', _workspaceTab === WORKSPACE_TAB_FILES);
-      if (editorTabBtn) {
-        const active = _workspaceTab === WORKSPACE_TAB_EDITOR;
-        editorTabBtn.classList.toggle('active', active);
-        editorTabBtn.setAttribute('aria-selected', active ? 'true' : 'false');
+      if (switchBtn) {
+        const filesActive = _workspaceTab === WORKSPACE_TAB_FILES;
+        switchBtn.setAttribute('aria-pressed', filesActive ? 'true' : 'false');
+        switchBtn.setAttribute('aria-controls', filesActive ? 'editorContentStack' : 'fileBrowserTabPane');
+        switchBtn.title = filesActive ? 'Return to code editor' : 'Open file browser';
+        const icon = switchBtn.querySelector('[aria-hidden="true"]');
+        if (icon) icon.textContent = filesActive ? '⌨️' : '📁';
+        if (switchLabel) switchLabel.textContent = filesActive ? 'Editor' : 'Files';
       }
-      if (filesTabBtn) {
-        const active = _workspaceTab === WORKSPACE_TAB_FILES;
-        filesTabBtn.classList.toggle('active', active);
-        filesTabBtn.setAttribute('aria-selected', active ? 'true' : 'false');
-      }
-      if (title) title.textContent = _workspaceTab === WORKSPACE_TAB_FILES ? 'File Browser' : 'Editor';
       if (_workspaceTab === WORKSPACE_TAB_FILES) {
         if (auditPreviewActive) closeAuditPreview();
         loadFileTree();
@@ -5305,8 +5337,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
     }
 
-    document.getElementById('workspaceEditorTabBtn')?.addEventListener('click', () => setWorkspaceTab(WORKSPACE_TAB_EDITOR));
-    document.getElementById('workspaceFilesTabBtn')?.addEventListener('click', () => setWorkspaceTab(WORKSPACE_TAB_FILES));
+    document.getElementById('workspaceSwitchBtn')?.addEventListener('click', () => {
+      setWorkspaceTab(_workspaceTab === WORKSPACE_TAB_FILES ? WORKSPACE_TAB_EDITOR : WORKSPACE_TAB_FILES);
+    });
 
     async function showFileBrowser() {
       if (!isAuthenticated() || !canCurrentUserAccessIDE()) {

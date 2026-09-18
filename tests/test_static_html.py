@@ -113,6 +113,24 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn("classroom_question_silence", signals)
         self.assertIn("clearTimeout(completionTimer)", editor)
 
+    def test_space_efficient_ide_controls_are_wired(self):
+        ids = set(self.parser.ids)
+        self.assertTrue({
+            "ideTopbarTools", "workspaceSwitchBtn", "workspaceSwitchLabel",
+            "shellFontRange", "shellFontVal", "ideSolidBackgroundEnabled",
+            "ideSolidBackgroundColor",
+        }.issubset(ids))
+        self.assertNotIn("toolTray", ids)
+        self.assertNotIn("topbarToolsBtn", ids)
+        self.assertNotIn("workspaceEditorTabBtn", ids)
+        self.assertNotIn("workspaceFilesTabBtn", ids)
+        self.assertIn('id="fontRange" type="range" min="12" max="50"', self.raw)
+        self.assertIn('id="shellFontRange" type="range" min="12" max="50"', self.raw)
+        app_core = (BASE_DIR / "static" / "js" / "app-core.js").read_text(encoding="utf-8")
+        self.assertIn("eagleide-shell-font-size", app_core)
+        self.assertIn("ide_solid_background_enabled", app_core)
+        self.assertNotIn("workspaceFilesTabBtn", app_core)
+
     def test_attribute_ampersands_are_html_escaped(self):
         unescaped = re.findall(r'(?:href|src)="[^"]*&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9A-Fa-f]+);)', self.raw)
         self.assertEqual(unescaped, [])
@@ -212,6 +230,8 @@ class StaticHtmlTestCase(unittest.TestCase):
             "adminIdeLightBackgroundInput",
             "adminIdeDarkBackgroundInput",
             "adminHomeBackgroundInput",
+            "ideSolidBackgroundEnabled",
+            "ideSolidBackgroundColor",
             "teacherDashMobileCloseBtn",
             "studentDashMobileCloseBtn",
         }.issubset(ids))
