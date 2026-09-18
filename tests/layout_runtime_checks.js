@@ -41,7 +41,7 @@ function surface() {
 const elements = new Map();
 for (const id of ['outer', 'rightstack', 'hsplitter', 'vsplitter', 'editorContentStack',
   'teacherStreamPane', 'editorStreamSplitter', 'teacherPaneToggleBtn', 'rightEdgeToggleBtn',
-  'editor', 'output', 'toolTray', 'topbarToolsBtn']) elements.set(id, surface());
+  'editor', 'output']) elements.set(id, surface());
 elements.get('hsplitter').setAttribute('aria-orientation', 'vertical');
 elements.get('vsplitter').setAttribute('aria-orientation', 'horizontal');
 elements.get('editorStreamSplitter').setAttribute('aria-orientation', 'horizontal');
@@ -97,7 +97,6 @@ document.fire('DOMContentLoaded');
 flushFrames();
 assert.equal(body.classList.contains('tablet-mode'), false, 'tablet viewport must retain desktop panels');
 assert.equal(body.classList.contains('panel-editor'), false);
-assert.equal(elements.get('toolTray').classList.contains('collapsed'), false, 'touch tools default matches desktop');
 assert.equal(root.styles.get('--app-height'), '750px');
 assert.equal(elements.get('output').scrollTop, 12, 'resize preserves shell reading position');
 assert.equal(observer.observed.length, 3);

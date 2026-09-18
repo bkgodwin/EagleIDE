@@ -18,7 +18,6 @@
 body.network-mode { background: var(--network-bg); }
 body.network-mode .network-view { display: flex; }
 body.network-mode .wiki-view,
-body.network-mode .tool-tray,
 body.network-mode .outer,
 body.network-mode .edge-toggle,
 body.network-mode .teacher-pane-toggle,

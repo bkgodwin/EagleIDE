@@ -56,6 +56,8 @@ DEFAULT_CONFIG = {
     "ide_background_light_asset": "",
     "ide_background_dark_asset": "",
     "home_background_asset": "",
+    "ide_solid_background_enabled": False,
+    "ide_solid_background_color": "#101827",
 
     # Registration toggle
     "registration_enabled": True,
