@@ -496,6 +496,45 @@ class RolePermissionTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertIn("disabled", response.get_json()["error"].lower())
 
+    def test_teacher_can_send_multiple_checked_files_in_one_request(self):
+        eagle.USERS_FILE.write_text(json.dumps({"users": [{
+            "email": self.student_email,
+            "name": "Student",
+            "role": "student",
+            "class_id": "class-one",
+            "class_ids": ["class-one"],
+            "enabled": True,
+        }]}), encoding="utf-8")
+        eagle.CLASSES_FILE.write_text(json.dumps({"classes": [{
+            "id": "class-one",
+            "name": "Class One",
+            "teacher_email": self.teacher_email,
+            "students": [self.student_email],
+            "settings": {"teacher_file_send_enabled": True},
+        }]}), encoding="utf-8")
+        eagle._users_cache = None
+        eagle._classes_cache = None
+        teacher_dir = eagle._get_user_dir(self.teacher_email)
+        teacher_dir.mkdir(parents=True, exist_ok=True)
+        (teacher_dir / "demo.py").write_text("print('demo')\n", encoding="utf-8")
+        (teacher_dir / "helper.js").write_text("console.log('helper');\n", encoding="utf-8")
+
+        with patch.object(classroom_features, "CLASSROOM_EVENTS_FILE", self.root / "events.json"):
+            response = self.http.post(
+                "/api/classroom/send-file",
+                headers={"X-Teacher-Token": self.teacher_token},
+                json={
+                    "classId": "class-one",
+                    "sourcePaths": ["demo.py", "helper.js"],
+                    "recipients": "all",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.get_json()["copied"]), 2)
+        shared = eagle._get_user_dir(self.student_email) / "Shared" / "From Teacher"
+        self.assertEqual({path.name for path in shared.iterdir()}, {"demo.py", "helper.js"})
+
     def test_raise_hand_and_streaming_stay_in_the_selected_class(self):
         eagle.USERS_FILE.write_text(json.dumps({"users": [{
             "email": self.student_email,

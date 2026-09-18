@@ -81,7 +81,8 @@
 
   function isStudentInClass() {
     const c = ctx();
-    return !!(c.USER_TOKEN && !c.TEACHER_TOKEN && !c.ADMIN_TOKEN && currentClassId());
+    const signedInNotebookUser = (c.USER_TOKEN && !c.TEACHER_TOKEN) || c.TEACHER_TOKEN;
+    return !!(signedInNotebookUser && !c.ADMIN_TOKEN && currentClassId());
   }
 
   function isTeacher() {
@@ -90,7 +91,10 @@
   }
 
   function userHeaders() {
-    return { 'X-User-Token': ctx().USER_TOKEN || '' };
+    const c = ctx();
+    return c.TEACHER_TOKEN
+      ? { 'X-Teacher-Token': c.TEACHER_TOKEN }
+      : { 'X-User-Token': c.USER_TOKEN || '' };
   }
 
   function userJsonHeaders() {
@@ -465,6 +469,7 @@
           <button class="student-notebook-tab-icon-btn student-notebook-color-toggle" id="studentNotebookTabColorToggle" type="button" title="Choose tab color" aria-label="Choose tab color" aria-expanded="${colorPaletteOpen ? 'true' : 'false'}">🎨</button>
           ${colorPaletteOpen ? tabColorPaletteHtml(tab.color) : ''}
         </div>
+        <button class="student-notebook-tab-icon-btn" id="studentNotebookShareTabBtn" type="button" title="Share this tab with your teacher or class" aria-label="Share tab">↗</button>
         <button class="student-notebook-tab-icon-btn" id="studentNotebookRenameTabBtn" type="button" title="Rename tab" aria-label="Rename tab">✎</button>
         <button class="student-notebook-tab-icon-btn danger" id="studentNotebookDeleteTabBtn" type="button" title="Delete tab" aria-label="Delete tab">🗑</button>
       </div>
@@ -483,9 +488,20 @@
     });
     page.querySelector('#studentNotebookRenameTabBtn')?.addEventListener('click', renameActiveTab);
     page.querySelector('#studentNotebookDeleteTabBtn')?.addEventListener('click', deleteActiveTab);
+    const shareButton = page.querySelector('#studentNotebookShareTabBtn');
+    if (shareButton) {
+      const canShare = window.ClassroomFiles?.canShareNotebookTab?.() === true;
+      shareButton.hidden = !canShare;
+      shareButton.addEventListener('click', async () => {
+        persistActivePageFromDom();
+        if (dirty) await saveNotebook({ immediate: true });
+        window.ClassroomFiles?.openNotebookShareModal?.({ id: tab.id, label: tab.label || 'Notes' });
+      });
+    }
   }
 
   function assignmentGradeHtml(block) {
+    if (block?.graded === false) return '';
     const score = String(block.score || '').trim();
     const feedback = String(block.feedback || '').trim();
     if (!score && !feedback) return '';
@@ -512,7 +528,7 @@
               <span class="student-notebook-assignment-title-wrap"><strong>${escapeHtml(block.title || 'Notebook Assignment')}</strong>${skillTagsHtml(block.skillTags)}</span>
               <span class="student-notebook-assignment-badges">
                 <span>${block.responseType === 'code' ? 'Code response' : 'Written response'}</span>
-                ${Number(block.maxScore || 0) > 0 ? `<span>${escapeHtml(block.maxScore)} pts</span>` : ''}
+                ${block.graded === false ? '<span>Practice · ungraded</span>' : (Number(block.maxScore || 0) > 0 ? `<span>${escapeHtml(block.maxScore)} pts</span>` : '')}
                 ${isAssignmentResponseLocked(block) ? '<span>Locked</span>' : ''}
               </span>
             </button>
@@ -1049,6 +1065,7 @@
       return;
     }
     drawerOpen = true;
+    document.body.classList.add('notebook-drawer-open');
     document.getElementById('studentNotebookDrawer')?.classList.add('open');
     document.getElementById('studentNotebookDrawer')?.setAttribute('aria-hidden', 'false');
     const overlay = document.getElementById('studentNotebookOverlay');
@@ -1060,6 +1077,7 @@
     hideAllCodeBlockShells({ stop: true });
     if (dirty) await saveNotebook({ immediate: true });
     drawerOpen = false;
+    document.body.classList.remove('notebook-drawer-open');
     document.getElementById('studentNotebookDrawer')?.classList.remove('open');
     document.getElementById('studentNotebookDrawer')?.setAttribute('aria-hidden', 'true');
     const overlay = document.getElementById('studentNotebookOverlay');
@@ -1102,12 +1120,12 @@
 
   function updateEntryPoints() {
     const c = ctx();
-    const studentShow = !!(c.USER_TOKEN && !c.TEACHER_TOKEN && !c.ADMIN_TOKEN && currentClassId());
+    const notebookShow = isStudentInClass();
     const notebookBtn = document.getElementById('notebookOpenBtn');
-    if (notebookBtn) notebookBtn.style.display = studentShow ? '' : 'none';
+    if (notebookBtn) notebookBtn.style.display = notebookShow ? '' : 'none';
     const teacherPromptBtn = document.getElementById('teacherNotebookPromptBtn');
     if (teacherPromptBtn) teacherPromptBtn.style.display = isTeacher() ? '' : 'none';
-    if (!studentShow && drawerOpen) closeDrawer();
+    if (!notebookShow && drawerOpen) closeDrawer();
   }
 
   function searchNotebook(query) {
@@ -1351,6 +1369,9 @@
     document.getElementById('teacherNotebookPromptInput').value = '';
     const maxScoreInput = document.getElementById('teacherNotebookPromptMaxScoreInput');
     if (maxScoreInput) maxScoreInput.value = '10';
+    const practiceInput = document.getElementById('teacherNotebookPracticeInput');
+    if (practiceInput) practiceInput.checked = false;
+    if (maxScoreInput) maxScoreInput.disabled = false;
     teacherNotebookSelectedSkills.clear();
     teacherNotebookSkillQuery = '';
     const skillSearch = document.getElementById('teacherNotebookSkillSearch');
@@ -1372,6 +1393,7 @@
     const responseType = document.querySelector('input[name="teacherNotebookResponseType"]:checked')?.value || 'written';
     const maxScoreRaw = document.getElementById('teacherNotebookPromptMaxScoreInput')?.value;
     const maxScore = Math.max(0, Math.min(1000, parseInt(maxScoreRaw || '10', 10) || 0));
+    const graded = !document.getElementById('teacherNotebookPracticeInput')?.checked;
     const skillTags = selectedTeacherNotebookSkillTags();
     const status = document.getElementById('teacherNotebookPromptStatus');
     if (!classId) return alert('Select a class first.');
@@ -1384,7 +1406,7 @@
       const res = await fetch('/api/teacher/notebook-prompts/create', {
         method: 'POST',
         headers: teacherJsonHeaders(),
-        body: JSON.stringify({ classId, title, prompt, responseType, maxScore, skillTags }),
+        body: JSON.stringify({ classId, title, prompt, responseType, maxScore, graded, skillTags }),
       });
       const data = await res.json().catch(() => ({}));
       if (!data?.ok) throw new Error(data?.error || 'Send failed');
@@ -1422,7 +1444,7 @@
       list.innerHTML = prompts.length ? prompts.map(prompt => `
         <button class="teacher-notebook-prompt-row${prompt.id === selectedTeacherPromptId ? ' active' : ''}" data-prompt-id="${escapeHtml(prompt.id)}">
           <span class="teacher-notebook-prompt-title"><strong>${escapeHtml(prompt.title || prompt.prompt || 'Notebook Assignment')}</strong>${skillTagsHtml(prompt.skillTags)}</span>
-          <div class="meta">${escapeHtml(formatLocalDateTime(prompt.createdAt) || prompt.createdAt || '')} · ${prompt.responseType === 'code' ? 'Code' : 'Written'} · Max ${escapeHtml(prompt.maxScore || 0)} · ${prompt.responseCount || 0}/${prompt.studentCount || 0} responded${prompt.locked ? ' · Locked' : ''}</div>
+          <div class="meta">${escapeHtml(formatLocalDateTime(prompt.createdAt) || prompt.createdAt || '')} · ${prompt.responseType === 'code' ? 'Code' : 'Written'} · ${prompt.graded === false ? 'Practice · ungraded' : `Max ${escapeHtml(prompt.maxScore || 0)}`} · ${prompt.responseCount || 0}/${prompt.studentCount || 0} responded${prompt.locked ? ' · Locked' : ''}</div>
         </button>
       `).join('') : '<div style="color:#888;">No notebook prompts have been sent yet.</div>';
       list.querySelectorAll('[data-prompt-id]').forEach(btn => {
@@ -1488,9 +1510,10 @@
       const data = await res.json().catch(() => ({}));
       if (!data?.ok) throw new Error(data?.error || 'Load failed');
       const prompt = data.prompt || {};
+      const promptIsGraded = prompt.graded !== false;
       if (title) title.textContent = prompt.title || prompt.prompt || 'Notebook responses';
       const responsesHtml = (data.responses || []).map(row => {
-        const scored = !!(String(row.score || '').trim() || String(row.feedback || '').trim());
+        const scored = promptIsGraded && !!(String(row.score || '').trim() || String(row.feedback || '').trim());
         return `
         <article class="teacher-notebook-response-card${scored ? ' scored' : ''}" data-student-email="${escapeHtml(row.studentEmail || '')}">
           <div class="teacher-notebook-response-head">
@@ -1500,7 +1523,7 @@
             </div>
             <div class="teacher-notebook-score-actions">
               <span class="teacher-notebook-scored-badge" ${scored ? '' : 'hidden'}>Scored</span>
-              <button type="button" class="btn secondary" data-grade-toggle>${scored ? 'Edit Score' : 'Score'}</button>
+              ${promptIsGraded ? `<button type="button" class="btn secondary" data-grade-toggle>${scored ? 'Edit Score' : 'Score'}</button>` : '<span class="teacher-notebook-practice-badge">Practice</span>'}
             </div>
           </div>
           <div class="teacher-notebook-response-body">${sanitizeHtml(row.responseHtml || '')}</div>
@@ -1510,12 +1533,12 @@
               ${row.feedback ? `<span>${escapeHtml(row.feedback)}</span>` : ''}
             </div>
           ` : ''}
-          <div class="teacher-notebook-grade-controls" hidden>
+          ${promptIsGraded ? `<div class="teacher-notebook-grade-controls" hidden>
             <input type="text" data-grade-score value="${escapeHtml(row.score || '')}" placeholder="Score">
             <textarea data-grade-feedback placeholder="Feedback">${escapeHtml(row.feedback || '')}</textarea>
             <button type="button" class="btn secondary" data-grade-save>Save Feedback</button>
             <span data-grade-status></span>
-          </div>
+          </div>` : ''}
         </article>
       `;
       }).join('');
@@ -1524,7 +1547,7 @@
         <div class="teacher-notebook-assignment-actions">
           <div>
             <span class="teacher-notebook-prompt-title"><strong>${escapeHtml(prompt.title || 'Notebook Assignment')}</strong>${skillTagsHtml(prompt.skillTags)}</span>
-            <div class="meta">${escapeHtml(formatLocalDateTime(prompt.createdAt) || prompt.createdAt || '')} · ${prompt.responseType === 'code' ? 'Code response' : 'Written response'} · Max ${escapeHtml(prompt.maxScore || 0)}</div>
+            <div class="meta">${escapeHtml(formatLocalDateTime(prompt.createdAt) || prompt.createdAt || '')} · ${prompt.responseType === 'code' ? 'Code response' : 'Written response'} · ${promptIsGraded ? `Max ${escapeHtml(prompt.maxScore || 0)}` : 'Practice · ungraded'}</div>
           </div>
           <button type="button" class="btn secondary" id="teacherNotebookLockPromptBtn">${prompt.locked ? 'Unlock Submissions' : 'Lock Submissions'}</button>
           <button type="button" class="btn danger" id="teacherNotebookDeletePromptBtn">Delete Assignment</button>
@@ -1602,6 +1625,10 @@
       document.getElementById('teacherNotebookPromptModal').style.display = 'none';
     });
     document.getElementById('teacherNotebookPromptSubmitBtn')?.addEventListener('click', submitTeacherPrompt);
+    document.getElementById('teacherNotebookPracticeInput')?.addEventListener('change', event => {
+      const maxScoreInput = document.getElementById('teacherNotebookPromptMaxScoreInput');
+      if (maxScoreInput) maxScoreInput.disabled = event.target.checked;
+    });
     document.getElementById('teacherNotebookSkillSearch')?.addEventListener('input', event => {
       teacherNotebookSkillQuery = event.target.value || '';
       const c = ctx();
@@ -1640,6 +1667,14 @@
       socket.on('notebook_prompts_updated', msg => {
         if (drawerOpen && msg?.class_id === currentClassId()) refreshAssignmentsFromServer().catch(() => {});
       });
+      socket.on('notebook_tab_received', msg => {
+        const c = ctx();
+        const email = String(c.currentUser?.email || c.currentTeacher?.email || '').toLowerCase();
+        if (drawerOpen && msg?.class_id === currentClassId() && String(msg?.target_email || '').toLowerCase() === email) {
+          alert(`Notebook tab "${msg?.label || 'Notes'}" received from ${msg?.from_name || 'your class'}.`);
+          loadNotebook(true).catch(() => {});
+        }
+      });
     } else {
       window.addEventListener('eagle-socket-ready', event => {
         event.detail?.socket?.on('notebook_prompt_created', msg => {
@@ -1647,6 +1682,14 @@
         });
         event.detail?.socket?.on('notebook_prompts_updated', msg => {
           if (drawerOpen && msg?.class_id === currentClassId()) refreshAssignmentsFromServer().catch(() => {});
+        });
+        event.detail?.socket?.on('notebook_tab_received', msg => {
+          const c = ctx();
+          const email = String(c.currentUser?.email || c.currentTeacher?.email || '').toLowerCase();
+          if (drawerOpen && msg?.class_id === currentClassId() && String(msg?.target_email || '').toLowerCase() === email) {
+            alert(`Notebook tab "${msg?.label || 'Notes'}" received from ${msg?.from_name || 'your class'}.`);
+            loadNotebook(true).catch(() => {});
+          }
         });
       }, { once: true });
     }

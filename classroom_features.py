@@ -492,11 +492,18 @@ def register(app, socketio) -> None:
     def classroom_send_file():
         data = request.get_json(silent=True) or {}
         class_id = (data.get("classId") or "").strip()
-        source_path = (data.get("sourcePath") or "").strip()
+        raw_source_paths = data.get("sourcePaths")
+        if not isinstance(raw_source_paths, list):
+            raw_source_paths = [data.get("sourcePath")]
+        source_paths = []
+        for raw_path in raw_source_paths[:50]:
+            normalized_path = str(raw_path or "").strip()
+            if normalized_path and normalized_path not in source_paths:
+                source_paths.append(normalized_path)
         recipients = data.get("recipients")
         target_email = (data.get("targetEmail") or "").strip().lower()
-        if not class_id or not source_path:
-            return jsonify(ok=False, error="classId and sourcePath required"), 400
+        if not class_id or not source_paths:
+            return jsonify(ok=False, error="classId and at least one source path are required"), 400
 
         teacher = M._require_teacher(request)
         student = M._require_user(request)
@@ -522,34 +529,35 @@ def register(app, socketio) -> None:
                         return jsonify(ok=False, error=f"Student not in class: {email}"), 400
             else:
                 return jsonify(ok=False, error="recipients required"), 400
-            src_name = Path(source_path).name
             sender_name = teacher.get("name") or teacher.get("email") or "Teacher"
             for dest_email in dest_emails:
-                dest_rel = f"{SHARED_DIR}/From Teacher/{src_name}"
-                ok_copy, err, final_path = _copy_file_to_user(
-                    teacher.get("email", ""), source_path, dest_email, dest_rel
-                )
-                if ok_copy:
-                    copied.append({"email": dest_email, "path": final_path})
-                    socketio.emit(
-                        "classroom_file_received",
-                        {
-                            "class_id": class_id,
-                            "path": final_path,
-                            "filename": Path(final_path).name,
-                            "from_name": sender_name,
-                            "target_email": dest_email,
-                        },
-                        room=f"class_{class_id}_students",
+                for source_path in source_paths:
+                    src_name = Path(source_path).name
+                    dest_rel = f"{SHARED_DIR}/From Teacher/{src_name}"
+                    ok_copy, err, final_path = _copy_file_to_user(
+                        teacher.get("email", ""), source_path, dest_email, dest_rel
                     )
-                else:
-                    errors.append({"email": dest_email, "error": err})
+                    if ok_copy:
+                        copied.append({"email": dest_email, "sourcePath": source_path, "path": final_path})
+                        socketio.emit(
+                            "classroom_file_received",
+                            {
+                                "class_id": class_id,
+                                "path": final_path,
+                                "filename": Path(final_path).name,
+                                "from_name": sender_name,
+                                "target_email": dest_email,
+                            },
+                            room=f"class_{class_id}_students",
+                        )
+                    else:
+                        errors.append({"email": dest_email, "sourcePath": source_path, "error": err})
             append_classroom_event(
                 "file_send_teacher",
                 class_id,
                 teacher.get("email", ""),
                 "teacher",
-                {"source_path": source_path, "copied": copied, "errors": errors},
+                {"source_paths": source_paths, "copied": copied, "errors": errors},
             )
             return jsonify(ok=True, copied=copied, errors=errors)
 
@@ -559,7 +567,6 @@ def register(app, socketio) -> None:
         if not M._user_in_class(M._find_user(student_email) or {}, class_id):
             return jsonify(ok=False, error="Not in class"), 403
         sender_name = _safe_path_component(student.get("name") or student_email)
-        src_name = Path(source_path).name
 
         if target_email:
             if not settings.get("student_peer_sharing_enabled"):
@@ -569,51 +576,158 @@ def register(app, socketio) -> None:
                 return jsonify(ok=False, error="Recipient not in class"), 400
             if target_email == student_email:
                 return jsonify(ok=False, error="Cannot send file to yourself"), 400
-            dest_rel = f"{SHARED_DIR}/From {sender_name}/{src_name}"
-            ok_copy, err, final_path = _copy_file_to_user(
-                student_email, source_path, target_email, dest_rel
-            )
-            if not ok_copy:
-                return jsonify(ok=False, error=err), 400
-            socketio.emit(
-                "classroom_file_received",
-                {
-                    "class_id": class_id,
-                    "path": final_path,
-                    "filename": Path(final_path).name,
-                    "from_name": sender_name,
-                    "target_email": target_email,
-                },
-                room=f"class_{class_id}_students",
-            )
+            for source_path in source_paths:
+                src_name = Path(source_path).name
+                dest_rel = f"{SHARED_DIR}/From {sender_name}/{src_name}"
+                ok_copy, err, final_path = _copy_file_to_user(
+                    student_email, source_path, target_email, dest_rel
+                )
+                if ok_copy:
+                    copied.append({"email": target_email, "sourcePath": source_path, "path": final_path})
+                    socketio.emit(
+                        "classroom_file_received",
+                        {
+                            "class_id": class_id,
+                            "path": final_path,
+                            "filename": Path(final_path).name,
+                            "from_name": sender_name,
+                            "target_email": target_email,
+                        },
+                        room=f"class_{class_id}_students",
+                    )
+                else:
+                    errors.append({"email": target_email, "sourcePath": source_path, "error": err})
             append_classroom_event(
                 "file_send_peer",
                 class_id,
                 student_email,
                 "student",
-                {"source_path": source_path, "target_email": target_email, "dest_path": final_path},
+                {"source_paths": source_paths, "target_email": target_email, "copied": copied, "errors": errors},
             )
-            return jsonify(ok=True, copied=[{"email": target_email, "path": final_path}], errors=[])
+            if not copied:
+                return jsonify(ok=False, error=errors[0]["error"] if errors else "Send failed", errors=errors), 400
+            return jsonify(ok=True, copied=copied, errors=errors)
 
         if not settings.get("student_send_to_teacher_enabled"):
             return jsonify(ok=False, error="Send to teacher is disabled for this class"), 403
         teacher_email = (cls.get("teacher_email") or "").strip().lower()
         if not teacher_email:
             return jsonify(ok=False, error="Teacher not found"), 400
-        dest_rel = f"{SHARED_DIR}/{sender_name} - {src_name}"
-        ok_copy, err, final_path = _copy_file_to_user(
-            student_email, source_path, teacher_email, dest_rel
-        )
-        if not ok_copy:
-            return jsonify(ok=False, error=err), 400
+        for source_path in source_paths:
+            src_name = Path(source_path).name
+            dest_rel = f"{SHARED_DIR}/{sender_name} - {src_name}"
+            ok_copy, err, final_path = _copy_file_to_user(
+                student_email, source_path, teacher_email, dest_rel
+            )
+            if ok_copy:
+                copied.append({"email": teacher_email, "sourcePath": source_path, "path": final_path})
+            else:
+                errors.append({"email": teacher_email, "sourcePath": source_path, "error": err})
         append_classroom_event(
             "file_send_student_teacher",
             class_id,
             student_email,
             "student",
-            {"source_path": source_path, "dest_path": final_path},
+            {"source_paths": source_paths, "copied": copied, "errors": errors},
         )
-        return jsonify(ok=True, copied=[{"email": teacher_email, "path": final_path}], errors=[])
+        if not copied:
+            return jsonify(ok=False, error=errors[0]["error"] if errors else "Send failed", errors=errors), 400
+        return jsonify(ok=True, copied=copied, errors=errors)
+
+    @app.post("/api/notebook/share-tab")
+    def classroom_share_notebook_tab():
+        data = request.get_json(silent=True) or {}
+        class_id = str(data.get("classId") or "").strip()
+        tab_id = str(data.get("tabId") or "").strip()
+        recipients = data.get("recipients")
+        target_email = str(data.get("targetEmail") or "").strip().lower()
+        if not class_id or not tab_id:
+            return jsonify(ok=False, error="classId and tabId are required"), 400
+
+        teacher = M._require_teacher(request)
+        student = M._require_user(request)
+        cls = M._find_class_by_id(class_id)
+        if not cls:
+            return jsonify(ok=False, error="Class not found"), 404
+        settings = merge_class_settings(cls.get("settings", {}))
+        copied = []
+        errors = []
+
+        if teacher:
+            source_email = (teacher.get("email") or "").strip().lower()
+            if (cls.get("teacher_email") or "").strip().lower() != source_email:
+                return jsonify(ok=False, error="Class not found"), 404
+            if not settings.get("teacher_file_send_enabled"):
+                return jsonify(ok=False, error="Teacher sharing is disabled for this class"), 403
+            class_students = {(email or "").strip().lower() for email in cls.get("students", [])}
+            if recipients == "all" or recipients == ["all"]:
+                destination_emails = sorted(class_students)
+            elif isinstance(recipients, list) and recipients:
+                destination_emails = [str(email or "").strip().lower() for email in recipients if str(email or "").strip()]
+                if any(email not in class_students for email in destination_emails):
+                    return jsonify(ok=False, error="One or more recipients are not in this class"), 400
+            else:
+                return jsonify(ok=False, error="recipients required"), 400
+            sender_name = teacher.get("name") or teacher.get("email") or "Teacher"
+            actor_role = "teacher"
+        elif student:
+            source_email = (student.get("email") or "").strip().lower()
+            if not M._user_in_class(M._find_user(source_email) or {}, class_id):
+                return jsonify(ok=False, error="Not in class"), 403
+            sender_name = student.get("name") or student.get("email") or "Student"
+            actor_role = "student"
+            if target_email:
+                if not settings.get("student_peer_sharing_enabled"):
+                    return jsonify(ok=False, error="Peer sharing is disabled for this class"), 403
+                peer_ok, _ = _verify_student_in_class(target_email, class_id)
+                if not peer_ok:
+                    return jsonify(ok=False, error="Recipient not in class"), 400
+                if target_email == source_email:
+                    return jsonify(ok=False, error="Cannot share a notebook tab with yourself"), 400
+                destination_emails = [target_email]
+            else:
+                if not settings.get("student_send_to_teacher_enabled"):
+                    return jsonify(ok=False, error="Send to teacher is disabled for this class"), 403
+                teacher_email = (cls.get("teacher_email") or "").strip().lower()
+                if not teacher_email:
+                    return jsonify(ok=False, error="Teacher not found"), 400
+                destination_emails = [teacher_email]
+        else:
+            return jsonify(ok=False, error="Authentication required"), 401
+
+        with M._notebooks_lock:
+            for destination_email in destination_emails:
+                ok_copy, error, copied_tab = M._copy_notebook_tab_to_user(
+                    source_email,
+                    destination_email,
+                    class_id,
+                    tab_id,
+                    sender_name,
+                )
+                if ok_copy:
+                    copied.append({"email": destination_email, "tabId": copied_tab.get("id"), "label": copied_tab.get("label")})
+                    socketio.emit(
+                        "notebook_tab_received",
+                        {
+                            "class_id": class_id,
+                            "target_email": destination_email,
+                            "from_name": sender_name,
+                            "label": copied_tab.get("label"),
+                        },
+                        room=f"class_{class_id}",
+                    )
+                else:
+                    errors.append({"email": destination_email, "error": error})
+        append_classroom_event(
+            "notebook_tab_share",
+            class_id,
+            source_email,
+            actor_role,
+            {"tab_id": tab_id, "copied": copied, "errors": errors},
+        )
+        if not copied:
+            return jsonify(ok=False, error=errors[0]["error"] if errors else "Share failed", errors=errors), 400
+        return jsonify(ok=True, copied=copied, errors=errors)
 
     def _student_from_token(token: str) -> Optional[dict]:
         return M._student_tokens.get(token)

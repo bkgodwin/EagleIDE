@@ -102,7 +102,8 @@ body.light-mode .topbar-primary .topbar-tools-btn {
 
 .ide-topbar-tools #guidesBtn,
 .ide-topbar-tools #autocompleteBtn,
-.ide-topbar-tools #resourcesToggleBtn {
+.ide-topbar-tools #resourcesToggleBtn,
+#roleMenuBtn {
   border-color: rgba(255, 255, 255, .42);
   background: #234d70;
   color: #fff;
@@ -111,11 +112,13 @@ body.light-mode .topbar-primary .topbar-tools-btn {
 
 .ide-topbar-tools #guidesBtn:hover,
 .ide-topbar-tools #autocompleteBtn:hover,
-.ide-topbar-tools #resourcesToggleBtn:hover { background: #173a57; }
+.ide-topbar-tools #resourcesToggleBtn:hover,
+#roleMenuBtn:hover { background: #173a57; }
 
 body.light-mode .ide-topbar-tools #guidesBtn,
 body.light-mode .ide-topbar-tools #autocompleteBtn,
-body.light-mode .ide-topbar-tools #resourcesToggleBtn {
+body.light-mode .ide-topbar-tools #resourcesToggleBtn,
+body.light-mode #roleMenuBtn {
   border-color: #173a57;
   background: #315f86;
   color: #fff;
