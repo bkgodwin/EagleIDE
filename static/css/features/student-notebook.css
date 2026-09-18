@@ -1,4 +1,25 @@
 /* Student notebook drawer */
+.student-notebook-drawer,
+#teacherNotebookPromptModal,
+#dash-notebook {
+  font-family: "Comic Sans MS", "Comic Neue", cursive;
+}
+
+.student-notebook-drawer button,
+.student-notebook-drawer input,
+.student-notebook-drawer textarea,
+.student-notebook-drawer select,
+#teacherNotebookPromptModal button,
+#teacherNotebookPromptModal input,
+#teacherNotebookPromptModal textarea,
+#teacherNotebookPromptModal select,
+#dash-notebook button,
+#dash-notebook input,
+#dash-notebook textarea,
+#dash-notebook select {
+  font-family: inherit;
+}
+
 .run-disabled {
   opacity: 0.58;
   cursor: not-allowed;
@@ -122,6 +143,28 @@
   font-size: 12px;
   color: rgba(52, 35, 18, 0.75);
   white-space: nowrap;
+}
+
+.teacher-notebook-practice-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--theme-border-mid);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--theme-input-bg) 82%, #f3c74d 18%);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.teacher-notebook-practice-option input { width: 18px; height: 18px; }
+.teacher-notebook-practice-badge {
+  display: inline-flex;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #f3c74d;
+  color: #2b2107;
+  font-weight: 800;
 }
 
 .student-notebook-toolbar {

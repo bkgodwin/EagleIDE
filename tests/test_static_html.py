@@ -253,6 +253,8 @@ class StaticHtmlTestCase(unittest.TestCase):
     def test_teacher_notebook_shell_and_challenge_controls_are_wired(self):
         core = (BASE_DIR / "static" / "js" / "app-core.js").read_text(encoding="utf-8")
         notebook = (BASE_DIR / "static" / "js" / "student-notebook.js").read_text(encoding="utf-8")
+        classroom_files = (BASE_DIR / "static" / "js" / "classroom-files.js").read_text(encoding="utf-8")
+        notebook_css = (BASE_DIR / "static" / "css" / "features" / "student-notebook.css").read_text(encoding="utf-8")
         self.assertIn("SHELL_DEBUG_MESSAGE_PATTERN", core)
         self.assertIn("challenges_enabled", core)
         self.assertIn("guest_ide_access_enabled", core)
@@ -260,7 +262,22 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn("X-Class-ID", core)
         self.assertIn("skill.description", notebook)
         self.assertIn("teacherNotebookSelectedSkills", notebook)
+        self.assertIn("X-Teacher-Token", notebook)
+        self.assertIn("teacherNotebookPracticeInput", notebook)
+        self.assertIn("openNotebookShareModal", classroom_files)
+        self.assertIn('font-family: "Comic Sans MS"', notebook_css)
+        self.assertIn("teacherNotebookPracticeInput", self.parser.ids)
         self.assertNotIn("open-class-bookmarks-btn", core)
+
+    def test_file_browser_checkbox_selection_and_multi_send_are_wired(self):
+        core = (BASE_DIR / "static" / "js" / "app-core.js").read_text(encoding="utf-8")
+        classroom_files = (BASE_DIR / "static" / "js" / "classroom-files.js").read_text(encoding="utf-8")
+        file_css = (BASE_DIR / "static" / "css" / "features" / "file-browser.css").read_text(encoding="utf-8")
+        self.assertIn("row.classList.toggle('selected', checkbox.checked)", core)
+        self.assertIn("resolveSendFileItems", core)
+        self.assertIn("body.sourcePaths = sendItems.map", classroom_files)
+        self.assertIn("font-size:16px", file_css)
+        self.assertIn("width:22px", file_css)
 
     def test_ide_search_does_not_force_wiki_mode_and_hides_contents_toggle(self):
         reader = (BASE_DIR / "static" / "js" / "wiki-reader.js").read_text(encoding="utf-8")

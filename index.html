@@ -38,7 +38,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20260918-5">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260918-6">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -1033,7 +1033,7 @@
 
   <!-- Student Notebook Drawer -->
   <div id="studentNotebookOverlay" class="student-notebook-overlay" hidden></div>
-  <aside id="studentNotebookDrawer" class="student-notebook-drawer" aria-hidden="true" aria-label="Student notebook">
+  <aside id="studentNotebookDrawer" class="student-notebook-drawer" aria-hidden="true" aria-label="Class notebook">
     <div class="student-notebook-spine" aria-hidden="true"></div>
     <div class="student-notebook-book">
       <div class="student-notebook-cover">
@@ -1094,6 +1094,7 @@
           </div>
           <label for="teacherNotebookPromptMaxScoreInput">Maximum Score</label>
           <input id="teacherNotebookPromptMaxScoreInput" type="number" min="0" max="1000" step="1" value="10">
+          <label class="teacher-notebook-practice-option"><input id="teacherNotebookPracticeInput" type="checkbox"> Practice / ungraded assignment</label>
           <label for="teacherNotebookPromptInput">Prompt</label>
           <textarea id="teacherNotebookPromptInput" placeholder="Type the reflection or notebook prompt for your selected class..."></textarea>
         </div>
@@ -1622,7 +1623,7 @@
   <div id="classroomSendFileModal" class="modal" style="display:none;">
     <div class="modal-content" style="max-width:520px;">
       <h3 id="classroomSendFileTitle">Send file</h3>
-      <p style="font-size:12px; color:var(--theme-text-dim);">A copy is placed in the recipient&apos;s Shared folder.</p>
+      <p id="classroomSendDescription" style="font-size:12px; color:var(--theme-text-dim);">A copy is placed in the recipient&apos;s Shared folder.</p>
       <div id="classroomSendRecipients" class="classroom-send-recipients choice-list"></div>
       <div id="classroomSendPeerRow" style="display:none; margin-top:8px;">
         <label for="classroomSendPeerSelect" style="font-size:12px;">Classmate</label>
@@ -1650,21 +1651,21 @@
   <script src="/static/js/app.js"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20250608"></script>
-  <script src="/static/js/layout.js?v=20260918-5"></script>
-  <script src="/static/js/editor-init.js?v=20260918-5"></script>
+  <script src="/static/js/layout.js?v=20260918-6"></script>
+  <script src="/static/js/editor-init.js?v=20260918-6"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js"></script>
-  <script src="/static/js/app-core.js?v=20260918-5"></script>
+  <script src="/static/js/app-core.js?v=20260918-6"></script>
 <script src="/static/js/network-sim.js?v=20260714-18"></script>
 <script src="/static/js/network-sim-advanced.js?v=20260714-4"></script>
-  <script src="/static/js/wiki-reader.js?v=20260918-5"></script>
+  <script src="/static/js/wiki-reader.js?v=20260918-6"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
   <script src="/static/js/lesson-plans.js?v=20260816-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20260918-5"></script>
-  <script src="/static/js/classroom-signals.js?v=20260918-5"></script>
-  <script src="/static/js/classroom-files.js?v=20260918-5"></script>
-  <script src="/static/js/student-notebook.js?v=20260806-1"></script>
-  <script src="/static/js/student-dashboard.js?v=20260918-5"></script>
+  <script src="/static/js/wiki-admin.js?v=20260918-6"></script>
+  <script src="/static/js/classroom-signals.js?v=20260918-6"></script>
+  <script src="/static/js/classroom-files.js?v=20260918-6"></script>
+  <script src="/static/js/student-notebook.js?v=20260918-6"></script>
+  <script src="/static/js/student-dashboard.js?v=20260918-6"></script>
 
 </body>
 </html>
