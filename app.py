@@ -189,6 +189,9 @@ MAX_NOTEBOOK_FEEDBACK_CHARS = 2000
 MAX_NOTEBOOK_PROMPT_MAX_SCORE = 1000
 DEFAULT_NOTEBOOK_TAB_COLOR = "#f7d666"
 EXAMPLES_DIR_NAME = "Examples"
+TRASH_DIR_NAME = "Trash"
+TRASH_RETENTION_SECONDS = 7 * 24 * 60 * 60
+TRASH_METADATA_NAME = "trash.json"
 EXAMPLE_FILES: dict[str, str] = {
     "hello.py": 'print("Hello from EagleIDE!")\nname = input("What is your name? ")\nprint(f"Welcome, {name}!")\n',
     "hello.js": 'const name = input("What is your name? ");\nconsole.log(`Hello from EagleIDE, ${name}!`);\n',
@@ -760,6 +763,7 @@ _default_skills_seed_lock = threading.Lock()
 _notebooks_lock = threading.Lock()
 _server_health_lock = threading.Lock()
 _wiki_example_lock = threading.Lock()
+_trash_lock = threading.RLock()
 _users_cache: Optional[tuple[str, int, dict]] = None
 _classes_cache: Optional[tuple[str, int, dict]] = None
 _skills_cache: Optional[tuple[str, int, dict]] = None
@@ -1870,6 +1874,164 @@ def _get_user_dir(email: str) -> Path:
     return USER_FILES_DIR / _sanitize_email_for_path(email)
 
 
+def _trash_dir(user_dir: Path) -> Path:
+    return user_dir.resolve() / TRASH_DIR_NAME
+
+
+def _trash_metadata_path(user_dir: Path) -> Path:
+    return user_dir.resolve() / ".eagleide" / TRASH_METADATA_NAME
+
+
+def _ensure_workspace_system_dirs(user_dir: Path) -> None:
+    user_dir.mkdir(parents=True, exist_ok=True)
+    _trash_dir(user_dir).mkdir(exist_ok=True)
+    _trash_metadata_path(user_dir).parent.mkdir(exist_ok=True)
+
+
+def _relative_workspace_parts(user_dir: Path, target: Path) -> tuple[str, ...]:
+    try:
+        return target.resolve().relative_to(user_dir.resolve()).parts
+    except (OSError, ValueError):
+        return ()
+
+
+def _is_trash_path(user_dir: Path, target: Path, *, include_root: bool = True) -> bool:
+    parts = _relative_workspace_parts(user_dir, target)
+    return bool(parts and parts[0].casefold() == TRASH_DIR_NAME.casefold() and (include_root or len(parts) > 1))
+
+
+def _load_trash_metadata(user_dir: Path) -> dict[str, dict]:
+    with _trash_lock:
+        raw = _read_json_file(_trash_metadata_path(user_dir), {"items": {}})
+        items = raw.get("items", {}) if isinstance(raw, dict) else {}
+        return {str(key): value for key, value in items.items() if isinstance(key, str) and isinstance(value, dict)}
+
+
+def _save_trash_metadata(user_dir: Path, items: dict[str, dict]) -> None:
+    with _trash_lock:
+        _write_json_file_atomic(_trash_metadata_path(user_dir), {"version": 1, "items": items})
+
+
+def _remove_workspace_item(target: Path) -> None:
+    if target.is_symlink() or target.is_file():
+        target.unlink()
+    elif target.is_dir():
+        shutil.rmtree(target)
+    else:
+        target.unlink(missing_ok=True)
+
+
+def _unique_trash_destination(trash_dir: Path, source: Path) -> Path:
+    candidate = trash_dir / source.name
+    if not candidate.exists():
+        return candidate
+    stem = source.stem if source.is_file() else source.name
+    suffix = source.suffix if source.is_file() else ""
+    for index in range(2, MAX_DUPLICATE_NAME_ATTEMPTS + 2):
+        candidate = trash_dir / f"{stem} (deleted {index}){suffix}"
+        if not candidate.exists():
+            return candidate
+    raise FileExistsError("Trash contains too many items with this name")
+
+
+def _purge_expired_trash(user_dir: Path, *, now: Optional[float] = None) -> int:
+    """Permanently remove top-level trash entries after the seven-day retention window."""
+    with _trash_lock:
+        _ensure_workspace_system_dirs(user_dir)
+        trash_dir = _trash_dir(user_dir)
+        items = _load_trash_metadata(user_dir)
+        current_time = float(time.time() if now is None else now)
+        removed = 0
+        changed = False
+        try:
+            entries = list(os.scandir(trash_dir))
+        except OSError:
+            entries = []
+        existing_keys = set()
+        for entry in entries:
+            trash_path = Path(entry.path)
+            key = trash_path.relative_to(user_dir.resolve()).as_posix()
+            existing_keys.add(key)
+            record = items.get(key, {})
+            try:
+                deleted_at = float(record.get("deleted_at") or entry.stat(follow_symlinks=False).st_mtime)
+            except (OSError, TypeError, ValueError):
+                deleted_at = current_time
+            if current_time - deleted_at < TRASH_RETENTION_SECONDS:
+                continue
+            try:
+                _remove_workspace_item(trash_path)
+                removed += 1
+                items.pop(key, None)
+                changed = True
+            except OSError:
+                continue
+        for stale_key in set(items) - existing_keys:
+            items.pop(stale_key, None)
+            changed = True
+        if changed:
+            _save_trash_metadata(user_dir, items)
+        return removed
+
+
+def _move_workspace_item_to_trash(user_dir: Path, target: Path) -> tuple[Path, int]:
+    with _trash_lock:
+        _ensure_workspace_system_dirs(user_dir)
+        trash_dir = _trash_dir(user_dir)
+        destination = _unique_trash_destination(trash_dir, target)
+        original_path = target.resolve().relative_to(user_dir.resolve()).as_posix()
+        target.rename(destination)
+        deleted_at = int(time.time())
+        items = _load_trash_metadata(user_dir)
+        trash_path = destination.relative_to(user_dir.resolve()).as_posix()
+        items[trash_path] = {"original_path": original_path, "deleted_at": deleted_at}
+        try:
+            _save_trash_metadata(user_dir, items)
+        except Exception:
+            destination.rename(target)
+            raise
+        return destination, deleted_at
+
+
+def _restore_workspace_item(user_dir: Path, target: Path) -> Path:
+    with _trash_lock:
+        parts = _relative_workspace_parts(user_dir, target)
+        if len(parts) != 2 or parts[0].casefold() != TRASH_DIR_NAME.casefold():
+            raise ValueError("Select a top-level item in Trash to restore")
+        key = Path(*parts).as_posix()
+        items = _load_trash_metadata(user_dir)
+        record = items.get(key)
+        if not record:
+            raise ValueError("Restore information is unavailable for this item")
+        original_path = record.get("original_path")
+        destination = _validate_workspace_path(user_dir, original_path)
+        if not destination or _is_trash_path(user_dir, destination):
+            raise ValueError("The original location is invalid")
+        if destination.exists():
+            raise FileExistsError("An item already exists at the original location")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        target.rename(destination)
+        items.pop(key, None)
+        try:
+            _save_trash_metadata(user_dir, items)
+        except Exception:
+            destination.rename(target)
+            raise
+        return destination
+
+
+def _permanently_delete_trash_item(user_dir: Path, target: Path) -> None:
+    with _trash_lock:
+        parts = _relative_workspace_parts(user_dir, target)
+        if len(parts) < 2 or parts[0].casefold() != TRASH_DIR_NAME.casefold():
+            raise ValueError("Only items inside Trash can be permanently deleted")
+        _remove_workspace_item(target)
+        if len(parts) == 2:
+            items = _load_trash_metadata(user_dir)
+            items.pop(Path(*parts).as_posix(), None)
+            _save_trash_metadata(user_dir, items)
+
+
 def _seed_example_files(email: str) -> None:
     """Create starter Examples files for newly-created accounts."""
     try:
@@ -1879,6 +2041,7 @@ def _seed_example_files(email: str) -> None:
         user_dir = _validate_user_path(USER_FILES_DIR, safe_component)
         if not user_dir:
             return
+        _ensure_workspace_system_dirs(user_dir)
         examples_dir = _validate_user_path(USER_FILES_DIR, f"{safe_component}/{EXAMPLES_DIR_NAME}")
         if not examples_dir:
             return
@@ -1981,10 +2144,16 @@ def _count_files_in_folder(directory: Path) -> int:
     return sum(1 for f in directory.iterdir() if f.is_file() and f.suffix.lower() in ALLOWED_EXTENSIONS)
 
 def _count_all_files_for_user(user_dir: Path) -> int:
-    """Count all files (allowed extensions only) recursively under user directory."""
+    """Count active workspace files; trashed and private metadata files do not consume the file-count quota."""
     if not user_dir.exists():
         return 0
-    return sum(1 for f in user_dir.rglob("*") if f.is_file() and f.suffix.lower() in ALLOWED_EXTENSIONS)
+    return sum(
+        1 for f in user_dir.rglob("*")
+        if f.is_file()
+        and f.suffix.lower() in ALLOWED_EXTENSIONS
+        and not _is_trash_path(user_dir, f)
+        and ".eagleide" not in _relative_workspace_parts(user_dir, f)
+    )
 
 def _count_allowed_files_in_tree(root: Path) -> int:
     if not root.exists():
@@ -2012,13 +2181,17 @@ def _sum_file_sizes(root: Path) -> int:
     return total
 
 def _enforce_file_limits(user_dir: Path) -> int:
-    """Delete oldest files exceeding per-folder (20) and per-account (100) limits.
-    Returns the number of files deleted."""
+    """Move oldest excess files to Trash while enforcing workspace count limits."""
     if not user_dir.exists():
         return 0
     deleted = 0
     # Enforce per-folder limit first
-    all_dirs = [user_dir] + [d for d in user_dir.rglob("*") if d.is_dir()]
+    all_dirs = [user_dir] + [
+        d for d in user_dir.rglob("*")
+        if d.is_dir()
+        and not _is_trash_path(user_dir, d)
+        and ".eagleide" not in _relative_workspace_parts(user_dir, d)
+    ]
     for folder in all_dirs:
         files = sorted(
             [f for f in folder.iterdir() if f.is_file() and f.suffix.lower() in ALLOWED_EXTENSIONS],
@@ -2026,22 +2199,28 @@ def _enforce_file_limits(user_dir: Path) -> int:
         )
         while len(files) > MAX_FILES_PER_FOLDER:
             try:
-                files[0].unlink()
+                _move_workspace_item_to_trash(user_dir, files[0])
                 deleted += 1
             except (OSError, FileNotFoundError) as exc:
-                print(f"Warning: could not delete {files[0]}: {exc}")
+                print(f"Warning: could not move {files[0]} to Trash: {exc}")
             files.pop(0)
     # Enforce per-account limit
     all_files = sorted(
-        [f for f in user_dir.rglob("*") if f.is_file() and f.suffix.lower() in ALLOWED_EXTENSIONS],
+        [
+            f for f in user_dir.rglob("*")
+            if f.is_file()
+            and f.suffix.lower() in ALLOWED_EXTENSIONS
+            and not _is_trash_path(user_dir, f)
+            and ".eagleide" not in _relative_workspace_parts(user_dir, f)
+        ],
         key=lambda f: f.stat().st_mtime
     )
     while len(all_files) > MAX_FILES_PER_ACCOUNT:
         try:
-            all_files[0].unlink()
+            _move_workspace_item_to_trash(user_dir, all_files[0])
             deleted += 1
         except (OSError, FileNotFoundError) as exc:
-            print(f"Warning: could not delete {all_files[0]}: {exc}")
+            print(f"Warning: could not move {all_files[0]} to Trash: {exc}")
         all_files.pop(0)
     return deleted
 
@@ -2051,9 +2230,13 @@ def _cleanup_all_user_files() -> None:
         return
     for user_dir in USER_FILES_DIR.iterdir():
         if user_dir.is_dir():
+            _ensure_workspace_system_dirs(user_dir)
+            purged = _purge_expired_trash(user_dir)
+            if purged:
+                print(f"Startup cleanup: purged {purged} expired trash item(s) from {user_dir.name}")
             removed = _enforce_file_limits(user_dir)
             if removed:
-                print(f"Startup cleanup: removed {removed} excess file(s) from {user_dir.name}")
+                print(f"Startup cleanup: moved {removed} excess file(s) to Trash for {user_dir.name}")
 
 def _validate_user_path(user_dir: Path, path_str: str) -> Optional[Path]:
     """Validate and resolve a path within user directory. Returns None if invalid."""
@@ -2566,11 +2749,13 @@ def files_list():
         return jsonify(ok=False, error="Authentication required"), 401
     
     user_dir = _get_user_dir(user["email"])
-    user_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_workspace_system_dirs(user_dir)
+    _purge_expired_trash(user_dir)
     # Repair a missing starter folder for existing accounts as well as new
     # ones without recreating individual examples a user intentionally removed.
     if not (user_dir / EXAMPLES_DIR_NAME).is_dir():
         _seed_example_files(user["email"])
+    trash_metadata = _load_trash_metadata(user_dir)
     
     def build_tree(directory: Path, base: Path) -> tuple[list, int]:
         items = []
@@ -2589,19 +2774,35 @@ def files_list():
                             file_entries.append(entry)
                     except OSError:
                         continue
-            folder_entries.sort(key=lambda x: x.name.lower())
+            folder_entries.sort(key=lambda x: (x.name.casefold() != TRASH_DIR_NAME.casefold(), x.name.casefold()))
             file_entries.sort(key=lambda x: x.name.lower())
             for entry in folder_entries:
                 entry_path = Path(entry.path)
                 rel = str(entry_path.relative_to(base)).replace("\\", "/")
                 children, child_size = build_tree(entry_path, base)
                 total_size += child_size
-                items.append({
+                item = {
                     "name": entry.name,
                     "path": rel,
                     "type": "folder",
                     "children": children
-                })
+                }
+                rel_parts = Path(rel).parts
+                if rel_parts and rel_parts[0].casefold() == TRASH_DIR_NAME.casefold():
+                    if len(rel_parts) == 1:
+                        item["system"] = "trash"
+                    else:
+                        trash_root = Path(rel_parts[0], rel_parts[1]).as_posix()
+                        record = trash_metadata.get(trash_root, {})
+                        item.update({
+                            "in_trash": True,
+                            "trash_root": trash_root,
+                            "restorable": rel == trash_root and bool(record.get("original_path")),
+                            "original_path": record.get("original_path", ""),
+                            "deleted_at": int(record.get("deleted_at") or 0),
+                            "expires_at": int(record.get("deleted_at") or 0) + TRASH_RETENTION_SECONDS if record.get("deleted_at") else 0,
+                        })
+                items.append(item)
             for entry in file_entries:
                 entry_path = Path(entry.path)
                 rel = str(entry_path.relative_to(base)).replace("\\", "/")
@@ -2610,7 +2811,7 @@ def files_list():
                 except OSError:
                     size = 0
                 total_size += size
-                items.append({
+                item = {
                     "name": entry.name,
                     "path": rel,
                     "type": "file",
@@ -2622,7 +2823,20 @@ def files_list():
                         if entry_path.suffix.lower() in DATABASE_EXTENSIONS
                         else "text"
                     ),
-                })
+                }
+                rel_parts = Path(rel).parts
+                if len(rel_parts) >= 2 and rel_parts[0].casefold() == TRASH_DIR_NAME.casefold():
+                    trash_root = Path(rel_parts[0], rel_parts[1]).as_posix()
+                    record = trash_metadata.get(trash_root, {})
+                    item.update({
+                        "in_trash": True,
+                        "trash_root": trash_root,
+                        "restorable": rel == trash_root and bool(record.get("original_path")),
+                        "original_path": record.get("original_path", ""),
+                        "deleted_at": int(record.get("deleted_at") or 0),
+                        "expires_at": int(record.get("deleted_at") or 0) + TRASH_RETENTION_SECONDS if record.get("deleted_at") else 0,
+                    })
+                items.append(item)
         except PermissionError:
             pass
         return items, total_size
@@ -2660,6 +2874,10 @@ def files_create():
             return jsonify(ok=False, error="Invalid parent directory"), 400
         if not parent_path.is_dir():
             return jsonify(ok=False, error="Parent folder no longer exists. Refresh the file browser."), 404
+        if _is_trash_path(user_dir, parent_path):
+            return jsonify(ok=False, error="Restore or permanently delete items already in Trash"), 400
+        if parent_path == user_dir and name.casefold() == TRASH_DIR_NAME.casefold():
+            return jsonify(ok=False, error="Trash is a protected workspace folder"), 400
         target = _validate_workspace_path(user_dir, (parent_path / name).relative_to(user_dir).as_posix())
         if not target:
             return jsonify(ok=False, error="Invalid path"), 400
@@ -2825,6 +3043,8 @@ def files_write():
     target = _validate_workspace_path(user_dir, path_str)
     if not target:
         return jsonify(ok=False, error="Invalid path"), 400
+    if _is_trash_path(user_dir, target) and not target.exists():
+        return jsonify(ok=False, error="Files cannot be created directly in Trash"), 400
     
     if target.suffix.lower() not in TEXT_EXTENSIONS:
         return jsonify(ok=False, error="Only text files can be edited"), 400
@@ -3097,6 +3317,10 @@ def files_rename():
     old = _validate_workspace_path(user_dir, old_path)
     if not old or not old.exists():
         return jsonify(ok=False, error="File not found"), 404
+    if _is_trash_path(user_dir, old):
+        return jsonify(ok=False, error="Items in Trash cannot be renamed"), 400
+    if old.parent == user_dir and new_name.casefold() == TRASH_DIR_NAME.casefold():
+        return jsonify(ok=False, error="Trash is a protected workspace folder"), 400
     if old.is_file() and Path(new_name).suffix.lower() not in ALLOWED_EXTENSIONS:
         return jsonify(ok=False, error="Keep a supported file extension when renaming a file"), 400
     
@@ -3133,14 +3357,51 @@ def files_delete():
     if not target or not target.exists():
         return jsonify(ok=False, error="File not found"), 404
     
+    user_dir = user_dir.resolve()
+    if target.resolve() == _trash_dir(user_dir):
+        return jsonify(ok=False, error="Trash is a protected workspace folder"), 400
+
     try:
-        if target.is_dir():
-            shutil.rmtree(target)
-        else:
-            target.unlink()
-        return jsonify(ok=True)
+        if _is_trash_path(user_dir, target, include_root=False):
+            _permanently_delete_trash_item(user_dir, target)
+            return jsonify(ok=True, permanent=True)
+        destination, deleted_at = _move_workspace_item_to_trash(user_dir, target)
+        return jsonify(
+            ok=True,
+            trashed=True,
+            trash_path=destination.relative_to(user_dir).as_posix(),
+            expires_at=deleted_at + TRASH_RETENTION_SECONDS,
+        )
+    except FileExistsError as exc:
+        return jsonify(ok=False, error=str(exc) or "Trash contains too many items with this name"), 409
     except Exception:
         return jsonify(ok=False, error="Could not delete item"), 500
+
+
+@app.post("/api/files/restore")
+def files_restore():
+    user = _require_user_for_files(request)
+    if not user:
+        return jsonify(ok=False, error="Authentication required"), 401
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify(ok=False, error="Request data must be an object"), 400
+    path_str = data.get("path", "")
+    if not path_str:
+        return jsonify(ok=False, error="Path required"), 400
+    user_dir = _get_user_dir(user["email"]).resolve()
+    target = _validate_workspace_path(user_dir, path_str)
+    if not target or not target.exists() or not _is_trash_path(user_dir, target, include_root=False):
+        return jsonify(ok=False, error="Trash item not found"), 404
+    try:
+        restored = _restore_workspace_item(user_dir, target)
+        return jsonify(ok=True, new_path=restored.relative_to(user_dir).as_posix())
+    except FileExistsError as exc:
+        return jsonify(ok=False, error=str(exc)), 409
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    except Exception:
+        return jsonify(ok=False, error="Could not restore item"), 500
 
 @app.post("/api/files/upload")
 def files_upload():
@@ -3172,8 +3433,12 @@ def files_upload():
         parent_path = _validate_workspace_path(user_dir, parent, allow_root=True)
         if not parent_path or not parent_path.is_dir():
             return jsonify(ok=False, error="Invalid parent directory"), 400
+        if _is_trash_path(user_dir, parent_path):
+            return jsonify(ok=False, error="Files cannot be uploaded directly into Trash"), 400
         target = parent_path / filename
     else:
+        if filename.casefold() == TRASH_DIR_NAME.casefold():
+            return jsonify(ok=False, error="Trash is a protected workspace folder"), 400
         target = user_dir / filename
     
     target_validated = _validate_workspace_path(user_dir, target.relative_to(user_dir).as_posix())
@@ -3327,6 +3592,8 @@ def files_move():
     src = _validate_workspace_path(user_dir, src_path)
     if not src or not src.exists():
         return jsonify(ok=False, error="Source not found"), 404
+    if _is_trash_path(user_dir, src):
+        return jsonify(ok=False, error="Use Restore or Delete Forever for items in Trash"), 400
 
     if dest_folder:
         dest_dir = _validate_workspace_path(user_dir, dest_folder, allow_root=True)
@@ -3334,6 +3601,8 @@ def files_move():
             return jsonify(ok=False, error="Destination folder not found"), 404
     else:
         dest_dir = user_dir.resolve()
+    if _is_trash_path(user_dir, dest_dir):
+        return jsonify(ok=False, error="Items cannot be moved directly into Trash"), 400
 
     # Prevent moving a folder into itself or any of its descendants
     if src.is_dir():
@@ -3382,6 +3651,8 @@ def files_duplicate():
     src = _validate_workspace_path(user_dir, src_path)
     if not src or not src.exists():
         return jsonify(ok=False, error="Source not found"), 404
+    if _is_trash_path(user_dir, src):
+        return jsonify(ok=False, error="Items in Trash cannot be duplicated"), 400
 
     parent_dir = src.parent
     stem = src.stem if src.is_file() else src.name

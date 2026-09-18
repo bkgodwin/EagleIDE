@@ -2,8 +2,10 @@
     .file-tree{ flex:1; overflow:auto; padding:4px 0; font-size:16px; }
     .file-tree-item{ display:flex; align-items:center; gap:8px; min-height:44px; padding:8px 12px; cursor:pointer; user-select:none; white-space:nowrap; border-radius:6px; margin:1px 4px; transition:background 0.1s; color:var(--theme-text); }
     .file-tree-item:hover{ background:rgba(165,200,240,0.12); }
-    .file-tree-item.active{ background:#1e2a3a; color:var(--columbia-blue); }
+    .file-tree-item.active{ background:transparent; color:var(--columbia-blue); box-shadow:inset 4px 0 0 var(--columbia-blue); }
     .file-tree-item.selected{ background:rgba(63,111,166,0.35); }
+    .file-tree-item.in-trash .fname{ color:var(--theme-text-dim); }
+    .file-tree-item[data-system="trash"] .fname{ font-weight:800; }
     .file-tree-item.drag-over{ background:rgba(165,200,240,0.25); border:1px dashed var(--columbia-blue); }
     .file-select-checkbox{ width:22px; height:22px; accent-color:#c62828; cursor:pointer; flex-shrink:0; }
     .file-tree-item .icon{ font-size:19px; flex-shrink:0; }

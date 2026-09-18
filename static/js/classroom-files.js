@@ -298,7 +298,11 @@
     tree.querySelectorAll('.audit-del-btn').forEach(btn => {
       btn.addEventListener('click', async e => {
         e.stopPropagation();
-        if (!confirm('Delete this file from the student account?')) return;
+        const inTrash = String(btn.dataset.path || '').replace(/\\/g, '/').startsWith('Trash/');
+        const message = inTrash
+          ? 'Permanently delete this file from the student’s Trash? This cannot be undone.'
+          : 'Move this file to the student’s Trash?';
+        if (!confirm(message)) return;
         const delRes = await fetch('/api/teacher/students/files/delete', {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json', 'X-Teacher-Token': c.TEACHER_TOKEN },

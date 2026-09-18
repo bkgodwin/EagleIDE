@@ -34,6 +34,22 @@ test('renaming and deleting a parent updates open files, working directories, an
   `, { assert, clearTimeout });
 });
 
+test('file selection changes only through the explicit checkbox selection helper', () => {
+  vm.runInNewContext(`
+    let _selectedFileItems = new Set();
+    ${extract('_normalizeTreePath')}
+    ${extract('setFileItemSelected')}
+    assert.equal(setFileItemSelected('unit/main.py', true), true);
+    assert.deepEqual([..._selectedFileItems], ['unit/main.py']);
+    assert.equal(setFileItemSelected('unit/main.py', false), false);
+    assert.equal(_selectedFileItems.size, 0);
+    assert.equal(setFileItemSelected('Trash', true), false);
+    assert.equal(_selectedFileItems.size, 0);
+  `, { assert });
+  const rowClick = source.slice(source.indexOf("row.addEventListener('click'"), source.indexOf("row.addEventListener('keydown'"));
+  assert.doesNotMatch(rowClick, /_selectedFileItems\.add|setFileItemSelected/);
+});
+
 test('autosave does not mark new edits clean when an older request completes', async () => {
   const context = vm.createContext({ assert });
   await vm.runInContext(`(async () => {
