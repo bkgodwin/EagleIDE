@@ -22,6 +22,7 @@ CLASSROOM_RETENTION_DAYS = 90
 MAX_QUESTION_LENGTH = 200
 MAX_RESPONSE_LENGTH = 500
 MAX_OPEN_QUESTIONS_PER_STUDENT = 3
+QUESTION_SILENCE_SECONDS = 5 * 60
 SHARED_DIR = "Shared"
 
 DEFAULT_CLASSROOM_SETTINGS: dict[str, bool] = {
@@ -90,9 +91,10 @@ def _write_signals_store(data: dict) -> None:
 def _class_bucket(class_id: str) -> dict:
     with _classroom_signals_lock:
         store = _read_signals_store()
-        bucket = store.setdefault("classes", {}).setdefault(class_id, {"hands": [], "questions": []})
+        bucket = store.setdefault("classes", {}).setdefault(class_id, {"hands": [], "questions": [], "silenced": {}})
         bucket.setdefault("hands", [])
         bucket.setdefault("questions", [])
+        bucket.setdefault("silenced", {})
         return bucket
 
 
@@ -108,9 +110,10 @@ def _edit_class_bucket(class_id: str):
     """Keep each read/modify/write atomic when a classroom acts together."""
     with _classroom_signals_lock:
         store = _read_signals_store()
-        bucket = store.setdefault("classes", {}).setdefault(class_id, {"hands": [], "questions": []})
+        bucket = store.setdefault("classes", {}).setdefault(class_id, {"hands": [], "questions": [], "silenced": {}})
         bucket.setdefault("hands", [])
         bucket.setdefault("questions", [])
+        bucket.setdefault("silenced", {})
         yield bucket
         _write_signals_store(store)
 
@@ -689,6 +692,24 @@ def register(app, socketio) -> None:
         email = (student.get("email") or "").strip().lower()
         name = student.get("name") or email
         with _edit_class_bucket(class_id) as bucket:
+            now = time.time()
+            silenced = bucket.setdefault("silenced", {})
+            silenced_until = float(silenced.get(email) or 0)
+            if silenced_until <= now:
+                silenced.pop(email, None)
+            else:
+                remaining = max(1, int(silenced_until - now + 0.999))
+                socketio.emit(
+                    "classroom_question_error",
+                    {
+                        "class_id": class_id,
+                        "error": f"Questions are paused for {remaining} more seconds. Please wait before asking again.",
+                        "code": "student_silenced",
+                        "retry_after": remaining,
+                    },
+                    to=request.sid,
+                )
+                return
             questions = bucket["questions"]
             open_count = sum(
                 1 for q in questions
@@ -711,6 +732,46 @@ def register(app, socketio) -> None:
             }
             questions.append(question)
         append_classroom_event("question_submit", class_id, email, "student", {"question_id": question["id"]})
+        _emit_classroom_signal_updates(socketio, class_id)
+
+    @socketio.on("classroom_question_silence")
+    def on_classroom_question_silence(payload):
+        class_id = str((payload or {}).get("class_id") or "").strip()
+        token = str((payload or {}).get("token") or "").strip()
+        student_email = str((payload or {}).get("student_email") or "").strip().lower()
+        teacher = _auth_class_teacher(token, class_id)
+        if not teacher or not student_email:
+            return
+        silenced_until = time.time() + QUESTION_SILENCE_SECONDS
+        with _edit_class_bucket(class_id) as bucket:
+            # Only students with a current question can be silenced from this
+            # teacher surface, preventing arbitrary account targeting.
+            has_open_question = any(
+                (q.get("student_email") or "").lower() == student_email and q.get("status") == "open"
+                for q in bucket["questions"]
+            )
+            if not has_open_question:
+                return
+            bucket.setdefault("silenced", {})[student_email] = silenced_until
+            for question in bucket["questions"]:
+                if (question.get("student_email") or "").lower() == student_email and question.get("status") == "open":
+                    question["status"] = "dismissed"
+        append_classroom_event(
+            "question_silence",
+            class_id,
+            teacher.get("email", ""),
+            "teacher",
+            {"student_email": student_email, "seconds": QUESTION_SILENCE_SECONDS},
+        )
+        socketio.emit(
+            "classroom_question_silenced",
+            {
+                "class_id": class_id,
+                "student_email": student_email,
+                "seconds": QUESTION_SILENCE_SECONDS,
+            },
+            to=f"class_{class_id}",
+        )
         _emit_classroom_signal_updates(socketio, class_id)
 
     @socketio.on("classroom_hand_ack")

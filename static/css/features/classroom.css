@@ -115,6 +115,20 @@
   margin-bottom: 4px;
 }
 
+.classroom-question-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(360px, 42vh);
+  padding-right: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  pointer-events: auto;
+  scrollbar-gutter: stable;
+}
+
+.classroom-question-card { flex: 0 0 auto; }
+
 .classroom-question-card .q-text {
   margin-bottom: 8px;
   line-height: 1.4;
@@ -140,6 +154,11 @@
   background: var(--columbia-blue);
   color: #102a43;
   border-color: transparent;
+}
+
+.classroom-question-actions button.silence {
+  border-color: rgba(245, 166, 35, 0.65);
+  color: #ffd08a;
 }
 
 .classroom-audit-banner {

@@ -137,6 +137,10 @@ REQUIRE_WINDOWS_JOB_LIMITS = os.environ.get("EAGLE_REQUIRE_WINDOWS_JOB_LIMITS", 
 REGISTRATION_IP_LIMIT = _env_int("EAGLE_REGISTRATIONS_PER_HOUR_PER_IP", 120, 20, 1000)
 REGISTRATION_RATE_WINDOW_SECONDS = 3600.0
 MAX_AUTH_RATE_LIMIT_KEYS = 8192
+MAX_CONCURRENT_PASSWORD_CHECKS = _env_int("EAGLE_MAX_CONCURRENT_PASSWORD_CHECKS", 8, 1, 64)
+AUTH_PASSWORD_QUEUE_TIMEOUT_SECONDS = 10.0
+AUTH_DEVICE_COOKIE = "eagleide_device_session"
+AUTH_DEVICE_SESSION_SECONDS = 14 * 24 * 60 * 60
 
 MAX_TEACHER_STREAM_CODE_BYTES = 200_000
 TEACHER_STREAM_MIN_INTERVAL_SECONDS = 0.25
@@ -736,6 +740,7 @@ _live_teacher_stream_sids_by_class: Dict[str, set[str]] = {}
 _socket_live_class_ids: Dict[str, set[str]] = {}
 _reg_rate_limit: dict = defaultdict(list)  # ip -> successful/well-formed registration attempts
 _auth_rate_limit_lock = threading.Lock()
+_password_check_slots = threading.BoundedSemaphore(MAX_CONCURRENT_PASSWORD_CHECKS)
 _classes_lock = threading.RLock()
 _skills_lock = threading.Lock()
 _default_skills_seed_lock = threading.Lock()
@@ -917,6 +922,79 @@ def _verify_user_password(user: dict, password: str) -> bool:
         _upgrade_legacy_password_if_needed(user.get("email", ""), password)
         return True
     return False
+
+
+def _user_info_from_record(user: dict) -> dict:
+    email = str(user.get("email") or "").strip().lower()
+    role = str(user.get("role") or "student").strip().lower()
+    if role == "teacher":
+        return {"email": email, "name": user.get("name", ""), "role": "teacher"}
+    return {
+        "email": email,
+        "name": user.get("name", ""),
+        "role": "student",
+        "class_id": user.get("class_id"),
+        "class_ids": _get_user_class_ids(user),
+    }
+
+
+def _device_credential_fingerprint(role: str, email: str) -> Optional[str]:
+    normalized_role = str(role or "").strip().lower()
+    normalized_email = str(email or "").strip().lower()
+    if normalized_role == "admin":
+        if not hmac.compare_digest(normalized_email, ADMIN_ACCOUNT_EMAIL.strip().lower()):
+            return None
+        credential = ADMIN_ACCOUNT_PASSWORD
+    else:
+        user = _find_user(normalized_email)
+        if not user or str(user.get("role") or "student").lower() != normalized_role:
+            return None
+        credential = str(user.get("password_hash") or user.get("password") or "")
+    if not credential:
+        return None
+    material = f"eagle-device-session-v1\0{normalized_role}\0{normalized_email}\0{credential}"
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def _set_device_session_cookie(response, role: str, email: str, access_token: str) -> None:
+    fingerprint = _device_credential_fingerprint(role, email)
+    if not fingerprint:
+        return
+    expires_at = int(time.time()) + AUTH_DEVICE_SESSION_SECONDS
+    payload = json.dumps({
+        "v": 1,
+        "role": str(role or "").strip().lower(),
+        "email": str(email or "").strip().lower(),
+        "credential": fingerprint,
+        "access_token": access_token,
+        "expires_at": expires_at,
+    }, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    token = _admin_cipher().encrypt(payload).decode("ascii")
+    forwarded_proto = str(request.headers.get("X-Forwarded-Proto") or "").split(",", 1)[0].strip().lower()
+    response.set_cookie(
+        AUTH_DEVICE_COOKIE,
+        token,
+        max_age=AUTH_DEVICE_SESSION_SECONDS,
+        httponly=True,
+        secure=bool(request.is_secure or forwarded_proto == "https"),
+        samesite="Strict",
+        path="/",
+    )
+
+
+def _clear_device_session_cookie(response) -> None:
+    response.delete_cookie(AUTH_DEVICE_COOKIE, path="/", samesite="Strict")
+
+
+def _issue_access_token(role: str, user_info: dict, token: Optional[str] = None) -> str:
+    token = token or uuid.uuid4().hex
+    if role == "admin":
+        _admin_tokens.add(token)
+    elif role == "teacher":
+        _teacher_tokens[token] = user_info
+    else:
+        _student_tokens[token] = user_info
+    return token
 
 
 def _load_classes() -> dict:
@@ -2095,12 +2173,14 @@ def admin_login():
     email_ok = hmac.compare_digest(email.lower().encode("utf-8"), ADMIN_ACCOUNT_EMAIL.lower().encode("utf-8"))
     pw_ok = hmac.compare_digest(pw.encode("utf-8"), ADMIN_ACCOUNT_PASSWORD.encode("utf-8"))
     if email_ok and pw_ok:
-        token = uuid.uuid4().hex
-        _admin_tokens.add(token)
+        user_info = {"email": ADMIN_ACCOUNT_EMAIL, "name": "Admin", "role": "admin"}
+        token = _issue_access_token("admin", user_info)
         _seed_example_files(ADMIN_ACCOUNT_EMAIL)
         _record_sign_in_event(ADMIN_ACCOUNT_EMAIL, "admin", ip, "admin_login")
-        return jsonify(ok=True, token=token)
-    return jsonify(ok=False, error="Invalid email or password"), 401
+        response = jsonify(ok=True, token=token, user=user_info, role="admin")
+        _set_device_session_cookie(response, "admin", ADMIN_ACCOUNT_EMAIL, token)
+        return response
+    return jsonify(ok=False, error="Incorrect email or password", code="invalid_credentials"), 401
 
 @app.get("/api/config")
 def get_config():
@@ -2289,12 +2369,12 @@ def auth_register():
     _seed_example_files(email)
     
     # Issue token
-    token = uuid.uuid4().hex
     user_info = {"email": email, "name": name, "role": "student", "class_id": None, "class_ids": []}
-    _student_tokens[token] = user_info
+    token = _issue_access_token("student", user_info)
     _record_sign_in_event(email, "student", ip, "registration")
-    
-    return jsonify(ok=True, token=token, user=user_info)
+    response = jsonify(ok=True, token=token, user=user_info, role="student")
+    _set_device_session_cookie(response, "student", email, token)
+    return response
 
 @app.post("/api/auth/login")
 def auth_login():
@@ -2309,14 +2389,22 @@ def auth_login():
         return jsonify(ok=False, error="Email and password required"), 400
     user = _find_user(email)
     if not user:
-        return jsonify(ok=False, error="Invalid email or password"), 401
+        return jsonify(ok=False, error="No account was found for that email", code="account_not_found"), 401
     if not user.get("enabled", True):
-        return jsonify(ok=False, error="Account is disabled"), 403
-    
-    pw_ok = _verify_user_password(user, password)
-    
+        return jsonify(ok=False, error="This account is disabled. Ask your teacher or administrator for help.", code="account_disabled"), 403
+
+    if not _password_check_slots.acquire(timeout=AUTH_PASSWORD_QUEUE_TIMEOUT_SECONDS):
+        response = jsonify(ok=False, error="The sign-in queue is busy. Please try again in a moment.", code="auth_busy")
+        response.status_code = 503
+        response.headers["Retry-After"] = "2"
+        return response
+    try:
+        pw_ok = _verify_user_password(user, password)
+    finally:
+        _password_check_slots.release()
+
     if not pw_ok:
-        return jsonify(ok=False, error="Invalid email or password"), 401
+        return jsonify(ok=False, error="Incorrect password", code="incorrect_password"), 401
     
     # Ensure user directory exists
     user_dir = _get_user_dir(email)
@@ -2324,23 +2412,56 @@ def auth_login():
     _seed_example_files(email)
     
     _record_user_sign_in(email, ip=ip)
-    token = uuid.uuid4().hex
     role = user.get("role", "student")
-    if role == "teacher":
-        user_info = {"email": email, "name": user.get("name", ""), "role": "teacher"}
-        _teacher_tokens[token] = user_info
-        _record_sign_in_event(email, "teacher", ip, "login")
-        return jsonify(ok=True, token=token, user=user_info, role="teacher")
-    user_info = {
-        "email": email,
-        "name": user.get("name", ""),
-        "role": "student",
-        "class_id": user.get("class_id"),
-        "class_ids": _get_user_class_ids(user),
-    }
-    _student_tokens[token] = user_info
-    _record_sign_in_event(email, "student", ip, "login")
-    return jsonify(ok=True, token=token, user=user_info, role="student")
+    # A successful legacy-password login may have upgraded the stored record.
+    refreshed_user = _find_user(email) or user
+    user_info = _user_info_from_record(refreshed_user)
+    token = _issue_access_token(role, user_info)
+    _record_sign_in_event(email, role, ip, "login")
+    response = jsonify(ok=True, token=token, user=user_info, role=role)
+    _set_device_session_cookie(response, role, email, token)
+    return response
+
+
+@app.post("/api/auth/restore")
+def auth_restore():
+    encrypted = str(request.cookies.get(AUTH_DEVICE_COOKIE) or "").strip()
+    if not encrypted:
+        return jsonify(ok=False, error="No saved sign-in", code="no_saved_session"), 401
+    try:
+        payload = json.loads(_admin_cipher().decrypt(encrypted.encode("ascii")).decode("utf-8"))
+        role = str(payload.get("role") or "").strip().lower()
+        email = str(payload.get("email") or "").strip().lower()
+        expires_at = int(payload.get("expires_at") or 0)
+        credential = str(payload.get("credential") or "")
+        access_token = str(payload.get("access_token") or "")
+    except (InvalidToken, ValueError, TypeError, UnicodeError, json.JSONDecodeError):
+        response = jsonify(ok=False, error="Saved sign-in is invalid", code="invalid_saved_session")
+        response.status_code = 401
+        _clear_device_session_cookie(response)
+        return response
+    current_fingerprint = _device_credential_fingerprint(role, email)
+    if payload.get("v") != 1 or role not in {"student", "teacher", "admin"} or not re.fullmatch(r"[0-9a-f]{32}", access_token) \
+            or expires_at <= int(time.time()) \
+            or not current_fingerprint or not hmac.compare_digest(credential, current_fingerprint):
+        response = jsonify(ok=False, error="Saved sign-in has expired", code="expired_saved_session")
+        response.status_code = 401
+        _clear_device_session_cookie(response)
+        return response
+    if role == "admin":
+        user_info = {"email": ADMIN_ACCOUNT_EMAIL, "name": "Admin", "role": "admin"}
+    else:
+        user = _find_user(email)
+        if not user or not user.get("enabled", True):
+            response = jsonify(ok=False, error="Account is unavailable", code="account_unavailable")
+            response.status_code = 403
+            _clear_device_session_cookie(response)
+            return response
+        user_info = _user_info_from_record(user)
+    token = _issue_access_token(role, user_info, access_token)
+    response = jsonify(ok=True, token=token, user=user_info, role=role)
+    _set_device_session_cookie(response, role, email, token)
+    return response
 
 @app.post("/api/auth/logout")
 def auth_logout():
@@ -2350,7 +2471,9 @@ def auth_logout():
     _student_tokens.pop(token, None)
     _teacher_tokens.pop(teacher_token, None)
     _admin_tokens.discard(admin_token)
-    return jsonify(ok=True)
+    response = jsonify(ok=True)
+    _clear_device_session_cookie(response)
+    return response
 
 @app.get("/api/auth/me")
 def auth_me():
@@ -3372,7 +3495,10 @@ def admin_reset_password():
     if not email:
         return jsonify(ok=False, error="Email required"), 400
     
-    new_password = secrets.token_urlsafe(16)
+    # Six characters are intentionally used for the administrator-distributed
+    # temporary credential. Students are prompted to replace it after sign-in.
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+    new_password = "".join(secrets.choice(alphabet) for _ in range(6))
     password_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     
     users_data = _load_users()
@@ -4614,6 +4740,54 @@ def teacher_change_password():
         if (info.get("email") or "").lower() == email and token != request.headers.get("X-Teacher-Token", "").strip():
             del _teacher_tokens[token]
     return jsonify(ok=True)
+
+
+@app.post("/api/student/change-password")
+def student_change_password():
+    student = _require_user(request)
+    if not student or str(student.get("role") or "student").lower() != "student":
+        return jsonify(ok=False, error="Student token required"), 401
+    data = request.get_json(silent=True) or {}
+    current_password = str(data.get("currentPassword") or "")
+    new_password = str(data.get("newPassword") or "")
+    if not current_password or not new_password:
+        return jsonify(ok=False, error="Current and new password are required"), 400
+    if len(new_password) < 8:
+        return jsonify(ok=False, error="New password must be at least 8 characters"), 400
+    if len(new_password.encode("utf-8")) > 72:
+        return jsonify(ok=False, error="New password must be 72 UTF-8 bytes or fewer"), 400
+    email = str(student.get("email") or "").strip().lower()
+    existing = _find_user(email)
+    if not existing or str(existing.get("role") or "student").lower() != "student":
+        return jsonify(ok=False, error="Student account not found"), 404
+    if not _verify_user_password(existing, current_password):
+        return jsonify(ok=False, error="Current password is incorrect"), 403
+    # Legacy plaintext accounts are upgraded during verification; compare the
+    # transaction against the refreshed credential rather than the stale copy.
+    existing = _find_user(email) or existing
+    original_credential = str(existing.get("password_hash") or existing.get("password") or "")
+    next_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    with _users_lock:
+        users_data = _load_users()
+        student_record = next(
+            (u for u in users_data.get("users", []) if (u.get("email") or "").lower() == email and u.get("role") == "student"),
+            None,
+        )
+        if not student_record:
+            return jsonify(ok=False, error="Student account not found"), 404
+        current_credential = str(student_record.get("password_hash") or student_record.get("password") or "")
+        if not hmac.compare_digest(original_credential, current_credential):
+            return jsonify(ok=False, error="Password changed in another session. Please sign in again."), 409
+        student_record["password_hash"] = next_hash
+        student_record.pop("password", None)
+        _save_users(users_data)
+    current_token = request.headers.get("X-User-Token", "").strip()
+    for token, info in list(_student_tokens.items()):
+        if (info.get("email") or "").lower() == email and token != current_token:
+            del _student_tokens[token]
+    response = jsonify(ok=True)
+    _set_device_session_cookie(response, "student", email, current_token)
+    return response
 
 
 @app.post("/api/teacher/students/update")

@@ -103,7 +103,7 @@ assert.deepEqual(studentClasses, []);
 """)
 
     def test_login_does_not_mask_server_or_disabled_account_errors(self):
-        self.run_javascript(["tryUnifiedSignIn"], r"""
+        self.run_javascript(["waitForAuthRetry", "fetchAuthRequest", "tryUnifiedSignIn"], r"""
 for (const status of [403, 500]) {
   const calls = [];
   fetch = async url => { calls.push(url); return { status, ok: false, json: async () => ({ ok: false, error: 'specific error' }) }; };
@@ -114,6 +114,10 @@ const calls = [];
 fetch = async url => { calls.push(url); return { status: 401, ok: false, json: async () => ({ ok: false, error: 'Invalid email or password' }) }; };
 assert.equal((await tryUnifiedSignIn('student@school.test', 'wrong')).ok, false);
 assert.deepEqual(calls, ['/api/auth/login', '/api/admin/login']);
+const passwordCalls = [];
+fetch = async url => { passwordCalls.push(url); return { status: 401, ok: false, json: async () => ({ ok: false, code: 'incorrect_password', error: 'Incorrect password' }) }; };
+assert.deepEqual(await tryUnifiedSignIn('student@school.test', 'wrong'), { ok: false, error: 'Incorrect password' });
+assert.deepEqual(passwordCalls, ['/api/auth/login', '/api/admin/login']);
 """)
 
 

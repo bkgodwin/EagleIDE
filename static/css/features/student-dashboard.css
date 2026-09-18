@@ -167,6 +167,41 @@
   max-width: 100%;
 }
 
+.student-account-layout {
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  padding: 22px;
+}
+
+.student-account-card {
+  display: grid;
+  gap: 10px;
+  width: min(100%, 520px);
+  padding: 22px;
+  border: 1px solid var(--theme-border-mid);
+  border-radius: 14px;
+  background: var(--theme-panel);
+}
+
+.student-account-card h3,
+.student-account-card p { margin: 0; }
+.student-account-card p { color: var(--theme-text-dim); line-height: 1.45; }
+.student-account-card label { margin-top: 5px; font-size: 12px; font-weight: 800; }
+.student-account-card input {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid var(--theme-border-mid);
+  border-radius: 8px;
+  background: var(--theme-input-bg);
+  color: var(--theme-text);
+}
+.student-account-card .btn { justify-self: start; margin-top: 4px; }
+.student-password-status { min-height: 20px; color: var(--theme-text-dim); font-size: 12px; }
+.student-password-status.is-error { color: #ff8a80; }
+.student-password-status.is-success { color: #73d69b; }
+
 @media (max-width: 1100px) {
   .student-skill-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .student-skill-card { border-right: 1px solid var(--theme-border-mid); }
