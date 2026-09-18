@@ -84,20 +84,22 @@
       top:calc(60px + 40vh);
       transform:translateY(-50%);
       z-index:250;
-      width:28px;
-      height:64px;
-      border:1px solid var(--theme-border-mid);
-      background:var(--theme-panel-hdr);
-      color:var(--theme-text);
-      font-size:16px;
-      border-radius:10px;
+      width:56px;
+      height:56px;
+      border:2px solid rgba(255,255,255,.55);
+      background:#234d70;
+      color:#fff;
+      font-size:22px;
+      font-weight:900;
+      border-radius:50%;
       cursor:pointer;
       display:flex;
       align-items:center;
       justify-content:center;
-      backdrop-filter:blur(4px);
+      box-shadow:0 4px 14px rgba(4,20,36,.42);
+      backdrop-filter:blur(6px);
     }
-    #rightEdgeToggleBtn{ right:6px; }
+    #rightEdgeToggleBtn{ right:12px; }
     #adminUsersModal .modal-content{ max-width:980px; }
     .ctx-menu{ position:fixed; background:var(--theme-panel); border:1px solid var(--theme-border); border-radius:8px; padding:4px 0; min-width:140px; z-index:9999; box-shadow:0 4px 20px rgba(0,0,0,.5); backdrop-filter:blur(4px); }
     .ctx-menu button{ width:100%; background:none; border:0; color:var(--theme-text); text-align:left; padding:6px 14px; cursor:pointer; font-size:13px; }
