@@ -37,7 +37,7 @@
     .workspace-floating-controls{
       position:absolute;
       top:7px;
-      right:8px;
+      right:24px;
       z-index:25;
       display:flex;
       align-items:center;
@@ -276,22 +276,25 @@
       bottom:6px;
       transform:translateX(-50%);
       z-index:260;
-      width:34px;
-      height:30px;
-      border-radius:10px;
-      border:1px solid var(--theme-border-mid);
-      background:var(--theme-panel-hdr);
-      color:var(--theme-text);
+      width:52px;
+      height:42px;
+      border-radius:13px;
+      border:2px solid rgba(255,255,255,.55);
+      background:#234d70;
+      color:#fff;
       display:none;
       align-items:center;
       justify-content:center;
       cursor:pointer;
-      font-size:15px;
+      font-size:20px;
+      font-weight:900;
       line-height:1;
-      backdrop-filter:blur(4px);
+      box-shadow:0 4px 14px rgba(4,20,36,.42);
+      backdrop-filter:blur(6px);
       transition:background .2s ease, border-color .2s ease, color .2s ease, box-shadow .2s ease;
     }
-    .teacher-pane-toggle:hover{ background:var(--theme-btn-hover); }
+    .teacher-pane-toggle:hover{ background:#173a57; border-color:#fff; }
+    body.light-mode .teacher-pane-toggle{ background:#315f86; border-color:#173a57; color:#fff; }
     .teacher-pane-toggle.live{
       background:rgba(198,40,40,0.18);
       border-color:rgba(198,40,40,0.9);

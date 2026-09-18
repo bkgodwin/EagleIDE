@@ -120,8 +120,8 @@ def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
 
 
 MAX_RUNNER_MEMORY_LIMIT_MB = _env_int("EAGLE_MAX_RUNNER_MEMORY_MB", 2048, 128, 4096)
-_default_run_capacity = max(1, min(4, max(1, int(os.cpu_count() or 2) // 2)))
-MAX_CONCURRENT_RUNS = _env_int("EAGLE_MAX_CONCURRENT_RUNS", 8, 1, 32)
+_default_run_capacity = 8
+MAX_CONCURRENT_RUNS = _env_int("EAGLE_MAX_CONCURRENT_RUNS", 25, 1, 25)
 MAX_GUEST_RUNS_PER_IP = _env_int("EAGLE_MAX_GUEST_RUNS_PER_IP", 2, 1, 16)
 MAX_RUN_STARTS_PER_WINDOW = _env_int("EAGLE_MAX_RUN_STARTS_PER_10_SECONDS", 6, 1, 60)
 RUN_START_RATE_WINDOW_SECONDS = 10.0
@@ -278,7 +278,7 @@ except Exception:
         "guest_ide_access_enabled": True,
         "network_sim_enabled": False,
         "python_memory_limit_mb": 750,
-        "python_max_concurrent_runs": 4,
+        "python_max_concurrent_runs": 8,
         "python_module_access": {},
         "wiki_max_asset_mb": 1024,
         "wiki_total_asset_mb": 10240,

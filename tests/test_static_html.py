@@ -269,6 +269,36 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn("teacherNotebookPracticeInput", self.parser.ids)
         self.assertNotIn("open-class-bookmarks-btn", core)
 
+    def test_ide_pane_controls_are_easy_to_reach(self):
+        editor_css = (BASE_DIR / "static" / "css" / "features" / "editor.css").read_text(encoding="utf-8")
+        shell_css = (BASE_DIR / "static" / "css" / "features" / "shell.css").read_text(encoding="utf-8")
+        layout_css = (BASE_DIR / "static" / "css" / "layout.css").read_text(encoding="utf-8")
+        legacy_css = (BASE_DIR / "static" / "css" / "legacy.css").read_text(encoding="utf-8")
+        shell_start = self.raw.index('id="shellPanel"')
+        shell_output = self.raw.index('id="output"', shell_start)
+        run_button = self.raw.index('id="runBtn"')
+        self.assertLess(shell_start, run_button)
+        self.assertLess(run_button, shell_output)
+        self.assertIn("right:24px", editor_css.replace(" ", ""))
+        self.assertIn("width:52px", editor_css.replace(" ", ""))
+        self.assertIn("height:42px", editor_css.replace(" ", ""))
+        self.assertIn("shell-run-btn", shell_css)
+        self.assertIn("width: 56px", layout_css)
+        self.assertIn("height: 56px", layout_css)
+        self.assertIn("width:56px", legacy_css)
+        self.assertIn("height:56px", legacy_css)
+
+    def test_python_concurrency_admin_limit_defaults_to_eight_and_caps_at_twenty_five(self):
+        app_source = (BASE_DIR / "app.py").read_text(encoding="utf-8")
+        config_source = (BASE_DIR / "config.py").read_text(encoding="utf-8")
+        core = (BASE_DIR / "static" / "js" / "app-core.js").read_text(encoding="utf-8")
+        self.assertIn('MAX_CONCURRENT_RUNS = _env_int("EAGLE_MAX_CONCURRENT_RUNS", 25, 1, 25)', app_source)
+        self.assertIn('"python_max_concurrent_runs": 8', app_source)
+        self.assertIn('"python_max_concurrent_runs": 8', config_source)
+        self.assertIn('id="pythonConcurrencyLimitModal" min="1" max="25"', self.raw)
+        self.assertIn("hard.max_concurrent_runs || 25", core)
+        self.assertIn("settings.python_max_concurrent_runs || 8", core)
+
     def test_file_browser_checkbox_selection_and_multi_send_are_wired(self):
         core = (BASE_DIR / "static" / "js" / "app-core.js").read_text(encoding="utf-8")
         classroom_files = (BASE_DIR / "static" / "js" / "classroom-files.js").read_text(encoding="utf-8")

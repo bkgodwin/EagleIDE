@@ -2387,7 +2387,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         document.body.classList.toggle('right-collapsed', collapsed);
         if (rightEdgeToggleBtn) {
           rightEdgeToggleBtn.textContent = collapsed ? '◀' : '▶';
-          rightEdgeToggleBtn.title = collapsed ? 'Show resources sidebar' : 'Hide resources sidebar';
+          rightEdgeToggleBtn.title = collapsed ? 'Show shell and resources panes' : 'Hide shell and resources panes';
+          rightEdgeToggleBtn.setAttribute('aria-label', rightEdgeToggleBtn.title);
           rightEdgeToggleBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
         }
         if (persist) {
@@ -3156,11 +3157,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         memoryInput.value = String(settings.python_memory_limit_mb || 750);
       }
       if (concurrencyInput) {
-        concurrencyInput.max = String(hard.max_concurrent_runs || 8);
-        concurrencyInput.value = String(settings.python_max_concurrent_runs || 4);
+        concurrencyInput.max = String(hard.max_concurrent_runs || 25);
+        concurrencyInput.value = String(settings.python_max_concurrent_runs || 8);
       }
       if (memoryHint) memoryHint.textContent = `Allowed range 128–${hard.max_memory_mb || 2048} MB.`;
-      if (concurrencyHint) concurrencyHint.textContent = `Hard ceiling ${hard.max_concurrent_runs || 8} runs; memory reservations may reduce live capacity.`;
+      if (concurrencyHint) concurrencyHint.textContent = `Default 8 · hard ceiling ${hard.max_concurrent_runs || 25} runs; memory reservations may reduce live capacity.`;
       if (stats) {
         stats.textContent = `${Number(data.active_runs || 0)} active run(s) · ${Number(data.reserved_memory_mb || 0).toFixed(1)} MB reserved · CPU ${hard.cpu_seconds || 8}s · wall ${hard.wall_seconds || 30}s · write budget ${hard.write_mb || 10} MB`;
       }
