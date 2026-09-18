@@ -457,9 +457,15 @@ body.light-mode .edge-toggle { background: #315f86; border-color: #173a57; color
   :root { --splitter-hit: 12px; --splitter-size: 8px; --vsplitter-size: 8px; }
   .panel .content,
   #output,
-  .file-tree,
-  .CodeMirror-scroll {
+  .file-tree {
     -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    touch-action: pan-x pan-y;
+  }
+  /* CodeMirror 5 virtualizes text and gutter rows. Its legacy iOS momentum
+     layer can temporarily move the text separately from those measurements. */
+  .CodeMirror-scroll {
+    -webkit-overflow-scrolling: auto;
     overscroll-behavior: contain;
     touch-action: pan-x pan-y;
   }

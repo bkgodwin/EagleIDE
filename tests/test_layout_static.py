@@ -45,12 +45,17 @@ class LayoutStaticTestCase(unittest.TestCase):
     def test_touch_viewport_sync_does_not_scroll_the_page(self):
         layout_js = (BASE_DIR / "static/js/layout.js").read_text(encoding="utf-8")
         app_core = (BASE_DIR / "static/js/app-core.js").read_text(encoding="utf-8")
+        layout_css = _css_without_comments(BASE_DIR / "static/css/layout.css")
+        editor_css = _css_without_comments(BASE_DIR / "static/css/features/editor.css")
 
         self.assertIn("window.visualViewport", layout_js)
         self.assertIn("--app-height", layout_js)
         self.assertNotIn("scrollIntoView", layout_js)
         self.assertNotIn("output.scrollTop = output.scrollHeight", layout_js)
         self.assertIn("ResizeObserver", layout_js)
+        self.assertIn("if (heightChanged) refreshEditors()", layout_js)
+        self.assertRegex(layout_css, r"\.CodeMirror-scroll\s*\{[^}]*-webkit-overflow-scrolling:\s*auto")
+        self.assertRegex(editor_css, r"\.CodeMirror-linenumber\s*\{[^}]*line-height:\s*inherit")
         self.assertIn("workspace-resizing", app_core)
         self.assertIn("outputEl.scrollTop = outputEl.scrollHeight", app_core)
 

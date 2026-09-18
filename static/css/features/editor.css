@@ -1,4 +1,13 @@
-.CodeMirror{ height:100%; background:var(--theme-cm-bg); color:var(--text-light); font-size: var(--cm-font-size); line-height:1.4 }
+.CodeMirror{ height:100%; background:var(--theme-cm-bg); color:var(--text-light); font-size:var(--cm-font-size); line-height:1.4 }
+    .CodeMirror-lines,
+    .CodeMirror pre.CodeMirror-line,
+    .CodeMirror pre.CodeMirror-line-like,
+    .CodeMirror-linenumber{ line-height:inherit; }
+    .CodeMirror-linenumber{ font-variant-numeric:tabular-nums; }
+    .CodeMirror-scroll{
+      overscroll-behavior:contain;
+      touch-action:pan-x pan-y;
+    }
     .CodeMirror pre{ tab-size: var(--indent-tabs); -moz-tab-size: var(--indent-tabs) }
     .CodeMirror pre.CodeMirror-line,
     .CodeMirror pre.CodeMirror-line-like{
