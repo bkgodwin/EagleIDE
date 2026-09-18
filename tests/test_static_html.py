@@ -106,12 +106,15 @@ class StaticHtmlTestCase(unittest.TestCase):
         app_core = (BASE_DIR / "static/js/app-core.js").read_text(encoding="utf-8")
         signals = (BASE_DIR / "static/js/classroom-signals.js").read_text(encoding="utf-8")
         editor = (BASE_DIR / "static/js/editor-init.js").read_text(encoding="utf-8")
+        autocomplete = (BASE_DIR / "static/js/autocomplete.js").read_text(encoding="utf-8")
         self.assertIn('@app.post("/api/student/change-password")', app_source)
         self.assertIn('@app.post("/api/auth/restore")', app_source)
         self.assertIn("RESOURCES_COLLAPSE_KEY", app_core)
         self.assertIn("classroom-question-list", signals)
         self.assertIn("classroom_question_silence", signals)
-        self.assertIn("clearTimeout(completionTimer)", editor)
+        self.assertIn("EagleAutocomplete.createEngine", editor)
+        self.assertIn("if (!active) return;", autocomplete)
+        self.assertIn("clearTimeout(timer)", autocomplete)
 
     def test_space_efficient_ide_controls_are_wired(self):
         ids = set(self.parser.ids)
