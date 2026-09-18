@@ -49,6 +49,7 @@ elements.get('output').scrollTop = 12;
 elements.get('output').scrollHeight = 200;
 
 let editorRefreshes = 0;
+let editorScrollRestores = 0;
 let observer;
 let frameId = 0;
 const frames = new Map();
@@ -59,7 +60,15 @@ const document = Object.assign(surface(), {
   documentElement: root, body,
   getElementById: (id) => elements.get(id) || null,
   querySelectorAll: () => [{ clientWidth: 400, clientHeight: 300,
-    CodeMirror: { refresh: () => editorRefreshes++ } }]
+    CodeMirror: {
+      getScrollInfo: () => ({ left: 17, top: 240 }),
+      refresh: () => editorRefreshes++,
+      scrollTo: (left, top) => {
+        assert.equal(left, 17);
+        assert.equal(top, 240);
+        editorScrollRestores++;
+      }
+    } }]
 });
 const window = Object.assign(surface(), {
   innerHeight: 900,
@@ -101,12 +110,20 @@ assert.equal(root.styles.get('--app-height'), '750px');
 assert.equal(elements.get('output').scrollTop, 12, 'resize preserves shell reading position');
 assert.equal(observer.observed.length, 3);
 
+const refreshesBeforeViewportPan = editorRefreshes;
+window.visualViewport.offsetTop = 24;
+window.visualViewport.fire('scroll');
+flushFrames();
+assert.equal(root.styles.get('--app-offset-top'), '24px');
+assert.equal(editorRefreshes, refreshesBeforeViewportPan, 'viewport panning must not refresh CodeMirror');
+
 window.visualViewport.height = 360;
 window.visualViewport.offsetTop = 90;
 window.visualViewport.fire('resize');
 flushFrames();
 assert.equal(root.styles.get('--app-height'), '360px', 'keyboard leaves controls within visible viewport');
 assert.equal(root.styles.get('--app-offset-top'), '90px');
+assert.ok(editorScrollRestores > 0, 'legitimate editor refreshes restore the prior scroll position');
 window.visualViewport.scale = 2;
 window.visualViewport.height = 180;
 window.visualViewport.fire('resize');
