@@ -38,7 +38,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20260918-6">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260918-8">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -62,7 +62,6 @@
         <button class="site-nav-link" id="wikiBookmarksBtn" type="button" aria-expanded="false" aria-controls="wikiBookmarksPanel">Bookmarks</button>
       </nav>
       <div class="ide-topbar-tools ide-only" id="ideTopbarTools" aria-label="IDE tools">
-        <button class="btn run run-btn-hero" id="runBtn">Run ▶</button>
         <div class="control-group" id="modeSelectorWrap">
           <label class="control-label" for="languageSelector">Mode</label>
           <select id="languageSelector" class="select">
@@ -277,8 +276,8 @@
     <div class="wiki-popover-heading"><strong>Search results</strong><button class="wiki-icon-btn" id="wikiSearchCloseBtn" type="button" aria-label="Close search">×</button></div>
     <div id="wikiSearchResults"></div>
   </section>
-  <button class="edge-toggle" id="rightEdgeToggleBtn" title="Hide resources sidebar" style="display:none;">◀</button>
-  <button class="teacher-pane-toggle" id="teacherPaneToggleBtn" title="Show teacher code stream" aria-expanded="false">▲</button>
+  <button class="edge-toggle" id="rightEdgeToggleBtn" title="Hide shell and resources panes" aria-label="Hide shell and resources panes" style="display:none;">◀</button>
+  <button class="teacher-pane-toggle" id="teacherPaneToggleBtn" title="Show teacher code stream" aria-label="Show teacher code stream" aria-expanded="false">▲</button>
 
   <main class="network-view" id="networkView" aria-label="Network Simulator">
     <section class="network-library" id="networkLibrary">
@@ -521,6 +520,7 @@
         <section class="panel" id="shellPanel" style="grid-row:1 / 2; grid-column:1;">
           <header class="shell-panel-header">
             <h3>Shell:</h3>
+            <button class="btn run run-btn-hero shell-run-btn" id="runBtn">Run ▶</button>
             <label class="shell-font-control" for="shellFontRange" title="Shell text size">
               <span>Text</span>
               <input id="shellFontRange" type="range" min="12" max="50" value="14" step="1">
@@ -1540,7 +1540,7 @@
             </div>
             <div class="admin-settings-fields two-column python-runtime-limit-grid">
               <label><span>Memory per Python run (MB)</span><input type="number" id="pythonMemoryLimitModal" min="128" max="2048" step="32"><small id="pythonMemoryLimitHint">Default 750 MB</small></label>
-              <label><span>Maximum concurrent runs</span><input type="number" id="pythonConcurrencyLimitModal" min="1" max="8" step="1"><small id="pythonConcurrencyLimitHint">Applies across students, teachers, admins, and guests.</small></label>
+              <label><span>Maximum concurrent runs</span><input type="number" id="pythonConcurrencyLimitModal" min="1" max="25" step="1"><small id="pythonConcurrencyLimitHint">Default 8. Applies across students, teachers, admins, and guests.</small></label>
             </div>
             <div class="python-runtime-live-stats" id="pythonRuntimeLiveStats"></div>
             <div class="python-module-access-heading">
@@ -1651,21 +1651,21 @@
   <script src="/static/js/app.js"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20250608"></script>
-  <script src="/static/js/layout.js?v=20260918-6"></script>
-  <script src="/static/js/editor-init.js?v=20260918-6"></script>
+  <script src="/static/js/layout.js?v=20260918-8"></script>
+  <script src="/static/js/editor-init.js?v=20260918-8"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js"></script>
-  <script src="/static/js/app-core.js?v=20260918-6"></script>
+  <script src="/static/js/app-core.js?v=20260918-8"></script>
 <script src="/static/js/network-sim.js?v=20260714-18"></script>
 <script src="/static/js/network-sim-advanced.js?v=20260714-4"></script>
-  <script src="/static/js/wiki-reader.js?v=20260918-6"></script>
+  <script src="/static/js/wiki-reader.js?v=20260918-8"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
   <script src="/static/js/lesson-plans.js?v=20260816-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20260918-6"></script>
-  <script src="/static/js/classroom-signals.js?v=20260918-6"></script>
-  <script src="/static/js/classroom-files.js?v=20260918-6"></script>
-  <script src="/static/js/student-notebook.js?v=20260918-6"></script>
-  <script src="/static/js/student-dashboard.js?v=20260918-6"></script>
+  <script src="/static/js/wiki-admin.js?v=20260918-8"></script>
+  <script src="/static/js/classroom-signals.js?v=20260918-8"></script>
+  <script src="/static/js/classroom-files.js?v=20260918-8"></script>
+  <script src="/static/js/student-notebook.js?v=20260918-8"></script>
+  <script src="/static/js/student-dashboard.js?v=20260918-8"></script>
 
 </body>
 </html>
