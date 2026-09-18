@@ -266,6 +266,8 @@ def _build_file_tree(directory: Path, base: Path) -> tuple[list, int]:
         file_entries = []
         with __import__("os").scandir(directory) as entries:
             for entry in entries:
+                if entry.name == ".eagleide":
+                    continue
                 try:
                     if entry.is_dir(follow_symlinks=False):
                         folder_entries.append(entry)
@@ -393,7 +395,8 @@ def register(app, socketio) -> None:
         if not ok:
             return jsonify(ok=False, error="Student not in class"), 403
         user_dir = M._get_user_dir(student_email)
-        user_dir.mkdir(parents=True, exist_ok=True)
+        M._ensure_workspace_system_dirs(user_dir)
+        M._purge_expired_trash(user_dir)
         tree, used_bytes = _build_file_tree(user_dir, user_dir)
         limit_bytes = M.USER_STORAGE_LIMIT_MB * 1024 * 1024
         return jsonify(ok=True, files=tree, used_bytes=used_bytes, limit_bytes=limit_bytes)
@@ -449,11 +452,13 @@ def register(app, socketio) -> None:
         target = M._validate_user_path(user_dir, path_str)
         if not target or not target.exists():
             return jsonify(ok=False, error="File not found"), 404
+        if target.resolve() == M._trash_dir(user_dir):
+            return jsonify(ok=False, error="Trash is a protected workspace folder"), 400
         try:
-            if target.is_dir():
-                __import__("shutil").rmtree(target)
+            if M._is_trash_path(user_dir, target, include_root=False):
+                M._permanently_delete_trash_item(user_dir, target)
             else:
-                target.unlink()
+                M._move_workspace_item_to_trash(user_dir, target)
         except Exception:
             return jsonify(ok=False, error="Could not delete item"), 500
         append_classroom_event(

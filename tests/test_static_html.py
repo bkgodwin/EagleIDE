@@ -133,6 +133,8 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn("eagleide-shell-font-size", app_core)
         self.assertIn("ide_solid_background_enabled", app_core)
         self.assertNotIn("workspaceFilesTabBtn", app_core)
+        for label in [">Lang<", ">Text<", ">Guide On<", ">Auto On<", ">Res On<", "📡 Stream Off", "📝 Prompt"]:
+            self.assertIn(label, self.raw)
 
     def test_attribute_ampersands_are_html_escaped(self):
         unescaped = re.findall(r'(?:href|src)="[^"]*&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9A-Fa-f]+);)', self.raw)
@@ -268,7 +270,7 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn("X-Teacher-Token", notebook)
         self.assertIn("teacherNotebookPracticeInput", notebook)
         self.assertIn("openNotebookShareModal", classroom_files)
-        self.assertIn('font-family: "Comic Sans MS"', notebook_css)
+        self.assertIn('font-family: "Arial Rounded MT Bold"', notebook_css)
         self.assertIn("teacherNotebookPracticeInput", self.parser.ids)
         self.assertNotIn("open-class-bookmarks-btn", core)
 
@@ -306,11 +308,17 @@ class StaticHtmlTestCase(unittest.TestCase):
         core = (BASE_DIR / "static" / "js" / "app-core.js").read_text(encoding="utf-8")
         classroom_files = (BASE_DIR / "static" / "js" / "classroom-files.js").read_text(encoding="utf-8")
         file_css = (BASE_DIR / "static" / "css" / "features" / "file-browser.css").read_text(encoding="utf-8")
-        self.assertIn("row.classList.toggle('selected', checkbox.checked)", core)
+        self.assertIn("setFileItemSelected(item.path, checkbox.checked)", core)
+        self.assertIn("id=\"restoreSelectedBtn\"", self.raw)
+        self.assertIn("/api/files/restore", core)
+        self.assertIn("item.system === 'trash'", core)
         self.assertIn("resolveSendFileItems", core)
         self.assertIn("body.sourcePaths = sendItems.map", classroom_files)
         self.assertIn("font-size:16px", file_css)
         self.assertIn("width:22px", file_css)
+        legacy_css = (BASE_DIR / "static" / "css" / "legacy.css").read_text(encoding="utf-8")
+        self.assertIn("--radius-sm: 0", legacy_css)
+        self.assertIn('[class*="-pane"]', legacy_css)
 
     def test_ide_search_does_not_force_wiki_mode_and_hides_contents_toggle(self):
         reader = (BASE_DIR / "static" / "js" / "wiki-reader.js").read_text(encoding="utf-8")

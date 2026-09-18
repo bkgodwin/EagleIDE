@@ -146,7 +146,11 @@ Checked-in seed/reference data is limited to files such as `challenges.csv` and 
 
 - `config.txt` and `.admin_key`
 - `users.json`, `classes.json`, and `skills.json`
-- `assignments/`, `notebooks/`, `user_files/`, and `sandboxes/`
+- `assignments/`, `notebooks/`, `user_files/`, and `sandboxes/`; each user workspace
+  has a protected visible `Trash/` folder and private `.eagleide/trash.json`
+  restore metadata. Ordinary file-browser and teacher-audit deletes move items to
+  Trash, top-level items restore to their original paths, and expired items are
+  purged after seven days during startup or file-tree access.
 - `lesson_plans/` (weekly plans, class-source mappings, and revocable public-link tokens)
 - `background_assets/` (administrator IDE/home backgrounds and per-class home backgrounds)
 - `wiki_data/` (SQLite catalog, Markdown, media, drafts, and revisions) and `wiki_backups/`
@@ -165,7 +169,7 @@ Network simulator definitions are source data in `network_content.py`; assignmen
 
 ## Where to Make Changes
 
-- Accounts, classes, files, assignments, quizzes, mastery, admin, AI, or core API behavior: `app.py` plus the matching section of `app-core.js`.
+- Accounts, classes, files, assignments, quizzes, mastery, admin, AI, or core API behavior: `app.py` plus the matching section of `app-core.js`. Keep the Trash root protected, use the locked metadata helpers for restore records, and preserve the distinction between recoverable active-workspace deletion and permanent deletion inside Trash.
 - Network simulator catalog, permissions, grading, migrations, or storage: `network_features.py`, `network_store.py`, and `network_content.py`. Core browser topology/packet behavior belongs in `network-sim.js`; diagnostics, capture, deterministic traffic, IPv6, dynamic-routing views, and productivity tools belong in `network-sim-advanced.js`; background generation belongs in `network-sim-worker.js`; visuals belong in `features/network-sim.css`. Saved topology schema version 2 supports media-aware ports, parallel links, link properties, IPv6, RSTP, routing protocols, wireless radio settings, stateful policy, and seeded simulation metadata; preserve `migrate_topology()` compatibility when evolving it.
 - Raise hand, classroom questions, file sharing, or teacher audit: `classroom_features.py`, `classroom-signals.js`, and/or `classroom-files.js`.
 - Notebook prompts and student notes: notebook helpers/routes in `app.py`, `student-notebook.js`, and `features/student-notebook.css`.
