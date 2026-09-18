@@ -5,13 +5,21 @@
   const TABLET_BP = 1200;
   let viewportFrame = null;
   let editorFrame = null;
+  let lastViewportHeight = null;
+  let lastViewportOffsetTop = null;
 
   function refreshEditors() {
     if (editorFrame) return;
     editorFrame = requestAnimationFrame(() => {
       editorFrame = null;
       document.querySelectorAll('#editorPanel .CodeMirror').forEach((element) => {
-        if (element.clientWidth && element.clientHeight) element.CodeMirror?.refresh?.();
+        const cm = element.CodeMirror;
+        if (!element.clientWidth || !element.clientHeight || !cm?.refresh) return;
+        const scroll = cm.getScrollInfo?.();
+        cm.refresh();
+        if (Number.isFinite(scroll?.left) && Number.isFinite(scroll?.top)) {
+          cm.scrollTo?.(scroll.left, scroll.top);
+        }
       });
     });
   }
@@ -26,9 +34,21 @@
       if (viewport && Math.abs(viewport.scale - 1) > 0.01) return;
       const viewportHeight = viewport?.height || window.innerHeight;
       if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return;
-      document.documentElement.style.setProperty('--app-height', `${Math.round(viewportHeight)}px`);
-      document.documentElement.style.setProperty('--app-offset-top', `${Math.round(viewport?.offsetTop || 0)}px`);
-      refreshEditors();
+      const roundedHeight = Math.round(viewportHeight);
+      const roundedOffsetTop = Math.round(viewport?.offsetTop || 0);
+      const heightChanged = roundedHeight !== lastViewportHeight;
+      if (heightChanged) {
+        lastViewportHeight = roundedHeight;
+        document.documentElement.style.setProperty('--app-height', `${roundedHeight}px`);
+      }
+      if (roundedOffsetTop !== lastViewportOffsetTop) {
+        lastViewportOffsetTop = roundedOffsetTop;
+        document.documentElement.style.setProperty('--app-offset-top', `${roundedOffsetTop}px`);
+      }
+      // visualViewport scroll fires repeatedly while iPadOS pans around the
+      // software keyboard. Refresh only for an actual size change so
+      // CodeMirror's virtual lines and gutter stay anchored during a gesture.
+      if (heightChanged) refreshEditors();
     });
   }
 

@@ -262,6 +262,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     function refreshEditors() {
+      if (window.EagleIDE?.layout?.refreshEditors) {
+        window.EagleIDE.layout.refreshEditors();
+        return;
+      }
       try { window.eagleEditor?.refresh?.(); } catch {}
       try { teacherEditor?.refresh?.(); } catch {}
     }
