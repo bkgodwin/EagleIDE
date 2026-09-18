@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 _ORIGINAL_INPUT = builtins.input
@@ -12,6 +13,7 @@ builtins.input = lambda _prompt="": "admin@eagleide.local"
 getpass.getpass = lambda _prompt="": "password"
 
 import app as eagle  # noqa: E402
+import classroom_features  # noqa: E402
 
 builtins.input = _ORIGINAL_INPUT
 getpass.getpass = _ORIGINAL_GETPASS
@@ -90,6 +92,8 @@ class NotebookTestCase(unittest.TestCase):
         self.users_file.write_text(json.dumps(users), encoding="utf-8")
         self.classes_file.write_text(json.dumps(classes), encoding="utf-8")
         self.skills_file.write_text(json.dumps({"skills": []}), encoding="utf-8")
+        eagle._users_cache = None
+        eagle._classes_cache = None
         eagle._skills_cache = None
 
         eagle._teacher_tokens[self.teacher_token] = {
@@ -122,6 +126,8 @@ class NotebookTestCase(unittest.TestCase):
         eagle.USERS_FILE = self.original_users_file
         eagle.CLASSES_FILE = self.original_classes_file
         eagle.SKILLS_FILE = self.original_skills_file
+        eagle._users_cache = None
+        eagle._classes_cache = None
         eagle._skills_cache = None
         self.tmp.cleanup()
 
@@ -244,6 +250,7 @@ class NotebookTestCase(unittest.TestCase):
         response_type="written",
         skill_tags=None,
         max_score=10,
+        graded=True,
     ):
         response = self.client.post(
             "/api/teacher/notebook-prompts/create",
@@ -255,12 +262,133 @@ class NotebookTestCase(unittest.TestCase):
                 "responseType": response_type,
                 "skillTags": skill_tags or [],
                 "maxScore": max_score,
+                "graded": graded,
             },
         )
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertTrue(data["ok"])
         return data["prompt"]
+
+    def test_teacher_has_a_private_class_notebook_with_assignments(self):
+        prompt = self._create_prompt(title="Teacher Demonstration")
+
+        response = self.client.get(
+            f"/api/notebook?classId={self.class_id}",
+            headers={"X-Teacher-Token": self.teacher_token},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        notebook = response.get_json()["notebook"]
+        assignments = next(tab for tab in notebook["tabs"] if tab["id"] == "assignments")
+        self.assertEqual(assignments["blocks"][0]["promptId"], prompt["id"])
+        notebook["tabs"].insert(0, {
+            "id": "teacher-demo",
+            "label": "Demo",
+            "html": "<p>Teacher-only demonstration notes.</p>",
+            "color": "#abcdef",
+        })
+        notebook["activeTabId"] = "teacher-demo"
+        saved = self.client.post(
+            "/api/notebook/save",
+            headers={"X-Teacher-Token": self.teacher_token},
+            json={"classId": self.class_id, "notebook": notebook},
+        )
+        self.assertEqual(saved.status_code, 200)
+        teacher_tabs = {tab["id"] for tab in saved.get_json()["notebook"]["tabs"]}
+        self.assertIn("teacher-demo", teacher_tabs)
+
+        student_notebook = self.client.get(
+            f"/api/notebook?classId={self.class_id}",
+            headers={"X-User-Token": self.student_token},
+        ).get_json()["notebook"]
+        self.assertNotIn("teacher-demo", {tab["id"] for tab in student_notebook["tabs"]})
+
+    def test_practice_prompt_is_ungraded_and_rejects_scores(self):
+        prompt = self._create_prompt(title="Practice Reflection", graded=False)
+        self.assertFalse(prompt["graded"])
+        notebook = self.client.get(
+            f"/api/notebook?classId={self.class_id}",
+            headers={"X-User-Token": self.student_token},
+        ).get_json()["notebook"]
+        block = next(tab for tab in notebook["tabs"] if tab["id"] == "assignments")["blocks"][0]
+        self.assertFalse(block["graded"])
+
+        grade_response = self.client.post(
+            "/api/teacher/notebook-prompts/grade",
+            headers={"X-Teacher-Token": self.teacher_token},
+            json={
+                "classId": self.class_id,
+                "promptId": prompt["id"],
+                "studentEmail": self.student_email,
+                "score": "10",
+            },
+        )
+        self.assertEqual(grade_response.status_code, 409)
+        self.assertIn("practice", grade_response.get_json()["error"].lower())
+
+    def test_notebook_tab_sharing_follows_class_file_permissions(self):
+        source_notebook = self.client.get(
+            f"/api/notebook?classId={self.class_id}",
+            headers={"X-User-Token": self.student_token},
+        ).get_json()["notebook"]
+        source_notebook["tabs"].insert(0, {
+            "id": "share-me",
+            "label": "Shared Notes",
+            "html": "<p>Loops and counters.</p>",
+            "color": "#abcdef",
+        })
+        saved = self.client.post(
+            "/api/notebook/save",
+            headers={"X-User-Token": self.student_token},
+            json={"classId": self.class_id, "notebook": source_notebook},
+        )
+        self.assertEqual(saved.status_code, 200)
+
+        with patch.object(classroom_features, "CLASSROOM_EVENTS_FILE", self.root / "events.json"):
+            to_teacher = self.client.post(
+                "/api/notebook/share-tab",
+                headers={"X-User-Token": self.student_token},
+                json={"classId": self.class_id, "tabId": "share-me"},
+            )
+            self.assertEqual(to_teacher.status_code, 200)
+            teacher_tab_id = to_teacher.get_json()["copied"][0]["tabId"]
+            from_teacher = self.client.post(
+                "/api/notebook/share-tab",
+                headers={"X-Teacher-Token": self.teacher_token},
+                json={"classId": self.class_id, "tabId": teacher_tab_id, "recipients": "all"},
+            )
+            self.assertEqual(from_teacher.status_code, 200)
+            self.assertEqual(len(from_teacher.get_json()["copied"]), 2)
+
+            peer_denied = self.client.post(
+                "/api/notebook/share-tab",
+                headers={"X-User-Token": self.student_token},
+                json={"classId": self.class_id, "tabId": "share-me", "targetEmail": self.second_student_email},
+            )
+            self.assertEqual(peer_denied.status_code, 403)
+
+            classes = json.loads(self.classes_file.read_text(encoding="utf-8"))
+            classes["classes"][0]["settings"] = {"student_peer_sharing_enabled": True}
+            self.classes_file.write_text(json.dumps(classes), encoding="utf-8")
+            eagle._classes_cache = None
+            peer_allowed = self.client.post(
+                "/api/notebook/share-tab",
+                headers={"X-User-Token": self.student_token},
+                json={"classId": self.class_id, "tabId": "share-me", "targetEmail": self.second_student_email},
+            )
+            self.assertEqual(peer_allowed.status_code, 200)
+
+        teacher_notebook = self.client.get(
+            f"/api/notebook?classId={self.class_id}",
+            headers={"X-Teacher-Token": self.teacher_token},
+        ).get_json()["notebook"]
+        peer_notebook = self.client.get(
+            f"/api/notebook?classId={self.class_id}",
+            headers={"X-User-Token": self.second_student_token},
+        ).get_json()["notebook"]
+        self.assertTrue(any("Loops and counters" in tab.get("html", "") for tab in teacher_notebook["tabs"]))
+        self.assertTrue(any("Loops and counters" in tab.get("html", "") for tab in peer_notebook["tabs"]))
 
     def test_prompt_is_added_to_locked_assignments_tab(self):
         prompt = self._create_prompt()

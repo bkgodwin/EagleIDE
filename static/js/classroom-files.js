@@ -4,7 +4,8 @@
 (function () {
   'use strict';
 
-  let sendFileItem = null;
+  let sendItems = [];
+  let sendKind = 'files';
   let sendFileContext = null;
   let sendInProgress = false;
   let auditStudentEmail = null;
@@ -75,20 +76,38 @@
     }
   }
 
-  async function openSendModal(item) {
+  async function openShareModal(items, kind = 'files') {
     const c = ctx();
     const classCtx = getClassContext();
-    if (!canSendFile(item)) return;
-    sendFileItem = item;
+    const normalizedItems = Array.isArray(items) ? items.filter(Boolean) : [items].filter(Boolean);
+    if (!normalizedItems.length) return;
+    if (kind === 'files' && !normalizedItems.every(canSendFile)) return;
+    if (kind === 'notebook' && !canShareNotebookTab()) return;
+    sendItems = normalizedItems;
+    sendKind = kind;
     const selection = { classId: classCtx.id, token: c.TEACHER_TOKEN || c.USER_TOKEN };
     sendFileContext = selection;
     const modal = document.getElementById('classroomSendFileModal');
     const title = document.getElementById('classroomSendFileTitle');
+    const description = document.getElementById('classroomSendDescription');
+    const submitButton = document.getElementById('classroomSendFileSubmitBtn');
     const recipientsWrap = document.getElementById('classroomSendRecipients');
     const peerRow = document.getElementById('classroomSendPeerRow');
     if (!modal || !recipientsWrap) return;
 
-    title.textContent = `Send "${item.name}" — ${classCtx.name || 'Selected class'}`;
+    if (kind === 'notebook') {
+      title.textContent = `Share notebook tab "${normalizedItems[0].label || 'Notes'}" — ${classCtx.name || 'Selected class'}`;
+      if (description) description.textContent = 'A separate editable copy is added to each recipient’s notebook.';
+      if (submitButton) submitButton.textContent = 'Share';
+    } else if (normalizedItems.length === 1) {
+      title.textContent = `Send "${normalizedItems[0].name}" — ${classCtx.name || 'Selected class'}`;
+      if (description) description.textContent = 'A copy is placed in each recipient’s Shared folder.';
+      if (submitButton) submitButton.textContent = 'Send';
+    } else {
+      title.textContent = `Send ${normalizedItems.length} selected files — ${classCtx.name || 'Selected class'}`;
+      if (description) description.textContent = 'Copies are placed in each recipient’s Shared folder.';
+      if (submitButton) submitButton.textContent = 'Send';
+    }
     recipientsWrap.innerHTML = '';
     if (peerRow) peerRow.style.display = 'none';
 
@@ -148,22 +167,44 @@
     modal.style.display = 'flex';
   }
 
+  function canShareNotebookTab() {
+    const c = ctx();
+    const classCtx = getClassContext();
+    if (!classCtx) return false;
+    if (c.TEACHER_TOKEN) return classCtx.settings?.teacher_file_send_enabled !== false;
+    if (c.USER_TOKEN && !c.ADMIN_TOKEN) {
+      const settings = classCtx.settings || {};
+      return settings.student_send_to_teacher_enabled !== false
+        || settings.student_peer_sharing_enabled === true;
+    }
+    return false;
+  }
+
+  function openSendModal(items) {
+    return openShareModal(items, 'files');
+  }
+
+  function openNotebookShareModal(tab) {
+    return openShareModal(tab, 'notebook');
+  }
+
   async function submitSendFile() {
     if (sendInProgress) return;
     const c = ctx();
     const classCtx = getClassContext();
-    if (!sendFileItem || !classCtx || !sendFileContext) return;
+    if (!sendItems.length || !classCtx || !sendFileContext) return;
     if (classCtx.id !== sendFileContext.classId || (c.TEACHER_TOKEN || c.USER_TOKEN) !== sendFileContext.token) {
       document.getElementById('classroomSendFileModal').style.display = 'none';
-      sendFileItem = null;
+      sendItems = [];
       sendFileContext = null;
       return alert('Your class or account changed. Open Send File again to choose recipients for the selected class.');
     }
     const classId = sendFileContext.classId;
     const body = {
       classId,
-      sourcePath: sendFileItem.path,
     };
+    if (sendKind === 'notebook') body.tabId = sendItems[0].id;
+    else body.sourcePaths = sendItems.map(item => item.path);
 
     if (c.TEACHER_TOKEN) {
       const selectAll = document.getElementById('classroomSendSelectAll')?.checked;
@@ -183,7 +224,7 @@
 
     sendInProgress = true;
     try {
-      const res = await fetch('/api/classroom/send-file', {
+      const res = await fetch(sendKind === 'notebook' ? '/api/notebook/share-tab' : '/api/classroom/send-file', {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
@@ -192,11 +233,13 @@
       if (!j?.ok) return alert(j?.error || 'Send failed');
       const copied = j.copied?.length || 0;
       const errors = j.errors?.length || 0;
-      let msg = `File sent to ${copied} recipient(s).`;
+      let msg = sendKind === 'notebook'
+        ? `Notebook tab shared with ${copied} recipient(s).`
+        : `${copied} file ${copied === 1 ? 'copy' : 'copies'} sent.`;
       if (errors) msg += ` ${errors} failed.`;
       alert(msg);
       document.getElementById('classroomSendFileModal').style.display = 'none';
-      sendFileItem = null;
+      sendItems = [];
       sendFileContext = null;
     } catch {
       alert('Could not send the file. Check your connection and try again.');
@@ -327,7 +370,7 @@
   function bindUi() {
     document.getElementById('classroomSendFileCancelBtn')?.addEventListener('click', () => {
       document.getElementById('classroomSendFileModal').style.display = 'none';
-      sendFileItem = null;
+      sendItems = [];
     });
     document.getElementById('classroomSendFileSubmitBtn')?.addEventListener('click', () => submitSendFile());
     document.getElementById('classroomAuditCloseBtn')?.addEventListener('click', () => {
@@ -350,10 +393,12 @@
   window.ClassroomFiles = {
     addCtxMenuItems,
     openSendModal,
+    openNotebookShareModal,
     openAuditModal,
     resetStudentExamples,
     loadClassroomLog,
     canSendFile,
+    canShareNotebookTab,
     studentCanUseSendFeature,
   };
 

@@ -5715,7 +5715,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         checkbox.addEventListener('change', () => {
           if (checkbox.checked) _selectedFileItems.add(item.path);
           else _selectedFileItems.delete(item.path);
-          renderCurrentFolder();
+          row.classList.toggle('selected', checkbox.checked);
+          row.dataset.selected = checkbox.checked ? '1' : '0';
+          updateFileActionButtons();
+          updateSendFileButtonVisibility();
         });
 
         // Click: open file or enter folder
@@ -6142,17 +6145,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       return settings.student_send_to_teacher_enabled !== false || settings.student_peer_sharing_enabled === true;
     }
 
-    function resolveSendFileItem() {
-      const isStudent = USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN;
-      if (isStudent) {
-        const selectedFiles = getSelectedTreeItems().filter(i => i.type === 'file');
-        if (selectedFiles.length > 1) return null;
-        if (selectedFiles.length === 1) return selectedFiles[0];
-      }
+    function resolveSendFileItems() {
+      const selectedItems = getSelectedTreeItems();
+      const selectedFiles = selectedItems.filter(item => item.type === 'file');
+      if (selectedItems.length) return selectedFiles.length === selectedItems.length ? selectedFiles : [];
       if (currentOpenFile?.path && !currentOpenFile.audit && !currentOpenFile.notebook) {
-        return { type: 'file', path: currentOpenFile.path, name: currentOpenFile.name };
+        return [{ type: 'file', path: currentOpenFile.path, name: currentOpenFile.name }];
       }
-      return null;
+      return [];
     }
 
     function updateSendFileButtonVisibility() {
@@ -6167,24 +6167,24 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           return;
         }
         btn.style.display = '';
-        const selectedFiles = getSelectedTreeItems().filter(i => i.type === 'file');
-        const item = resolveSendFileItem();
-        const ready = item && canSendOpenFile(item) && selectedFiles.length <= 1;
+        const selectedItems = getSelectedTreeItems();
+        const items = resolveSendFileItems();
+        const ready = items.length > 0 && items.every(canSendOpenFile);
         btn.disabled = !ready;
         btn.title = ready
-          ? 'Send selected file to teacher or classmate'
-          : (selectedFiles.length > 1 ? 'Select only one file to send' : 'Select one file to send');
+          ? `Send ${items.length === 1 ? 'selected file' : `${items.length} selected files`} to teacher or classmate`
+          : (selectedItems.some(item => item.type !== 'file') ? 'Only files can be sent; uncheck selected folders' : 'Check one or more files to send');
         return;
       }
       if (!TEACHER_TOKEN) {
         btn.style.display = 'none';
         return;
       }
-      const item = resolveSendFileItem();
-      const show = item && canSendOpenFile(item);
+      const items = resolveSendFileItems();
+      const show = items.length > 0 && items.every(canSendOpenFile);
       btn.style.display = show ? '' : 'none';
       btn.disabled = false;
-      btn.title = 'Send open file to students';
+      btn.title = items.length > 1 ? `Send ${items.length} selected files to students` : 'Send selected file to students';
     }
 
     async function openFile(item) {
@@ -8334,14 +8334,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     window.onClassroomSettingsUpdated = applyClassSettingsPatch;
 
     document.getElementById('sendFileBtn')?.addEventListener('click', () => {
-      const item = resolveSendFileItem();
-      if (!item) {
-        const selectedFiles = getSelectedTreeItems().filter(i => i.type === 'file');
-        if (selectedFiles.length > 1) alert('Select only one file to send.');
-        else alert('Select one file to send.');
+      const items = resolveSendFileItems();
+      if (!items.length) {
+        const selectedItems = getSelectedTreeItems();
+        if (selectedItems.some(item => item.type !== 'file')) alert('Only files can be sent. Uncheck any selected folders.');
+        else alert('Check one or more files to send.');
         return;
       }
-      if (window.ClassroomFiles?.openSendModal) window.ClassroomFiles.openSendModal(item);
+      if (window.ClassroomFiles?.openSendModal) window.ClassroomFiles.openSendModal(items);
       else alert('Send file is unavailable. Please refresh the page.');
     });
     document.getElementById('classroomAuditCloseBannerBtn')?.addEventListener('click', closeAuditPreview);
