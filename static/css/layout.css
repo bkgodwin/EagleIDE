@@ -31,7 +31,7 @@
   flex: 0 0 auto;
 }
 
-/* Beat legacy shell.css header.topbar { z-index: 100 } so account menu clears tool-tray */
+/* Keep account menus above the workspace. */
 header.topbar.topbar-primary {
   position: sticky;
   top: 0;
@@ -80,6 +80,63 @@ body.light-mode .topbar-primary .topbar-tools-btn {
   justify-self: center;
 }
 
+.ide-topbar-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 3px 4px;
+  scrollbar-width: thin;
+  overscroll-behavior-x: contain;
+}
+
+.ide-topbar-tools > * { flex: 0 0 auto; }
+.ide-topbar-tools .btn,
+.ide-topbar-tools .select { min-height: 34px; }
+.ide-topbar-tools .control-group { padding: 2px 7px; gap: 6px; }
+.ide-topbar-tools .font-range { width: 92px; }
+.ide-topbar-tools #classSelectorWrap { min-width: 180px; padding: 2px 7px; }
+.ide-topbar-tools #classSelector { max-width: 150px; }
+
+.ide-topbar-tools #guidesBtn,
+.ide-topbar-tools #autocompleteBtn,
+.ide-topbar-tools #resourcesToggleBtn {
+  border-color: rgba(255, 255, 255, .42);
+  background: #234d70;
+  color: #fff;
+  box-shadow: 0 2px 7px rgba(4, 20, 36, .3);
+}
+
+.ide-topbar-tools #guidesBtn:hover,
+.ide-topbar-tools #autocompleteBtn:hover,
+.ide-topbar-tools #resourcesToggleBtn:hover { background: #173a57; }
+
+body.light-mode .ide-topbar-tools #guidesBtn,
+body.light-mode .ide-topbar-tools #autocompleteBtn,
+body.light-mode .ide-topbar-tools #resourcesToggleBtn {
+  border-color: #173a57;
+  background: #315f86;
+  color: #fff;
+}
+
+body:not(.wiki-mode) .topbar-primary {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  min-height: 58px;
+  padding: 5px 8px;
+}
+
+body:not(.wiki-mode) .topbar-primary-center {
+  justify-self: stretch;
+  justify-content: flex-start;
+  min-width: 0;
+  overflow: hidden;
+}
+
+body:not(.wiki-mode) .site-primary-nav { flex: 0 0 auto; }
+
 .btn.run-btn-hero {
   min-width: 168px;
   min-height: 52px;
@@ -90,6 +147,15 @@ body.light-mode .topbar-primary .topbar-tools-btn {
   letter-spacing: 0.4px;
   border-radius: 12px;
   box-shadow: 0 4px 16px rgba(198, 40, 40, 0.35);
+}
+
+.ide-topbar-tools .btn.run-btn-hero {
+  min-width: 92px;
+  min-height: 40px;
+  margin-left: 0;
+  padding: 9px 18px;
+  font-size: 16px;
+  border-radius: 9px;
 }
 
 .btn.run-btn-hero.stop {
@@ -107,27 +173,6 @@ body.light-mode .topbar-primary .topbar-tools-btn {
   flex-wrap: wrap;
   overflow: visible;
 }
-
-.tool-tray {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-  padding: var(--space-2) var(--space-4);
-  min-height: var(--tool-tray-h);
-  background: var(--glass-bg-elevated);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  border-bottom: 1px solid var(--theme-border-mid);
-  position: relative;
-  z-index: 100;
-  flex: 0 0 auto;
-  max-height: min(240px, 30dvh);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-.tool-tray.collapsed { display: none; }
 
 .file-chip {
   max-width: 200px;
@@ -167,8 +212,8 @@ body.light-mode .file-chip { background: rgba(255, 255, 255, 0.45); }
   display: grid;
   grid-template-columns: minmax(0, var(--left-width)) var(--vsplitter-size) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
-  gap: var(--space-3);
-  padding: var(--space-3) max(var(--space-3), env(safe-area-inset-right)) max(var(--space-3), env(safe-area-inset-bottom)) max(var(--space-3), env(safe-area-inset-left));
+  gap: 5px;
+  padding: 5px max(5px, env(safe-area-inset-right)) max(5px, env(safe-area-inset-bottom)) max(5px, env(safe-area-inset-left));
   flex: 1;
   min-height: 0;
   min-width: 0;
@@ -177,14 +222,10 @@ body.light-mode .file-chip { background: rgba(255, 255, 255, 0.45); }
   overflow: hidden;
 }
 
-body.tool-tray-collapsed .outer {
-  height: auto;
-}
-
 .panel {
   background: var(--theme-panel);
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-lg);
+  border-radius: 8px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -305,7 +346,7 @@ body.workspace-resizing iframe { pointer-events: none; }
 
 .edge-toggle {
   position: fixed;
-  top: calc(var(--topbar-h) + var(--tool-tray-h) + 35vh);
+  top: calc(var(--topbar-h) + 35vh);
   transform: translateY(-50%);
   z-index: 250;
   width: 48px;
@@ -374,12 +415,11 @@ body.workspace-resizing iframe { pointer-events: none; }
   overscroll-behavior: contain;
 }
 #rightStackPanel .tabs .tab-btn { flex-shrink: 0; }
-.workspace-tabs { min-width: 0; flex-wrap: wrap; }
-
 @media (max-width: 900px) {
-  .outer { gap: 8px; padding: 8px; }
-  .workspace-tabs { margin-left: 0; }
-  .workspace-tab-btn { padding-inline: 10px; }
+  .outer { gap: 4px; padding: 4px; }
+  body:not(.wiki-mode) .topbar-primary { grid-template-columns: auto minmax(0,1fr) auto; }
+  body:not(.wiki-mode) .topbar-primary .brand > div:first-child { max-width: 76px; }
+  .ide-topbar-tools .font-range { width: 74px; }
 }
 
 /* A very narrow phone/split-screen window still exposes every panel: stack
@@ -393,15 +433,14 @@ body.workspace-resizing iframe { pointer-events: none; }
 }
 
 @media (max-width: 1366px) {
-  .tool-tray { gap: var(--space-1); }
-  .btn, .tab-btn, .workspace-tab-btn, .file-action-btn { min-height: 40px; }
+  .btn, .tab-btn, .file-action-btn { min-height: 40px; }
   .file-tree-item { padding-top: 9px; padding-bottom: 9px; }
   .topbar-primary .brand > div:first-child { max-width: 120px; }
   .btn.run-btn-hero { min-width: 138px; min-height: 48px; margin-left: 16px; padding: 11px 26px; font-size: 17px; }
 }
 
 @media (pointer: coarse) {
-  .btn, .tab-btn, .workspace-tab-btn, .file-action-btn, .file-tree-item {
+  .btn, .tab-btn, .file-action-btn, .file-tree-item {
     min-height: var(--touch-min);
   }
   .file-select-checkbox { width: 22px; height: 22px; }
@@ -422,7 +461,7 @@ body.guest-mode #rightStackPanel { display: none !important; }
 body.guest-mode .vsplitter { display: none !important; }
 body.guest-mode #rightstack { grid-template-rows: 1fr !important; }
 body.guest-mode #shellPanel { grid-row: 1 / 2 !important; }
-body.guest-mode #workspaceFilesTabBtn { display: none !important; }
+body.guest-mode #workspaceSwitchBtn { display: none !important; }
 
 body.right-collapsed #rightColumn { display: none !important; }
 body.right-collapsed #hsplitter { display: none !important; }
@@ -439,4 +478,9 @@ body.resources-collapsed #rightColumn .vsplitter { display: none !important; }
 body.resources-collapsed #rightstack { grid-template-rows: minmax(0, 1fr) !important; }
 body.resources-collapsed #shellPanel { grid-row: 1 / 2 !important; }
 
-body.guest-mode .tool-tray .guest-hidden { display: none !important; }
+body.guest-mode .ide-topbar-tools .guest-hidden { display: none !important; }
+
+body.ide-solid-background:not(.wiki-mode) {
+  background-color: var(--ide-solid-background-color);
+  background-image: none !important;
+}

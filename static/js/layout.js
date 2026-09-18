@@ -42,39 +42,6 @@
     document.body.classList.remove('tablet-mode', 'panel-editor', 'panel-shell', 'panel-resources');
   }
 
-  function setToolTrayCollapsed(collapsed) {
-    const tray = document.getElementById('toolTray');
-    const btn = document.getElementById('topbarToolsBtn');
-    if (!tray) return;
-    tray.classList.toggle('collapsed', collapsed);
-    document.body.classList.toggle('tool-tray-collapsed', collapsed);
-    if (btn) {
-      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-      btn.textContent = collapsed ? 'Tools ▸' : 'Tools ▾';
-    }
-    refreshEditors();
-    try {
-      localStorage.setItem('eagleide-tool-tray-collapsed', collapsed ? '1' : '0');
-    } catch {}
-  }
-
-  function initToolTray() {
-    const btn = document.getElementById('topbarToolsBtn');
-    const tray = document.getElementById('toolTray');
-    if (!btn || !tray) return;
-
-    btn.addEventListener('click', () => {
-      setToolTrayCollapsed(!tray.classList.contains('collapsed'));
-    });
-
-    let startCollapsed = false;
-    try {
-      const saved = localStorage.getItem('eagleide-tool-tray-collapsed');
-      if (saved === '1') startCollapsed = true;
-    } catch {}
-    setToolTrayCollapsed(startCollapsed);
-  }
-
   function initRoleMenu() {
     const menu = document.getElementById('roleMenu');
     const btn = document.getElementById('roleMenuBtn');
@@ -143,12 +110,11 @@
   document.addEventListener('DOMContentLoaded', () => {
     syncAppHeight();
     syncTabletMode();
-    initToolTray();
     initRoleMenu();
     observeWorkspaceSize();
     initLongPressContext();
   });
 
   window.EagleIDE = window.EagleIDE || {};
-  window.EagleIDE.layout = { syncTabletMode, syncAppHeight, refreshEditors, isTabletWidth, setToolTrayCollapsed };
+  window.EagleIDE.layout = { syncTabletMode, syncAppHeight, refreshEditors, isTabletWidth };
 })();

@@ -160,7 +160,7 @@
     body.guest-mode .vsplitter{ display:none !important; }
     body.guest-mode #rightstack{ grid-template-rows: 1fr !important; }
     body.guest-mode #shellPanel{ grid-row:1 / 2 !important; }
-    body.guest-mode #workspaceFilesTabBtn{ display:none !important; }
+    body.guest-mode #workspaceSwitchBtn{ display:none !important; }
 
     /* Users table in admin settings */
     /* Student assignment card inline score badge */

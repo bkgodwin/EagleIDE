@@ -27,12 +27,43 @@
     }
 
     .editor-content-stack{
+      position:relative;
       display:grid;
       grid-template-rows: minmax(0, 1fr) 0 0;
       grid-template-areas: "workspace" "splitter" "teacher";
       height:100%;
       min-height:0;
     }
+    .workspace-floating-controls{
+      position:absolute;
+      top:7px;
+      right:8px;
+      z-index:25;
+      display:flex;
+      align-items:center;
+      gap:6px;
+      pointer-events:none;
+    }
+    .workspace-floating-controls > *{ pointer-events:auto; }
+    .workspace-switch-btn{
+      min-height:34px;
+      padding:6px 11px;
+      border:1px solid var(--glass-border-highlight);
+      border-radius:8px;
+      background:color-mix(in srgb,var(--theme-panel-hdr) 94%,transparent);
+      color:var(--theme-text);
+      box-shadow:0 3px 12px rgba(0,0,0,.28);
+      font:inherit;
+      font-size:12px;
+      font-weight:800;
+      cursor:pointer;
+      backdrop-filter:blur(8px);
+    }
+    .workspace-switch-btn:hover,.workspace-switch-btn:focus-visible{ background:var(--theme-btn-hover); outline:2px solid var(--columbia-blue); outline-offset:1px; }
+    #clearErrorsBtn{ min-height:34px; padding:6px 10px; font-size:12px; }
+    #clearErrorsBtn[hidden]{ display:none !important; }
+    .editor-content-stack.file-browser-active #clearErrorsBtn{ display:none !important; }
+    .editor-content-stack.file-browser-active .workspace-switch-btn{ background:var(--theme-secondary); color:var(--columbia-blue); }
     .student-editor-wrap{ grid-area: workspace; position:relative; height:100%; }
     .student-editor-wrap.artifact-preview-active > .CodeMirror,
     .student-editor-wrap.artifact-preview-active > textarea,
@@ -47,8 +78,8 @@
       height:100%;
       min-height:0;
       background:var(--theme-panel);
-      border-radius:10px;
-      border:1px solid var(--theme-border-mid);
+      border-radius:0;
+      border:0;
       overflow:hidden;
       flex-direction:column;
     }
