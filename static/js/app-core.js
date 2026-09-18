@@ -351,6 +351,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           const c = Number(e.target.dataset.c);
           if (!csvEditorRows[r]) csvEditorRows[r] = [];
           csvEditorRows[r][c] = e.target.value;
+          currentBufferDirty = true;
           scheduleCsvAutosave();
         });
       });
@@ -1993,11 +1994,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
       // Save current file before running Python or JavaScript.
       if (currentOpenFile && (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN)) {
-        try {
-          await saveCurrentFile();
-        } catch (err) {
-          appendOut(`[Warning: could not save "${currentOpenFile.name}" before running: ${err}]\n`);
-        }
+        // The runner receives the current editor buffer directly, so a slow
+        // classroom network must not block Run while the same buffer autosaves.
+        saveCurrentFile().then(ok => {
+          if (!ok) appendOut(`[Warning: could not autosave "${currentOpenFile?.name || 'file'}"; the current code still ran.]\n`);
+        }).catch(err => {
+          appendOut(`[Warning: could not autosave "${currentOpenFile?.name || 'file'}": ${err?.message || err}]\n`);
+        });
       }
       appendOut('[Sending code]\n');
       setRunButtonState(true, 'editor');
@@ -2332,7 +2335,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const editorStreamSplitter = document.getElementById('editorStreamSplitter');
       const teacherPaneToggleBtn = document.getElementById('teacherPaneToggleBtn');
       const rightEdgeToggleBtn = document.getElementById('rightEdgeToggleBtn');
+      const resourcesToggleBtn = document.getElementById('resourcesToggleBtn');
       const RIGHT_COLLAPSE_KEY = 'eagleide-right-collapsed';
+      const RESOURCES_COLLAPSE_KEY = 'eagleide-resources-collapsed';
       const LEFT_WIDTH_KEY = 'eagleide-left-width';
       const SHELL_SIZE_KEY = 'eagleide-shell-size';
 
@@ -2370,12 +2375,30 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         window.EagleIDE?.layout?.refreshEditors?.();
       }
 
+      function applyResourcesState(collapsed, persist = true) {
+        document.body.classList.toggle('resources-collapsed', collapsed);
+        if (resourcesToggleBtn) {
+          resourcesToggleBtn.textContent = collapsed ? 'Show Resources' : 'Hide Resources';
+          resourcesToggleBtn.title = collapsed
+            ? 'Show wiki, assignments, and other resources'
+            : 'Hide wiki, assignments, and other resources';
+          resourcesToggleBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        }
+        if (persist) {
+          try { localStorage.setItem(RESOURCES_COLLAPSE_KEY, collapsed ? '1' : '0'); } catch {}
+        }
+        window.EagleIDE?.layout?.refreshEditors?.();
+      }
+
       if (rightEdgeToggleBtn) {
         rightEdgeToggleBtn.addEventListener('click', () => {
           const collapsed = !document.body.classList.contains('right-collapsed');
           applyRightSidebarState(collapsed);
         });
       }
+      resourcesToggleBtn?.addEventListener('click', () => {
+        applyResourcesState(!document.body.classList.contains('resources-collapsed'));
+      });
 
       try {
         const storedLeft = parseFloat(localStorage.getItem(LEFT_WIDTH_KEY) || '');
@@ -2385,8 +2408,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const storedTeacherPane = parseFloat(localStorage.getItem(TEACHER_PANE_SIZE_KEY) || '');
         if (Number.isFinite(storedTeacherPane)) setTeacherPaneSize(storedTeacherPane, false);
         applyRightSidebarState(localStorage.getItem(RIGHT_COLLAPSE_KEY) === '1', false);
+        applyResourcesState(localStorage.getItem(RESOURCES_COLLAPSE_KEY) === '1', false);
       } catch {
         applyRightSidebarState(false, false);
+        applyResourcesState(false, false);
         setTeacherPaneSize(50, false);
       }
 
@@ -2491,7 +2516,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     })();
 
     // ---- Login UI ----
-    function updateLoginModeUI() {
+    function updateLoginModeUI(clearError = true) {
       const reg = document.getElementById('registerSection');
       const btn = document.getElementById('toggleRegisterBtn');
       const submit = document.getElementById('loginSubmitBtn');
@@ -2501,7 +2526,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (submit) submit.textContent = registerMode ? 'Create Account' : 'Sign In';
       if (title) title.textContent = registerMode ? 'Create Student Account' : 'Sign In';
       const err = document.getElementById('authError');
-      if (err) err.textContent = '';
+      if (err && clearError) err.textContent = '';
     }
 
     function openLoginModal() {
@@ -2678,7 +2703,19 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     async function applyAuthLoginPayload(j) {
-      if (j.role === 'teacher') {
+      if (j.role === 'admin') {
+        ADMIN_TOKEN = j.token;
+        USER_TOKEN = null;
+        TEACHER_TOKEN = null;
+        currentTeacher = null;
+        currentUser = null;
+        teacherClasses = [];
+        studentClasses = [];
+        currentTeacherClassId = null;
+        currentStudentClassId = null;
+        document.body.classList.add('admin-mode');
+        setTeacherStreamingEnabled(false);
+      } else if (j.role === 'teacher') {
         TEACHER_TOKEN = j.token;
         currentTeacher = j.user;
         USER_TOKEN = null;
@@ -2715,9 +2752,54 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       await showFileBrowser();
     }
 
+    function waitForAuthRetry(delayMs) {
+      return new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+
+    async function fetchAuthRequest(url, options = {}, attempts = 3) {
+      let lastError = null;
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timeout = controller ? setTimeout(() => controller.abort(), 8000) : null;
+        try {
+          const response = await fetch(url, { ...options, signal: controller?.signal });
+          if (![502, 503, 504].includes(response.status) || attempt === attempts - 1) return response;
+          lastError = new Error(`Server temporarily unavailable (${response.status})`);
+        } catch (error) {
+          lastError = error;
+          if (attempt === attempts - 1) break;
+        } finally {
+          if (timeout) clearTimeout(timeout);
+        }
+        await waitForAuthRetry(350 * (attempt + 1));
+      }
+      if (lastError?.name === 'AbortError') {
+        const timeoutError = new Error('The sign-in request timed out. The network may be slow; please try again.');
+        timeoutError.code = 'timeout';
+        throw timeoutError;
+      }
+      const networkError = new Error('Could not reach the EagleIDE server. Check Wi-Fi and try again.');
+      networkError.code = 'network';
+      throw networkError;
+    }
+
+    async function fetchWithDeadline(url, options = {}, timeoutMs = 12000) {
+      if (typeof AbortController === 'undefined') return fetch(url, options);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        return await fetch(url, { ...options, signal: controller.signal });
+      } catch (error) {
+        if (error?.name === 'AbortError') throw new Error('The server took too long to respond. Check your connection and try again.');
+        throw error;
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+
     async function tryUnifiedSignIn(email, password) {
       try {
-        const authRes = await fetch('/api/auth/login', {
+        const authRes = await fetchAuthRequest('/api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, password })
@@ -2733,24 +2815,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         if (authRes.status !== 401) {
           return { ok: false, error: authJson?.error || 'Sign-in is temporarily unavailable. Please try again.' };
         }
-        const adminRes = await fetch('/api/admin/login', {
+        const adminRes = await fetchAuthRequest('/api/admin/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, password })
         });
         const adminJson = await adminRes.json().catch(() => ({}));
         if (adminRes.ok && adminJson?.ok && adminJson.token) {
-          ADMIN_TOKEN = adminJson.token;
-          USER_TOKEN = null;
-          TEACHER_TOKEN = null;
-          currentTeacher = null;
-          currentUser = null;
-          document.body.classList.add('admin-mode');
-          closeLoginModal();
-          setTeacherStreamingEnabled(false);
-          saveAuthSession();
-          updateAuthUI();
-          await showFileBrowser();
+          await applyAuthLoginPayload({ ...adminJson, role: 'admin' });
           return { ok: true };
         }
         const authError = String(authJson?.error || '').trim();
@@ -2765,8 +2837,21 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           error = authError || adminError || generic;
         }
         return { ok: false, error };
-      } catch {
-        return { ok: false, error: 'Network error. Please try again.' };
+      } catch (error) {
+        return { ok: false, error: error?.message || 'Could not reach the server. Check Wi-Fi and try again.' };
+      }
+    }
+
+    async function restoreDeviceSession() {
+      try {
+        const response = await fetchAuthRequest('/api/auth/restore', { method: 'POST' }, 2);
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data?.ok || !data.token || !data.role) return false;
+        await applyAuthLoginPayload(data);
+        return true;
+      } catch (error) {
+        console.warn('Could not restore the saved device session.', error);
+        return false;
       }
     }
 
@@ -2862,7 +2947,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       submitBtn.textContent = registerMode ? 'Creating account…' : 'Signing in…';
       try {
         if (registerMode) {
-          const res = await fetch('/api/auth/register', {
+          const res = await fetchAuthRequest('/api/auth/register', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email, password, name })
@@ -2881,16 +2966,21 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         authSubmitPending = false;
         submitBtn.disabled = false;
         toggleBtn.disabled = false;
-        updateLoginModeUI();
+        updateLoginModeUI(false);
       }
     });
     document.getElementById('authPasswordInput').addEventListener('keypress', (e) => {
       if (e.key === 'Enter') document.getElementById('loginSubmitBtn').click();
     });
     (async () => {
-      const restored = restoreAuthSession();
+      let restored = restoreAuthSession();
       if (restored) {
-        await validateRestoredAuthSession();
+        restored = await validateRestoredAuthSession();
+      }
+      if (!restored) {
+        restored = await restoreDeviceSession();
+      }
+      if (restored) {
         if (USER_TOKEN) {
           await loadStudentClassData().catch(() => null);
         } else if (TEACHER_TOKEN) {
@@ -5356,7 +5446,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return false;
       if (!canCurrentUserAccessIDE()) return false;
       const requestContext = JSON.stringify(fileAuthHeaders());
-      const res = await fetch('/api/files/list', { headers: fileAuthHeaders() });
+      const res = await fetchWithDeadline('/api/files/list', { headers: fileAuthHeaders() });
       const j = await res.json().catch(() => ({}));
       if (requestContext !== JSON.stringify(fileAuthHeaders())) return false;
       if (!j.ok) {
@@ -5826,16 +5916,17 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (currentOpenFile?.draft) return true;
       if (fileArtifactPreviewActive || (currentOpenFile?.kind && currentOpenFile.kind !== 'text')) return true;
       if (!currentOpenFile || (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN)) return true;
+      if (!currentBufferDirty) return true;
       syncEditorBridge();
       const content = csvEditorActive ? stringifyCsvRows(csvEditorRows) : editor.getValue();
       const savedFile = currentOpenFile;
       const savedContext = JSON.stringify(fileAuthHeaders());
       try {
-        const res = await fetch('/api/files/write', {
+        const res = await fetchWithDeadline('/api/files/write', {
           method: 'POST',
           headers: fileJsonHeaders(),
           body: JSON.stringify({ path: savedFile.path, content, require_existing: true })
-        });
+        }, 10000);
         if (!res.ok) return false;
         const j = await res.json().catch(() => ({}));
         if (j.ok && currentOpenFile === savedFile && savedContext === JSON.stringify(fileAuthHeaders())
@@ -5909,6 +6000,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (_autosaveTimer) clearTimeout(_autosaveTimer);
       _autosaveTimer = setTimeout(async () => {
         _autosaveTimer = null;
+        if (!currentBufferDirty) return;
         const ok = await saveCurrentFile().catch((err) => {
           console.warn('Autosave failed:', err);
           return false;
@@ -6071,9 +6163,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         alert('Your current file could not be saved. Check your connection before opening another file.');
         return;
       }
-      const res = await fetch('/api/files/read?path=' + encodeURIComponent(item.path), { headers: fileAuthHeaders() });
+      let res;
+      try {
+        res = await fetchWithDeadline('/api/files/read?path=' + encodeURIComponent(item.path), { headers: fileAuthHeaders() });
+      } catch (error) {
+        alert(error?.message || 'Could not reach the server to open this file.');
+        return;
+      }
       const j = await res.json().catch(() => ({}));
-      if (!j.ok) { alert(j.error || 'Cannot open file'); return; }
+      if (!res.ok || !j.ok) { alert(j.error || 'Cannot open file'); return; }
       const kind = j.kind || item.kind || 'text';
       currentOpenFile = { path: item.path, name: item.name, kind };
       clearFileArtifactPreview();

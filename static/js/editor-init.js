@@ -174,6 +174,7 @@ function initEditor() {
       let activeSuggIdx = 0;
       let suggestionList = [];
       let completionActive = true;
+      let completionTimer = null;
       const LANGUAGE_COMPLETIONS = {
         python: {
           keywords: ['def','class','if','elif','else','for','while','return','yield','import','from','as','try','except','finally','raise','with','assert','pass','break','continue','global','nonlocal','lambda','and','or','not','in','is','None','True','False','self'],
@@ -477,7 +478,11 @@ function initEditor() {
       
       // Trigger on input
       cmInst.on('inputRead', () => {
-        setTimeout(checkCompletion, COMPLETION_DEBOUNCE_MS);
+        if (completionTimer) clearTimeout(completionTimer);
+        completionTimer = setTimeout(() => {
+          completionTimer = null;
+          checkCompletion();
+        }, COMPLETION_DEBOUNCE_MS);
       });
       
       // Hide on click outside
@@ -490,7 +495,11 @@ function initEditor() {
       // Toggle button handler
       window.toggleEagleCompletion = function(enabled) {
         completionActive = enabled;
-        if (!enabled) hideSuggestions();
+        if (!enabled) {
+          if (completionTimer) clearTimeout(completionTimer);
+          completionTimer = null;
+          hideSuggestions();
+        }
       };
     })();
 

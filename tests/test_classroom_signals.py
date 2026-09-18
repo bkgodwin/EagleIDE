@@ -25,7 +25,7 @@ class ClassroomSignalPersistenceTests(unittest.TestCase):
             bucket = classroom._class_bucket("class-one")
             self.assertEqual(len(bucket["hands"]), 60)
             self.assertEqual({q["id"] for q in bucket["questions"]}, {str(i) for i in range(60)})
-            self.assertEqual(classroom._class_bucket("class-two"), {"hands": [], "questions": []})
+            self.assertEqual(classroom._class_bucket("class-two"), {"hands": [], "questions": [], "silenced": {}})
 
     def test_failed_update_does_not_persist_partial_state(self):
         with tempfile.TemporaryDirectory() as folder, patch.object(

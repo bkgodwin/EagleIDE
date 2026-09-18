@@ -95,6 +95,24 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn("/api/teacher/skills/bulk-assign", app_core)
         self.assertIn("/api/teacher/skills/bulk-delete", app_core)
 
+    def test_student_account_resources_and_question_controls_are_wired(self):
+        ids = set(self.parser.ids)
+        self.assertTrue({
+            "resourcesToggleBtn", "studentPasswordForm", "studentCurrentPassword",
+            "studentNewPassword", "studentConfirmPassword", "studentChangePasswordBtn",
+            "studentPasswordStatus",
+        }.issubset(ids))
+        app_source = (BASE_DIR / "app.py").read_text(encoding="utf-8")
+        app_core = (BASE_DIR / "static/js/app-core.js").read_text(encoding="utf-8")
+        signals = (BASE_DIR / "static/js/classroom-signals.js").read_text(encoding="utf-8")
+        editor = (BASE_DIR / "static/js/editor-init.js").read_text(encoding="utf-8")
+        self.assertIn('@app.post("/api/student/change-password")', app_source)
+        self.assertIn('@app.post("/api/auth/restore")', app_source)
+        self.assertIn("RESOURCES_COLLAPSE_KEY", app_core)
+        self.assertIn("classroom-question-list", signals)
+        self.assertIn("classroom_question_silence", signals)
+        self.assertIn("clearTimeout(completionTimer)", editor)
+
     def test_attribute_ampersands_are_html_escaped(self):
         unescaped = re.findall(r'(?:href|src)="[^"]*&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9A-Fa-f]+);)', self.raw)
         self.assertEqual(unescaped, [])
