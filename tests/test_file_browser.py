@@ -2,6 +2,7 @@
 import builtins
 import getpass
 import io
+import os
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -31,6 +32,14 @@ class FileBrowserTests(unittest.TestCase):
 
     def post(self, route, data, **kwargs):
         return self.client.post("/api/files/" + route, json=data, headers=self.headers, **kwargs)
+
+    def delete(self, path):
+        return self.client.delete("/api/files/delete", json={"path": path}, headers=self.headers)
+
+    def list_files(self):
+        response = self.client.get("/api/files/list", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        return response.get_json()["files"]
 
     def test_new_student_can_create_folder_and_nested_file(self):
         self.assertEqual(self.post("create", {"name": "Week One", "type": "folder"}).status_code, 200)
@@ -67,7 +76,7 @@ class FileBrowserTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(self.post("create", {"name": name}).status_code, 400)
         self.assertEqual(self.post("create", {"name": "file.py", "parent": "missing"}).status_code, 404)
-        for route in ["create", "rename", "move", "duplicate", "write"]:
+        for route in ["create", "rename", "move", "duplicate", "write", "restore"]:
             self.assertEqual(self.post(route, ["not-an-object"]).status_code, 400)
         self.assertEqual(self.post("write", {"path": 7, "content": "test"}).status_code, 400)
 
@@ -90,10 +99,85 @@ class FileBrowserTests(unittest.TestCase):
         moved = self.post("move", {"src": "renamed.py", "dest": "dest"})
         self.assertEqual(moved.get_json()["new_path"], "dest/renamed.py")
         self.assertEqual((self.workspace / "dest/renamed.py").read_text(), "saved")
-        self.assertEqual(self.client.delete("/api/files/delete", json={"path": "dest"}, headers=self.headers).status_code, 200)
+        deleted = self.delete("dest")
+        self.assertEqual(deleted.status_code, 200)
+        self.assertTrue(deleted.get_json()["trashed"])
         stale = self.post("write", {"path": "dest/renamed.py", "content": "old", "require_existing": True})
         self.assertEqual(stale.status_code, 404)
         self.assertFalse((self.workspace / "dest").exists())
+        self.assertTrue((self.workspace / deleted.get_json()["trash_path"] / "renamed.py").exists())
+
+    def test_trash_is_created_and_items_can_be_restored_or_deleted_forever(self):
+        tree = self.list_files()
+        self.assertEqual(tree[0]["path"], "Trash")
+        self.assertEqual(tree[0]["system"], "trash")
+
+        self.post("create", {"name": "lesson.py"})
+        self.post("write", {"path": "lesson.py", "content": "print('saved')"})
+        deleted = self.delete("lesson.py")
+        payload = deleted.get_json()
+        self.assertTrue(payload["trashed"])
+        self.assertEqual(payload["trash_path"], "Trash/lesson.py")
+        self.assertFalse((self.workspace / "lesson.py").exists())
+        self.assertTrue((self.workspace / "Trash/lesson.py").exists())
+
+        trash_item = self.list_files()[0]["children"][0]
+        self.assertTrue(trash_item["in_trash"])
+        self.assertTrue(trash_item["restorable"])
+        self.assertEqual(trash_item["original_path"], "lesson.py")
+        self.assertEqual(trash_item["expires_at"] - trash_item["deleted_at"], eagle.TRASH_RETENTION_SECONDS)
+
+        restored = self.post("restore", {"path": payload["trash_path"]})
+        self.assertEqual(restored.status_code, 200)
+        self.assertEqual(restored.get_json()["new_path"], "lesson.py")
+        self.assertEqual((self.workspace / "lesson.py").read_text(encoding="utf-8"), "print('saved')")
+
+        trashed_again = self.delete("lesson.py").get_json()["trash_path"]
+        permanent = self.delete(trashed_again)
+        self.assertEqual(permanent.status_code, 200)
+        self.assertTrue(permanent.get_json()["permanent"])
+        self.assertFalse((self.workspace / trashed_again).exists())
+
+    def test_trash_name_collisions_and_restore_conflicts_are_safe(self):
+        self.post("create", {"name": "same.py"})
+        first = self.delete("same.py").get_json()["trash_path"]
+        self.post("create", {"name": "same.py"})
+        second = self.delete("same.py").get_json()["trash_path"]
+        self.assertNotEqual(first, second)
+
+        restored = self.post("restore", {"path": first})
+        self.assertEqual(restored.status_code, 200)
+        conflict = self.post("restore", {"path": second})
+        self.assertEqual(conflict.status_code, 409)
+        self.assertTrue((self.workspace / second).exists())
+
+    def test_trash_protections_and_expiration(self):
+        self.list_files()
+        self.assertEqual(self.delete("Trash").status_code, 400)
+        self.assertEqual(self.post("create", {"name": "blocked.py", "parent": "Trash"}).status_code, 400)
+        self.assertEqual(self.post("move", {"src": "Examples", "dest": "Trash"}).status_code, 400)
+        self.assertEqual(self.post("duplicate", {"src": "Trash"}).status_code, 400)
+        self.assertEqual(self.post("write", {"path": "Trash/blocked.py", "content": "no"}).status_code, 400)
+
+        self.post("create", {"name": "old.py"})
+        deleted = self.delete("old.py").get_json()
+        eagle._purge_expired_trash(self.workspace, now=deleted["expires_at"] + 1)
+        self.assertFalse((self.workspace / deleted["trash_path"]).exists())
+        self.assertEqual(self.post("restore", {"path": deleted["trash_path"]}).status_code, 404)
+
+    def test_startup_file_limit_cleanup_is_recoverable(self):
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        (self.workspace / "old.py").write_text("old", encoding="utf-8")
+        (self.workspace / "new.py").write_text("new", encoding="utf-8")
+        os.utime(self.workspace / "old.py", (1, 1))
+        os.utime(self.workspace / "new.py", (2, 2))
+        with patch.object(eagle, "MAX_FILES_PER_FOLDER", 1), patch.object(eagle, "MAX_FILES_PER_ACCOUNT", 10):
+            self.assertEqual(eagle._enforce_file_limits(self.workspace), 1)
+        self.assertFalse((self.workspace / "old.py").exists())
+        self.assertTrue((self.workspace / "Trash/old.py").exists())
+        restored = self.post("restore", {"path": "Trash/old.py"})
+        self.assertEqual(restored.status_code, 200)
+        self.assertTrue((self.workspace / "old.py").exists())
 
     def test_upload_normalizes_windows_filename_and_rejects_folder_collision(self):
         self.post("create", {"name": "folder.py", "type": "folder"})

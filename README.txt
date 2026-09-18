@@ -240,11 +240,16 @@ Features:
 - Real-time code execution (30 second timeout)
 - Interactive input support (input() works in both Python and JavaScript)
 - Drag-and-drop file organization
+- Checkbox-only multi-selection: tapping a file opens it and tapping a folder enters it without changing the selected set.
+- A protected Trash folder for every account. Normal deletes move items to Trash,
+  top-level trash items can be restored to their original location, and students
+  can choose Delete Forever. Items remaining in Trash expire after seven days.
 - Scaled previews for PNG, JPEG, GIF, and WebP images
 - Safe metadata views for .db, .sqlite, and .sqlite3 database artifacts
 
 Account and classroom defaults:
 - New student and teacher workspaces include an Examples folder with Python, JavaScript, HTML, CSS, CSV, and text starter files.
+- Every workspace includes a protected Trash folder; its restore metadata is stored privately under that account's workspace.
 - Opening the file browser repairs the Examples folder for an older account if the folder is missing; files users intentionally remove are not recreated on every refresh.
 - Live editor streaming is available to teachers only and remains limited to classes they own.
 - A class's AI enabled switch controls student access. The owning teacher retains AI explaining, chat, grading, and reporting tools while site-wide AI remains enabled.
