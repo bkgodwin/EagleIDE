@@ -2,6 +2,7 @@ import builtins
 import getpass
 import json
 import tempfile
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -320,6 +321,110 @@ class RolePermissionTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.generated_tokens.append(response.get_json()["token"])
 
+    def test_device_cookie_restores_session_without_using_shared_ip(self):
+        password_hash = eagle.bcrypt.hashpw(b"StudentPass123", eagle.bcrypt.gensalt()).decode("utf-8")
+        eagle._save_users({"users": [{
+            "email": self.student_email,
+            "name": "Student",
+            "role": "student",
+            "password_hash": password_hash,
+            "enabled": True,
+        }]})
+        login = self.http.post(
+            "/api/auth/login",
+            json={"email": self.student_email, "password": "StudentPass123"},
+            environ_base={"REMOTE_ADDR": "10.30.40.50"},
+        )
+        self.assertEqual(login.status_code, 200)
+        first_token = login.get_json()["token"]
+        self.generated_tokens.append(first_token)
+        self.assertIn(eagle.AUTH_DEVICE_COOKIE, login.headers.get("Set-Cookie", ""))
+        self.assertIn("HttpOnly", login.headers.get("Set-Cookie", ""))
+        self.assertIn("SameSite=Strict", login.headers.get("Set-Cookie", ""))
+
+        # Simulate a server restart: the browser cookie remains but access-token
+        # maps are empty. Restoration reactivates this device's bearer token.
+        eagle._student_tokens.pop(first_token, None)
+        restored = self.http.post(
+            "/api/auth/restore",
+            environ_base={"REMOTE_ADDR": "10.99.88.77"},
+        )
+        self.assertEqual(restored.status_code, 200)
+        restored_payload = restored.get_json()
+        self.assertEqual(restored_payload["role"], "student")
+        self.assertEqual(restored_payload["token"], first_token)
+        self.generated_tokens.append(restored_payload["token"])
+
+        users = eagle._load_users()
+        users["users"][0]["password_hash"] = eagle.bcrypt.hashpw(b"ChangedPass123", eagle.bcrypt.gensalt()).decode("utf-8")
+        eagle._save_users(users)
+        rejected = self.http.post("/api/auth/restore")
+        self.assertEqual(rejected.status_code, 401)
+        self.assertIn("expired", rejected.get_json()["error"].lower())
+
+    def test_student_can_change_password_without_changing_account_schema(self):
+        old_hash = eagle.bcrypt.hashpw(b"OldPassword123", eagle.bcrypt.gensalt()).decode("utf-8")
+        eagle._save_users({"users": [{
+            "email": self.student_email,
+            "name": "Student",
+            "role": "student",
+            "password_hash": old_hash,
+            "class_id": "class-one",
+            "class_ids": ["class-one"],
+            "enabled": True,
+        }]})
+        other_token = "student-other-device"
+        eagle._student_tokens[other_token] = dict(eagle._student_tokens[self.student_token])
+        self.generated_tokens.append(other_token)
+        response = self.http.post(
+            "/api/student/change-password",
+            headers={"X-User-Token": self.student_token},
+            json={"currentPassword": "OldPassword123", "newPassword": "NewPassword456"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(self.student_token, eagle._student_tokens)
+        self.assertNotIn(other_token, eagle._student_tokens)
+        saved = eagle._find_user(self.student_email)
+        self.assertEqual(saved["class_ids"], ["class-one"])
+        self.assertTrue(eagle._verify_user_password(saved, "NewPassword456"))
+        self.assertFalse(eagle._verify_user_password(saved, "OldPassword123"))
+
+    def test_legacy_student_can_change_password_after_automatic_hash_upgrade(self):
+        eagle._save_users({"users": [{
+            "email": self.student_email,
+            "name": "Legacy Student",
+            "role": "student",
+            "password": "LegacyPassword123",
+            "class_id": "class-one",
+            "class_ids": ["class-one"],
+            "enabled": True,
+        }]})
+        response = self.http.post(
+            "/api/student/change-password",
+            headers={"X-User-Token": self.student_token},
+            json={"currentPassword": "LegacyPassword123", "newPassword": "ModernPassword456"},
+        )
+        self.assertEqual(response.status_code, 200)
+        saved = eagle._find_user(self.student_email)
+        self.assertNotIn("password", saved)
+        self.assertTrue(eagle._verify_user_password(saved, "ModernPassword456"))
+
+    def test_admin_reset_password_is_six_characters(self):
+        eagle._save_users({"users": [{
+            "email": self.student_email,
+            "name": "Student",
+            "role": "student",
+            "password_hash": "old-hash",
+            "enabled": True,
+        }]})
+        response = self.http.post(
+            "/api/admin/users/reset-password",
+            headers={"X-Admin-Token": self.admin_token},
+            json={"email": self.student_email},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.get_json()["temp_password"]), 6)
+
     def test_malformed_auth_requests_return_validation_errors(self):
         with patch("app._load_config", return_value={"registration_enabled": True}):
             for route in ("/api/auth/register", "/api/auth/login", "/api/admin/login"):
@@ -474,6 +579,67 @@ class RolePermissionTestCase(unittest.TestCase):
                 event.get("name") == "teacher_code" and event["args"][0].get("class_id") == "class-one"
                 for event in student_client.get_received()
             ))
+
+    def test_teacher_can_silence_student_questions_for_five_minutes(self):
+        eagle._save_users({"users": [{
+            "email": self.student_email,
+            "name": "Student",
+            "role": "student",
+            "class_id": "class-one",
+            "class_ids": ["class-one"],
+            "enabled": True,
+        }]})
+        eagle._save_classes({"classes": [{
+            "id": "class-one",
+            "name": "Class One",
+            "teacher_email": self.teacher_email,
+            "students": [self.student_email],
+            "settings": {"raise_hand_enabled": True},
+        }]})
+        signals_file = self.root / "question_signals.json"
+        events_file = self.root / "question_events.json"
+        teacher_client = eagle.socketio.test_client(eagle.app, flask_test_client=self.http)
+        student_client = eagle.socketio.test_client(eagle.app, flask_test_client=self.http)
+        self.socket_clients.extend([teacher_client, student_client])
+
+        with patch.object(classroom_features, "CLASSROOM_SIGNALS_FILE", signals_file), \
+             patch.object(classroom_features, "CLASSROOM_EVENTS_FILE", events_file):
+            teacher_client.emit("join_class_room", {
+                "role": "teacher", "token": self.teacher_token, "class_id": "class-one",
+            })
+            student_client.emit("join_class_room", {
+                "role": "student", "token": self.student_token, "class_id": "class-one",
+            })
+            teacher_client.get_received()
+            student_client.get_received()
+            student_client.emit("classroom_question_submit", {
+                "token": self.student_token, "class_id": "class-one", "text": "First question",
+            })
+            teacher_updates = [
+                event for event in teacher_client.get_received()
+                if event.get("name") == "classroom_questions_update"
+            ]
+            self.assertTrue(teacher_updates)
+            self.assertEqual(len(teacher_updates[-1]["args"][0]["questions"]), 1)
+
+            teacher_client.emit("classroom_question_silence", {
+                "token": self.teacher_token,
+                "class_id": "class-one",
+                "student_email": self.student_email,
+            })
+            saved = classroom_features._class_bucket("class-one")
+            self.assertGreater(saved["silenced"][self.student_email], time.time() + 290)
+            self.assertEqual([q for q in saved["questions"] if q.get("status") == "open"], [])
+            student_client.get_received()
+            student_client.emit("classroom_question_submit", {
+                "token": self.student_token, "class_id": "class-one", "text": "Second question",
+            })
+            errors = [
+                event for event in student_client.get_received()
+                if event.get("name") == "classroom_question_error"
+            ]
+            self.assertTrue(errors)
+            self.assertEqual(errors[-1]["args"][0]["code"], "student_silenced")
 
     def test_class_ai_switch_restricts_student_but_not_owner_teacher(self):
         self._set_disabled_ai_class()

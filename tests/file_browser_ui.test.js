@@ -49,6 +49,7 @@ test('autosave does not mark new edits clean when an older request completes', a
       assert.equal(JSON.parse(options.body).require_existing, true);
       return new Promise(resolve => { release = resolve; });
     };
+    ${extract('fetchWithDeadline')}
     ${extract('saveCurrentFile')}
     const saving = saveCurrentFile();
     text = 'new edit';
@@ -65,6 +66,7 @@ test('late file-list authentication failures cannot sign out a newer session', a
     const canCurrentUserAccessIDE = () => true;
     const clearAuthStateMemory = () => { throw new Error('must not clear newer session'); };
     const fetch = () => new Promise(resolve => { release = resolve; });
+    ${extract('fetchWithDeadline')}
     ${extract('fetchFileTreeData')}
     const loading = fetchFileTreeData();
     USER_TOKEN = 'new';
