@@ -129,6 +129,7 @@ function initEditor() {
       if (btn) {
         btn.textContent = teacherPaneOpen ? '▼' : '▲';
         btn.title = teacherPaneOpen ? 'Hide teacher code stream' : 'Show teacher code stream';
+        btn.setAttribute('aria-label', btn.title);
         btn.setAttribute('aria-expanded', teacherPaneOpen ? 'true' : 'false');
       }
       updateTeacherStreamToggleState();

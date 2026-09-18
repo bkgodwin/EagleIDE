@@ -73,7 +73,7 @@ DEFAULT_CONFIG = {
     # Student Python execution. The server retains a hard upper bound from its
     # environment; admins can reduce these limits without restarting.
     "python_memory_limit_mb": 750,
-    "python_max_concurrent_runs": 4,
+    "python_max_concurrent_runs": 8,
     "python_module_access": {},
 
     # Wiki media limits. Large files use chunked uploads under the global

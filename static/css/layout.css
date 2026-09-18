@@ -352,12 +352,13 @@ body.workspace-resizing iframe { pointer-events: none; }
   top: calc(var(--topbar-h) + 35vh);
   transform: translateY(-50%);
   z-index: 250;
-  width: 48px;
-  height: 48px;
-  border: 1px solid var(--glass-border);
-  background: var(--theme-panel-hdr);
-  color: var(--theme-text);
-  font-size: 18px;
+  width: 56px;
+  height: 56px;
+  border: 2px solid rgba(255, 255, 255, .55);
+  background: #234d70;
+  color: #fff;
+  font-size: 22px;
+  font-weight: 900;
   border-radius: 50%;
   cursor: pointer;
   display: flex;
@@ -367,6 +368,8 @@ body.workspace-resizing iframe { pointer-events: none; }
   transition: transform var(--transition-fast), background var(--transition-fast);
 }
 
+.edge-toggle:hover { background: #173a57; border-color: #fff; }
+body.light-mode .edge-toggle { background: #315f86; border-color: #173a57; color: #fff; }
 .edge-toggle:active { transform: translateY(-50%) scale(0.94); }
 #rightEdgeToggleBtn { right: 12px; }
 

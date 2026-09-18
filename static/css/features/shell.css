@@ -53,7 +53,21 @@
   min-height: calc(var(--shell-font-size) * 1.5 + 16px);
 }
 
-.shell-panel-header { min-height: 42px; }
+.shell-panel-header {
+  min-height: 58px;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+}
+.btn.run-btn-hero.shell-run-btn {
+  flex: 1 1 150px;
+  width: min(240px, 100%);
+  min-width: 112px;
+  min-height: 44px;
+  margin: 0;
+  padding: 9px 24px;
+  font-size: 17px;
+  border-radius: 10px;
+}
 .shell-font-control {
   display: flex;
   align-items: center;
@@ -62,7 +76,7 @@
   font-size: 11px;
   font-weight: 700;
 }
-.shell-font-control input { width: 112px; accent-color: var(--eagle-red); }
+.shell-font-control input { width: clamp(68px, 9vw, 112px); accent-color: var(--eagle-red); }
 .shell-font-control output { min-width: 2ch; color: var(--theme-text); text-align: right; }
 
 .shell-input-bar .btn {
