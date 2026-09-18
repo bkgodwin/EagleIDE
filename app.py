@@ -1528,6 +1528,7 @@ def _load_notebook_prompts(class_id: str) -> list[dict]:
             "prompt": prompt_text,
             "responseType": _sanitize_notebook_response_type(row.get("responseType")),
             "maxScore": _sanitize_notebook_max_score(row.get("maxScore")),
+            "graded": row.get("graded") is not False,
             "skillTags": _normalize_skill_tags(row.get("skillTags") or []),
             "locked": bool(row.get("locked")),
             "createdAt": str(row.get("createdAt") or _current_timestamp()),
@@ -1554,6 +1555,7 @@ def _save_notebook_prompts(class_id: str, prompts: list[dict]) -> None:
             "prompt": prompt_text,
             "responseType": _sanitize_notebook_response_type(prompt.get("responseType")),
             "maxScore": _sanitize_notebook_max_score(prompt.get("maxScore")),
+            "graded": prompt.get("graded") is not False,
             "skillTags": _normalize_skill_tags(prompt.get("skillTags") or []),
             "locked": bool(prompt.get("locked")),
             "createdAt": str(prompt.get("createdAt") or _current_timestamp()),
@@ -1615,6 +1617,7 @@ def _normalize_assignment_blocks(raw_tabs: list, prompts: list[dict]) -> list[di
             "prompt": prompt.get("prompt", ""),
             "responseType": response_type,
             "maxScore": _sanitize_notebook_max_score(prompt.get("maxScore")),
+            "graded": prompt.get("graded") is not False,
             "skillTags": _normalize_skill_tags(prompt.get("skillTags") or []),
             "locked": bool(prompt.get("locked")),
             "createdAt": prompt.get("createdAt", ""),
@@ -1716,6 +1719,46 @@ def _save_student_notebook(student_email: str, class_id: str, notebook: dict) ->
     return normalized
 
 
+def _copy_notebook_tab_to_user(
+    source_email: str,
+    destination_email: str,
+    class_id: str,
+    tab_id: str,
+    sender_name: str,
+) -> tuple[bool, str, Optional[dict]]:
+    """Copy one personal tab while preserving the recipient's existing notebook."""
+    source = _load_student_notebook(source_email, class_id)
+    source_tab = next(
+        (tab for tab in source.get("tabs", []) if tab.get("id") == tab_id and tab.get("id") != "assignments"),
+        None,
+    )
+    if not source_tab:
+        return False, "Notebook tab not found", None
+    destination = _load_student_notebook(destination_email, class_id)
+    personal_tabs = [tab for tab in destination.get("tabs", []) if tab.get("id") != "assignments"]
+    if len(personal_tabs) >= MAX_NOTEBOOK_TABS - 1:
+        return False, "Recipient notebook has reached its tab limit", None
+    copied_tab = {
+        "id": f"shared_{uuid.uuid4().hex[:16]}",
+        "label": _sanitize_notebook_label(source_tab.get("label"), "Shared Notes"),
+        "locked": False,
+        "html": _sanitize_notebook_html(source_tab.get("html") or ""),
+        "color": _sanitize_notebook_color(source_tab.get("color")),
+        "bookmarked": False,
+        "sharedFrom": _sanitize_notebook_label(sender_name, "Classmate"),
+    }
+    tabs = [tab for tab in destination.get("tabs", []) if tab.get("id") != "assignments"]
+    tabs.append(copied_tab)
+    assignment_tab = _notebook_assignments_tab(destination)
+    if assignment_tab:
+        tabs.append(assignment_tab)
+    destination["tabs"] = tabs
+    destination["activeTabId"] = copied_tab["id"]
+    saved = _save_student_notebook(destination_email, class_id, destination)
+    saved_tab = next((tab for tab in saved.get("tabs", []) if tab.get("id") == copied_tab["id"]), copied_tab)
+    return True, "", saved_tab
+
+
 def _student_can_access_notebook(student_email: str, class_id: str) -> bool:
     user_obj = _find_user(student_email)
     return bool(user_obj and user_obj.get("role") == "student" and _user_in_class(user_obj, class_id))
@@ -1726,6 +1769,22 @@ def _teacher_owns_class(teacher_email: str, class_id: str) -> Optional[dict]:
     if not cls or (cls.get("teacher_email") or "").strip().lower() != (teacher_email or "").strip().lower():
         return None
     return cls
+
+
+def _notebook_actor_for_request(req, class_id: str) -> tuple[Optional[dict], str]:
+    """Return an authorized student or owning teacher and its role."""
+    student = _require_user(req)
+    if student:
+        email = (student.get("email") or "").strip().lower()
+        if _student_can_access_notebook(email, class_id):
+            return student, "student"
+        return None, ""
+    teacher = _require_teacher(req)
+    if teacher:
+        email = (teacher.get("email") or "").strip().lower()
+        if _teacher_owns_class(email, class_id):
+            return teacher, "teacher"
+    return None, ""
 
 
 def _emit_notebook_assignments_changed(class_id: str, event_type: str, prompt: Optional[dict] = None) -> None:
@@ -3815,36 +3874,38 @@ def join_class():
 
 @app.get("/api/notebook")
 def get_notebook():
-    user = _require_user(request)
-    if not user:
-        return jsonify(ok=False, error="Student login required"), 401
-    class_id = (request.args.get("classId") or user.get("class_id") or "").strip()
+    fallback_student = _require_user(request)
+    class_id = (request.args.get("classId") or (fallback_student or {}).get("class_id") or "").strip()
     if not class_id:
         return jsonify(ok=False, error="Join a class to use the notebook"), 400
-    student_email = (user.get("email") or "").strip().lower()
-    if not _student_can_access_notebook(student_email, class_id):
+    actor, _role = _notebook_actor_for_request(request, class_id)
+    if not actor:
+        if not request.headers.get("X-User-Token") and not request.headers.get("X-Teacher-Token"):
+            return jsonify(ok=False, error="Authentication required"), 401
         return jsonify(ok=False, error="Notebook class not found"), 403
+    actor_email = (actor.get("email") or "").strip().lower()
     with _notebooks_lock:
-        notebook = _load_student_notebook(student_email, class_id)
+        notebook = _load_student_notebook(actor_email, class_id)
     return jsonify(ok=True, notebook=notebook)
 
 
 @app.post("/api/notebook/save")
 def save_notebook():
-    user = _require_user(request)
-    if not user:
-        return jsonify(ok=False, error="Student login required"), 401
     payload = request.get_json(silent=True) or {}
-    class_id = (payload.get("classId") or user.get("class_id") or "").strip()
+    fallback_student = _require_user(request)
+    class_id = (payload.get("classId") or (fallback_student or {}).get("class_id") or "").strip()
     notebook_payload = payload.get("notebook") or {}
     if not class_id:
         return jsonify(ok=False, error="Join a class to use the notebook"), 400
-    student_email = (user.get("email") or "").strip().lower()
-    if not _student_can_access_notebook(student_email, class_id):
+    actor, _role = _notebook_actor_for_request(request, class_id)
+    if not actor:
+        if not request.headers.get("X-User-Token") and not request.headers.get("X-Teacher-Token"):
+            return jsonify(ok=False, error="Authentication required"), 401
         return jsonify(ok=False, error="Notebook class not found"), 403
+    actor_email = (actor.get("email") or "").strip().lower()
     try:
         with _notebooks_lock:
-            notebook = _save_student_notebook(student_email, class_id, notebook_payload)
+            notebook = _save_student_notebook(actor_email, class_id, notebook_payload)
     except ValueError as exc:
         return jsonify(ok=False, error=str(exc)), 413
     return jsonify(ok=True, notebook=notebook)
@@ -3861,6 +3922,7 @@ def teacher_create_notebook_prompt():
     title = _sanitize_notebook_prompt_title(data.get("title") or prompt_text[:MAX_NOTEBOOK_PROMPT_TITLE_CHARS])
     response_type = _sanitize_notebook_response_type(data.get("responseType"))
     max_score = _sanitize_notebook_max_score(data.get("maxScore"))
+    graded = data.get("graded") is not False
     requested_skill_tags = _normalize_skill_tags(data.get("skillTags") or [])
     if not class_id:
         return jsonify(ok=False, error="classId is required"), 400
@@ -3902,6 +3964,7 @@ def teacher_create_notebook_prompt():
         "prompt": prompt_text,
         "responseType": response_type,
         "maxScore": max_score,
+        "graded": graded,
         "skillTags": skill_tags,
         "locked": False,
         "createdAt": _current_timestamp(),
@@ -4099,6 +4162,8 @@ def teacher_grade_notebook_prompt_response():
         prompt = next((p for p in prompts if p.get("id") == prompt_id), None)
         if not prompt:
             return jsonify(ok=False, error="Prompt not found"), 404
+        if prompt.get("graded") is False:
+            return jsonify(ok=False, error="Practice notebook assignments are not graded"), 409
         notebook = _load_student_notebook(student_email, class_id)
         block = _notebook_prompt_response(notebook, prompt_id)
         if not block:
@@ -8699,7 +8764,9 @@ def _build_class_mastery_report_uncached(class_id: str, teacher_email: str) -> O
         })
     notebook_prompts = [
         prompt for prompt in _load_notebook_prompts(class_id)
-        if _normalize_skill_tags(prompt.get("skillTags") or []) and _sanitize_notebook_max_score(prompt.get("maxScore")) > 0
+        if prompt.get("graded") is not False
+        and _normalize_skill_tags(prompt.get("skillTags") or [])
+        and _sanitize_notebook_max_score(prompt.get("maxScore")) > 0
     ]
     notebook_assignment_rows = []
     for prompt in notebook_prompts:
