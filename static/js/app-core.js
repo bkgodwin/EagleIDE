@@ -953,10 +953,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const btn = document.getElementById('streamingToggleBtn');
       if (!btn) return;
       if (teacherStreamingEnabled) {
-        btn.textContent = '📡 Streaming: On';
+        btn.textContent = '📡 Stream On';
         btn.classList.remove('stop');
       } else {
-        btn.textContent = '📡 Streaming: Off';
+        btn.textContent = '📡 Stream Off';
         btn.classList.add('stop');
       }
     }
@@ -2310,7 +2310,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       function applyGuides(enabled, persist = true) {
         guidesEnabled = !!enabled;
         document.body.classList.toggle('guides-off', !guidesEnabled);
-        guidesBtn.textContent = `Guides: ${guidesEnabled ? 'On' : 'Off'}`;
+        guidesBtn.textContent = `Guide ${guidesEnabled ? 'On' : 'Off'}`;
         if (persist) {
           try { localStorage.setItem(GUIDES_KEY, guidesEnabled ? '1' : '0'); } catch {}
         }
@@ -2319,7 +2319,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       function applyAutocomplete(enabled, persist = true) {
         autocompleteEnabled = !!enabled;
         window.toggleEagleCompletion?.(autocompleteEnabled);
-        autocompleteBtn.textContent = `Autocomplete: ${autocompleteEnabled ? 'On' : 'Off'}`;
+        autocompleteBtn.textContent = `Auto ${autocompleteEnabled ? 'On' : 'Off'}`;
         if (persist) {
           try { localStorage.setItem(AUTOCOMPLETE_KEY, autocompleteEnabled ? '1' : '0'); } catch {}
         }
@@ -2400,7 +2400,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       function applyResourcesState(collapsed, persist = true) {
         document.body.classList.toggle('resources-collapsed', collapsed);
         if (resourcesToggleBtn) {
-          resourcesToggleBtn.textContent = collapsed ? 'Show Resources' : 'Hide Resources';
+          resourcesToggleBtn.textContent = collapsed ? 'Res Off' : 'Res On';
           resourcesToggleBtn.title = collapsed
             ? 'Show wiki, assignments, and other resources'
             : 'Hide wiki, assignments, and other resources';
@@ -5363,6 +5363,19 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       return String(path || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
     }
 
+    function _isTrashTreePath(path) {
+      const normalized = _normalizeTreePath(path);
+      return normalized === 'Trash' || normalized.startsWith('Trash/');
+    }
+
+    function setFileItemSelected(path, selected) {
+      const normalized = _normalizeTreePath(path);
+      if (!normalized || normalized === 'Trash') return false;
+      if (selected) _selectedFileItems.add(normalized);
+      else _selectedFileItems.delete(normalized);
+      return _selectedFileItems.has(normalized);
+    }
+
     function applyFilePathChange(oldPath, newPath) {
       const old = _normalizeTreePath(oldPath);
       const next = newPath == null ? null : _normalizeTreePath(newPath);
@@ -5392,17 +5405,33 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     function updateFileActionButtons() {
       const selected = getSelectedTreeItems();
+      const hasTrashItems = selected.some(item => item.in_trash);
+      const allTrashItems = selected.length > 0 && selected.every(item => item.in_trash);
       for (const id of ['duplicateSelectedBtn', 'deleteSelectedBtn', 'moveSelectedBtn']) {
         const button = document.getElementById(id);
-        if (button) button.disabled = selected.length === 0;
+        if (button) button.disabled = selected.length === 0 || (id !== 'deleteSelectedBtn' && hasTrashItems);
       }
       const rename = document.getElementById('renameSelectedBtn');
-      if (rename) rename.disabled = selected.length !== 1;
+      if (rename) rename.disabled = selected.length !== 1 || hasTrashItems;
       const download = document.getElementById('downloadSelectedBtn');
       if (download) download.disabled = selected.length !== 1 || selected[0]?.type !== 'file';
+      const restore = document.getElementById('restoreSelectedBtn');
+      if (restore) {
+        restore.hidden = !(_isTrashTreePath(_currentFolderPath) || hasTrashItems);
+        restore.disabled = !selected.some(item => item.restorable);
+      }
+      const remove = document.getElementById('deleteSelectedBtn');
+      if (remove) {
+        remove.textContent = allTrashItems ? '🗑️ Delete Forever' : '🗑️ Delete';
+        remove.title = allTrashItems ? 'Permanently delete selected trash items' : 'Move selected files and folders to Trash';
+      }
+      for (const id of ['newFileBtn', 'newFolderBtn', 'uploadFileBtn']) {
+        const button = document.getElementById(id);
+        if (button) button.hidden = _isTrashTreePath(_currentFolderPath);
+      }
       const status = document.getElementById('fileSelectionStats');
       if (status) status.textContent = `${selected.length} selected`;
-      const items = _getItemsAtPath(_allFileTree, _currentFolderPath);
+      const items = _getItemsAtPath(_allFileTree, _currentFolderPath).filter(item => !item.system);
       const selectAll = document.getElementById('selectAllFilesBtn');
       if (selectAll) {
         selectAll.disabled = items.length === 0;
@@ -5587,7 +5616,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       updateBreadcrumb();
       updateFileActionButtons();
       if (!items.length) {
-        treeEl.innerHTML = '<div class="file-tree-empty">No files here. Create one!</div>';
+        treeEl.innerHTML = `<div class="file-tree-empty">${_isTrashTreePath(_currentFolderPath) ? 'Trash is empty.' : 'No files here. Create one!'}</div>`;
         updateSendFileButtonVisibility();
         return;
       }
@@ -5654,13 +5683,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const ul = document.createElement('div');
       items.forEach(item => {
         const row = document.createElement('div');
-        const isSelected = _selectedFileItems.has(item.path);
+        const isSelected = !item.system && _selectedFileItems.has(item.path);
         row.className = 'file-tree-item' + (currentOpenFile?.path === item.path ? ' active' : '') + (isSelected ? ' selected' : '');
         row.style.paddingLeft = (12 + depth * 14) + 'px';
-        row.draggable = true;
+        row.draggable = !item.system && !item.in_trash;
         row.dataset.path = item.path;
         row.dataset.type = item.type;
         row.dataset.name = item.name;
+        if (item.system) row.dataset.system = item.system;
+        if (item.in_trash) row.classList.add('in-trash');
         row.dataset.selected = isSelected ? '1' : '0';
         row.tabIndex = 0;
         row.setAttribute('aria-label', `${item.type === 'folder' ? 'Folder' : 'File'}: ${item.name}`);
@@ -5671,14 +5702,19 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         checkbox.type = 'checkbox';
         checkbox.className = 'file-select-checkbox';
         checkbox.checked = isSelected;
+        checkbox.hidden = !!item.system;
+        checkbox.disabled = !!item.system;
         checkbox.setAttribute('aria-label', `Select ${item.name}`);
         const fname = document.createElement('span');
         fname.className = 'fname';
         fname.title = item.name;
         fname.textContent = item.name;
+        if (item.in_trash && item.expires_at) {
+          fname.title = `${item.name} — permanently deleted after ${new Date(item.expires_at * 1000).toLocaleDateString()}`;
+        }
 
         if (item.type === 'folder') {
-          icon.textContent = '📂';
+          icon.textContent = item.system === 'trash' ? '🗑️' : '📂';
           const arrow = document.createElement('span');
           arrow.style.cssText = 'font-size:10px; color:#888; margin-right:2px;';
           arrow.textContent = '▶';
@@ -5714,10 +5750,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
         checkbox.addEventListener('click', (e) => e.stopPropagation());
         checkbox.addEventListener('change', () => {
-          if (checkbox.checked) _selectedFileItems.add(item.path);
-          else _selectedFileItems.delete(item.path);
-          row.classList.toggle('selected', checkbox.checked);
-          row.dataset.selected = checkbox.checked ? '1' : '0';
+          if (item.system) return;
+          const selected = setFileItemSelected(item.path, checkbox.checked);
+          row.classList.toggle('selected', selected);
+          row.dataset.selected = selected ? '1' : '0';
           updateFileActionButtons();
           updateSendFileButtonVisibility();
         });
@@ -5755,7 +5791,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         row.addEventListener('dragend', () => { row.style.opacity = ''; });
 
         // --- Drop target (folders only) ---
-        if (item.type === 'folder') {
+        if (item.type === 'folder' && !item.system && !item.in_trash) {
           row.addEventListener('dragover', (e) => {
             e.preventDefault();
             e.dataTransfer.dropEffect = 'move';
@@ -5810,7 +5846,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const items = [];
       for (const path of _selectedFileItems) {
         const found = _findItemByPath(_allFileTree, path);
-        if (found) items.push(found);
+        if (found && !found.system) items.push(found);
       }
       // Selecting a folder already includes descendants; do not mutate a
       // child again after its parent was moved/deleted/duplicated.
@@ -5847,7 +5883,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         alert('Select at least one file or folder to delete.');
         return;
       }
-      if (!confirm(`Delete ${selected.length} selected item(s)?`)) return;
+      const allInTrash = selected.every(item => item.in_trash);
+      const someInTrash = selected.some(item => item.in_trash);
+      const message = allInTrash
+        ? `Permanently delete ${selected.length} selected item(s)? This cannot be undone.`
+        : someInTrash
+          ? `Move active items to Trash and permanently delete selected trash items? Permanent deletion cannot be undone.`
+          : `Move ${selected.length} selected item(s) to Trash?`;
+      if (!confirm(message)) return;
       const failures = [];
       for (const item of selected) {
         try {
@@ -5866,6 +5909,36 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       _selectedFileItems.clear();
       await loadFileTree();
       if (failures.length) alert(`Some items could not be deleted:\n\n${failures.join('\n')}`);
+    }
+
+    async function restoreItems(items) {
+      const restorable = (items || []).filter(item => item.restorable);
+      if (!restorable.length) {
+        alert('Select one or more top-level items in Trash to restore.');
+        return;
+      }
+      const failures = [];
+      for (const item of restorable) {
+        try {
+          const res = await fetch('/api/files/restore', {
+            method: 'POST',
+            headers: fileJsonHeaders(),
+            body: JSON.stringify({ path: item.path })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data.ok) failures.push(`${item.name}: ${data.error || 'Restore failed'}`);
+          else applyFilePathChange(item.path, data.new_path);
+        } catch {
+          failures.push(`${item.name}: Network error`);
+        }
+      }
+      _selectedFileItems.clear();
+      await loadFileTree();
+      if (failures.length) alert(`Some items could not be restored:\n\n${failures.join('\n')}`);
+    }
+
+    async function restoreSelectedItems() {
+      await restoreItems(getSelectedTreeItems());
     }
 
     function pickMoveDestination(folders, excludedPaths) {
@@ -5911,7 +5984,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         alert('Select at least one file or folder to move.');
         return;
       }
-      const folders = _getAllFolders(_allFileTree);
+      const folders = _getAllFolders(_allFileTree).filter(folder => !_isTrashTreePath(folder.path));
       const selectedFolders = new Set(selected.filter(item => item.type === 'folder').map(item => item.path));
       const destination = await pickMoveDestination(folders, selectedFolders);
       if (destination == null) return;
@@ -6132,13 +6205,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     function canTeacherSendOpenFile(item) {
-      if (!item || item.type !== 'file' || !TEACHER_TOKEN) return false;
+      if (!item || item.type !== 'file' || item.in_trash || _isTrashTreePath(item.path) || !TEACHER_TOKEN) return false;
       return !!getCurrentClassContext();
     }
 
     function canSendOpenFile(item) {
+      if (!item || item.type !== 'file' || item.in_trash || _isTrashTreePath(item.path)) return false;
       if (window.ClassroomFiles?.canSendFile) return window.ClassroomFiles.canSendFile(item);
-      if (!item || item.type !== 'file') return false;
       if (TEACHER_TOKEN) return canTeacherSendOpenFile(item);
       const classCtx = getCurrentClassContext();
       if (!classCtx || !USER_TOKEN || ADMIN_TOKEN) return false;
@@ -6148,9 +6221,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     function resolveSendFileItems() {
       const selectedItems = getSelectedTreeItems();
-      const selectedFiles = selectedItems.filter(item => item.type === 'file');
+      const selectedFiles = selectedItems.filter(item => item.type === 'file' && !item.in_trash && !_isTrashTreePath(item.path));
       if (selectedItems.length) return selectedFiles.length === selectedItems.length ? selectedFiles : [];
-      if (currentOpenFile?.path && !currentOpenFile.audit && !currentOpenFile.notebook) {
+      if (currentOpenFile?.path && !_isTrashTreePath(currentOpenFile.path) && !currentOpenFile.audit && !currentOpenFile.notebook) {
         return [{ type: 'file', path: currentOpenFile.path, name: currentOpenFile.name }];
       }
       return [];
@@ -6280,11 +6353,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           downloadFileItem(item);
         };
         _ctxMenu.appendChild(dlBtn);
-        if (window.ClassroomFiles?.addCtxMenuItems) {
+        if (!item.in_trash && window.ClassroomFiles?.addCtxMenuItems) {
           window.ClassroomFiles.addCtxMenuItems(_ctxMenu, item, () => {
             if (_ctxMenu) { _ctxMenu.remove(); _ctxMenu = null; }
           });
-        } else if (canTeacherSendOpenFile(item)) {
+        } else if (!item.in_trash && canTeacherSendOpenFile(item)) {
           const sendBtn = document.createElement('button');
           sendBtn.textContent = '📤 Send to class…';
           sendBtn.onclick = () => {
@@ -6294,26 +6367,63 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           _ctxMenu.appendChild(sendBtn);
         }
       }
-      const renameBtn = document.createElement('button');
-      renameBtn.textContent = '✏️ Rename';
-      renameBtn.onclick = () => { _ctxMenu.remove(); renameItem(item); };
-      _ctxMenu.appendChild(renameBtn);
-      for (const [label, action] of [['📑 Duplicate', duplicateSelectedItems], ['📦 Move', moveSelectedItems]]) {
-        const button = document.createElement('button');
-        button.textContent = label;
-        button.onclick = () => {
+      if (item.system === 'trash') {
+        const openTrashBtn = document.createElement('button');
+        openTrashBtn.textContent = '🗑️ Open Trash';
+        openTrashBtn.onclick = () => {
           _ctxMenu.remove();
-          _selectedFileItems = new Set([item.path]);
+          _currentFolderPath = item.path;
+          _shellCwd = item.path;
           renderCurrentFolder();
-          action();
         };
-        _ctxMenu.appendChild(button);
+        _ctxMenu.appendChild(openTrashBtn);
+      } else if (item.in_trash) {
+        if (item.restorable) {
+          const restoreBtn = document.createElement('button');
+          restoreBtn.textContent = '↩ Restore';
+          restoreBtn.onclick = () => { _ctxMenu.remove(); restoreItems([item]); };
+          _ctxMenu.appendChild(restoreBtn);
+        }
+        const permanentBtn = document.createElement('button');
+        permanentBtn.textContent = '🗑️ Delete Forever';
+        permanentBtn.className = 'danger';
+        permanentBtn.onclick = () => { _ctxMenu.remove(); deleteItem(item); };
+        _ctxMenu.appendChild(permanentBtn);
+      } else {
+        const renameBtn = document.createElement('button');
+        renameBtn.textContent = '✏️ Rename';
+        renameBtn.onclick = () => { _ctxMenu.remove(); renameItem(item); };
+        _ctxMenu.appendChild(renameBtn);
+
+        const duplicateBtn = document.createElement('button');
+        duplicateBtn.textContent = '📑 Duplicate';
+        duplicateBtn.onclick = async () => {
+          _ctxMenu.remove();
+          const res = await fetch('/api/files/duplicate', {
+            method: 'POST', headers: fileJsonHeaders(), body: JSON.stringify({ src: item.path })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data.ok) alert(data.error || 'Duplicate failed');
+          await loadFileTree();
+        };
+        _ctxMenu.appendChild(duplicateBtn);
+
+        const moveBtn = document.createElement('button');
+        moveBtn.textContent = '📦 Move';
+        moveBtn.onclick = async () => {
+          _ctxMenu.remove();
+          const folders = _getAllFolders(_allFileTree).filter(folder => !_isTrashTreePath(folder.path));
+          const destination = await pickMoveDestination(folders, new Set(item.type === 'folder' ? [item.path] : []));
+          if (destination != null) await moveItem(item.path, destination);
+        };
+        _ctxMenu.appendChild(moveBtn);
+
+        const delBtn = document.createElement('button');
+        delBtn.textContent = '🗑️ Delete';
+        delBtn.className = 'danger';
+        delBtn.onclick = () => { _ctxMenu.remove(); deleteItem(item); };
+        _ctxMenu.appendChild(delBtn);
       }
-      const delBtn = document.createElement('button');
-      delBtn.textContent = '🗑️ Delete';
-      delBtn.className = 'danger';
-      delBtn.onclick = () => { _ctxMenu.remove(); deleteItem(item); };
-      _ctxMenu.appendChild(delBtn);
       document.body.appendChild(_ctxMenu);
       const menu = _ctxMenu;
       const view = window.visualViewport;
@@ -6421,7 +6531,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     async function deleteItem(item) {
-      if (!confirm(`Delete "${item.name}"?`)) return;
+      const message = item.in_trash
+        ? `Permanently delete "${item.name}"? This cannot be undone.`
+        : `Move "${item.name}" to Trash?`;
+      if (!confirm(message)) return;
       const res = await fetch('/api/files/delete', {
         method: 'DELETE',
         headers: fileJsonHeaders(),
@@ -6450,7 +6563,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           const j = await res.json().catch(() => ({}));
           if (!res.ok || !j.ok) throw new Error(j.error || 'Could not create item');
           _currentFolderPath = parent;
-          _selectedFileItems = new Set([_normalizeTreePath(j.path)]);
           await loadFileTree();
         }
       });
@@ -6481,6 +6593,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     document.getElementById('refreshFilesBtn').addEventListener('click', loadFileTree);
     document.getElementById('deleteSelectedBtn')?.addEventListener('click', deleteSelectedItems);
+    document.getElementById('restoreSelectedBtn')?.addEventListener('click', restoreSelectedItems);
     document.getElementById('duplicateSelectedBtn')?.addEventListener('click', duplicateSelectedItems);
     document.getElementById('moveSelectedBtn')?.addEventListener('click', moveSelectedItems);
     document.getElementById('renameSelectedBtn')?.addEventListener('click', () => {
@@ -6492,10 +6605,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (selected.length === 1 && selected[0].type === 'file') downloadFileItem(selected[0]);
     });
     document.getElementById('selectAllFilesBtn')?.addEventListener('click', () => {
-      const items = _getItemsAtPath(_allFileTree, _currentFolderPath);
+      const items = _getItemsAtPath(_allFileTree, _currentFolderPath).filter(item => !item.system);
       const allSelected = items.every(item => _selectedFileItems.has(item.path));
       _selectedFileItems.clear();
-      if (!allSelected) items.forEach(item => _selectedFileItems.add(item.path));
+      if (!allSelected) items.forEach(item => setFileItemSelected(item.path, true));
       renderCurrentFolder();
     });
 

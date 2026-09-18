@@ -256,3 +256,27 @@
       .topbar-primary .run-btn-hero { flex: 0 0 auto; min-width: 110px; margin-left: 8px; padding: 8px 20px; }
       .topbar-primary .file-chip { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
     }
+
+    /* The coding workspace uses a compact, square-edged visual language. Wiki
+       pages retain their softer cards and controls. */
+    body:not(.wiki-mode) {
+      --radius-sm: 0;
+      --radius-md: 0;
+      --radius-lg: 0;
+    }
+    body:not(.wiki-mode) button,
+    body:not(.wiki-mode) .btn,
+    body:not(.wiki-mode) .tab-btn,
+    body:not(.wiki-mode) .file-action-btn,
+    body:not(.wiki-mode) .workspace-switch-btn,
+    body:not(.wiki-mode) .panel,
+    body:not(.wiki-mode) .modal-content,
+    body:not(.wiki-mode) .ctx-menu,
+    body:not(.wiki-mode) .control-group,
+    body:not(.wiki-mode) .embedded-file-browser,
+    body:not(.wiki-mode) .file-tree-item,
+    body:not(.wiki-mode) .glass-surface,
+    body:not(.wiki-mode) [class*="-pane"],
+    body:not(.wiki-mode) [class*="-panel"] {
+      border-radius: 0 !important;
+    }

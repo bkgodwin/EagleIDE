@@ -83,7 +83,7 @@ body.light-mode .topbar-primary .topbar-tools-btn {
 .ide-topbar-tools {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
@@ -95,9 +95,10 @@ body.light-mode .topbar-primary .topbar-tools-btn {
 .ide-topbar-tools > * { flex: 0 0 auto; }
 .ide-topbar-tools .btn,
 .ide-topbar-tools .select { min-height: 34px; }
-.ide-topbar-tools .control-group { padding: 2px 7px; gap: 6px; }
-.ide-topbar-tools .font-range { width: 92px; }
-.ide-topbar-tools #classSelectorWrap { min-width: 180px; padding: 2px 7px; }
+.ide-topbar-tools .btn { padding-inline: 8px; }
+.ide-topbar-tools .control-group { padding: 2px 5px; gap: 4px; }
+.ide-topbar-tools .font-range { width: 76px; }
+.ide-topbar-tools #classSelectorWrap { min-width: 160px; padding: 2px 5px; }
 .ide-topbar-tools #classSelector { max-width: 150px; }
 
 .ide-topbar-tools #guidesBtn,
@@ -425,7 +426,10 @@ body.light-mode .edge-toggle { background: #315f86; border-color: #173a57; color
   .outer { gap: 4px; padding: 4px; }
   body:not(.wiki-mode) .topbar-primary { grid-template-columns: auto minmax(0,1fr) auto; }
   body:not(.wiki-mode) .topbar-primary .brand > div:first-child { max-width: 76px; }
-  .ide-topbar-tools .font-range { width: 74px; }
+  .ide-topbar-tools { gap: 3px; }
+  .ide-topbar-tools .btn { padding-inline: 6px; }
+  .ide-topbar-tools .font-range { width: 58px; }
+  .ide-topbar-tools #classSelectorWrap { min-width: 142px; }
 }
 
 /* A very narrow phone/split-screen window still exposes every panel: stack
