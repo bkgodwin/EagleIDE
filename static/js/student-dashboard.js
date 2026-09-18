@@ -214,6 +214,51 @@
     if (upgrades.length) showAchievementToasts(upgrades);
   }
 
+  async function changePassword(event) {
+    event?.preventDefault?.();
+    const c = ctx();
+    const currentInput = document.getElementById('studentCurrentPassword');
+    const newInput = document.getElementById('studentNewPassword');
+    const confirmInput = document.getElementById('studentConfirmPassword');
+    const status = document.getElementById('studentPasswordStatus');
+    const button = document.getElementById('studentChangePasswordBtn');
+    const currentPassword = currentInput?.value || '';
+    const newPassword = newInput?.value || '';
+    const confirmPassword = confirmInput?.value || '';
+    const setStatus = (message, isError = false) => {
+      if (!status) return;
+      status.textContent = message;
+      status.classList.toggle('is-error', isError);
+      status.classList.toggle('is-success', !!message && !isError);
+    };
+    if (!c.USER_TOKEN) return setStatus('Please sign in again before changing your password.', true);
+    if (!currentPassword || !newPassword || !confirmPassword) return setStatus('Complete all password fields.', true);
+    if (newPassword.length < 8) return setStatus('The new password must be at least 8 characters.', true);
+    if (newPassword !== confirmPassword) return setStatus('The new passwords do not match.', true);
+    button.disabled = true;
+    setStatus('Changing password…');
+    try {
+      const response = await fetch('/api/student/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-User-Token': c.USER_TOKEN },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.ok) {
+        setStatus(data?.error || 'Could not change the password. Please try again.', true);
+        return;
+      }
+      currentInput.value = '';
+      newInput.value = '';
+      confirmInput.value = '';
+      setStatus('Password changed. This device will remain signed in.');
+    } catch {
+      setStatus('Could not reach the server. Check your connection and try again.', true);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   function stopMasteryPolling() {
     if (masteryPollTimer) {
       clearInterval(masteryPollTimer);
@@ -258,6 +303,7 @@
     document.getElementById('studentDashboardBtn')?.addEventListener('click', openDashboard);
     document.getElementById('studentDashCloseBtn')?.addEventListener('click', closeDashboard);
     document.getElementById('studentDashMobileCloseBtn')?.addEventListener('click', closeDashboard);
+    document.getElementById('studentPasswordForm')?.addEventListener('submit', changePassword);
     document.querySelectorAll('#studentDashboardModal .teacher-dash-navbtn').forEach(button => {
       button.addEventListener('click', () => {
         const viewId = button.dataset.view;

@@ -126,18 +126,29 @@
       html += '</div>';
     }
     if (hasQuestions) {
-      html += teacherQuestions.map(q => `
+      const newestFirst = teacherQuestions.slice().reverse();
+      html += '<div class="classroom-question-list" aria-label="Student questions, newest first">';
+      html += newestFirst.map(q => `
         <div class="classroom-strip-card classroom-question-card" data-qid="${escapeHtml(q.id)}">
           <div class="q-meta">${escapeHtml(q.student_name || q.student_email)}</div>
           <div class="q-text">${escapeHtml(q.text)}</div>
           <div class="classroom-question-actions">
             <button type="button" class="primary" data-respond="${escapeHtml(q.id)}">Respond</button>
             <button type="button" data-dismiss="${escapeHtml(q.id)}">Dismiss</button>
+            <button type="button" class="silence" data-silence-email="${escapeHtml(q.student_email)}" data-silence-name="${escapeHtml(q.student_name || q.student_email)}">Silence 5 min</button>
           </div>
         </div>
       `).join('');
+      html += '</div>';
     }
     strip.innerHTML = html;
+    const questionList = strip.querySelector?.('.classroom-question-list') || null;
+    const questionCards = questionList ? Array.from(questionList.children) : [];
+    if (questionList && questionCards.length > 2) {
+      const visibleHeight = questionCards[0].getBoundingClientRect().height
+        + questionCards[1].getBoundingClientRect().height + 8;
+      questionList.style.maxHeight = `${Math.ceil(visibleHeight)}px`;
+    }
     strip.querySelectorAll('[data-ack-email]').forEach(btn => {
       btn.addEventListener('click', () => {
         emitSocket('classroom_hand_ack', { student_email: btn.dataset.ackEmail });
@@ -156,6 +167,13 @@
           question_id: btn.dataset.respond,
           response: response.trim().slice(0, 500),
         });
+      });
+    });
+    strip.querySelectorAll('[data-silence-email]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const name = btn.dataset.silenceName || btn.dataset.silenceEmail || 'this student';
+        if (!confirm(`Silence questions from ${name} for 5 minutes? Their current questions will be dismissed.`)) return;
+        emitSocket('classroom_question_silence', { student_email: btn.dataset.silenceEmail });
       });
     });
   }
@@ -227,6 +245,13 @@
     socket.on('classroom_question_error', msg => {
       if (msg?.class_id !== getClassId()) return;
       alert(msg.error || 'Could not submit question');
+    });
+
+    socket.on('classroom_question_silenced', msg => {
+      if (!isStudentInClass() || msg?.class_id !== getClassId()) return;
+      const email = String(ctx().currentUser?.email || '').toLowerCase();
+      if (String(msg.student_email || '').toLowerCase() !== email) return;
+      alert('Your classroom questions have been paused for 5 minutes.');
     });
 
     socket.on('classroom_file_received', msg => {
