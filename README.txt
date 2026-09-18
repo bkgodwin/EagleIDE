@@ -229,7 +229,11 @@ Students can:
 
 Features:
 - Syntax highlighting for Python, JavaScript, HTML, and CSS
-- Intelligent autocomplete (keywords, builtins, defined symbols)
+- Intelligent autocomplete with Python string, list, and file members; user-defined
+  functions, methods, variables, attributes, signatures, and docstrings; and a
+  keyboard-navigable help panel showing arguments, return types, and descriptions.
+  Autocomplete can be disabled from the IDE toolbar; while disabled it does not
+  load its metadata catalog or analyze editor changes.
 - Auto-indentation
 - Line numbers
 - Error highlighting
