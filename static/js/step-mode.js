@@ -12,8 +12,28 @@
   let lineHandle = null;
   let narrationWidget = null;
   let originalReadOnly = false;
+  let autoplayTimer = null;
+  let autoplayActive = false;
+  let autoplayDelaySeconds = 1;
+
+  const MIN_AUTOPLAY_SECONDS = 0.5;
+  const MAX_AUTOPLAY_SECONDS = 5;
+  const AUTOPLAY_STEP_SECONDS = 0.5;
 
   const $ = (id) => document.getElementById(id);
+
+  function clampStepDelay(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return 1;
+    return Math.min(MAX_AUTOPLAY_SECONDS, Math.max(MIN_AUTOPLAY_SECONDS, Math.round(numeric * 2) / 2));
+  }
+
+  function findPlaybackPosition(indexes, targetTraceIndex) {
+    const target = Number(targetTraceIndex);
+    if (!Array.isArray(indexes) || !indexes.length || !Number.isInteger(target)) return -1;
+    const position = indexes.findIndex((index) => index >= target);
+    return position >= 0 ? position : indexes.length - 1;
+  }
 
   function ctx() {
     return window.EagleIDE?.getContext?.() || {};
@@ -144,6 +164,13 @@
     const host = $('stepModeVariables');
     if (!host) return;
     const rows = [...(step.locals || []), ...(step.globals || [])];
+    const seen = new Set(rows.map((row) => String(row.name || '')));
+    (trace?.definedItems || []).forEach((item) => {
+      const name = String(item?.name || '');
+      if (!name || seen.has(name)) return;
+      rows.push(item);
+      seen.add(name);
+    });
     const changed = new Set(step.changed || []);
     if (!rows.length) {
       host.innerHTML = '<div class="step-variable-empty">No visible variables at this step.</div>';
@@ -178,10 +205,22 @@
         <strong>${escapeHtml(step.exception.type)}:</strong> ${escapeHtml(step.exception.message)}
         ${(step.exception.troubleshooting || []).length ? '<div>See the narrator bubble for troubleshooting steps.</div>' : ''}
       </div>` : '';
+    const callChoice = step.event === 'call' && step.supportsStepChoice ? `
+      <div class="step-call-choice">
+        <button class="btn secondary" id="stepModeIntoBtn" type="button">Step into</button>
+        <button class="btn secondary" id="stepModeOverBtn" type="button"${step.canStepOver ? '' : ' disabled'}>Step over</button>
+        <div class="step-call-note${step.hasException ? ' is-blocked' : ''}">
+          ${step.hasException
+            ? 'Step over is blocked because this recorded call raised an exception. Step into it to see where the error occurred.'
+            : 'Choose whether to inspect this user-defined code or continue in its caller.'}
+        </div>
+      </div>` : '';
     host.innerHTML = `
       <div><strong>${escapeHtml(eventLabel)}</strong> · line ${Number(step.line || 1)}</div>
-      <div>Function: <code>${escapeHtml(step.function || '<module>')}</code> · call depth ${Number(step.depth || 0)}</div>
-      ${input}${returned}${exception}`;
+      <div>Function: <code>${escapeHtml(step.qualifiedFunction || step.function || '<module>')}</code> · call depth ${Number(step.depth || 0)}</div>
+      ${input}${returned}${exception}${callChoice}`;
+    $('stepModeIntoBtn')?.addEventListener('click', stepIntoCurrentCall);
+    $('stepModeOverBtn')?.addEventListener('click', stepOverCurrentCall);
   }
 
   function selectStepIndexes(steps, mode) {
@@ -219,23 +258,126 @@
     renderExecution(step);
     highlightStep(step);
     ctx().setShellOutput?.(String(trace.output || '').slice(0, Number(step.outputLength || 0)));
-    if (step.event === 'exception') {
+    if (step.event === 'call' && step.supportsStepChoice) {
+      if (autoplayActive) stopAutoplay();
+      if (step.hasException) {
+        setStatus('Step over is unavailable because this call raised an exception. Step into the call to inspect it.', 'exception');
+      } else {
+        setStatus('Choose Step into to inspect this code, or Step over to continue in the caller.');
+      }
+    } else if (step.event === 'exception') {
       setStatus(`${step.exception?.type || 'Exception'} ended the program. Use the narration and captured values to troubleshoot it.`, 'exception');
     } else if (step.event === 'input') {
       setStatus('This input was captured during execution. Playback will not request another value.');
     } else if (trace.truncated && position === filteredIndexes.length - 1) {
       setStatus('The trace reached its safety limit. The recorded steps remain available.');
+    } else if (autoplayActive) {
+      setStatus(`Autoplay is advancing every ${autoplayDelaySeconds.toFixed(1)} seconds. It pauses at user-defined calls and exceptions.`);
     } else {
       setStatus('Use the arrow buttons or keyboard arrows to move through the recorded execution.');
     }
   }
 
-  function move(delta) {
+  function move(delta, options = {}) {
     if (state !== 'playback' || !filteredIndexes.length) return;
+    if (!options.fromAutoplay) stopAutoplay();
     const next = Math.max(0, Math.min(filteredIndexes.length - 1, position + delta));
     if (next === position) return;
     position = next;
     renderCurrentStep();
+  }
+
+  function jumpToTraceIndex(traceIndex) {
+    const targetPosition = findPlaybackPosition(filteredIndexes, Number(traceIndex));
+    if (targetPosition < 0) return;
+    stopAutoplay();
+    position = targetPosition;
+    renderCurrentStep();
+  }
+
+  function stepIntoCurrentCall() {
+    move(1);
+  }
+
+  function stepOverCurrentCall() {
+    const step = trace?.steps?.[filteredIndexes[position]];
+    if (!step?.canStepOver || !Number.isInteger(Number(step.stepOverIndex))) return;
+    jumpToTraceIndex(Number(step.stepOverIndex));
+  }
+
+  function updateAutoplayControls() {
+    const button = $('stepModeAutoBtn');
+    const unavailable = state !== 'playback';
+    if (button) {
+      button.textContent = autoplayActive ? '⏸ Pause' : '▶ Auto';
+      button.title = autoplayActive ? 'Pause autoplay' : 'Start autoplay';
+      button.setAttribute('aria-label', button.title);
+      button.classList.toggle('is-playing', autoplayActive);
+      button.disabled = unavailable;
+    }
+    if ($('stepModeSpeed')) $('stepModeSpeed').textContent = `${autoplayDelaySeconds.toFixed(1)}s`;
+    if ($('stepModeFasterBtn')) $('stepModeFasterBtn').disabled = unavailable || autoplayDelaySeconds <= MIN_AUTOPLAY_SECONDS;
+    if ($('stepModeSlowerBtn')) $('stepModeSlowerBtn').disabled = unavailable || autoplayDelaySeconds >= MAX_AUTOPLAY_SECONDS;
+  }
+
+  function stopAutoplay() {
+    if (autoplayTimer !== null) clearTimeout(autoplayTimer);
+    autoplayTimer = null;
+    autoplayActive = false;
+    updateAutoplayControls();
+  }
+
+  function scheduleAutoplay() {
+    if (autoplayTimer !== null) clearTimeout(autoplayTimer);
+    autoplayTimer = null;
+    if (!autoplayActive || state !== 'playback' || !filteredIndexes.length) return;
+    const step = trace?.steps?.[filteredIndexes[position]];
+    if (position >= filteredIndexes.length - 1) {
+      stopAutoplay();
+      setStatus('Autoplay reached the end of the recorded execution.');
+      return;
+    }
+    if (step?.event === 'exception' || (step?.event === 'call' && step.supportsStepChoice)) {
+      stopAutoplay();
+      return;
+    }
+    autoplayTimer = setTimeout(() => {
+      autoplayTimer = null;
+      if (!autoplayActive) return;
+      move(1, { fromAutoplay: true });
+      scheduleAutoplay();
+    }, autoplayDelaySeconds * 1000);
+  }
+
+  function toggleAutoplay() {
+    if (state !== 'playback' || !filteredIndexes.length) return;
+    if (autoplayActive) {
+      stopAutoplay();
+      renderCurrentStep();
+      return;
+    }
+    if (position >= filteredIndexes.length - 1) position = 0;
+    const step = trace?.steps?.[filteredIndexes[position]];
+    if (step?.event === 'call' && step.supportsStepChoice) {
+      setStatus('Choose Step into or Step over before starting autoplay.');
+      return;
+    }
+    autoplayActive = true;
+    updateAutoplayControls();
+    renderCurrentStep();
+    scheduleAutoplay();
+  }
+
+  function adjustAutoplaySpeed(deltaSeconds) {
+    autoplayDelaySeconds = clampStepDelay(autoplayDelaySeconds + Number(deltaSeconds || 0));
+    updateAutoplayControls();
+    if (state !== 'playback') return;
+    if (autoplayActive) {
+      renderCurrentStep();
+      scheduleAutoplay();
+    } else {
+      setStatus(`Autoplay will advance every ${autoplayDelaySeconds.toFixed(1)} seconds.`);
+    }
   }
 
   function decodeTrace(encoded) {
@@ -258,6 +400,7 @@
     $('stepModeDetails').hidden = false;
     updateFilteredIndexes(true);
     updateLaunchButton();
+    updateAutoplayControls();
     renderCurrentStep();
   }
 
@@ -293,6 +436,7 @@
     $('stepModeDetails').hidden = true;
     setStatus('Recording one sandboxed execution… If input is requested, enter it in the shell and press Send.');
     updateLaunchButton();
+    updateAutoplayControls();
     const started = await context.startStepTrace?.(snapshot);
     if (!started) {
       state = 'idle';
@@ -302,6 +446,7 @@
   }
 
   function exit(options = {}) {
+    stopAutoplay();
     clearEditorDecoration();
     if (state === 'playback') setEditorPlaybackLocked(false);
     state = 'idle';
@@ -314,6 +459,7 @@
     $('stepModeDetails')?.setAttribute('hidden', '');
     if (!options.preservePanel) $('stepModePanel')?.setAttribute('hidden', '');
     updateLaunchButton();
+    updateAutoplayControls();
   }
 
   function onRunnerFinished() {
@@ -364,25 +510,37 @@
     $('stepModeBtn')?.addEventListener('click', start);
     $('stepModePreviousBtn')?.addEventListener('click', () => move(-1));
     $('stepModeNextBtn')?.addEventListener('click', () => move(1));
+    $('stepModeAutoBtn')?.addEventListener('click', toggleAutoplay);
+    $('stepModeSlowerBtn')?.addEventListener('click', () => adjustAutoplaySpeed(AUTOPLAY_STEP_SECONDS));
+    $('stepModeFasterBtn')?.addEventListener('click', () => adjustAutoplaySpeed(-AUTOPLAY_STEP_SECONDS));
     $('stepModeRestartBtn')?.addEventListener('click', () => {
+      stopAutoplay();
       position = 0;
       renderCurrentStep();
     });
     $('stepModeExitBtn')?.addEventListener('click', () => exit());
     $('stepModeGranularity')?.addEventListener('change', () => {
+      stopAutoplay();
       updateFilteredIndexes(true);
       renderCurrentStep();
     });
     document.addEventListener('keydown', (event) => {
       if (state !== 'playback' || event.altKey || event.ctrlKey || event.metaKey) return;
       const tag = String(event.target?.tagName || '').toLowerCase();
-      if (['input', 'textarea', 'select'].includes(tag)) return;
+      const isCodeMirrorInput = !!event.target?.closest?.('.CodeMirror');
+      if (tag === 'select' || (['input', 'textarea'].includes(tag) && event.target?.id !== 'stdin' && !isCodeMirrorInput)) return;
       if (event.key === 'ArrowLeft') {
         event.preventDefault();
         move(-1);
       } else if (event.key === 'ArrowRight') {
         event.preventDefault();
         move(1);
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        adjustAutoplaySpeed(-AUTOPLAY_STEP_SECONDS);
+      } else if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        adjustAutoplaySpeed(AUTOPLAY_STEP_SECONDS);
       }
     });
     bindSocket();
@@ -390,7 +548,7 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { selectStepIndexes };
+    module.exports = { clampStepDelay, findPlaybackPosition, selectStepIndexes };
     return;
   }
 

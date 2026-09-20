@@ -243,7 +243,11 @@ Features:
   active line is highlighted, deterministic speech-bubble narration explains
   the operation, and the panel replays variables, output, function returns,
   captured input, and detailed exception troubleshooting. Recorded inputs are
-  reused during playback and are never requested a second time.
+  reused during playback and are never requested a second time. Narration
+  describes file modes, common file methods, CSV readers/writers, imports,
+  classes, special methods, and super(). Recorded custom calls can be stepped
+  into or over unless the call raised an exception. Autoplay advances from
+  every 0.5 to 5 seconds and pauses at custom-call decisions.
 - Interactive input support (input() works in both Python and JavaScript)
 - Drag-and-drop file organization
 - Checkbox-only multi-selection: tapping a file opens it and tapping a folder enters it without changing the selected set.
