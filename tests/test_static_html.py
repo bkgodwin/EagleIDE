@@ -299,6 +299,7 @@ class StaticHtmlTestCase(unittest.TestCase):
             "stepModeBtn", "stepModePanel", "stepModePreviousBtn", "stepModeNextBtn",
             "stepModeCounter", "stepModeGranularity", "stepModeVariables",
             "stepModeExecution", "stepModeRestartBtn", "stepModeExitBtn",
+            "stepModeAutoBtn", "stepModeSlowerBtn", "stepModeSpeed", "stepModeFasterBtn",
         }.issubset(ids))
         self.assertLess(self.raw.index('id="runBtn"'), self.raw.index('id="stepModeBtn"'))
         self.assertIn('id="stepModeBtn" type="button" title="Start Step Mode" aria-label="Start Step Mode">👣</button>', self.raw)
