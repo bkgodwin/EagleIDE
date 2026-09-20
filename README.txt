@@ -238,6 +238,12 @@ Features:
 - Line numbers
 - Error highlighting
 - Real-time code execution (30 second timeout)
+- Python Step Mode beside Run records one sandboxed execution and lets students
+  or teachers move backward and forward through line or function events. The
+  active line is highlighted, deterministic speech-bubble narration explains
+  the operation, and the panel replays variables, output, function returns,
+  captured input, and detailed exception troubleshooting. Recorded inputs are
+  reused during playback and are never requested a second time.
 - Interactive input support (input() works in both Python and JavaScript)
 - Drag-and-drop file organization
 - Checkbox-only multi-selection: tapping a file opens it and tapping a folder enters it without changing the selected set.

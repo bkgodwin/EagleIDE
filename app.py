@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import atexit
+import base64
 import codecs
 import csv
 import hashlib
@@ -6632,6 +6633,7 @@ class _ProcessRunnerBase:
         self.total_input_wait = 0.0
         self.run_id = 0
         self.job_handle: Optional[int] = None
+        self.max_output_bytes = MAX_OUTPUT_BYTES
         self._state_lock = _native_threading.RLock()
 
     def _is_current(self, proc: subprocess.Popen, run_id: int) -> bool:
@@ -6769,9 +6771,9 @@ class _ProcessRunnerBase:
                         return
                     total_bytes += len(raw)
                     total_lines += raw.count(b"\n")
-                    if total_bytes > MAX_OUTPUT_BYTES:
+                    if total_bytes > self.max_output_bytes:
                         flush(force=True)
-                        set_limit(f"Output limit exceeded ({MAX_OUTPUT_BYTES // 1000} KB); process stopped")
+                        set_limit(f"Output limit exceeded ({self.max_output_bytes // 1000} KB); process stopped")
                         return
                     if total_lines > MAX_OUTPUT_LINES:
                         flush(force=True)
@@ -6960,6 +6962,7 @@ class Runner(_ProcessRunnerBase):
         memory_limit_bytes: int = RUNNER_MEMORY_LIMIT_BYTES,
         disabled_modules: frozenset[str] = frozenset(),
         source_name: str = "python-chart.py",
+        trace_token: str = "",
     ) -> None:
         sbox = _prepare_runner_sandbox("pyide", self.sid)
         runner_py = sbox / "runner.py"
@@ -6995,6 +6998,9 @@ class Runner(_ProcessRunnerBase):
             "MKL_NUM_THREADS": "1",
             "NUMEXPR_NUM_THREADS": "1",
         })
+        if trace_token:
+            env["EAGLE_RUN_MODE"] = "trace"
+            env["EAGLE_TRACE_TOKEN"] = trace_token
         self._launch(
             [sys.executable, "-u", str(SANDBOX_WORKER), str(runner_py), str(allowed_root_path)],
             str(cwd_path),
@@ -7003,6 +7009,93 @@ class Runner(_ProcessRunnerBase):
             disk_limit_bytes=min(USER_STORAGE_LIMIT_MB * 1024 * 1024, used + MAX_RUN_WRITE_BYTES),
             memory_limit_bytes=memory_limit_bytes,
         )
+
+
+class TraceRunner(Runner):
+    """Python runner that separates a bounded trace envelope from student I/O."""
+
+    MAX_TRACE_PROTOCOL_BYTES = 6 * 1024 * 1024
+    TRACE_CHUNK_CHARS = 240_000
+
+    def __init__(self, sid: str):
+        super().__init__(sid)
+        self.max_output_bytes = self.MAX_TRACE_PROTOCOL_BYTES + MAX_OUTPUT_BYTES
+        self._trace_token = ""
+        self._trace_buffer = ""
+        self._trace_encoded = ""
+
+    def start(self, code: str, *args, **kwargs) -> None:
+        self._trace_token = secrets.token_hex(24)
+        self._trace_buffer = ""
+        self._trace_encoded = ""
+        super().start(code, *args, trace_token=self._trace_token, **kwargs)
+
+    def _emit_output(self, proc: subprocess.Popen, run_id: int, data: str) -> None:
+        if not data or not self._is_current(proc, run_id):
+            return
+        marker = f"[[EAGLE_TRACE:{self._trace_token}:"
+        end_marker = ":EAGLE_TRACE_END]]"
+        self._trace_buffer += data
+        while self._trace_buffer:
+            start = self._trace_buffer.find(marker)
+            if start < 0:
+                keep = 0
+                for size in range(min(len(self._trace_buffer), len(marker) - 1), 0, -1):
+                    if self._trace_buffer.endswith(marker[:size]):
+                        keep = size
+                        break
+                emit_text = self._trace_buffer[:-keep] if keep else self._trace_buffer
+                self._trace_buffer = self._trace_buffer[-keep:] if keep else ""
+                if emit_text:
+                    super()._emit_output(proc, run_id, emit_text)
+                return
+            if start > 0:
+                super()._emit_output(proc, run_id, self._trace_buffer[:start])
+                self._trace_buffer = self._trace_buffer[start:]
+            end = self._trace_buffer.find(end_marker, len(marker))
+            if end < 0:
+                if len(self._trace_buffer) > self.MAX_TRACE_PROTOCOL_BYTES:
+                    super()._emit_output(proc, run_id, "[Step Mode trace exceeded its protocol limit.]\n")
+                    self._trace_buffer = ""
+                return
+            self._trace_encoded = self._trace_buffer[len(marker):end]
+            self._trace_buffer = self._trace_buffer[end + len(end_marker):]
+
+    def _after_process(self, proc: subprocess.Popen, run_id: int) -> None:
+        if self._trace_buffer:
+            super()._emit_output(proc, run_id, self._trace_buffer)
+            self._trace_buffer = ""
+        super()._after_process(proc, run_id)
+        if not self._trace_encoded:
+            socketio.emit(
+                "trace_error",
+                {"error": "The trace ended before Step Mode could collect its playback data."},
+                to=self.sid,
+            )
+            return
+        try:
+            raw = base64.b64decode(self._trace_encoded.encode("ascii"), validate=True)
+            if len(raw) > self.MAX_TRACE_PROTOCOL_BYTES:
+                raise ValueError("Trace payload is too large")
+            payload = json.loads(raw.decode("utf-8"))
+            if not isinstance(payload, dict) or payload.get("version") != 1 or not isinstance(payload.get("steps"), list):
+                raise ValueError("Trace payload has an invalid shape")
+        except Exception:
+            socketio.emit(
+                "trace_error",
+                {"error": "Step Mode received an invalid or incomplete execution trace."},
+                to=self.sid,
+            )
+            return
+        total = max(1, (len(self._trace_encoded) + self.TRACE_CHUNK_CHARS - 1) // self.TRACE_CHUNK_CHARS)
+        for index in range(total):
+            start = index * self.TRACE_CHUNK_CHARS
+            socketio.emit(
+                "trace_chunk",
+                {"index": index, "total": total, "data": self._trace_encoded[start:start + self.TRACE_CHUNK_CHARS]},
+                to=self.sid,
+            )
+        socketio.emit("trace_ready", {"chunks": total}, to=self.sid)
 
 
 class JsRunner(_ProcessRunnerBase):
@@ -7083,10 +7176,27 @@ def _get_runner(sid: str) -> Runner:
     stale_runner = None
     with _runner_lock:
         r = _runners.get(sid)
-        if isinstance(r, Runner) and not isinstance(r, JsRunner):
+        if isinstance(r, Runner) and not isinstance(r, (JsRunner, TraceRunner)):
             return r
         stale_runner = r
         r = Runner(sid)
+        _runners[sid] = r
+    if stale_runner:
+        try:
+            stale_runner.stop()
+        except Exception:
+            pass
+    return r
+
+
+def _get_trace_runner(sid: str) -> TraceRunner:
+    stale_runner = None
+    with _runner_lock:
+        r = _runners.get(sid)
+        if isinstance(r, TraceRunner):
+            return r
+        stale_runner = r
+        r = TraceRunner(sid)
         _runners[sid] = r
     if stale_runner:
         try:
@@ -7472,6 +7582,60 @@ def on_run_code(payload):
             },
         )
         emit("finished", {})
+
+
+@socketio.on("trace_code")
+def on_trace_code(payload):
+    """Record a bounded Python execution trace for manual browser playback."""
+    payload = payload if isinstance(payload, dict) else {}
+    raw_code = payload.get("code", "")
+    code = str(raw_code if isinstance(raw_code, str) else "")
+
+    def reject(message: str) -> None:
+        emit("trace_error", {"error": message})
+        emit("finished", {})
+
+    if len(code) > MAX_RUN_CODE_CHARS:
+        reject(f"Step Mode rejected code longer than {MAX_RUN_CODE_CHARS} characters.")
+        return
+    if len(code.encode("utf-8")) > MAX_RUN_CODE_BYTES:
+        reject(f"Step Mode rejected code larger than {MAX_RUN_CODE_BYTES // 1000} KB.")
+        return
+
+    file_path = str(payload.get("file_path") or "")
+    language_hint = _normalize_language_hint(payload.get("language"), file_path)
+    if language_hint != "python" or (file_path and Path(file_path).suffix.lower() not in {"", ".py"}):
+        reject("Step Mode currently supports Python programs. JavaScript support is planned next.")
+        return
+
+    context, context_error = _resolve_execution_context(payload, request.sid)
+    if context_error or not context:
+        reject(context_error or "Step Mode could not validate this execution session.")
+        return
+
+    runtime_settings = _normalized_python_runtime_settings()
+    python_memory_bytes = int(runtime_settings["python_memory_limit_mb"]) * 1024 * 1024
+    admitted, admission_error = _try_acquire_execution_slot(request.sid, context, python_memory_bytes)
+    if not admitted:
+        reject(f"Step Mode could not start: {admission_error}")
+        return
+
+    runner = _get_trace_runner(request.sid)
+    try:
+        runner.start(
+            code,
+            user_dir=context.get("run_dir"),
+            allowed_root=context.get("allowed_root"),
+            memory_limit_bytes=python_memory_bytes,
+            disabled_modules=disabled_module_roots(runtime_settings.get("python_module_access")),
+            source_name=Path(file_path).name if file_path else "untitled.py",
+        )
+    except Exception as exc:
+        _pop_runner(request.sid)
+        _release_execution_slot(request.sid)
+        _append_server_log(f"Trace runner start failure ({type(exc).__name__}): {exc}", "ERROR")
+        reject("Step Mode could not start. Ask your teacher or administrator to check the server log.")
+
 
 @socketio.on("send_input")
 def on_send_input(payload):
