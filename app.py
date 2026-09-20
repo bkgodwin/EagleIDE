@@ -124,6 +124,7 @@ def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
 MAX_RUNNER_MEMORY_LIMIT_MB = _env_int("EAGLE_MAX_RUNNER_MEMORY_MB", 2048, 128, 4096)
 _default_run_capacity = 8
 MAX_CONCURRENT_RUNS = _env_int("EAGLE_MAX_CONCURRENT_RUNS", 25, 1, 25)
+RUNNER_CPU_RESERVE = _env_int("EAGLE_RUNNER_CPU_RESERVE", 2, 0, 64)
 MAX_GUEST_RUNS_PER_IP = _env_int("EAGLE_MAX_GUEST_RUNS_PER_IP", 2, 1, 16)
 MAX_RUN_STARTS_PER_WINDOW = _env_int("EAGLE_MAX_RUN_STARTS_PER_10_SECONDS", 6, 1, 60)
 RUN_START_RATE_WINDOW_SECONDS = 10.0
@@ -1869,6 +1870,7 @@ def _write_assignment_submission_copy(owner_email: str, assignment_name: str, st
     if not target:
         raise ValueError("Invalid submission file path")
     target.write_text(content, encoding="utf-8")
+    _invalidate_workspace_tree_cache(owner_dir)
     return str(target.relative_to(owner_dir))
 
 def _get_user_dir(email: str) -> Path:
@@ -2541,6 +2543,8 @@ def admin_python_runtime():
         hard_limits={
             "max_memory_mb": MAX_RUNNER_MEMORY_LIMIT_MB,
             "max_concurrent_runs": MAX_CONCURRENT_RUNS,
+            "cpu_aware_concurrent_runs": _effective_execution_hard_capacity(),
+            "service_cpu_reserve": RUNNER_CPU_RESERVE,
             "cpu_seconds": MAX_CPU_TIME_SECONDS,
             "wall_seconds": MAX_WALL_TIME,
             "write_mb": MAX_RUN_WRITE_BYTES // (1024 * 1024),
@@ -2743,6 +2747,53 @@ def auth_me():
 # -------------------------
 # File management endpoints
 # -------------------------
+WORKSPACE_TREE_CACHE_SECONDS = 3.0
+MAX_WORKSPACE_TREE_CACHE_ENTRIES = 128
+_workspace_tree_cache_lock = threading.Lock()
+_workspace_tree_cache: Dict[str, tuple[float, dict]] = {}
+_workspace_tree_cache_metrics = {"hits": 0, "misses": 0, "invalidations": 0}
+
+
+def _workspace_cache_key(user_dir: Path) -> str:
+    return os.path.normcase(str(user_dir.resolve()))
+
+
+def _get_cached_workspace_tree(user_dir: Path) -> Optional[dict]:
+    key = _workspace_cache_key(user_dir)
+    now = time.monotonic()
+    with _workspace_tree_cache_lock:
+        cached = _workspace_tree_cache.get(key)
+        if not cached or cached[0] <= now:
+            _workspace_tree_cache.pop(key, None)
+            _workspace_tree_cache_metrics["misses"] += 1
+            return None
+        _workspace_tree_cache_metrics["hits"] += 1
+        return copy.deepcopy(cached[1])
+
+
+def _store_cached_workspace_tree(user_dir: Path, payload: dict) -> None:
+    key = _workspace_cache_key(user_dir)
+    now = time.monotonic()
+    with _workspace_tree_cache_lock:
+        for stale_key, (expires_at, _) in list(_workspace_tree_cache.items()):
+            if expires_at <= now:
+                _workspace_tree_cache.pop(stale_key, None)
+        if len(_workspace_tree_cache) >= MAX_WORKSPACE_TREE_CACHE_ENTRIES:
+            oldest_key = min(_workspace_tree_cache, key=lambda item: _workspace_tree_cache[item][0])
+            _workspace_tree_cache.pop(oldest_key, None)
+        _workspace_tree_cache[key] = (now + WORKSPACE_TREE_CACHE_SECONDS, copy.deepcopy(payload))
+
+
+def _invalidate_workspace_tree_cache(user_dir: Path) -> None:
+    try:
+        key = _workspace_cache_key(user_dir)
+    except Exception:
+        return
+    with _workspace_tree_cache_lock:
+        if _workspace_tree_cache.pop(key, None) is not None:
+            _workspace_tree_cache_metrics["invalidations"] += 1
+
+
 @app.get("/api/files/list")
 def files_list():
     user = _require_user_for_files(request)
@@ -2751,11 +2802,16 @@ def files_list():
     
     user_dir = _get_user_dir(user["email"])
     _ensure_workspace_system_dirs(user_dir)
-    _purge_expired_trash(user_dir)
+    if _purge_expired_trash(user_dir):
+        _invalidate_workspace_tree_cache(user_dir)
     # Repair a missing starter folder for existing accounts as well as new
     # ones without recreating individual examples a user intentionally removed.
     if not (user_dir / EXAMPLES_DIR_NAME).is_dir():
         _seed_example_files(user["email"])
+        _invalidate_workspace_tree_cache(user_dir)
+    cached = _get_cached_workspace_tree(user_dir)
+    if cached is not None:
+        return jsonify(ok=True, **cached)
     trash_metadata = _load_trash_metadata(user_dir)
     
     def build_tree(directory: Path, base: Path) -> tuple[list, int]:
@@ -2844,7 +2900,9 @@ def files_list():
     
     tree, used_bytes = build_tree(user_dir, user_dir)
     limit_bytes = USER_STORAGE_LIMIT_MB * 1024 * 1024
-    return jsonify(ok=True, files=tree, used_bytes=used_bytes, limit_bytes=limit_bytes)
+    payload = {"files": tree, "used_bytes": used_bytes, "limit_bytes": limit_bytes}
+    _store_cached_workspace_tree(user_dir, payload)
+    return jsonify(ok=True, **payload)
 
 @app.post("/api/files/create")
 def files_create():
@@ -2895,6 +2953,7 @@ def files_create():
                 return jsonify(ok=False, error=f"Account limit reached (max {MAX_FILES_PER_ACCOUNT} files per account)"), 400
             with target.open("xb"):
                 pass
+        _invalidate_workspace_tree_cache(user_dir)
         return jsonify(ok=True, path=target.relative_to(user_dir).as_posix(), name=name, type=file_type)
     except FileExistsError:
         return jsonify(ok=False, error="A file or folder with that name already exists"), 409
@@ -2975,6 +3034,7 @@ def files_create_wiki_example():
                 except FileExistsError:
                     continue
                 relative_path = target.relative_to(user_dir).as_posix()
+                _invalidate_workspace_tree_cache(user_dir)
                 return jsonify(
                     ok=True,
                     path=relative_path,
@@ -3074,6 +3134,7 @@ def files_write():
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
+        _invalidate_workspace_tree_cache(user_dir)
         return jsonify(ok=True)
     except FileNotFoundError:
         return jsonify(ok=False, error="This file was moved or deleted. Refresh the file browser before saving."), 404
@@ -3335,6 +3396,7 @@ def files_rename():
     
     try:
         old.rename(new_validated)
+        _invalidate_workspace_tree_cache(user_dir)
         return jsonify(ok=True, new_path=new_validated.relative_to(user_dir).as_posix())
     except Exception:
         return jsonify(ok=False, error="Could not rename item"), 500
@@ -3365,8 +3427,10 @@ def files_delete():
     try:
         if _is_trash_path(user_dir, target, include_root=False):
             _permanently_delete_trash_item(user_dir, target)
+            _invalidate_workspace_tree_cache(user_dir)
             return jsonify(ok=True, permanent=True)
         destination, deleted_at = _move_workspace_item_to_trash(user_dir, target)
+        _invalidate_workspace_tree_cache(user_dir)
         return jsonify(
             ok=True,
             trashed=True,
@@ -3396,6 +3460,7 @@ def files_restore():
         return jsonify(ok=False, error="Trash item not found"), 404
     try:
         restored = _restore_workspace_item(user_dir, target)
+        _invalidate_workspace_tree_cache(user_dir)
         return jsonify(ok=True, new_path=restored.relative_to(user_dir).as_posix())
     except FileExistsError as exc:
         return jsonify(ok=False, error=str(exc)), 409
@@ -3482,6 +3547,7 @@ def files_upload():
                     raise ValueError("upload_limit")
                 handle.write(chunk)
         temp_target.replace(target_validated)
+        _invalidate_workspace_tree_cache(user_dir)
         return jsonify(ok=True, path=str(target_validated.relative_to(user_dir)))
     except ValueError:
         try:
@@ -3631,6 +3697,7 @@ def files_move():
 
     try:
         src.rename(new_validated)
+        _invalidate_workspace_tree_cache(user_dir)
         return jsonify(ok=True, new_path=new_validated.relative_to(user_dir.resolve()).as_posix())
     except Exception:
         return jsonify(ok=False, error="Could not move item"), 500
@@ -3697,6 +3764,7 @@ def files_duplicate():
             shutil.copytree(src, duplicate_validated)
         else:
             shutil.copy2(src, duplicate_validated)
+        _invalidate_workspace_tree_cache(user_dir)
         return jsonify(ok=True, new_path=duplicate_validated.relative_to(user_dir.resolve()).as_posix())
     except Exception:
         return jsonify(ok=False, error="Could not duplicate item"), 500
@@ -3937,6 +4005,7 @@ def admin_clear_user_files():
             return jsonify(ok=False, error=f"Failed to clear files: {type(exc).__name__}"), 500
     else:
         _seed_example_files(email)
+    _invalidate_workspace_tree_cache(user_dir)
     _append_server_log(f"Admin cleared files for {email}; Examples restored.", "WARNING")
     return jsonify(ok=True)
 
@@ -3990,6 +4059,7 @@ def _delete_user_by_email(email: str) -> bool:
             shutil.rmtree(user_dir)
         except Exception as exc:
             print(f"Warning: failed to delete user directory for {email}: {type(exc).__name__}")
+    _invalidate_workspace_tree_cache(user_dir)
     return True
 
 
@@ -4078,6 +4148,7 @@ def admin_bulk_clear_files():
         else:
             _seed_example_files(email)
             cleared.append(email)
+        _invalidate_workspace_tree_cache(user_dir)
     if cleared:
         _append_server_log(f"Admin bulk-cleared files for {len(cleared)} account(s); Examples restored.", "WARNING")
     return jsonify(ok=True, cleared=cleared, errors=errors)
@@ -6594,14 +6665,37 @@ def _terminate_isolated_process(proc: Optional[subprocess.Popen], job_handle: Op
 
 def _prepare_runner_sandbox(prefix: str, sid: str) -> Path:
     safe_sid = re.sub(r"[^A-Za-z0-9_-]", "_", str(sid))[:120] or uuid.uuid4().hex
-    sbox = SANDBOX_DIR / f"{prefix}_{safe_sid}"
+    sbox = SANDBOX_DIR / f"{prefix}_{safe_sid}_{uuid.uuid4().hex[:12]}"
     try:
-        if sbox.exists():
-            shutil.rmtree(sbox)
-        sbox.mkdir(parents=True, exist_ok=True)
+        sbox.mkdir(parents=True, exist_ok=False)
     except Exception as exc:
         raise RuntimeError("Could not prepare execution sandbox") from exc
     return sbox
+
+
+def _delete_runner_sandbox_quietly(path: Optional[Path]) -> None:
+    if not path:
+        return
+    try:
+        resolved = path.resolve()
+        sandbox_root = SANDBOX_DIR.resolve()
+        if os.path.commonpath([str(resolved), str(sandbox_root)]) != str(sandbox_root):
+            return
+        if not resolved.name.startswith(("pyide_", "jside_")):
+            return
+        shutil.rmtree(resolved, ignore_errors=True)
+    except Exception:
+        pass
+
+
+def _cleanup_stale_runner_sandboxes() -> None:
+    try:
+        entries = list(SANDBOX_DIR.iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        if entry.is_dir() and entry.name.startswith(("pyide_", "jside_")):
+            _delete_runner_sandbox_quietly(entry)
 
 
 def _runner_environment(extra: Optional[dict[str, str]] = None) -> dict[str, str]:
@@ -6634,6 +6728,7 @@ class _ProcessRunnerBase:
         self.run_id = 0
         self.job_handle: Optional[int] = None
         self.max_output_bytes = MAX_OUTPUT_BYTES
+        self.sandbox_dir: Optional[Path] = None
         self._state_lock = _native_threading.RLock()
 
     def _is_current(self, proc: subprocess.Popen, run_id: int) -> bool:
@@ -6674,6 +6769,7 @@ class _ProcessRunnerBase:
             run_id = self.run_id
             stop_evt = _native_threading.Event()
 
+        launch_started = time.perf_counter()
         proc = subprocess.Popen(
             command,
             stdin=subprocess.PIPE,
@@ -6703,13 +6799,19 @@ class _ProcessRunnerBase:
             self.input_wait_started = 0.0
             self.total_input_wait = 0.0
             self.job_handle = job_handle
+            sandbox_dir = self.sandbox_dir
             self.thread = _native_threading.Thread(
                 target=self._pump,
-                args=(proc, stop_evt, run_id, job_handle, disk_root, disk_limit_bytes),
+                args=(proc, stop_evt, run_id, job_handle, disk_root, disk_limit_bytes, sandbox_dir),
                 daemon=True,
             )
+        launch_ms = max(0, int(round((time.perf_counter() - launch_started) * 1000)))
+        with _execution_admission_lock:
+            _run_metrics["launch_count"] += 1
+            _run_metrics["launch_ms_total"] += launch_ms
+            _run_metrics["launch_ms_max"] = max(_run_metrics["launch_ms_max"], launch_ms)
         try:
-            socketio.emit("run_ack", {"ok": True}, to=self.sid)
+            socketio.emit("run_ack", {"ok": True, "launch_ms": launch_ms}, to=self.sid)
         except Exception:
             pass
         self._emit_output(proc, run_id, "[Process started]\n")
@@ -6730,6 +6832,7 @@ class _ProcessRunnerBase:
         job_handle: Optional[int],
         disk_root: Optional[Path],
         disk_limit_bytes: int,
+        sandbox_dir: Optional[Path],
     ) -> None:
         assert proc.stdout and proc.stdin
         stdout = proc.stdout
@@ -6837,7 +6940,8 @@ class _ProcessRunnerBase:
                 reason = limit_reason[0] if limit_reason else ""
             if reason:
                 self._emit_output(proc, run_id, f"\n[{reason}]\n")
-            if self._is_current(proc, run_id):
+            completed_current_run = self._is_current(proc, run_id)
+            if completed_current_run:
                 try:
                     self._after_process(proc, run_id)
                 except Exception:
@@ -6846,11 +6950,16 @@ class _ProcessRunnerBase:
                     self.proc = None
                     self.job_handle = None
                     self.waiting_for_input = False
+            with self._state_lock:
+                if self.run_id == run_id and self.sandbox_dir == sandbox_dir:
+                    self.sandbox_dir = None
+            _delete_runner_sandbox_quietly(sandbox_dir)
+            _runner_finished(self.sid, self, run_id)
+            if completed_current_run:
                 try:
                     socketio.emit("finished", {}, to=self.sid)
                 except Exception:
                     pass
-            _runner_finished(self.sid, self, run_id)
 
     def send_stdin(self, data: str) -> None:
         with self._state_lock:
@@ -6919,6 +7028,8 @@ class Runner(_ProcessRunnerBase):
         return manifest
 
     def _after_process(self, proc: subprocess.Popen, run_id: int) -> None:
+        if self._artifact_root:
+            _invalidate_workspace_tree_cache(self._artifact_root)
         after = self._artifact_manifest(self._artifact_root)
         changed = [
             path
@@ -6965,6 +7076,7 @@ class Runner(_ProcessRunnerBase):
         trace_token: str = "",
     ) -> None:
         sbox = _prepare_runner_sandbox("pyide", self.sid)
+        self.sandbox_dir = sbox
         runner_py = sbox / "runner.py"
         runner_py.write_text(code, encoding="utf-8")
         cwd_path = user_dir if user_dir and user_dir.exists() else sbox
@@ -7001,14 +7113,19 @@ class Runner(_ProcessRunnerBase):
         if trace_token:
             env["EAGLE_RUN_MODE"] = "trace"
             env["EAGLE_TRACE_TOKEN"] = trace_token
-        self._launch(
-            [sys.executable, "-u", str(SANDBOX_WORKER), str(runner_py), str(allowed_root_path)],
-            str(cwd_path),
-            env,
-            disk_root=allowed_root_path,
-            disk_limit_bytes=min(USER_STORAGE_LIMIT_MB * 1024 * 1024, used + MAX_RUN_WRITE_BYTES),
-            memory_limit_bytes=memory_limit_bytes,
-        )
+        try:
+            self._launch(
+                [sys.executable, "-u", str(SANDBOX_WORKER), str(runner_py), str(allowed_root_path)],
+                str(cwd_path),
+                env,
+                disk_root=allowed_root_path,
+                disk_limit_bytes=min(USER_STORAGE_LIMIT_MB * 1024 * 1024, used + MAX_RUN_WRITE_BYTES),
+                memory_limit_bytes=memory_limit_bytes,
+            )
+        except Exception:
+            _delete_runner_sandbox_quietly(sbox)
+            self.sandbox_dir = None
+            raise
 
 
 class TraceRunner(Runner):
@@ -7103,6 +7220,7 @@ class JsRunner(_ProcessRunnerBase):
 
     def start(self, code: str, user_dir: Optional[Path] = None) -> None:
         sbox = _prepare_runner_sandbox("jside", self.sid)
+        self.sandbox_dir = sbox
         runner_js = sbox / "runner.js"
         runner_js.write_text(code, encoding="utf-8")
         cwd_path = user_dir if user_dir and user_dir.exists() else sbox
@@ -7149,16 +7267,21 @@ try {{
   process.exit(1);
 }}
 """
-        self._launch(
-            [NODE_EXECUTABLE, f"--max-old-space-size={JS_HEAP_LIMIT_MB}", "-e", wrapper_code],
-            str(cwd_path),
-            _runner_environment({"NODE_DISABLE_COLORS": "1"}),
-            # V8 reserves substantially more virtual address space than its
-            # managed heap. Keep the student-visible heap small while leaving
-            # enough address space for Node to initialize; the VM context does
-            # not expose Buffer, require, process, or other native allocators.
-            memory_limit_bytes=JS_ADDRESS_SPACE_LIMIT_BYTES,
-        )
+        try:
+            self._launch(
+                [NODE_EXECUTABLE, f"--max-old-space-size={JS_HEAP_LIMIT_MB}", "-e", wrapper_code],
+                str(cwd_path),
+                _runner_environment({"NODE_DISABLE_COLORS": "1"}),
+                # V8 reserves substantially more virtual address space than its
+                # managed heap. Keep the student-visible heap small while leaving
+                # enough address space for Node to initialize; the VM context does
+                # not expose Buffer, require, process, or other native allocators.
+                memory_limit_bytes=JS_ADDRESS_SPACE_LIMIT_BYTES,
+            )
+        except Exception:
+            _delete_runner_sandbox_quietly(sbox)
+            self.sandbox_dir = None
+            raise
 
 
 def _runner_finished(sid: str, runner: _ProcessRunnerBase, run_id: int) -> None:
@@ -7242,6 +7365,15 @@ _stdin_event_history: Dict[str, deque] = defaultdict(deque)
 _socket_limit_lock = _native_threading.Lock()
 _socket_sid_ips: Dict[str, str] = {}
 _run_metrics: Dict[str, int] = defaultdict(int)
+
+
+def _effective_execution_hard_capacity() -> int:
+    """Keep CPU headroom for HTTP, Socket.IO, and operating-system work."""
+    cores = max(1, int(os.cpu_count() or 1))
+    if cores < 6:
+        return MAX_CONCURRENT_RUNS
+    cpu_capacity = max(1, cores - min(RUNNER_CPU_RESERVE, cores - 1))
+    return min(MAX_CONCURRENT_RUNS, cpu_capacity)
 
 
 def _resolve_execution_context(payload: dict, sid: str) -> tuple[Optional[dict], Optional[str]]:
@@ -7351,7 +7483,7 @@ def _try_acquire_execution_slot(
             "python_max_concurrent_runs",
             _default_run_capacity,
         )
-        configured_concurrency = min(MAX_CONCURRENT_RUNS, int(configured_concurrency))
+        configured_concurrency = min(_effective_execution_hard_capacity(), int(configured_concurrency))
         if len(_active_runs_by_sid) >= configured_concurrency:
             _run_metrics["capacity_rejected"] += 1
             return False, "Execution capacity is busy; try again shortly"
@@ -7449,6 +7581,9 @@ def _release_execution_slot(sid: str) -> None:
         if _active_sid_by_identity.get(identity) == sid:
             _active_sid_by_identity.pop(identity, None)
         _run_metrics["completed"] += 1
+        duration_ms = max(0, int(round((time.time() - float(record.get("started_at") or time.time())) * 1000)))
+        _run_metrics["duration_ms_total"] += duration_ms
+        _run_metrics["duration_ms_max"] = max(_run_metrics["duration_ms_max"], duration_ms)
 
 
 def _stdin_event_allowed(sid: str) -> bool:
@@ -8408,6 +8543,7 @@ def delete_assignment():
             if owner_assignment_dir and owner_assignment_dir.exists():
                 try:
                     shutil.rmtree(owner_assignment_dir)
+                    _invalidate_workspace_tree_cache(owner_root)
                 except Exception as cleanup_error:
                     print(f"Warning: failed to remove assignment folder for {name}: {cleanup_error}")
             return jsonify(ok=True)
@@ -9520,6 +9656,7 @@ def teacher_save_class_mastery_feedback(class_id: str):
     if not out_file:
         return jsonify(ok=False, error="Invalid file path"), 400
     out_file.write_text(feedback + "\n", encoding="utf-8")
+    _invalidate_workspace_tree_cache(teacher_root)
     rel_path = str(out_file.relative_to(teacher_root)).replace("\\", "/")
     return jsonify(ok=True, path=rel_path, fileName=filename)
 
@@ -9543,10 +9680,12 @@ def admin_server_health():
         execution_health = {
             "active": len(_active_runs_by_sid),
             "capacity": min(
-                MAX_CONCURRENT_RUNS,
+                _effective_execution_hard_capacity(),
                 int(python_runtime["python_max_concurrent_runs"]),
             ),
             "hard_capacity": MAX_CONCURRENT_RUNS,
+            "cpu_aware_hard_capacity": _effective_execution_hard_capacity(),
+            "service_cpu_reserve": RUNNER_CPU_RESERVE,
             "python_memory_limit_mb": int(python_runtime["python_memory_limit_mb"]),
             "reserved_memory_mb": round(
                 sum(
@@ -9562,6 +9701,16 @@ def admin_server_health():
             "rate_rejected_total": int(_run_metrics.get("rate_rejected", 0)),
             "guest_rejected_total": int(_run_metrics.get("guest_rejected", 0)),
             "pressure_rejected_total": int(_run_metrics.get("pressure_rejected", 0)),
+            "average_launch_ms": round(
+                _run_metrics.get("launch_ms_total", 0) / max(1, _run_metrics.get("launch_count", 0)),
+                1,
+            ),
+            "maximum_launch_ms": int(_run_metrics.get("launch_ms_max", 0)),
+            "average_run_ms": round(
+                _run_metrics.get("duration_ms_total", 0) / max(1, _run_metrics.get("completed", 0)),
+                1,
+            ),
+            "maximum_run_ms": int(_run_metrics.get("duration_ms_max", 0)),
         }
     with _html_runtime_lock:
         html_runtime_active = len(_html_runtime_sessions)
@@ -9570,6 +9719,11 @@ def admin_server_health():
             **{key: int(value) for key, value in _ai_metrics.items()},
             "capacity": MAX_CONCURRENT_AI_REQUESTS,
             "circuit_open": time.monotonic() < _ai_circuit_open_until,
+        }
+    with _workspace_tree_cache_lock:
+        workspace_cache_health = {
+            "entries": len(_workspace_tree_cache),
+            **{key: int(value) for key, value in _workspace_tree_cache_metrics.items()},
         }
     return jsonify(
         ok=True,
@@ -9595,6 +9749,7 @@ def admin_server_health():
                 "capacity": MAX_HTML_RUNTIME_SESSIONS,
             },
             "ai": ai_health,
+            "workspace_tree_cache": workspace_cache_health,
             "sign_ins": {
                 "last_24_hours": _count_sign_ins(24 * 3600),
                 "last_7_days": _count_sign_ins(7 * 24 * 3600),
@@ -9681,6 +9836,7 @@ if __name__ == "__main__":
     print(f"EagleIDE server starting on http://{host}:{port}", flush=True)
     print("Press Ctrl+C to stop.", flush=True)
     _append_server_log(f"Server listening on http://{host}:{port} (async={socketio.async_mode})", "INFO")
+    _cleanup_stale_runner_sandboxes()
     _cleanup_all_user_files()
     try:
         socketio.run(app, host=host, port=port, debug=False, allow_unsafe_werkzeug=True)

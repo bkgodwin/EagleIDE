@@ -29,6 +29,14 @@ class FileBrowserTests(unittest.TestCase):
         self.headers = {"X-User-Token": self.token}
         self.client = eagle.app.test_client()
         self.workspace = eagle._get_user_dir("files@school.test")
+        with eagle._workspace_tree_cache_lock:
+            eagle._workspace_tree_cache.clear()
+        self.addCleanup(self._clear_workspace_cache)
+
+    @staticmethod
+    def _clear_workspace_cache():
+        with eagle._workspace_tree_cache_lock:
+            eagle._workspace_tree_cache.clear()
 
     def post(self, route, data, **kwargs):
         return self.client.post("/api/files/" + route, json=data, headers=self.headers, **kwargs)
@@ -53,6 +61,26 @@ class FileBrowserTests(unittest.TestCase):
         self.assertEqual(read.get_json()["content"], "print('hello')")
         other = self.client.get("/api/files/read?path=Week%20One/main.py", headers={"X-User-Token": self.other})
         self.assertEqual(other.status_code, 404)
+
+    def test_workspace_tree_cache_is_invalidated_by_mutations(self):
+        self.list_files()
+        self.assertIsNotNone(eagle._get_cached_workspace_tree(self.workspace))
+
+        created = self.post("create", {"name": "cached.py"})
+        self.assertEqual(created.status_code, 200)
+        self.assertIsNone(eagle._get_cached_workspace_tree(self.workspace))
+        self.assertIn("cached.py", {item["path"] for item in self.list_files()})
+
+        written = self.post("write", {"path": "cached.py", "content": "print('fresh')"})
+        self.assertEqual(written.status_code, 200)
+        self.assertIsNone(eagle._get_cached_workspace_tree(self.workspace))
+        refreshed = {item["path"]: item for item in self.list_files()}
+        self.assertEqual(refreshed["cached.py"]["size"], len("print('fresh')"))
+
+        deleted = self.delete("cached.py")
+        self.assertEqual(deleted.status_code, 200)
+        self.assertIsNone(eagle._get_cached_workspace_tree(self.workspace))
+        self.assertNotIn("cached.py", {item["path"] for item in self.list_files()})
 
     def test_duplicate_create_returns_conflict_without_overwriting(self):
         self.post("create", {"name": "main.py"})
