@@ -439,6 +439,66 @@ class SourceNarrator:
             return "method"
         return "function"
 
+    def _describe_common_call(self, call: ast.Call, path: str) -> str:
+        args = [self._segment(item) for item in call.args]
+        if isinstance(call.func, ast.Attribute):
+            owner = self._segment(call.func.value, "the value")
+            method = call.func.attr
+            descriptions = {
+                "upper": f"Create an uppercase copy of string {owner}; the original string is unchanged.",
+                "lower": f"Create a lowercase copy of string {owner}; the original string is unchanged.",
+                "strip": f"Return a copy of string {owner} with matching characters removed from both ends.",
+                "lstrip": f"Return a copy of string {owner} with matching characters removed from the left end.",
+                "rstrip": f"Return a copy of string {owner} with matching characters removed from the right end.",
+                "split": f"Split string {owner} into a list of smaller strings using {args[0] if args else 'whitespace'} as the separator.",
+                "join": f"Join the strings from {args[0] if args else 'the iterable'} using {owner} between each item.",
+                "replace": f"Return a copy of string {owner} with {args[0] if args else 'the old text'} replaced by {args[1] if len(args) > 1 else 'new text'}.",
+                "find": f"Find the first position of {args[0] if args else 'the requested text'} in string {owner}, returning -1 when it is absent.",
+                "capitalize": f"Return a copy of string {owner} with its first character capitalized and remaining characters lowercased.",
+                "title": f"Return a title-cased copy of string {owner}, capitalizing the start of each word.",
+                "startswith": f"Check whether string {owner} begins with {args[0] if args else 'the requested prefix'}.",
+                "endswith": f"Check whether string {owner} ends with {args[0] if args else 'the requested suffix'}.",
+                "format": f"Insert the supplied values into the replacement fields of string {owner}.",
+                "isdigit": f"Check whether string {owner} is nonempty and contains only digit characters.",
+                "isalpha": f"Check whether string {owner} is nonempty and contains only alphabetic characters.",
+                "append": f"Add {args[0] if args else 'one item'} to the end of list {owner}. This changes the list in place.",
+                "extend": f"Add every item from {args[0] if args else 'the iterable'} to the end of list {owner}. This changes the list in place.",
+                "insert": f"Insert {args[1] if len(args) > 1 else 'an item'} into list {owner} at index {args[0] if args else 'the requested position'}.",
+                "remove": f"Remove the first item equal to {args[0] if args else 'the requested value'} from list {owner}.",
+                "pop": f"Remove and return an item from {owner}, using {args[0] if args else 'the last position'} as its index.",
+                "sort": f"Sort list {owner} in place. The method changes the list and returns None.",
+                "reverse": f"Reverse list {owner} in place. The method changes the list and returns None.",
+                "clear": f"Remove every item from {owner}. This changes the collection in place.",
+                "copy": f"Create a shallow copy of {owner}; nested objects are still shared.",
+                "index": f"Find the position of the first matching value in {owner}; raise ValueError if it is absent.",
+                "count": f"Count how many times the requested value appears in {owner}.",
+            }
+            if method in descriptions:
+                return descriptions[method]
+        builtins = {
+            "len": f"Count the items in {args[0] if args else 'the value'} and return that integer.",
+            "range": f"Create a sequence of integers from the supplied bounds; the stop value is not included.",
+            "enumerate": f"Pair each item from {args[0] if args else 'the iterable'} with a running index.",
+            "zip": "Group items from the supplied iterables by position, stopping when the shortest iterable ends.",
+            "sum": f"Add the numeric items from {args[0] if args else 'the iterable'} and return the total.",
+            "min": "Return the smallest supplied item.",
+            "max": "Return the largest supplied item.",
+            "sorted": f"Return a new sorted list from {args[0] if args else 'the iterable'} without changing the original.",
+            "any": f"Return True if at least one item from {args[0] if args else 'the iterable'} is truthy.",
+            "all": f"Return True only if every item from {args[0] if args else 'the iterable'} is truthy.",
+            "int": f"Convert {args[0] if args else 'the value'} to an integer.",
+            "float": f"Convert {args[0] if args else 'the value'} to a floating-point number.",
+            "str": f"Convert {args[0] if args else 'the value'} to text.",
+            "list": f"Create a list from {args[0] if args else 'no starting items'}.",
+            "dict": "Create a dictionary from the supplied keys and values.",
+            "set": f"Create a set of unique items from {args[0] if args else 'the supplied values'}.",
+            "type": f"Return the type of {args[0] if args else 'the value'}.",
+            "isinstance": f"Check whether {args[0] if args else 'the value'} belongs to the requested type.",
+            "print": "Display the supplied values in the program output.",
+            "input": f"Display {args[0] if args else 'a prompt'}, wait for the user, and return the entered text as a string.",
+        }
+        return builtins.get(path, "")
+
     def _describe_call(self, call: ast.Call) -> str:
         path = self._call_path(call.func)
         if path == "open" or path.endswith(".open"):
@@ -458,6 +518,9 @@ class SourceNarrator:
         csv_path = origin if origin in {"csv.reader", "csv.DictReader", "csv.writer", "csv.DictWriter"} else path
         if csv_path in {"csv.reader", "csv.DictReader", "csv.writer", "csv.DictWriter"}:
             return self._describe_csv_call(call, csv_path)
+        common = self._describe_common_call(call, path)
+        if common:
+            return common
         if origin:
             return (
                 f"Call {origin} from an imported module. Step Mode does not enter imported library code; "

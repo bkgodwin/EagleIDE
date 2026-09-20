@@ -519,7 +519,17 @@
       renderCurrentStep();
     });
     $('stepModeExitBtn')?.addEventListener('click', () => exit());
-    $('stepModeGranularity')?.addEventListener('change', () => {
+    const granularity = $('stepModeGranularity');
+    const keepGranularityOpen = (event) => {
+      if (autoplayActive) stopAutoplay();
+      event.stopPropagation();
+    };
+    granularity?.addEventListener('pointerdown', keepGranularityOpen);
+    granularity?.addEventListener('click', (event) => event.stopPropagation());
+    granularity?.addEventListener('focus', () => {
+      if (autoplayActive) stopAutoplay();
+    });
+    granularity?.addEventListener('change', () => {
       stopAutoplay();
       updateFilteredIndexes(true);
       renderCurrentStep();
