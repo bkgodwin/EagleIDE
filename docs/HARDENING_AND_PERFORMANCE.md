@@ -63,10 +63,12 @@ Tune only after measuring the host under classroom load:
 
 | Variable | Default | Purpose |
 | --- | ---: | --- |
-| `EAGLE_MAX_CONCURRENT_RUNS` | 25 | Operator hard ceiling for global Python/JavaScript runner slots |
+| `EAGLE_MAX_CONCURRENT_RUNS` | 25 | Operator hard ceiling for global Python/JavaScript runner slots; accepted range is 1–128 |
 | `EAGLE_RUNNER_CPU_RESERVE` | 2 | Logical cores preserved for HTTP, Socket.IO, the proxy, and operating-system work on hosts with 6+ cores |
 | `EAGLE_MAX_RUNNER_MEMORY_MB` | 2048 | Operator hard ceiling for the admin-set Python per-run memory limit |
 | `EAGLE_MAX_GUEST_RUNS_PER_IP` | 2 | Guest runner slots per address |
+| `EAGLE_MAX_QUEUED_RUNS` | 100 | Global bounded in-memory execution queue |
+| `EAGLE_MAX_GUEST_QUEUED_RUNS_PER_IP` | 4 | Queued guest requests per address |
 | `EAGLE_MAX_RUN_STARTS_PER_10_SECONDS` | 6 | Run-start burst limit per identity |
 | `EAGLE_MAX_SOCKET_CONNECTIONS` | 512 | Global realtime connections |
 | `EAGLE_MAX_SOCKET_CONNECTIONS_PER_IP` | 128 | Realtime connections per address |
@@ -88,9 +90,12 @@ virtual-address ceiling is intentionally larger than the heap because current
 V8 releases reserve additional address space during startup. Student code does
 not receive `require`, `process`, `Buffer`, or network APIs.
 
-For a 50–60 student class, begin with 4 concurrent runs and 750 MB per Python
-run. Normal edit/wiki traffic remains independent; students whose simultaneous
-runs exceed capacity receive a retry message. Measure a realistic lesson that
+For a 50–60 student class, begin with 8 concurrent runs and 750 MB per Python
+run. Normal edit/wiki traffic remains independent; excess authenticated runs
+enter a bounded FIFO queue and receive live position updates. Each account may
+have only one active or queued request. Queued code remains in memory, is never
+written to logs or persistence, is removed on disconnect/cancellation, and is
+authorized again immediately before launch. Measure a realistic lesson that
 imports Matplotlib before increasing concurrency. Increasing runner or AI
 concurrency raises peak CPU and memory use, so change one setting at a time and
 repeat the same load test.
@@ -100,6 +105,19 @@ multiple CPU cores without placing untrusted code inside the web process. On
 hosts with six or more logical cores, admission also caps execution at the host
 CPU count minus `EAGLE_RUNNER_CPU_RESERVE`. The admin health response reports
 both ceilings plus average and maximum process-launch and run durations.
+Increasing a 32-core host to 30 runners requires setting
+`EAGLE_MAX_CONCURRENT_RUNS=30`, leaving the default two-core reserve, and then
+setting the admin runtime limit to 30. At the default 750 MB reservation, 30
+Python runners reserve 22.5 GB before application and operating-system
+headroom; size RAM accordingly.
+
+The protected Server Health view lists active and queued executions without
+showing source code. Administrators can halt either one; active processes use
+the same bounded termination and cleanup path as user stops, and the affected
+user receives `Execution halted by admin` in the shell. A program blocked in
+`input()` remains an active resident process and keeps its slot, while other
+free slots continue serving the queue. Step Mode playback after trace capture
+is browser-side and does not retain a server slot.
 
 When Ollama runs on another server, AI features use only bounded HTTP request
 and response handling on the EagleIDE host. Size local execution capacity from
@@ -114,11 +132,14 @@ For multiple application instances, move ephemeral tokens, Socket.IO coordinatio
 
 ## Monitoring and load-test acceptance
 
-The admin server-health response reports execution admission totals, active HTML sessions, and AI active/capacity/rejection/failure/cache/circuit metrics. During a load test, verify:
+The admin server-health response reports active and queued execution counts,
+queue wait times, admission totals, active HTML sessions, and AI
+active/capacity/rejection/failure/cache/circuit metrics. During a load test,
+verify:
 
 1. Infinite Python and JavaScript runs stop within their limits and release capacity.
 2. Output floods stop at byte or line limits without growing the browser indefinitely.
-3. Excess runs and AI calls receive a clear busy or rate-limit response while ordinary page requests remain responsive.
+3. Excess runs receive position updates and promote in order while queue overflow and AI calls receive clear bounded errors.
 4. Disconnecting clients removes child processes and presence state.
 5. HTML JavaScript runs only on the cross-site preview origin; the fallback sends `script-src 'none'`.
 6. Memory and disk pressure reject new execution before the host becomes unstable.

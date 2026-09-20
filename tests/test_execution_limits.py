@@ -165,6 +165,20 @@ class ExecutionLimitTestCase(unittest.TestCase):
         payload["language"] = "javascript"
         return payload
 
+    def _add_student_token(self, suffix):
+        token = f"runner-student-{suffix}"
+        email = f"runner.{suffix}@example.com"
+        eagle._student_tokens[token] = {
+            "email": email,
+            "name": f"Runner {suffix.title()}",
+            "role": "student",
+            "class_id": None,
+            "class_ids": [],
+        }
+        self.addCleanup(eagle._student_tokens.pop, token, None)
+        eagle._get_user_dir(email).mkdir(parents=True, exist_ok=True)
+        return token
+
     @staticmethod
     def _trace_payload(events):
         chunks = []
@@ -567,6 +581,296 @@ class ExecutionLimitTestCase(unittest.TestCase):
         first.emit("stop", {})
         self._collect_until_finished(first)
 
+    def test_waiting_for_input_leaves_other_execution_slots_available(self):
+        eagle.MAX_CONCURRENT_RUNS = 2
+        second_token = self._add_student_token("input-peer")
+        first = self._socket()
+        second = self._socket()
+        first.emit("run_code", self._payload("input('Waiting: ')"))
+
+        first_events = []
+        deadline = time.time() + 5
+        while time.time() < deadline and eagle.INPUT_TOKEN not in self._output(first_events):
+            first_events.extend(first.get_received())
+            eagle.socketio.sleep(0.02)
+        self.assertIn(eagle.INPUT_TOKEN, self._output(first_events))
+
+        second.emit("run_code", self._payload("print('peer ran')", token=second_token))
+        second_events = self._collect_until_finished(second)
+        self.assertIn("peer ran", self._output(second_events))
+        self.assertFalse(any(event.get("name") == "run_queued" for event in second_events))
+
+        first.emit("stop", {})
+        self._collect_until_finished(first)
+
+    def test_full_capacity_queues_and_promotes_next_user(self):
+        eagle.MAX_CONCURRENT_RUNS = 1
+        second_token = self._add_student_token("queued")
+        first = self._socket()
+        second = self._socket()
+        first.emit("run_code", self._payload("name = input('Waiting: ')\nprint(name)"))
+
+        first_events = []
+        deadline = time.time() + 5
+        while time.time() < deadline and eagle.INPUT_TOKEN not in self._output(first_events):
+            first_events.extend(first.get_received())
+            eagle.socketio.sleep(0.02)
+        self.assertIn(eagle.INPUT_TOKEN, self._output(first_events))
+
+        second.emit("run_code", self._payload("print('promoted')", token=second_token))
+        eagle.socketio.sleep(0.05)
+        queued_events = second.get_received()
+        queued_payloads = [
+            (event.get("args") or [{}])[0]
+            for event in queued_events
+            if event.get("name") == "run_queued"
+        ]
+        self.assertEqual(queued_payloads[0]["position"], 1)
+        self.assertFalse(any(event.get("name") == "run_ack" for event in queued_events))
+
+        first.emit("send_input", {"data": "done"})
+        self._collect_until_finished(first)
+        second_events = queued_events + self._collect_until_finished(second)
+        self.assertIn("promoted", self._output(second_events))
+        self.assertTrue(any(event.get("name") == "run_ack" for event in second_events))
+        self.assertFalse(eagle._execution_queue)
+
+    def test_queued_stop_cancels_request_and_updates_following_position(self):
+        eagle.MAX_CONCURRENT_RUNS = 1
+        second_token = self._add_student_token("cancelled-queue")
+        third_token = self._add_student_token("following-queue")
+        first = self._socket()
+        second = self._socket()
+        third = self._socket()
+        first.emit("run_code", self._payload("input('Waiting: ')"))
+
+        deadline = time.time() + 5
+        first_events = []
+        while time.time() < deadline and eagle.INPUT_TOKEN not in self._output(first_events):
+            first_events.extend(first.get_received())
+            eagle.socketio.sleep(0.02)
+        second.emit("run_code", self._payload("print('cancelled')", token=second_token))
+        third.emit("run_code", self._payload("print('third')", token=third_token))
+        eagle.socketio.sleep(0.05)
+        second.get_received()
+        initial_third = third.get_received()
+        self.assertTrue(any(
+            event.get("name") == "run_queued"
+            and (event.get("args") or [{}])[0].get("position") == 2
+            for event in initial_third
+        ))
+
+        second.emit("stop", {})
+        cancelled_events = self._collect_until_finished(second)
+        self.assertIn("Queued execution cancelled", self._output(cancelled_events))
+        eagle.socketio.sleep(0.05)
+        updated_third = third.get_received()
+        self.assertTrue(any(
+            event.get("name") == "run_queue_update"
+            and (event.get("args") or [{}])[0].get("position") == 1
+            for event in updated_third
+        ))
+
+        first.emit("stop", {})
+        self._collect_until_finished(first)
+        self._collect_until_finished(third)
+
+    def test_queued_execution_rechecks_authentication_before_launch(self):
+        eagle.MAX_CONCURRENT_RUNS = 1
+        second_token = self._add_student_token("expired-queue")
+        first = self._socket()
+        second = self._socket()
+        first.emit("run_code", self._payload("input('Waiting: ')"))
+
+        deadline = time.time() + 5
+        first_events = []
+        while time.time() < deadline and eagle.INPUT_TOKEN not in self._output(first_events):
+            first_events.extend(first.get_received())
+            eagle.socketio.sleep(0.02)
+        second.emit("run_code", self._payload("print('must not execute')", token=second_token))
+        eagle.socketio.sleep(0.05)
+        queued_events = second.get_received()
+        self.assertTrue(any(event.get("name") == "run_queued" for event in queued_events))
+        eagle._student_tokens.pop(second_token, None)
+
+        first.emit("stop", {})
+        self._collect_until_finished(first)
+        second_events = queued_events + self._collect_until_finished(second)
+        self.assertIn("invalid or expired student session", self._output(second_events))
+        self.assertNotIn("must not execute", self._output(second_events))
+
+    def test_step_mode_uses_the_same_execution_queue(self):
+        eagle.MAX_CONCURRENT_RUNS = 1
+        second_token = self._add_student_token("queued-trace")
+        first = self._socket()
+        second = self._socket()
+        first.emit("run_code", self._payload("input('Waiting: ')"))
+
+        deadline = time.time() + 5
+        first_events = []
+        while time.time() < deadline and eagle.INPUT_TOKEN not in self._output(first_events):
+            first_events.extend(first.get_received())
+            eagle.socketio.sleep(0.02)
+        trace_payload = self._payload("value = 7\nprint(value)", token=second_token)
+        second.emit("trace_code", trace_payload)
+        eagle.socketio.sleep(0.05)
+        queued_events = second.get_received()
+        self.assertTrue(any(event.get("name") == "run_queued" for event in queued_events))
+
+        first.emit("stop", {})
+        self._collect_until_finished(first)
+        trace_events = queued_events + self._collect_until_finished(second)
+        trace = self._trace_payload(trace_events)
+        self.assertIsNotNone(trace)
+        self.assertIn("7", trace["output"])
+
+    def test_admin_can_view_and_halt_active_and_queued_executions(self):
+        eagle.MAX_CONCURRENT_RUNS = 1
+        second_token = self._add_student_token("admin-queued")
+        first = self._socket()
+        second = self._socket()
+        first.emit("run_code", self._payload("input('Waiting: ')"))
+
+        first_events = []
+        deadline = time.time() + 5
+        while time.time() < deadline and eagle.INPUT_TOKEN not in self._output(first_events):
+            first_events.extend(first.get_received())
+            eagle.socketio.sleep(0.02)
+        second.emit("run_code", self._payload("print('should not run')", token=second_token))
+        eagle.socketio.sleep(0.05)
+        second.get_received()
+
+        denied = self.http.get("/api/admin/executions")
+        malformed = self.http.post(
+            "/api/admin/executions/kill",
+            json=["not-an-object"],
+            headers={"X-Admin-Token": self.admin_token},
+        )
+        listing = self.http.get(
+            "/api/admin/executions",
+            headers={"X-Admin-Token": self.admin_token},
+        )
+        self.assertEqual(denied.status_code, 401)
+        self.assertEqual(malformed.status_code, 400)
+        self.assertEqual(listing.status_code, 200)
+        data = listing.get_json()["data"]
+        self.assertEqual(data["active_count"], 1)
+        self.assertEqual(data["queued_count"], 1)
+        for execution in data["active"] + data["queued"]:
+            self.assertNotIn("code", execution)
+            self.assertNotIn("payload", execution)
+        self.assertNotIn(second_token, json.dumps(data))
+        self.assertNotIn("should not run", json.dumps(data))
+
+        queued_kill = self.http.post(
+            "/api/admin/executions/kill",
+            json={"execution_id": data["queued"][0]["execution_id"]},
+            headers={"X-Admin-Token": self.admin_token},
+        )
+        self.assertEqual(queued_kill.status_code, 200)
+        queued_events = self._collect_until_finished(second)
+        self.assertIn("Execution halted by admin", self._output(queued_events))
+        self.assertNotIn("should not run", self._output(queued_events))
+
+        active_kill = self.http.post(
+            "/api/admin/executions/kill",
+            json={"execution_id": data["active"][0]["execution_id"]},
+            headers={"X-Admin-Token": self.admin_token},
+        )
+        self.assertEqual(active_kill.status_code, 200)
+        active_events = first_events + self._collect_until_finished(first)
+        self.assertIn("Execution halted by admin", self._output(active_events))
+        final_data = self.http.get(
+            "/api/admin/executions",
+            headers={"X-Admin-Token": self.admin_token},
+        ).get_json()["data"]
+        self.assertEqual(final_data["active_count"], 0)
+        self.assertEqual(final_data["queued_count"], 0)
+
+    def test_cancel_during_launch_cannot_leave_an_untracked_runner(self):
+        sid = "launch-race-sid"
+        context = {
+            "identity": "account:launch-race@example.com",
+            "rate_identity": "account:launch-race@example.com",
+            "role": "student",
+            "email": "launch-race@example.com",
+            "display_name": "Launch Race",
+            "run_dir": self.user_files_dir,
+            "allowed_root": self.user_files_dir,
+            "guest_ip": "",
+        }
+        entry = {
+            "execution_id": "launch-race-execution",
+            "sid": sid,
+            "kind": "run",
+            "code": "print('must be stopped')",
+            "payload": {},
+            "context": context,
+            "runtime_settings": eagle._normalized_python_runtime_settings(),
+            "requested_memory_bytes": 128 * 1024 * 1024,
+            "language": "python",
+            "is_javascript": False,
+            "file_path": "",
+            "cancelled": eagle._native_threading.Event(),
+            "control_lock": eagle._native_threading.RLock(),
+        }
+        launch_entered = eagle._native_threading.Event()
+        allow_launch_return = eagle._native_threading.Event()
+        stopped = eagle._native_threading.Event()
+
+        class BlockingRunner:
+            def start(self, *_args, **_kwargs):
+                launch_entered.set()
+                allow_launch_return.wait(timeout=5)
+
+            def stop(self):
+                stopped.set()
+
+        runner = BlockingRunner()
+
+        def register_runner(_sid):
+            with eagle._runner_lock:
+                eagle._runners[_sid] = runner
+            return runner
+
+        with eagle._execution_admission_lock:
+            eagle._reserve_execution_slot_locked(sid, context, entry["requested_memory_bytes"], entry)
+        with eagle._socket_limit_lock:
+            eagle._socket_sid_ips[sid] = "127.0.0.1"
+        try:
+            with mock.patch.object(eagle, "_resolve_execution_context", return_value=(context, None)), \
+                    mock.patch.object(eagle, "_get_runner", side_effect=register_runner):
+                launch_thread = eagle._native_threading.Thread(
+                    target=eagle._start_execution_request,
+                    args=(entry,),
+                )
+                launch_thread.start()
+                self.assertTrue(launch_entered.wait(timeout=2))
+
+                result = []
+                stop_thread = eagle._native_threading.Thread(
+                    target=lambda: result.append(eagle._stop_active_execution(
+                        sid,
+                        execution_id=entry["execution_id"],
+                    )),
+                )
+                stop_thread.start()
+                time.sleep(0.05)
+                self.assertTrue(stop_thread.is_alive())
+                allow_launch_return.set()
+                launch_thread.join(timeout=2)
+                stop_thread.join(timeout=2)
+
+            self.assertEqual(result, [True])
+            self.assertTrue(stopped.is_set())
+            self.assertNotIn(sid, eagle._runners)
+            self.assertNotIn(sid, eagle._active_runs_by_sid)
+        finally:
+            allow_launch_return.set()
+            eagle._stop_active_execution(sid)
+            with eagle._socket_limit_lock:
+                eagle._socket_sid_ips.pop(sid, None)
+
     def test_global_execution_capacity_is_bounded(self):
         eagle.MAX_CONCURRENT_RUNS = 1
         first = {"identity": "account:first@example.com", "role": "student", "guest_ip": ""}
@@ -585,8 +889,11 @@ class ExecutionLimitTestCase(unittest.TestCase):
         eagle.RUNNER_CPU_RESERVE = 2
         with mock.patch.object(eagle.os, "cpu_count", return_value=12):
             self.assertEqual(eagle._effective_execution_hard_capacity(), 10)
+        eagle.MAX_CONCURRENT_RUNS = 40
+        with mock.patch.object(eagle.os, "cpu_count", return_value=32):
+            self.assertEqual(eagle._effective_execution_hard_capacity(), 30)
         with mock.patch.object(eagle.os, "cpu_count", return_value=4):
-            self.assertEqual(eagle._effective_execution_hard_capacity(), 25)
+            self.assertEqual(eagle._effective_execution_hard_capacity(), 40)
 
     def test_runner_sandbox_cleanup_is_strictly_scoped(self):
         disposable = self.sandbox_dir / "pyide_stale"
