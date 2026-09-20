@@ -38,7 +38,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20260918-10">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260920-1">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -521,13 +521,42 @@
         <section class="panel" id="shellPanel" style="grid-row:1 / 2; grid-column:1;">
           <header class="shell-panel-header">
             <h3>Shell:</h3>
-            <button class="btn run run-btn-hero shell-run-btn" id="runBtn">Run ▶</button>
+            <div class="shell-run-actions">
+              <button class="btn run run-btn-hero shell-run-btn" id="runBtn">Run ▶</button>
+              <button class="btn secondary step-mode-launch-btn" id="stepModeBtn" type="button" title="Start Step Mode" aria-label="Start Step Mode">👣</button>
+            </div>
             <label class="shell-font-control" for="shellFontRange" title="Shell text size">
               <span>Text</span>
               <input id="shellFontRange" type="range" min="12" max="50" value="14" step="1">
               <output id="shellFontVal" for="shellFontRange">14</output>
             </label>
           </header>
+          <section class="step-mode-panel" id="stepModePanel" hidden aria-label="Step Mode controls">
+            <div class="step-mode-toolbar">
+              <button class="step-arrow-btn" id="stepModePreviousBtn" type="button" aria-label="Previous execution step" title="Previous step (Left Arrow)">⬅</button>
+              <strong id="stepModeCounter">Step 0 of 0</strong>
+              <button class="step-arrow-btn" id="stepModeNextBtn" type="button" aria-label="Next execution step" title="Next step (Right Arrow)">➡</button>
+              <label class="step-mode-granularity">View
+                <select id="stepModeGranularity" aria-label="Step granularity">
+                  <option value="line">Line by line</option>
+                  <option value="function">Function by function</option>
+                </select>
+              </label>
+              <button class="btn secondary" id="stepModeRestartBtn" type="button">↺ Restart</button>
+              <button class="btn secondary" id="stepModeExitBtn" type="button">Exit</button>
+            </div>
+            <div class="step-mode-status" id="stepModeStatus" role="status" aria-live="polite"></div>
+            <div class="step-mode-details" id="stepModeDetails" hidden>
+              <section>
+                <h4>Variables</h4>
+                <div class="step-variable-list" id="stepModeVariables"></div>
+              </section>
+              <section>
+                <h4>Execution</h4>
+                <div class="step-execution-summary" id="stepModeExecution"></div>
+              </section>
+            </div>
+          </section>
           <div class="content"><div id="output"></div></div>
           <div class="shell-input-bar">
             <input id="stdin" placeholder="Shell command (help) or program input…" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" name="ide-shell-input"/>
@@ -1657,13 +1686,14 @@
   <script src="/static/js/editor-init.js?v=20260918-10"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js"></script>
-  <script src="/static/js/app-core.js?v=20260918-10"></script>
+  <script src="/static/js/app-core.js?v=20260920-1"></script>
+  <script src="/static/js/step-mode.js?v=20260920-2"></script>
 <script src="/static/js/network-sim.js?v=20260714-18"></script>
 <script src="/static/js/network-sim-advanced.js?v=20260714-4"></script>
-  <script src="/static/js/wiki-reader.js?v=20260918-10"></script>
+  <script src="/static/js/wiki-reader.js?v=20260920-1"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
   <script src="/static/js/lesson-plans.js?v=20260816-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20260918-10"></script>
+  <script src="/static/js/wiki-admin.js?v=20260920-1"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20260918-10"></script>
   <script src="/static/js/student-notebook.js?v=20260918-10"></script>

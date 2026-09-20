@@ -293,6 +293,27 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn("width:56px", legacy_css)
         self.assertIn("height:56px", legacy_css)
 
+    def test_step_mode_controls_and_assets_are_wired(self):
+        ids = set(self.parser.ids)
+        self.assertTrue({
+            "stepModeBtn", "stepModePanel", "stepModePreviousBtn", "stepModeNextBtn",
+            "stepModeCounter", "stepModeGranularity", "stepModeVariables",
+            "stepModeExecution", "stepModeRestartBtn", "stepModeExitBtn",
+        }.issubset(ids))
+        self.assertLess(self.raw.index('id="runBtn"'), self.raw.index('id="stepModeBtn"'))
+        self.assertIn('id="stepModeBtn" type="button" title="Start Step Mode" aria-label="Start Step Mode">👣</button>', self.raw)
+        self.assertNotIn('>👣 Step Mode</button>', self.raw)
+        self.assertIn('/static/js/step-mode.js', self.raw)
+        main_css = (BASE_DIR / "static" / "css" / "main.css").read_text(encoding="utf-8")
+        step_css = (BASE_DIR / "static" / "css" / "features" / "step-mode.css").read_text(encoding="utf-8")
+        core = (BASE_DIR / "static" / "js" / "app-core.js").read_text(encoding="utf-8")
+        self.assertIn('features/step-mode.css', main_css)
+        self.assertIn('.cm-step-line', step_css)
+        self.assertIn('.step-narration-bubble', step_css)
+        self.assertIn('@media (pointer: coarse)', step_css)
+        self.assertIn("startStepTrace", core)
+        self.assertIn("activeRunSource === 'step'", core)
+
     def test_python_concurrency_admin_limit_defaults_to_eight_and_caps_at_twenty_five(self):
         app_source = (BASE_DIR / "app.py").read_text(encoding="utf-8")
         config_source = (BASE_DIR / "config.py").read_text(encoding="utf-8")

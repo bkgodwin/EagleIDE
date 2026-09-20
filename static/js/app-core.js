@@ -1229,6 +1229,50 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       return true;
     }
 
+    async function startStepTrace(snapshot = null) {
+      if (isProgramRunning || !socket) return false;
+      const source = snapshot || getEditorSnapshot();
+      const language = String(source?.language || '').toLowerCase();
+      if (!language.includes('python')) return false;
+      outputEl.textContent = '';
+      shellOutputChars = 0;
+      clearErrorHighlights();
+      _inTraceback = false;
+      waitingForUserInput = false;
+      exceptionInCurrentRun = false;
+      lastRunExceptionType = null;
+      lastRunExceptionEntry = null;
+      hideExceptionHelpButton();
+      closeExceptionHelpModal();
+      if (currentOpenFile && (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN)) {
+        saveCurrentFile().catch(() => false);
+      }
+      setRunButtonState(true, 'step');
+      socket.emit('trace_code', {
+        code: String(source.code || ''),
+        language: 'python',
+        user_token: USER_TOKEN || '',
+        teacher_token: TEACHER_TOKEN || '',
+        admin_token: ADMIN_TOKEN || '',
+        class_id: getCurrentClassContext()?.id || '',
+        file_path: source.filePath || '',
+      });
+      return true;
+    }
+
+    function stopStepTrace() {
+      if (!isProgramRunning || activeRunSource !== 'step' || !socket) return false;
+      socket.emit('stop', {});
+      return true;
+    }
+
+    function setShellOutput(text) {
+      const value = String(text || '');
+      outputEl.textContent = value;
+      shellOutputChars = value.length;
+      scheduleShellScroll();
+    }
+
     function refreshEagleIDEContext() {
       const prev = window.EagleIDE || {};
       window.EagleIDE = {
@@ -1255,6 +1299,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           runNotebookCode,
           sendNotebookInput,
           stopNotebookRun,
+          startStepTrace,
+          stopStepTrace,
+          setShellOutput,
           isProgramRunning,
           activeRunSource,
           showSystemShellMessages: showSystemShellMessages(),
@@ -1649,6 +1696,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             if (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN) loadFileTree();
             return;
           }
+          if (activeRunSource === 'step') {
+            _inTraceback = false;
+            waitingForUserInput = false;
+            setRunButtonState(false);
+            window.StepMode?.onRunnerFinished?.();
+            if (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN) loadFileTree();
+            return;
+          }
           _inTraceback = false; // Reset traceback state when process finishes
           waitingForUserInput = false;
           setRunButtonState(false);
@@ -1815,6 +1870,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         runBtn.disabled = true;
         runBtn.classList.remove('stop');
         runBtn.classList.add('run-disabled');
+      } else if (isProgramRunning && activeRunSource === 'step') {
+        runBtn.textContent = 'Tracing…';
+        runBtn.disabled = true;
+        runBtn.classList.remove('stop');
+        runBtn.classList.add('run-disabled');
       } else {
         runBtn.disabled = false;
         runBtn.textContent = isProgramRunning ? 'Stop ⏹' : 'Run ▶';
@@ -1823,7 +1883,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
       runBtn.classList.toggle('run', !isProgramRunning);
       runBtn.title = isProgramRunning
-        ? (activeRunSource === 'notebook' ? 'Notebook code is running' : 'Stop current program')
+        ? (activeRunSource === 'notebook' ? 'Notebook code is running' : (activeRunSource === 'step' ? 'Step Mode is recording this execution' : 'Stop current program'))
         : 'Run current program';
       notifyRunState();
       refreshEagleIDEContext();
@@ -1923,6 +1983,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     });
 
     document.getElementById('runBtn').addEventListener('click', async () => {
+      window.StepMode?.exit?.();
       if (isProgramRunning && activeRunSource !== 'editor') {
         return;
       }

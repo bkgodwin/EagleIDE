@@ -1,4 +1,5 @@
 import builtins
+import base64
 import getpass
 import io
 import json
@@ -162,6 +163,23 @@ class ExecutionLimitTestCase(unittest.TestCase):
         payload["language"] = "javascript"
         return payload
 
+    @staticmethod
+    def _trace_payload(events):
+        chunks = []
+        expected = 0
+        for event in events:
+            args = (event.get("args") or [{}])[0]
+            if event.get("name") == "trace_chunk":
+                total = int(args.get("total") or 0)
+                if not chunks:
+                    chunks = [""] * total
+                chunks[int(args.get("index") or 0)] = str(args.get("data") or "")
+            elif event.get("name") == "trace_ready":
+                expected = int(args.get("chunks") or 0)
+        if not expected or expected != len(chunks) or not all(chunks):
+            return None
+        return json.loads(base64.b64decode("".join(chunks)).decode("utf-8"))
+
     def test_valid_python_run_finishes_and_releases_capacity(self):
         client = self._socket()
         client.emit("run_code", self._payload("print('safe hello')"))
@@ -172,6 +190,99 @@ class ExecutionLimitTestCase(unittest.TestCase):
         names = [event.get("name") for event in events]
         self.assertLess(names.index("run_ack"), names.index("finished"))
         self.assertNotIn(client.eio_sid, eagle._active_runs_by_sid)
+
+    def test_step_mode_records_variables_function_returns_and_teacher_runs(self):
+        client = self._socket()
+        payload = self._payload(
+            "def double(value):\n"
+            "    answer = value * 2\n"
+            "    return answer\n"
+            "number = 6\n"
+            "result = double(number)\n"
+            "print(result)\n"
+        )
+        payload["user_token"] = ""
+        payload["teacher_token"] = self.teacher_token
+        client.emit("trace_code", payload)
+        events = self._collect_until_finished(client)
+        trace = self._trace_payload(events)
+
+        self.assertIsNotNone(trace)
+        self.assertIn("12", trace["output"])
+        self.assertTrue(any(step.get("event") == "call" and step.get("function") == "double" for step in trace["steps"]))
+        self.assertTrue(any(step.get("event") == "return" and step.get("returnValue") == "12" for step in trace["steps"]))
+        visible_values = [row.get("value") for step in trace["steps"] for row in step.get("locals", [])]
+        self.assertIn("6", visible_values)
+        self.assertNotIn(client.eio_sid, eagle._active_runs_by_sid)
+
+    def test_step_mode_records_input_once_for_playback(self):
+        client = self._socket()
+        client.emit("trace_code", self._payload("name = input('Name: ')\nprint('Hello', name)"))
+        events = []
+        deadline = time.time() + 5
+        while time.time() < deadline and eagle.INPUT_TOKEN not in self._output(events):
+            events.extend(client.get_received())
+            eagle.socketio.sleep(0.02)
+        self.assertIn(eagle.INPUT_TOKEN, self._output(events))
+
+        client.emit("send_input", {"data": "Avery"})
+        events.extend(self._collect_until_finished(client))
+        trace = self._trace_payload(events)
+
+        self.assertIsNotNone(trace)
+        self.assertEqual(trace["inputs"], [{"prompt": "Name: ", "value": "Avery", "line": 1}])
+        input_steps = [step for step in trace["steps"] if step.get("event") == "input"]
+        self.assertEqual(len(input_steps), 1)
+        self.assertEqual(input_steps[0]["input"]["value"], "Avery")
+        self.assertIn("Hello Avery", trace["output"])
+
+    def test_step_mode_keeps_detailed_uncaught_exception_trace(self):
+        client = self._socket()
+        code = "numbers = [10, 20]\nposition = 4\nprint(numbers[position])"
+        client.emit("trace_code", self._payload(code))
+        events = self._collect_until_finished(client)
+        trace = self._trace_payload(events)
+
+        self.assertIsNotNone(trace)
+        self.assertEqual(trace["exception"]["type"], "IndexError")
+        self.assertEqual(trace["exception"]["line"], 3)
+        self.assertIn("print(numbers[position])", trace["exception"]["source"])
+        final_step = trace["steps"][-1]
+        self.assertEqual(final_step["event"], "exception")
+        self.assertIn("print(numbers[position])", final_step["narration"])
+        self.assertIn("Review the captured values", final_step["narration"])
+        self.assertTrue(final_step["exception"]["troubleshooting"])
+        self.assertNotIn(final_step["exception"]["troubleshooting"][0], final_step["narration"])
+        self.assertIn("IndexError", trace["output"])
+        self.assertNotIn(str(self.sandbox_dir), trace["exception"]["traceback"])
+
+    def test_step_mode_never_calls_student_repr_for_variable_display(self):
+        client = self._socket()
+        code = (
+            "class UnsafeDisplay:\n"
+            "    def __repr__(self):\n"
+            "        raise RuntimeError('repr must not run')\n"
+            "value = UnsafeDisplay()\n"
+            "print('trace-safe')\n"
+        )
+        client.emit("trace_code", self._payload(code))
+        trace = self._trace_payload(self._collect_until_finished(client))
+
+        self.assertIsNotNone(trace)
+        self.assertIsNone(trace["exception"])
+        self.assertIn("trace-safe", trace["output"])
+        displayed = [row.get("value") for step in trace["steps"] for row in step.get("locals", [])]
+        self.assertIn("<UnsafeDisplay instance>", displayed)
+
+    def test_step_mode_explains_syntax_errors_before_execution(self):
+        client = self._socket()
+        client.emit("trace_code", self._payload("if True\n    print('missing colon')"))
+        trace = self._trace_payload(self._collect_until_finished(client))
+
+        self.assertIsNotNone(trace)
+        self.assertEqual(trace["exception"]["type"], "SyntaxError")
+        self.assertEqual(trace["steps"][-1]["event"], "exception")
+        self.assertTrue(trace["exception"]["troubleshooting"])
 
     def test_python_traceback_keeps_lesson_details_without_server_paths(self):
         client = self._socket()
