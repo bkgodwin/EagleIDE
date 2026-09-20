@@ -816,6 +816,8 @@ def _safe_exception_text(
 
 
 def main() -> int:
+    import base64
+    import json as trace_json
     import sys
 
     if len(sys.argv) != 3:
@@ -842,6 +844,16 @@ def main() -> int:
     except Exception:
         print("The Python program could not be prepared. Ask an administrator to check the server log.", file=sys.stderr)
         return 1
+
+    trace_mode = os.environ.get("EAGLE_RUN_MODE") == "trace"
+    trace_token = str(os.environ.get("EAGLE_TRACE_TOKEN") or "")
+    trace_recorder = None
+    trace_limit_error = None
+    if trace_mode:
+        from trace_support import TraceLimitReached, TraceRecorder
+
+        trace_limit_error = TraceLimitReached
+        trace_recorder = TraceRecorder(user_code, display_name)
 
     policy = PathPolicy(allowed_root)
     _apply_resource_limits()
@@ -872,6 +884,11 @@ def main() -> int:
         blocked_exact,
         artifact_manager,
     )
+    real_stdout = sys.stdout
+    real_stderr = sys.stderr
+    real_settrace = getattr(sys, "settrace", None)
+    if trace_recorder is not None:
+        safe_builtins["input"] = trace_recorder.make_input(real_stdout, sys.stdin, INPUT_TOKEN)
     _install_audit_hook(policy, code_path, write_budget, blocked_roots, blocked_exact)
     _scrub_runtime_globals(safe_builtins)
 
@@ -881,6 +898,53 @@ def main() -> int:
         "__file__": display_name,
         "__package__": None,
     }
+    if trace_recorder is not None:
+        exit_code = 0
+        try:
+            sys.stdout = trace_recorder.output
+            sys.stderr = trace_recorder.output
+            if real_settrace:
+                real_settrace(trace_recorder.trace)
+            # Student code must not inspect, replace, or disable the trusted
+            # callback.  Cleanup retains the original built-in reference.
+            if hasattr(sys, "gettrace"):
+                sys.gettrace = _blocked_call
+            if hasattr(sys, "settrace"):
+                sys.settrace = _blocked_call
+            exec(compile(user_code, display_name, "exec"), sandbox_globals, sandbox_globals)
+        except trace_limit_error:
+            trace_recorder.truncated = True
+        except SystemExit as exc:
+            code = getattr(exc, "code", 0)
+            exit_code = int(code) if isinstance(code, int) else 0
+        except BaseException as exc:
+            exit_code = 1
+            safe_text = _safe_exception_text(
+                exc,
+                exc.__traceback__,
+                allowed_root=allowed_root,
+                runtime_root=runtime_root,
+                runtime_file=runtime_file,
+                display_name=display_name,
+            )
+            trace_recorder.record_uncaught_exception(exc, exc.__traceback__, safe_text)
+        finally:
+            if real_settrace:
+                real_settrace(None)
+            sys.stdout = real_stdout
+            sys.stderr = real_stderr
+        try:
+            encoded = base64.b64encode(
+                trace_json.dumps(trace_recorder.result(), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            ).decode("ascii")
+            real_stdout.write(f"\n[[EAGLE_TRACE:{trace_token}:{encoded}:EAGLE_TRACE_END]]\n")
+            real_stdout.flush()
+        except BaseException:
+            real_stderr.write("[Step Mode could not package this execution trace.]\n")
+            real_stderr.flush()
+            return 1
+        return exit_code
+
     try:
         exec(compile(user_code, display_name, "exec"), sandbox_globals, sandbox_globals)
     except SystemExit:
