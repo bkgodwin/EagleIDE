@@ -333,16 +333,32 @@ class StaticHtmlTestCase(unittest.TestCase):
         step_js = (BASE_DIR / "static" / "js" / "step-mode.js").read_text(encoding="utf-8")
         self.assertIn("granularity?.addEventListener('pointerdown', keepGranularityOpen)", step_js)
 
-    def test_python_concurrency_admin_limit_defaults_to_eight_and_caps_at_twenty_five(self):
+    def test_python_concurrency_admin_limit_defaults_to_eight_and_scales_safely(self):
         app_source = (BASE_DIR / "app.py").read_text(encoding="utf-8")
         config_source = (BASE_DIR / "config.py").read_text(encoding="utf-8")
         core = (BASE_DIR / "static" / "js" / "app-core.js").read_text(encoding="utf-8")
-        self.assertIn('MAX_CONCURRENT_RUNS = _env_int("EAGLE_MAX_CONCURRENT_RUNS", 25, 1, 25)', app_source)
+        self.assertIn('MAX_CONCURRENT_RUNS = _env_int("EAGLE_MAX_CONCURRENT_RUNS", 25, 1, 128)', app_source)
+        self.assertIn('MAX_QUEUED_RUNS = _env_int("EAGLE_MAX_QUEUED_RUNS", 100, 1, 1000)', app_source)
         self.assertIn('"python_max_concurrent_runs": 8', app_source)
         self.assertIn('"python_max_concurrent_runs": 8', config_source)
-        self.assertIn('id="pythonConcurrencyLimitModal" min="1" max="25"', self.raw)
-        self.assertIn("hard.max_concurrent_runs || 25", core)
+        self.assertIn('id="pythonConcurrencyLimitModal" min="1" max="128"', self.raw)
+        self.assertIn("hard.max_concurrent_runs || 128", core)
         self.assertIn("settings.python_max_concurrent_runs || 8", core)
+
+    def test_execution_queue_and_admin_kill_controls_are_wired(self):
+        ids = set(self.parser.ids)
+        self.assertTrue({
+            "executionQueueStatus", "executionQueueStatusText", "executionQueueCancelBtn",
+            "adminExecutionSummary", "adminExecutionList",
+        }.issubset(ids))
+        app_source = (BASE_DIR / "app.py").read_text(encoding="utf-8")
+        core = (BASE_DIR / "static" / "js" / "app-core.js").read_text(encoding="utf-8")
+        self.assertIn('@app.get("/api/admin/executions")', app_source)
+        self.assertIn('@app.post("/api/admin/executions/kill")', app_source)
+        self.assertIn("Execution halted by admin", app_source)
+        self.assertIn("socket.on('run_queued'", core)
+        self.assertIn("socket.on('run_queue_update'", core)
+        self.assertIn("startAdminExecutionPolling", core)
 
     def test_file_browser_checkbox_selection_and_multi_send_are_wired(self):
         core = (BASE_DIR / "static" / "js" / "app-core.js").read_text(encoding="utf-8")
