@@ -231,6 +231,7 @@ def _copy_file_to_user(
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(content, encoding="utf-8")
+        M._invalidate_workspace_tree_cache(dest_dir)
         return True, "", str(dest.relative_to(dest_dir)).replace("\\", "/")
     except Exception:
         return False, "Could not copy file", None
@@ -252,6 +253,8 @@ def reset_example_files_only(student_email: str) -> int:
             continue
         target.write_text(content, encoding="utf-8")
         reset_count += 1
+    if reset_count:
+        M._invalidate_workspace_tree_cache(user_dir)
     return reset_count
 
 
@@ -459,6 +462,7 @@ def register(app, socketio) -> None:
                 M._permanently_delete_trash_item(user_dir, target)
             else:
                 M._move_workspace_item_to_trash(user_dir, target)
+            M._invalidate_workspace_tree_cache(user_dir)
         except Exception:
             return jsonify(ok=False, error="Could not delete item"), 500
         append_classroom_event(

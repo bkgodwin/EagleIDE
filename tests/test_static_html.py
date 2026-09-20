@@ -52,6 +52,22 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn('"public, max-age=31536000, immutable"', source)
         self.assertIn('"public, max-age=300, must-revalidate"', source)
 
+    def test_heavy_network_simulator_is_loaded_on_demand(self):
+        feature_loader = (BASE_DIR / "static" / "js" / "feature-loader.js").read_text(encoding="utf-8")
+        self.assertIn('/static/js/feature-loader.js?v=', self.raw)
+        self.assertNotRegex(self.raw, r'<script src="/static/js/network-sim(?:-advanced)?\.js')
+        self.assertIn("'/static/js/network-sim.js?v=", feature_loader)
+        self.assertIn("'/static/js/network-sim-advanced.js?v=", feature_loader)
+
+    def test_shell_output_is_batched_before_rendering(self):
+        app_core = (BASE_DIR / "static" / "js" / "app-core.js").read_text(encoding="utf-8")
+        self.assertIn("requestAnimationFrame(flushQueuedShellOutput)", app_core)
+        self.assertIn("queueShellOutput(s);", app_core)
+        self.assertRegex(
+            app_core,
+            r"socket\.on\('finished',[\s\S]{0,120}flushQueuedShellOutput\(\)",
+        )
+
     def test_wiki_asset_cache_versions_stay_in_sync(self):
         main_css = (BASE_DIR / "static" / "css" / "main.css").read_text(encoding="utf-8")
         page_version = re.search(r'/static/css/main\.css\?v=([^"]+)', self.raw)
