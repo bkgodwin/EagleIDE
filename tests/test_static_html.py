@@ -314,6 +314,8 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn('@media (pointer: coarse)', step_css)
         self.assertIn("startStepTrace", core)
         self.assertIn("activeRunSource === 'step'", core)
+        step_js = (BASE_DIR / "static" / "js" / "step-mode.js").read_text(encoding="utf-8")
+        self.assertIn("granularity?.addEventListener('pointerdown', keepGranularityOpen)", step_js)
 
     def test_python_concurrency_admin_limit_defaults_to_eight_and_caps_at_twenty_five(self):
         app_source = (BASE_DIR / "app.py").read_text(encoding="utf-8")
