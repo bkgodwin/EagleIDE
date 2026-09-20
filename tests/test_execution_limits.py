@@ -39,6 +39,7 @@ class ExecutionLimitTestCase(unittest.TestCase):
         self.original_wall_time = eagle.MAX_WALL_TIME
         self.original_interactive_wall_time = eagle.MAX_INTERACTIVE_WALL_TIME
         self.original_max_concurrent_runs = eagle.MAX_CONCURRENT_RUNS
+        self.original_runner_cpu_reserve = eagle.RUNNER_CPU_RESERVE
         self.original_run_write_bytes = eagle.MAX_RUN_WRITE_BYTES
         self.original_editor_bytes = eagle.MAX_EDITOR_FILE_BYTES
         self.original_teacher_stream_bytes = eagle.MAX_TEACHER_STREAM_CODE_BYTES
@@ -114,6 +115,7 @@ class ExecutionLimitTestCase(unittest.TestCase):
         eagle.MAX_WALL_TIME = self.original_wall_time
         eagle.MAX_INTERACTIVE_WALL_TIME = self.original_interactive_wall_time
         eagle.MAX_CONCURRENT_RUNS = self.original_max_concurrent_runs
+        eagle.RUNNER_CPU_RESERVE = self.original_runner_cpu_reserve
         eagle.MAX_RUN_WRITE_BYTES = self.original_run_write_bytes
         eagle.MAX_EDITOR_FILE_BYTES = self.original_editor_bytes
         eagle.MAX_TEACHER_STREAM_CODE_BYTES = self.original_teacher_stream_bytes
@@ -190,6 +192,11 @@ class ExecutionLimitTestCase(unittest.TestCase):
         names = [event.get("name") for event in events]
         self.assertLess(names.index("run_ack"), names.index("finished"))
         self.assertNotIn(client.eio_sid, eagle._active_runs_by_sid)
+
+        deadline = time.time() + 2
+        while time.time() < deadline and list(self.sandbox_dir.glob("pyide_*")):
+            time.sleep(0.02)
+        self.assertEqual(list(self.sandbox_dir.glob("pyide_*")), [])
 
     def test_step_mode_records_variables_function_returns_and_teacher_runs(self):
         client = self._socket()
@@ -572,6 +579,30 @@ class ExecutionLimitTestCase(unittest.TestCase):
         self.assertFalse(second_admitted)
         self.assertIn("capacity is busy", error)
         eagle._release_execution_slot("first-sid")
+
+    def test_cpu_aware_capacity_preserves_web_service_headroom(self):
+        eagle.MAX_CONCURRENT_RUNS = 25
+        eagle.RUNNER_CPU_RESERVE = 2
+        with mock.patch.object(eagle.os, "cpu_count", return_value=12):
+            self.assertEqual(eagle._effective_execution_hard_capacity(), 10)
+        with mock.patch.object(eagle.os, "cpu_count", return_value=4):
+            self.assertEqual(eagle._effective_execution_hard_capacity(), 25)
+
+    def test_runner_sandbox_cleanup_is_strictly_scoped(self):
+        disposable = self.sandbox_dir / "pyide_stale"
+        unrelated = self.sandbox_dir / "keep_me"
+        outside = self.root / "pyide_outside"
+        for directory in (disposable, unrelated, outside):
+            directory.mkdir()
+            (directory / "data.txt").write_text("keep", encoding="utf-8")
+
+        eagle._delete_runner_sandbox_quietly(disposable)
+        eagle._delete_runner_sandbox_quietly(unrelated)
+        eagle._delete_runner_sandbox_quietly(outside)
+
+        self.assertFalse(disposable.exists())
+        self.assertTrue(unrelated.exists())
+        self.assertTrue(outside.exists())
 
     def test_execution_slot_reserves_requested_memory(self):
         requested = 321 * 1024 * 1024
