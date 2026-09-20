@@ -50,6 +50,7 @@ Required runtime components:
 |   |   `-- features/            Feature-specific styles
 |   `-- js/
 |       |-- app.js               Creates the `window.EagleIDE` namespace
+|       |-- feature-loader.js    On-demand loading for large optional browser features
 |       |-- app-core.js          Active main UI state, APIs, sockets, auth, files, quizzes, admin
 |       |-- editor-init.js       CodeMirror setup and textarea fallback
 |       |-- autocomplete.js      Bounded code analysis, catalog-backed suggestions, and completion UI
@@ -122,7 +123,7 @@ Authentication uses ephemeral in-memory token maps. Protected HTTP requests pass
 
 1. `app.js`, then shared modal/lazy/layout/editor/Markdown/shell helpers.
 2. `app-core.js`, which owns the central mutable state and main socket connection.
-3. The base network simulator followed by its advanced engine, then wiki reader/admin, classroom, notebook, and student dashboard feature scripts. These consume state exposed through `window.EagleIDE`; the advanced simulator also uses the explicit `window.NetworkSim` integration API and `network-sim:*` DOM events.
+3. The wiki reader/admin, classroom, notebook, and student dashboard feature scripts. These consume state exposed through `window.EagleIDE`. The feature loader fetches the base and advanced network simulator scripts together when the simulator is first requested; the advanced simulator uses the explicit `window.NetworkSim` integration API and `network-sim:*` DOM events.
 
 `app-core.js` is the active main application script. `state-socket.js` and `app-main.js` are not referenced by `index.html`; editing them alone has no browser effect. The historical `tools/migrate_ux.py` can rebuild `app-core.js` from those fragments, so do not run either migration script as a normal build or formatting step. They can overwrite newer UI work.
 

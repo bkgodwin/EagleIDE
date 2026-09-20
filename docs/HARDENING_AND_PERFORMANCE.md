@@ -63,7 +63,8 @@ Tune only after measuring the host under classroom load:
 
 | Variable | Default | Purpose |
 | --- | ---: | --- |
-| `EAGLE_MAX_CONCURRENT_RUNS` | 8 | Operator hard ceiling for global Python/JavaScript runner slots |
+| `EAGLE_MAX_CONCURRENT_RUNS` | 25 | Operator hard ceiling for global Python/JavaScript runner slots |
+| `EAGLE_RUNNER_CPU_RESERVE` | 2 | Logical cores preserved for HTTP, Socket.IO, the proxy, and operating-system work on hosts with 6+ cores |
 | `EAGLE_MAX_RUNNER_MEMORY_MB` | 2048 | Operator hard ceiling for the admin-set Python per-run memory limit |
 | `EAGLE_MAX_GUEST_RUNS_PER_IP` | 2 | Guest runner slots per address |
 | `EAGLE_MAX_RUN_STARTS_PER_10_SECONDS` | 6 | Run-start burst limit per identity |
@@ -77,7 +78,7 @@ Tune only after measuring the host under classroom load:
 | `EAGLE_AI_CIRCUIT_FAILURES` | 3 | Failures before opening the AI circuit |
 | `EAGLE_AI_CIRCUIT_COOLDOWN_SECONDS` | 30 | Circuit-breaker recovery delay |
 
-The admin dashboard defaults to **4 concurrent runs** and **750 MB per Python
+The admin dashboard defaults to **8 concurrent runs** and **750 MB per Python
 run**. It may reduce those values without restarting, but it cannot exceed the
 operator hard ceilings above. Admission reserves the configured amount for
 each Python run, preserves at least 20% or 1 GB of host RAM (whichever is
@@ -93,6 +94,17 @@ runs exceed capacity receive a retry message. Measure a realistic lesson that
 imports Matplotlib before increasing concurrency. Increasing runner or AI
 concurrency raises peak CPU and memory use, so change one setting at a time and
 repeat the same load test.
+
+Each student run is a separate operating-system process, so concurrent runs use
+multiple CPU cores without placing untrusted code inside the web process. On
+hosts with six or more logical cores, admission also caps execution at the host
+CPU count minus `EAGLE_RUNNER_CPU_RESERVE`. The admin health response reports
+both ceilings plus average and maximum process-launch and run durations.
+
+When Ollama runs on another server, AI features use only bounded HTTP request
+and response handling on the EagleIDE host. Size local execution capacity from
+EagleIDE CPU, memory, and disk measurements rather than reserving local cores
+for Ollama.
 
 ## Reverse proxy requirements
 

@@ -1234,8 +1234,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const source = snapshot || getEditorSnapshot();
       const language = String(source?.language || '').toLowerCase();
       if (!language.includes('python')) return false;
-      outputEl.textContent = '';
-      shellOutputChars = 0;
+      clearShellOutput();
       clearErrorHighlights();
       _inTraceback = false;
       waitingForUserInput = false;
@@ -1268,6 +1267,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     function setShellOutput(text) {
       const value = String(text || '');
+      cancelQueuedShellOutput();
       outputEl.textContent = value;
       shellOutputChars = value.length;
       scheduleShellScroll();
@@ -1526,7 +1526,23 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       });
     }
 
+    let queuedShellOutput = '';
+    let queuedShellOutputFrame = 0;
+
+    function cancelQueuedShellOutput() {
+      queuedShellOutput = '';
+      if (queuedShellOutputFrame) cancelAnimationFrame(queuedShellOutputFrame);
+      queuedShellOutputFrame = 0;
+    }
+
+    function clearShellOutput() {
+      cancelQueuedShellOutput();
+      outputEl.textContent = '';
+      shellOutputChars = 0;
+    }
+
     function appendDirectShellText(text, className = '') {
+      flushQueuedShellOutput();
       const value = String(text || '');
       if (!value) return;
       if (!outputEl.firstChild) shellOutputChars = 0;
@@ -1541,8 +1557,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       scheduleShellScroll();
     }
 
-    // Append a (possibly multi-line) string to the shell output with correct per-line coloring.
-    const appendOut = (s) => {
+    // Render a (possibly multi-line) chunk with correct per-line coloring.
+    const renderShellOutput = (s) => {
       if (!s) return;
       if (!outputEl.firstChild) shellOutputChars = 0;
       // Split into lines while preserving newlines at end of each segment
@@ -1558,6 +1574,35 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       shellOutputChars += visibleChars;
       trimShellOutput();
       scheduleShellScroll();
+    };
+
+    function flushQueuedShellOutput() {
+      if (queuedShellOutputFrame) cancelAnimationFrame(queuedShellOutputFrame);
+      queuedShellOutputFrame = 0;
+      if (!queuedShellOutput) return;
+      const text = queuedShellOutput;
+      queuedShellOutput = '';
+      renderShellOutput(text);
+    }
+
+    function queueShellOutput(text) {
+      if (!text) return;
+      queuedShellOutput += text;
+      // Keep latency low for ordinary output while collapsing output floods into
+      // one DOM update per frame. Flush large batches promptly to bound memory.
+      if (queuedShellOutput.length >= 64 * 1024) {
+        flushQueuedShellOutput();
+        return;
+      }
+      if (!queuedShellOutputFrame) {
+        queuedShellOutputFrame = requestAnimationFrame(flushQueuedShellOutput);
+      }
+    }
+
+    // System and state messages remain ordered ahead of queued program output.
+    const appendOut = (s) => {
+      flushQueuedShellOutput();
+      renderShellOutput(s);
     };
 
     function highlightErrorLine(lineNum) {
@@ -1681,7 +1726,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             if (remainder) appendOut(remainder);
             outputEl.scrollTop = outputEl.scrollHeight;
           } else {
-            appendOut(s);
+            queueShellOutput(s);
           }
         });
         socket.on('run_artifacts', msg => {
@@ -1689,6 +1734,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           if (artifacts.length && (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN)) loadFileTree();
         });
         socket.on('finished', () => {
+          flushQueuedShellOutput();
           if (activeRunSource === 'notebook') {
             notebookRunHandlers?.onFinished?.();
             notebookRunHandlers = null;
@@ -2001,7 +2047,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (shellHidden) {
         document.getElementById('toggleShellBtn').click();
       }
-      outputEl.textContent = '';
+      clearShellOutput();
       clearErrorHighlights();
       _inTraceback = false;      // reset traceback coloring state for new run
       waitingForUserInput = false;
@@ -2104,7 +2150,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (!socket || !item?.path) return false;
       const shellHidden = document.body.classList.contains('shell-hidden');
       if (shellHidden) document.getElementById('toggleShellBtn')?.click();
-      outputEl.textContent = '';
+      clearShellOutput();
       clearErrorHighlights();
       _inTraceback = false;
       waitingForUserInput = false;
@@ -3554,7 +3600,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
               window.StudentNotebook?.onTeacherDashboardOpen?.();
             } else if (btn.dataset.view === 'dash-network') {
               stopTeacherDashboardRosterPolling();
-              await window.NetworkSim?.openTeacherPanel?.();
+              try {
+                await window.EagleFeatures?.load?.('network');
+                await window.NetworkSim?.openTeacherPanel?.();
+              } catch (error) {
+                console.error('Network Simulator failed to load:', error);
+                alert('The Network Simulator could not be loaded. Refresh the page and try again.');
+              }
             } else {
               stopTeacherDashboardRosterPolling();
             }
@@ -3643,7 +3695,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         await loadAssignments();
         renderAdminAssignments();
         if (targetView === 'dash-notebook') window.StudentNotebook?.onTeacherDashboardOpen?.();
-        if (targetView === 'dash-network') window.NetworkSim?.openTeacherPanel?.();
+        if (targetView === 'dash-network') {
+          try {
+            await window.EagleFeatures?.load?.('network');
+            window.NetworkSim?.openTeacherPanel?.();
+          } catch (error) {
+            console.error('Network Simulator failed to load:', error);
+            alert('The Network Simulator could not be loaded. Refresh the page and try again.');
+          }
+        }
       });
       startTeacherDashboardRosterPolling();
       document.getElementById('teacherPasswordStatus').textContent = '';
@@ -5656,7 +5716,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         openFile,
         runFile: runFileFromShell,
         onItemDeleted: handleShellItemDeleted,
-        clearShell: () => { outputEl.textContent = ''; },
+        clearShell: clearShellOutput,
         getCurrentUser: () => currentUser || currentTeacher || (ADMIN_TOKEN ? { name: 'Admin', email: 'admin' } : null),
       });
       window.ShellCommands.bindStdin?.(stdinEl, () => ({

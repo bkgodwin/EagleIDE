@@ -2078,10 +2078,14 @@
     });
   }
 
-  function routeFromLocation() {
+  async function routeFromLocation() {
     const path = location.pathname;
     if (path === '/network') {
-      window.NetworkSim?.show?.({ push: false });
+      if (window.EagleFeatures?.openNetwork) {
+        await window.EagleFeatures.openNetwork(null, { push: false });
+      } else {
+        window.NetworkSim?.show?.({ push: false });
+      }
       return;
     }
     if (path === '/ide') {
