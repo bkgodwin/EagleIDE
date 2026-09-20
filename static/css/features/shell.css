@@ -68,6 +68,29 @@
   font-size: 17px;
   border-radius: 10px;
 }
+.execution-queue-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 9px;
+  border: 1px solid var(--theme-border-mid);
+  border-left: 3px solid #e6ad35;
+  background: var(--theme-input-bg);
+  color: var(--theme-text);
+  font-size: 12px;
+}
+.execution-queue-status[hidden] { display: none; }
+.execution-queue-status span { min-width: 0; overflow-wrap: anywhere; }
+.execution-queue-status button {
+  min-height: 28px;
+  padding: 3px 8px;
+  border: 1px solid var(--theme-border-mid);
+  background: transparent;
+  color: var(--theme-text);
+  cursor: pointer;
+}
+.execution-queue-status button:disabled { cursor: wait; opacity: .55; }
 .shell-font-control {
   display: flex;
   align-items: center;

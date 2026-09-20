@@ -123,9 +123,11 @@ def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
 
 MAX_RUNNER_MEMORY_LIMIT_MB = _env_int("EAGLE_MAX_RUNNER_MEMORY_MB", 2048, 128, 4096)
 _default_run_capacity = 8
-MAX_CONCURRENT_RUNS = _env_int("EAGLE_MAX_CONCURRENT_RUNS", 25, 1, 25)
+MAX_CONCURRENT_RUNS = _env_int("EAGLE_MAX_CONCURRENT_RUNS", 25, 1, 128)
 RUNNER_CPU_RESERVE = _env_int("EAGLE_RUNNER_CPU_RESERVE", 2, 0, 64)
 MAX_GUEST_RUNS_PER_IP = _env_int("EAGLE_MAX_GUEST_RUNS_PER_IP", 2, 1, 16)
+MAX_QUEUED_RUNS = _env_int("EAGLE_MAX_QUEUED_RUNS", 100, 1, 1000)
+MAX_GUEST_QUEUED_RUNS_PER_IP = _env_int("EAGLE_MAX_GUEST_QUEUED_RUNS_PER_IP", 4, 1, 64)
 MAX_RUN_STARTS_PER_WINDOW = _env_int("EAGLE_MAX_RUN_STARTS_PER_10_SECONDS", 6, 1, 60)
 RUN_START_RATE_WINDOW_SECONDS = 10.0
 RUN_RATE_IDENTITY_STALE_SECONDS = 3600.0
@@ -2471,6 +2473,10 @@ def save_config():
         resetter = globals().get("_reset_ai_runtime_state")
         if callable(resetter):
             resetter()
+    if "python_max_concurrent_runs" in partial:
+        scheduler = globals().get("_drain_execution_queue")
+        if callable(scheduler):
+            scheduler()
     new_cfg.update(_normalized_python_runtime_settings(new_cfg))
     new_cfg = _config_with_background_urls(new_cfg)
     new_cfg.pop("admin_password_encrypted", None)
@@ -2524,6 +2530,7 @@ def admin_python_runtime():
     containment = landlock_status()
     with _execution_admission_lock:
         active_runs = len(_active_runs_by_sid)
+        queued_runs = len(_execution_queue)
         reserved_bytes = sum(
             max(0, int(record.get("reserved_bytes") or 0))
             for record in _active_runs_by_sid.values()
@@ -2539,12 +2546,14 @@ def admin_python_runtime():
             "platform": sys.platform,
         },
         active_runs=active_runs,
+        queued_runs=queued_runs,
         reserved_memory_mb=round(reserved_bytes / (1024 * 1024), 1),
         hard_limits={
             "max_memory_mb": MAX_RUNNER_MEMORY_LIMIT_MB,
             "max_concurrent_runs": MAX_CONCURRENT_RUNS,
             "cpu_aware_concurrent_runs": _effective_execution_hard_capacity(),
             "service_cpu_reserve": RUNNER_CPU_RESERVE,
+            "max_queued_runs": MAX_QUEUED_RUNS,
             "cpu_seconds": MAX_CPU_TIME_SECONDS,
             "wall_seconds": MAX_WALL_TIME,
             "write_mb": MAX_RUN_WRITE_BYTES // (1024 * 1024),
@@ -6954,8 +6963,8 @@ class _ProcessRunnerBase:
                 if self.run_id == run_id and self.sandbox_dir == sandbox_dir:
                     self.sandbox_dir = None
             _delete_runner_sandbox_quietly(sandbox_dir)
-            _runner_finished(self.sid, self, run_id)
-            if completed_current_run:
+            released_by_runner = _runner_finished(self.sid, self, run_id)
+            if completed_current_run and released_by_runner:
                 try:
                     socketio.emit("finished", {}, to=self.sid)
                 except Exception:
@@ -7284,7 +7293,7 @@ try {{
             raise
 
 
-def _runner_finished(sid: str, runner: _ProcessRunnerBase, run_id: int) -> None:
+def _runner_finished(sid: str, runner: _ProcessRunnerBase, run_id: int) -> bool:
     should_release = False
     with _runner_lock:
         current = _runners.get(sid)
@@ -7293,6 +7302,7 @@ def _runner_finished(sid: str, runner: _ProcessRunnerBase, run_id: int) -> None:
             should_release = True
     if should_release:
         _release_execution_slot(sid)
+    return should_release
 
 
 def _get_runner(sid: str) -> Runner:
@@ -7365,6 +7375,9 @@ _stdin_event_history: Dict[str, deque] = defaultdict(deque)
 _socket_limit_lock = _native_threading.Lock()
 _socket_sid_ips: Dict[str, str] = {}
 _run_metrics: Dict[str, int] = defaultdict(int)
+_execution_queue: deque[dict] = deque()
+_queued_runs_by_sid: Dict[str, dict] = {}
+_queued_sid_by_identity: Dict[str, str] = {}
 
 
 def _effective_execution_hard_capacity() -> int:
@@ -7374,6 +7387,69 @@ def _effective_execution_hard_capacity() -> int:
         return MAX_CONCURRENT_RUNS
     cpu_capacity = max(1, cores - min(RUNNER_CPU_RESERVE, cores - 1))
     return min(MAX_CONCURRENT_RUNS, cpu_capacity)
+
+
+def _configured_execution_capacity() -> int:
+    configured = _normalized_python_runtime_settings().get(
+        "python_max_concurrent_runs",
+        _default_run_capacity,
+    )
+    return min(_effective_execution_hard_capacity(), max(1, int(configured)))
+
+
+def _prune_execution_rate_history_locked(now: float) -> None:
+    stale_cutoff = now - RUN_RATE_IDENTITY_STALE_SECONDS
+    for stale_key in [key for key, seen in list(_run_history_last_seen.items()) if seen < stale_cutoff]:
+        _run_history_last_seen.pop(stale_key, None)
+        _run_start_history.pop(stale_key, None)
+    overflow = len(_run_history_last_seen) - MAX_RUN_RATE_IDENTITIES
+    if overflow > 0:
+        oldest = heapq.nsmallest(overflow, _run_history_last_seen.items(), key=lambda item: item[1])
+        for stale_key, _ in oldest:
+            _run_history_last_seen.pop(stale_key, None)
+            _run_start_history.pop(stale_key, None)
+
+
+def _execution_capacity_reason_locked(context: dict, requested_memory_bytes: int) -> str:
+    if len(_active_runs_by_sid) >= _configured_execution_capacity():
+        return "capacity"
+    total_memory, _ = _system_memory_status()
+    if total_memory > 0:
+        reserved_memory = sum(
+            max(0, int(record.get("reserved_bytes") or 0))
+            for record in _active_runs_by_sid.values()
+        )
+        server_headroom = max(1024 * 1024 * 1024, int(total_memory * 0.20))
+        if reserved_memory + requested_memory_bytes > max(0, total_memory - server_headroom):
+            return "memory"
+    guest_ip = str(context.get("guest_ip") or "")
+    if guest_ip:
+        guest_count = sum(1 for row in _active_runs_by_sid.values() if row.get("guest_ip") == guest_ip)
+        if guest_count >= MAX_GUEST_RUNS_PER_IP:
+            return "guest"
+    return ""
+
+
+def _reserve_execution_slot_locked(sid: str, context: dict, requested_memory_bytes: int, entry: Optional[dict] = None) -> None:
+    now = time.time()
+    identity = str(context.get("identity") or "")
+    record = {
+        "identity": identity,
+        "guest_ip": str(context.get("guest_ip") or ""),
+        "started_at": now,
+        "role": context.get("role", "guest"),
+        "email": str(context.get("email") or ""),
+        "display_name": str(context.get("display_name") or context.get("email") or "Guest")[:100],
+        "reserved_bytes": requested_memory_bytes,
+        "execution_id": str((entry or {}).get("execution_id") or uuid.uuid4().hex),
+        "language": str((entry or {}).get("language") or "python"),
+        "file_name": Path(str((entry or {}).get("file_path") or "")).name,
+        "kind": str((entry or {}).get("kind") or "run"),
+        "entry": entry,
+    }
+    _active_runs_by_sid[sid] = record
+    _active_sid_by_identity[identity] = sid
+    _run_metrics["admitted"] += 1
 
 
 def _resolve_execution_context(payload: dict, sid: str) -> tuple[Optional[dict], Optional[str]]:
@@ -7421,6 +7497,7 @@ def _resolve_execution_context(payload: dict, sid: str) -> tuple[Optional[dict],
             "rate_identity": f"account:{email}",
             "role": role,
             "email": email,
+            "display_name": str(info.get("name") or email)[:100],
             "run_dir": run_dir,
             "allowed_root": root,
             "guest_ip": "",
@@ -7434,6 +7511,7 @@ def _resolve_execution_context(payload: dict, sid: str) -> tuple[Optional[dict],
         "rate_identity": f"guest-ip:{guest_ip}",
         "role": "guest",
         "email": "",
+        "display_name": f"Guest ({guest_ip})",
         "run_dir": None,
         "allowed_root": None,
         "guest_ip": guest_ip,
@@ -7455,19 +7533,10 @@ def _try_acquire_execution_slot(
         _run_metrics["pressure_rejected"] += 1
         return False, pressure_reason
     with _execution_admission_lock:
-        stale_cutoff = now - RUN_RATE_IDENTITY_STALE_SECONDS
-        for stale_key in [key for key, seen in list(_run_history_last_seen.items()) if seen < stale_cutoff]:
-            _run_history_last_seen.pop(stale_key, None)
-            _run_start_history.pop(stale_key, None)
-        overflow = len(_run_history_last_seen) - MAX_RUN_RATE_IDENTITIES
-        if overflow > 0:
-            oldest = heapq.nsmallest(overflow, _run_history_last_seen.items(), key=lambda item: item[1])
-            for stale_key, _ in oldest:
-                _run_history_last_seen.pop(stale_key, None)
-                _run_start_history.pop(stale_key, None)
-        if sid in _active_runs_by_sid:
+        _prune_execution_rate_history_locked(now)
+        if sid in _active_runs_by_sid or sid in _queued_runs_by_sid:
             return False, "A program is already running in this browser session"
-        existing_sid = _active_sid_by_identity.get(identity)
+        existing_sid = _active_sid_by_identity.get(identity) or _queued_sid_by_identity.get(identity)
         if existing_sid and existing_sid != sid:
             return False, "This account already has a program running in another tab"
 
@@ -7479,41 +7548,19 @@ def _try_acquire_execution_slot(
         if len(history) >= MAX_RUN_STARTS_PER_WINDOW:
             _run_metrics["rate_rejected"] += 1
             return False, "Run rate limit reached; wait a few seconds before trying again"
-        configured_concurrency = _normalized_python_runtime_settings().get(
-            "python_max_concurrent_runs",
-            _default_run_capacity,
-        )
-        configured_concurrency = min(_effective_execution_hard_capacity(), int(configured_concurrency))
-        if len(_active_runs_by_sid) >= configured_concurrency:
+        capacity_reason = _execution_capacity_reason_locked(context, requested_memory_bytes)
+        if capacity_reason == "capacity":
             _run_metrics["capacity_rejected"] += 1
             return False, "Execution capacity is busy; try again shortly"
-        total_memory, _ = _system_memory_status()
-        if total_memory > 0:
-            reserved_memory = sum(
-                max(0, int(record.get("reserved_bytes") or 0))
-                for record in _active_runs_by_sid.values()
-            )
-            server_headroom = max(1024 * 1024 * 1024, int(total_memory * 0.20))
-            if reserved_memory + requested_memory_bytes > max(0, total_memory - server_headroom):
-                _run_metrics["pressure_rejected"] += 1
-                return False, "Execution memory capacity is busy; try again shortly"
-        if guest_ip:
-            guest_count = sum(1 for row in _active_runs_by_sid.values() if row.get("guest_ip") == guest_ip)
-            if guest_count >= MAX_GUEST_RUNS_PER_IP:
-                _run_metrics["guest_rejected"] += 1
-                return False, "Guest execution capacity is busy; try again shortly"
+        if capacity_reason == "memory":
+            _run_metrics["pressure_rejected"] += 1
+            return False, "Execution memory capacity is busy; try again shortly"
+        if capacity_reason == "guest":
+            _run_metrics["guest_rejected"] += 1
+            return False, "Guest execution capacity is busy; try again shortly"
 
         history.append(now)
-        record = {
-            "identity": identity,
-            "guest_ip": guest_ip,
-            "started_at": now,
-            "role": context.get("role", "guest"),
-            "reserved_bytes": requested_memory_bytes,
-        }
-        _active_runs_by_sid[sid] = record
-        _active_sid_by_identity[identity] = sid
-        _run_metrics["admitted"] += 1
+        _reserve_execution_slot_locked(sid, context, requested_memory_bytes)
         return True, ""
 
 
@@ -7572,7 +7619,191 @@ def _execution_pressure_reason(requested_memory_bytes: int = 0) -> str:
     return ""
 
 
+def _execution_queue_updates_locked() -> list[tuple[str, dict]]:
+    updates: list[tuple[str, dict]] = []
+    total = len(_execution_queue)
+    for position, entry in enumerate(_execution_queue, start=1):
+        if entry.get("last_position") == position and entry.get("last_total") == total:
+            continue
+        entry["last_position"] = position
+        entry["last_total"] = total
+        updates.append((entry["sid"], {
+            "execution_id": entry["execution_id"],
+            "status": "queued",
+            "position": position,
+            "total_waiting": total,
+        }))
+    return updates
+
+
+def _emit_execution_queue_updates(updates: list[tuple[str, dict]]) -> None:
+    for sid, payload in updates:
+        try:
+            socketio.emit("run_queue_update", payload, to=sid)
+        except Exception:
+            pass
+
+
+def _submit_execution_request(entry: dict, context: dict) -> tuple[str, str]:
+    """Reserve an immediate slot or place a validated request in the bounded queue."""
+    sid = str(entry.get("sid") or "")
+    identity = str(context.get("identity") or "")
+    rate_identity = str(context.get("rate_identity") or identity)
+    guest_ip = str(context.get("guest_ip") or "")
+    requested_memory_bytes = max(128 * 1024 * 1024, int(entry.get("requested_memory_bytes") or 0))
+    pressure_reason = _execution_pressure_reason(requested_memory_bytes)
+    if pressure_reason:
+        with _execution_admission_lock:
+            _run_metrics["pressure_rejected"] += 1
+        return "rejected", pressure_reason
+
+    now = time.time()
+    updates: list[tuple[str, dict]] = []
+    with _execution_admission_lock:
+        _prune_execution_rate_history_locked(now)
+        if sid in _active_runs_by_sid or sid in _queued_runs_by_sid:
+            return "rejected", "A program is already running or queued in this browser session"
+        existing_sid = _active_sid_by_identity.get(identity) or _queued_sid_by_identity.get(identity)
+        if existing_sid and existing_sid != sid:
+            return "rejected", "This account already has a program running in another tab or has one queued"
+
+        history = _run_start_history[rate_identity]
+        _run_history_last_seen[rate_identity] = now
+        cutoff = now - RUN_START_RATE_WINDOW_SECONDS
+        while history and history[0] < cutoff:
+            history.popleft()
+        if len(history) >= MAX_RUN_STARTS_PER_WINDOW:
+            _run_metrics["rate_rejected"] += 1
+            return "rejected", "Run rate limit reached; wait a few seconds before trying again"
+        history.append(now)
+
+        entry["context"] = context
+        entry["queued_at"] = now
+        entry["cancelled"] = _native_threading.Event()
+        # Serialize the final launch boundary with stop, disconnect, and admin
+        # cancellation so a process can never appear after its admission record
+        # has already been released.
+        entry["control_lock"] = _native_threading.RLock()
+        capacity_reason = _execution_capacity_reason_locked(context, requested_memory_bytes)
+        if not _execution_queue and not capacity_reason:
+            _reserve_execution_slot_locked(sid, context, requested_memory_bytes, entry)
+            return "start", ""
+
+        if len(_execution_queue) >= MAX_QUEUED_RUNS:
+            _run_metrics["queue_rejected"] += 1
+            return "rejected", "Execution queue is full; try again shortly"
+        if guest_ip:
+            guest_waiting = sum(1 for row in _execution_queue if row.get("context", {}).get("guest_ip") == guest_ip)
+            if guest_waiting >= MAX_GUEST_QUEUED_RUNS_PER_IP:
+                _run_metrics["queue_rejected"] += 1
+                return "rejected", "Guest execution queue is full for this network; try again shortly"
+
+        _execution_queue.append(entry)
+        _queued_runs_by_sid[sid] = entry
+        _queued_sid_by_identity[identity] = sid
+        _run_metrics["queued"] += 1
+        updates = _execution_queue_updates_locked()
+        position = int(entry.get("last_position") or len(_execution_queue))
+        total = len(_execution_queue)
+
+    try:
+        socketio.emit("run_queued", {
+            "execution_id": entry["execution_id"],
+            "position": position,
+            "total_waiting": total,
+        }, to=sid)
+    except Exception:
+        pass
+    _emit_execution_queue_updates(updates)
+    _drain_execution_queue()
+    return "queued", ""
+
+
+def _drain_execution_queue() -> None:
+    if not _execution_queue or _execution_pressure_reason():
+        return
+    promoted: list[dict] = []
+    updates: list[tuple[str, dict]] = []
+    with _execution_admission_lock:
+        while _execution_queue and len(_active_runs_by_sid) < _configured_execution_capacity():
+            selected = None
+            for candidate in _execution_queue:
+                reason = _execution_capacity_reason_locked(
+                    candidate.get("context") or {},
+                    max(128 * 1024 * 1024, int(candidate.get("requested_memory_bytes") or 0)),
+                )
+                if not reason:
+                    selected = candidate
+                    break
+                if reason in {"capacity", "memory"}:
+                    break
+                # A guest-specific cap must not block signed-in users behind it.
+            if selected is None:
+                break
+            _execution_queue.remove(selected)
+            sid = selected["sid"]
+            identity = str((selected.get("context") or {}).get("identity") or "")
+            _queued_runs_by_sid.pop(sid, None)
+            if _queued_sid_by_identity.get(identity) == sid:
+                _queued_sid_by_identity.pop(identity, None)
+            selected["started_from_queue_at"] = time.time()
+            _reserve_execution_slot_locked(
+                sid,
+                selected.get("context") or {},
+                max(128 * 1024 * 1024, int(selected.get("requested_memory_bytes") or 0)),
+                selected,
+            )
+            _run_metrics["dequeued"] += 1
+            wait_ms = max(0, int(round((time.time() - float(selected.get("queued_at") or time.time())) * 1000)))
+            _run_metrics["queue_wait_ms_total"] += wait_ms
+            _run_metrics["queue_wait_ms_max"] = max(_run_metrics["queue_wait_ms_max"], wait_ms)
+            promoted.append(selected)
+        updates = _execution_queue_updates_locked()
+        total_waiting = len(_execution_queue)
+
+    _emit_execution_queue_updates(updates)
+    for entry in promoted:
+        try:
+            socketio.emit("run_queue_update", {
+                "execution_id": entry["execution_id"],
+                "status": "starting",
+                "position": 0,
+                "total_waiting": total_waiting,
+            }, to=entry["sid"])
+        except Exception:
+            pass
+        socketio.start_background_task(_start_execution_request, entry)
+
+
+def _cancel_queued_execution(*, sid: str = "", execution_id: str = "") -> Optional[dict]:
+    updates: list[tuple[str, dict]] = []
+    removed = None
+    with _execution_admission_lock:
+        if sid:
+            removed = _queued_runs_by_sid.get(sid)
+        elif execution_id:
+            removed = next((row for row in _execution_queue if row.get("execution_id") == execution_id), None)
+        if not removed:
+            return None
+        try:
+            _execution_queue.remove(removed)
+        except ValueError:
+            return None
+        removed["cancelled"].set()
+        removed_sid = str(removed.get("sid") or "")
+        identity = str((removed.get("context") or {}).get("identity") or "")
+        _queued_runs_by_sid.pop(removed_sid, None)
+        if _queued_sid_by_identity.get(identity) == removed_sid:
+            _queued_sid_by_identity.pop(identity, None)
+        _run_metrics["queue_cancelled"] += 1
+        updates = _execution_queue_updates_locked()
+    _emit_execution_queue_updates(updates)
+    _drain_execution_queue()
+    return removed
+
+
 def _release_execution_slot(sid: str) -> None:
+    released = False
     with _execution_admission_lock:
         record = _active_runs_by_sid.pop(sid, None)
         if not record:
@@ -7584,6 +7815,9 @@ def _release_execution_slot(sid: str) -> None:
         duration_ms = max(0, int(round((time.time() - float(record.get("started_at") or time.time())) * 1000)))
         _run_metrics["duration_ms_total"] += duration_ms
         _run_metrics["duration_ms_max"] = max(_run_metrics["duration_ms_max"], duration_ms)
+        released = True
+    if released:
+        _drain_execution_queue()
 
 
 def _stdin_event_allowed(sid: str) -> bool:
@@ -7598,12 +7832,184 @@ def _stdin_event_allowed(sid: str) -> bool:
     return True
 
 
+def _build_execution_entry(payload: dict, context: dict, kind: str, code: str, runtime_settings: dict) -> dict:
+    file_path = str(payload.get("file_path") or "")
+    language_hint = _normalize_language_hint(payload.get("language"), file_path)
+    is_javascript = kind == "run" and (
+        language_hint == "javascript" or (Path(file_path).suffix.lower() == ".js" if file_path else False)
+    )
+    requested_memory_bytes = RUNNER_MEMORY_LIMIT_BYTES
+    if not is_javascript:
+        requested_memory_bytes = int(runtime_settings["python_memory_limit_mb"]) * 1024 * 1024
+    return {
+        "execution_id": uuid.uuid4().hex,
+        "sid": request.sid,
+        "kind": kind,
+        "code": code,
+        "payload": dict(payload),
+        "context": context,
+        "runtime_settings": copy.deepcopy(runtime_settings),
+        "requested_memory_bytes": requested_memory_bytes,
+        "language": "javascript" if is_javascript else "python",
+        "is_javascript": is_javascript,
+        "file_path": file_path,
+    }
+
+
+def _execution_entry_is_active(entry: dict) -> bool:
+    if entry.get("cancelled") and entry["cancelled"].is_set():
+        return False
+    with _execution_admission_lock:
+        record = _active_runs_by_sid.get(str(entry.get("sid") or ""))
+        return bool(record and record.get("execution_id") == entry.get("execution_id"))
+
+
+def _stop_active_execution(sid: str, *, execution_id: str = "") -> bool:
+    """Cancel one admitted execution without racing its final launch step."""
+    with _execution_admission_lock:
+        record = _active_runs_by_sid.get(sid)
+        if not record or (execution_id and record.get("execution_id") != execution_id):
+            return False
+        entry = record.get("entry") or {}
+        control_lock = entry.get("control_lock")
+        if control_lock is None:
+            control_lock = _native_threading.RLock()
+            entry["control_lock"] = control_lock
+
+    with control_lock:
+        with _execution_admission_lock:
+            current = _active_runs_by_sid.get(sid)
+            if not current or (execution_id and current.get("execution_id") != execution_id):
+                return False
+            current_entry = current.get("entry") or entry
+            cancelled = current_entry.get("cancelled")
+            if cancelled:
+                cancelled.set()
+
+        # Removing the runner first transfers completion ownership away from its
+        # pump thread. The pump will then avoid releasing the next queued slot or
+        # sending a duplicate finished event while stop() closes the process.
+        runner = _pop_runner(sid)
+        if runner:
+            try:
+                runner.stop()
+            except Exception:
+                pass
+
+        with _execution_admission_lock:
+            current = _active_runs_by_sid.get(sid)
+            still_active = bool(
+                current and (not execution_id or current.get("execution_id") == execution_id)
+            )
+        if still_active:
+            _release_execution_slot(sid)
+        return bool(runner or still_active)
+
+
+def _finish_rejected_execution(entry: dict, message: str) -> None:
+    sid = str(entry.get("sid") or "")
+    if entry.get("kind") == "trace":
+        socketio.emit("trace_error", {"error": message}, to=sid)
+    else:
+        socketio.emit("output", {"data": f"[{message}]\n"}, to=sid)
+    _release_execution_slot(sid)
+    socketio.emit("finished", {}, to=sid)
+
+
+def _start_execution_request(entry: dict) -> None:
+    sid = str(entry.get("sid") or "")
+    if not sid or not _execution_entry_is_active(entry):
+        return
+    with _socket_limit_lock:
+        connected = sid in _socket_sid_ips
+    if not connected:
+        _release_execution_slot(sid)
+        return
+
+    context, context_error = _resolve_execution_context(entry.get("payload") or {}, sid)
+    expected_identity = str((entry.get("context") or {}).get("identity") or "")
+    control_lock = entry.get("control_lock")
+    if control_lock is None:
+        control_lock = _native_threading.RLock()
+        entry["control_lock"] = control_lock
+    if context_error or not context or context.get("identity") != expected_identity:
+        with control_lock:
+            if _execution_entry_is_active(entry):
+                _finish_rejected_execution(entry, context_error or "Run rejected: execution session changed while queued")
+        return
+
+    runtime_settings = entry.get("runtime_settings") or _normalized_python_runtime_settings()
+    code = str(entry.get("code") or "")
+    file_path = str(entry.get("file_path") or "")
+    with control_lock:
+        if not _execution_entry_is_active(entry):
+            return
+        try:
+            if entry.get("kind") == "trace":
+                runner = _get_trace_runner(sid)
+                runner.start(
+                    code,
+                    user_dir=context.get("run_dir"),
+                    allowed_root=context.get("allowed_root"),
+                    memory_limit_bytes=int(runtime_settings["python_memory_limit_mb"]) * 1024 * 1024,
+                    disabled_modules=disabled_module_roots(runtime_settings.get("python_module_access")),
+                    source_name=Path(file_path).name if file_path else "untitled.py",
+                )
+            elif entry.get("is_javascript"):
+                runner = _get_js_runner(sid)
+                runner.start(code, user_dir=context.get("run_dir"))
+            else:
+                runner = _get_runner(sid)
+                runner.start(
+                    code,
+                    user_dir=context.get("run_dir"),
+                    allowed_root=context.get("allowed_root"),
+                    memory_limit_bytes=int(runtime_settings["python_memory_limit_mb"]) * 1024 * 1024,
+                    disabled_modules=disabled_module_roots(runtime_settings.get("python_module_access")),
+                    source_name=Path(file_path).name if file_path else "untitled.py",
+                )
+        except Exception as exc:
+            _pop_runner(sid)
+            _release_execution_slot(sid)
+            label = "Trace runner" if entry.get("kind") == "trace" else "Runner"
+            _append_server_log(f"{label} start failure ({type(exc).__name__}): {exc}", "ERROR")
+            if entry.get("kind") == "trace":
+                socketio.emit(
+                    "trace_error",
+                    {"error": "Step Mode could not start. Ask your teacher or administrator to check the server log."},
+                    to=sid,
+                )
+            else:
+                socketio.emit(
+                    "output",
+                    {"data": "[The program could not be started. Ask your teacher or administrator to check the server log.]\n"},
+                    to=sid,
+                )
+            socketio.emit("finished", {}, to=sid)
+
+
 def _stop_all_runners() -> None:
+    with _execution_admission_lock:
+        queued = list(_execution_queue)
+        active = [
+            (sid, str(record.get("execution_id") or ""))
+            for sid, record in _active_runs_by_sid.items()
+        ]
+        _execution_queue.clear()
+        _queued_runs_by_sid.clear()
+        _queued_sid_by_identity.clear()
+        for entry in queued:
+            if entry.get("cancelled"):
+                entry["cancelled"].set()
+    for sid, execution_id in active:
+        _stop_active_execution(sid, execution_id=execution_id)
+
+    # Clean up any legacy or partially initialized runner that did not have an
+    # admission record. Normal queued launches are handled by the path above.
     with _runner_lock:
         items = list(_runners.items())
         _runners.clear()
-    for sid, runner in items:
-        _release_execution_slot(sid)
+    for _sid, runner in items:
         try:
             runner.stop()
         except Exception:
@@ -7631,13 +8037,8 @@ def on_connect():
 @socketio.on("disconnect")
 def on_disconnect():
     departed_class_ids = list(_socket_sid_rooms.get(request.sid, set()))
-    r = _pop_runner(request.sid)
-    _release_execution_slot(request.sid)
-    if r:
-        try:
-            r.stop()
-        except Exception:
-            pass
+    _cancel_queued_execution(sid=request.sid)
+    _stop_active_execution(request.sid)
     for class_id in list(_socket_live_class_ids.get(request.sid, set())):
         _set_teacher_stream_state_for_sid(request.sid, class_id, False)
     _socket_sid_info.pop(request.sid, None)
@@ -7669,54 +8070,15 @@ def on_run_code(payload):
         emit("finished", {})
         return
 
-    # Resolve language and resource reservation before admission so the server
-    # never admits more potential memory than it can safely sustain.
-    file_path = str(payload.get("file_path") or "")
-    language_hint = _normalize_language_hint(payload.get("language"), file_path)
-    is_js = language_hint == "javascript" or (Path(file_path).suffix.lower() == ".js" if file_path else False)
     runtime_settings = _normalized_python_runtime_settings()
-    python_memory_bytes = int(runtime_settings["python_memory_limit_mb"]) * 1024 * 1024
-    requested_memory_bytes = RUNNER_MEMORY_LIMIT_BYTES if is_js else python_memory_bytes
-    admitted, admission_error = _try_acquire_execution_slot(
-        request.sid,
-        context,
-        requested_memory_bytes,
-    )
-    if not admitted:
+    entry = _build_execution_entry(payload, context, "run", code, runtime_settings)
+    disposition, admission_error = _submit_execution_request(entry, context)
+    if disposition == "rejected":
         emit("output", {"data": f"[Run rejected: {admission_error}]\n"})
         emit("finished", {})
         return
-
-    if is_js:
-        r = _get_js_runner(request.sid)
-    else:
-        r = _get_runner(request.sid)
-    try:
-        if isinstance(r, JsRunner):
-            r.start(code, user_dir=context.get("run_dir"))
-        else:
-            r.start(
-                code,
-                user_dir=context.get("run_dir"),
-                allowed_root=context.get("allowed_root"),
-                memory_limit_bytes=python_memory_bytes,
-                disabled_modules=disabled_module_roots(runtime_settings.get("python_module_access")),
-                source_name=Path(file_path).name if file_path else "untitled.py",
-            )
-    except Exception as exc:
-        _pop_runner(request.sid)
-        _release_execution_slot(request.sid)
-        _append_server_log(f"Runner start failure ({type(exc).__name__}): {exc}", "ERROR")
-        emit(
-            "output",
-            {
-                "data": (
-                    "[The program could not be started. "
-                    "Ask your teacher or administrator to check the server log.]\n"
-                )
-            },
-        )
-        emit("finished", {})
+    if disposition == "start":
+        _start_execution_request(entry)
 
 
 @socketio.on("trace_code")
@@ -7749,27 +8111,13 @@ def on_trace_code(payload):
         return
 
     runtime_settings = _normalized_python_runtime_settings()
-    python_memory_bytes = int(runtime_settings["python_memory_limit_mb"]) * 1024 * 1024
-    admitted, admission_error = _try_acquire_execution_slot(request.sid, context, python_memory_bytes)
-    if not admitted:
+    entry = _build_execution_entry(payload, context, "trace", code, runtime_settings)
+    disposition, admission_error = _submit_execution_request(entry, context)
+    if disposition == "rejected":
         reject(f"Step Mode could not start: {admission_error}")
         return
-
-    runner = _get_trace_runner(request.sid)
-    try:
-        runner.start(
-            code,
-            user_dir=context.get("run_dir"),
-            allowed_root=context.get("allowed_root"),
-            memory_limit_bytes=python_memory_bytes,
-            disabled_modules=disabled_module_roots(runtime_settings.get("python_module_access")),
-            source_name=Path(file_path).name if file_path else "untitled.py",
-        )
-    except Exception as exc:
-        _pop_runner(request.sid)
-        _release_execution_slot(request.sid)
-        _append_server_log(f"Trace runner start failure ({type(exc).__name__}): {exc}", "ERROR")
-        reject("Step Mode could not start. Ask your teacher or administrator to check the server log.")
+    if disposition == "start":
+        _start_execution_request(entry)
 
 
 @socketio.on("send_input")
@@ -7792,10 +8140,12 @@ def on_send_input(payload):
 
 @socketio.on("stop")
 def on_stop(_=None):
-    r = _pop_runner(request.sid)
-    _release_execution_slot(request.sid)
-    if r:
-        r.stop()
+    queued = _cancel_queued_execution(sid=request.sid)
+    if queued:
+        emit("output", {"data": "\n[Queued execution cancelled]\n"})
+        emit("finished", {})
+        return
+    _stop_active_execution(request.sid)
     emit("output", {"data": "\n[Stopped]\n"})
     emit("finished", {})
 
@@ -9661,8 +10011,126 @@ def teacher_save_class_mastery_feedback(class_id: str):
     return jsonify(ok=True, path=rel_path, fileName=filename)
 
 # -------------------------
-# Admin server health
+# Admin execution queue and server health
 # -------------------------
+def _execution_admin_snapshot() -> dict:
+    now = time.time()
+    with _execution_admission_lock:
+        active_records = [(sid, dict(record)) for sid, record in _active_runs_by_sid.items()]
+        queued_records = list(_execution_queue)
+        metrics = {key: int(value) for key, value in _run_metrics.items()}
+        capacity = _configured_execution_capacity()
+    with _runner_lock:
+        runners = dict(_runners)
+
+    active = []
+    for sid, record in active_records:
+        runner = runners.get(sid)
+        state = "waiting_for_input" if bool(getattr(runner, "waiting_for_input", False)) else (
+            "running" if runner else "starting"
+        )
+        active.append({
+            "execution_id": record.get("execution_id"),
+            "display_name": record.get("display_name") or record.get("email") or "Guest",
+            "email": record.get("email") or "",
+            "role": record.get("role") or "guest",
+            "language": record.get("language") or "python",
+            "file_name": record.get("file_name") or "Untitled",
+            "kind": record.get("kind") or "run",
+            "state": state,
+            "started_at": float(record.get("started_at") or now),
+            "elapsed_seconds": max(0, int(now - float(record.get("started_at") or now))),
+            "reserved_memory_mb": round(max(0, int(record.get("reserved_bytes") or 0)) / (1024 * 1024), 1),
+        })
+    active.sort(key=lambda row: row["started_at"])
+
+    queued = []
+    for position, entry in enumerate(queued_records, start=1):
+        context = entry.get("context") or {}
+        queued.append({
+            "execution_id": entry.get("execution_id"),
+            "display_name": context.get("display_name") or context.get("email") or "Guest",
+            "email": context.get("email") or "",
+            "role": context.get("role") or "guest",
+            "language": entry.get("language") or "python",
+            "file_name": Path(str(entry.get("file_path") or "")).name or "Untitled",
+            "kind": entry.get("kind") or "run",
+            "state": "queued",
+            "position": position,
+            "queued_at": float(entry.get("queued_at") or now),
+            "wait_seconds": max(0, int(now - float(entry.get("queued_at") or now))),
+        })
+    return {
+        "active": active,
+        "queued": queued,
+        "active_count": len(active),
+        "queued_count": len(queued),
+        "capacity": capacity,
+        "max_queue": MAX_QUEUED_RUNS,
+        "metrics": {
+            "queued_total": metrics.get("queued", 0),
+            "dequeued_total": metrics.get("dequeued", 0),
+            "cancelled_total": metrics.get("queue_cancelled", 0),
+            "queue_rejected_total": metrics.get("queue_rejected", 0),
+            "average_wait_ms": round(
+                metrics.get("queue_wait_ms_total", 0) / max(1, metrics.get("dequeued", 0)),
+                1,
+            ),
+            "maximum_wait_ms": metrics.get("queue_wait_ms_max", 0),
+        },
+    }
+
+
+@app.get("/api/admin/executions")
+def admin_execution_queue():
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    return jsonify(ok=True, data=_execution_admin_snapshot())
+
+
+@app.post("/api/admin/executions/kill")
+def admin_kill_execution():
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify(ok=False, error="Request body must be an object"), 400
+    execution_id = str(payload.get("execution_id") or "").strip()
+    if not execution_id or len(execution_id) > 64:
+        return jsonify(ok=False, error="Valid execution_id required"), 400
+
+    queued = _cancel_queued_execution(execution_id=execution_id)
+    if queued:
+        sid = str(queued.get("sid") or "")
+        socketio.emit("output", {"data": "\n[Execution halted by admin]\n"}, to=sid)
+        socketio.emit("finished", {}, to=sid)
+        with _execution_admission_lock:
+            _run_metrics["admin_halted"] += 1
+        _append_server_log("Admin halted a queued execution.", "WARNING")
+        return jsonify(ok=True, state="queued")
+
+    with _execution_admission_lock:
+        active_match = next(
+            ((sid, record) for sid, record in _active_runs_by_sid.items() if record.get("execution_id") == execution_id),
+            None,
+        )
+    if not active_match:
+        return jsonify(ok=False, error="Execution not found"), 404
+
+    sid, record = active_match
+    if not _stop_active_execution(sid, execution_id=execution_id):
+        return jsonify(ok=False, error="Execution already finished"), 404
+    socketio.emit("output", {"data": "\n[Execution halted by admin]\n"}, to=sid)
+    socketio.emit("finished", {}, to=sid)
+    with _execution_admission_lock:
+        _run_metrics["admin_halted"] += 1
+    _append_server_log(
+        f"Admin halted execution for {record.get('display_name') or record.get('email') or record.get('role') or 'user'}.",
+        "WARNING",
+    )
+    return jsonify(ok=True, state="active")
+
+
 @app.get("/api/admin/server-health")
 def admin_server_health():
     if not _require_admin(request):
@@ -9679,10 +10147,9 @@ def admin_server_health():
         python_runtime = _normalized_python_runtime_settings()
         execution_health = {
             "active": len(_active_runs_by_sid),
-            "capacity": min(
-                _effective_execution_hard_capacity(),
-                int(python_runtime["python_max_concurrent_runs"]),
-            ),
+            "queued": len(_execution_queue),
+            "capacity": _configured_execution_capacity(),
+            "queue_capacity": MAX_QUEUED_RUNS,
             "hard_capacity": MAX_CONCURRENT_RUNS,
             "cpu_aware_hard_capacity": _effective_execution_hard_capacity(),
             "service_cpu_reserve": RUNNER_CPU_RESERVE,
@@ -9701,6 +10168,15 @@ def admin_server_health():
             "rate_rejected_total": int(_run_metrics.get("rate_rejected", 0)),
             "guest_rejected_total": int(_run_metrics.get("guest_rejected", 0)),
             "pressure_rejected_total": int(_run_metrics.get("pressure_rejected", 0)),
+            "queued_total": int(_run_metrics.get("queued", 0)),
+            "dequeued_total": int(_run_metrics.get("dequeued", 0)),
+            "queue_cancelled_total": int(_run_metrics.get("queue_cancelled", 0)),
+            "admin_halted_total": int(_run_metrics.get("admin_halted", 0)),
+            "average_queue_wait_ms": round(
+                _run_metrics.get("queue_wait_ms_total", 0) / max(1, _run_metrics.get("dequeued", 0)),
+                1,
+            ),
+            "maximum_queue_wait_ms": int(_run_metrics.get("queue_wait_ms_max", 0)),
             "average_launch_ms": round(
                 _run_metrics.get("launch_ms_total", 0) / max(1, _run_metrics.get("launch_count", 0)),
                 1,

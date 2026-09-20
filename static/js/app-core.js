@@ -57,6 +57,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let mySid = null;
     let isProgramRunning = false;
     let activeRunSource = null;
+    let executionQueueState = null;
+    let adminExecutionPoll = null;
+    let adminExecutionRequestPending = false;
     let notebookRunHandlers = null;
     let csvEditorActive = false;
     let csvEditorRows = [];
@@ -1673,8 +1676,41 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         socket.on('connect', () => {
           rejoinClassRooms();
         });
+        socket.on('disconnect', () => {
+          if (!executionQueueState) return;
+          appendOut('[Queued execution cancelled because the connection closed]\n');
+          clearExecutionQueueState();
+          setRunButtonState(false, 'editor');
+        });
         socket.on('connect_error', err => appendOut('[Socket error] ' + (err?.message || err) + '\n'));
+        socket.on('run_queued', msg => {
+          executionQueueState = {
+            executionId: String(msg?.execution_id || ''),
+            status: 'queued',
+            position: Math.max(1, Number(msg?.position) || 1),
+            totalWaiting: Math.max(1, Number(msg?.total_waiting) || 1),
+          };
+          renderExecutionQueueState();
+          setRunButtonState(true, activeRunSource || 'editor');
+          const notice = `[Awaiting execution… (${ordinal(executionQueueState.position)} in line)]\n`;
+          if (activeRunSource === 'notebook') notebookRunHandlers?.onOutput?.(notice);
+          else appendOut(notice);
+        });
+        socket.on('run_queue_update', msg => {
+          const executionId = String(msg?.execution_id || '');
+          if (executionQueueState?.executionId && executionId && executionQueueState.executionId !== executionId) return;
+          executionQueueState = {
+            executionId,
+            status: msg?.status === 'starting' ? 'starting' : 'queued',
+            position: Math.max(0, Number(msg?.position) || 0),
+            totalWaiting: Math.max(0, Number(msg?.total_waiting) || 0),
+          };
+          renderExecutionQueueState();
+          setRunButtonState(true, activeRunSource || 'editor');
+        });
         socket.on('run_ack', () => {
+          clearExecutionQueueState();
+          setRunButtonState(true, activeRunSource || 'editor');
           if (activeRunSource === 'notebook') {
             notebookRunHandlers?.onAck?.();
             return;
@@ -1735,6 +1771,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         });
         socket.on('finished', () => {
           flushQueuedShellOutput();
+          clearExecutionQueueState();
           if (activeRunSource === 'notebook') {
             notebookRunHandlers?.onFinished?.();
             notebookRunHandlers = null;
@@ -1902,6 +1939,36 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       cleanupHtmlRuntimeSession(runtimeId);
     }
 
+    function ordinal(value) {
+      const number = Math.max(1, Math.floor(Number(value) || 1));
+      const mod100 = number % 100;
+      if (mod100 >= 11 && mod100 <= 13) return `${number}th`;
+      return `${number}${number % 10 === 1 ? 'st' : number % 10 === 2 ? 'nd' : number % 10 === 3 ? 'rd' : 'th'}`;
+    }
+
+    function renderExecutionQueueState() {
+      const status = document.getElementById('executionQueueStatus');
+      const text = document.getElementById('executionQueueStatusText');
+      const cancel = document.getElementById('executionQueueCancelBtn');
+      if (!status || !text || !cancel) return;
+      if (!executionQueueState) {
+        status.hidden = true;
+        cancel.disabled = false;
+        cancel.textContent = 'Cancel';
+        return;
+      }
+      status.hidden = false;
+      text.textContent = executionQueueState.status === 'starting'
+        ? 'Starting execution…'
+        : `Awaiting execution… (${ordinal(executionQueueState.position)} in line)`;
+      cancel.hidden = executionQueueState.status === 'starting';
+    }
+
+    function clearExecutionQueueState() {
+      executionQueueState = null;
+      renderExecutionQueueState();
+    }
+
     function setRunButtonState(running, source = activeRunSource || 'editor') {
       isProgramRunning = !!running;
       activeRunSource = isProgramRunning ? source : null;
@@ -1911,7 +1978,20 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         refreshEagleIDEContext();
         return;
       }
-      if (isProgramRunning && activeRunSource === 'notebook') {
+      if (isProgramRunning && executionQueueState) {
+        runBtn.textContent = executionQueueState.status === 'starting' ? 'Starting…' : 'Queued…';
+        runBtn.disabled = true;
+        runBtn.classList.remove('stop', 'run');
+        runBtn.classList.add('run-disabled');
+        runBtn.title = executionQueueState.status === 'starting'
+          ? 'Execution is starting'
+          : `Awaiting execution; ${ordinal(executionQueueState.position)} in line`;
+        document.getElementById('stepModeBtn')?.setAttribute('disabled', 'disabled');
+        renderExecutionQueueState();
+        notifyRunState();
+        refreshEagleIDEContext();
+        return;
+      } else if (isProgramRunning && activeRunSource === 'notebook') {
         runBtn.textContent = 'Notebook Running';
         runBtn.disabled = true;
         runBtn.classList.remove('stop');
@@ -1931,6 +2011,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       runBtn.title = isProgramRunning
         ? (activeRunSource === 'notebook' ? 'Notebook code is running' : (activeRunSource === 'step' ? 'Step Mode is recording this execution' : 'Stop current program'))
         : 'Run current program';
+      if (!isProgramRunning) document.getElementById('stepModeBtn')?.removeAttribute('disabled');
       notifyRunState();
       refreshEagleIDEContext();
     }
@@ -2138,6 +2219,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     document.getElementById('exceptionHelpCloseBtn')?.addEventListener('click', closeExceptionHelpModal);
     exceptionHelpModal?.addEventListener('click', (e) => {
       if (e.target === exceptionHelpModal) closeExceptionHelpModal();
+    });
+    document.getElementById('executionQueueCancelBtn')?.addEventListener('click', (event) => {
+      if (!executionQueueState || !socket) return;
+      event.currentTarget.disabled = true;
+      event.currentTarget.textContent = 'Cancelling…';
+      socket.emit('stop', {});
     });
     setRunButtonState(false);
 
@@ -2785,6 +2872,92 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       });
     }
 
+    function formatExecutionAge(totalSeconds) {
+      const seconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+      if (seconds < 60) return `${seconds}s`;
+      const minutes = Math.floor(seconds / 60);
+      return `${minutes}m ${seconds % 60}s`;
+    }
+
+    function renderAdminExecutionQueue(data) {
+      const list = document.getElementById('adminExecutionList');
+      const summary = document.getElementById('adminExecutionSummary');
+      if (!list || !summary) return;
+      const active = Array.isArray(data?.active) ? data.active : [];
+      const queued = Array.isArray(data?.queued) ? data.queued : [];
+      summary.textContent = `${active.length} of ${Number(data?.capacity || 0)} active · ${queued.length} waiting`;
+      const rows = [
+        ...active.map(item => ({ ...item, queueLabel: item.state === 'waiting_for_input' ? 'Waiting for input' : item.state === 'starting' ? 'Starting' : 'Running', age: item.elapsed_seconds })),
+        ...queued.map(item => ({ ...item, queueLabel: `${ordinal(item.position)} in line`, age: item.wait_seconds })),
+      ];
+      if (!rows.length) {
+        list.innerHTML = '<div class="execution-admin-empty">No active or queued code executions.</div>';
+        return;
+      }
+      list.innerHTML = `<table class="execution-admin-table">
+        <thead><tr><th>User</th><th>Status</th><th>Program</th><th>Time</th><th></th></tr></thead>
+        <tbody>${rows.map(item => `<tr>
+          <td><strong>${escapeHtml(item.display_name || 'Guest')}</strong><small>${escapeHtml(item.email || item.role || '')}</small></td>
+          <td><span class="execution-admin-state">${escapeHtml(item.queueLabel)}</span><small>${escapeHtml(item.kind === 'trace' ? 'Step Mode' : item.role || '')}</small></td>
+          <td>${escapeHtml(item.file_name || 'Untitled')}<small>${escapeHtml(item.language || 'python')}</small></td>
+          <td>${escapeHtml(formatExecutionAge(item.age))}</td>
+          <td><button type="button" class="btn secondary execution-admin-kill" data-execution-kill="${escapeHtml(item.execution_id || '')}" data-execution-name="${escapeHtml(item.display_name || 'this user')}">Kill</button></td>
+        </tr>`).join('')}</tbody>
+      </table>`;
+    }
+
+    async function loadAdminExecutionQueue() {
+      if (!ADMIN_TOKEN || adminExecutionRequestPending) return;
+      adminExecutionRequestPending = true;
+      try {
+        const res = await fetch('/api/admin/executions', { headers: { 'X-Admin-Token': ADMIN_TOKEN } });
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok || !payload?.ok) throw new Error(payload?.error || 'Could not load executions');
+        renderAdminExecutionQueue(payload.data || {});
+      } catch (error) {
+        const list = document.getElementById('adminExecutionList');
+        if (list) list.innerHTML = `<div class="execution-admin-empty">${escapeHtml(error?.message || 'Could not load executions')}</div>`;
+      } finally {
+        adminExecutionRequestPending = false;
+      }
+    }
+
+    function startAdminExecutionPolling() {
+      stopAdminExecutionPolling();
+      loadAdminExecutionQueue();
+      adminExecutionPoll = setInterval(() => {
+        if (!document.hidden && document.getElementById('serverHealthModal')?.style.display !== 'none') {
+          loadAdminExecutionQueue();
+        }
+      }, 2000);
+    }
+
+    function stopAdminExecutionPolling() {
+      if (!adminExecutionPoll) return;
+      clearInterval(adminExecutionPoll);
+      adminExecutionPoll = null;
+    }
+
+    async function killAdminExecution(executionId, displayName, button) {
+      if (!ADMIN_TOKEN || !executionId) return;
+      if (!confirm(`Halt the code execution for ${displayName || 'this user'}?`)) return;
+      if (button) button.disabled = true;
+      try {
+        const res = await fetch('/api/admin/executions/kill', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+          body: JSON.stringify({ execution_id: executionId }),
+        });
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok || !payload?.ok) throw new Error(payload?.error || 'Could not halt execution');
+        await loadAdminExecutionQueue();
+      } catch (error) {
+        alert(error?.message || 'Could not halt execution');
+      } finally {
+        if (button) button.disabled = false;
+      }
+    }
+
     async function loadServerHealth() {
       if (!ADMIN_TOKEN) return;
       const res = await fetch('/api/admin/server-health', { headers: { 'X-Admin-Token': ADMIN_TOKEN } });
@@ -2809,6 +2982,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       document.getElementById('serverHealthUpdatedAt').textContent =
         `Updated: ${new Date().toLocaleString()} • Started: ${d.started_at || '—'}`;
       renderServerHealthFeed(d.alerts || []);
+      loadAdminExecutionQueue();
       window.ClassroomFiles?.loadClassroomLog?.();
     }
 
@@ -2988,6 +3162,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     document.getElementById('loginBtn').addEventListener('click', () => openLoginModal());
     document.getElementById('signOutBtn')?.addEventListener('click', async () => {
       if (!isAuthenticated()) return;
+      if (isProgramRunning && socket) socket.emit('stop', {});
+      clearExecutionQueueState();
+      stopAdminExecutionPolling();
       teacherSkills = [];
       editingSkillId = null;
       if (USER_TOKEN) {
@@ -3264,13 +3441,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         memoryInput.value = String(settings.python_memory_limit_mb || 750);
       }
       if (concurrencyInput) {
-        concurrencyInput.max = String(hard.max_concurrent_runs || 25);
+        concurrencyInput.max = String(hard.max_concurrent_runs || 128);
         concurrencyInput.value = String(settings.python_max_concurrent_runs || 8);
       }
       if (memoryHint) memoryHint.textContent = `Allowed range 128–${hard.max_memory_mb || 2048} MB.`;
-      if (concurrencyHint) concurrencyHint.textContent = `Default 8 · hard ceiling ${hard.max_concurrent_runs || 25} runs; memory reservations may reduce live capacity.`;
+      if (concurrencyHint) concurrencyHint.textContent = `Default 8 · operator ceiling ${hard.max_concurrent_runs || 128} · CPU-safe capacity ${hard.cpu_aware_concurrent_runs || '—'}; memory reservations may reduce live capacity.`;
       if (stats) {
-        stats.textContent = `${Number(data.active_runs || 0)} active run(s) · ${Number(data.reserved_memory_mb || 0).toFixed(1)} MB reserved · CPU ${hard.cpu_seconds || 8}s · wall ${hard.wall_seconds || 30}s · write budget ${hard.write_mb || 10} MB`;
+        stats.textContent = `${Number(data.active_runs || 0)} active · ${Number(data.queued_runs || 0)} queued · ${Number(data.reserved_memory_mb || 0).toFixed(1)} MB reserved · CPU ${hard.cpu_seconds || 8}s · wall ${hard.wall_seconds || 30}s · write budget ${hard.write_mb || 10} MB`;
       }
 
       const containment = data.containment || {};
@@ -3397,7 +3574,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       document.getElementById('guestIdeAccessEnabledModal').checked = currentConfig?.guest_ide_access_enabled !== false;
       document.getElementById('networkSimEnabledModal').checked = !!currentConfig?.network_sim_enabled;
       document.getElementById('pythonMemoryLimitModal').value = Number(currentConfig?.python_memory_limit_mb || 750);
-      document.getElementById('pythonConcurrencyLimitModal').value = Number(currentConfig?.python_max_concurrent_runs || 4);
+      document.getElementById('pythonConcurrencyLimitModal').value = Number(currentConfig?.python_max_concurrent_runs || 8);
       loadPythonRuntimeAdmin();
 
       const status = document.getElementById('adminSettingsStatus');
@@ -3851,7 +4028,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const html_runtime_max_dom_nodes = parseInt(document.getElementById('htmlMaxDomNodesModal').value, 10) || 3000;
       const html_runtime_max_popups = parseInt(document.getElementById('htmlMaxPopupSpawnModal').value, 10) || 2;
       const python_memory_limit_mb = parseInt(document.getElementById('pythonMemoryLimitModal').value, 10) || 750;
-      const python_max_concurrent_runs = parseInt(document.getElementById('pythonConcurrencyLimitModal').value, 10) || 4;
+      const python_max_concurrent_runs = parseInt(document.getElementById('pythonConcurrencyLimitModal').value, 10) || 8;
       const python_module_access = collectPythonModuleAccess();
       
       const registration_enabled = document.getElementById('registrationEnabledModal').checked;
@@ -4260,11 +4437,18 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     document.getElementById('serverHealthBtn')?.addEventListener('click', () => {
       document.getElementById('serverHealthModal').style.display = 'flex';
       loadServerHealth();
+      startAdminExecutionPolling();
     });
     document.getElementById('serverHealthCloseBtn')?.addEventListener('click', () => {
       document.getElementById('serverHealthModal').style.display = 'none';
+      stopAdminExecutionPolling();
     });
     document.getElementById('serverHealthRefreshBtn')?.addEventListener('click', loadServerHealth);
+    document.getElementById('adminExecutionList')?.addEventListener('click', event => {
+      const button = event.target.closest?.('[data-execution-kill]');
+      if (!button) return;
+      killAdminExecution(button.dataset.executionKill, button.dataset.executionName, button);
+    });
 
     document.getElementById('adminSelectAllChk')?.addEventListener('change', (e) => {
       const checked = e.target.checked;

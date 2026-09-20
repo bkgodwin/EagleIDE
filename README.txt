@@ -593,9 +593,10 @@ ADMIN SETTINGS (⚙ button)
 - Configure AI settings (Ollama URL, model, assistant preprompt)
 - Enable/disable AI features globally
 - Configure Python memory per run (750 MB by default)
-- Configure the site-wide concurrent run limit (4 by default)
+- Configure the site-wide concurrent run limit (8 by default; operator and CPU ceilings still apply)
 - Enable or disable managed Python modules through a dependency-aware access list
-- View live active-run, reserved-memory, and native-containment status
+- View live active/queued runs, reserved-memory, and native-containment status
+- Halt an active or queued execution; the affected user receives a shell message
 - Configure HTML runtime settings
 - Enable/disable student self-registration
 - Create teacher accounts
