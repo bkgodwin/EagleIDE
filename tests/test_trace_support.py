@@ -55,6 +55,24 @@ class SourceNarratorTestCase(unittest.TestCase):
         self.assertEqual(items["Child.__init__"], "special method")
         self.assertEqual(items["Child.__str__"], "special method")
 
+    def test_common_string_list_and_builtin_calls_explain_effects(self):
+        source = (
+            "words = ' one,two '.strip().split(',')\n"
+            "words.append('three')\n"
+            "words.sort()\n"
+            "joined = '-'.join(words)\n"
+            "size = len(words)\n"
+            "ordered = sorted(words)\n"
+        )
+        narrator = SourceNarrator(source)
+
+        self.assertIn("Split string", narrator.describe_line(1))
+        self.assertIn("changes the list in place", narrator.describe_line(2))
+        self.assertIn("returns None", narrator.describe_line(3))
+        self.assertIn("Join the strings", narrator.describe_line(4))
+        self.assertIn("Count the items", narrator.describe_line(5))
+        self.assertIn("without changing the original", narrator.describe_line(6))
+
 
 if __name__ == "__main__":
     unittest.main()
