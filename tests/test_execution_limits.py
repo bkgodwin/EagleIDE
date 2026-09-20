@@ -215,6 +215,103 @@ class ExecutionLimitTestCase(unittest.TestCase):
         self.assertIn("6", visible_values)
         self.assertNotIn(client.eio_sid, eagle._active_runs_by_sid)
 
+    def test_step_mode_marks_custom_call_boundaries_and_defined_items(self):
+        client = self._socket()
+        code = (
+            "import csv\n"
+            "def helper(value):\n"
+            "    return value * 2\n"
+            "class Box:\n"
+            "    def __init__(self, value):\n"
+            "        self.value = value\n"
+            "    def doubled(self):\n"
+            "        return helper(self.value)\n"
+            "box = Box(3)\n"
+            "answer = box.doubled()\n"
+            "print(answer)\n"
+        )
+        client.emit("trace_code", self._payload(code))
+        trace = self._trace_payload(self._collect_until_finished(client))
+
+        self.assertIsNotNone(trace)
+        calls = [step for step in trace["steps"] if step.get("event") == "call"]
+        init_call = next(step for step in calls if step.get("qualifiedFunction") == "Box.__init__")
+        method_call = next(step for step in calls if step.get("qualifiedFunction") == "Box.doubled")
+        helper_call = next(step for step in calls if step.get("qualifiedFunction") == "helper")
+        self.assertEqual(init_call["callKind"], "method")
+        self.assertTrue(init_call["supportsStepChoice"])
+        self.assertTrue(init_call["canStepOver"])
+        self.assertGreaterEqual(init_call["stepOverIndex"], init_call["callEndIndex"])
+        self.assertIn("running Box's initializer", init_call["narration"])
+        self.assertTrue(method_call["canStepOver"])
+        self.assertTrue(helper_call["canStepOver"])
+
+        defined = {item["name"]: item["type"] for item in trace["definedItems"]}
+        self.assertEqual(defined["csv"], "imported module")
+        self.assertEqual(defined["helper"], "function")
+        self.assertEqual(defined["Box"], "class")
+        self.assertEqual(defined["Box.__init__"], "special method")
+        self.assertEqual(defined["Box.doubled"], "method")
+
+        rows = [row for step in trace["steps"] for row in (*step.get("locals", []), *step.get("globals", []))]
+        self.assertTrue(any(row["name"] == "csv" and row["type"] == "imported module" for row in rows))
+        self.assertTrue(any(row["name"] == "Box" and row["type"] == "class" for row in rows))
+        self.assertTrue(any(row["name"] == "helper" and row["type"] == "function" for row in rows))
+
+    def test_step_mode_blocks_step_over_when_custom_call_raises(self):
+        client = self._socket()
+        code = (
+            "def fail():\n"
+            "    values = [1]\n"
+            "    return values[4]\n"
+            "fail()\n"
+        )
+        client.emit("trace_code", self._payload(code))
+        trace = self._trace_payload(self._collect_until_finished(client))
+
+        self.assertIsNotNone(trace)
+        call = next(
+            step for step in trace["steps"]
+            if step.get("event") == "call" and step.get("qualifiedFunction") == "fail"
+        )
+        self.assertTrue(call["hasException"])
+        self.assertFalse(call["canStepOver"])
+        self.assertEqual(trace["exception"]["type"], "IndexError")
+
+    def test_step_mode_explains_imported_calls_without_tracing_library_source(self):
+        client = self._socket()
+        client.emit("trace_code", self._payload("import math\nroot = math.sqrt(81)\nprint(root)"))
+        trace = self._trace_payload(self._collect_until_finished(client))
+
+        self.assertIsNotNone(trace)
+        sqrt_line = next(step for step in trace["steps"] if step.get("source") == "root = math.sqrt(81)")
+        self.assertIn("math.sqrt from an imported module", sqrt_line["narration"])
+        self.assertIn("does not enter imported library code", sqrt_line["narration"])
+        self.assertFalse(any(step.get("qualifiedFunction", "").endswith("sqrt") for step in trace["steps"]))
+
+    def test_step_mode_does_not_trace_same_named_file_inside_imported_package(self):
+        package = self.user_dir / "lesson_package"
+        package.mkdir()
+        (package / "__init__.py").write_text("", encoding="utf-8")
+        (package / "untitled.py").write_text(
+            "def triple(value):\n    hidden_library_line = value * 3\n    return hidden_library_line\n",
+            encoding="utf-8",
+        )
+        client = self._socket()
+        code = (
+            "from lesson_package import untitled as imported_lesson\n"
+            "answer = imported_lesson.triple(4)\n"
+            "print(answer)\n"
+        )
+        client.emit("trace_code", self._payload(code))
+        trace = self._trace_payload(self._collect_until_finished(client))
+
+        self.assertIsNotNone(trace)
+        self.assertIn("12", trace["output"])
+        call_line = next(step for step in trace["steps"] if step.get("source") == "answer = imported_lesson.triple(4)")
+        self.assertIn("lesson_package.untitled.triple from an imported module", call_line["narration"])
+        self.assertFalse(any(step.get("source") == "hidden_library_line = value * 3" for step in trace["steps"]))
+
     def test_step_mode_records_input_once_for_playback(self):
         client = self._socket()
         client.emit("trace_code", self._payload("name = input('Name: ')\nprint('Hello', name)"))
