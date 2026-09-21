@@ -129,9 +129,10 @@ def register(
 
     @app.get("/api/wiki/tree")
     def wiki_tree():
-        response = jsonify(ok=True, tree=store.get_tree(), catalog_version=store.catalog_version())
+        catalog_version = store.catalog_version()
+        response = jsonify(ok=True, tree=store.get_tree(), catalog_version=catalog_version)
         response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=300"
-        response.set_etag(f"wiki-tree-{store.catalog_version()}")
+        response.set_etag(f"wiki-tree-{catalog_version}")
         return response.make_conditional(request)
 
     @app.get("/api/wiki/home")
