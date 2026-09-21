@@ -390,6 +390,7 @@ class WikiStore:
         self._search_cache: OrderedDict[tuple[Any, ...], list[dict[str, Any]]] = OrderedDict()
         self._link_cache: OrderedDict[tuple[Any, ...], list[dict[str, str]]] = OrderedDict()
         self._coverage_cache: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
+        self._home_cache: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
         self._prepare_directories()
         self._init_schema()
         self.prune_revisions()
@@ -602,6 +603,7 @@ class WikiStore:
             self._search_cache.clear()
             self._link_cache.clear()
             self._coverage_cache.clear()
+            self._home_cache.clear()
 
     def checkpoint(self) -> None:
         with self._connect() as conn:
@@ -671,6 +673,10 @@ class WikiStore:
             return int(row["value"] if row else 1)
 
     def home_settings(self) -> dict[str, Any]:
+        cache_key = (self.catalog_version(),)
+        cached = self._cache_get(self._home_cache, cache_key)
+        if cached is not None:
+            return cached
         values = {
             "title": DEFAULT_HOME_TITLE,
             "subtitle": DEFAULT_HOME_SUBTITLE,
@@ -697,6 +703,7 @@ class WikiStore:
                     except (ValueError, TypeError, json.JSONDecodeError):
                         values["external_resources"] = []
             values["standards"] = self._list_standards_locked(conn)
+        self._cache_put(self._home_cache, cache_key, values, 2)
         return values
 
     @staticmethod
