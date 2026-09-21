@@ -480,6 +480,23 @@ def register(
             return _json_error(str(exc), 400)
         return jsonify(ok=True, node=node), 201
 
+    @app.post("/api/admin/wiki/tools")
+    def admin_wiki_tool_create():
+        _, error = _admin_required()
+        if error:
+            return error
+        data = request.get_json(silent=True) or {}
+        try:
+            node = store.create_tool(
+                data.get("tool_type"),
+                data.get("parent_id") or None,
+                title=data.get("title") or "",
+                status=data.get("status") or "draft",
+            )
+        except ValueError as exc:
+            return _json_error(str(exc), 400)
+        return jsonify(ok=True, node=node), 201
+
     @app.post("/api/admin/wiki/pages/upload")
     def admin_wiki_page_upload():
         _, error = _admin_required()

@@ -164,6 +164,8 @@
       showStatus(ideAccessMessage(), true);
       return false;
     }
+    disposeWikiContent($('wikiArticleBody'));
+    disposeWikiContent($('wikiEmbeddedContent'));
     setView('ide', { push });
     try { window.eagleEditor?.refresh?.(); } catch {}
     return true;
@@ -371,6 +373,11 @@
     return '📎';
   }
 
+  function displayKind(node) {
+    if (node?.tool_type) return 'tool';
+    return node?.kind || node?.node_kind || 'topic';
+  }
+
   function flattenTree(nodes, output = []) {
     for (const node of nodes || []) {
       output.push(node);
@@ -465,7 +472,8 @@
         link.title = node.title;
         if (node.kind !== 'folder') link.dataset.wikiNode = node.id;
         if (node.kind === 'folder') link.classList.add('is-folder');
-        const meta = admin && node.status === 'draft' ? `${node.kind} · draft` : node.kind;
+        const kindLabel = displayKind(node);
+        const meta = admin && node.status === 'draft' ? `${kindLabel} · draft` : kindLabel;
         link.innerHTML = `<span class="wiki-tree-icon" aria-hidden="true">${escapeHtml(iconFor(node, open))}</span><span class="wiki-tree-title">${escapeHtml(node.title)}</span><span class="wiki-tree-meta${node.status === 'draft' ? ' is-draft' : ''}">${escapeHtml(meta)}</span>`;
         link.addEventListener('click', () => {
           if (node.kind === 'folder') {
@@ -676,7 +684,7 @@
       const labels = bookmark ? (item.labels || []) : ['Featured'];
       const classNames = bookmark ? (item.lesson_classes || []).map(cls => cls.name) : [];
       card.innerHTML = `
-        <span class="wiki-kind-label">${escapeHtml(item.kind || item.node_kind || 'topic')}</span>
+        <span class="wiki-kind-label">${escapeHtml(displayKind(item))}</span>
         <h3>${escapeHtml(item.title)}</h3>
         <p>${escapeHtml(item.description || (classNames.length ? classNames.join(', ') : 'Open this wiki topic.'))}</p>
         <span class="wiki-card-labels">${labels.map(label => `<span class="wiki-badge ${label === 'Lesson Material' ? 'lesson' : ''}">${escapeHtml(label)}</span>`).join('')}</span>`;
@@ -829,6 +837,7 @@
 
   async function showHome({ push = true } = {}) {
     state.coverageAbort?.abort?.();
+    disposeWikiContent($('wikiArticleBody'));
     setView('wiki', { push, path: '/' });
     state.currentNode = null;
     $('wikiHomePanel').hidden = false;
@@ -968,6 +977,7 @@
   }
 
   async function showStandardsCoverage({ push = true, folderId = '' } = {}) {
+    disposeWikiContent($('wikiArticleBody'));
     syncHomeBackground(false);
     const directFolderId = !push ? new URLSearchParams(location.search).get('folder_id') : '';
     const selectedFolderId = String(folderId || directFolderId || '').trim();
@@ -1018,6 +1028,7 @@
   async function openNode(identifier, { push = true, anchor = '', highlight = '' } = {}) {
     syncHomeBackground(false);
     state.coverageAbort?.abort?.();
+    disposeWikiContent($('wikiArticleBody'));
     setView('wiki', { push: false });
     showStatus('Loading topic…', false, 0);
     try {
@@ -1121,16 +1132,20 @@
 
   function renderNode(node, target, { embedded = false } = {}) {
     if (!target) return;
-    target.textContent = '';
+    disposeWikiContent(target);
     if (!embedded) {
       renderBreadcrumbs(node);
       $('wikiArticleTitle').textContent = `${node.icon ? `${node.icon} ` : ''}${node.title || 'Wiki'}`;
-      $('wikiArticleKind').textContent = node.kind || 'Topic';
+      $('wikiArticleKind').textContent = node.tool_type ? 'Interactive Tool' : (node.kind || 'Topic');
       $('wikiArticleDescription').textContent = node.description || '';
       $('wikiArticleBookmarkBtn').hidden = !isStudent() || (node.kind === 'folder' && !(node.children || []).length);
       $('wikiArticleFeatureBtn').hidden = !isTeacher();
     }
-    if (node.kind === 'page') {
+    if (node.tool_type) {
+      renderToolNode(target, node);
+      if (!embedded) renderToc([]);
+      if (!embedded) renderPageStandards([]);
+    } else if (node.kind === 'page') {
       renderMarkdown(target, node.markdown || '', node, { embedded });
       if (!embedded) renderPageStandards(node.standards || []);
     } else if (node.kind === 'folder') {
@@ -1151,9 +1166,55 @@
     if (embedded) {
       const heading = document.createElement('div');
       heading.className = 'wiki-embedded-heading';
-      heading.innerHTML = `<span class="wiki-kind-label">${escapeHtml(node.kind)}</span><h2>${escapeHtml(node.title)}</h2>${node.description ? `<p>${escapeHtml(node.description)}</p>` : ''}`;
+      heading.innerHTML = `<span class="wiki-kind-label">${escapeHtml(displayKind(node))}</span><h2>${escapeHtml(node.title)}</h2>${node.description ? `<p>${escapeHtml(node.description)}</p>` : ''}`;
       target.prepend(heading);
     }
+  }
+
+  function disposeWikiContent(target) {
+    if (!target) return;
+    target._wikiImageObserver?.disconnect?.();
+    target._wikiImageObserver = null;
+    for (const media of target.querySelectorAll('video,audio')) {
+      try { media.pause(); } catch {}
+      media.removeAttribute('src');
+      media.querySelectorAll('source').forEach(source => source.removeAttribute('src'));
+      try { media.load(); } catch {}
+    }
+    for (const frame of target.querySelectorAll('iframe')) {
+      try { frame.src = 'about:blank'; } catch {}
+      frame.removeAttribute('src');
+    }
+    target.querySelectorAll('.wiki-tool-host').forEach(host => window.WikiTools?.unmount?.(host));
+    target.replaceChildren();
+  }
+
+  function disposeActiveContent() {
+    disposeWikiContent($('wikiArticleBody'));
+    disposeWikiContent($('wikiEmbeddedContent'));
+  }
+
+  function renderToolNode(target, node) {
+    const host = document.createElement('div');
+    host.className = 'wiki-tool-host';
+    host.setAttribute('aria-busy', 'true');
+    host.innerHTML = '<div class="skeleton" style="height:180px"></div>';
+    target.appendChild(host);
+    const mount = () => {
+      if (!host.isConnected || !target.contains(host)) return;
+      host.removeAttribute('aria-busy');
+      window.WikiTools?.mount?.(host, node);
+    };
+    if (window.WikiTools) {
+      mount();
+      return;
+    }
+    window.EagleFeatures?.load?.('wikiTools').then(mount).catch(error => {
+      if (!host.isConnected) return;
+      host.removeAttribute('aria-busy');
+      host.textContent = error?.message || 'The interactive tool could not be loaded.';
+      host.classList.add('wiki-tool-load-error');
+    });
   }
 
   function renderMediaNode(target, node) {
@@ -1597,7 +1658,7 @@
   function renderEmbeddedHome() {
     const target = $('wikiEmbeddedContent');
     if (!target) return;
-    target.textContent = '';
+    disposeWikiContent(target);
     const heading = document.createElement('div');
     heading.innerHTML = '<span class="wiki-eyebrow">EagleIDE Coding Wiki</span><h2>Wiki Home</h2><p>Browse featured class material and all coding topics.</p>';
     target.appendChild(heading);
@@ -1626,7 +1687,7 @@
       const card = document.createElement('button');
       card.type = 'button';
       card.className = 'wiki-card';
-      card.innerHTML = `<span class="wiki-kind-label">${escapeHtml(item.kind || 'topic')}</span><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.description || 'Open this topic.')}</p>`;
+      card.innerHTML = `<span class="wiki-kind-label">${escapeHtml(displayKind(item))}</span><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.description || 'Open this topic.')}</p>`;
       card.addEventListener('click', () => openEmbeddedNode(item.slug || item.node_id));
       target.appendChild(card);
     }
@@ -1635,6 +1696,7 @@
   async function openEmbeddedNode(identifier, { fromHistory = false } = {}) {
     const target = $('wikiEmbeddedContent');
     if (!target) return;
+    disposeWikiContent(target);
     target.innerHTML = '<div class="skeleton" style="height:90px"></div>';
     try {
       const data = await fetchJson(`/api/wiki/nodes/${encodeURIComponent(identifier)}`);
@@ -2096,6 +2158,13 @@
     $('lessonTabBtn')?.addEventListener('click', () => { if (!state.embeddedNode && !state.home) loadHome({ quiet: true }); });
     document.addEventListener('pointerdown', event => { state.lastPointerType = event.pointerType || 'mouse'; }, true);
     document.addEventListener('click', handleDocumentClick, true);
+    document.addEventListener('click', event => {
+      if (event.target.closest?.('#networkViewBtn,#wikiHeroNetworkBtn,#settingsOpenNetworkSimBtn')) {
+        disposeActiveContent();
+      }
+      const tab = event.target.closest?.('.tab-btn');
+      if (tab && tab.dataset.tab !== 'lessonTab') disposeWikiContent($('wikiEmbeddedContent'));
+    }, true);
     $('wikiReaderShell')?.addEventListener('scroll', hideStandardDescriptionTooltip, { passive: true });
     document.addEventListener('pointerover', event => {
       if (event.pointerType && event.pointerType !== 'mouse') return;
@@ -2169,6 +2238,7 @@
   window.WikiReader = {
     authHeaders,
     context,
+    disposeActiveContent,
     escapeHtml,
     fetchJson,
     findTreeNode,
