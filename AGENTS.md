@@ -68,6 +68,7 @@ Required runtime components:
 |       |-- lesson-plan-public.js Public/embed navigation and print controller
 |       |-- wiki-reader.js       Public/embedded wiki reader, tree, search, links, and IDE handoff
 |       |-- wiki-admin.js        Admin authoring, uploads, ordering, analytics, and recovery UI
+|       |-- wiki-tools.js        Lazy interactive binary and IPv4 subnet wiki calculators
 |       |-- network-sim.js       Browser topology engine, packet tools, CLI, labs, and teacher UI
 |       |-- network-sim-advanced.js Diagnostics, capture, deterministic traffic, IPv6, routing, and canvas tools
 |       |-- network-sim-worker.js Seeded background-traffic generator running off the UI thread
@@ -125,7 +126,7 @@ Authentication uses ephemeral in-memory token maps. Protected HTTP requests pass
 2. `app-core.js`, which owns the central mutable state and main socket connection.
 3. The wiki reader/admin, classroom, notebook, and student dashboard feature scripts. These consume state exposed through `window.EagleIDE`. The feature loader fetches the base and advanced network simulator scripts together when the simulator is first requested; the advanced simulator uses the explicit `window.NetworkSim` integration API and `network-sim:*` DOM events.
 
-`app-core.js` is the active main application script. `state-socket.js` and `app-main.js` are not referenced by `index.html`; editing them alone has no browser effect. The historical `tools/migrate_ux.py` can rebuild `app-core.js` from those fragments, so do not run either migration script as a normal build or formatting step. They can overwrite newer UI work.
+`app-core.js` is the active main application script. `state-socket.js` and `app-main.js` are not referenced by `index.html`; editing them alone has no browser effect. The historical `tools/migrate_ux.py` can rebuild `app-core.js` from those fragments, so do not run either migration script as a normal build or formatting step. They can overwrite newer UI work. Interactive wiki calculators live in `wiki-tools.js` with `features/wiki-tools.css`; both are loaded together by `feature-loader.js` only when a tool page is opened.
 
 `static/css/main.css` is the only local stylesheet entry point. It imports tokens, foundations, feature styles, and finally `legacy.css`. Prefer the closest feature file for new rules and preserve the import order. Check desktop, tablet, mobile, light, and dark appearances after layout or token changes.
 

@@ -38,7 +38,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20260920-5">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260921-3">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -1364,6 +1364,7 @@
           <div class="wiki-manager-toolbar">
             <button class="btn secondary" id="wikiAdminNewFolderBtn" type="button">New Folder</button>
             <button class="btn secondary" id="wikiAdminNewPageBtn" type="button">New Page</button>
+            <button class="btn secondary" id="wikiAdminNewToolBtn" type="button">Add Tool</button>
             <label class="btn secondary wiki-file-label" for="wikiAdminMarkdownInput">Upload .md</label>
             <input id="wikiAdminMarkdownInput" type="file" accept=".md,text/markdown" multiple />
             <label class="btn secondary wiki-file-label" for="wikiAdminAssetInput">Upload Media / Files</label>
@@ -1438,6 +1439,12 @@
               </div>
               <div class="wiki-revisions" id="wikiAdminRevisions"></div>
             </div>
+            <section class="wiki-admin-tool-summary" id="wikiAdminToolSummary" hidden>
+              <span class="wiki-eyebrow">Interactive wiki tool</span>
+              <h4 id="wikiAdminToolName">Tool</h4>
+              <p id="wikiAdminToolDescription"></p>
+              <p>Students receive the interactive calculator when this item is published. The tool code and styles load only when someone opens this page.</p>
+            </section>
             <div class="modal-actions wiki-admin-save-actions">
               <button class="btn secondary" id="wikiAdminPreviewBtn" type="button">Refresh Preview</button>
               <button class="btn run" id="wikiAdminSaveBtn" type="submit">Save Changes</button>
@@ -1457,6 +1464,29 @@
         <div class="wiki-manager-panel-heading"><div><span class="wiki-eyebrow">Usage</span><h4>Wiki analytics</h4></div></div>
         <div id="wikiAdminAnalyticsContent"></div>
       </section>
+    </div>
+  </div>
+
+  <div id="wikiToolPickerModal" class="modal" style="display:none;">
+    <div class="modal-content wiki-tool-picker-modal">
+      <header>
+        <div><span class="wiki-eyebrow">Interactive content</span><h3>Add a Wiki Tool</h3></div>
+        <button class="wiki-icon-btn" id="wikiToolPickerCloseBtn" type="button" aria-label="Close tool picker">×</button>
+      </header>
+      <p id="wikiToolPickerDestination">Choose a tool to add to the selected wiki folder.</p>
+      <div class="wiki-tool-picker-grid">
+        <button type="button" data-wiki-tool-type="binary-converter">
+          <span class="wiki-tool-picker-icon" aria-hidden="true">🔢</span>
+          <strong>Binary &amp; Decimal Converter</strong>
+          <span>Convert unsigned values up to 32 bits with place-value tables and worked steps.</span>
+        </button>
+        <button type="button" data-wiki-tool-type="ipv4-subnet">
+          <span class="wiki-tool-picker-icon" aria-hidden="true">🧮</span>
+          <strong>IPv4 Subnet Calculator</strong>
+          <span>Calculate network details, host ranges, and bitwise address work.</span>
+        </button>
+      </div>
+      <div class="modal-actions"><button class="btn secondary" id="wikiToolPickerCancelBtn" type="button">Cancel</button></div>
     </div>
   </div>
 
@@ -1696,7 +1726,7 @@
   </div><!-- .app-shell -->
 
   <script src="/static/js/app.js"></script>
-  <script src="/static/js/feature-loader.js?v=20260920-1"></script>
+  <script src="/static/js/feature-loader.js?v=20260921-1"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20250608"></script>
   <script src="/static/js/layout.js?v=20260918-10"></script>
@@ -1704,12 +1734,12 @@
   <script src="/static/js/editor-init.js?v=20260918-10"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js"></script>
-  <script src="/static/js/app-core.js?v=20260920-5"></script>
+  <script src="/static/js/app-core.js?v=20260921-3"></script>
   <script src="/static/js/step-mode.js?v=20260920-4"></script>
-  <script src="/static/js/wiki-reader.js?v=20260920-5"></script>
+  <script src="/static/js/wiki-reader.js?v=20260921-3"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
   <script src="/static/js/lesson-plans.js?v=20260816-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20260920-5"></script>
+  <script src="/static/js/wiki-admin.js?v=20260921-3"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20260918-10"></script>
   <script src="/static/js/student-notebook.js?v=20260918-10"></script>

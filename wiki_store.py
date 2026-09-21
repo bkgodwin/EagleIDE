@@ -48,6 +48,19 @@ MAX_STANDARD_ID_CHARS = 120
 MAX_STANDARD_DESCRIPTION_CHARS = 4000
 MAX_EXTERNAL_RESOURCES = 100
 
+WIKI_TOOL_TYPES: dict[str, dict[str, str]] = {
+    "binary-converter": {
+        "title": "Binary & Decimal Converter",
+        "description": "Convert unsigned values between decimal and binary with a place-value breakdown.",
+        "icon": "🔢",
+    },
+    "ipv4-subnet": {
+        "title": "IPv4 Subnet Calculator",
+        "description": "Explore IPv4 networks, address ranges, masks, and the bitwise work behind each result.",
+        "icon": "🧮",
+    },
+}
+
 ASSET_TYPES: dict[str, tuple[str, str, bool]] = {
     ".png": ("image", "image/png", False),
     ".jpg": ("image", "image/jpeg", False),
@@ -109,6 +122,13 @@ def safe_description(value: Any) -> str:
 def safe_icon(value: Any) -> str:
     text = re.sub(r"[\x00-\x1f\x7f]+", "", str(value or "")).strip()
     return text[:32]
+
+
+def safe_tool_type(value: Any) -> str:
+    tool_type = str(value or "").strip().lower()
+    if tool_type and tool_type not in WIKI_TOOL_TYPES:
+        raise ValueError("Unknown wiki tool type")
+    return tool_type
 
 
 def safe_footer_text(value: Any) -> str:
@@ -449,6 +469,7 @@ class WikiStore:
                     mime_type TEXT NOT NULL DEFAULT '',
                     size_bytes INTEGER NOT NULL DEFAULT 0,
                     description TEXT NOT NULL DEFAULT '',
+                    tool_type TEXT NOT NULL DEFAULT '',
                     version INTEGER NOT NULL DEFAULT 1,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
@@ -543,6 +564,8 @@ class WikiStore:
             node_columns = {row["name"] for row in conn.execute("PRAGMA table_info(nodes)")}
             if "icon" not in node_columns:
                 conn.execute("ALTER TABLE nodes ADD COLUMN icon TEXT NOT NULL DEFAULT ''")
+            if "tool_type" not in node_columns:
+                conn.execute("ALTER TABLE nodes ADD COLUMN tool_type TEXT NOT NULL DEFAULT ''")
             conn.execute(
                 "INSERT INTO schema_meta(key,value) VALUES('schema_version',?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -1031,6 +1054,7 @@ class WikiStore:
         icon: Any = "",
         file_name: str = "",
         standard_ids: Iterable[Any] = (),
+        tool_type: Any = "",
     ) -> dict[str, Any]:
         title = safe_title(title, "Untitled Page")
         parent_id = self._validate_id(parent_id) if parent_id else None
@@ -1038,6 +1062,7 @@ class WikiStore:
         if len(content.encode("utf-8")) > MAX_PAGE_BYTES:
             raise ValueError("Markdown page exceeds the 2MB limit")
         status = "published" if status == "published" else "draft"
+        tool_type = safe_tool_type(tool_type)
         node_id = uuid.uuid4().hex
         storage_name = f"{node_id}.md"
         path = self.content_dir / storage_name
@@ -1048,12 +1073,12 @@ class WikiStore:
                 self._parent_exists(conn, parent_id)
                 slug = self._unique_slug(conn, title)
                 conn.execute(
-                    "INSERT INTO nodes(id,parent_id,kind,title,icon,slug,sort_order,status,file_name,storage_name,mime_type,size_bytes,description,created_at,updated_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,'text/markdown; charset=utf-8',?,?,?,?)",
+                    "INSERT INTO nodes(id,parent_id,kind,title,icon,slug,sort_order,status,file_name,storage_name,mime_type,size_bytes,description,tool_type,created_at,updated_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,'text/markdown; charset=utf-8',?,?,?,?,?)",
                     (
                         node_id, parent_id, "page", title, safe_icon(icon), slug, self._next_order(conn, parent_id), status,
                         safe_filename(file_name or f"{slug}.md"), storage_name, len(content.encode("utf-8")),
-                        safe_description(description), now, now,
+                        safe_description(description), tool_type, now, now,
                     ),
                 )
                 self._replace_aliases(conn, node_id, aliases)
@@ -1067,6 +1092,28 @@ class WikiStore:
             path.unlink(missing_ok=True)
             raise
         return self.get_node(node_id, include_drafts=True) or {}
+
+    def create_tool(
+        self,
+        tool_type: Any,
+        parent_id: Optional[str] = None,
+        *,
+        title: Any = "",
+        status: str = "draft",
+    ) -> dict[str, Any]:
+        tool_type = safe_tool_type(tool_type)
+        if not tool_type:
+            raise ValueError("Wiki tool type is required")
+        definition = WIKI_TOOL_TYPES[tool_type]
+        return self.create_page(
+            title or definition["title"],
+            "",
+            parent_id,
+            status=status,
+            description=definition["description"],
+            icon=definition["icon"],
+            tool_type=tool_type,
+        )
 
     def _create_revision_locked(self, conn: sqlite3.Connection, page_id: str, title: str, content: str) -> str:
         revision_id = uuid.uuid4().hex
@@ -1505,7 +1552,7 @@ class WikiStore:
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         with self._connect() as conn:
             rows = [self._row_dict(row) for row in conn.execute(
-                f"SELECT id,parent_id,kind,title,icon,slug,sort_order,status,description,mime_type,size_bytes,updated_at,deleted_at "
+                f"SELECT id,parent_id,kind,title,icon,slug,sort_order,status,description,tool_type,mime_type,size_bytes,updated_at,deleted_at "
                 f"FROM nodes {where} ORDER BY sort_order,title COLLATE NOCASE"
             )]
         if not include_images:
@@ -1593,7 +1640,7 @@ class WikiStore:
         with self._connect() as conn:
             if node["kind"] == "folder":
                 node["children"] = [self._row_dict(row) for row in conn.execute(
-                    "SELECT id,parent_id,kind,title,slug,sort_order,status,description,mime_type,size_bytes,updated_at "
+                    "SELECT id,parent_id,kind,title,icon,slug,sort_order,status,description,tool_type,mime_type,size_bytes,updated_at "
                     "FROM nodes WHERE parent_id=? AND deleted_at IS NULL "
                     + ("" if include_drafts else "AND status='published' ")
                     + "ORDER BY sort_order,title COLLATE NOCASE",
@@ -1701,9 +1748,10 @@ class WikiStore:
             summary = plain[:280]
         return {
             "id": node["id"], "title": node["title"], "slug": node["slug"], "kind": node["kind"],
+            "tool_type": node.get("tool_type", ""),
             "summary": summary[:280], "breadcrumbs": node["breadcrumbs"],
             "thumbnail_url": node["media_url"] if node["kind"] == "image" else "",
-            "locations": self._page_locations(node.get("markdown", ""), term, anchor) if node["kind"] == "page" else [],
+            "locations": self._page_locations(node.get("markdown", ""), term, anchor) if node["kind"] == "page" and not node.get("tool_type") else [],
         }
 
     def _decorate_search_results(self, rows: Iterable[Any], query: str) -> list[dict[str, Any]]:
@@ -1711,7 +1759,9 @@ class WikiStore:
         for source in rows:
             item = dict(source)
             node = self.get_node(item["id"], include_drafts=False, include_content=True)
-            locations = self._page_locations(node.get("markdown", ""), query) if node and node["kind"] == "page" else []
+            if node:
+                item["tool_type"] = node.get("tool_type", "")
+            locations = self._page_locations(node.get("markdown", ""), query) if node and node["kind"] == "page" and not node.get("tool_type") else []
             location = locations[0] if locations else {"heading": "", "anchor": "", "excerpt": item.get("description", "")}
             item["anchor"] = location.get("anchor", "")
             item["location_heading"] = location.get("heading", "")
@@ -2068,7 +2118,7 @@ class WikiStore:
             params.extend(class_list)
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT b.id,b.owner_email,b.node_id,b.class_id,b.kind,b.created_at,n.title,n.slug,n.kind node_kind,n.description "
+                "SELECT b.id,b.owner_email,b.node_id,b.class_id,b.kind,b.created_at,n.title,n.slug,n.kind node_kind,n.tool_type,n.description "
                 "FROM bookmarks b JOIN nodes n ON n.id=b.node_id "
                 f"WHERE ({' OR '.join(clauses)}) AND n.status='published' AND n.deleted_at IS NULL "
                 "ORDER BY b.created_at DESC,n.title",
@@ -2099,7 +2149,7 @@ class WikiStore:
     def list_class_features(self, class_id: str) -> list[dict[str, Any]]:
         with self._connect() as conn:
             return [dict(row) for row in conn.execute(
-                "SELECT f.class_id,f.node_id,f.teacher_email,f.created_at,n.title,n.slug,n.kind,n.description "
+                "SELECT f.class_id,f.node_id,f.teacher_email,f.created_at,n.title,n.slug,n.kind,n.tool_type,n.description "
                 "FROM class_features f JOIN nodes n ON n.id=f.node_id "
                 "WHERE f.class_id=? AND n.status='published' AND n.deleted_at IS NULL ORDER BY f.created_at DESC",
                 (str(class_id or "").strip(),),
@@ -2321,6 +2371,9 @@ class WikiStore:
             if kind not in {"folder", "page", "image", "video", "pdf", "file"}:
                 raise ValueError("Backup contains an invalid wiki item type")
             node_kinds[node_id] = kind
+            tool_type = str(row.get("tool_type") or "")
+            if (kind != "page" and tool_type) or (tool_type and tool_type not in WIKI_TOOL_TYPES):
+                raise ValueError("Backup contains an invalid wiki tool type")
             icon = str(row.get("icon") or "")
             if safe_icon(icon) != icon:
                 raise ValueError("Backup contains an invalid folder icon")
@@ -2478,7 +2531,7 @@ class WikiStore:
                     if not expected or sha256_file(destination) != expected:
                         raise ValueError(f"Backup checksum failed for {name}")
             table_columns = {
-                "nodes": ("id","parent_id","kind","title","icon","slug","sort_order","status","file_name","storage_name","mime_type","size_bytes","description","version","created_at","updated_at","deleted_at"),
+                "nodes": ("id","parent_id","kind","title","icon","slug","sort_order","status","file_name","storage_name","mime_type","size_bytes","description","tool_type","version","created_at","updated_at","deleted_at"),
                 "aliases": ("id","node_id","term","normalized","anchor"),
                 "sections": ("id","page_id","anchor","heading","normalized","level","ordinal"),
                 "redirects": ("old_slug","node_id","created_at"),
@@ -2501,7 +2554,12 @@ class WikiStore:
                     for row in rows:
                         if not isinstance(row, dict):
                             raise ValueError(f"Backup table {table} is invalid")
-                        values = tuple((row.get(column) or "") if table == "nodes" and column == "icon" else row.get(column) for column in columns)
+                        values = tuple(
+                            (row.get(column) or "")
+                            if table == "nodes" and column in {"icon", "tool_type"}
+                            else row.get(column)
+                            for column in columns
+                        )
                         conn.execute(statement, values)
                 valid_ids = {row["id"] for row in manifest.get("nodes") or [] if isinstance(row, dict)}
                 bookmark_columns = ("id","owner_email","node_id","class_id","kind","created_at")

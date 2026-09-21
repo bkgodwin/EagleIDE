@@ -22,6 +22,16 @@
 
   const $ = (id) => document.getElementById(id);
   const reader = () => window.WikiReader;
+  const TOOL_LABELS = Object.freeze({
+    'binary-converter': {
+      title: 'Binary & Decimal Converter',
+      description: 'Converts unsigned values up to 32 bits with place-value tables and worked steps.',
+    },
+    'ipv4-subnet': {
+      title: 'IPv4 Subnet Calculator',
+      description: 'Calculates IPv4 network details, host ranges, and the bitwise work behind the answer.',
+    },
+  });
 
   function adminHeaders(json = false) {
     return reader().authHeaders(json);
@@ -105,6 +115,7 @@
     state.revisions = [];
     $('wikiAdminEditor').hidden = true;
     $('wikiAdminEmptyState').hidden = false;
+    $('wikiAdminToolSummary').hidden = true;
   }
 
   async function selectNode(nodeId, { skipDraftSave = false } = {}) {
@@ -125,6 +136,7 @@
   function fillEditor() {
     const node = state.node;
     if (!node) return clearSelection();
+    const isTool = !!node.tool_type;
     $('wikiAdminEmptyState').hidden = true;
     $('wikiAdminEditor').hidden = false;
     $('wikiAdminTitle').value = node.title || '';
@@ -135,11 +147,17 @@
     $('wikiAdminAliases').value = (node.aliases || []).join(', ');
     $('wikiAdminStatus').value = node.status || 'draft';
     $('wikiAdminAliasesWrap').hidden = node.kind === 'image';
-    $('wikiAdminPageStandardsWrap').hidden = node.kind !== 'page';
-    $('wikiAdminPageTools').hidden = node.kind !== 'page';
-    $('wikiAdminPreviewBtn').hidden = node.kind !== 'page';
-    $('wikiAdminProperties').open = node.kind !== 'page';
-    if (node.kind === 'page') {
+    $('wikiAdminPageStandardsWrap').hidden = node.kind !== 'page' || isTool;
+    $('wikiAdminPageTools').hidden = node.kind !== 'page' || isTool;
+    $('wikiAdminPreviewBtn').hidden = node.kind !== 'page' || isTool;
+    $('wikiAdminProperties').open = node.kind !== 'page' || isTool;
+    $('wikiAdminToolSummary').hidden = !isTool;
+    if (isTool) {
+      const definition = TOOL_LABELS[node.tool_type] || {};
+      $('wikiAdminToolName').textContent = definition.title || 'Wiki Tool';
+      $('wikiAdminToolDescription').textContent = definition.description || node.description || '';
+    }
+    if (node.kind === 'page' && !isTool) {
       state.pageStandardsQuery = '';
       state.pageStandardsSelectedOnly = false;
       if ($('wikiAdminPageStandardsSearch')) $('wikiAdminPageStandardsSearch').value = '';
@@ -198,7 +216,7 @@
 
   async function autosaveDraft(immediate = false) {
     clearTimeout(state.draftTimer);
-    if (!state.draftDirty || !state.node || state.node.kind !== 'page') return;
+    if (!state.draftDirty || !state.node || state.node.kind !== 'page' || state.node.tool_type) return;
     const content = $('wikiAdminContent').value || '';
     try {
       const payload = await reader().fetchJson(`/api/admin/wiki/nodes/${state.node.id}/draft`, {
@@ -235,7 +253,7 @@
     if (['folder', 'page'].includes(state.node.kind)) {
       payload.icon = $('wikiAdminFolderIcon').value.trim();
     }
-    if (state.node.kind === 'page') {
+    if (state.node.kind === 'page' && !state.node.tool_type) {
       payload.content = $('wikiAdminContent').value || '';
       payload.standard_ids = [...$('wikiAdminPageStandards').querySelectorAll('input[type="checkbox"]:checked')].map(input => input.value);
     }
@@ -283,6 +301,38 @@
       $('wikiAdminContent')?.focus();
     } catch (error) {
       progress(error.message || 'Could not create page.', true);
+    }
+  }
+
+  function openToolPicker() {
+    const destination = selectedParentForNew();
+    const folder = destination ? findAdminNode(destination) : null;
+    $('wikiToolPickerDestination').textContent = folder
+      ? `The new tool will be added to “${folder.title}” as a draft.`
+      : 'The new tool will be added to the wiki root as a draft.';
+    $('wikiToolPickerModal').style.display = 'flex';
+    $('wikiToolPickerModal').querySelector('[data-wiki-tool-type]')?.focus();
+  }
+
+  function closeToolPicker() {
+    $('wikiToolPickerModal').style.display = 'none';
+  }
+
+  async function createTool(toolType) {
+    if (!TOOL_LABELS[toolType]) return;
+    closeToolPicker();
+    progress(`Adding ${TOOL_LABELS[toolType].title}…`);
+    try {
+      const payload = await reader().fetchJson('/api/admin/wiki/tools', {
+        method: 'POST',
+        headers: adminHeaders(true),
+        body: JSON.stringify({ tool_type: toolType, parent_id: selectedParentForNew(), status: 'draft' }),
+      });
+      state.selectedId = payload.node.id;
+      await loadTree();
+      progress('Tool added as a draft. Review its title and publish it when ready.');
+    } catch (error) {
+      progress(error.message || 'Could not add wiki tool.', true);
     }
   }
 
@@ -990,6 +1040,7 @@
 
   async function closeManager() {
     if (state.draftDirty) await autosaveDraft(true);
+    closeToolPicker();
     $('wikiManagerModal').style.display = 'none';
     $('wikiAdminAnalytics').hidden = true;
   }
@@ -1007,6 +1058,15 @@
     $('wikiAdminAddResourceBtn')?.addEventListener('click', () => addExternalResourceRow());
     $('wikiAdminNewFolderBtn')?.addEventListener('click', createFolder);
     $('wikiAdminNewPageBtn')?.addEventListener('click', createPage);
+    $('wikiAdminNewToolBtn')?.addEventListener('click', openToolPicker);
+    $('wikiToolPickerCloseBtn')?.addEventListener('click', closeToolPicker);
+    $('wikiToolPickerCancelBtn')?.addEventListener('click', closeToolPicker);
+    $('wikiToolPickerModal')?.addEventListener('click', event => {
+      if (event.target.id === 'wikiToolPickerModal') closeToolPicker();
+    });
+    document.querySelectorAll('[data-wiki-tool-type]').forEach(button => {
+      button.addEventListener('click', () => createTool(button.dataset.wikiToolType));
+    });
     $('wikiAdminContentTabBtn')?.addEventListener('click', () => showManagerSection('content'));
     $('wikiAdminHomeTabBtn')?.addEventListener('click', () => showManagerSection('home'));
     $('wikiAdminMediaTabBtn')?.addEventListener('click', () => showManagerSection('media'));
@@ -1080,7 +1140,12 @@
     });
     $('wikiAdminAnalyticsBtn')?.addEventListener('click', () => showManagerSection('analytics'));
     window.addEventListener('keydown', event => {
-      if (event.key === 'Escape' && $('wikiManagerModal')?.style.display === 'flex' && $('wikiImageInsertModal')?.style.display !== 'flex') closeManager();
+      if (event.key !== 'Escape') return;
+      if ($('wikiToolPickerModal')?.style.display === 'flex') {
+        closeToolPicker();
+        return;
+      }
+      if ($('wikiManagerModal')?.style.display === 'flex' && $('wikiImageInsertModal')?.style.display !== 'flex') closeManager();
     });
   }
 
