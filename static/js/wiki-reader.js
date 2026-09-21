@@ -17,6 +17,7 @@
     searchQuery: '',
     searchResults: [],
     searchAbort: null,
+    treeFilterTimer: null,
     statusTimer: null,
     previewTimer: null,
     previewAbort: null,
@@ -25,6 +26,7 @@
     classAction: null,
     treeDragId: '',
     drawerResizeFrame: 0,
+    sectionScrollToken: 0,
     standardTooltipTarget: null,
     wikiReturn: null,
     printDocumentTitle: '',
@@ -264,6 +266,12 @@
     if ($('wikiFontSizeSelect')) $('wikiFontSizeSelect').value = String(size);
     if (persist) {
       try { localStorage.setItem(WIKI_FONT_SIZE_KEY, String(size)); } catch {}
+    }
+    const currentAnchor = decodeURIComponent(location.hash.replace(/^#/, ''));
+    if (currentAnchor) {
+      requestAnimationFrame(() => scrollToArticleTarget(document.getElementById(currentAnchor), {
+        behavior: 'auto',
+      }));
     }
     return size;
   }
@@ -621,7 +629,7 @@
   function renderAllTrees() {
     renderTree($('wikiNavTree'), state.tree, { filter: $('wikiTreeFilter')?.value || '' });
     scheduleContentsDrawerResize();
-    window.WikiAdmin?.renderTree?.();
+    if ($('wikiManagerModal')?.style.display === 'flex') window.WikiAdmin?.renderTree?.();
   }
 
   function scheduleContentsDrawerResize() {
@@ -1039,7 +1047,7 @@
         const firstHit = highlightSearchTerm($('wikiArticleBody'), highlight);
         const target = requestedAnchor ? document.getElementById(requestedAnchor) : null;
         if (firstHit) firstHit.scrollIntoView({ block: 'center' });
-        else if (target) target.scrollIntoView({ block: 'start' });
+        else if (target) scrollToArticleTarget(target, { behavior: 'auto' });
         else document.querySelector('.wiki-reader-shell')?.scrollTo?.({ top: 0, behavior: 'instant' });
       });
       return data.node;
@@ -1235,7 +1243,8 @@
     const images = [...target.querySelectorAll('img[data-wiki-src]')];
     if (!images.length) return;
     const scrollRoot = target.closest('.wiki-admin-preview-wrap,.wiki-embedded-content') || $('wikiReaderShell');
-    const loadImage = image => {
+    const rootBounds = scrollRoot?.getBoundingClientRect?.();
+    const loadImage = (image, bounds = null) => {
       const source = image.dataset.wikiSrc;
       if (!source) return;
       image.addEventListener('load', () => {
@@ -1245,22 +1254,21 @@
         image.closest('.wiki-image')?.classList.remove('is-loading');
         image.closest('.wiki-image')?.classList.add('is-error');
       }, { once: true });
-      const rootBounds = scrollRoot?.getBoundingClientRect?.();
-      const imageBounds = image.getBoundingClientRect();
+      const imageBounds = bounds || image.getBoundingClientRect();
       if (!rootBounds || imageBounds.top <= rootBounds.bottom + 320) image.fetchPriority = 'high';
       image.loading = 'eager';
       image.src = source;
       delete image.dataset.wikiSrc;
     };
     if (!('IntersectionObserver' in window)) {
-      images.forEach(loadImage);
+      images.forEach(image => loadImage(image));
       return;
     }
     const observer = new IntersectionObserver(entries => {
       for (const entry of entries) {
         if (!entry.isIntersecting) continue;
         observer.unobserve(entry.target);
-        loadImage(entry.target);
+        loadImage(entry.target, entry.boundingClientRect);
       }
     }, {
       root: scrollRoot || null,
@@ -1378,12 +1386,12 @@
 
   function postProcessCode(target, markdown, node) {
     const metadata = extractFenceMetadata(markdown);
-    [...target.querySelectorAll('pre > code')].forEach((code, index) => {
+    const codeBlocks = [...target.querySelectorAll('pre > code')];
+    codeBlocks.forEach((code, index) => {
       const rawClass = [...code.classList].find(value => value.startsWith('language-')) || '';
       const classLanguage = rawClass.replace(/^language-/, '').split(/\s/)[0];
       const meta = metadata[index] || {};
       const info = languageInfo(meta.language || classLanguage);
-      try { window.hljs?.highlightElement?.(code); } catch {}
       const pre = code.parentElement;
       const toolbar = document.createElement('span');
       toolbar.className = 'wiki-code-toolbar';
@@ -1423,6 +1431,15 @@
       }
       pre.appendChild(toolbar);
     });
+    const highlight = () => {
+      if (!target.isConnected) return;
+      for (const code of codeBlocks) {
+        if (!code.isConnected || code.dataset.highlighted === 'yes') continue;
+        try { window.hljs?.highlightElement?.(code); } catch {}
+      }
+    };
+    if ('requestIdleCallback' in window) window.requestIdleCallback(highlight, { timeout: 250 });
+    else setTimeout(highlight, 0);
   }
 
   function applyAutoLinks(target, candidates) {
@@ -1503,11 +1520,43 @@
       anchor.textContent = section.heading;
       anchor.addEventListener('click', (event) => {
         event.preventDefault();
-        document.getElementById(section.anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        scrollToArticleTarget(document.getElementById(section.anchor));
         history.replaceState(history.state, '', `${location.pathname}#${encodeURIComponent(section.anchor)}`);
       });
       links.appendChild(anchor);
     }
+  }
+
+  function scrollToArticleTarget(target, { behavior = 'smooth' } = {}) {
+    const root = $('wikiReaderShell');
+    if (!root || !target || !root.contains(target)) return;
+    const token = ++state.sectionScrollToken;
+    const align = (nextBehavior = 'auto') => {
+      if (token !== state.sectionScrollToken || !target.isConnected) return;
+      const rootRect = root.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const top = Math.max(0, root.scrollTop + targetRect.top - rootRect.top - 18);
+      root.scrollTo({ top, behavior: nextBehavior });
+    };
+    align(behavior);
+
+    // Media above a heading can finish sizing after a jump. Re-align only when
+    // that pending media settles, so font and image reflow cannot move the
+    // selected heading away from the top of the reader.
+    const precedesTarget = media => !!(media.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING);
+    const pending = [...$('wikiArticleBody').querySelectorAll('img,video,iframe')].filter(media => {
+      if (!precedesTarget(media)) return false;
+      if (media.tagName === 'IMG') return !!media.dataset.wikiSrc || !media.complete;
+      if (media.tagName === 'VIDEO') return media.readyState < 1;
+      return true;
+    });
+    const realign = () => requestAnimationFrame(() => align('auto'));
+    for (const media of pending) {
+      const eventName = media.tagName === 'VIDEO' ? 'loadedmetadata' : 'load';
+      media.addEventListener(eventName, realign, { once: true });
+      media.addEventListener('error', realign, { once: true });
+    }
+    if (document.fonts?.status === 'loading') document.fonts.ready.then(realign).catch(() => {});
   }
 
   function renderPageStandards(standards) {
@@ -1989,7 +2038,10 @@
     $('ideViewBtn')?.addEventListener('click', () => showIDE());
     $('wikiReturnBtn')?.addEventListener('click', returnToWiki);
     $('wikiViewBtn')?.addEventListener('click', () => showHome());
-    $('wikiTreeFilter')?.addEventListener('input', () => renderAllTrees());
+    $('wikiTreeFilter')?.addEventListener('input', () => {
+      clearTimeout(state.treeFilterTimer);
+      state.treeFilterTimer = setTimeout(renderAllTrees, 90);
+    });
     window.addEventListener('resize', scheduleContentsDrawerResize, { passive: true });
     $('wikiClassSelector')?.addEventListener('change', async (event) => {
       state.selectedClassId = event.target.value || '';

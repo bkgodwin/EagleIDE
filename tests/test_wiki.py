@@ -112,6 +112,18 @@ class WikiStoreTests(unittest.TestCase):
         self.assertIn("Updated Page", {item["title"] for item in _flatten(self.store.get_tree())})
         self.assertEqual(self.store.search("Replacement")[0]["id"], page["id"])
 
+    def test_home_cache_is_isolated_and_invalidated_by_catalog_changes(self):
+        first_version = self.store.catalog_version()
+        first_home = self.store.home_settings()
+        first_home["title"] = "Mutated by caller"
+
+        self.assertNotEqual(self.store.home_settings()["title"], "Mutated by caller")
+        updated = self.store.update_home_settings("Faster Wiki", "Cached safely")
+
+        self.assertGreater(self.store.catalog_version(), first_version)
+        self.assertEqual(updated["title"], "Faster Wiki")
+        self.assertEqual(self.store.home_settings()["subtitle"], "Cached safely")
+
     def test_backup_excludes_bookmarks_and_restore_preserves_live_bookmarks(self):
         folder = self.store.create_folder("Course Folder", icon="🖧")
         sibling = self.store.create_page("Earlier Page", "# Earlier Page", folder["id"], status="published")
