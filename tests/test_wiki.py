@@ -124,6 +124,27 @@ class WikiStoreTests(unittest.TestCase):
         self.assertEqual(updated["title"], "Faster Wiki")
         self.assertEqual(self.store.home_settings()["subtitle"], "Cached safely")
 
+    def test_tools_behave_like_pages_and_survive_portable_backup(self):
+        folder = self.store.create_folder("Networking")
+        tool = self.store.create_tool("ipv4-subnet", folder["id"], status="published")
+
+        public = self.store.get_node(tool["id"])
+        self.assertEqual(public["kind"], "page")
+        self.assertEqual(public["tool_type"], "ipv4-subnet")
+        self.assertEqual(public["parent_id"], folder["id"])
+        tree_tool = next(item for item in _flatten(self.store.get_tree()) if item["id"] == tool["id"])
+        self.assertEqual(tree_tool["tool_type"], "ipv4-subnet")
+
+        backup = self.store.create_backup(self.root / "tools.zip")
+        self.store.soft_delete(tool["id"])
+        self.store.restore_archive(backup)
+        restored = self.store.get_node(tool["id"])
+        self.assertEqual(restored["tool_type"], "ipv4-subnet")
+        self.assertEqual(restored["parent_id"], folder["id"])
+
+        with self.assertRaisesRegex(ValueError, "Unknown wiki tool type"):
+            self.store.create_tool("packet-forger")
+
     def test_backup_excludes_bookmarks_and_restore_preserves_live_bookmarks(self):
         folder = self.store.create_folder("Course Folder", icon="🖧")
         sibling = self.store.create_page("Earlier Page", "# Earlier Page", folder["id"], status="published")
@@ -479,6 +500,52 @@ class WikiApiTests(unittest.TestCase):
         response = self.client.post("/api/admin/wiki/folders", json={"title": "Denied"})
         self.assertEqual(response.status_code, 401)
         self.assertFalse(response.get_json()["ok"])
+
+    def test_admin_can_add_publish_move_and_delete_wiki_tools(self):
+        folder = self.client.post(
+            "/api/admin/wiki/folders", headers=self.admin, json={"title": "Networking"}
+        ).get_json()["node"]
+        denied = self.client.post(
+            "/api/admin/wiki/tools", json={"tool_type": "ipv4-subnet", "parent_id": folder["id"]}
+        )
+        self.assertEqual(denied.status_code, 401)
+        created = self.client.post(
+            "/api/admin/wiki/tools",
+            headers=self.admin,
+            json={"tool_type": "ipv4-subnet", "parent_id": folder["id"], "status": "draft"},
+        )
+        self.assertEqual(created.status_code, 201)
+        tool = created.get_json()["node"]
+        self.assertEqual(tool["tool_type"], "ipv4-subnet")
+        self.assertEqual(tool["parent_id"], folder["id"])
+        self.assertEqual(self.client.get(f"/api/wiki/nodes/{tool['id']}").status_code, 404)
+
+        published = self.client.patch(
+            f"/api/admin/wiki/nodes/{tool['id']}",
+            headers=self.admin,
+            json={"status": "published", "title": "Subnet Practice"},
+        ).get_json()["node"]
+        self.assertEqual(published["tool_type"], "ipv4-subnet")
+        self.assertEqual(self.client.get(f"/api/wiki/nodes/{tool['id']}").status_code, 200)
+        tree = self.client.get("/api/wiki/tree").get_json()["tree"]
+        self.assertEqual(next(item for item in _flatten(tree) if item["id"] == tool["id"])["tool_type"], "ipv4-subnet")
+
+        moved = self.client.post(
+            f"/api/admin/wiki/nodes/{tool['id']}/move",
+            headers=self.admin,
+            json={"parent_id": None},
+        ).get_json()["node"]
+        self.assertIsNone(moved["parent_id"])
+        self.assertEqual(
+            self.client.delete(f"/api/admin/wiki/nodes/{tool['id']}", headers=self.admin).status_code,
+            200,
+        )
+
+        invalid = self.client.post(
+            "/api/admin/wiki/tools", headers=self.admin, json={"tool_type": "not-a-tool"}
+        )
+        self.assertEqual(invalid.status_code, 400)
+        self.assertIn("Unknown wiki tool type", invalid.get_json()["error"])
 
     def test_admin_can_edit_public_home_banner_text(self):
         original = self.client.get("/api/wiki/home").get_json()["home_settings"]

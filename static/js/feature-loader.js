@@ -7,6 +7,10 @@
       '/static/js/network-sim.js?v=20260714-18',
       '/static/js/network-sim-advanced.js?v=20260714-4',
     ],
+    wikiTools: [
+      '/static/css/features/wiki-tools.css?v=20260921-1',
+      '/static/js/wiki-tools.js?v=20260921-1',
+    ],
   };
   const pending = new Map();
 
@@ -35,12 +39,42 @@
     });
   }
 
+  function loadStylesheet(href) {
+    return new Promise((resolve, reject) => {
+      const existing = document.querySelector(`link[data-eagle-feature-href="${href}"]`);
+      if (existing?.dataset.loaded === 'true') {
+        resolve();
+        return;
+      }
+      if (existing) {
+        existing.addEventListener('load', resolve, { once: true });
+        existing.addEventListener('error', () => reject(new Error(`Could not load ${href}`)), { once: true });
+        return;
+      }
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = href;
+      link.dataset.eagleFeatureHref = href;
+      link.addEventListener('load', () => {
+        link.dataset.loaded = 'true';
+        resolve();
+      }, { once: true });
+      link.addEventListener('error', () => reject(new Error(`Could not load ${href}`)), { once: true });
+      document.head.appendChild(link);
+    });
+  }
+
+  function loadAsset(src) {
+    return src.includes('.css?') || src.endsWith('.css') ? loadStylesheet(src) : loadScript(src);
+  }
+
   function load(name) {
     if (!definitions[name]) return Promise.reject(new Error(`Unknown EagleIDE feature: ${name}`));
     if (name === 'network' && window.NetworkSim && window.NetworkSimAdvanced) return Promise.resolve();
+    if (name === 'wikiTools' && window.WikiTools) return Promise.resolve();
     if (pending.has(name)) return pending.get(name);
     const request = definitions[name]
-      .reduce((chain, src) => chain.then(() => loadScript(src)), Promise.resolve())
+      .reduce((chain, src) => chain.then(() => loadAsset(src)), Promise.resolve())
       .catch(error => {
         pending.delete(name);
         throw error;
@@ -50,6 +84,7 @@
   }
 
   async function openNetwork(trigger, options) {
+    window.WikiReader?.disposeActiveContent?.();
     if (trigger) {
       trigger.disabled = true;
       trigger.setAttribute('aria-busy', 'true');
@@ -90,6 +125,9 @@
   window.EagleFeatures = Object.freeze({
     load,
     openNetwork,
-    isLoaded: name => name === 'network' && !!window.NetworkSim && !!window.NetworkSimAdvanced,
+    isLoaded: name => (
+      (name === 'network' && !!window.NetworkSim && !!window.NetworkSimAdvanced)
+      || (name === 'wikiTools' && !!window.WikiTools)
+    ),
   });
 })();
