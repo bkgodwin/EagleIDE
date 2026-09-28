@@ -67,9 +67,19 @@
     .ai-grade-btn:hover{ background:#45a049; }
     .ai-grade-btn:disabled{ background:#666; cursor:not-allowed; }
     /* File Sidebar */
-    .assignment-admin-layout{ display:grid; grid-template-columns:minmax(260px, 320px) minmax(0, 1fr); gap:16px; align-items:start; }
+    .assignment-admin-layout{ display:block; }
+    .assignment-title-row{ width:100%; display:block; padding:15px 18px; border:1px solid var(--theme-border-mid); border-radius:10px; background:var(--theme-input-bg); color:var(--columbia-blue); font-size:17px; font-weight:750; text-align:left; cursor:pointer; }
+    .assignment-title-row:hover,.assignment-title-row[aria-expanded="true"]{ border-color:var(--columbia-blue); background:var(--theme-output-bg); }
+    .assignment-list-item{ margin-bottom:10px; }
+    .assignment-list-item .assignment-detail-panel{ margin-top:6px; }
+    .assignment-manage-actions{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:0 0 14px; }
+    .assignment-manage-actions select{ min-height:34px; padding:6px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:6px; }
     .assignment-detail-panel{ background:var(--theme-input-bg); border:1px solid var(--theme-border-mid); border-radius:10px; padding:14px; min-height:180px; }
     .assignment-detail-panel h4{ margin:0 0 8px; color:var(--columbia-blue); }
+    .assignment-quiz-preview{ border-top:1px solid var(--theme-border-mid); padding-top:12px; margin:0 0 16px; }
+    .assignment-quiz-preview h5{ color:var(--columbia-blue); font-size:14px; margin:0 0 8px; }
+    .assignment-quiz-preview li{ margin-bottom:8px; color:var(--theme-text); }
+    .assignment-quiz-preview pre{ max-width:100%; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; background:var(--theme-output-bg); padding:8px; border-radius:6px; }
     .scores-table{ width:100%; border-collapse:collapse; font-size:13px; }
     .scores-table th, .scores-table td{ border-bottom:1px solid var(--theme-border-mid); padding:8px 6px; text-align:left; vertical-align:top; }
     .scores-table th{ color:var(--columbia-blue); }
@@ -77,9 +87,19 @@
     .assignment-ai-controls textarea{ width:100%; min-height:76px; resize:vertical; padding:8px; color:var(--theme-text); background:var(--theme-input-bg); border:1px solid var(--theme-border); border-radius:8px; }
     .assignment-ai-rigor{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
     .assignment-ai-rigor input{ flex:1; min-width:160px; accent-color:var(--columbia-blue); }
+    .assignment-ai-rigor-help{ margin:0; color:var(--theme-text-dim); font-size:13px; line-height:1.45; }
     .assignment-grade-input{ width:76px; padding:6px; color:var(--theme-text); background:var(--theme-input-bg); border:1px solid var(--theme-border); border-radius:6px; }
     .assignment-not-turned-in{ color:#ef5350; font-weight:800; }
     .assignment-ai-feedback{ min-width:220px; max-width:420px; color:var(--theme-text); font-size:12px; line-height:1.45; white-space:pre-line; }
+    .teacher-reference-assignments{ padding:16px; }
+    .teacher-reference-assignments-header{ display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px; }
+    .teacher-reference-kicker{ color:var(--theme-text-dim); font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+    .teacher-reference-assignments-header h3{ color:var(--columbia-blue); font-size:23px; margin:4px 0 0; }
+    .teacher-reference-assignment-list{ display:grid; gap:18px; }
+    .teacher-reference-assignment-card{ padding:20px; border:1px solid var(--theme-border-mid); border-radius:12px; background:var(--theme-input-bg); }
+    .teacher-reference-assignment-card h4{ color:var(--columbia-blue); font-size:clamp(22px,2vw,30px); line-height:1.2; margin:0 0 12px; }
+    .teacher-reference-assignment-task{ color:var(--theme-text); font-size:clamp(18px,1.7vw,23px); line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .teacher-reference-assignment-meta{ color:var(--theme-text-dim); font-size:14px; margin-top:14px; }
     .assignment-ai-status{ display:inline-flex; padding:2px 7px; border-radius:999px; font-size:11px; font-weight:700; background:var(--theme-secondary); color:var(--theme-text-dim); }
     .assignment-ai-status.queued,.assignment-ai-status.running{ color:#90caf9; border:1px solid #1976d2; }
     .assignment-ai-status.failed{ color:#ef5350; border:1px solid #c62828; }

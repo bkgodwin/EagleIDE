@@ -1427,8 +1427,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
       currentTeacherClassId = nextId;
       activeAssignmentsClassId = nextId;
+      if (changed) currentAdminAssignmentName = null;
       refreshEagleIDEContext();
       syncTeacherDashboardClassSelectors();
+      renderTeacherReferenceAssignments();
       emitJoinClassRoom('teacher', TEACHER_TOKEN, nextId);
       window.ClassroomSignals?.onAuthChanged?.();
       window.ClassroomSignals?.loadTeacherSignals?.();
@@ -7376,6 +7378,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       return 'College';
     }
 
+    function assignmentRigorSummary(level) {
+      const value = Math.max(1, Math.min(10, parseInt(level, 10) || 6));
+      if (value <= 2) return 'Good-faith effort and the core skill; ignore incidental errors.';
+      if (value <= 4) return 'Core skill plus some stated objectives; ignore incidental errors.';
+      if (value <= 6) return 'Core skill, most objectives, and working intended behavior.';
+      if (value <= 8) return 'All key objectives and no evident execution blocker; minor practice deductions capped at 2 points.';
+      return 'All objectives, no evident errors, and sound practices; incidental deductions capped at 2 points.';
+    }
+
     function masteryBandClass(score) {
       if (score === null || score === undefined) return 'mastery-cell-untested';
       if (score < 70) return 'mastery-cell-red';
@@ -7569,11 +7580,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           populateTeacherAssignmentsClassSelect();
           syncTeacherDashboardClassSelectors();
         }
-        if (isAdmin && currentAssignments.length) {
-          if (!currentAdminAssignmentName || !getAssignmentByName(currentAdminAssignmentName)) {
-            currentAdminAssignmentName = currentAssignments[0].id || currentAssignments[0].name;
-          }
-        } else {
+        if (!isAdmin) {
           currentAdminAssignmentName = null;
         }
         renderAssignments();
@@ -7608,6 +7615,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         if (studentView) studentView.style.display = 'none';
         if (teacherNotice) teacherNotice.style.display = '';
         renderAdminAssignments();
+        renderTeacherReferenceAssignments();
       } else {
         if (studentView) studentView.style.display = 'block';
         if (teacherNotice) teacherNotice.style.display = 'none';
@@ -7615,58 +7623,60 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
     }
 
+    function sortAssignmentsChronologically(assignments) {
+      return [...assignments].sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
+        || String(a.id || a.name || '').localeCompare(String(b.id || b.name || '')));
+    }
+
+    function renderTeacherReferenceAssignments() {
+      const list = document.getElementById('teacherReferenceAssignmentList');
+      const heading = document.getElementById('teacherReferenceAssignmentsTitle');
+      if (!list || !heading) return;
+      const activeClass = teacherClasses.find(cls => cls.id === currentTeacherClassId);
+      heading.textContent = activeClass ? `Unlocked Assignments · ${activeClass.name}` : 'Unlocked Assignments';
+      if (!TEACHER_TOKEN || !activeClass) {
+        list.innerHTML = '<p class="teacher-reference-assignment-meta">Select a class to see its unlocked assignments.</p>';
+        return;
+      }
+      const visible = sortAssignmentsChronologically((currentAssignments || []).filter(a => a.targetClassId === activeClass.id && a.active));
+      list.innerHTML = visible.length ? visible.map(a => `
+        <article class="teacher-reference-assignment-card">
+          <h4>${escapeHtml(a.name)}</h4>
+          <div class="teacher-reference-assignment-task">${escapeHtml(a.task || '(No task description)')}</div>
+          <div class="teacher-reference-assignment-meta">${escapeHtml(a.allowFileSubmission === false ? 'Quiz assignment' : 'Code assignment')}${a.quiz?.questions?.length ? ` · ${a.quiz.questions.length} quiz question(s)` : ''}</div>
+        </article>
+      `).join('') : '<p class="teacher-reference-assignment-meta">No unlocked assignments for this class yet.</p>';
+    }
+
     function renderAdminAssignments() {
       const list = document.getElementById('assignmentList');
-      const detail = document.getElementById('assignmentDetailPanel');
+      if (!list) return;
       const activeClassId = activeAssignmentsClassId || currentTeacherClassId;
-      const classAssignments = (currentAssignments || []).filter(a => !activeClassId || a.targetClassId === activeClassId);
+      const classAssignments = sortAssignmentsChronologically((currentAssignments || []).filter(a => !activeClassId || a.targetClassId === activeClassId));
       if (!classAssignments.length) {
         list.innerHTML = '<p style="color:#888;">No assignments yet. Create one to get started.</p>';
-        detail.innerHTML = '<p style="color:#888; margin:0;">No assignments for the selected class.</p>';
+        currentAdminAssignmentName = null;
         return;
       }
 
-      if (!currentAdminAssignmentName || !classAssignments.some(a => (a.id || a.name) === currentAdminAssignmentName)) {
-        currentAdminAssignmentName = classAssignments[0]?.id || classAssignments[0]?.name || null;
+      if (currentAdminAssignmentName && !classAssignments.some(a => (a.id || a.name) === currentAdminAssignmentName)) {
+        currentAdminAssignmentName = null;
       }
       list.innerHTML = classAssignments.map(a => `
-        <div class="assignment-card" style="border-color:${currentAdminAssignmentName === (a.id || a.name) ? 'var(--columbia-blue)' : 'var(--theme-border-mid)'};">
-          <h4>${escapeHtml(a.name)}</h4>
-          <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
-          <div class="meta">
-            Max Score: ${(a.allowFileSubmission === false ? 0 : (a.maxScore || 0)) + (a.quiz?.totalPoints || 0)} (${a.allowFileSubmission === false ? 'Quiz only' : `Code ${a.maxScore || 0}${a.quiz?.totalPoints ? ` + Quiz ${a.quiz.totalPoints}` : ''}`}) · ${a.active ? 'Unlocked' : 'Locked'} · Class: ${escapeHtml(a.targetClassName || 'All')} · ${(a.submissions || []).length} submission(s)
-          </div>
-          ${(a.skillTags || []).length ? `<div class="skill-tags">${(a.skillTags || []).map(tag => `<span class="skill-chip">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
-          <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:8px;">
-            <select class="copy-assignment-class-select" data-id="${escapeHtml(a.id || a.name)}" style="padding:6px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:6px;">
-              <option value="">Copy to class…</option>
-              ${teacherClasses.filter(c => c.id !== a.targetClassId).map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('')}
-            </select>
-            <button class="btn secondary copy-assignment-btn" data-id="${escapeHtml(a.id || a.name)}">Copy</button>
-          </div>
-          <div class="assignment-actions">
-            <button class="btn secondary select-assignment-btn" data-id="${escapeHtml(a.id || a.name)}">Grades</button>
-            <button class="btn secondary edit-assignment-btn" data-id="${escapeHtml(a.id || a.name)}">Edit</button>
-            <button class="btn secondary lock-assignment-btn" data-id="${escapeHtml(a.id || a.name)}" data-active="${a.active}">${a.active ? 'Lock' : 'Unlock'}</button>
-            <button class="btn stop delete-assignment-btn" data-id="${escapeHtml(a.id || a.name)}">Delete</button>
-          </div>
-        </div>
+        <section class="assignment-list-item">
+          <button type="button" class="assignment-title-row" data-id="${escapeHtml(a.id || a.name)}" aria-expanded="${currentAdminAssignmentName === (a.id || a.name)}">${escapeHtml(a.name)}</button>
+          ${currentAdminAssignmentName === (a.id || a.name) ? '<div id="assignmentDetailPanel" class="assignment-detail-panel"></div>' : ''}
+        </section>
       `).join('');
 
-      list.querySelectorAll('.select-assignment-btn').forEach(btn => btn.addEventListener('click', () => {
-        currentAdminAssignmentName = btn.dataset.id;
+      list.querySelectorAll('.assignment-title-row').forEach(btn => btn.addEventListener('click', () => {
+        currentAdminAssignmentName = currentAdminAssignmentName === btn.dataset.id ? null : btn.dataset.id;
         renderAdminAssignments();
       }));
-      list.querySelectorAll('.edit-assignment-btn').forEach(btn => btn.addEventListener('click', () => showAssignmentModal(getAssignmentByName(btn.dataset.id))));
-      list.querySelectorAll('.lock-assignment-btn').forEach(btn => btn.addEventListener('click', () => toggleAssignmentActive(btn.dataset.id, btn.dataset.active !== 'true')));
-      list.querySelectorAll('.delete-assignment-btn').forEach(btn => btn.addEventListener('click', () => deleteAssignment(btn.dataset.id)));
-      list.querySelectorAll('.copy-assignment-btn').forEach(btn => btn.addEventListener('click', () => copyAssignmentToClass(btn.dataset.id)));
-
+      const detail = list.querySelector('#assignmentDetailPanel');
+      if (!detail) return;
       const assignment = getAssignmentByName(currentAdminAssignmentName);
-      if (!assignment) {
-        detail.innerHTML = '<p style="color:#888; margin:0;">Select an assignment to review scores and open submissions.</p>';
-        return;
-      }
+      if (!assignment) return;
 
       const submissions = [...(assignment.submissions || [])];
       const submissionsByEmail = new Map(submissions.map(sub => [String(sub.email || '').toLowerCase(), sub]));
@@ -7684,6 +7694,17 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         <div class="meta" style="margin-bottom:12px; white-space:pre-wrap;">${escapeHtml(assignment.task || '(No task description)')}</div>
         <div class="meta" style="margin-bottom:12px;">Max score ${(assignment.allowFileSubmission === false ? 0 : (assignment.maxScore || 0)) + (assignment.quiz?.totalPoints || 0)}${assignment.allowFileSubmission === false ? ' (Quiz only)' : ''}${assignment.quiz?.totalPoints ? ` · Quiz ${assignment.quiz.totalPoints} pts` : ''} · Class ${escapeHtml(assignment.targetClassName || 'All')} · Quiz max submissions ${assignment.quizSettings?.maxSubmissions > 0 ? assignment.quizSettings.maxSubmissions : 'Unlimited'}</div>
         ${(assignment.skillTags || []).length ? `<div class="skill-tags" style="margin-bottom:12px;">${(assignment.skillTags || []).map(tag => `<span class="skill-chip">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
+        ${assignment.quiz?.questions?.length ? `<section class="assignment-quiz-preview"><h5>Quiz questions</h5><ol>${assignment.quiz.questions.map(question => `<li>${escapeHtml(question.question || '(Untitled question)')} <span class="meta">(${Number(question.points) || 0} pts)</span>${question.codeSnippet ? `<pre>${escapeHtml(question.codeSnippet)}</pre>` : ''}</li>`).join('')}</ol></section>` : ''}
+        <div class="assignment-manage-actions">
+          <button class="btn secondary edit-assignment-btn" data-id="${escapeHtml(assignment.id || assignment.name)}">Edit</button>
+          <button class="btn secondary lock-assignment-btn" data-id="${escapeHtml(assignment.id || assignment.name)}" data-active="${assignment.active}">${assignment.active ? 'Lock' : 'Unlock'}</button>
+          <select class="copy-assignment-class-select" data-id="${escapeHtml(assignment.id || assignment.name)}" aria-label="Copy to class">
+            <option value="">Copy to class…</option>
+            ${teacherClasses.filter(c => c.id !== assignment.targetClassId).map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('')}
+          </select>
+          <button class="btn secondary copy-assignment-btn" data-id="${escapeHtml(assignment.id || assignment.name)}">Copy</button>
+          <button class="btn stop delete-assignment-btn" data-id="${escapeHtml(assignment.id || assignment.name)}">Delete</button>
+        </div>
         ${assignment.allowFileSubmission === false ? '' : `
         <section class="assignment-ai-controls">
           <strong>AI grading</strong>
@@ -7691,11 +7712,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           <textarea id="assignmentAiInstructions" maxlength="4000" placeholder="Examples: prioritize correct output over style; require comments for each function…">${escapeHtml(assignment.aiGradingInstructions || '')}</textarea>
           <div class="assignment-ai-rigor">
             <label for="assignmentAiRigor">Rigor</label>
-            <input id="assignmentAiRigor" type="range" min="1" max="10" step="1" value="${assignment.aiGradingRigor || 5}">
-            <output id="assignmentAiRigorOutput">${assignment.aiGradingRigor || 5}/10 · ${escapeHtml(rigorLevelLabel(assignment.aiGradingRigor || 5))}</output>
+            <input id="assignmentAiRigor" type="range" min="1" max="10" step="1" value="${assignment.aiGradingRigor || 6}">
+            <output id="assignmentAiRigorOutput">${assignment.aiGradingRigor || 6}/10 · ${escapeHtml(rigorLevelLabel(assignment.aiGradingRigor || 6))}</output>
             <button class="btn secondary" id="saveAssignmentAiSettingsBtn">Save AI settings</button>
             <button class="btn run" id="gradeAllSubmissionsBtn" ${submissions.some(sub => sub.code) ? '' : 'disabled'}>AI Grade All</button>
           </div>
+          <p id="assignmentAiRigorHelp" class="assignment-ai-rigor-help">${escapeHtml(assignmentRigorSummary(assignment.aiGradingRigor || 6))}</p>
           <div class="meta">${pendingCount ? `${pendingCount} submission(s) currently queued or grading. You can close this dashboard; grading continues on the server.` : 'Queued grading continues on the server after you leave this page.'}</div>
         </section>`}
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
@@ -7736,10 +7758,16 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           </tbody>
         </table>
       `;
+      detail.querySelector('.edit-assignment-btn')?.addEventListener('click', () => showAssignmentModal(assignment));
+      detail.querySelector('.lock-assignment-btn')?.addEventListener('click', (event) => toggleAssignmentActive(assignment.id, event.currentTarget.dataset.active !== 'true'));
+      detail.querySelector('.delete-assignment-btn')?.addEventListener('click', () => deleteAssignment(assignment.id));
+      detail.querySelector('.copy-assignment-btn')?.addEventListener('click', () => copyAssignmentToClass(assignment.id));
       detail.querySelector('#assignmentAiRigor')?.addEventListener('input', (event) => {
         const value = event.target.value;
         const output = detail.querySelector('#assignmentAiRigorOutput');
         if (output) output.textContent = `${value}/10 · ${rigorLevelLabel(value)}`;
+        const help = detail.querySelector('#assignmentAiRigorHelp');
+        if (help) help.textContent = assignmentRigorSummary(value);
       });
       detail.querySelector('#saveAssignmentAiSettingsBtn')?.addEventListener('click', () => saveAssignmentAiSettings(assignment.id));
       detail.querySelector('#gradeAllSubmissionsBtn')?.addEventListener('click', () => queueAllAssignmentAiGrades(assignment.id));
