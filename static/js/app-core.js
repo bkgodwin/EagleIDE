@@ -8847,7 +8847,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       aiBtn.textContent = submission.aiGradingStatus === 'running' ? 'AI Grading…' : (submission.aiGradingStatus === 'queued' ? 'AI Queued' : 'AI Grade');
       if (feedback) {
         feedback.style.display = submission.aiFeedback ? '' : 'none';
-        feedback.textContent = submission.aiFeedback ? `AI feedback: ${submission.aiFeedback}` : '';
+        feedback.textContent = submission.aiFeedback || '';
       }
       const submitted = (assignment.submissions || []).filter(row => row.code).sort((a, b) => String(a.name || a.email || '').localeCompare(String(b.name || b.email || ''), undefined, { sensitivity: 'base' }));
       const index = submitted.findIndex(row => String(row.email || '').toLowerCase() === String(submission.email || '').toLowerCase());

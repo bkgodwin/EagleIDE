@@ -46,6 +46,15 @@
   transform: translateY(-1px);
 }
 
+body.notebook-drawer-open #notebookOpenBtn {
+  position: fixed;
+  z-index: 1512;
+  left: calc(var(--notebook-viewport-left, 0px) + env(safe-area-inset-left, 0px) + 10px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
+  top: auto;
+  right: auto;
+}
+
 #studentNotebookCloseBtn {
   background: #d7372f;
   border-color: #8f1f19;
@@ -65,12 +74,12 @@
 
 .student-notebook-drawer {
   position: fixed;
-  top: var(--app-offset-top, 0px);
-  right: env(safe-area-inset-right, 0px);
-  width: min(860px, calc(100vw - env(safe-area-inset-right, 0px)));
-  max-width: 100%;
+  top: var(--notebook-viewport-top, var(--app-offset-top, 0px));
+  right: calc(var(--notebook-viewport-right, 0px) + env(safe-area-inset-right, 0px));
+  width: min(860px, calc(var(--notebook-viewport-width, 100dvw) - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
+  max-width: var(--notebook-viewport-width, 100dvw);
   box-sizing: border-box;
-  height: var(--app-height, 100dvh);
+  height: var(--notebook-viewport-height, var(--app-height, 100dvh));
   z-index: 1510;
   transform: translateX(calc(100% + 28px));
   transition: transform 260ms ease;
@@ -103,7 +112,7 @@
   border: 1px solid rgba(80, 58, 38, 0.2);
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
-  overflow: visible;
+  overflow: hidden;
   position: relative;
 }
 
@@ -220,7 +229,7 @@
   position: relative;
   min-height: 0;
   min-width: 0;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .student-notebook-page {
@@ -1302,7 +1311,7 @@
 
 @media (max-width: 780px) {
   .student-notebook-drawer {
-    width: calc(100vw - env(safe-area-inset-right, 0px));
+    width: calc(var(--notebook-viewport-width, 100dvw) - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
   }
   .student-notebook-book {
     margin: 0;

@@ -314,7 +314,7 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         self.assertEqual(submission["aiSuggestedScore"], 9)
         self.assertEqual(submission["codeScore"], 7)
         self.assertTrue(submission["manualScoreOverride"])
-        self.assertIn("−1: The task requires", submission["aiFeedback"])
+        self.assertIn("−1 points — The task requires", submission["aiFeedback"])
         self.assertIn("Score: 9/10", submission["aiFeedback"])
 
     def test_grade_all_ai_uses_alphabetical_batches_of_three(self):
@@ -406,9 +406,26 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         high, high_feedback = eagle._parse_assignment_ai_result(raw, 100, rigor=10)
         self.assertEqual(low, 70)
         self.assertNotIn("undefined name", low_feedback)
-        self.assertEqual(middle, 30)
-        self.assertEqual(high, 28)
-        self.assertIn("−2: The variable names", high_feedback)
+        self.assertEqual(middle, 24)
+        self.assertEqual(high, 22)
+        self.assertIn("• −2 points — The variable names", high_feedback)
+
+    def test_low_rigor_ignores_mislabeled_syntax_and_secondary_objectives(self):
+        raw = json.dumps({
+            "effort": "clear", "strength": "The code demonstrates a loop over the input list.",
+            "deductions": [
+                {"points": 20, "category": "core", "reason": "A syntax error prevents the program from running."},
+                {"points": 15, "category": "objective", "reason": "The optional summary is not printed at the end."},
+                {"points": 20, "category": "core", "reason": "The required loop never processes any input values."},
+            ],
+        })
+        for rigor in (1, 2, 3, 4):
+            score, feedback = eagle._parse_assignment_ai_result(raw, 100, rigor=rigor, syntax_error="invalid syntax")
+            self.assertGreaterEqual(score, 75)
+            self.assertNotIn("syntax error", feedback.lower())
+            self.assertNotIn("optional summary", feedback.lower())
+            self.assertIn("required loop", feedback)
+            self.assertIn("Points deducted\n•", feedback)
 
     def test_no_effort_is_low_at_all_rigor_levels_and_high_rigor_checks_syntax(self):
         raw = json.dumps({"effort": "none", "strength": "No demonstrated requirements", "deductions": []})
@@ -419,7 +436,7 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         attempt = json.dumps({"effort": "clear", "strength": "The code uses a loop to print values.", "deductions": []})
         self.assertEqual(eagle._parse_assignment_ai_result(attempt, 100, rigor=1, syntax_error="invalid syntax")[0], 100)
         strict_score, strict_feedback = eagle._parse_assignment_ai_result(attempt, 100, rigor=10, syntax_error="invalid syntax")
-        self.assertEqual(strict_score, 60)
+        self.assertEqual(strict_score, 55)
         self.assertIn("program cannot run", strict_feedback)
 
     def test_rigor_guidance_moves_from_effort_to_all_objectives(self):
