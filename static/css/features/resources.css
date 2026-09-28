@@ -79,13 +79,13 @@
     .assignment-ai-rigor input{ flex:1; min-width:160px; accent-color:var(--columbia-blue); }
     .assignment-grade-input{ width:76px; padding:6px; color:var(--theme-text); background:var(--theme-input-bg); border:1px solid var(--theme-border); border-radius:6px; }
     .assignment-not-turned-in{ color:#ef5350; font-weight:800; }
-    .assignment-ai-feedback{ min-width:220px; max-width:420px; color:var(--theme-text); font-size:12px; line-height:1.45; }
+    .assignment-ai-feedback{ min-width:220px; max-width:420px; color:var(--theme-text); font-size:12px; line-height:1.45; white-space:pre-line; }
     .assignment-ai-status{ display:inline-flex; padding:2px 7px; border-radius:999px; font-size:11px; font-weight:700; background:var(--theme-secondary); color:var(--theme-text-dim); }
     .assignment-ai-status.queued,.assignment-ai-status.running{ color:#90caf9; border:1px solid #1976d2; }
     .assignment-ai-status.failed{ color:#ef5350; border:1px solid #c62828; }
     .assignment-ai-status.completed{ color:#66bb6a; border:1px solid #2e7d32; }
     .submission-navigation{ display:flex; gap:8px; }
-    .submission-ai-feedback{ padding:9px; border-left:3px solid var(--columbia-blue); background:var(--theme-input-bg); color:var(--theme-text); font-size:12px; line-height:1.45; }
+    .submission-ai-feedback{ padding:9px; border-left:3px solid var(--columbia-blue); background:var(--theme-input-bg); color:var(--theme-text); font-size:12px; line-height:1.45; white-space:pre-line; }
     .account-notice{ background:var(--theme-input-bg); border:1px solid var(--theme-border-mid); border-radius:10px; padding:14px; margin-bottom:18px; color:var(--theme-text-dim); }
     .skill-tags{ display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
     .skill-chip{ font-size:11px; padding:3px 8px; border-radius:999px; border:1px solid var(--theme-border-mid); background:var(--theme-output-bg); color:var(--columbia-blue); }
