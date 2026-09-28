@@ -4,6 +4,7 @@ import getpass
 import io
 import json
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -194,6 +195,64 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         self.assertTrue((self.submissions_dir / migrated["submissions"][0]["submissionPath"]).exists())
         self.assertEqual(eagle._count_all_files_for_user(teacher_root), 0)
 
+    def test_missing_canonical_submission_path_recovers_legacy_workspace_file(self):
+        assignment_id = "a" * 32
+        teacher_root = eagle._get_user_dir(self.teacher_email)
+        legacy_folder = teacher_root / "Legacy Work"
+        legacy_folder.mkdir(parents=True)
+        legacy_file = legacy_folder / "Student One.py"
+        legacy_file.write_text("print('recovered')", encoding="utf-8")
+        metadata = {
+            "id": assignment_id,
+            "name": "Legacy Work",
+            "task": "Legacy task",
+            "maxScore": 10,
+            "active": True,
+            "allowFileSubmission": True,
+            "targetClassId": self.class_one,
+            "targetClassName": "Period One",
+            "createdByEmail": self.teacher_email,
+            "storageVersion": 2,
+            "submissions": [{
+                "name": "Student One",
+                "email": self.student_email,
+                "adminFilePath": "",
+                "submittedFileName": "Student One.py",
+                "code": "",
+            }],
+        }
+        expected = eagle._assignment_submission_directory(metadata) / "Student One--123456.py"
+        metadata["submissions"][0]["submissionPath"] = expected.relative_to(self.submissions_dir).as_posix()
+        (self.assignments_dir / f"{assignment_id}.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+        migrated = eagle._list_assignments()[0]
+
+        self.assertFalse(legacy_file.exists())
+        self.assertTrue(expected.is_file())
+        self.assertEqual(expected.read_text(encoding="utf-8"), "print('recovered')")
+        self.assertEqual(migrated["submissions"][0]["submissionPath"], expected.relative_to(self.submissions_dir).as_posix())
+
+    def test_teacher_can_edit_submission_in_protected_store(self):
+        assignment = self.create_assignment(active=True)
+        submission = self.submit_code(assignment)
+        changed = "for value in range(5):\n    print(value)\n"
+
+        response = self.client.post(
+            "/api/assignments/submission",
+            headers=self.teacher_headers,
+            json={"assignmentId": assignment["id"], "studentEmail": self.student_email, "content": changed},
+        )
+
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual((self.submissions_dir / submission["submissionPath"]).read_text(encoding="utf-8"), changed)
+        loaded = eagle._load_assignment(assignment["id"])
+        self.assertEqual(loaded["submissions"][0]["code"], changed)
+        opened = self.client.get(
+            f"/api/assignments/submission?assignmentId={assignment['id']}&studentEmail={self.student_email}",
+            headers=self.teacher_headers,
+        )
+        self.assertEqual(opened.get_json()["content"], changed)
+
     def test_background_ai_grade_saves_feedback_without_replacing_manual_override(self):
         assignment = self.create_assignment(active=True)
         self.submit_code(assignment)
@@ -208,7 +267,7 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
             eagle,
             "call_ollama_generate",
             return_value={"ok": True, "text": '{"score": 9, "feedback": "The loop produces the required output correctly. Clear structure supports the strong score."}'},
-        ):
+        ) as grader:
             queued = self.client.post(
                 "/api/assignments/grade-ai",
                 headers=self.teacher_headers,
@@ -223,12 +282,57 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
                     break
                 time.sleep(0.02)
 
+        self.assertEqual(grader.call_args.kwargs["request_identity"], f"teacher:{self.teacher_email}")
+
         submission = graded["submissions"][0]
         self.assertEqual(submission["aiGradingStatus"], "completed")
         self.assertEqual(submission["aiSuggestedScore"], 9)
         self.assertEqual(submission["codeScore"], 7)
         self.assertTrue(submission["manualScoreOverride"])
         self.assertIn("required output", submission["aiFeedback"])
+
+    def test_grade_all_ai_processes_only_one_submission_at_a_time(self):
+        assignment = self.create_assignment(active=True)
+        first = self.submit_code(assignment)
+        loaded = eagle._load_assignment(assignment["id"])
+        second = dict(first)
+        second.update({"name": "Student Two", "email": self.missing_email, "code": "print('second')", "submissionPath": ""})
+        loaded["submissions"].append(second)
+        self.assertTrue(eagle._save_assignment(loaded))
+        active = 0
+        maximum_active = 0
+        guard = threading.Lock()
+
+        def grade_one(*_args, **_kwargs):
+            nonlocal active, maximum_active
+            with guard:
+                active += 1
+                maximum_active = max(maximum_active, active)
+            time.sleep(0.04)
+            with guard:
+                active -= 1
+            return {"ok": True, "text": '{"score": 8, "feedback": "The solution meets the main requirement. Minor refinement would improve clarity."}'}
+
+        with patch.object(eagle, "_effective_ai_enabled", return_value=(True, None)), patch.object(
+            eagle, "call_ollama_generate", side_effect=grade_one
+        ) as grader:
+            queued = self.client.post(
+                "/api/assignments/grade-all-ai",
+                headers=self.teacher_headers,
+                json={"assignmentId": assignment["id"]},
+            )
+            self.assertEqual(queued.status_code, 202)
+            self.assertEqual(queued.get_json()["queued"], 2)
+            deadline = time.time() + 4
+            while time.time() < deadline:
+                statuses = [row.get("aiGradingStatus") for row in eagle._load_assignment(assignment["id"])["submissions"]]
+                if statuses == ["completed", "completed"]:
+                    break
+                time.sleep(0.02)
+
+        self.assertEqual(grader.call_count, 2)
+        self.assertEqual(maximum_active, 1)
+        self.assertEqual(statuses, ["completed", "completed"])
 
     def test_grade_export_supports_points_and_one_decimal_percent(self):
         assignment = self.create_assignment(active=True)
