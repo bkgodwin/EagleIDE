@@ -213,6 +213,10 @@ class FileBrowserTests(unittest.TestCase):
             data={"file": (io.BytesIO(b"print('hello')"), "C:\\fakepath\\upload.py")})
         self.assertEqual(uploaded.status_code, 200, uploaded.get_data(as_text=True))
         self.assertTrue((self.workspace / "upload.py").is_file())
+        collapsed = self.client.post("/api/files/upload", headers=self.headers,
+            data={"file": (io.BytesIO(b"print('second')"), "C:fakepathsecond.py")})
+        self.assertEqual(collapsed.status_code, 200, collapsed.get_data(as_text=True))
+        self.assertTrue((self.workspace / "second.py").is_file())
         collision = self.client.post("/api/files/upload", headers=self.headers,
             data={"file": (io.BytesIO(b"test"), "folder.py")})
         self.assertEqual(collision.status_code, 409)
