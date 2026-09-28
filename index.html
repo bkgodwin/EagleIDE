@@ -38,7 +38,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20260921-3">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260928-assignment-grading">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -475,6 +475,10 @@
           </div>
           <div class="file-tree" id="fileTree"></div>
           <div id="submissionScoringPanel" class="submission-scoring-panel" style="display:none;">
+            <div class="submission-navigation" aria-label="Submission navigation">
+              <button class="btn secondary" id="previousSubmissionBtn" type="button" title="Previous submitted student">← Previous</button>
+              <button class="btn secondary" id="nextSubmissionBtn" type="button" title="Next submitted student">Next →</button>
+            </div>
             <h4 id="submissionScoringTitle">Submission Scoring</h4>
             <div id="submissionScoringMeta" class="submission-scoring-meta"></div>
             <div id="submissionQuizSummary" class="submission-scoring-meta" style="display:none;"></div>
@@ -484,6 +488,7 @@
               <button class="btn secondary" id="submissionAiGradeBtn" style="display:none;">AI Grade</button>
             </div>
             <div id="submissionScoreTotals" class="submission-scoring-meta"></div>
+            <div id="submissionAiFeedback" class="submission-ai-feedback" style="display:none;"></div>
             <div id="submissionScoreSaveStatus" class="submission-save-status"></div>
           </div>
           <div class="file-sidebar-actions">
@@ -715,6 +720,10 @@
 
   <!-- Teacher Dashboard Modal -->
   <div id="teacherDashboardModal" class="modal teacher-dash-modal glass-modal teacher-dash-fullscreen" style="display:none;">
+    <button id="teacherDashMinimizedBar" class="teacher-dash-minimized-bar" type="button" hidden>
+      <span>📝 Assignment grading</span>
+      <strong id="teacherDashMinimizedLabel">Return to submissions</strong>
+    </button>
     <div class="modal-content">
       <button class="teacher-dash-mobile-close" id="teacherDashMobileCloseBtn" type="button" aria-label="Close teacher dashboard">✕</button>
       <!-- Left Sidebar Navigation -->
@@ -1734,12 +1743,12 @@
   <script src="/static/js/editor-init.js?v=20260918-10"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js"></script>
-  <script src="/static/js/app-core.js?v=20260921-3"></script>
+  <script src="/static/js/app-core.js?v=20260928-assignment-grading"></script>
   <script src="/static/js/step-mode.js?v=20260920-4"></script>
-  <script src="/static/js/wiki-reader.js?v=20260921-3"></script>
+  <script src="/static/js/wiki-reader.js?v=20260928-assignment-grading"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
   <script src="/static/js/lesson-plans.js?v=20260816-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20260921-3"></script>
+  <script src="/static/js/wiki-admin.js?v=20260928-assignment-grading"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20260918-10"></script>
   <script src="/static/js/student-notebook.js?v=20260918-10"></script>

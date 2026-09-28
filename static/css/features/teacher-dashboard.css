@@ -189,6 +189,30 @@
       overflow: hidden;
       border-radius: 16px;
     }
+    .teacher-dash-minimized-bar {
+      position: fixed;
+      z-index: 1200;
+      top: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(720px, calc(100vw - 24px));
+      min-height: 46px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 9px 16px;
+      border: 1px solid var(--columbia-blue);
+      border-radius: 12px;
+      background: var(--theme-panel-hdr);
+      color: var(--theme-text);
+      box-shadow: 0 10px 30px rgba(0,0,0,.35);
+      cursor: pointer;
+    }
+    .teacher-dash-minimized-bar strong { color:var(--columbia-blue); }
+    .teacher-dash-modal.is-minimized { pointer-events:none; background:transparent; backdrop-filter:none; }
+    .teacher-dash-modal.is-minimized .modal-content { display:none; }
+    .teacher-dash-modal.is-minimized .teacher-dash-minimized-bar { pointer-events:auto; }
     .teacher-dash-mobile-close { display: none; }
     .teacher-dash-sidebar {
       width: 220px;
