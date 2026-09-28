@@ -133,6 +133,29 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         )
         self.assertEqual(duplicate.status_code, 409)
 
+    def test_assignment_creation_time_survives_edits_and_legacy_migration(self):
+        assignment = self.create_assignment()
+        self.assertTrue(assignment.get("createdAt"))
+        self.assertEqual(assignment["aiGradingRigor"], 6)
+        changed = self.client.post(
+            "/api/assignments/update",
+            headers=self.teacher_headers,
+            json={"assignmentId": assignment["id"], "task": "Revised instructions"},
+        )
+        self.assertEqual(changed.status_code, 200)
+        self.assertEqual(changed.get_json()["assignment"]["createdAt"], assignment["createdAt"])
+
+        legacy = dict(assignment)
+        legacy["id"] = "a" * 32
+        legacy["name"] = "Older work"
+        legacy.pop("createdAt", None)
+        legacy_path = self.assignments_dir / f"{legacy['id']}.json"
+        legacy_path.write_text(json.dumps(legacy), encoding="utf-8")
+        migrated = eagle._load_assignment(legacy["id"])
+        self.assertTrue(migrated.get("createdAt"))
+        self.assertEqual(json.loads(legacy_path.read_text(encoding="utf-8"))["createdAt"], migrated["createdAt"])
+        self.assertEqual(eagle._load_assignment(legacy["id"])["createdAt"], migrated["createdAt"])
+
     def test_locked_assignments_are_hidden_from_student_assignment_list(self):
         locked = self.create_assignment(name="Locked")
         active = self.create_assignment(name="Active", active=True)
@@ -266,7 +289,7 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         with patch.object(eagle, "_effective_ai_enabled", return_value=(True, None)), patch.object(
             eagle,
             "call_ollama_generate",
-            return_value={"ok": True, "text": '{"strength":"The loop prints each value in the sequence.","deductions":[{"points":1,"reason":"The task requires the last value too, but range stops before it."}]}'},
+            return_value={"ok": True, "text": '{"effort":"clear","strength":"The loop prints each value in the sequence.","deductions":[{"points":1,"category":"core","reason":"The task requires the last value too, but range stops before it."}]}'},
         ) as grader:
             queued = self.client.post(
                 "/api/assignments/grade-ai",
@@ -311,6 +334,8 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         started = []
         completed = []
         events = []
+        first_batch = threading.Barrier(3)
+        second_batch = threading.Barrier(3)
 
         def grade_one(_url, _model, prompt, **_kwargs):
             nonlocal active, maximum_active
@@ -320,12 +345,16 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
                 maximum_active = max(maximum_active, active)
                 started.append(name)
                 events.append(("start", name))
-            time.sleep(0.06)
+            if name in {"Anna", "Beta", "Charlie"}:
+                first_batch.wait(timeout=5)
+            elif name in {"Delta", "Echo", "Foxtrot"}:
+                second_batch.wait(timeout=5)
+            time.sleep(0.02)
             with guard:
                 active -= 1
                 completed.append(name)
                 events.append(("done", name))
-            return {"ok": True, "text": '{"strength":"The solution includes the required print call.","deductions":[{"points":2,"reason":"The loop required by the task is absent from the code."}]}'}
+            return {"ok": True, "text": '{"effort":"clear","strength":"The solution includes the required print call.","deductions":[{"points":2,"category":"core","reason":"The loop required by the task is absent from the code."}]}'}
 
         with patch.object(eagle, "_effective_ai_enabled", return_value=(True, None)), patch.object(
             eagle, "call_ollama_generate", side_effect=grade_one
@@ -361,6 +390,43 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
                     '{"strength":"The code has a loop.","deductions":[{"points":1,"reason":"bad"}]}'):
             with self.assertRaises(ValueError):
                 eagle._parse_assignment_ai_result(raw, 10)
+
+    def test_rigor_scales_core_objective_execution_and_incidental_deductions(self):
+        raw = json.dumps({
+            "effort": "clear", "strength": "The code includes a loop and an output statement.",
+            "deductions": [
+                {"points": 40, "category": "core", "reason": "The required loop does not process the input list."},
+                {"points": 20, "category": "objective", "reason": "The requested summary is absent from the result."},
+                {"points": 10, "category": "execution", "reason": "An undefined name prevents the main function from running."},
+                {"points": 8, "category": "incidental", "reason": "The variable names make the code harder to follow."},
+            ],
+        })
+        low, low_feedback = eagle._parse_assignment_ai_result(raw, 100, rigor=1)
+        middle, _ = eagle._parse_assignment_ai_result(raw, 100, rigor=6)
+        high, high_feedback = eagle._parse_assignment_ai_result(raw, 100, rigor=10)
+        self.assertEqual(low, 70)
+        self.assertNotIn("undefined name", low_feedback)
+        self.assertEqual(middle, 30)
+        self.assertEqual(high, 28)
+        self.assertIn("−2: The variable names", high_feedback)
+
+    def test_no_effort_is_low_at_all_rigor_levels_and_high_rigor_checks_syntax(self):
+        raw = json.dumps({"effort": "none", "strength": "No demonstrated requirements", "deductions": []})
+        for rigor in (1, 5, 10):
+            score, feedback = eagle._parse_assignment_ai_result(raw, 100, rigor=rigor)
+            self.assertEqual(score, 20)
+            self.assertIn("No substantive attempt", feedback)
+        attempt = json.dumps({"effort": "clear", "strength": "The code uses a loop to print values.", "deductions": []})
+        self.assertEqual(eagle._parse_assignment_ai_result(attempt, 100, rigor=1, syntax_error="invalid syntax")[0], 100)
+        strict_score, strict_feedback = eagle._parse_assignment_ai_result(attempt, 100, rigor=10, syntax_error="invalid syntax")
+        self.assertEqual(strict_score, 60)
+        self.assertIn("program cannot run", strict_feedback)
+
+    def test_rigor_guidance_moves_from_effort_to_all_objectives(self):
+        self.assertIn("genuine attempt", eagle._assignment_rigor_guidance(1))
+        self.assertIn("most stated objectives", eagle._assignment_rigor_guidance(6))
+        self.assertIn("every stated objective", eagle._assignment_rigor_guidance(10))
+        self.assertIn("at most 2 points", eagle._assignment_rigor_guidance(10))
 
     def test_student_assignment_list_exposes_scores_but_not_ai_feedback(self):
         assignment = self.create_assignment(active=True)
