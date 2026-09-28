@@ -38,7 +38,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20260928-assignment-fixes">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260928-assignment-rigor-views">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -692,14 +692,16 @@
               <!-- Submissions sidebar (admin only, used when teacher opens a submission) -->
               <div id="submissionsSidebar" style="display:none;"></div>
 
-              <!-- Teacher/Admin notice -->
-              <div id="assignmentTeacherNotice" style="display:none; padding:16px;">
-                <div style="padding:16px; background:var(--theme-input-bg); border:1px solid var(--theme-border-mid); border-radius:12px; text-align:center;">
-                  <div style="font-size:20px; margin-bottom:8px;">📋</div>
-                  <div style="font-weight:700; color:var(--columbia-blue); margin-bottom:6px;">Assignments &amp; Grades</div>
-                  <div style="color:var(--theme-text-dim); font-size:13px; margin-bottom:14px;">Manage assignments, view submissions, and grade students from the Teacher Dashboard.</div>
-                  <button class="btn run" id="openDashAssignmentsBtn">Open Teacher Dashboard</button>
+              <!-- Teacher reference material for the currently selected class -->
+              <div id="assignmentTeacherNotice" class="teacher-reference-assignments" style="display:none;">
+                <div class="teacher-reference-assignments-header">
+                  <div>
+                    <span class="teacher-reference-kicker">Class reference material</span>
+                    <h3 id="teacherReferenceAssignmentsTitle">Unlocked Assignments</h3>
+                  </div>
+                  <button class="btn run" id="openDashAssignmentsBtn">Manage &amp; Grade</button>
                 </div>
+                <div id="teacherReferenceAssignmentList" class="teacher-reference-assignment-list"></div>
               </div>
 
               <div id="assignmentStudentView" style="padding:12px;">
@@ -804,9 +806,6 @@
           <div class="teacher-dash-scroll">
             <div class="assignment-admin-layout">
               <div id="assignmentList"></div>
-              <div id="assignmentDetailPanel" class="assignment-detail-panel">
-                <p style="color:#888; margin:0;">Select an assignment to review scores and open submissions.</p>
-              </div>
             </div>
           </div>
         </div>
@@ -1746,12 +1745,12 @@
   <script src="/static/js/editor-init.js?v=20260918-10"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js"></script>
-  <script src="/static/js/app-core.js?v=20260928-assignment-fixes"></script>
+  <script src="/static/js/app-core.js?v=20260928-assignment-rigor-views"></script>
   <script src="/static/js/step-mode.js?v=20260920-4"></script>
-  <script src="/static/js/wiki-reader.js?v=20260928-assignment-fixes"></script>
+  <script src="/static/js/wiki-reader.js?v=20260928-assignment-rigor-views"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
   <script src="/static/js/lesson-plans.js?v=20260816-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20260928-assignment-fixes"></script>
+  <script src="/static/js/wiki-admin.js?v=20260928-assignment-rigor-views"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20260918-10"></script>
   <script src="/static/js/student-notebook.js?v=20260918-10"></script>
