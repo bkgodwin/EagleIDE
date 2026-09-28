@@ -3536,6 +3536,13 @@ def files_upload():
     
     # Sanitize filename
     filename = filename.replace("\\", "/").rsplit("/", 1)[-1]
+    # Some POSIX multipart parsers consume the backslash escapes in the
+    # browser-supplied ``C:\\fakepath\\name.ext`` value before it reaches
+    # Flask. Normalize that collapsed form without accepting arbitrary drive
+    # paths; the usual path and filename validation still runs below.
+    collapsed_fakepath = re.fullmatch(r"[A-Za-z]:fakepath(.+)", filename, re.IGNORECASE)
+    if collapsed_fakepath:
+        filename = collapsed_fakepath.group(1)
     if not _valid_workspace_name(filename):
         return jsonify(ok=False, error="Invalid filename"), 400
     suffix = Path(filename).suffix.lower()
