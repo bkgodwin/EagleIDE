@@ -73,6 +73,19 @@
     .scores-table{ width:100%; border-collapse:collapse; font-size:13px; }
     .scores-table th, .scores-table td{ border-bottom:1px solid var(--theme-border-mid); padding:8px 6px; text-align:left; vertical-align:top; }
     .scores-table th{ color:var(--columbia-blue); }
+    .assignment-ai-controls{ display:grid; gap:10px; padding:12px; margin:12px 0; border:1px solid var(--theme-border-mid); border-radius:10px; background:var(--theme-output-bg); }
+    .assignment-ai-controls textarea{ width:100%; min-height:76px; resize:vertical; padding:8px; color:var(--theme-text); background:var(--theme-input-bg); border:1px solid var(--theme-border); border-radius:8px; }
+    .assignment-ai-rigor{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    .assignment-ai-rigor input{ flex:1; min-width:160px; accent-color:var(--columbia-blue); }
+    .assignment-grade-input{ width:76px; padding:6px; color:var(--theme-text); background:var(--theme-input-bg); border:1px solid var(--theme-border); border-radius:6px; }
+    .assignment-not-turned-in{ color:#ef5350; font-weight:800; }
+    .assignment-ai-feedback{ min-width:220px; max-width:420px; color:var(--theme-text); font-size:12px; line-height:1.45; }
+    .assignment-ai-status{ display:inline-flex; padding:2px 7px; border-radius:999px; font-size:11px; font-weight:700; background:var(--theme-secondary); color:var(--theme-text-dim); }
+    .assignment-ai-status.queued,.assignment-ai-status.running{ color:#90caf9; border:1px solid #1976d2; }
+    .assignment-ai-status.failed{ color:#ef5350; border:1px solid #c62828; }
+    .assignment-ai-status.completed{ color:#66bb6a; border:1px solid #2e7d32; }
+    .submission-navigation{ display:flex; gap:8px; }
+    .submission-ai-feedback{ padding:9px; border-left:3px solid var(--columbia-blue); background:var(--theme-input-bg); color:var(--theme-text); font-size:12px; line-height:1.45; }
     .account-notice{ background:var(--theme-input-bg); border:1px solid var(--theme-border-mid); border-radius:10px; padding:14px; margin-bottom:18px; color:var(--theme-text-dim); }
     .skill-tags{ display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
     .skill-chip{ font-size:11px; padding:3px 8px; border-radius:999px; border:1px solid var(--theme-border-mid); background:var(--theme-output-bg); color:var(--columbia-blue); }
@@ -104,6 +117,9 @@
     .skill-card-handle:active{ cursor:grabbing; }
     .skill-class-pills{ display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
     @media (max-width: 1200px){
+    .assignment-admin-layout{ grid-template-columns:minmax(0, 1fr); }
+    .scores-table{ min-width:1050px; }
+    .assignment-detail-panel{ overflow-x:auto; }
     .assignment-option-card{
       border:1px solid var(--theme-border-mid);
       border-radius:10px;
