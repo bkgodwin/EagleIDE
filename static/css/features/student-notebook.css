@@ -66,8 +66,10 @@
 .student-notebook-drawer {
   position: fixed;
   top: var(--app-offset-top, 0px);
-  right: 0;
-  width: min(860px, 98vw);
+  right: env(safe-area-inset-right, 0px);
+  width: min(860px, calc(100vw - env(safe-area-inset-right, 0px)));
+  max-width: 100%;
+  box-sizing: border-box;
   height: var(--app-height, 100dvh);
   z-index: 1510;
   transform: translateX(calc(100% + 28px));
@@ -93,6 +95,7 @@
 
 .student-notebook-book {
   flex: 1;
+  min-width: 0;
   margin: 18px 16px 18px 0;
   border-radius: 8px 0 0 8px;
   background: #f8f0d8;
@@ -106,6 +109,7 @@
 
 .student-notebook-cover {
   display: flex;
+  min-width: 0;
   justify-content: space-between;
   gap: 12px;
   align-items: center;
@@ -133,6 +137,7 @@
 
 .student-notebook-cover-actions {
   display: flex;
+  min-width: 0;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
@@ -214,6 +219,7 @@
 .student-notebook-page-wrap {
   position: relative;
   min-height: 0;
+  min-width: 0;
   overflow: visible;
 }
 
@@ -312,6 +318,25 @@
   align-items: flex-start;
   padding: 2px 12px 8px 0;
   scrollbar-width: thin;
+}
+
+@media (max-width: 1024px) {
+  .student-notebook-cover {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 10px 12px;
+  }
+  .student-notebook-cover-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  #studentNotebookCloseBtn {
+    margin-left: auto;
+    flex: 0 0 auto;
+  }
+  .student-notebook-page {
+    padding-right: 20px;
+  }
 }
 
 .student-notebook-tab {
@@ -1277,7 +1302,7 @@
 
 @media (max-width: 780px) {
   .student-notebook-drawer {
-    width: 100vw;
+    width: calc(100vw - env(safe-area-inset-right, 0px));
   }
   .student-notebook-book {
     margin: 0;

@@ -72,7 +72,7 @@ Tune only after measuring the host under classroom load:
 | `EAGLE_MAX_RUN_STARTS_PER_10_SECONDS` | 6 | Run-start burst limit per identity |
 | `EAGLE_MAX_SOCKET_CONNECTIONS` | 512 | Global realtime connections |
 | `EAGLE_MAX_SOCKET_CONNECTIONS_PER_IP` | 128 | Realtime connections per address |
-| `EAGLE_MAX_CONCURRENT_AI_REQUESTS` | 2 | Concurrent Ollama calls |
+| `EAGLE_MAX_CONCURRENT_AI_REQUESTS` | 3 | Concurrent Ollama calls; class grading dispatches alphabetical batches of at most three and waits for each batch |
 | `EAGLE_MAX_AI_REQUESTS_PER_MINUTE` | 6 | AI calls per signed-in identity or address |
 | `EAGLE_MAX_AI_PROMPT_CHARS` | 64000 | Maximum composed AI prompt |
 | `EAGLE_MAX_AI_RESPONSE_CHARS` | 64000 | Maximum accepted AI response |

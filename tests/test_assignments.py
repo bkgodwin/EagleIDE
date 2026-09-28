@@ -266,7 +266,7 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         with patch.object(eagle, "_effective_ai_enabled", return_value=(True, None)), patch.object(
             eagle,
             "call_ollama_generate",
-            return_value={"ok": True, "text": '{"score": 9, "feedback": "The loop produces the required output correctly. Clear structure supports the strong score."}'},
+            return_value={"ok": True, "text": '{"strength":"The loop prints each value in the sequence.","deductions":[{"points":1,"reason":"The task requires the last value too, but range stops before it."}]}'},
         ) as grader:
             queued = self.client.post(
                 "/api/assignments/grade-ai",
@@ -283,35 +283,49 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
                 time.sleep(0.02)
 
         self.assertEqual(grader.call_args.kwargs["request_identity"], f"teacher:{self.teacher_email}")
+        self.assertTrue(grader.call_args.kwargs["json_response"])
+        self.assertEqual(grader.call_args.kwargs["temperature"], 0)
 
         submission = graded["submissions"][0]
         self.assertEqual(submission["aiGradingStatus"], "completed")
         self.assertEqual(submission["aiSuggestedScore"], 9)
         self.assertEqual(submission["codeScore"], 7)
         self.assertTrue(submission["manualScoreOverride"])
-        self.assertIn("required output", submission["aiFeedback"])
+        self.assertIn("−1: The task requires", submission["aiFeedback"])
+        self.assertIn("Score: 9/10", submission["aiFeedback"])
 
-    def test_grade_all_ai_processes_only_one_submission_at_a_time(self):
+    def test_grade_all_ai_uses_alphabetical_batches_of_three(self):
         assignment = self.create_assignment(active=True)
         first = self.submit_code(assignment)
         loaded = eagle._load_assignment(assignment["id"])
-        second = dict(first)
-        second.update({"name": "Student Two", "email": self.missing_email, "code": "print('second')", "submissionPath": ""})
-        loaded["submissions"].append(second)
+        loaded["submissions"][0]["name"] = "Zebra"
+        loaded["submissions"][0]["code"] = "print('Zebra')"
+        for name in ("Charlie", "Anna", "Foxtrot", "Beta", "Echo", "Delta"):
+            row = dict(first)
+            row.update({"name": name, "email": f"{name.lower()}@example.com", "code": f"print('{name}')", "submissionPath": ""})
+            loaded["submissions"].append(row)
         self.assertTrue(eagle._save_assignment(loaded))
         active = 0
         maximum_active = 0
         guard = threading.Lock()
+        started = []
+        completed = []
+        events = []
 
-        def grade_one(*_args, **_kwargs):
+        def grade_one(_url, _model, prompt, **_kwargs):
             nonlocal active, maximum_active
+            name = next(name for name in ("Anna", "Beta", "Charlie", "Delta", "Echo", "Foxtrot", "Zebra") if f"print('{name}')" in prompt)
             with guard:
                 active += 1
                 maximum_active = max(maximum_active, active)
-            time.sleep(0.04)
+                started.append(name)
+                events.append(("start", name))
+            time.sleep(0.06)
             with guard:
                 active -= 1
-            return {"ok": True, "text": '{"score": 8, "feedback": "The solution meets the main requirement. Minor refinement would improve clarity."}'}
+                completed.append(name)
+                events.append(("done", name))
+            return {"ok": True, "text": '{"strength":"The solution includes the required print call.","deductions":[{"points":2,"reason":"The loop required by the task is absent from the code."}]}'}
 
         with patch.object(eagle, "_effective_ai_enabled", return_value=(True, None)), patch.object(
             eagle, "call_ollama_generate", side_effect=grade_one
@@ -322,17 +336,50 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
                 json={"assignmentId": assignment["id"]},
             )
             self.assertEqual(queued.status_code, 202)
-            self.assertEqual(queued.get_json()["queued"], 2)
-            deadline = time.time() + 4
+            self.assertEqual(queued.get_json()["queued"], 7)
+            deadline = time.time() + 8
             while time.time() < deadline:
                 statuses = [row.get("aiGradingStatus") for row in eagle._load_assignment(assignment["id"])["submissions"]]
-                if statuses == ["completed", "completed"]:
+                if statuses == ["completed"] * 7:
                     break
                 time.sleep(0.02)
 
-        self.assertEqual(grader.call_count, 2)
-        self.assertEqual(maximum_active, 1)
-        self.assertEqual(statuses, ["completed", "completed"])
+        self.assertEqual(grader.call_count, 7)
+        self.assertEqual(maximum_active, 3)
+        self.assertEqual(set(started[:3]), {"Anna", "Beta", "Charlie"})
+        self.assertEqual(set(started[3:6]), {"Delta", "Echo", "Foxtrot"})
+        self.assertEqual(started[6], "Zebra")
+        self.assertLess(
+            max(events.index(("done", name)) for name in ("Anna", "Beta", "Charlie")),
+            min(events.index(("start", name)) for name in ("Delta", "Echo", "Foxtrot")),
+        )
+        self.assertEqual(statuses, ["completed"] * 7)
+
+    def test_ai_grade_rejects_unsupported_or_unexplained_scores(self):
+        for raw in ("9 because it looks fine", '{"score":9,"feedback":"Good"}',
+                    '{"strength":"The code has a loop.","deductions":[{"points":11,"reason":"The loop has an incorrect range."}]}',
+                    '{"strength":"The code has a loop.","deductions":[{"points":1,"reason":"bad"}]}'):
+            with self.assertRaises(ValueError):
+                eagle._parse_assignment_ai_result(raw, 10)
+
+    def test_student_assignment_list_exposes_scores_but_not_ai_feedback(self):
+        assignment = self.create_assignment(active=True)
+        self.submit_code(assignment)
+        loaded = eagle._load_assignment(assignment["id"])
+        loaded["submissions"][0].update({"codeScore": 8, "totalScore": 8, "aiFeedback": "Teacher-only rationale"})
+        self.assertTrue(eagle._save_assignment(loaded))
+        response = self.client.get("/api/assignments", headers=self.student_headers)
+        self.assertEqual(response.status_code, 200)
+        student_assignment = response.get_json()["assignments"][0]
+        self.assertEqual(student_assignment["studentSubmissionSummary"]["codeScore"], 8)
+        self.assertNotIn("Teacher-only rationale", response.get_data(as_text=True))
+
+    def test_student_submission_response_excludes_ai_grading_fields(self):
+        assignment = self.create_assignment(active=True)
+        submission = self.submit_code(assignment)
+        self.assertNotIn("aiFeedback", submission)
+        self.assertNotIn("aiGradingError", submission)
+        self.assertNotIn("aiSuggestedScore", submission)
 
     def test_grade_export_supports_points_and_one_decimal_percent(self):
         assignment = self.create_assignment(active=True)
