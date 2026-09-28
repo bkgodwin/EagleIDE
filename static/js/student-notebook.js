@@ -18,6 +18,8 @@
   let activeClassId = null;
   let loadedClassId = null;
   let drawerOpen = false;
+  let notebookButtonHome = null;
+  let notebookButtonNext = null;
   let saveTimer = null;
   let dirty = false;
   let activeEditorEl = null;
@@ -1065,23 +1067,56 @@
       return;
     }
     drawerOpen = true;
+    syncDrawerViewport();
     document.body.classList.add('notebook-drawer-open');
     document.getElementById('studentNotebookDrawer')?.classList.add('open');
     document.getElementById('studentNotebookDrawer')?.setAttribute('aria-hidden', 'false');
     const overlay = document.getElementById('studentNotebookOverlay');
     if (overlay) overlay.hidden = true;
+    const toggle = document.getElementById('notebookOpenBtn');
+    if (toggle) {
+      notebookButtonHome = toggle.parentNode;
+      notebookButtonNext = toggle.nextSibling;
+      document.body.appendChild(toggle);
+      toggle.textContent = '✕ Notebook';
+      toggle.title = 'Close notebook';
+      toggle.setAttribute('aria-expanded', 'true');
+    }
     loadNotebook().catch(err => console.warn(err));
+  }
+
+  function syncDrawerViewport() {
+    const viewport = window.visualViewport;
+    const width = viewport?.width || window.innerWidth;
+    const left = viewport?.offsetLeft || 0;
+    if (!Number.isFinite(width) || width <= 0) return;
+    const root = document.documentElement.style;
+    root.setProperty('--notebook-viewport-width', `${Math.floor(width)}px`);
+    root.setProperty('--notebook-viewport-left', `${Math.max(0, Math.floor(left))}px`);
+    root.setProperty('--notebook-viewport-right', `${Math.max(0, Math.ceil(window.innerWidth - left - width))}px`);
+    root.setProperty('--notebook-viewport-top', `${Math.max(0, Math.floor(viewport?.offsetTop || 0))}px`);
+    const height = viewport?.height || window.innerHeight;
+    if (Number.isFinite(height) && height > 0) root.setProperty('--notebook-viewport-height', `${Math.floor(height)}px`);
   }
 
   async function closeDrawer() {
     hideAllCodeBlockShells({ stop: true });
-    if (dirty) await saveNotebook({ immediate: true });
     drawerOpen = false;
+    const toggle = document.getElementById('notebookOpenBtn');
+    if (toggle) {
+      toggle.textContent = '📓 Notebook';
+      toggle.title = 'Open notebook';
+      toggle.setAttribute('aria-expanded', 'false');
+      if (notebookButtonHome) {
+        notebookButtonHome.insertBefore(toggle, notebookButtonNext?.parentNode === notebookButtonHome ? notebookButtonNext : null);
+      }
+    }
     document.body.classList.remove('notebook-drawer-open');
     document.getElementById('studentNotebookDrawer')?.classList.remove('open');
     document.getElementById('studentNotebookDrawer')?.setAttribute('aria-hidden', 'true');
     const overlay = document.getElementById('studentNotebookOverlay');
     if (overlay) overlay.hidden = true;
+    if (dirty) await saveNotebook({ immediate: true });
   }
 
   async function refreshAssignmentsFromServer() {
@@ -1600,7 +1635,13 @@
   }
 
   function bindUi() {
-    document.getElementById('notebookOpenBtn')?.addEventListener('click', openDrawer);
+    document.getElementById('notebookOpenBtn')?.addEventListener('click', () => {
+      if (drawerOpen) closeDrawer();
+      else openDrawer();
+    });
+    window.addEventListener('resize', syncDrawerViewport, { passive: true });
+    window.visualViewport?.addEventListener('resize', syncDrawerViewport, { passive: true });
+    window.visualViewport?.addEventListener('scroll', syncDrawerViewport, { passive: true });
     document.getElementById('studentNotebookCloseBtn')?.addEventListener('click', closeDrawer);
     document.getElementById('studentNotebookInsertCodeBtn')?.addEventListener('click', insertEditorCode);
     document.getElementById('studentNotebookWikiLinkBtn')?.addEventListener('click', openWikiLinkPicker);

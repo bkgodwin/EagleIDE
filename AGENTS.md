@@ -82,6 +82,7 @@ Required runtime components:
 |   |-- test_layout_runtime.py   Pointer/keyboard resize and visual-viewport JavaScript checks
 |   |-- test_classroom_signals.py Atomic simultaneous classroom signal persistence
 |   |-- *_ui.test.js            Dependency-free Node tests for classroom/file UI state races
+|   |-- student_notebook_ui.test.js Notebook toggle and visible-viewport regression test
 |   |-- test_python_sandbox.py   Module ACL, native containment, SQLite, and chart security
 |   |-- test_startup.py          Launcher safety, dependency pinning, and environment checks
 |   |-- test_html_runtime.py     HTML runtime security, assets, bridge, and cleanup
