@@ -547,12 +547,11 @@ FOR STUDENTS
 1. View assignments in the Assignments tab only after joining a class
 2. Join a class from the Assignments tab using the 6-character class code
    (once joined, students cannot self-leave)
-3. Click assignment to view details
+3. Unlocked assignments appear in the assignment area; locked assignments are hidden
 4. Sign in with your student account
 5. Choose one of your saved files to submit
-6. The selected file is copied to the assignment owner's assignment folder and
-   renamed to the student's name, with a submission comment at the top that
-   includes student name and timestamp
+6. The selected file is copied to the protected assignment submission store,
+   organized by class and assignment, with student name and timestamp metadata
 7. Resubmissions replace your previous file for that assignment
 
 --------------------------------------------------
@@ -570,9 +569,13 @@ FOR TEACHERS
    - Target class
 6. Lock/unlock assignments
 7. Edit or delete assignments from the assignment manager
-8. Open submitted files directly from the assignment owner workspace
-9. Grade from the left sidebar with auto-saving score changes or AI grading
-10. Review alphabetized score tables and download scores as CSV
+8. Review the complete class roster, including students marked Not turned in
+9. Open submissions in the teacher editor, move between them with previous/next
+   controls, and return through the minimized dashboard bar
+10. Set manual scores or queue individual/all submissions for background AI
+    grading with assignment-specific instructions and adjustable rigor
+11. Review AI score feedback and override AI scores at any time
+12. Export student-number/score CSV files as points or one-decimal percentages
 
 Notebook assignments use the same teacher-owned skill catalog shown in Dashboard
 > Skills. The prompt composer includes a searchable, scrollable skill sidebar
@@ -801,6 +804,7 @@ Core Files:
 Auto-Generated Directories:
   sandboxes/          - Temporary code execution folders
   assignments/        - Assignment JSON files
+  assignment_submissions/ - Uncounted class/assignment submission copies
   user_files/         - Per-user file storage (one subdirectory per account)
 
 Auto-Generated Files:

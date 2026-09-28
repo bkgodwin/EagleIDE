@@ -151,7 +151,9 @@ Checked-in seed/reference data is limited to files such as `challenges.csv` and 
 
 - `config.txt` and `.admin_key`
 - `users.json`, `classes.json`, and `skills.json`
-- `assignments/`, `notebooks/`, `user_files/`, and `sandboxes/`; each user workspace
+- `assignments/` (assignment metadata), `assignment_submissions/` (class/assignment
+  submission files that do not count against teacher workspace quotas), `notebooks/`,
+  `user_files/`, and `sandboxes/`; each user workspace
   has a protected visible `Trash/` folder and private `.eagleide/trash.json`
   restore metadata. Ordinary file-browser and teacher-audit deletes move items to
   Trash, top-level items restore to their original paths, and expired items are
