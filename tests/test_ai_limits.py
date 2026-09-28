@@ -65,6 +65,18 @@ class AiLimitTestCase(unittest.TestCase):
         self.assertTrue(second["cached"])
         self.assertEqual(post.call_count, 1)
 
+    def test_background_ai_generation_accepts_explicit_identity_without_request_context(self):
+        with mock.patch.object(eagle.requests, "post", return_value=_Response()) as post:
+            result = eagle.call_ollama_generate(
+                "http://127.0.0.1:11434",
+                "model",
+                "background prompt",
+                request_identity="teacher:teacher@example.com",
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(post.call_count, 1)
+
     def test_ai_rate_and_prompt_limits_reject_before_network(self):
         eagle.MAX_AI_REQUESTS_PER_MINUTE = 1
         eagle.MAX_AI_PROMPT_CHARS = 10

@@ -193,9 +193,8 @@
       position: fixed;
       z-index: 1200;
       top: 8px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: min(720px, calc(100vw - 24px));
+      right: 12px;
+      width: min(560px, calc(100vw - 390px));
       min-height: 46px;
       display: flex;
       align-items: center;
@@ -209,10 +208,28 @@
       box-shadow: 0 10px 30px rgba(0,0,0,.35);
       cursor: pointer;
     }
+    .teacher-dash-minimized-copy { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .teacher-dash-minimized-bar strong { color:var(--columbia-blue); }
+    .teacher-dash-minimized-actions { display:flex; flex:0 0 auto; gap:6px; }
+    .teacher-dash-minimized-actions button {
+      width:34px;
+      min-height:32px;
+      border:1px solid var(--theme-border-mid);
+      border-radius:8px;
+      background:var(--theme-btn);
+      color:var(--theme-text);
+      cursor:pointer;
+      font:inherit;
+      font-weight:800;
+    }
+    .teacher-dash-minimized-actions button:hover:not(:disabled) { background:var(--theme-btn-hover); }
+    .teacher-dash-minimized-actions button:disabled { opacity:.42; cursor:not-allowed; }
     .teacher-dash-modal.is-minimized { pointer-events:none; background:transparent; backdrop-filter:none; }
     .teacher-dash-modal.is-minimized .modal-content { display:none; }
     .teacher-dash-modal.is-minimized .teacher-dash-minimized-bar { pointer-events:auto; }
+    @media (max-width: 760px) {
+      .teacher-dash-minimized-bar { left:12px; right:12px; width:auto; }
+    }
     .teacher-dash-mobile-close { display: none; }
     .teacher-dash-sidebar {
       width: 220px;
