@@ -4007,8 +4007,16 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     document.getElementById('teacherDashboardBtn')?.addEventListener('click', () => {
       openTeacherDashboard('dash-reports');
     });
-    document.getElementById('teacherDashMinimizedBar')?.addEventListener('click', () => {
+    const teacherDashMinimizedBar = document.getElementById('teacherDashMinimizedBar');
+    teacherDashMinimizedBar?.addEventListener('click', (event) => {
+      if (event.target.closest('.teacher-dash-minimized-actions')) return;
       openTeacherDashboard('dash-assignments');
+    });
+    teacherDashMinimizedBar?.addEventListener('keydown', (event) => {
+      if ((event.key === 'Enter' || event.key === ' ') && !event.target.closest('.teacher-dash-minimized-actions')) {
+        event.preventDefault();
+        openTeacherDashboard('dash-assignments');
+      }
     });
 
 
@@ -6346,6 +6354,29 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const savedFile = currentOpenFile;
       const savedContext = JSON.stringify(fileAuthHeaders());
       try {
+        if (savedFile.submission) {
+          const res = await fetchWithDeadline('/api/assignments/submission', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...assignmentManagerHeaders() },
+            body: JSON.stringify({
+              assignmentId: savedFile.assignmentId,
+              studentEmail: savedFile.studentEmail,
+              content,
+            }),
+          }, 10000);
+          const result = await res.json().catch(() => ({}));
+          if (!res.ok || !result.ok) return false;
+          const { submission } = getSubmissionForAssignment(savedFile.assignmentId, savedFile.studentEmail);
+          if (submission) {
+            submission.code = content;
+            submission.aiGradingStatus = '';
+            submission.aiGradingError = '';
+            submission.aiFeedback = '';
+            submission.aiSuggestedScore = null;
+          }
+          if (currentOpenFile === savedFile && content === editor.getValue()) currentBufferDirty = false;
+          return true;
+        }
         const res = await fetchWithDeadline('/api/files/write', {
           method: 'POST',
           headers: fileJsonHeaders(),
@@ -8594,7 +8625,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         alert('Your current file could not be saved before opening the submission.');
         return;
       }
-      showFileBrowser();
       try {
         const query = new URLSearchParams({ assignmentId: assignment.id || assignment.name, studentEmail: submission.email || email });
         const response = await fetch(`/api/assignments/submission?${query.toString()}`, { headers: assignmentManagerHeaders() });
@@ -8603,13 +8633,19 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           alert(result.error || 'Could not open submission.');
           return;
         }
-        currentOpenFile = null;
+        currentOpenFile = {
+          name: result.fileName || submission.submittedFileName || 'submission.py',
+          submission: true,
+          assignmentId: assignment.id || assignment.name,
+          studentEmail: submission.email || email,
+          kind: 'text',
+        };
         clearFileArtifactPreview();
         setCsvMode(false);
         editor.setValue(result.content || submission.code || '');
         currentBufferDirty = false;
         syncEditorLanguage(result.fileName || submission.submittedFileName || 'submission.py');
-        setMainEditorReadOnly(true);
+        setMainEditorReadOnly(false);
         updateActiveFileName();
         updateEditorOverlay();
         setWorkspaceTab('editor');
@@ -8787,10 +8823,16 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
       const submitted = (assignment.submissions || []).filter(row => row.code).sort((a, b) => String(a.name || a.email || '').localeCompare(String(b.name || b.email || ''), undefined, { sensitivity: 'base' }));
       const index = submitted.findIndex(row => String(row.email || '').toLowerCase() === String(submission.email || '').toLowerCase());
-      const previous = document.getElementById('previousSubmissionBtn');
-      const next = document.getElementById('nextSubmissionBtn');
-      if (previous) previous.disabled = index <= 0;
-      if (next) next.disabled = index < 0 || index >= submitted.length - 1;
+      const previousDisabled = index <= 0;
+      const nextDisabled = index < 0 || index >= submitted.length - 1;
+      ['previousSubmissionBtn', 'teacherDashPreviousSubmissionBtn'].forEach((id) => {
+        const button = document.getElementById(id);
+        if (button) button.disabled = previousDisabled;
+      });
+      ['nextSubmissionBtn', 'teacherDashNextSubmissionBtn'].forEach((id) => {
+        const button = document.getElementById(id);
+        if (button) button.disabled = nextDisabled;
+      });
       document.getElementById('submissionScoreSaveStatus').textContent = '';
     }
 
@@ -8922,6 +8964,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     document.getElementById('previousSubmissionBtn')?.addEventListener('click', () => navigateAssignmentSubmission(-1));
     document.getElementById('nextSubmissionBtn')?.addEventListener('click', () => navigateAssignmentSubmission(1));
+    document.getElementById('teacherDashPreviousSubmissionBtn')?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      navigateAssignmentSubmission(-1);
+    });
+    document.getElementById('teacherDashNextSubmissionBtn')?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      navigateAssignmentSubmission(1);
+    });
 
     async function downloadCSV(assignmentReference, assignmentName, format = 'points') {
       const url = `/api/assignments/${encodeURIComponent(assignmentReference)}/csv?format=${encodeURIComponent(format)}`;

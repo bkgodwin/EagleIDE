@@ -20,9 +20,14 @@ test('submission editor navigation and minimized dashboard use stable assignment
   assert.match(html, /id="previousSubmissionBtn"/);
   assert.match(html, /id="nextSubmissionBtn"/);
   assert.match(html, /id="teacherDashMinimizedBar"/);
+  assert.match(html, /id="teacherDashPreviousSubmissionBtn"/);
+  assert.match(html, /id="teacherDashNextSubmissionBtn"/);
+  assert.ok(html.indexOf('id="submissionScoringPanel"') < html.indexOf('id="fileBrowserTabPane"'));
   assert.match(source, /assignmentId: assignment\?\.id/);
   assert.match(source, /minimizeTeacherDashboardForSubmission/);
   assert.match(source, /navigateAssignmentSubmission/);
+  assert.match(source, /submission: true/);
+  assert.match(source, /\/api\/assignments\/submission/);
 });
 
 test('student assignment actions target IDs instead of ambiguous duplicate names', () => {

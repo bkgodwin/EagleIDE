@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 from urllib.parse import quote, urlsplit
 
-from flask import Flask, send_from_directory, send_file, request, jsonify
+from flask import Flask, has_request_context, send_from_directory, send_file, request, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
 import requests
 import bcrypt
@@ -5400,6 +5400,7 @@ def call_ollama_generate(
     *,
     num_predict: int = 2048,
     use_cache: bool = True,
+    request_identity: Optional[str] = None,
 ) -> Dict[str, Any]:
     global _ai_consecutive_failures, _ai_circuit_open_until
     prompt = str(prompt or "")
@@ -5426,7 +5427,9 @@ def call_ollama_generate(
         "options": {"num_predict": _bounded_int(num_predict, 2048, 1, 4096)},
     }
     cache_key = hashlib.sha256(f"{url}\0{model}\0{prompt}".encode("utf-8")).hexdigest()
-    identity = _ai_request_identity()
+    identity = str(request_identity or "").strip()
+    if not identity:
+        identity = _ai_request_identity() if has_request_context() else "background:system"
     now = time.monotonic()
     with _ai_lock:
         _prune_ai_state(now)
@@ -8705,13 +8708,22 @@ def _migrate_assignment_submission_files(assignment: dict) -> bool:
         if not isinstance(submission, dict) or not assignment.get("allowFileSubmission", True):
             continue
         existing_relative = str(submission.get("submissionPath") or "").strip()
-        if existing_relative and _assignment_submission_path(assignment, existing_relative):
+        existing_path = _assignment_submission_path(assignment, existing_relative) if existing_relative else None
+        if existing_path and existing_path.exists() and existing_path.is_file():
             if submission.get("adminFilePath"):
                 submission["adminFilePath"] = ""
                 changed = True
             continue
         legacy_relative = str(submission.get("adminFilePath") or "").strip()
         legacy_source = _validate_user_path(owner_root, legacy_relative) if owner_root and legacy_relative else None
+        if (not legacy_source or not legacy_source.exists()) and owner_root:
+            source_suffix = Path(str(submission.get("submittedFileName") or "submission.py")).suffix.lower() or ".py"
+            legacy_assignment_dir = _sanitize_storage_component(assignment.get("name") or "Assignment", fallback="Assignment")
+            legacy_student_name = _sanitize_storage_component(
+                submission.get("name") or submission.get("email") or "Student",
+                fallback="Student",
+            )
+            legacy_source = _validate_user_path(owner_root, f"{legacy_assignment_dir}/{legacy_student_name}{source_suffix}")
         source_name = str(submission.get("submittedFileName") or (legacy_source.name if legacy_source else "submission.py"))
         try:
             content = None
@@ -8810,9 +8822,9 @@ def _save_assignment(assignment: Dict[str, Any]) -> bool:
 def _list_assignments() -> list:
     """List all assignments"""
     with _assignment_lock:
+        ASSIGNMENTS_DIR.mkdir(parents=True, exist_ok=True)
+        ASSIGNMENT_SUBMISSIONS_DIR.mkdir(parents=True, exist_ok=True)
         assignments = []
-        if not ASSIGNMENTS_DIR.exists():
-            return assignments
         for path in list(ASSIGNMENTS_DIR.iterdir()):
             if path.suffix == ".json":
                 data = _load_assignment_file(path)
@@ -9356,6 +9368,7 @@ def _run_assignment_ai_grading(assignment_id: str, student_email: str) -> None:
             cfg.get("ai_model", "gemma3:4b"),
             prompt,
             timeout=_configured_ai_timeout(cfg),
+            request_identity=f"teacher:{str(assignment.get('createdByEmail') or '').strip().lower() or 'unknown'}",
         )
         if not result.get("ok"):
             raise RuntimeError(result.get("error") or "AI service error")
@@ -9535,6 +9548,71 @@ def get_assignment_submission_file():
         except Exception:
             pass
     return jsonify(ok=True, content=content, fileName=submission.get("submittedFileName") or "submission.py")
+
+
+@app.post("/api/assignments/submission")
+def update_assignment_submission_file():
+    """Save teacher edits to a protected assignment submission copy."""
+    actor = _assignment_actor(request)
+    if not actor:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    data = request.get_json(silent=True) or {}
+    reference = str(data.get("assignmentId") or data.get("assignmentName") or "").strip()
+    student_email = str(data.get("studentEmail") or "").strip().lower()
+    content = data.get("content")
+    if not reference or not student_email or not isinstance(content, str):
+        return jsonify(ok=False, error="Assignment, student email, and file content are required"), 400
+    if len(content.encode("utf-8")) > MAX_EDITOR_FILE_BYTES:
+        return jsonify(ok=False, error=f"File exceeds the {MAX_EDITOR_FILE_BYTES // (1024 * 1024)}MB editor limit"), 413
+
+    with _assignment_lock:
+        assignment = _load_assignment(reference)
+        if not assignment:
+            return jsonify(ok=False, error="Assignment not found"), 404
+        if (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+            return jsonify(ok=False, error="You can only edit your own assignment submissions"), 403
+        submission = next(
+            (row for row in assignment.get("submissions", []) if (row.get("email") or "").lower() == student_email),
+            None,
+        )
+        if not submission:
+            return jsonify(ok=False, error="Submission not found"), 404
+        if not assignment.get("allowFileSubmission", True):
+            return jsonify(ok=False, error="This assignment does not accept file submissions"), 400
+
+        stored_path = _assignment_submission_path(assignment, submission.get("submissionPath") or "")
+        try:
+            if not stored_path:
+                relative = _write_assignment_submission_copy(
+                    assignment,
+                    str(submission.get("name") or submission.get("email") or "Student"),
+                    student_email,
+                    str(submission.get("submittedFileName") or "submission.py"),
+                    content,
+                )
+                submission["submissionPath"] = relative
+            else:
+                stored_path.parent.mkdir(parents=True, exist_ok=True)
+                temporary = stored_path.with_name(f".{stored_path.name}.{uuid.uuid4().hex}.tmp")
+                try:
+                    temporary.write_text(content, encoding="utf-8")
+                    temporary.replace(stored_path)
+                finally:
+                    if temporary.exists():
+                        temporary.unlink()
+        except Exception as exc:
+            print(f"Error saving teacher-edited submission for {assignment.get('name')}: {exc}")
+            return jsonify(ok=False, error="Could not save submission"), 500
+
+        submission["code"] = content
+        submission["teacherEditedAt"] = _current_timestamp()
+        submission["aiGradingStatus"] = ""
+        submission["aiGradingError"] = ""
+        submission["aiFeedback"] = ""
+        submission["aiSuggestedScore"] = None
+        if not _save_assignment(assignment):
+            return jsonify(ok=False, error="Could not save assignment metadata"), 500
+    return jsonify(ok=True, savedAt=submission["teacherEditedAt"])
 
 @app.get("/api/assignments/<assignment_reference>/csv")
 def download_assignment_csv(assignment_reference: str):
@@ -10631,6 +10709,7 @@ if __name__ == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", str(SERVER_PORT)))
     _record_server_startup_event()
+    _list_assignments()
     try:
         signal.signal(signal.SIGTERM, _handle_server_termination)
     except (AttributeError, OSError, ValueError):
