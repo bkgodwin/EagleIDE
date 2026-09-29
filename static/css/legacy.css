@@ -228,7 +228,8 @@
         border-bottom: 1px solid var(--theme-border-mid);
       }
       .teacher-dash-sidebar .teacher-dash-brand { padding: 10px 62px 10px 12px; }
-      .teacher-dash-sidebar .teacher-dash-nav { flex-direction: row; overflow: auto; padding: 8px; }
+      .teacher-dash-sidebar .teacher-dash-nav { flex-direction: row; overflow: auto; padding: 8px; scrollbar-width: none; }
+      .teacher-dash-sidebar .teacher-dash-nav::-webkit-scrollbar { display: none; }
       .teacher-dash-sidebar .teacher-dash-navbtn { width: auto; white-space: nowrap; }
       .teacher-dash-sidebar .teacher-dash-close-area { display: none; }
       .teacher-dash-scroll { padding: 12px; }

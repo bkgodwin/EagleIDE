@@ -88,6 +88,20 @@
     .assignment-ai-rigor{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
     .assignment-ai-rigor input{ flex:1; min-width:160px; accent-color:var(--columbia-blue); }
     .assignment-ai-rigor-help{ margin:0; color:var(--theme-text-dim); font-size:13px; line-height:1.45; }
+    .assignment-feedback-sharing{ display:flex; align-items:center; gap:8px; font-size:13px; font-weight:700; }
+    .assignment-feedback-sharing input{ accent-color:var(--columbia-blue); }
+    .assignment-student-ai-feedback{ margin:10px 0; padding:10px; border-left:3px solid var(--columbia-blue); border-radius:6px; background:var(--theme-output-bg); }
+    .assignment-student-ai-feedback pre{ margin:6px 0 0; white-space:pre-wrap; font:inherit; color:var(--theme-text); }
+    .assignment-ai-queue-modal{ width:min(720px, calc(100vw - 28px)); max-width:720px; }
+    .assignment-ai-queue-header{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+    .assignment-ai-queue-header h3{ margin:3px 0 0; }
+    .assignment-ai-queue-summary{ margin:14px 0 8px; padding:10px 12px; border:1px solid var(--theme-border-mid); border-radius:8px; background:var(--theme-output-bg); font-weight:700; }
+    .assignment-ai-queue-note{ margin:0 0 12px; color:var(--theme-text-dim); font-size:12px; line-height:1.45; }
+    .assignment-ai-queue-list{ display:grid; gap:8px; max-height:min(55vh, 520px); overflow:auto; }
+    .assignment-ai-queue-item{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:11px 12px; border:1px solid var(--theme-border-mid); border-radius:9px; background:var(--theme-panel); }
+    .assignment-ai-queue-item div{ display:grid; gap:3px; min-width:0; }
+    .assignment-ai-queue-item span,.assignment-ai-queue-item small{ color:var(--theme-text-dim); overflow-wrap:anywhere; }
+    .assignment-ai-queue-empty{ padding:28px 16px; text-align:center; color:var(--theme-text-dim); border:1px dashed var(--theme-border-mid); border-radius:9px; }
     .assignment-grade-input{ width:76px; padding:6px; color:var(--theme-text); background:var(--theme-input-bg); border:1px solid var(--theme-border); border-radius:6px; }
     .assignment-not-turned-in{ color:#ef5350; font-weight:800; }
     .assignment-ai-feedback{ min-width:220px; max-width:420px; color:var(--theme-text); font-size:13px; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; }

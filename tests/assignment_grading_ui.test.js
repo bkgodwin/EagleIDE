@@ -6,6 +6,7 @@ const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'static', 'js', 'app-core.js'), 'utf8');
+const studentDashboard = fs.readFileSync(path.join(root, 'static', 'js', 'student-dashboard.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 
 test('teacher assignment table includes missing, manual, AI, and export controls', () => {
@@ -15,6 +16,19 @@ test('teacher assignment table includes missing, manual, AI, and export controls
   assert.match(source, /Additional grading instructions/);
   assert.match(source, /Percent \(1 decimal\)/);
   assert.match(source, /aiFeedback/);
+  assert.match(source, /openAssignmentAiQueueBtn/);
+  assert.match(source, /assignmentShareAiFeedback/);
+  assert.match(html, /id="assignmentAiQueueModal"/);
+});
+
+test('student dashboard owns locked assignment history and can copy preserved code to a draft editor', () => {
+  assert.doesNotMatch(html, /id="studentPastAssignmentList"/);
+  assert.match(html, /data-view="student-dash-past"/);
+  assert.match(html, /id="studentPastAssignmentsPane"/);
+  assert.match(studentDashboard, /\/api\/assignments\/past\?classId=/);
+  assert.match(studentDashboard, /source: 'assignment'/);
+  assert.match(studentDashboard, /setEditorSnapshot/);
+  assert.match(studentDashboard, /Teacher-shared AI feedback/);
 });
 
 test('submission editor navigation and minimized dashboard use stable assignment IDs', () => {

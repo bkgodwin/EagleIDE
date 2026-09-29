@@ -38,7 +38,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20260928-assignment-rigor-views">
+  <link rel="stylesheet" href="/static/css/main.css?v=20260929-ai-queue-history-2">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -708,9 +708,6 @@
                 <div id="studentAccountNotice" class="account-notice">Sign in with a student account to submit assignment files and view your scores.</div>
                 <h3 style="color:var(--columbia-blue); margin-top:0;">Active Assignments</h3>
                 <div id="studentAssignmentList"></div>
-
-                <h3 style="color:var(--columbia-blue); margin-top:24px;">Past Assignments</h3>
-                <div id="studentPastAssignmentList"></div>
               </div>
             </div>
 
@@ -1010,6 +1007,9 @@
           <button class="teacher-dash-navbtn" data-view="student-dash-mastery">
             <span class="navbtn-icon">🏅</span><span>Skill Mastery</span>
           </button>
+          <button class="teacher-dash-navbtn" data-view="student-dash-past">
+            <span class="navbtn-icon">📚</span><span>Past Assignments</span>
+          </button>
           <button class="teacher-dash-navbtn" data-view="student-dash-account">
             <span class="navbtn-icon">🔐</span><span>Account</span>
           </button>
@@ -1054,6 +1054,17 @@
             <div id="studentMasteryPane"></div>
           </div>
         </div>
+        <div class="teacher-dash-view" id="student-dash-past">
+          <div class="teacher-dash-view-hdr">
+            <div>
+              <h2 class="teacher-dash-view-title">Past Assignments</h2>
+              <p class="student-classes-subtitle">Locked work that your teacher previously released, with your preserved submission and grades.</p>
+            </div>
+          </div>
+          <div class="teacher-dash-scroll">
+            <div id="studentPastAssignmentsPane" class="student-past-assignments"></div>
+          </div>
+        </div>
         <div class="teacher-dash-view" id="student-dash-account">
           <div class="teacher-dash-view-hdr">
             <div>
@@ -1081,6 +1092,22 @@
   </div>
 
   <div id="studentAchievementToastStack" class="student-achievement-toast-stack" aria-live="polite"></div>
+
+  <div id="assignmentAiQueueModal" class="modal" style="display:none;">
+    <div class="modal-content assignment-ai-queue-modal">
+      <header class="assignment-ai-queue-header">
+        <div><span class="student-classes-eyebrow">Ollama workload</span><h3>AI Grading Queue</h3></div>
+        <button class="btn secondary" id="assignmentAiQueueCloseBtn" type="button">Close</button>
+      </header>
+      <div id="assignmentAiQueueSummary" class="assignment-ai-queue-summary" aria-live="polite">Loading queue…</div>
+      <p class="assignment-ai-queue-note">EagleIDE fills the configured Ollama capacity continuously. Ollama does not expose its internal buffer depth, so overload responses trigger a shared cooldown and automatic retry.</p>
+      <div id="assignmentAiQueueList" class="assignment-ai-queue-list"></div>
+      <div class="modal-actions">
+        <button class="btn secondary" id="assignmentAiQueueRefreshBtn" type="button">Refresh</button>
+        <button class="btn stop" id="assignmentAiQueueCancelAllBtn" type="button">Cancel All Grading</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Student Notebook Drawer -->
   <div id="studentNotebookOverlay" class="student-notebook-overlay" hidden></div>
@@ -1745,16 +1772,16 @@
   <script src="/static/js/editor-init.js?v=20260918-10"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js"></script>
-  <script src="/static/js/app-core.js?v=20260928-assignment-rigor-views"></script>
+  <script src="/static/js/app-core.js?v=20260929-ai-queue-history-2"></script>
   <script src="/static/js/step-mode.js?v=20260920-4"></script>
-  <script src="/static/js/wiki-reader.js?v=20260928-assignment-rigor-views"></script>
+  <script src="/static/js/wiki-reader.js?v=20260929-ai-queue-history-2"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
   <script src="/static/js/lesson-plans.js?v=20260816-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20260928-assignment-rigor-views"></script>
+  <script src="/static/js/wiki-admin.js?v=20260929-ai-queue-history-2"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20260918-10"></script>
   <script src="/static/js/student-notebook.js?v=20260918-10"></script>
-  <script src="/static/js/student-dashboard.js?v=20260918-10"></script>
+  <script src="/static/js/student-dashboard.js?v=20260929-ai-queue-history-2"></script>
 
 </body>
 </html>
