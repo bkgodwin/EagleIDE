@@ -45,6 +45,20 @@ class AutocompleteMetadataTestCase(unittest.TestCase):
         self.assertEqual(len(builtin_names), 70)
         self.assertTrue({"open", "print", "len", "range", "zip"}.issubset(builtin_names))
 
+    def test_python_module_members_and_keyword_help_are_cataloged(self):
+        module_entries = {
+            owner: {row["name"] for row in self.rows if row["owner"] == owner}
+            for owner in ("csv", "json", "random")
+        }
+        self.assertTrue({"reader", "writer", "DictReader", "DictWriter"}.issubset(module_entries["csv"]))
+        self.assertTrue({"dump", "dumps", "load", "loads"}.issubset(module_entries["json"]))
+        self.assertTrue({"choice", "randint", "random", "sample", "shuffle"}.issubset(module_entries["random"]))
+
+        keywords = {row["name"]: row for row in self.rows if row["owner"] == "keyword"}
+        self.assertTrue({"if", "elif", "else", "for", "while", "in", "not", "and", "or"}.issubset(keywords))
+        for name in ("if", "for", "while", "in", "not", "and", "or"):
+            self.assertGreaterEqual(len(keywords[name]["description"]), 75)
+
     def test_catalog_api_and_client_asset_are_wired(self):
         app_source = (BASE_DIR / "app.py").read_text(encoding="utf-8")
         page = (BASE_DIR / "index.html").read_text(encoding="utf-8")
