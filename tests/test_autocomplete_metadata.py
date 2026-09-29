@@ -59,12 +59,29 @@ class AutocompleteMetadataTestCase(unittest.TestCase):
         for name in ("if", "for", "while", "in", "not", "and", "or"):
             self.assertGreaterEqual(len(keywords[name]["description"]), 75)
 
+    def test_object_math_and_chart_helpers_are_cataloged(self):
+        expected = {
+            "csv.DictReader": {"fieldnames", "line_num"},
+            "csv.DictWriter": {"writeheader", "writerow", "writerows"},
+            "dict": {"get", "items", "keys", "values"},
+            "math": {"pi", "sin", "sqrt", "isclose"},
+            "statistics": {"mean", "median", "stdev"},
+            "numpy": {"array", "zeros", "linspace"},
+            "numpy.ndarray": {"reshape", "shape", "sum"},
+            "matplotlib.pyplot": {"plot", "subplots", "xlabel", "show"},
+            "matplotlib.axes.Axes": {"plot", "set_title"},
+            "sqlite3.Connection": {"cursor", "execute", "commit"},
+        }
+        for owner, required in expected.items():
+            found = {row["name"] for row in self.rows if row["owner"] == owner}
+            self.assertTrue(required.issubset(found), f"Missing {owner}: {required - found}")
+
     def test_catalog_api_and_client_asset_are_wired(self):
         app_source = (BASE_DIR / "app.py").read_text(encoding="utf-8")
         page = (BASE_DIR / "index.html").read_text(encoding="utf-8")
         client_source = (BASE_DIR / "static" / "js" / "autocomplete.js").read_text(encoding="utf-8")
         self.assertIn('@app.get("/api/autocomplete/catalog")', app_source)
-        self.assertIn('/static/js/autocomplete.js?v=20260929-2', page)
+        self.assertRegex(page, r'/static/js/autocomplete\.js\?v=[^" ]+')
         self.assertIn("cache: 'no-store'", client_source)
         self.assertIn('metadata = catalogIndex(payload.entries);', client_source)
         self.assertIn('schedule();', client_source)
