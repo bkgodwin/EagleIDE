@@ -1,21 +1,40 @@
 .CodeMirror{ height:100%; background:var(--theme-cm-bg); color:var(--text-light); font-size: var(--cm-font-size); line-height:1.4 }
     .CodeMirror-foldgutter { width: 20px; }
-    .CodeMirror-foldgutter .eagle-fold-open,
-    .CodeMirror-foldgutter .eagle-fold-closed {
-      width: 17px;
-      height: 17px;
+    /* CodeMirror positions markers in the gutter wrapper, beside the gutter. */
+    .CodeMirror .eagle-fold-open,
+    .CodeMirror .eagle-fold-closed {
+      box-sizing: border-box;
+      display: block;
+      width: 16px;
+      height: 16px;
       line-height: 14px;
-      margin: 1px 1px 0;
+      margin: 1px 2px 0;
       text-align: center;
-      border: 1px solid var(--theme-border-mid);
+      border: 1px solid var(--theme-border);
       border-radius: 4px;
       color: var(--theme-text);
       background: var(--theme-input-bg);
+      font-family: Arial, sans-serif;
+      font-size: 13px;
+      font-weight: 700;
       cursor: pointer;
     }
-    .CodeMirror-foldgutter .eagle-fold-open::after { content: '−'; }
-    .CodeMirror-foldgutter .eagle-fold-closed::after { content: '+'; }
-    .CodeMirror-foldmarker { color: var(--columbia-blue); border: 1px solid var(--theme-border-mid); border-radius: 4px; padding: 0 3px; }
+    .CodeMirror .eagle-fold-open::after { content: '−'; }
+    .CodeMirror .eagle-fold-closed::after { content: '+'; }
+    .CodeMirror .eagle-fold-open:hover,
+    .CodeMirror .eagle-fold-closed:hover { background: var(--theme-btn-hover); }
+    .CodeMirror-foldmarker {
+      margin: 0 3px;
+      padding: 0 5px;
+      border: 1px solid var(--theme-border);
+      border-radius: 999px;
+      background: var(--theme-input-bg);
+      color: var(--theme-text-dim);
+      font-size: .86em;
+      font-weight: 700;
+      letter-spacing: 1px;
+      cursor: pointer;
+    }
     .CodeMirror pre{ tab-size: var(--indent-tabs); -moz-tab-size: var(--indent-tabs) }
     .CodeMirror pre.CodeMirror-line,
     .CodeMirror pre.CodeMirror-line-like{
