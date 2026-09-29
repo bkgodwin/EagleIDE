@@ -1,4 +1,21 @@
 .CodeMirror{ height:100%; background:var(--theme-cm-bg); color:var(--text-light); font-size: var(--cm-font-size); line-height:1.4 }
+    .CodeMirror-foldgutter { width: 20px; }
+    .CodeMirror-foldgutter .eagle-fold-open,
+    .CodeMirror-foldgutter .eagle-fold-closed {
+      width: 17px;
+      height: 17px;
+      line-height: 14px;
+      margin: 1px 1px 0;
+      text-align: center;
+      border: 1px solid var(--theme-border-mid);
+      border-radius: 4px;
+      color: var(--theme-text);
+      background: var(--theme-input-bg);
+      cursor: pointer;
+    }
+    .CodeMirror-foldgutter .eagle-fold-open::after { content: '−'; }
+    .CodeMirror-foldgutter .eagle-fold-closed::after { content: '+'; }
+    .CodeMirror-foldmarker { color: var(--columbia-blue); border: 1px solid var(--theme-border-mid); border-radius: 4px; padding: 0 3px; }
     .CodeMirror pre{ tab-size: var(--indent-tabs); -moz-tab-size: var(--indent-tabs) }
     .CodeMirror pre.CodeMirror-line,
     .CodeMirror pre.CodeMirror-line-like{

@@ -124,15 +124,49 @@
     const simpleHint = hinted.replace(/typing\./g, '').split(/[\[|]/)[0].trim();
     if (/^(str|String)$/i.test(simpleHint)) return 'str';
     if (/^(list|List|Sequence|MutableSequence)$/i.test(simpleHint)) return 'list';
+    if (/^(dict|Dict|Mapping)$/i.test(simpleHint)) return 'dict';
+    if (/^(set|Set)$/i.test(simpleHint)) return 'set';
+    if (/^(tuple|Tuple)$/i.test(simpleHint)) return 'tuple';
     if (/^(TextIO|TextIOWrapper|IO)$/i.test(simpleHint)) return 'file';
+    if (/^(?:Path|pathlib\.Path)$/.test(simpleHint)) return 'pathlib.Path';
+    if (/^(?:ndarray|np\.ndarray|numpy\.ndarray)$/.test(simpleHint)) return 'numpy.ndarray';
+    if (/^csv\.(?:reader|DictReader|writer|DictWriter)$/.test(simpleHint)) return simpleHint;
     if (classNames.has(simpleHint)) return simpleHint;
     const expression = String(value || '').trim();
     if (/^(?:[rubf]{0,2})?["']/i.test(expression) || /^str\s*\(/.test(expression)) return 'str';
     if (/^\[/.test(expression) || /^list\s*\(/.test(expression) || /\.split\s*\(/.test(expression)) return 'list';
+    if (/^dict\s*\(/.test(expression) || /^\{\s*\}/.test(expression) || /^\{[^{}]*:/.test(expression)) return 'dict';
+    if (/^set\s*\(/.test(expression) || /^\{[^{}]*,/.test(expression)) return 'set';
+    if (/^tuple\s*\(/.test(expression) || /^\([^)]*,/.test(expression)) return 'tuple';
     if (/^(?:open|io\.open)\s*\(/.test(expression)) return 'file';
+    if (/^csv\.(?:DictReader|DictWriter|reader|writer)\s*\(/.test(expression)) {
+      return `csv.${expression.match(/(?:DictReader|DictWriter|reader|writer)/)[0]}`;
+    }
+    if (/^(?:pathlib\.)?Path\s*\(/.test(expression)) return 'pathlib.Path';
+    if (/^(?:np|numpy)\.(?:array|asarray|zeros|ones|empty|arange|linspace)\s*\(/.test(expression)) return 'numpy.ndarray';
+    if (/^(?:plt|pyplot|matplotlib\.pyplot)\.figure\s*\(/.test(expression)) return 'matplotlib.figure.Figure';
+    if (/^sqlite3\.connect\s*\(/.test(expression)) return 'sqlite3.Connection';
+    if (/^re\.compile\s*\(/.test(expression)) return 're.Pattern';
     const constructor = expression.match(/^([A-Za-z_]\w*)\s*\(/);
     if (constructor && classNames.has(constructor[1])) return constructor[1];
     return simpleHint || '';
+  }
+
+  function inferredCallType(value, varTypes) {
+    const call = String(value || '').trim().match(/^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*\(/);
+    if (!call) return '';
+    const parts = call[1].split('.');
+    const canonical = [varTypes.get(parts[0]) || parts[0], ...parts.slice(1)].join('.');
+    if (/^csv\.(?:reader|DictReader|writer|DictWriter)$/.test(canonical)) return canonical;
+    if (/^pathlib\.Path$/.test(canonical)) return 'pathlib.Path';
+    if (/^(?:pathlib\.Path\.open|io\.(?:StringIO|BytesIO))$/.test(canonical)) return 'file';
+    if (/^numpy\.(?:array|asarray|zeros|ones|empty|arange|linspace)$/.test(canonical)) return 'numpy.ndarray';
+    if (/^matplotlib\.pyplot\.figure$/.test(canonical)) return 'matplotlib.figure.Figure';
+    if (/^sqlite3\.connect$/.test(canonical)) return 'sqlite3.Connection';
+    if (/^sqlite3\.Connection\.(?:cursor|execute)$/.test(canonical)) return 'sqlite3.Cursor';
+    if (/^re\.compile$/.test(canonical)) return 're.Pattern';
+    if (/^re\.Pattern\.(?:search|match|fullmatch)$/.test(canonical)) return 're.Match';
+    return '';
   }
 
   function createSymbol(name, kind, extra) {
@@ -256,6 +290,7 @@
         const name = assignment[1];
         let typeName = inferPythonType(assignment[3], assignment[2], classNames);
         if (!typeName && result.varTypes.has(assignment[3].trim())) typeName = result.varTypes.get(assignment[3].trim());
+        if (!typeName) typeName = inferredCallType(assignment[3], result.varTypes);
         if (!typeName) {
           const calledName = assignment[3].trim().match(/^([A-Za-z_]\w*)\s*\(/)?.[1];
           typeName = result.functions.find(item => item.name === calledName)?.returns || '';
@@ -281,6 +316,17 @@
         }
       }
 
+      const subplot = line.match(/^\s*([A-Za-z_]\w*)\s*,\s*([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\.subplots\s*\(/);
+      if (subplot && result.varTypes.get(subplot[3]) === 'matplotlib.pyplot') {
+        [[subplot[1], 'matplotlib.figure.Figure'], [subplot[2], 'matplotlib.axes.Axes']].forEach(([name, typeName]) => {
+          result.varTypes.set(name, typeName);
+          if (!variableNames.has(name)) {
+            variableNames.add(name);
+            result.variables.push(createSymbol(name, 'variable', { returns: typeName, description: `Object returned by ${subplot[3]}.subplots().` }));
+          }
+        });
+      }
+
       const withFile = line.match(/^\s*(?:async\s+)?with\s+(?:open|io\.open)\s*\([^)]*\)\s+as\s+([A-Za-z_]\w*)/);
       if (withFile) {
         result.varTypes.set(withFile[1], 'file');
@@ -292,19 +338,33 @@
         }
       }
 
-      const forMatch = line.match(/^\s*for\s+([A-Za-z_]\w*)\s+in\b/);
-      if (forMatch && !variableNames.has(forMatch[1])) {
-        variableNames.add(forMatch[1]);
-        result.variables.push(createSymbol(forMatch[1], 'variable', { returns: 'Any', description: 'Loop variable.' }));
+      const forMatch = line.match(/^\s*(?:async\s+)?for\s+([A-Za-z_]\w*)\s+in\s+(.+?)\s*:/);
+      if (forMatch) {
+        const iterable = forMatch[2].trim();
+        const iterableType = result.varTypes.get(iterable) || inferredCallType(iterable, result.varTypes);
+        const itemType = iterableType === 'csv.DictReader' ? 'dict' : iterableType === 'csv.reader' ? 'list' : '';
+        if (itemType) result.varTypes.set(forMatch[1], itemType);
+        if (!variableNames.has(forMatch[1])) {
+          variableNames.add(forMatch[1]);
+          result.variables.push(createSymbol(forMatch[1], 'variable', { returns: itemType || 'Any', description: 'Loop variable.' }));
+        }
+      }
+      const withObject = line.match(/^\s*with\s+([A-Za-z_]\w*\.open\s*\([^)]*\))\s+as\s+([A-Za-z_]\w*)/);
+      if (withObject && inferredCallType(withObject[1], result.varTypes) === 'file') {
+        result.varTypes.set(withObject[2], 'file');
+        if (!variableNames.has(withObject[2])) {
+          variableNames.add(withObject[2]);
+          result.variables.push(createSymbol(withObject[2], 'variable', { returns: 'file', description: 'File opened from a workspace path.' }));
+        }
       }
       const importMatch = line.match(/^\s*import\s+(.+)$/);
       if (importMatch) {
         importMatch[1].replace(/\s+#.*$/, '').split(',').forEach(rawImport => {
-          const imported = rawImport.trim().match(/^([A-Za-z_]\w*)(?:\s+as\s+([A-Za-z_]\w*))?$/);
+          const imported = rawImport.trim().match(/^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)(?:\s+as\s+([A-Za-z_]\w*))?$/);
           if (!imported) return;
           const moduleName = imported[1];
-          const visibleName = imported[2] || moduleName;
-          result.varTypes.set(visibleName, moduleName);
+          const visibleName = imported[2] || moduleName.split('.')[0];
+          result.varTypes.set(visibleName, imported[2] ? moduleName : visibleName);
           if (variableNames.has(visibleName)) return;
           variableNames.add(visibleName);
           result.variables.push(createSymbol(visibleName, 'module', {
@@ -313,11 +373,12 @@
           }));
         });
       } else {
-        const fromImport = line.match(/^\s*from\s+\S+\s+import\s+([A-Za-z_]\w*)(?:\s+as\s+([A-Za-z_]\w*))?/);
-        const imported = fromImport && (fromImport[2] || fromImport[1]);
+        const fromImport = line.match(/^\s*from\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s+import\s+([A-Za-z_]\w*)(?:\s+as\s+([A-Za-z_]\w*))?/);
+        const imported = fromImport && (fromImport[3] || fromImport[2]);
         if (imported && !variableNames.has(imported)) {
+          result.varTypes.set(imported, `${fromImport[1]}.${fromImport[2]}`);
           variableNames.add(imported);
-          result.variables.push(createSymbol(imported, 'module', { returns: 'module', description: 'Imported module member.' }));
+          result.variables.push(createSymbol(imported, 'module', { returns: 'module', owner: fromImport[1], importedName: fromImport[2], description: `Imported ${fromImport[1]}.${fromImport[2]}.` }));
         }
       }
     }
@@ -385,7 +446,7 @@
   function contextAt(line, cursorCh) {
     const before = String(line || '').slice(0, cursorCh);
     if (isInsideCommentOrString(String(line || ''), cursorCh)) return null;
-    const attr = before.match(/((?:[A-Za-z_$][\w$]*|(?:[rubf]{0,2})?["'][^"']*["']|\[[^\]]*\]|(?:open|io\.open)\s*\([^()\n]*\)))\.((?:[A-Za-z_$][\w$]*)?)$/i);
+    const attr = before.match(/((?:[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*\([^()\n]*\)|[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*|(?:[rubf]{0,2})?["'][^"']*["']|\[[^\]]*\]))\.((?:[A-Za-z_$][\w$]*)?)$/i);
     if (attr) {
       return { mode: 'member', object: attr[1], partial: attr[2], fromCh: cursorCh - attr[2].length };
     }
@@ -432,8 +493,12 @@
         if (/^(?:[rubf]{0,2})?["']/i.test(objectName)) owner = 'str';
         else if (/^\[/.test(objectName)) owner = 'list';
         else if (/^(?:open|io\.open)\s*\(/.test(objectName)) owner = 'file';
+        else if (/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*\(/.test(objectName)) owner = inferredCallType(objectName, analysis.varTypes);
         else if (objectName === 'self' || objectName === 'cls') owner = options.currentClass || '';
-        else owner = analysis.varTypes.get(objectName) || (analysis.methods.has(objectName) ? objectName : '');
+        else if (objectName.includes('.')) {
+          const parts = objectName.split('.');
+          owner = [analysis.varTypes.get(parts[0]) || parts[0], ...parts.slice(1)].join('.');
+        } else owner = analysis.varTypes.get(objectName) || (analysis.methods.has(objectName) ? objectName : '');
         for (const entry of index.values()) {
           if (entry.language === 'python' && String(entry.owner).toLowerCase() === String(owner).toLowerCase()) add(Object.assign({}, entry));
         }
@@ -451,7 +516,10 @@
     } else {
       analysis.functions.forEach(add);
       analysis.classes.forEach(add);
-      analysis.variables.forEach(add);
+      analysis.variables.forEach(item => {
+        const imported = item.importedName && index.get(`${language}|${String(item.owner).toLowerCase()}|${item.importedName}`);
+        add(imported ? Object.assign({}, imported, { name: item.name }) : item);
+      });
       const keywords = language === 'python' ? PYTHON_KEYWORDS : JAVASCRIPT_KEYWORDS;
       const builtins = language === 'python' ? PYTHON_BUILTINS : JAVASCRIPT_BUILTINS;
       keywords.forEach(name => add(detailFor(index, language, 'keyword', name, {
@@ -489,6 +557,7 @@
     let detailsNode = null;
     let suggestions = [];
     let selectedIndex = 0;
+    let selectionIntent = false;
     let visibleContext = null;
     let analysisCache = null;
     let analysisSource = null;
@@ -537,6 +606,7 @@
       if (popup) popup.classList.add('hidden');
       suggestions = [];
       selectedIndex = 0;
+      selectionIntent = false;
       visibleContext = null;
     }
 
@@ -564,6 +634,7 @@
 
     function select(index) {
       if (!suggestions.length) return;
+      selectionIntent = true;
       selectedIndex = (index + suggestions.length) % suggestions.length;
       listNode.querySelectorAll('.completion-item').forEach((node, itemIndex) => {
         node.classList.toggle('selected', itemIndex === selectedIndex);
@@ -594,6 +665,7 @@
       if (!popup || !items.length) { hide(); return; }
       suggestions = items;
       selectedIndex = 0;
+      selectionIntent = false;
       visibleContext = { line: cursor.line, cursorCh: cursor.ch, fromCh: context.fromCh, mode: context.mode, object: context.object };
       listNode.textContent = '';
       items.forEach((item, index) => {
@@ -707,9 +779,13 @@
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
         select(selectedIndex + (event.key === 'ArrowDown' ? 1 : -1));
-      } else if (event.key === 'Enter' || event.key === 'Tab') {
+      } else if ((event.key === 'Enter' || event.key === 'Tab') && selectionIntent) {
         event.preventDefault();
         apply(suggestions[selectedIndex]);
+      } else if (event.key === 'Enter' || event.key === 'Tab') {
+        // Typing may open suggestions automatically. Enter and Tab keep editing
+        // until the student explicitly navigates or hovers over a suggestion.
+        hide();
       } else if (event.key === 'Escape') {
         event.preventDefault();
         hide();
