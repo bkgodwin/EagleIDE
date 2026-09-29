@@ -112,6 +112,69 @@ test('Python imports expose CSV, JSON, random, and direct open-file members from
   assert.equal(directFileItems[0].name, 'read');
 });
 
+test('Python object and dotted-module completions retain specific helper text', () => {
+  const source = [
+    'import csv as data_csv',
+    'import matplotlib.pyplot as plt',
+    'import numpy as np',
+    'import sqlite3',
+    'import math as m',
+    'from pathlib import Path',
+    'from math import sqrt as root',
+    'with open("records.csv") as handle:',
+    '    rows = data_csv.DictReader(handle)',
+    '    for row in rows:',
+    '        pass',
+    'output = data_csv.writer(handle)',
+    'values = np.zeros(4)',
+    'file_path = Path("records.csv")',
+    'with file_path.open() as stream:',
+    '    pass',
+    'figure, axes = plt.subplots()',
+    'database = sqlite3.connect("data.db")',
+    'cursor = database.cursor()',
+  ].join('\n');
+  const analysis = autocomplete.analyzePython(source);
+  assert.equal(analysis.varTypes.get('rows'), 'csv.DictReader');
+  assert.equal(analysis.varTypes.get('row'), 'dict');
+  assert.equal(analysis.varTypes.get('output'), 'csv.writer');
+  assert.equal(analysis.varTypes.get('values'), 'numpy.ndarray');
+  assert.equal(analysis.varTypes.get('file_path'), 'pathlib.Path');
+  assert.equal(analysis.varTypes.get('stream'), 'file');
+  assert.equal(analysis.varTypes.get('figure'), 'matplotlib.figure.Figure');
+  assert.equal(analysis.varTypes.get('axes'), 'matplotlib.axes.Axes');
+  assert.equal(analysis.varTypes.get('cursor'), 'sqlite3.Cursor');
+  const catalog = autocomplete.catalogIndex([
+    { language: 'python', owner: 'csv.DictReader', name: 'fieldnames', kind: 'attribute', returns: 'list', description: 'CSV column names.' },
+    { language: 'python', owner: 'csv.writer', name: 'writerow', kind: 'method', signature: '(row)', returns: 'int', description: 'Write one CSV row.' },
+    { language: 'python', owner: 'dict', name: 'get', kind: 'method', signature: '(key)', returns: 'Any', description: 'Read a value safely.' },
+    { language: 'python', owner: 'numpy.ndarray', name: 'reshape', kind: 'method', signature: '(shape)', returns: 'numpy.ndarray', description: 'Change array shape.' },
+    { language: 'python', owner: 'matplotlib.pyplot', name: 'plot', kind: 'function', signature: '(x, y)', returns: 'list', description: 'Draw a line chart.' },
+    { language: 'python', owner: 'matplotlib.axes.Axes', name: 'set_title', kind: 'method', signature: '(label)', returns: 'Text', description: 'Label the axes.' },
+    { language: 'python', owner: 'math', name: 'sqrt', kind: 'function', signature: '(x)', returns: 'float', description: 'Compute a square root.' },
+  ]);
+  const names = (object, partial) => autocomplete.buildSuggestionSet({
+    language: 'python', analysis, catalog, context: { mode: 'member', object, partial, fromCh: 0 },
+  });
+  assert.equal(names('rows', 'field')[0].description, 'CSV column names.');
+  assert.equal(names('output', 'writer')[0].name, 'writerow');
+  assert.equal(names('row', 'get')[0].name, 'get');
+  assert.equal(names('values', 'res')[0].name, 'reshape');
+  assert.equal(names('plt', 'plot')[0].description, 'Draw a line chart.');
+  assert.equal(names('axes', 'set')[0].name, 'set_title');
+  assert.equal(names('m', 'sq')[0].description, 'Compute a square root.');
+  assert.equal(names('data_csv.DictReader(handle)', 'field')[0].name, 'fieldnames');
+  const imported = autocomplete.buildSuggestionSet({
+    language: 'python', analysis, catalog, context: { mode: 'global', object: '', partial: 'root', fromCh: 0 },
+  });
+  assert.equal(imported[0].description, 'Compute a square root.');
+  assert.equal(imported[0].name, 'root');
+  assert.equal(autocomplete.contextAt('plt.plot', 8).object, 'plt');
+  assert.equal(autocomplete.contextAt('matplotlib.pyplot.plot', 22).object, 'matplotlib.pyplot');
+  assert.equal(autocomplete.contextAt('data_csv.DictReader(handle).field', 33).object, 'data_csv.DictReader(handle)');
+  assert.equal(autocomplete.contextAt('np.zeros(4).reshape', 19).object, 'np.zeros(4)');
+});
+
 test('completion context rejects comments and unfinished strings but supports a bare dot', () => {
   assert.deepEqual(
     autocomplete.contextAt('handle.', 7),
@@ -153,6 +216,41 @@ test('disabled engine does not fetch metadata or schedule analysis work', async 
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(fetches, 1);
   engine.setEnabled(false);
+});
+
+test('automatic suggestions do not steal Enter or Tab until explicitly selected', () => {
+  const handlers = {};
+  const makeNode = () => ({
+    children: [], style: {}, className: '', textContent: '',
+    classList: { add() {}, remove() {}, toggle() {} },
+    appendChild(child) { this.children.push(child); return child; },
+    append(...children) { this.children.push(...children); },
+    setAttribute() {}, addEventListener() {}, scrollIntoView() {},
+    querySelectorAll() { return this.children; },
+    getBoundingClientRect() { return { right: 200, bottom: 200, width: 180, height: 180 }; },
+  });
+  const document = { body: makeNode(), createElement: makeNode, addEventListener() {} };
+  let replacements = 0;
+  const cm = {
+    on(name, handler) { handlers[name] = handler; },
+    getOption: () => 'python', getValue: () => 'pri', getCursor: () => ({ line: 0, ch: 3 }),
+    getLine: () => 'pri', somethingSelected: () => false,
+    cursorCoords: () => ({ left: 10, top: 10, bottom: 25 }),
+    replaceRange() { replacements += 1; }, focus() {},
+  };
+  const engine = autocomplete.createEngine(cm, { enabled: true, document, window: { innerWidth: 800, innerHeight: 600, addEventListener() {} } });
+  engine.check();
+  let prevented = 0;
+  handlers.keydown(cm, { key: 'Enter', preventDefault() { prevented += 1; } });
+  assert.equal(prevented, 0);
+  assert.equal(replacements, 0);
+  engine.check();
+  handlers.keydown(cm, { key: 'Tab', preventDefault() { prevented += 1; } });
+  assert.equal(prevented, 0);
+  engine.check();
+  handlers.keydown(cm, { key: 'ArrowDown', preventDefault() { prevented += 1; } });
+  handlers.keydown(cm, { key: 'Enter', preventDefault() { prevented += 1; } });
+  assert.equal(replacements, 1);
 });
 
 test('analysis refuses oversized editor buffers', () => {

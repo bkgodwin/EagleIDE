@@ -1,4 +1,8 @@
-function initEditor() {
+function eagleFoldRange(cm, pos) {
+      return window.EagleEditorBehavior?.foldRange(cm, pos, window.CodeMirror) || null;
+    }
+
+    function initEditor() {
       const ta = document.getElementById('editor');
       // Determine saved theme at startup
       let _savedCmTheme = 'monokai';
@@ -8,11 +12,15 @@ function initEditor() {
           mode: "python",
           theme: _savedCmTheme,
           lineNumbers: true,
+          gutters: ['CodeMirror-linenumbers', 'CodeMirror-foldgutter'],
+          foldGutter: { rangeFinder: eagleFoldRange, indicatorOpen: 'eagle-fold-open', indicatorFolded: 'eagle-fold-closed' },
+          foldOptions: { rangeFinder: eagleFoldRange, widget: ' ⋯ ' },
+          extraKeys: { Enter: cm => window.EagleEditorBehavior.enter(cm), 'Ctrl-Q': cm => cm.foldCode?.(cm.getCursor()) },
           indentUnit: 4,
           tabSize: 4,
           indentWithTabs: true,
           smartIndent: true,
-          electricChars: true,
+          electricChars: false,
           autoCloseBrackets: true,
           matchBrackets: true,
           viewportMargin: 20
@@ -28,7 +36,7 @@ function initEditor() {
           setValue: (v) => { cm.setValue(v); dirty = true; }
         };
       } else {
-        // Fallback textarea: keep tab characters on Enter after colon
+        // Fallback textarea uses the same predictable Python Enter rules.
         ta.style.display = 'block';
         ta.style.width = "100%"; ta.style.height = "100%"; ta.style.background = "var(--bg-dark)";
         ta.style.color = "var(--text-light)"; ta.style.border = "0"; ta.style.outline = "none";
@@ -38,16 +46,19 @@ function initEditor() {
             ta.value = ta.value.substring(0, s) + "\t" + ta.value.substring(e2);
             ta.selectionStart = ta.selectionEnd = s + 1;
           } else if (e.key === "Enter") {
-            const before = ta.value.slice(0, ta.selectionStart);
-            const lastLine = before.split(/\r?\n/).pop() || "";
-            const base = lastLine.match(/^\t*/)?.[0] ?? "";
-            const extra = /:\s*$/.test(lastLine) ? "\t" : "";
-            setTimeout(() => {
-              const pos = ta.selectionStart;
-              const insert = base + extra;
-              ta.value = ta.value.slice(0, pos) + insert + ta.value.slice(pos);
-              ta.selectionStart = ta.selectionEnd = pos + insert.length;
-            }, 0);
+            e.preventDefault();
+            const start = ta.selectionStart;
+            const end = ta.selectionEnd;
+            const lineStart = ta.value.lastIndexOf('\n', start - 1) + 1;
+            const nextNewline = ta.value.indexOf('\n', start);
+            const lineEnd = nextNewline < 0 ? ta.value.length : nextNewline;
+            const line = ta.value.slice(lineStart, lineEnd);
+            const next = window.EagleEditorBehavior?.nextPythonIndent(line, start - lineStart)
+              || { clearBlankLine: false, text: `\n${line.match(/^[\t ]*/)?.[0] || ''}` };
+            const from = next.clearBlankLine && start === end ? lineStart : start;
+            const to = next.clearBlankLine && start === end ? lineEnd : end;
+            ta.value = ta.value.slice(0, from) + next.text + ta.value.slice(to);
+            ta.selectionStart = ta.selectionEnd = from + next.text.length;
           }
         });
         window.__isDirty = () => true;
@@ -104,6 +115,9 @@ function initEditor() {
         mode: "python",
         theme: cmTheme,
         lineNumbers: true,
+        gutters: ['CodeMirror-linenumbers', 'CodeMirror-foldgutter'],
+        foldGutter: { rangeFinder: eagleFoldRange, indicatorOpen: 'eagle-fold-open', indicatorFolded: 'eagle-fold-closed' },
+        foldOptions: { rangeFinder: eagleFoldRange, widget: ' ⋯ ' },
         indentUnit: 4,
         tabSize: 4,
         indentWithTabs: true,
