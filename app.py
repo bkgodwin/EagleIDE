@@ -158,7 +158,10 @@ MAX_TEACHER_STREAM_CODE_BYTES = 200_000
 TEACHER_STREAM_MIN_INTERVAL_SECONDS = 0.25
 
 MAX_CONCURRENT_AI_REQUESTS = _env_int("EAGLE_MAX_CONCURRENT_AI_REQUESTS", 3, 1, 16)
-MAX_AI_REQUESTS_PER_MINUTE = _env_int("EAGLE_MAX_AI_REQUESTS_PER_MINUTE", 6, 1, 120)
+MAX_QUEUED_AI_REQUESTS = _env_int("EAGLE_MAX_QUEUED_AI_REQUESTS", 500, 25, 5000)
+AI_OVERLOAD_RETRY_ATTEMPTS = _env_int("EAGLE_AI_OVERLOAD_RETRY_ATTEMPTS", 2, 1, 5)
+AI_OVERLOAD_MIN_PAUSE_SECONDS = _env_int("EAGLE_AI_OVERLOAD_MIN_PAUSE_SECONDS", 3, 1, 60)
+AI_OVERLOAD_MAX_PAUSE_SECONDS = _env_int("EAGLE_AI_OVERLOAD_MAX_PAUSE_SECONDS", 60, 5, 300)
 MAX_AI_PROMPT_CHARS = _env_int("EAGLE_MAX_AI_PROMPT_CHARS", 64_000, 2_000, 250_000)
 MAX_AI_RESPONSE_CHARS = _env_int("EAGLE_MAX_AI_RESPONSE_CHARS", 64_000, 2_000, 250_000)
 MAX_AI_HTTP_RESPONSE_BYTES = _env_int("EAGLE_MAX_AI_HTTP_RESPONSE_BYTES", 2 * 1024 * 1024, 64 * 1024, 16 * 1024 * 1024)
@@ -5331,12 +5334,17 @@ def teacher_toggle_student():
 # -------------------------
 # Ollama helpers (AI)
 # -------------------------
-_ai_slots = threading.BoundedSemaphore(MAX_CONCURRENT_AI_REQUESTS)
 _ai_lock = threading.Lock()
 _ai_request_history: Dict[str, deque] = defaultdict(deque)
 _ai_cache: Dict[str, tuple[float, str]] = {}
 _ai_consecutive_failures = 0
 _ai_circuit_open_until = 0.0
+_ai_pause_until = 0.0
+_ai_queue_condition = threading.Condition(threading.Lock())
+_ai_pending_jobs: deque = deque()
+_ai_jobs: Dict[str, Dict[str, Any]] = {}
+_ai_workers: list[threading.Thread] = []
+_ai_workers_lock = threading.Lock()
 _ai_metrics = {
     "active": 0,
     "accepted": 0,
@@ -5345,26 +5353,47 @@ _ai_metrics = {
     "circuit_rejected": 0,
     "failures": 0,
     "cache_hits": 0,
+    "queued": 0,
+    "dequeued": 0,
+    "retried": 0,
+    "canceled": 0,
+    "queue_wait_ms_total": 0,
+    "queue_wait_ms_max": 0,
 }
 AI_CACHE_TTL_SECONDS = 60.0
 AI_CACHE_MAX_ENTRIES = 128
+AI_JOB_HISTORY_SECONDS = 600.0
+AI_JOB_HISTORY_MAX_ENTRIES = 500
 
 
 def _reset_ai_runtime_state() -> None:
-    global _ai_consecutive_failures, _ai_circuit_open_until
+    global _ai_consecutive_failures, _ai_circuit_open_until, _ai_pause_until
     with _ai_lock:
         _ai_cache.clear()
         _ai_consecutive_failures = 0
         _ai_circuit_open_until = 0.0
+        _ai_pause_until = 0.0
+    with _ai_queue_condition:
+        _ai_queue_condition.notify_all()
 
 
-def _record_ai_failure() -> None:
-    global _ai_consecutive_failures, _ai_circuit_open_until
+def _record_ai_failure(*, retry_after: float = 0.0) -> None:
+    global _ai_consecutive_failures, _ai_circuit_open_until, _ai_pause_until
     with _ai_lock:
         _ai_metrics["failures"] += 1
         _ai_consecutive_failures += 1
+        if retry_after > 0:
+            pause = max(AI_OVERLOAD_MIN_PAUSE_SECONDS, min(float(retry_after), AI_OVERLOAD_MAX_PAUSE_SECONDS))
+            _ai_pause_until = max(_ai_pause_until, time.monotonic() + pause)
         if _ai_consecutive_failures >= AI_CIRCUIT_FAILURE_THRESHOLD:
             _ai_circuit_open_until = time.monotonic() + AI_CIRCUIT_COOLDOWN_SECONDS
+
+
+def _record_ai_success() -> None:
+    global _ai_consecutive_failures, _ai_circuit_open_until
+    with _ai_lock:
+        _ai_consecutive_failures = 0
+        _ai_circuit_open_until = 0.0
 
 
 def _ai_request_identity() -> str:
@@ -5395,6 +5424,231 @@ def _prune_ai_state(now: float) -> None:
             _ai_cache.pop(key, None)
 
 
+def _retry_after_seconds(response: Any, fallback: int = AI_OVERLOAD_MIN_PAUSE_SECONDS) -> int:
+    try:
+        raw = response.headers.get("Retry-After", "")
+        return max(1, min(AI_OVERLOAD_MAX_PAUSE_SECONDS, int(float(raw)))) if raw else fallback
+    except Exception:
+        return fallback
+
+
+def _perform_ollama_request(job: Dict[str, Any]) -> Dict[str, Any]:
+    """Perform one network attempt. Queueing, overload pauses, and retries live in the dispatcher."""
+    r = None
+    try:
+        bounded_timeout = max(AI_MIN_TIMEOUT_SECONDS, min(float(job["timeout"]), AI_MAX_TIMEOUT_SECONDS))
+        r = requests.post(job["url"], json=job["payload"], timeout=(3.0, bounded_timeout), stream=True)
+        status_code = int(r.status_code)
+        if not 200 <= status_code < 300:
+            if status_code == 404:
+                error = f"Ollama could not find model '{job['model']}'. Pull it on the Ollama server or select an installed model."
+            elif status_code in {401, 403}:
+                error = "Ollama rejected the request. Check the server URL and access policy."
+            elif status_code in {429, 503}:
+                error = "Ollama is at capacity; the request will be retried after a short pause."
+            else:
+                error = f"Ollama rejected the request (HTTP {status_code})."
+            retry_after = _retry_after_seconds(r)
+            _record_ai_failure(retry_after=retry_after if status_code in {429, 503} else 0)
+            return {
+                "ok": False,
+                "error": error,
+                "status": status_code if status_code in {429, 503} else 502,
+                "retry_after": retry_after,
+            }
+        declared_size = int(r.headers.get("Content-Length", "0") or 0)
+        if declared_size > MAX_AI_HTTP_RESPONSE_BYTES:
+            raise ValueError("AI service response exceeds the configured byte limit")
+        response_bytes = bytearray()
+        for chunk in r.iter_content(chunk_size=16_384):
+            if not chunk:
+                continue
+            response_bytes.extend(chunk)
+            if len(response_bytes) > MAX_AI_HTTP_RESPONSE_BYTES:
+                raise ValueError("AI service response exceeds the configured byte limit")
+        payload = json.loads(response_bytes.decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("AI service returned an invalid response")
+        if payload.get("error"):
+            message = str(payload.get("error") or "").lower()
+            overloaded = any(marker in message for marker in ("busy", "queue", "capacity", "too many", "limit"))
+            retry_after = AI_OVERLOAD_MIN_PAUSE_SECONDS if overloaded else 0
+            _record_ai_failure(retry_after=retry_after)
+            return {
+                "ok": False,
+                "error": "Ollama is at capacity; the request will be retried after a short pause." if overloaded else "Ollama could not generate a response for this request.",
+                "status": 503 if overloaded else 502,
+                "retry_after": retry_after,
+            }
+        message = payload.get("message") if isinstance(payload.get("message"), dict) else {}
+        text = str(payload.get("response") or message.get("content") or payload.get("data") or "").strip()
+        if not text:
+            _record_ai_failure()
+            return {"ok": False, "error": "Ollama returned an empty response. Check that the selected model supports text generation.", "status": 502}
+        _record_ai_success()
+        return {
+            "ok": True,
+            "text": text[:MAX_AI_RESPONSE_CHARS],
+            "ollama_metrics": {
+                "total_duration": int(payload.get("total_duration") or 0),
+                "load_duration": int(payload.get("load_duration") or 0),
+                "eval_count": int(payload.get("eval_count") or 0),
+            },
+        }
+    except requests.exceptions.Timeout:
+        _record_ai_failure()
+        return {
+            "ok": False,
+            "error": (
+                f"The AI model did not respond within {int(bounded_timeout)} seconds. "
+                "The model may still be loading; try again or increase the AI timeout in Admin Settings."
+            ),
+            "status": 504,
+        }
+    except requests.exceptions.ConnectionError:
+        _record_ai_failure()
+        return {"ok": False, "error": "The Ollama service could not be reached. Check its URL and confirm Ollama is listening for this server.", "status": 502}
+    except requests.exceptions.RequestException:
+        _record_ai_failure()
+        return {"ok": False, "error": "The Ollama request failed. Check the AI service and try again.", "status": 502}
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        _record_ai_failure()
+        return {"ok": False, "error": "Ollama returned an invalid or oversized response.", "status": 502}
+    except Exception:
+        _record_ai_failure()
+        return {"ok": False, "error": "The AI request could not be completed.", "status": 502}
+    finally:
+        if r is not None:
+            try:
+                r.close()
+            except Exception:
+                pass
+
+
+def _prune_ai_jobs_locked(now: float) -> None:
+    finished = [
+        job for job in _ai_jobs.values()
+        if job.get("finished_monotonic") and now - float(job["finished_monotonic"]) >= AI_JOB_HISTORY_SECONDS
+    ]
+    excess = max(0, len(_ai_jobs) - AI_JOB_HISTORY_MAX_ENTRIES)
+    if excess:
+        finished.extend(sorted(
+            (job for job in _ai_jobs.values() if job.get("finished_monotonic")),
+            key=lambda item: float(item.get("finished_monotonic") or 0),
+        )[:excess])
+    for job in {item["id"]: item for item in finished}.values():
+        _ai_jobs.pop(job["id"], None)
+
+
+def _ai_dispatcher_loop() -> None:
+    global _ai_pause_until
+    while True:
+        with _ai_queue_condition:
+            while True:
+                _prune_ai_jobs_locked(time.monotonic())
+                with _ai_lock:
+                    ready_at = max(_ai_pause_until, _ai_circuit_open_until)
+                delay = ready_at - time.monotonic()
+                if _ai_pending_jobs and delay <= 0:
+                    job = _ai_pending_jobs.popleft()
+                    break
+                _ai_queue_condition.wait(timeout=max(0.1, min(delay, 5.0)) if delay > 0 else None)
+            if job.get("canceled"):
+                job["state"] = "canceled"
+                job["result"] = {"ok": False, "error": "AI request canceled", "status": 499}
+                job["finished_monotonic"] = time.monotonic()
+                job["finishedAt"] = _current_timestamp()
+                job["event"].set()
+                continue
+            job["state"] = "running"
+            job["startedAt"] = job.get("startedAt") or _current_timestamp()
+            job["attempts"] += 1
+            wait_ms = max(0, int((time.monotonic() - float(job["queued_monotonic"])) * 1000))
+        with _ai_lock:
+            _ai_metrics["active"] += 1
+            _ai_metrics["dequeued"] += 1
+            _ai_metrics["queue_wait_ms_total"] += wait_ms
+            _ai_metrics["queue_wait_ms_max"] = max(_ai_metrics["queue_wait_ms_max"], wait_ms)
+        result = _perform_ollama_request(job)
+        with _ai_lock:
+            _ai_metrics["active"] = max(0, _ai_metrics["active"] - 1)
+        retryable = result.get("status") in {429, 503}
+        with _ai_queue_condition:
+            if job.get("canceled"):
+                job["state"] = "canceled"
+                job["result"] = {"ok": False, "error": "AI request canceled", "status": 499}
+            elif retryable and job["attempts"] <= AI_OVERLOAD_RETRY_ATTEMPTS:
+                delay = max(AI_OVERLOAD_MIN_PAUSE_SECONDS, min(int(result.get("retry_after") or AI_OVERLOAD_MIN_PAUSE_SECONDS), AI_OVERLOAD_MAX_PAUSE_SECONDS))
+                with _ai_lock:
+                    _ai_pause_until = max(_ai_pause_until, time.monotonic() + delay)
+                    _ai_metrics["retried"] += 1
+                job["state"] = "retrying"
+                job["retryAt"] = datetime.fromtimestamp(time.time() + delay, timezone.utc).isoformat(timespec="seconds")
+                _ai_pending_jobs.append(job)
+                _ai_queue_condition.notify_all()
+                continue
+            else:
+                job["state"] = "completed" if result.get("ok") else "failed"
+                job["result"] = result
+            job["finished_monotonic"] = time.monotonic()
+            job["finishedAt"] = _current_timestamp()
+            if job.get("result", {}).get("ok") and job.get("use_cache"):
+                with _ai_lock:
+                    _ai_cache[job["cache_key"]] = (time.monotonic() + AI_CACHE_TTL_SECONDS, job["result"]["text"])
+                    _prune_ai_state(time.monotonic())
+            job["event"].set()
+            _ai_queue_condition.notify_all()
+
+
+def _ensure_ai_dispatcher() -> None:
+    with _ai_workers_lock:
+        alive = [worker for worker in _ai_workers if worker.is_alive()]
+        _ai_workers[:] = alive
+        for index in range(len(alive), MAX_CONCURRENT_AI_REQUESTS):
+            worker = threading.Thread(target=_ai_dispatcher_loop, name=f"ollama-queue-{index + 1}", daemon=True)
+            _ai_workers.append(worker)
+            worker.start()
+
+
+def _cancel_ai_jobs(predicate) -> int:
+    canceled = 0
+    with _ai_queue_condition:
+        for job in _ai_jobs.values():
+            if job.get("state") not in {"queued", "retrying", "running"} or not predicate(job):
+                continue
+            job["canceled"] = True
+            canceled += 1
+            if job.get("state") != "running":
+                job["state"] = "canceled"
+                job["result"] = {"ok": False, "error": "AI request canceled", "status": 499}
+                job["finished_monotonic"] = time.monotonic()
+                job["finishedAt"] = _current_timestamp()
+                job["event"].set()
+        if canceled:
+            with _ai_lock:
+                _ai_metrics["canceled"] += canceled
+            _ai_queue_condition.notify_all()
+    return canceled
+
+
+def _ai_queue_summary() -> Dict[str, Any]:
+    with _ai_queue_condition:
+        states = defaultdict(int)
+        for job in _ai_jobs.values():
+            if job.get("state") in {"queued", "retrying", "running"}:
+                states[job["state"]] += 1
+    with _ai_lock:
+        pause_for = max(0, int(max(_ai_pause_until, _ai_circuit_open_until) - time.monotonic()))
+    return {
+        "queued": states["queued"] + states["retrying"],
+        "running": states["running"],
+        "retrying": states["retrying"],
+        "capacity": MAX_CONCURRENT_AI_REQUESTS,
+        "pausedForSeconds": pause_for,
+        "ollamaBufferAvailable": False,
+    }
+
+
 def call_ollama_generate(
     ollama_url: str,
     model: str,
@@ -5406,8 +5660,10 @@ def call_ollama_generate(
     request_identity: Optional[str] = None,
     json_response: bool = False,
     temperature: Optional[float] = None,
+    request_kind: str = "interactive",
+    request_label: str = "",
+    request_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    global _ai_consecutive_failures, _ai_circuit_open_until
     prompt = str(prompt or "")
     if not prompt:
         return {"ok": False, "error": "AI prompt is empty", "status": 400}
@@ -5444,14 +5700,6 @@ def call_ollama_generate(
     now = time.monotonic()
     with _ai_lock:
         _prune_ai_state(now)
-        if now < _ai_circuit_open_until:
-            _ai_metrics["circuit_rejected"] += 1
-            return {
-                "ok": False,
-                "error": "AI service is temporarily unavailable; retry shortly",
-                "status": 503,
-                "retry_after": max(1, int(_ai_circuit_open_until - now)),
-            }
         cached = _ai_cache.get(cache_key) if use_cache else None
         if cached and cached[0] > now:
             _ai_metrics["cache_hits"] += 1
@@ -5459,100 +5707,46 @@ def call_ollama_generate(
         history = _ai_request_history[identity]
         while history and history[0] <= now - 60.0:
             history.popleft()
-        if len(history) >= MAX_AI_REQUESTS_PER_MINUTE:
-            _ai_metrics["rate_rejected"] += 1
-            return {
-                "ok": False,
-                "error": "AI request limit reached; wait before trying again",
-                "status": 429,
-                "retry_after": max(1, int(60 - (now - history[0]))),
-            }
         history.append(now)
-
-    if not _ai_slots.acquire(blocking=False):
+    job_id = uuid.uuid4().hex
+    job = {
+        "id": job_id,
+        "identity": identity,
+        "kind": str(request_kind or "interactive")[:60],
+        "label": str(request_label or "")[:160],
+        "metadata": dict(request_metadata or {}),
+        "url": url,
+        "model": model,
+        "payload": payload,
+        "timeout": timeout,
+        "cache_key": cache_key,
+        "use_cache": bool(use_cache),
+        "state": "queued",
+        "attempts": 0,
+        "canceled": False,
+        "queued_monotonic": now,
+        "queuedAt": _current_timestamp(),
+        "startedAt": "",
+        "finishedAt": "",
+        "retryAt": "",
+        "result": None,
+        "event": threading.Event(),
+    }
+    with _ai_queue_condition:
+        active_count = sum(1 for item in _ai_jobs.values() if item.get("state") in {"queued", "retrying", "running"})
+        if active_count >= MAX_QUEUED_AI_REQUESTS:
+            with _ai_lock:
+                _ai_metrics["capacity_rejected"] += 1
+            return {"ok": False, "error": "The AI queue is full; try again after current work completes", "status": 503, "retry_after": 5}
+        _ai_jobs[job_id] = job
+        _ai_pending_jobs.append(job)
         with _ai_lock:
-            _ai_metrics["capacity_rejected"] += 1
-        return {"ok": False, "error": "AI service is busy; retry shortly", "status": 503, "retry_after": 5}
-    with _ai_lock:
-        _ai_metrics["active"] += 1
-        _ai_metrics["accepted"] += 1
-    r = None
-    try:
-        bounded_timeout = max(AI_MIN_TIMEOUT_SECONDS, min(float(timeout), AI_MAX_TIMEOUT_SECONDS))
-        r = requests.post(url, json=payload, timeout=(3.0, bounded_timeout), stream=True)
-        if not 200 <= int(r.status_code) < 300:
-            if int(r.status_code) == 404:
-                error = f"Ollama could not find model '{model}'. Pull it on the Ollama server or select an installed model."
-            elif int(r.status_code) in {401, 403}:
-                error = "Ollama rejected the request. Check the server URL and access policy."
-            else:
-                error = f"Ollama rejected the request (HTTP {int(r.status_code)})."
-            _record_ai_failure()
-            return {"ok": False, "error": error, "status": 502}
-        declared_size = int(r.headers.get("Content-Length", "0") or 0)
-        if declared_size > MAX_AI_HTTP_RESPONSE_BYTES:
-            raise ValueError("AI service response exceeds the configured byte limit")
-        response_bytes = bytearray()
-        for chunk in r.iter_content(chunk_size=16_384):
-            if not chunk:
-                continue
-            response_bytes.extend(chunk)
-            if len(response_bytes) > MAX_AI_HTTP_RESPONSE_BYTES:
-                raise ValueError("AI service response exceeds the configured byte limit")
-        j = json.loads(response_bytes.decode("utf-8"))
-        if not isinstance(j, dict):
-            raise ValueError("AI service returned an invalid response")
-        if j.get("error"):
-            _record_ai_failure()
-            return {"ok": False, "error": "Ollama could not generate a response for this request.", "status": 502}
-        message = j.get("message") if isinstance(j.get("message"), dict) else {}
-        text = str(j.get("response") or message.get("content") or j.get("data") or "").strip()
-        if not text:
-            _record_ai_failure()
-            return {"ok": False, "error": "Ollama returned an empty response. Check that the selected model supports text generation.", "status": 502}
-        text = text[:MAX_AI_RESPONSE_CHARS]
-        with _ai_lock:
-            _ai_consecutive_failures = 0
-            _ai_circuit_open_until = 0.0
-            if use_cache:
-                _ai_cache[cache_key] = (time.monotonic() + AI_CACHE_TTL_SECONDS, text)
-            _prune_ai_state(time.monotonic())
-        return {"ok": True, "text": text}
-    except requests.exceptions.Timeout:
-        _record_ai_failure()
-        return {
-            "ok": False,
-            "error": (
-                f"The AI model did not respond within {int(bounded_timeout)} seconds. "
-                "The model may still be loading; try again or increase the AI timeout in Admin Settings."
-            ),
-            "status": 504,
-        }
-    except requests.exceptions.ConnectionError:
-        _record_ai_failure()
-        return {
-            "ok": False,
-            "error": "The Ollama service could not be reached. Check its URL and confirm Ollama is listening for this server.",
-            "status": 502,
-        }
-    except requests.exceptions.RequestException:
-        _record_ai_failure()
-        return {"ok": False, "error": "The Ollama request failed. Check the AI service and try again.", "status": 502}
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
-        _record_ai_failure()
-        return {"ok": False, "error": "Ollama returned an invalid or oversized response.", "status": 502}
-    except Exception:
-        _record_ai_failure()
-        return {"ok": False, "error": "The AI request could not be completed.", "status": 502}
-    finally:
-        if r is not None:
-            try:
-                r.close()
-            except Exception:
-                pass
-        with _ai_lock:
-            _ai_metrics["active"] = max(0, _ai_metrics["active"] - 1)
-        _ai_slots.release()
+            _ai_metrics["accepted"] += 1
+            _ai_metrics["queued"] += 1
+        _ai_queue_condition.notify()
+    _ensure_ai_dispatcher()
+    job["event"].wait()
+    return dict(job.get("result") or {"ok": False, "error": "The AI request could not be completed.", "status": 502})
 
 
 @app.post("/api/admin/ai/test")
@@ -8543,6 +8737,11 @@ def _normalize_assignment_schema(assignment: dict) -> dict:
     normalized = dict(assignment or {})
     normalized["id"] = str(normalized.get("id") or "").strip().lower()
     normalized["allowFileSubmission"] = bool(normalized.get("allowFileSubmission", True))
+    normalized["shareAiFeedback"] = bool(normalized.get("shareAiFeedback", False))
+    released_at = str(normalized.get("releasedAt") or "").strip()
+    if not released_at and (normalized.get("active") or normalized.get("submissions")):
+        released_at = str(normalized.get("createdAt") or "").strip() or _current_timestamp()
+    normalized["releasedAt"] = released_at
     normalized["skillTags"] = _normalize_skill_tags(normalized.get("skillTags") or [])
     normalized["aiGradingInstructions"] = str(normalized.get("aiGradingInstructions") or "").strip()[:4000]
     try:
@@ -8604,7 +8803,7 @@ def _normalize_assignment_schema(assignment: dict) -> dict:
             sub_n["quizSubmissionCount"] = 0
         sub_n["aiFeedback"] = _sanitize_ai_feedback_text(sub_n.get("aiFeedback") or "")[:1200]
         status = str(sub_n.get("aiGradingStatus") or "").strip().lower()
-        sub_n["aiGradingStatus"] = status if status in {"queued", "running", "completed", "failed"} else ""
+        sub_n["aiGradingStatus"] = status if status in {"queued", "running", "completed", "failed", "canceled"} else ""
         sub_n["aiGradingError"] = str(sub_n.get("aiGradingError") or "").strip()[:500]
         submissions.append(sub_n)
     normalized["submissions"] = submissions
@@ -8853,6 +9052,47 @@ def _assignment_request_reference(data: dict) -> tuple[str, Optional[str]]:
     class_id = str(data.get("classId") or "").strip() or None
     return reference, class_id
 
+
+def _student_assignment_payload(assignment: dict, student_email: str, *, include_submission: bool = False) -> dict:
+    payload = dict(assignment)
+    payload.pop("submissions", None)
+    quiz_copy = copy.deepcopy(payload.get("quiz") or None)
+    if quiz_copy:
+        for question in quiz_copy.get("questions", []) or []:
+            if isinstance(question, dict):
+                question.pop("correctAnswer", None)
+    payload["quiz"] = quiz_copy
+    submission = next(
+        (row for row in (assignment.get("submissions") or []) if (row.get("email") or "").lower() == student_email.lower()),
+        None,
+    )
+    summary = None
+    if submission:
+        summary = {
+            "submittedAt": submission.get("submittedAt"),
+            "codeScore": submission.get("codeScore"),
+            "quizScore": submission.get("quizScore"),
+            "totalScore": submission.get("totalScore"),
+            "aiFeedback": submission.get("aiFeedback") if assignment.get("shareAiFeedback") else "",
+        }
+    payload["studentSubmissionSummary"] = summary
+    if include_submission and submission:
+        code = str(submission.get("code") or "")
+        stored_path = _assignment_submission_path(assignment, submission.get("submissionPath") or "")
+        if stored_path and stored_path.exists() and stored_path.is_file():
+            try:
+                code = stored_path.read_text(encoding="utf-8")
+            except Exception:
+                pass
+        payload["studentSubmission"] = {
+            **(summary or {}),
+            "code": code,
+            "fileName": str(submission.get("submittedFileName") or "submission.py"),
+        }
+    else:
+        payload["studentSubmission"] = None
+    return payload
+
 @app.get("/api/assignments")
 def get_assignments():
     """Get all assignments"""
@@ -8881,26 +9121,31 @@ def get_assignments():
         target_class = a.get("targetClassId")
         if not target_class or target_class not in class_ids or not a.get("active", False):
             continue
-        assignment_copy = dict(a)
-        assignment_copy.pop("submissions", None)
-        quiz_copy = copy.deepcopy(assignment_copy.get("quiz") or None)
-        if quiz_copy:
-            for question in quiz_copy.get("questions", []) or []:
-                if isinstance(question, dict):
-                    question.pop("correctAnswer", None)
-        assignment_copy["quiz"] = quiz_copy
-        student_submission = next(
-            (s for s in (a.get("submissions") or []) if (s.get("email") or "").lower() == (user.get("email") or "").lower()),
-            None,
-        )
-        assignment_copy["studentSubmissionSummary"] = {
-            "submittedAt": (student_submission or {}).get("submittedAt"),
-            "codeScore": (student_submission or {}).get("codeScore"),
-            "quizScore": (student_submission or {}).get("quizScore"),
-            "totalScore": (student_submission or {}).get("totalScore"),
-        } if student_submission else None
-        visible_assignments.append(assignment_copy)
+        visible_assignments.append(_student_assignment_payload(a, user.get("email") or ""))
     return jsonify(ok=True, assignments=visible_assignments, isAdmin=False, isTeacher=False, canManage=False)
+
+
+@app.get("/api/assignments/past")
+def get_past_assignments():
+    user = _require_user(request)
+    if not user:
+        return jsonify(ok=False, error="Student authentication required"), 401
+    user_obj = _find_user(user.get("email", "")) or user
+    class_ids = set(_get_user_class_ids(user_obj))
+    requested_class = str(request.args.get("classId") or "").strip()
+    if requested_class:
+        if requested_class not in class_ids:
+            return jsonify(ok=False, error="Assignment history is unavailable for this class"), 403
+        class_ids = {requested_class}
+    past = [
+        _student_assignment_payload(assignment, user.get("email") or "", include_submission=True)
+        for assignment in _list_assignments()
+        if assignment.get("targetClassId") in class_ids
+        and not assignment.get("active", False)
+        and bool(str(assignment.get("releasedAt") or "").strip())
+    ]
+    past.sort(key=lambda row: (str(row.get("releasedAt") or row.get("createdAt") or ""), str(row.get("name") or "").casefold()), reverse=True)
+    return jsonify(ok=True, assignments=past)
 
 @app.post("/api/assignments/create")
 def create_assignment():
@@ -8948,6 +9193,8 @@ def create_assignment():
         "maxScore": max_score,
         "allowFileSubmission": bool(data.get("allowFileSubmission", True)),
         "active": False,
+        "releasedAt": "",
+        "shareAiFeedback": bool(data.get("shareAiFeedback", False)),
         "quiz": data.get("quiz") or None,
         "quizSettings": data.get("quizSettings") or {"maxSubmissions": 0},
         "skillTags": _normalize_skill_tags(data.get("skillTags") or []),
@@ -8989,7 +9236,11 @@ def update_assignment():
     if "allowFileSubmission" in data:
         assignment["allowFileSubmission"] = bool(data.get("allowFileSubmission"))
     if "active" in data:
-        assignment["active"] = data["active"]
+        assignment["active"] = bool(data["active"])
+        if assignment["active"] and not assignment.get("releasedAt"):
+            assignment["releasedAt"] = _current_timestamp()
+    if "shareAiFeedback" in data:
+        assignment["shareAiFeedback"] = bool(data.get("shareAiFeedback"))
     if "quiz" in data:
         assignment["quiz"] = data["quiz"]
     if "quizSettings" in data:
@@ -9069,6 +9320,8 @@ def copy_assignment_to_class():
         "maxScore": source.get("maxScore", 100),
         "allowFileSubmission": bool(source.get("allowFileSubmission", True)),
         "active": False,
+        "releasedAt": "",
+        "shareAiFeedback": bool(source.get("shareAiFeedback", False)),
         "quiz": copy.deepcopy(source.get("quiz") or None),
         "quizSettings": copy.deepcopy(source.get("quizSettings") or {"maxSubmissions": 0}),
         "skillTags": _normalize_skill_tags(source.get("skillTags") or []),
@@ -9298,6 +9551,7 @@ def score_submission():
 
 _assignment_ai_queue: Queue = Queue()
 _assignment_ai_queued_keys: set[tuple[str, str]] = set()
+_assignment_ai_cancelled_keys: set[tuple[str, str]] = set()
 _assignment_ai_queue_lock = threading.Lock()
 _assignment_ai_worker: Optional[threading.Thread] = None
 _assignment_ai_recovery_checked = False
@@ -9430,6 +9684,8 @@ def _set_assignment_ai_failure(assignment_id: str, student_email: str, error: st
             if (submission.get("email") or "").lower() == student_email.lower():
                 if submitted_at is not None and submission.get("submittedAt") != submitted_at:
                     return
+                if submission.get("aiGradingStatus") == "canceled":
+                    return
                 submission["aiGradingStatus"] = "failed"
                 submission["aiGradingError"] = str(error or "AI grading failed")[:500]
                 submission["aiGradedAt"] = _current_timestamp()
@@ -9438,6 +9694,10 @@ def _set_assignment_ai_failure(assignment_id: str, student_email: str, error: st
 
 
 def _run_assignment_ai_grading(assignment_id: str, student_email: str) -> None:
+    key = (assignment_id, student_email.lower())
+    with _assignment_ai_queue_lock:
+        if key in _assignment_ai_cancelled_keys:
+            return
     with _assignment_lock:
         assignment = _load_assignment(assignment_id)
         if not assignment:
@@ -9502,21 +9762,23 @@ def _run_assignment_ai_grading(assignment_id: str, student_email: str) -> None:
         )
         if len(prompt) > MAX_AI_PROMPT_CHARS:
             raise ValueError("Submission and rubric are too long for AI grading; no score was saved")
-        for attempt in range(4):
-            result = call_ollama_generate(
-                cfg.get("ai_ollama_url", ""),
-                cfg.get("ai_model", "gemma3:4b"),
-                prompt,
-                timeout=_configured_ai_timeout(cfg),
-                num_predict=700,
-                use_cache=False,
-                json_response=True,
-                temperature=0,
-                request_identity=f"teacher:{str(assignment.get('createdByEmail') or '').strip().lower() or 'unknown'}",
-            )
-            if result.get("ok") or result.get("status") not in {429, 503} or attempt == 3:
-                break
-            time.sleep(min(60, max(1, int(result.get("retry_after") or 5))))
+        result = call_ollama_generate(
+            cfg.get("ai_ollama_url", ""),
+            cfg.get("ai_model", "gemma3:4b"),
+            prompt,
+            timeout=_configured_ai_timeout(cfg),
+            num_predict=700,
+            use_cache=False,
+            json_response=True,
+            temperature=0,
+            request_identity=f"teacher:{str(assignment.get('createdByEmail') or '').strip().lower() or 'unknown'}",
+            request_kind="assignment-grading",
+            request_label=f"{assignment.get('name') or 'Assignment'} · {submission.get('name') or student_email}",
+            request_metadata={"assignmentId": assignment_id, "studentEmail": student_email.lower()},
+        )
+        with _assignment_ai_queue_lock:
+            if key in _assignment_ai_cancelled_keys:
+                return
         if not result.get("ok"):
             raise RuntimeError(result.get("error") or "AI service error")
         score, feedback = _parse_assignment_ai_result(result.get("text") or "", max_score, rigor, syntax_error)
@@ -9538,8 +9800,9 @@ def _run_assignment_ai_grading(assignment_id: str, student_email: str) -> None:
             latest_submission["aiGradingStatus"] = "completed"
             latest_submission["aiGradingError"] = ""
             latest_submission["aiGradedAt"] = _current_timestamp()
-            if not latest_submission.get("manualScoreOverride"):
-                latest_submission["codeScore"] = score
+            latest_submission["manualScoreOverride"] = False
+            latest_submission["manualScore"] = None
+            latest_submission["codeScore"] = score
             code_score = latest_submission.get("codeScore") or 0
             quiz_score = latest_submission.get("quizScore") or 0
             latest_submission["totalScore"] = code_score + quiz_score if (latest_submission.get("codeScore") is not None or latest_submission.get("quizScore") is not None) else None
@@ -9553,10 +9816,12 @@ def _assignment_ai_worker_loop() -> None:
     while True:
         batch = _assignment_ai_queue.get()
         try:
-            with ThreadPoolExecutor(max_workers=3, thread_name_prefix="assignment-ai") as pool:
-                futures = [pool.submit(_run_assignment_ai_grading, *key) for key in batch]
+            with _assignment_ai_queue_lock:
+                runnable = [key for key in batch if key not in _assignment_ai_cancelled_keys]
+            with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_AI_REQUESTS, thread_name_prefix="assignment-ai") as pool:
+                futures = [pool.submit(_run_assignment_ai_grading, *key) for key in runnable]
                 wait(futures)
-                for key, future in zip(batch, futures):
+                for key, future in zip(runnable, futures):
                     try:
                         future.result()
                     except Exception:
@@ -9565,6 +9830,7 @@ def _assignment_ai_worker_loop() -> None:
             for key in batch:
                 with _assignment_ai_queue_lock:
                     _assignment_ai_queued_keys.discard(key)
+                    _assignment_ai_cancelled_keys.discard(key)
             _assignment_ai_queue.task_done()
 
 
@@ -9586,6 +9852,7 @@ def _enqueue_assignment_ai_grade(assignment: dict, student_email: str, *, queue_
     with _assignment_ai_queue_lock:
         if key in _assignment_ai_queued_keys:
             return False
+        _assignment_ai_cancelled_keys.discard(key)
         _assignment_ai_queued_keys.add(key)
     with _assignment_lock:
         assignment = _load_assignment(key[0]) or assignment
@@ -9625,8 +9892,8 @@ def _resume_assignment_ai_grading_queue():
                 email = str(submission.get("email") or "")
                 if _enqueue_assignment_ai_grade(assignment, email, queue_now=False):
                     pending.append((str(assignment.get("id") or ""), email.lower()))
-        for offset in range(0, len(pending), 3):
-            _assignment_ai_queue.put(pending[offset:offset + 3])
+        for offset in range(0, len(pending), MAX_CONCURRENT_AI_REQUESTS):
+            _assignment_ai_queue.put(pending[offset:offset + MAX_CONCURRENT_AI_REQUESTS])
     if not _assignment_ai_queue.empty():
         _ensure_assignment_ai_worker()
     return None
@@ -9690,11 +9957,105 @@ def grade_all_assignments_ai():
             queued += 1
             pending.append((str(assignment.get("id") or ""), email.lower()))
         assignment = _load_assignment(assignment.get("id")) or assignment
-    for offset in range(0, len(pending), 3):
-        _assignment_ai_queue.put(pending[offset:offset + 3])
+    for offset in range(0, len(pending), MAX_CONCURRENT_AI_REQUESTS):
+        _assignment_ai_queue.put(pending[offset:offset + MAX_CONCURRENT_AI_REQUESTS])
     if queued:
         _ensure_assignment_ai_worker()
     return jsonify(ok=True, queued=queued), 202
+
+
+def _cancel_assignment_ai_grade(assignment: dict, student_email: str) -> bool:
+    assignment_id = str(assignment.get("id") or "")
+    normalized_email = str(student_email or "").strip().lower()
+    key = (assignment_id, normalized_email)
+    found = False
+    with _assignment_ai_queue_lock:
+        if key in _assignment_ai_queued_keys:
+            _assignment_ai_cancelled_keys.add(key)
+            found = True
+    with _assignment_lock:
+        latest = _load_assignment(assignment_id) or assignment
+        submission = next(
+            (row for row in latest.get("submissions", []) if (row.get("email") or "").lower() == normalized_email),
+            None,
+        )
+        if submission and submission.get("aiGradingStatus") in {"queued", "running"}:
+            submission["aiGradingStatus"] = "canceled"
+            submission["aiGradingError"] = "Canceled by teacher"
+            submission["aiGradedAt"] = _current_timestamp()
+            _save_assignment(latest)
+            found = True
+    canceled_network = _cancel_ai_jobs(
+        lambda job: job.get("kind") == "assignment-grading"
+        and str((job.get("metadata") or {}).get("assignmentId") or "") == assignment_id
+        and str((job.get("metadata") or {}).get("studentEmail") or "").lower() == normalized_email
+    )
+    return found or bool(canceled_network)
+
+
+@app.get("/api/assignments/ai-queue")
+def get_assignment_ai_queue():
+    actor = _assignment_actor(request)
+    if not actor:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    teacher_email = actor.get("email", "").lower()
+    jobs = []
+    for assignment in _list_assignments():
+        if (assignment.get("createdByEmail") or "").lower() != teacher_email:
+            continue
+        for submission in assignment.get("submissions", []):
+            status = str(submission.get("aiGradingStatus") or "")
+            if status not in {"queued", "running"}:
+                continue
+            jobs.append({
+                "assignmentId": assignment.get("id"),
+                "assignmentName": assignment.get("name"),
+                "className": assignment.get("targetClassName"),
+                "studentEmail": submission.get("email"),
+                "studentName": submission.get("name") or submission.get("email"),
+                "status": status,
+                "queuedAt": submission.get("aiQueuedAt"),
+            })
+    jobs.sort(key=lambda row: (str(row.get("queuedAt") or ""), str(row.get("studentName") or "").casefold()))
+    waiting_position = 0
+    for job in jobs:
+        if job["status"] == "queued":
+            waiting_position += 1
+            job["position"] = waiting_position
+        else:
+            job["position"] = 0
+    return jsonify(ok=True, jobs=jobs, queue=_ai_queue_summary())
+
+
+@app.post("/api/assignments/ai-queue/cancel")
+def cancel_assignment_ai_queue_item():
+    actor = _assignment_actor(request)
+    if not actor:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    data = request.get_json(silent=True) or {}
+    assignment = _load_assignment(str(data.get("assignmentId") or ""))
+    student_email = str(data.get("studentEmail") or "").strip().lower()
+    if not assignment or not student_email:
+        return jsonify(ok=False, error="Assignment and student are required"), 400
+    if (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+        return jsonify(ok=False, error="You can only cancel grading for your own assignments"), 403
+    return jsonify(ok=True, canceled=_cancel_assignment_ai_grade(assignment, student_email))
+
+
+@app.post("/api/assignments/ai-queue/cancel-all")
+def cancel_all_assignment_ai_queue_items():
+    actor = _assignment_actor(request)
+    if not actor:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    teacher_email = actor.get("email", "").lower()
+    canceled = 0
+    for assignment in _list_assignments():
+        if (assignment.get("createdByEmail") or "").lower() != teacher_email:
+            continue
+        for submission in list(assignment.get("submissions", [])):
+            if submission.get("aiGradingStatus") in {"queued", "running"}:
+                canceled += int(_cancel_assignment_ai_grade(assignment, str(submission.get("email") or "")))
+    return jsonify(ok=True, canceled=canceled)
 
 
 @app.get("/api/assignments/submission")
@@ -10079,6 +10440,7 @@ def get_student_quiz_report(assignment_reference: str):
         "maxTotal": assignment_max_total,
         "assignmentPercent": assignment_percent,
         "skillScores": resolved_skill_scores,
+        "aiFeedback": submission.get("aiFeedback") if assignment.get("shareAiFeedback") else "",
     })
 
 @app.post("/api/quiz/grade-written")
@@ -10791,6 +11153,11 @@ def admin_server_health():
             "capacity": MAX_CONCURRENT_AI_REQUESTS,
             "circuit_open": time.monotonic() < _ai_circuit_open_until,
         }
+    ai_health.update(_ai_queue_summary())
+    ai_health["average_queue_wait_ms"] = round(
+        ai_health.get("queue_wait_ms_total", 0) / max(1, ai_health.get("dequeued", 0)),
+        1,
+    )
     with _workspace_tree_cache_lock:
         workspace_cache_health = {
             "entries": len(_workspace_tree_cache),

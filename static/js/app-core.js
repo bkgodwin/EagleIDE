@@ -1140,12 +1140,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (auditPreviewActive) closeAuditPreview();
       const draftHasContent = Boolean(currentOpenFile?.draft && String(editor.getValue() || '').trim());
       if (draftHasContent || (currentBufferDirty && !isAuthenticated())) {
-        const replace = window.confirm('The current editor contains unsaved work. Replace it with this wiki example?');
+        const replace = window.confirm('The current editor contains unsaved work. Replace it with this code copy?');
         if (!replace) return false;
       }
       const saved = await saveCurrentFile();
       if (!saved) {
-        window.alert('The current file could not be saved. The wiki example was not opened.');
+        window.alert('The current file could not be saved. The code copy was not opened.');
         return false;
       }
       const language = String(snapshot.language || 'python').toLowerCase();
@@ -7716,7 +7716,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             <output id="assignmentAiRigorOutput">${assignment.aiGradingRigor || 6}/10 · ${escapeHtml(rigorLevelLabel(assignment.aiGradingRigor || 6))}</output>
             <button class="btn secondary" id="saveAssignmentAiSettingsBtn">Save AI settings</button>
             <button class="btn run" id="gradeAllSubmissionsBtn" ${submissions.some(sub => sub.code) ? '' : 'disabled'}>AI Grade All</button>
+            <button class="btn secondary" id="openAssignmentAiQueueBtn" type="button">View AI Queue</button>
           </div>
+          <label class="assignment-feedback-sharing"><input id="assignmentShareAiFeedback" type="checkbox" ${assignment.shareAiFeedback ? 'checked' : ''}> Show AI feedback to students for this assignment</label>
           <p id="assignmentAiRigorHelp" class="assignment-ai-rigor-help">${escapeHtml(assignmentRigorSummary(assignment.aiGradingRigor || 6))}</p>
           <div class="meta">${pendingCount ? `${pendingCount} submission(s) currently queued or grading. You can close this dashboard; grading continues on the server.` : 'Queued grading continues on the server after you leave this page.'}</div>
         </section>`}
@@ -7771,6 +7773,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       });
       detail.querySelector('#saveAssignmentAiSettingsBtn')?.addEventListener('click', () => saveAssignmentAiSettings(assignment.id));
       detail.querySelector('#gradeAllSubmissionsBtn')?.addEventListener('click', () => queueAllAssignmentAiGrades(assignment.id));
+      detail.querySelector('#openAssignmentAiQueueBtn')?.addEventListener('click', openAssignmentAiQueue);
       detail.querySelector('#downloadScoresBtn')?.addEventListener('click', () => downloadCSV(assignment.id || assignment.name, assignment.name, detail.querySelector('#gradeExportFormat')?.value || 'points'));
       detail.querySelectorAll('.open-submission-btn').forEach(btn => btn.addEventListener('click', () => openAssignmentSubmission(assignment.id || assignment.name, btn.dataset.email)));
       detail.querySelectorAll('.ai-grade-submission-btn').forEach(btn => btn.addEventListener('click', () => queueAssignmentAiGrade(assignment.id || assignment.name, btn.dataset.email)));
@@ -7787,7 +7790,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     function renderStudentAssignments() {
       const activeList = document.getElementById('studentAssignmentList');
-      const pastList = document.getElementById('studentPastAssignmentList');
       const notice = document.getElementById('studentAccountNotice');
       const joinPanel = document.getElementById('joinClassPanel');
       const joinPanelTitle = document.getElementById('joinClassPanelTitle');
@@ -7807,7 +7809,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
       const visibleAssignments = (currentAssignments || []).filter(a => !selectedClassId || a.targetClassId === selectedClassId);
       const activeAssignments = visibleAssignments.filter(a => a.active);
-      const pastAssignments = visibleAssignments.filter(a => !a.active);
 
       function scoreBadge(a) {
         const s = a.studentSubmissionSummary;
@@ -7832,6 +7833,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
             <div class="meta">Max Score: ${assignmentTotalMaxScore(a)}${a.allowFileSubmission === false ? ' (Quiz only)' : ''}${a.quiz?.questions?.length ? ` · ${a.quiz.questions.length} question(s)` : ''}${a.quizSettings?.maxSubmissions > 0 ? ` · ${a.quizSettings.maxSubmissions} quiz attempt(s)` : ''}</div>
             ${scoreBadge(a)}
+            ${a.studentSubmissionSummary?.aiFeedback ? `<div class="assignment-student-ai-feedback"><strong>Teacher-shared AI feedback</strong><pre>${escapeHtml(a.studentSubmissionSummary.aiFeedback)}</pre></div>` : ''}
             ${(a.skillTags || []).length ? `<div class="skill-tags">${(a.skillTags || []).map(tag => `<span class="skill-chip">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
             <div class="assignment-actions">
               ${a.allowFileSubmission === false ? '' : `<button class="btn run submit-assignment-btn" data-id="${escapeHtml(a.id || a.name)}" ${canSubmit && joinedClass && files.length ? '' : 'disabled'}>Submit File</button>`}
@@ -7843,23 +7845,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         activeList.querySelectorAll('.submit-assignment-btn').forEach(btn => btn.addEventListener('click', () => showAssignmentSubmitModal(btn.dataset.id)));
         activeList.querySelectorAll('.open-questions-btn').forEach(btn => btn.addEventListener('click', () => openQuestions(btn.dataset.id)));
         activeList.querySelectorAll('.view-score-report-btn').forEach(btn => btn.addEventListener('click', () => openStudentScoreReport(btn.dataset.id)));
-      }
-
-      if (!pastAssignments.length) {
-        pastList.innerHTML = `<p style="color:#888;">${joinedClass ? 'No past assignments for this class.' : 'Join a class to see previous assignments.'}</p>`;
-      } else {
-        pastList.innerHTML = pastAssignments.map(a => `
-          <div class="assignment-card" style="opacity:0.85;">
-            <h4>${escapeHtml(a.name)} <span style="color:#888; font-size:12px; font-weight:normal;">(Locked)</span></h4>
-            <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
-            ${scoreBadge(a)}
-            ${(a.skillTags || []).length ? `<div class="skill-tags">${(a.skillTags || []).map(tag => `<span class="skill-chip">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
-            <div class="assignment-actions">
-              ${hasSubmissionSummary(a.studentSubmissionSummary) ? `<button class="btn secondary view-score-report-btn" data-id="${escapeHtml(a.id || a.name)}" ${canSubmit ? '' : 'disabled'}>Score Report</button>` : ''}
-            </div>
-          </div>
-        `).join('');
-        pastList.querySelectorAll('.view-score-report-btn').forEach(btn => btn.addEventListener('click', () => openStudentScoreReport(btn.dataset.id)));
       }
     }
 
@@ -8618,7 +8603,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           <div style="font-size:13px; margin-bottom:6px;"><strong>Assignment:</strong> ${escapeHtml(report.assignmentName || getAssignmentByName(assignmentReference)?.name || 'Assignment')}</div>
           <div style="font-size:13px; margin-bottom:6px;"><strong>Submitted:</strong> ${escapeHtml(report.submittedAt || '—')}</div>
           <div style="font-size:13px; margin-bottom:10px;"><strong>Total Score:</strong> ${report.totalScore ?? '—'} / ${report.maxTotal ?? '—'}</div>
-          <div style="font-size:12px; color:#888; margin-bottom:10px;">This report shows score and skill-tag achievement only. Correct answers are never shown.</div>
+          ${report.aiFeedback ? `<div class="assignment-student-ai-feedback" style="margin-bottom:12px;"><strong>Teacher-shared AI feedback</strong><pre>${escapeHtml(report.aiFeedback)}</pre></div>` : ''}
+          <div style="font-size:12px; color:#888; margin-bottom:10px;">Correct quiz answers are never shown.</div>
           <div class="score-report-list">
             ${Object.keys(tags).map(tag => `
               <div class="score-report-item">
@@ -8959,17 +8945,92 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
     }
 
+    let assignmentAiQueuePollTimer = null;
+
+    function closeAssignmentAiQueue() {
+      const modal = document.getElementById('assignmentAiQueueModal');
+      if (modal) modal.style.display = 'none';
+      if (assignmentAiQueuePollTimer) {
+        clearInterval(assignmentAiQueuePollTimer);
+        assignmentAiQueuePollTimer = null;
+      }
+    }
+
+    async function loadAssignmentAiQueue() {
+      const list = document.getElementById('assignmentAiQueueList');
+      const summary = document.getElementById('assignmentAiQueueSummary');
+      if (!list || !summary || !TEACHER_TOKEN) return;
+      try {
+        const response = await fetch('/api/assignments/ai-queue', { headers: assignmentManagerHeaders() });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.ok) throw new Error(result.error || 'Could not load the AI queue.');
+        const queue = result.queue || {};
+        const jobs = result.jobs || [];
+        summary.textContent = queue.pausedForSeconds
+          ? `Ollama cooldown: ${queue.pausedForSeconds}s · ${queue.running || 0} running · ${queue.queued || 0} waiting`
+          : `${queue.running || 0} running of ${queue.capacity || 0} slots · ${queue.queued || 0} waiting across all AI features`;
+        list.innerHTML = jobs.length ? jobs.map(job => `
+          <article class="assignment-ai-queue-item">
+            <div>
+              <strong>${escapeHtml(job.studentName || job.studentEmail || 'Student')}</strong>
+              <span>${escapeHtml(job.assignmentName || 'Assignment')} · ${escapeHtml(job.className || 'Class')}</span>
+              <small>${job.status === 'running' ? 'Grading now' : `Waiting${job.position ? ` · position ${job.position}` : ''}`}</small>
+            </div>
+            <button class="btn stop assignment-ai-cancel-btn" type="button" data-assignment-id="${escapeHtml(job.assignmentId)}" data-student-email="${escapeHtml(job.studentEmail)}">Cancel</button>
+          </article>
+        `).join('') : '<div class="assignment-ai-queue-empty">No assignment grading jobs are waiting or running.</div>';
+        list.querySelectorAll('.assignment-ai-cancel-btn').forEach(button => button.addEventListener('click', async () => {
+          button.disabled = true;
+          await fetch('/api/assignments/ai-queue/cancel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...assignmentManagerHeaders() },
+            body: JSON.stringify({ assignmentId: button.dataset.assignmentId, studentEmail: button.dataset.studentEmail }),
+          });
+          await Promise.all([loadAssignmentAiQueue(), loadAssignments()]);
+        }));
+      } catch (error) {
+        summary.textContent = error?.message || 'Could not load the AI queue.';
+        list.innerHTML = '<div class="assignment-ai-queue-empty">Queue status is temporarily unavailable.</div>';
+      }
+    }
+
+    function openAssignmentAiQueue() {
+      const modal = document.getElementById('assignmentAiQueueModal');
+      if (!modal) return;
+      modal.style.display = 'flex';
+      loadAssignmentAiQueue();
+      if (assignmentAiQueuePollTimer) clearInterval(assignmentAiQueuePollTimer);
+      assignmentAiQueuePollTimer = setInterval(loadAssignmentAiQueue, 2000);
+    }
+
+    document.getElementById('assignmentAiQueueCloseBtn')?.addEventListener('click', closeAssignmentAiQueue);
+    document.getElementById('assignmentAiQueueRefreshBtn')?.addEventListener('click', loadAssignmentAiQueue);
+    document.getElementById('assignmentAiQueueCancelAllBtn')?.addEventListener('click', async () => {
+      const button = document.getElementById('assignmentAiQueueCancelAllBtn');
+      button.disabled = true;
+      try {
+        await fetch('/api/assignments/ai-queue/cancel-all', { method: 'POST', headers: assignmentManagerHeaders() });
+        await Promise.all([loadAssignmentAiQueue(), loadAssignments()]);
+      } finally {
+        button.disabled = false;
+      }
+    });
+    document.getElementById('assignmentAiQueueModal')?.addEventListener('click', event => {
+      if (event.target.id === 'assignmentAiQueueModal') closeAssignmentAiQueue();
+    });
+
     async function saveAssignmentAiSettings(assignmentReference) {
       const assignment = getAssignmentByName(assignmentReference);
       if (!assignment) return;
       const detail = document.getElementById('assignmentDetailPanel');
       const instructions = detail?.querySelector('#assignmentAiInstructions')?.value || '';
       const rigor = parseInt(detail?.querySelector('#assignmentAiRigor')?.value || '5', 10);
+      const shareAiFeedback = !!detail?.querySelector('#assignmentShareAiFeedback')?.checked;
       try {
         const response = await fetch('/api/assignments/update', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...assignmentManagerHeaders() },
-          body: JSON.stringify(assignmentRequestPayload(assignment, { aiGradingInstructions: instructions, aiGradingRigor: rigor })),
+          body: JSON.stringify(assignmentRequestPayload(assignment, { aiGradingInstructions: instructions, aiGradingRigor: rigor, shareAiFeedback })),
         });
         const result = await response.json().catch(() => ({}));
         if (!result.ok) throw new Error(result.error || 'Could not save AI settings.');

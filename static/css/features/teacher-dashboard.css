@@ -208,6 +208,7 @@
       box-shadow: 0 10px 30px rgba(0,0,0,.35);
       cursor: pointer;
     }
+    .teacher-dash-minimized-bar[hidden] { display:none !important; }
     .teacher-dash-minimized-copy { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .teacher-dash-minimized-bar strong { color:var(--columbia-blue); }
     .teacher-dash-minimized-actions { display:flex; flex:0 0 auto; gap:6px; }
