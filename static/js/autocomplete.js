@@ -297,11 +297,28 @@
         variableNames.add(forMatch[1]);
         result.variables.push(createSymbol(forMatch[1], 'variable', { returns: 'Any', description: 'Loop variable.' }));
       }
-      const importMatch = line.match(/^\s*(?:import\s+([A-Za-z_]\w*)|from\s+\S+\s+import\s+([A-Za-z_]\w*))/);
-      const imported = importMatch && (importMatch[1] || importMatch[2]);
-      if (imported && !variableNames.has(imported)) {
-        variableNames.add(imported);
-        result.variables.push(createSymbol(imported, 'module', { returns: 'module', description: 'Imported module or symbol.' }));
+      const importMatch = line.match(/^\s*import\s+(.+)$/);
+      if (importMatch) {
+        importMatch[1].replace(/\s+#.*$/, '').split(',').forEach(rawImport => {
+          const imported = rawImport.trim().match(/^([A-Za-z_]\w*)(?:\s+as\s+([A-Za-z_]\w*))?$/);
+          if (!imported) return;
+          const moduleName = imported[1];
+          const visibleName = imported[2] || moduleName;
+          result.varTypes.set(visibleName, moduleName);
+          if (variableNames.has(visibleName)) return;
+          variableNames.add(visibleName);
+          result.variables.push(createSymbol(visibleName, 'module', {
+            returns: 'module', owner: moduleName,
+            description: `Imported ${moduleName} module${visibleName === moduleName ? '.' : ` as ${visibleName}.`}`
+          }));
+        });
+      } else {
+        const fromImport = line.match(/^\s*from\s+\S+\s+import\s+([A-Za-z_]\w*)(?:\s+as\s+([A-Za-z_]\w*))?/);
+        const imported = fromImport && (fromImport[2] || fromImport[1]);
+        if (imported && !variableNames.has(imported)) {
+          variableNames.add(imported);
+          result.variables.push(createSymbol(imported, 'module', { returns: 'module', description: 'Imported module member.' }));
+        }
       }
     }
     return result;
@@ -368,7 +385,7 @@
   function contextAt(line, cursorCh) {
     const before = String(line || '').slice(0, cursorCh);
     if (isInsideCommentOrString(String(line || ''), cursorCh)) return null;
-    const attr = before.match(/((?:[A-Za-z_$][\w$]*|(?:[rubf]{0,2})?["'][^"']*["']|\[[^\]]*\]))\.((?:[A-Za-z_$][\w$]*)?)$/i);
+    const attr = before.match(/((?:[A-Za-z_$][\w$]*|(?:[rubf]{0,2})?["'][^"']*["']|\[[^\]]*\]|(?:open|io\.open)\s*\([^()\n]*\)))\.((?:[A-Za-z_$][\w$]*)?)$/i);
     if (attr) {
       return { mode: 'member', object: attr[1], partial: attr[2], fromCh: cursorCh - attr[2].length };
     }
@@ -414,6 +431,7 @@
         const objectName = context.object;
         if (/^(?:[rubf]{0,2})?["']/i.test(objectName)) owner = 'str';
         else if (/^\[/.test(objectName)) owner = 'list';
+        else if (/^(?:open|io\.open)\s*\(/.test(objectName)) owner = 'file';
         else if (objectName === 'self' || objectName === 'cls') owner = options.currentClass || '';
         else owner = analysis.varTypes.get(objectName) || (analysis.methods.has(objectName) ? objectName : '');
         for (const entry of index.values()) {
