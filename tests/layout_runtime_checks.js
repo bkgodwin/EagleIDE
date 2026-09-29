@@ -39,7 +39,7 @@ function surface() {
 }
 
 const elements = new Map();
-for (const id of ['outer', 'rightstack', 'hsplitter', 'vsplitter', 'editorContentStack',
+for (const id of ['outer', 'rightstack', 'hsplitter', 'vsplitter', 'editorContentStack', 'studentEditorWrap',
   'teacherStreamPane', 'editorStreamSplitter', 'teacherPaneToggleBtn', 'rightEdgeToggleBtn',
   'editor', 'output']) elements.set(id, surface());
 elements.get('hsplitter').setAttribute('aria-orientation', 'vertical');
@@ -99,7 +99,8 @@ assert.equal(body.classList.contains('tablet-mode'), false, 'tablet viewport mus
 assert.equal(body.classList.contains('panel-editor'), false);
 assert.equal(root.styles.get('--app-height'), '750px');
 assert.equal(elements.get('output').scrollTop, 12, 'resize preserves shell reading position');
-assert.equal(observer.observed.length, 3);
+assert.equal(observer.observed.length, 4);
+assert.ok(observer.observed.includes(elements.get('studentEditorWrap')), 'editor pane changes trigger CodeMirror remeasurement');
 
 window.visualViewport.height = 360;
 window.visualViewport.offsetTop = 90;
@@ -109,9 +110,15 @@ assert.equal(root.styles.get('--app-height'), '360px', 'keyboard leaves controls
 assert.equal(root.styles.get('--app-offset-top'), '90px');
 window.visualViewport.scale = 2;
 window.visualViewport.height = 180;
+const zoomRefreshesBefore = editorRefreshes;
 window.visualViewport.fire('resize');
 flushFrames();
 assert.equal(root.styles.get('--app-height'), '360px', 'pinch zoom does not reflow layout');
+assert.ok(editorRefreshes > zoomRefreshesBefore, 'pinch zoom refreshes editor text measurements');
+const returnRefreshesBefore = editorRefreshes;
+window.fire('pageshow');
+flushFrames();
+assert.ok(editorRefreshes > returnRefreshesBefore, 'returning to a suspended page refreshes the editor');
 const refreshesBefore = editorRefreshes;
 observer.callback();
 flushFrames();
