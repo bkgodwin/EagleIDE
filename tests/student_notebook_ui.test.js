@@ -51,3 +51,11 @@ test('notebook toggle closes the drawer and tracks the visible iPad viewport', a
   assert.match(css, /right: calc\(var\(--notebook-viewport-right/);
   assert.match(css, /width: min\(860px, calc\(var\(--notebook-viewport-width/);
 });
+
+test('long editable code scrolls inside its notebook block without widening the page', () => {
+  assert.match(css, /\.student-notebook-page\s*\{[^}]*overflow-x:\s*hidden/s);
+  assert.match(css, /\.student-notebook-editor\s*\{[^}]*width:\s*100%/s);
+  assert.match(css, /\.student-notebook-code-lines\s*\{[^}]*overflow-x:\s*auto/s);
+  assert.match(css, /\.student-notebook-code-lines\s*\{[^}]*font-size:\s*16px/s);
+  assert.match(css, /\.student-notebook-code-actions\s*\{[^}]*max-width:\s*100%/s);
+});

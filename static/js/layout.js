@@ -23,7 +23,10 @@
       const viewport = window.visualViewport;
       // Pinch zoom must not reflow the workspace. Keyboard/browser chrome changes
       // at normal zoom do resize it, keeping the bottom controls on screen.
-      if (viewport && Math.abs(viewport.scale - 1) > 0.01) return;
+      if (viewport && Math.abs(viewport.scale - 1) > 0.01) {
+        refreshEditors();
+        return;
+      }
       const viewportHeight = viewport?.height || window.innerHeight;
       if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return;
       document.documentElement.style.setProperty('--app-height', `${Math.round(viewportHeight)}px`);
@@ -61,7 +64,7 @@
   function observeWorkspaceSize() {
     if (!window.ResizeObserver) return;
     const observer = new ResizeObserver(refreshEditors);
-    ['editorContentStack', 'teacherStreamPane', 'outer'].forEach((id) => {
+    ['editorContentStack', 'studentEditorWrap', 'teacherStreamPane', 'outer'].forEach((id) => {
       const element = document.getElementById(id);
       if (element) observer.observe(element);
     });
@@ -105,8 +108,13 @@
     syncTabletMode();
     syncAppHeight();
   }, { passive: true });
+  window.addEventListener('pageshow', refreshEditors);
   window.visualViewport?.addEventListener('resize', syncAppHeight, { passive: true });
   window.visualViewport?.addEventListener('scroll', syncAppHeight, { passive: true });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshEditors();
+  });
+  document.fonts?.ready?.then(refreshEditors).catch(() => {});
   document.addEventListener('DOMContentLoaded', () => {
     syncAppHeight();
     syncTabletMode();
