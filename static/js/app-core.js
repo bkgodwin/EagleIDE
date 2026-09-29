@@ -1613,6 +1613,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     function highlightErrorLine(lineNum) {
       if (!window.eagleEditor) return;
       const cm = window.eagleEditor;
+      window.EagleEditorBehavior?.unfoldLine(cm, lineNum);
       const line = cm.getLine(lineNum);
       if (!line) return;
       

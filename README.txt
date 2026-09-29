@@ -229,13 +229,18 @@ Students can:
 
 Features:
 - Syntax highlighting for Python, JavaScript, HTML, and CSS
-- Intelligent autocomplete with Python string, list, and file members; user-defined
+- Intelligent autocomplete with Python file, CSV reader/writer, collection, NumPy,
+  and Matplotlib object members; math and other common module helpers; user-defined
   functions, methods, variables, attributes, signatures, and docstrings; and a
   keyboard-navigable help panel showing arguments, return types, and descriptions.
+  Press an arrow key before Enter or Tab to accept a suggested completion; otherwise
+  those keys keep their normal editing behavior. Clicking a suggestion also inserts it.
   Autocomplete can be disabled from the IDE toolbar; while disabled it does not
   load its metadata catalog or analyze editor changes.
-- Auto-indentation
-- Line numbers
+- Python Enter indentation preserves the current level; Enter on an empty indented
+  line clears the indentation. A block header ending in a colon adds one level.
+- Line numbers and +/- folding controls beside code blocks; Ctrl+Q toggles the
+  block at the cursor. An error inside a folded block expands it for highlighting.
 - Error highlighting
 - Real-time code execution (30 second timeout)
 - Python Step Mode beside Run records one sandboxed execution and lets students
