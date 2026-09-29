@@ -504,10 +504,14 @@
     function loadCatalog() {
       if (!active || metadata.size || catalogPromise || !request) return catalogPromise;
       catalogAbort = typeof AbortController !== 'undefined' ? new AbortController() : null;
-      const fetchOptions = catalogAbort ? { signal: catalogAbort.signal, cache: 'force-cache' } : { cache: 'force-cache' };
+      const fetchOptions = catalogAbort ? { signal: catalogAbort.signal, cache: 'no-store' } : { cache: 'no-store' };
       catalogPromise = request('/api/autocomplete/catalog', fetchOptions)
         .then(response => response.ok ? response.json() : Promise.reject(new Error('catalog unavailable')))
-        .then(payload => { if (active) metadata = catalogIndex(payload.entries); })
+        .then(payload => {
+          if (!active) return;
+          metadata = catalogIndex(payload.entries);
+          schedule();
+        })
         .catch(() => {})
         .finally(() => { catalogPromise = null; catalogAbort = null; });
       return catalogPromise;
