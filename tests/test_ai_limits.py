@@ -35,7 +35,6 @@ class _Response:
 class AiLimitTestCase(unittest.TestCase):
     def setUp(self):
         self.client = eagle.app.test_client()
-        self.original_limit = eagle.MAX_AI_REQUESTS_PER_MINUTE
         self.original_prompt_limit = eagle.MAX_AI_PROMPT_CHARS
         with eagle._ai_lock:
             eagle._ai_request_history.clear()
@@ -44,9 +43,12 @@ class AiLimitTestCase(unittest.TestCase):
             eagle._ai_circuit_open_until = 0.0
             for key in eagle._ai_metrics:
                 eagle._ai_metrics[key] = 0
+        eagle._reset_ai_runtime_state()
+        with eagle._ai_queue_condition:
+            eagle._ai_pending_jobs.clear()
+            eagle._ai_jobs.clear()
 
     def tearDown(self):
-        eagle.MAX_AI_REQUESTS_PER_MINUTE = self.original_limit
         eagle.MAX_AI_PROMPT_CHARS = self.original_prompt_limit
         with eagle._ai_lock:
             eagle._ai_request_history.clear()
@@ -77,20 +79,37 @@ class AiLimitTestCase(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(post.call_count, 1)
 
-    def test_ai_rate_and_prompt_limits_reject_before_network(self):
-        eagle.MAX_AI_REQUESTS_PER_MINUTE = 1
+    def test_ai_requests_queue_instead_of_hitting_the_old_per_minute_rejection(self):
         eagle.MAX_AI_PROMPT_CHARS = 10
         with eagle.app.test_request_context("/api/explain", method="POST"):
             with mock.patch.object(eagle.requests, "post", return_value=_Response()) as post:
                 too_large = eagle.call_ollama_generate("http://127.0.0.1:11434", "model", "x" * 11)
                 accepted = eagle.call_ollama_generate("http://127.0.0.1:11434", "model", "one")
-                rejected = eagle.call_ollama_generate("http://127.0.0.1:11434", "model", "two")
+                queued = eagle.call_ollama_generate("http://127.0.0.1:11434", "model", "two")
 
         self.assertFalse(too_large["ok"])
         self.assertTrue(accepted["ok"])
-        self.assertFalse(rejected["ok"])
-        self.assertIn("limit", rejected["error"].lower())
-        self.assertEqual(post.call_count, 1)
+        self.assertTrue(queued["ok"])
+        self.assertEqual(post.call_count, 2)
+
+    def test_ollama_capacity_response_pauses_and_retries_failed_job(self):
+        busy = _Response()
+        busy.status_code = 503
+        busy.headers = {"Retry-After": "1"}
+        ready = _Response()
+        with mock.patch.object(eagle, "AI_OVERLOAD_MIN_PAUSE_SECONDS", 1), mock.patch.object(
+            eagle.requests, "post", side_effect=[busy, ready]
+        ) as post:
+            result = eagle.call_ollama_generate(
+                "http://127.0.0.1:11434",
+                "model",
+                "retry prompt",
+                use_cache=False,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(post.call_count, 2)
+        self.assertGreaterEqual(eagle._ai_metrics["retried"], 1)
 
     def test_ai_url_rejects_credentials(self):
         with eagle.app.test_request_context("/api/explain", method="POST"):

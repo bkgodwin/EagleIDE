@@ -276,7 +276,7 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         )
         self.assertEqual(opened.get_json()["content"], changed)
 
-    def test_background_ai_grade_saves_feedback_without_replacing_manual_override(self):
+    def test_background_ai_regrade_replaces_feedback_and_manual_override(self):
         assignment = self.create_assignment(active=True)
         self.submit_code(assignment)
         manual = self.client.post(
@@ -308,12 +308,15 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         self.assertEqual(grader.call_args.kwargs["request_identity"], f"teacher:{self.teacher_email}")
         self.assertTrue(grader.call_args.kwargs["json_response"])
         self.assertEqual(grader.call_args.kwargs["temperature"], 0)
+        self.assertEqual(grader.call_args.kwargs["request_kind"], "assignment-grading")
+        self.assertEqual(grader.call_args.kwargs["request_metadata"]["assignmentId"], assignment["id"])
 
         submission = graded["submissions"][0]
         self.assertEqual(submission["aiGradingStatus"], "completed")
         self.assertEqual(submission["aiSuggestedScore"], 9)
-        self.assertEqual(submission["codeScore"], 7)
-        self.assertTrue(submission["manualScoreOverride"])
+        self.assertEqual(submission["codeScore"], 9)
+        self.assertFalse(submission["manualScoreOverride"])
+        self.assertIsNone(submission["manualScore"])
         self.assertIn("−1 points — The task requires", submission["aiFeedback"])
         self.assertIn("Score: 9/10", submission["aiFeedback"])
 
@@ -456,6 +459,76 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         student_assignment = response.get_json()["assignments"][0]
         self.assertEqual(student_assignment["studentSubmissionSummary"]["codeScore"], 8)
         self.assertNotIn("Teacher-only rationale", response.get_data(as_text=True))
+
+        shared = self.client.post(
+            "/api/assignments/update",
+            headers=self.teacher_headers,
+            json={"assignmentId": assignment["id"], "shareAiFeedback": True},
+        )
+        self.assertEqual(shared.status_code, 200)
+        response = self.client.get("/api/assignments", headers=self.student_headers)
+        self.assertEqual(response.get_json()["assignments"][0]["studentSubmissionSummary"]["aiFeedback"], "Teacher-only rationale")
+
+    def test_past_assignments_include_preserved_submission_but_never_unreleased_drafts(self):
+        draft = self.create_assignment(name="Teacher Draft")
+        released = self.create_assignment(name="Released Work", active=True)
+        self.submit_code(released)
+        source = eagle._get_user_dir(self.student_email) / "answer.py"
+        source.unlink()
+        loaded = eagle._load_assignment(released["id"])
+        loaded["submissions"][0].update({"codeScore": 9, "totalScore": 9, "aiFeedback": "Private first"})
+        self.assertTrue(eagle._save_assignment(loaded))
+        locked = self.client.post(
+            "/api/assignments/update",
+            headers=self.teacher_headers,
+            json={"assignmentId": released["id"], "active": False},
+        )
+        self.assertEqual(locked.status_code, 200)
+
+        history = self.client.get(f"/api/assignments/past?classId={self.class_one}", headers=self.student_headers)
+        self.assertEqual(history.status_code, 200)
+        rows = history.get_json()["assignments"]
+        self.assertEqual([row["id"] for row in rows], [released["id"]])
+        self.assertNotEqual(rows[0]["id"], draft["id"])
+        self.assertIn("for i in range(3)", rows[0]["studentSubmission"]["code"])
+        self.assertEqual(rows[0]["studentSubmission"]["totalScore"], 9)
+        self.assertEqual(rows[0]["studentSubmission"]["aiFeedback"], "")
+
+        shared = self.client.post(
+            "/api/assignments/update",
+            headers=self.teacher_headers,
+            json={"assignmentId": released["id"], "shareAiFeedback": True},
+        )
+        self.assertEqual(shared.status_code, 200)
+        history = self.client.get(f"/api/assignments/past?classId={self.class_one}", headers=self.student_headers)
+        self.assertEqual(history.get_json()["assignments"][0]["studentSubmission"]["aiFeedback"], "Private first")
+
+    def test_teacher_can_view_and_cancel_one_grading_queue_item(self):
+        assignment = self.create_assignment(active=True)
+        self.submit_code(assignment)
+        loaded = eagle._load_assignment(assignment["id"])
+        loaded["submissions"][0]["aiGradingStatus"] = "queued"
+        loaded["submissions"][0]["aiQueuedAt"] = "2026-09-29T12:00:00+00:00"
+        self.assertTrue(eagle._save_assignment(loaded))
+        key = (assignment["id"], self.student_email)
+        with eagle._assignment_ai_queue_lock:
+            eagle._assignment_ai_queued_keys.add(key)
+        try:
+            queue = self.client.get("/api/assignments/ai-queue", headers=self.teacher_headers)
+            self.assertEqual(queue.status_code, 200)
+            self.assertEqual(queue.get_json()["jobs"][0]["studentEmail"], self.student_email)
+            canceled = self.client.post(
+                "/api/assignments/ai-queue/cancel",
+                headers=self.teacher_headers,
+                json={"assignmentId": assignment["id"], "studentEmail": self.student_email},
+            )
+            self.assertEqual(canceled.status_code, 200)
+            self.assertTrue(canceled.get_json()["canceled"])
+            self.assertEqual(eagle._load_assignment(assignment["id"])["submissions"][0]["aiGradingStatus"], "canceled")
+        finally:
+            with eagle._assignment_ai_queue_lock:
+                eagle._assignment_ai_queued_keys.discard(key)
+                eagle._assignment_ai_cancelled_keys.discard(key)
 
     def test_student_submission_response_excludes_ai_grading_fields(self):
         assignment = self.create_assignment(active=True)
