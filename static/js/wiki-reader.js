@@ -168,6 +168,7 @@
     disposeWikiContent($('wikiEmbeddedContent'));
     setView('ide', { push });
     try { window.eagleEditor?.refresh?.(); } catch {}
+    window.EagleIDE?.layout?.refreshEditors?.();
     return true;
   }
 

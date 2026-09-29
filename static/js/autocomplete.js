@@ -557,7 +557,6 @@
     let detailsNode = null;
     let suggestions = [];
     let selectedIndex = 0;
-    let selectionIntent = false;
     let visibleContext = null;
     let analysisCache = null;
     let analysisSource = null;
@@ -606,7 +605,6 @@
       if (popup) popup.classList.add('hidden');
       suggestions = [];
       selectedIndex = 0;
-      selectionIntent = false;
       visibleContext = null;
     }
 
@@ -634,7 +632,6 @@
 
     function select(index) {
       if (!suggestions.length) return;
-      selectionIntent = true;
       selectedIndex = (index + suggestions.length) % suggestions.length;
       listNode.querySelectorAll('.completion-item').forEach((node, itemIndex) => {
         node.classList.toggle('selected', itemIndex === selectedIndex);
@@ -665,7 +662,6 @@
       if (!popup || !items.length) { hide(); return; }
       suggestions = items;
       selectedIndex = 0;
-      selectionIntent = false;
       visibleContext = { line: cursor.line, cursorCh: cursor.ch, fromCh: context.fromCh, mode: context.mode, object: context.object };
       listNode.textContent = '';
       items.forEach((item, index) => {
@@ -726,16 +722,17 @@
     }
 
     function apply(item) {
-      if (!item || !visibleContext) return;
+      if (!item || !visibleContext) return false;
       const cursor = cm.getCursor();
       const context = contextAt(cm.getLine(cursor.line), cursor.ch);
       if (!context || cursor.line !== visibleContext.line || context.fromCh !== visibleContext.fromCh || context.mode !== visibleContext.mode || context.object !== visibleContext.object) {
         hide();
-        return;
+        return false;
       }
       cm.replaceRange(item.name, { line: cursor.line, ch: context.fromCh }, cursor, '+autocomplete');
       hide();
       cm.focus();
+      return true;
     }
 
     function setEnabled(enabled) {
@@ -779,13 +776,10 @@
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
         select(selectedIndex + (event.key === 'ArrowDown' ? 1 : -1));
-      } else if ((event.key === 'Enter' || event.key === 'Tab') && selectionIntent) {
-        event.preventDefault();
-        apply(suggestions[selectedIndex]);
-      } else if (event.key === 'Enter' || event.key === 'Tab') {
-        // Typing may open suggestions automatically. Enter and Tab keep editing
-        // until the student explicitly navigates or hovers over a suggestion.
-        hide();
+      } else if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && !event.isComposing) {
+        // The highlighted suggestion is keyboard-ready as soon as the list opens.
+        // Leave native editing alone if the cursor moved and the list is stale.
+        if (apply(suggestions[selectedIndex])) event.preventDefault();
       } else if (event.key === 'Escape') {
         event.preventDefault();
         hide();
