@@ -218,7 +218,7 @@ test('disabled engine does not fetch metadata or schedule analysis work', async 
   engine.setEnabled(false);
 });
 
-test('automatic suggestions do not steal Enter or Tab until explicitly selected', () => {
+test('Enter and Tab accept the highlighted suggestion without a mouse click', () => {
   const handlers = {};
   const makeNode = () => ({
     children: [], style: {}, className: '', textContent: '',
@@ -242,15 +242,19 @@ test('automatic suggestions do not steal Enter or Tab until explicitly selected'
   engine.check();
   let prevented = 0;
   handlers.keydown(cm, { key: 'Enter', preventDefault() { prevented += 1; } });
-  assert.equal(prevented, 0);
-  assert.equal(replacements, 0);
+  assert.equal(prevented, 1);
+  assert.equal(replacements, 1);
   engine.check();
   handlers.keydown(cm, { key: 'Tab', preventDefault() { prevented += 1; } });
-  assert.equal(prevented, 0);
+  assert.equal(prevented, 2);
+  assert.equal(replacements, 2);
+  engine.check();
+  handlers.keydown(cm, { key: 'Tab', shiftKey: true, preventDefault() { prevented += 1; } });
+  assert.equal(prevented, 2, 'Shift+Tab remains available for editor indentation');
   engine.check();
   handlers.keydown(cm, { key: 'ArrowDown', preventDefault() { prevented += 1; } });
   handlers.keydown(cm, { key: 'Enter', preventDefault() { prevented += 1; } });
-  assert.equal(replacements, 1);
+  assert.equal(replacements, 3);
 });
 
 test('analysis refuses oversized editor buffers', () => {
