@@ -42,3 +42,13 @@ test('only real Python block headers fold and hidden error lines unfold', () => 
   assert.match(editorSource, /foldGutter: \{ rangeFinder: eagleFoldRange/);
   assert.match(appSource, /EagleEditorBehavior\?\.unfoldLine\(cm, lineNum\)/);
 });
+
+test('fold controls have visible gutter icons and a compact collapsed marker', () => {
+  const css = fs.readFileSync(path.join(__dirname, '../static/css/features/editor.css'), 'utf8');
+  const editorSource = fs.readFileSync(path.join(__dirname, '../static/js/editor-init.js'), 'utf8');
+  assert.match(css, /\.CodeMirror \.eagle-fold-open::after\s*\{\s*content:\s*'−'/);
+  assert.match(css, /\.CodeMirror \.eagle-fold-closed::after\s*\{\s*content:\s*'\+'/);
+  assert.doesNotMatch(css, /\.CodeMirror-foldgutter \.eagle-fold-/);
+  assert.match(css, /\.CodeMirror-foldmarker\s*\{[^}]*border-radius:\s*999px/s);
+  assert.equal((editorSource.match(/widget: '⋯'/g) || []).length, 2);
+});
