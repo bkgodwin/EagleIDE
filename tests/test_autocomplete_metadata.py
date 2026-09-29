@@ -62,8 +62,12 @@ class AutocompleteMetadataTestCase(unittest.TestCase):
     def test_catalog_api_and_client_asset_are_wired(self):
         app_source = (BASE_DIR / "app.py").read_text(encoding="utf-8")
         page = (BASE_DIR / "index.html").read_text(encoding="utf-8")
+        client_source = (BASE_DIR / "static" / "js" / "autocomplete.js").read_text(encoding="utf-8")
         self.assertIn('@app.get("/api/autocomplete/catalog")', app_source)
-        self.assertIn('/static/js/autocomplete.js', page)
+        self.assertIn('/static/js/autocomplete.js?v=20260929-2', page)
+        self.assertIn("cache: 'no-store'", client_source)
+        self.assertIn('metadata = catalogIndex(payload.entries);', client_source)
+        self.assertIn('schedule();', client_source)
 
 
 if __name__ == "__main__":
