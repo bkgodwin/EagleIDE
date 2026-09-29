@@ -15,6 +15,7 @@
   const STORAGE_PREFIX = 'eagleide-skill-bands-';
   let listenersAttached = false;
   let masteryPollTimer = null;
+  let pastAssignments = [];
 
   function ctx() {
     return window.EagleIDE?.getContext?.() || {};
@@ -204,6 +205,86 @@
     `;
   }
 
+  function assignmentLanguage(fileName) {
+    const name = String(fileName || '').toLowerCase();
+    if (name.endsWith('.js')) return 'javascript';
+    if (name.endsWith('.html') || name.endsWith('.htm')) return 'html';
+    if (name.endsWith('.css')) return 'css';
+    return 'python';
+  }
+
+  function assignmentMaxScore(assignment) {
+    return (assignment.allowFileSubmission === false ? 0 : Number(assignment.maxScore || 0))
+      + Number(assignment.quiz?.totalPoints || 0);
+  }
+
+  async function copyPastAssignmentToEditor(index) {
+    const assignment = pastAssignments[index];
+    const submission = assignment?.studentSubmission;
+    const c = ctx();
+    if (!submission || !c.setEditorSnapshot) return;
+    const opened = await c.setEditorSnapshot({
+      code: submission.code || '',
+      language: assignmentLanguage(submission.fileName),
+      fileName: submission.fileName || 'past-assignment.py',
+      source: 'assignment',
+      draft: true,
+    });
+    if (opened !== false) closeDashboard();
+  }
+
+  async function renderPastAssignmentsPane() {
+    const pane = document.getElementById('studentPastAssignmentsPane');
+    if (!pane) return;
+    const c = ctx();
+    const classId = getClassId();
+    if (!c.USER_TOKEN || !classId) {
+      pastAssignments = [];
+      pane.innerHTML = '<div class="student-past-empty">Select a class to view past assignments.</div>';
+      return;
+    }
+    pane.innerHTML = '<div class="student-past-empty">Loading past assignments…</div>';
+    try {
+      const response = await fetch(`/api/assignments/past?classId=${encodeURIComponent(classId)}`, {
+        headers: { 'X-User-Token': c.USER_TOKEN },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.ok) throw new Error(data?.error || 'Could not load past assignments.');
+      pastAssignments = data.assignments || [];
+      if (!pastAssignments.length) {
+        pane.innerHTML = '<div class="student-past-empty">No previously unlocked assignments have been locked yet.</div>';
+        return;
+      }
+      pane.innerHTML = pastAssignments.map((assignment, index) => {
+        const submission = assignment.studentSubmission;
+        const total = submission?.totalScore ?? submission?.codeScore ?? null;
+        const maxScore = assignmentMaxScore(assignment);
+        const codePreview = String(submission?.code || '').slice(0, 4000);
+        return `
+          <article class="student-past-assignment-card">
+            <header>
+              <div><span class="student-classes-eyebrow">Locked assignment</span><h3>${escapeHtml(assignment.name || 'Assignment')}</h3></div>
+              <span class="assignment-score-badge ${total == null ? 'pending' : 'scored'}">${total == null ? 'Not graded' : `${total} / ${maxScore}`}</span>
+            </header>
+            <p class="student-past-task">${escapeHtml(assignment.task || '(No task description)')}</p>
+            ${submission ? `
+              <div class="student-past-meta">Submitted ${escapeHtml(submission.submittedAt || '—')} · ${escapeHtml(submission.fileName || 'submission')}</div>
+              ${submission.aiFeedback ? `<section class="student-past-feedback"><strong>Teacher-shared AI feedback</strong><pre>${escapeHtml(submission.aiFeedback)}</pre></section>` : ''}
+              ${codePreview ? `<details class="student-past-code"><summary>View preserved submission</summary><pre><code>${escapeHtml(codePreview)}${String(submission.code || '').length > codePreview.length ? '\n…' : ''}</code></pre></details>` : '<div class="student-past-meta">No code file was submitted.</div>'}
+              ${codePreview ? `<button class="btn run student-past-copy-btn" type="button" data-index="${index}">Copy to Editor</button>` : ''}
+            ` : '<div class="student-past-meta">You did not submit work for this assignment.</div>'}
+          </article>
+        `;
+      }).join('');
+      pane.querySelectorAll('.student-past-copy-btn').forEach(button => {
+        button.addEventListener('click', () => copyPastAssignmentToEditor(Number(button.dataset.index)));
+      });
+    } catch (error) {
+      pastAssignments = [];
+      pane.innerHTML = `<div class="student-past-empty is-error">${escapeHtml(error?.message || 'Could not load past assignments.')}</div>`;
+    }
+  }
+
   async function checkAchievements({ silent = false } = {}) {
     if (!isStudent()) return;
     const classId = getClassId();
@@ -288,6 +369,7 @@
     });
     renderClassesPane();
     renderMasteryPane().catch(() => {});
+    renderPastAssignmentsPane().catch(() => {});
     checkAchievements({ silent: true }).catch(() => {});
   }
 
@@ -309,8 +391,10 @@
         const viewId = button.dataset.view;
         document.querySelectorAll('#studentDashboardModal .teacher-dash-navbtn').forEach(item => item.classList.toggle('active', item === button));
         document.querySelectorAll('#studentDashboardModal .teacher-dash-view').forEach(view => view.classList.toggle('active', view.id === viewId));
+        button.scrollIntoView?.({ block: 'nearest', inline: 'center' });
         if (viewId === 'student-dash-classes') renderClassesPane();
         if (viewId === 'student-dash-mastery') renderMasteryPane().catch(() => {});
+        if (viewId === 'student-dash-past') renderPastAssignmentsPane().catch(() => {});
       });
     });
     document.getElementById('joinClassCodeInput')?.addEventListener('keydown', event => {
@@ -348,6 +432,7 @@
       onAuthChanged();
       renderClassesPane();
       renderMasteryPane().catch(() => {});
+      renderPastAssignmentsPane().catch(() => {});
     },
   };
 

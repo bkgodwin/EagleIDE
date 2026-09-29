@@ -119,6 +119,8 @@ Required runtime components:
 
 Authentication uses ephemeral in-memory token maps. Protected HTTP requests pass one of `X-Admin-Token`, `X-Teacher-Token`, or `X-User-Token`. Socket events carry the corresponding token in their payload and join role-specific rooms. Preserve authorization and class-ownership checks on every new route or event.
 
+All Ollama generation goes through the shared in-memory AI dispatcher in `app.py`. It keeps the configured concurrency full while healthy, queues excess interactive and background work, applies a global cooldown when Ollama reports overload, and retries overloaded requests. Assignment grading adds a durable submission-status layer with teacher queue inspection and cancellation; do not bypass the dispatcher with direct Ollama HTTP calls.
+
 ### Frontend
 
 `index.html` contains the complete UI markup. Scripts are classic global scripts, not ES modules, and their order is significant. The active order at the end of the page is:
