@@ -67,6 +67,51 @@ test('member suggestions combine catalog methods with user class members', () =>
   assert.equal(fileItems[0].signature, '(size=-1)');
 });
 
+test('Python imports expose CSV, JSON, random, and direct open-file members from the catalog', () => {
+  const source = [
+    'import csv',
+    'import json as JSON',
+    'import random',
+    'with open("records.txt") as handle:',
+    '    pass',
+  ].join('\n');
+  const analysis = autocomplete.analyzePython(source);
+  const catalog = autocomplete.catalogIndex([
+    { language: 'python', owner: 'csv', name: 'DictReader', kind: 'class', signature: '(f, fieldnames=None)', returns: 'csv.DictReader', description: 'Reads CSV rows as dictionaries.' },
+    { language: 'python', owner: 'json', name: 'loads', kind: 'function', signature: '(s, **kwargs)', returns: 'Any', description: 'Parses JSON text.' },
+    { language: 'python', owner: 'random', name: 'randint', kind: 'function', signature: '(a, b)', returns: 'int', description: 'Returns an inclusive random integer.' },
+    { language: 'python', owner: 'file', name: 'read', kind: 'method', signature: '(size=-1)', returns: 'str', description: 'Reads file text.' },
+  ]);
+  assert.equal(analysis.varTypes.get('csv'), 'csv');
+  assert.equal(analysis.varTypes.get('JSON'), 'json');
+  assert.equal(analysis.varTypes.get('random'), 'random');
+  assert.equal(analysis.varTypes.get('handle'), 'file');
+
+  const csvItems = autocomplete.buildSuggestionSet({
+    language: 'python', analysis, catalog,
+    context: { mode: 'member', object: 'csv', partial: 'Dict', fromCh: 4 },
+  });
+  assert.equal(csvItems[0].name, 'DictReader');
+  assert.equal(csvItems[0].description, 'Reads CSV rows as dictionaries.');
+
+  const jsonItems = autocomplete.buildSuggestionSet({
+    language: 'python', analysis, catalog,
+    context: { mode: 'member', object: 'JSON', partial: 'lo', fromCh: 5 },
+  });
+  assert.equal(jsonItems[0].name, 'loads');
+
+  const randomItems = autocomplete.buildSuggestionSet({
+    language: 'python', analysis, catalog,
+    context: { mode: 'member', object: 'random', partial: 'rand', fromCh: 7 },
+  });
+  assert.equal(randomItems[0].name, 'randint');
+
+  const directFileContext = autocomplete.contextAt('open("records.txt").rea', 23);
+  assert.deepEqual(directFileContext, { mode: 'member', object: 'open("records.txt")', partial: 'rea', fromCh: 20 });
+  const directFileItems = autocomplete.buildSuggestionSet({ language: 'python', analysis, catalog, context: directFileContext });
+  assert.equal(directFileItems[0].name, 'read');
+});
+
 test('completion context rejects comments and unfinished strings but supports a bare dot', () => {
   assert.deepEqual(
     autocomplete.contextAt('handle.', 7),
