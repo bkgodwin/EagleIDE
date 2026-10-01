@@ -5455,6 +5455,7 @@ def _perform_ollama_request(job: Dict[str, Any]) -> Dict[str, Any]:
                 "ok": False,
                 "error": error,
                 "status": status_code if status_code in {429, 503} else 502,
+                "upstream_status": status_code,
                 "retry_after": retry_after,
             }
         declared_size = int(r.headers.get("Content-Length", "0") or 0)
@@ -5490,11 +5491,18 @@ def _perform_ollama_request(job: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "ok": True,
             "text": text[:MAX_AI_RESPONSE_CHARS],
+            "done_reason": payload.get("done_reason") if isinstance(payload.get("done_reason"), str) and payload["done_reason"] in {"stop", "length", "load", "unload"} else "",
             "ollama_metrics": {
                 "total_duration": int(payload.get("total_duration") or 0),
                 "load_duration": int(payload.get("load_duration") or 0),
                 "eval_count": int(payload.get("eval_count") or 0),
             },
+        }
+    except requests.exceptions.ConnectTimeout:
+        _record_ai_failure()
+        return {
+            "ok": False, "status": 502,
+            "error": "Could not connect to Ollama within 3 seconds. Check the configured URL, service availability, and firewall/network access from the EagleIDE server.",
         }
     except requests.exceptions.Timeout:
         _record_ai_failure()
@@ -5660,6 +5668,7 @@ def call_ollama_generate(
     use_cache: bool = True,
     request_identity: Optional[str] = None,
     json_response: bool = False,
+    response_schema: Optional[Dict[str, Any]] = None,
     temperature: Optional[float] = None,
     request_kind: str = "interactive",
     request_label: str = "",
@@ -5688,7 +5697,9 @@ def call_ollama_generate(
         "keep_alive": "15m",
         "options": {"num_predict": _bounded_int(num_predict, 2048, 1, 4096)},
     }
-    if json_response:
+    if response_schema is not None:
+        payload["format"] = copy.deepcopy(response_schema)
+    elif json_response:
         payload["format"] = "json"
     if temperature is not None:
         payload["options"]["temperature"] = max(0.0, min(2.0, float(temperature)))
@@ -8735,24 +8746,24 @@ def _ensure_default_teacher_skills(teacher_email: str) -> None:
 
 
 ASSIGNMENT_GRADING_CRITERIA = (
-    {"id": "objectives", "label": "All outlined objectives met", "description": "Every required feature and outcome in the assignment description is present."},
-    {"id": "correctness", "label": "Correct logic and results", "description": "The solution's visible logic should produce the intended results."},
-    {"id": "execution", "label": "Code executes without errors", "description": "No evident syntax, name, type, or runtime blocker prevents normal use."},
-    {"id": "input_validation", "label": "Input validation and handling", "description": "User or external input is validated and invalid values are handled appropriately."},
-    {"id": "error_handling", "label": "Error and exception handling", "description": "Expected failure cases are handled without hiding unrelated defects."},
-    {"id": "edge_cases", "label": "Edge cases", "description": "Boundary, empty, unusual, and otherwise relevant cases are considered."},
-    {"id": "code_quality", "label": "Good coding practices", "description": "The solution follows sound, language-appropriate implementation practices."},
-    {"id": "readability", "label": "Readable and clear code", "description": "Formatting and structure make the solution easy to follow."},
-    {"id": "naming", "label": "Meaningful names", "description": "Variables, functions, classes, and other identifiers communicate their purpose."},
-    {"id": "comments", "label": "Use of comments", "description": "Comments explain intent or non-obvious logic without narrating every line."},
-    {"id": "organization", "label": "Organization and modularity", "description": "Responsibilities are separated into sensible functions, classes, or sections."},
-    {"id": "efficiency", "label": "Efficiency", "description": "The approach avoids unnecessary work and uses suitable algorithms for the task."},
-    {"id": "data_structures", "label": "Appropriate data structures", "description": "Collections and data representations fit the problem and are used correctly."},
-    {"id": "language_features", "label": "Required language concepts", "description": "The requested language constructs or course concepts are demonstrated correctly."},
-    {"id": "output", "label": "Output and formatting", "description": "Required output is complete, accurate, labeled, and formatted as requested."},
-    {"id": "testing", "label": "Evidence of testing", "description": "Included tests or test cases meaningfully exercise the solution when the assignment calls for them."},
-    {"id": "documentation", "label": "Documentation", "description": "Docstrings, usage notes, or other required documentation are useful and accurate."},
-    {"id": "security", "label": "Security and safe handling", "description": "The code avoids unsafe handling of secrets, paths, commands, or untrusted data where relevant."},
+    {"id": "objectives", "rigorLevel": 2, "label": "All outlined objectives met", "description": "Every required feature and outcome in the assignment description is present."},
+    {"id": "language_features", "rigorLevel": 3, "label": "Required language concepts", "description": "The requested language constructs or course concepts are demonstrated correctly."},
+    {"id": "correctness", "rigorLevel": 4, "label": "Correct logic and results", "description": "The solution's visible logic should produce the intended results."},
+    {"id": "execution", "rigorLevel": 5, "label": "Code executes without errors", "description": "No evident syntax, name, type, or runtime blocker prevents normal use."},
+    {"id": "output", "rigorLevel": 5, "label": "Output and formatting", "description": "Required output is complete, accurate, labeled, and formatted as requested."},
+    {"id": "readability", "rigorLevel": 6, "label": "Readable and clear code", "description": "Formatting and structure make the solution easy to follow."},
+    {"id": "naming", "rigorLevel": 6, "label": "Meaningful names", "description": "Variables, functions, classes, and other identifiers communicate their purpose."},
+    {"id": "comments", "rigorLevel": 6, "label": "Use of comments", "description": "Comments explain intent or non-obvious logic without narrating every line."},
+    {"id": "code_quality", "rigorLevel": 6, "label": "Good coding practices", "description": "The solution follows sound, language-appropriate implementation practices."},
+    {"id": "organization", "rigorLevel": 7, "label": "Organization and modularity", "description": "Responsibilities are separated into sensible functions, classes, or sections."},
+    {"id": "data_structures", "rigorLevel": 7, "label": "Appropriate data structures", "description": "Collections and data representations fit the problem and are used correctly."},
+    {"id": "documentation", "rigorLevel": 7, "label": "Documentation", "description": "Docstrings, usage notes, or other required documentation are useful and accurate."},
+    {"id": "input_validation", "rigorLevel": 8, "label": "Input validation and handling", "description": "User or external input is validated and invalid values are handled appropriately."},
+    {"id": "error_handling", "rigorLevel": 8, "label": "Error and exception handling", "description": "Expected failure cases are handled without hiding unrelated defects."},
+    {"id": "edge_cases", "rigorLevel": 8, "label": "Edge cases", "description": "Boundary, empty, unusual, and otherwise relevant cases are considered."},
+    {"id": "testing", "rigorLevel": 8, "label": "Evidence of testing", "description": "Included tests or test cases meaningfully exercise the solution when the assignment calls for them."},
+    {"id": "efficiency", "rigorLevel": 9, "label": "Efficiency", "description": "The approach avoids unnecessary work and uses suitable algorithms for the task."},
+    {"id": "security", "rigorLevel": 10, "label": "Security and safe handling", "description": "The code avoids unsafe handling of secrets, paths, commands, or untrusted data where relevant."},
 )
 _ASSIGNMENT_GRADING_CRITERIA_BY_ID = {item["id"]: item for item in ASSIGNMENT_GRADING_CRITERIA}
 
@@ -8813,7 +8824,7 @@ def _assignment_rubric_points(rubric: str, criteria: list[str], max_score) -> di
     if set(points_by_criterion) != set(selected):
         raise ValueError("Keep each selected criterion heading in the format: Criterion name (N points)")
     if sum(points_by_criterion.values()) != maximum:
-        raise ValueError(f"Rubric criterion points must add up to {maximum}")
+        raise ValueError(f"Rubric criterion points must add up to {maximum}; received {sum(points_by_criterion.values())}")
     totals = re.findall(r"^\s*Total\s*:\s*(\d+)\s*(?:points?|pts?)\s*$", rubric, re.MULTILINE | re.IGNORECASE)
     if totals != [str(maximum)]:
         raise ValueError(f"End the rubric with exactly one Total: {maximum} points line")
@@ -9763,6 +9774,27 @@ _assignment_ai_worker: Optional[threading.Thread] = None
 _assignment_ai_recovery_checked = False
 
 
+def _assignment_rubric_response_schema(criteria: list[str], max_score: int) -> dict:
+    section = {
+        "type": "object", "additionalProperties": False,
+        "properties": {
+            "points": {"type": "integer", "minimum": 0, "maximum": max_score},
+            **{key: {"type": "string", "minLength": 1, "maxLength": 800}
+               for key in ("fullCredit", "partialCredit", "noCredit")},
+        },
+        "required": ["points", "fullCredit", "partialCredit", "noCredit"],
+    }
+    return {
+        "type": "object", "additionalProperties": False,
+        "properties": {"criteria": {
+            "type": "object", "additionalProperties": False,
+            "properties": {criterion_id: copy.deepcopy(section) for criterion_id in criteria},
+            "required": list(criteria),
+        }},
+        "required": ["criteria"],
+    }
+
+
 def _build_assignment_rubric_generation_prompt(*, task: str, max_score: int, criteria: list[str]) -> str:
     criterion_lines = []
     for criterion_id in criteria:
@@ -9776,12 +9808,11 @@ def _build_assignment_rubric_generation_prompt(*, task: str, max_score: int, cri
         "For each criterion, state its point value and concise descriptions for full, partial, and no credit. Make the levels observable from "
         "submitted source code. Do not claim the code will be executed; execution-related judgments must be phrased around evident blockers, "
         "the supplied syntax result, and visible logic. Avoid double-counting the same defect.\n\n"
-        "Return ONLY compact JSON with this exact shape: "
-        '{"rubric":"plain-text rubric with a title, one section per selected criterion, and a final Total: N points line"}. '
-        "The rubric must name every selected criterion exactly once and no unselected criterion. Use one plain-text heading per criterion, "
-        "with the exact label followed by its integer point value, for example: All outlined objectives met (10 points). "
-        "Do not use Markdown formatting in headings. The criterion point values must add up to the maximum; finish with Total: N points. "
-        "When more criteria are selected than available points, zero-point criteria are allowed.\n\n"
+        "Return ONLY compact JSON matching the supplied schema. Put each selected criterion ID exactly once inside criteria. "
+        "Each criterion has points (a whole number), fullCredit, partialCredit, and noCredit (concise plain-text expectations). "
+        "Do not generate headings, a total line, or Markdown; the server formats the editable rubric. "
+        "The points across all criteria must add up to the maximum. Zero-point criteria are allowed.\n\n"
+        "JSON schema: " + json.dumps(_assignment_rubric_response_schema(criteria, max_score), separators=(",", ":")) + "\n\n"
         f"Maximum points: {max_score}\n"
         "Selected criteria:\n" + "\n".join(criterion_lines) + "\n\n"
         "<assignment_description>\n" + str(task or "").strip() + "\n</assignment_description>"
@@ -9794,8 +9825,32 @@ def _parse_generated_assignment_rubric(raw: str, criteria: list[str], max_score:
         start = text.index("{")
         payload, _ = json.JSONDecoder().raw_decode(text[start:])
     except (ValueError, json.JSONDecodeError) as exc:
-        raise ValueError("AI returned an invalid rubric; nothing was saved") from exc
-    rubric = str(payload.get("rubric") or "").strip() if isinstance(payload, dict) else ""
+        raise ValueError("AI returned malformed or truncated JSON; a complete criteria object is required") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("AI returned the wrong JSON type; a criteria object is required")
+    if "criteria" in payload:
+        sections = payload["criteria"]
+        if not isinstance(sections, dict) or set(sections) != set(criteria):
+            raise ValueError("AI must return every selected criterion ID exactly once, with no additional criteria")
+        parts = ["Assignment scoring rubric"]
+        for criterion_id in criteria:
+            section = sections[criterion_id]
+            if not isinstance(section, dict) or type(section.get("points")) is not int or section["points"] < 0:
+                raise ValueError(f"AI returned invalid whole-number points for {criterion_id}")
+            descriptions = []
+            for key, label in (("fullCredit", "Full"), ("partialCredit", "Partial"), ("noCredit", "No credit")):
+                value = section.get(key)
+                if not isinstance(value, str) or not value.strip() or len(value) > 800:
+                    raise ValueError(f"AI omitted or exceeded the length of {key} for {criterion_id}")
+                descriptions.append(f"{label}: " + re.sub(r"\s+", " ", value).strip())
+            heading = f'{_ASSIGNMENT_GRADING_CRITERIA_BY_ID[criterion_id]["label"]} ({section["points"]} points)'
+            parts.append(heading + "\n" + "\n".join(descriptions))
+        parts.append(f"Total: {max_score} points")
+        rubric = "\n\n".join(parts)
+    else:
+        # Accept valid legacy-shaped model output without weakening point validation.
+        rubric = payload.get("rubric") if isinstance(payload.get("rubric"), str) else ""
+        rubric = rubric.strip()
     if len(rubric) < 80:
         raise ValueError("AI returned an incomplete rubric; nothing was saved")
     if len(rubric) > MAX_ASSIGNMENT_RUBRIC_CHARS:
@@ -9806,60 +9861,108 @@ def _parse_generated_assignment_rubric(raw: str, criteria: list[str], max_score:
 
 @app.post("/api/assignments/generate-rubric")
 def generate_assignment_rubric():
+    reference_id = uuid.uuid4().hex[:12]
+    diagnostics = {"stage": "authorization"}
+    try:
+        return _generate_assignment_rubric_response(reference_id, diagnostics)
+    except Exception as exc:
+        diagnostics["exceptionType"] = type(exc).__name__
+        frames = []
+        trace = exc.__traceback__
+        while trace is not None:
+            code = trace.tb_frame.f_code
+            frames.append(f"{Path(code.co_filename).name}:{trace.tb_lineno} ({code.co_name})")
+            trace = trace.tb_next
+        app.logger.error("Rubric generation exception reference=%s stage=%s exception=%s stack=%s",
+                         reference_id, diagnostics["stage"], type(exc).__name__, " -> ".join(frames))
+        return _assignment_rubric_failure(
+            "The server encountered an unexpected error while generating the rubric. Ask the administrator to check the server logs using this reference.",
+            500, "rubric_internal_error", reference_id, diagnostics,
+        )
+
+
+def _assignment_rubric_failure(error: str, status: int, code: str, reference_id: str, diagnostics: dict):
+    app.logger.warning("Rubric generation failed reference=%s code=%s diagnostics=%s",
+                       reference_id, code, json.dumps(diagnostics, sort_keys=True))
+    return jsonify(ok=False, error=error, errorCode=code, requestId=reference_id, details=diagnostics), status
+
+
+def _generate_assignment_rubric_response(reference_id: str, diagnostics: dict):
+    def fail(error, status=400, code="rubric_invalid_request"):
+        return _assignment_rubric_failure(error, status, code, reference_id, diagnostics)
+
     actor = _assignment_actor(request)
     if not actor:
-        return jsonify(ok=False, error="Teacher token required"), 401
-    data = request.get_json(silent=True) or {}
+        return fail("Teacher token required. Sign in again before generating a rubric.", 401, "rubric_auth_required")
+    data = request.get_json(silent=True)
+    if data is None:
+        data = {}
     if not isinstance(data, dict):
-        return jsonify(ok=False, error="Rubric request must be an object"), 400
+        return fail("Rubric request must be an object")
     allowed, error = _effective_ai_enabled(request, data)
     if not allowed:
-        return jsonify(ok=False, error=error or "AI unavailable"), 403
+        return fail(error or "AI unavailable. Ask the administrator to enable AI.", 403, "rubric_ai_disabled")
+    diagnostics["stage"] = "assignment_validation"
     reference, class_hint = _assignment_request_reference(data)
     assignment = _load_assignment(reference, class_hint)
     if not assignment:
-        return jsonify(ok=False, error="Assignment not found"), 404
+        return fail("Assignment not found. Refresh the assignment list and try again.", 404, "rubric_assignment_missing")
     if (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
-        return jsonify(ok=False, error="You can only generate rubrics for your own assignments"), 403
+        return fail("You can only generate rubrics for your own assignments", 403, "rubric_forbidden")
     try:
         criteria = _normalize_assignment_grading_criteria(data.get("criteria"), strict=True)
     except ValueError as exc:
-        return jsonify(ok=False, error=str(exc)), 400
+        return fail(str(exc))
     if not criteria:
-        return jsonify(ok=False, error="Select at least one grading criterion"), 400
+        return fail("Select at least one grading criterion")
     task = str(assignment.get("task") or "").strip()
     if not task:
-        return jsonify(ok=False, error="Add an assignment description before generating a rubric"), 400
+        return fail("Add an assignment description before generating a rubric")
     try:
         max_score = int(assignment.get("maxScore") or 0)
     except (TypeError, ValueError):
         max_score = 0
     if max_score <= 0:
-        return jsonify(ok=False, error="The assignment must have a positive code point value"), 400
+        return fail("The assignment must have a positive code point value")
+    raw_maximum = assignment.get("maxScore")
+    if isinstance(raw_maximum, bool) or (isinstance(raw_maximum, float) and raw_maximum != max_score):
+        return fail("The assignment must have a positive whole-number code point value")
+    diagnostics["stage"] = "configuration"
     cfg = _load_config()
-    prompt = _build_assignment_rubric_generation_prompt(task=task, max_score=max_score, criteria=criteria)
-    result = call_ollama_generate(
-        cfg.get("ai_ollama_url", ""),
-        cfg.get("ai_model", "gemma3:4b"),
-        prompt,
-        timeout=_configured_ai_timeout(cfg),
-        num_predict=min(4096, 700 + 180 * len(criteria)),
-        use_cache=False,
-        json_response=True,
-        temperature=0,
-        request_identity=f"teacher:{str(actor.get('email') or '').strip().lower() or 'unknown'}",
-        request_kind="assignment-rubric",
-        request_label=f"Rubric · {assignment.get('name') or 'Assignment'}",
-        request_metadata={"assignmentId": assignment.get("id"), "criteria": criteria},
-    )
-    if not result.get("ok"):
-        return jsonify(ok=False, error=result.get("error") or "AI rubric generation failed"), int(result.get("status") or 502)
     try:
-        rubric = _parse_generated_assignment_rubric(result.get("text") or "", criteria, max_score)
+        model = _normalize_ollama_model(cfg.get("ai_model", "gemma3:4b"))
     except ValueError as exc:
-        return jsonify(ok=False, error=str(exc)), 502
-    return jsonify(ok=True, rubric=rubric, criteria=criteria, maxScore=max_score,
-                   rubricContext=_assignment_rubric_context(task, max_score, criteria))
+        return fail(str(exc), 422, "rubric_configuration_error")
+    diagnostics.update(model=model, timeoutSeconds=_configured_ai_timeout(cfg), criteriaCount=len(criteria))
+    prompt = _build_assignment_rubric_generation_prompt(task=task, max_score=max_score, criteria=criteria)
+    diagnostics["numPredict"] = min(4096, 1400 + 220 * len(criteria))
+    for attempt in range(1, 3):
+        diagnostics.update(stage="ai_request", attempt=attempt)
+        result = call_ollama_generate(
+            cfg.get("ai_ollama_url", ""), model, prompt,
+            timeout=diagnostics["timeoutSeconds"], num_predict=diagnostics["numPredict"],
+            use_cache=False, json_response=True, response_schema=_assignment_rubric_response_schema(criteria, max_score), temperature=0,
+            request_identity=f"teacher:{str(actor.get('email') or '').strip().lower() or 'unknown'}",
+            request_kind="assignment-rubric", request_label=f"Rubric · {assignment.get('name') or 'Assignment'}",
+            request_metadata={"assignmentId": assignment.get("id"), "criteria": criteria, "referenceId": reference_id},
+        )
+        if not result.get("ok"):
+            if type(result.get("upstream_status")) is int:
+                diagnostics["upstreamStatus"] = result["upstream_status"]
+            return fail(result.get("error") or "AI rubric generation failed. Check AI Settings and model availability.",
+                        int(result.get("status") or 502), "rubric_ai_service_error")
+        diagnostics.update(stage="output_validation", responseChars=len(str(result.get("text") or "")),
+                           finishReason=result.get("done_reason") or "unknown")
+        try:
+            rubric = _parse_generated_assignment_rubric(result.get("text") or "", criteria, max_score)
+        except ValueError as exc:
+            if attempt == 1:
+                prompt += "\n\nYour previous response failed validation: " + str(exc) + ". Return a complete corrected criteria object."
+                continue
+            return fail(f"AI rubric rejected after {attempt} attempts: {exc}. No rubric was saved. Try fewer criteria or another installed model.",
+                        502, "rubric_invalid_output")
+        return jsonify(ok=True, rubric=rubric, criteria=criteria, maxScore=max_score, requestId=reference_id,
+                       rubricContext=_assignment_rubric_context(task, max_score, criteria))
 
 
 def _assignment_rigor_guidance(rigor: int) -> str:
