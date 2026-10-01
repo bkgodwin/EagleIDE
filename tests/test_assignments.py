@@ -137,6 +137,9 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         assignment = self.create_assignment()
         self.assertTrue(assignment.get("createdAt"))
         self.assertEqual(assignment["aiGradingRigor"], 6)
+        self.assertEqual(assignment["aiGradingMode"], "legacy")
+        self.assertEqual(assignment["aiGradingCriteria"], [])
+        self.assertEqual(assignment["aiGradingRubric"], "")
         changed = self.client.post(
             "/api/assignments/update",
             headers=self.teacher_headers,
@@ -319,6 +322,275 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         self.assertIsNone(submission["manualScore"])
         self.assertIn("−1 points — The task requires", submission["aiFeedback"])
         self.assertIn("Score: 9/10", submission["aiFeedback"])
+
+    def test_teacher_generates_accepts_and_invalidates_beta_rubric(self):
+        assignment = self.create_assignment()
+        generated_text = (
+            "All outlined objectives met (7 points)\nFull: Every loop objective is met. Partial: Some required behavior is present. "
+            "None: The objective is absent.\n\nUse of comments (3 points)\nFull: Comments clarify intent. Partial: Comments are limited. "
+            "None: Required comments are absent.\n\nTotal: 10 points"
+        )
+        with patch.object(eagle, "_effective_ai_enabled", return_value=(True, None)), patch.object(
+            eagle, "call_ollama_generate", return_value={"ok": True, "text": json.dumps({"rubric": generated_text})}
+        ) as generator:
+            response = self.client.post(
+                "/api/assignments/generate-rubric",
+                headers=self.teacher_headers,
+                json={"assignmentId": assignment["id"], "criteria": ["objectives", "comments"]},
+            )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(response.get_json()["rubric"], generated_text)
+        prompt = generator.call_args.args[2]
+        self.assertIn("Maximum points: 10", prompt)
+        self.assertIn("All outlined objectives met", prompt)
+        self.assertIn("Use of comments", prompt)
+        self.assertNotIn("Meaningful names", prompt)
+        self.assertEqual(generator.call_args.kwargs["request_kind"], "assignment-rubric")
+        self.assertEqual(eagle._load_assignment(assignment["id"])["aiGradingRubric"], "")
+
+        accepted = self.client.post(
+            "/api/assignments/update",
+            headers=self.teacher_headers,
+            json={
+                "assignmentId": assignment["id"],
+                "aiGradingMode": "rubric_beta",
+                "aiGradingCriteria": ["objectives", "comments"],
+                "aiGradingRubric": generated_text,
+                "aiGradingRubricContext": response.get_json()["rubricContext"],
+            },
+        )
+        self.assertEqual(accepted.status_code, 200, accepted.get_data(as_text=True))
+        saved = accepted.get_json()["assignment"]
+        self.assertEqual(saved["aiGradingMode"], "rubric_beta")
+        self.assertTrue(saved["aiGradingRubricContext"])
+        self.assertFalse(eagle._assignment_beta_rubric_error(saved))
+
+        changed = self.client.post(
+            "/api/assignments/update",
+            headers=self.teacher_headers,
+            json={"assignmentId": assignment["id"], "task": "Write two different loops"},
+        )
+        self.assertEqual(changed.status_code, 200)
+        stale = changed.get_json()["assignment"]
+        self.assertEqual(stale["aiGradingRubric"], "")
+        self.assertIn("Generate and accept", eagle._assignment_beta_rubric_error(stale))
+
+    def test_beta_grader_uses_only_accepted_selected_criteria(self):
+        assignment = self.create_assignment(active=True)
+        self.submit_code(assignment)
+        rubric = (
+            "All outlined objectives met (10 points)\nFull: the required loop is complete. Partial: the loop is incomplete. "
+            "None: no loop is present.\nTotal: 10 points"
+        )
+        updated = self.client.post(
+            "/api/assignments/update",
+            headers=self.teacher_headers,
+            json={
+                "assignmentId": assignment["id"],
+                "aiGradingMode": "rubric_beta",
+                "aiGradingCriteria": ["objectives"],
+                "aiGradingRubric": rubric,
+                "aiGradingRubricContext": eagle._assignment_rubric_context(assignment["task"], 10, ["objectives"]),
+            },
+        )
+        self.assertEqual(updated.status_code, 200)
+        model_result = json.dumps({
+            "effort": "clear",
+            "strength": "The submission contains the required loop structure.",
+            "evaluatedCriteria": ["objectives"],
+            "missingRequirements": ["The loop stops before the requested final value."],
+            "integrityWarning": "",
+            "deductions": [{
+                "points": 2,
+                "criterion": "objectives",
+                "reason": "The visible range excludes the requested final value from the loop output.",
+            }],
+        })
+        with patch.object(eagle, "call_ollama_generate", return_value={"ok": True, "text": model_result}) as grader:
+            eagle._run_assignment_ai_grading(assignment["id"], self.student_email)
+        prompt = grader.call_args.args[2]
+        self.assertIn("Use only the accepted rubric", prompt)
+        self.assertIn("`objectives`: All outlined objectives met", prompt)
+        self.assertNotIn("`comments`: Use of comments", prompt)
+        self.assertEqual(grader.call_args.kwargs["request_metadata"]["gradingMode"], "rubric_beta")
+        submission = eagle._load_assignment(assignment["id"])["submissions"][0]
+        self.assertEqual(submission["aiGradingStatus"], "completed")
+        self.assertEqual(submission["codeScore"], 8)
+        self.assertIn("Rubric Beta", submission["aiFeedback"])
+        self.assertIn("All outlined objectives met", submission["aiFeedback"])
+
+    def test_beta_grader_refuses_to_queue_without_an_accepted_current_rubric(self):
+        assignment = self.create_assignment(active=True)
+        self.submit_code(assignment)
+        changed = self.client.post(
+            "/api/assignments/update",
+            headers=self.teacher_headers,
+            json={"assignmentId": assignment["id"], "aiGradingMode": "rubric_beta", "aiGradingCriteria": ["execution"]},
+        )
+        self.assertEqual(changed.status_code, 200)
+        with patch.object(eagle, "_effective_ai_enabled", return_value=(True, None)):
+            response = self.client.post(
+                "/api/assignments/grade-ai",
+                headers=self.teacher_headers,
+                json={"assignmentId": assignment["id"], "studentEmail": self.student_email},
+            )
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("accept", response.get_json()["error"].lower())
+
+    def test_beta_does_not_add_legacy_syntax_penalties_for_unselected_execution(self):
+        assignment = self.create_assignment(active=True)
+        self.submit_code(assignment)
+        saved = eagle._load_assignment(assignment["id"])
+        saved.update({
+            "aiGradingMode": "rubric_beta", "aiGradingCriteria": ["comments"], "aiGradingRigor": 10,
+            "aiGradingRubric": "Use of comments (10 points)\nFull: Comments explain the intent.\nTotal: 10 points",
+            "aiGradingRubricContext": eagle._assignment_rubric_context(assignment["task"], 10, ["comments"]),
+        })
+        saved["submissions"][0]["code"] = "# Explain the intended calculation.\nprint(\n"
+        eagle._save_assignment(saved)
+        with patch.object(eagle, "call_ollama_generate", return_value={"ok": True, "text": json.dumps({
+            "effort": "some", "strength": "The comment explains the intended calculation.",
+            "evaluatedCriteria": ["comments"], "deductions": [],
+        })}) as ai:
+            eagle._run_assignment_ai_grading(assignment["id"], self.student_email)
+        self.assertIn("Python syntax check:", ai.call_args.args[2])
+        submission = eagle._load_assignment(assignment["id"])["submissions"][0]
+        self.assertEqual(submission["aiGradingStatus"], "completed")
+        self.assertEqual(submission["codeScore"], 10)
+
+    def test_beta_result_rejects_unselected_or_missing_criterion_evaluations(self):
+        rubric = "All outlined objectives met (8 points)\nFull: all work is complete.\nMeaningful names (2 points)\nFull: names are clear.\nTotal: 10 points"
+        valid = json.dumps({
+            "effort": "clear",
+            "strength": "The code clearly names and implements the requested calculation.",
+            "evaluatedCriteria": ["objectives", "naming"],
+            "missingRequirements": [],
+            "integrityWarning": "",
+            "deductions": [{"points": 1, "criterion": "naming", "reason": "The name x does not communicate the stored total value."}],
+        })
+        score, feedback = eagle._parse_assignment_rubric_ai_result(valid, 10, ["objectives", "naming"], rubric=rubric)
+        self.assertEqual(score, 9)
+        self.assertIn("Meaningful names", feedback)
+        missing = json.loads(valid)
+        missing["evaluatedCriteria"] = ["objectives"]
+        with self.assertRaises(ValueError):
+            eagle._parse_assignment_rubric_ai_result(json.dumps(missing), 10, ["objectives", "naming"], rubric=rubric)
+        outside = json.loads(valid)
+        outside["deductions"][0]["criterion"] = "comments"
+        with self.assertRaises(ValueError):
+            eagle._parse_assignment_rubric_ai_result(json.dumps(outside), 10, ["objectives", "naming"], rubric=rubric)
+        for evaluated in (["objectives", "naming", "comments"], ["objectives", "naming", "naming"], ["naming", "naming"]):
+            bad = json.loads(valid)
+            bad["evaluatedCriteria"] = evaluated
+            with self.assertRaises(ValueError):
+                eagle._parse_assignment_rubric_ai_result(json.dumps(bad), 10, ["objectives", "naming"], rubric=rubric)
+        excessive = json.loads(valid)
+        excessive["deductions"][0]["points"] = 3
+        with self.assertRaisesRegex(ValueError, "criterion's point value"):
+            eagle._parse_assignment_rubric_ai_result(json.dumps(excessive), 10, ["objectives", "naming"], rubric=rubric)
+
+    def test_rubric_point_budgets_are_validated_before_acceptance(self):
+        assignment = self.create_assignment()
+        criteria = ["objectives", "comments"]
+        context = eagle._assignment_rubric_context(assignment["task"], 10, criteria)
+        valid = "All outlined objectives met (8 points)\nFull: all objectives met.\nUse of comments (2 points)\nFull: useful comments.\nTotal: 10 points"
+        for bad_rubric in (
+            valid.replace("(8 points)", "(9 points)"),
+            valid.replace("Use of comments", "Meaningful names"),
+            valid + "\nUse of comments (0 points)",
+            valid.replace("Total: 10", "Total: 20"),
+        ):
+            rejected = self.client.post("/api/assignments/update", headers=self.teacher_headers, json={
+                "assignmentId": assignment["id"], "aiGradingMode": "rubric_beta",
+                "aiGradingCriteria": criteria, "aiGradingRubric": bad_rubric,
+                "aiGradingRubricContext": context,
+            })
+            self.assertEqual(rejected.status_code, 400, rejected.get_data(as_text=True))
+            self.assertEqual(eagle._load_assignment(assignment["id"])["aiGradingMode"], "legacy")
+        self.client.post("/api/assignments/update", headers=self.teacher_headers, json={
+            "assignmentId": assignment["id"], "task": "Changed while generating",
+        })
+        stale = self.client.post("/api/assignments/update", headers=self.teacher_headers, json={
+            "assignmentId": assignment["id"], "aiGradingMode": "rubric_beta",
+            "aiGradingCriteria": criteria, "aiGradingRubric": valid, "aiGradingRubricContext": context,
+        })
+        self.assertEqual(stale.status_code, 409)
+
+    def test_rubric_generation_rejects_non_owner_and_fails_without_mutation(self):
+        assignment = self.create_assignment()
+        foreign = eagle._load_assignment(assignment["id"])
+        foreign["createdByEmail"] = "another-teacher@example.com"
+        eagle._save_assignment(foreign)
+        with patch.object(eagle, "_effective_ai_enabled", return_value=(True, None)), patch.object(eagle, "call_ollama_generate") as ai:
+            denied = self.client.post("/api/assignments/generate-rubric", headers=self.teacher_headers, json={
+                "assignmentId": assignment["id"], "criteria": ["objectives"],
+            })
+            self.assertEqual(denied.status_code, 403)
+            ai.assert_not_called()
+        foreign["createdByEmail"] = self.teacher_email
+        eagle._save_assignment(foreign)
+        with patch.object(eagle, "_effective_ai_enabled", return_value=(True, None)), patch.object(
+            eagle, "call_ollama_generate", return_value={"ok": False, "error": "AI unavailable", "status": 503}
+        ):
+            failed = self.client.post("/api/assignments/generate-rubric", headers=self.teacher_headers, json={
+                "assignmentId": assignment["id"], "criteria": ["objectives"],
+            })
+        self.assertEqual(failed.status_code, 503)
+        self.assertEqual(eagle._load_assignment(assignment["id"])["aiGradingRubric"], "")
+
+    def test_changed_settings_cannot_save_a_stale_grade(self):
+        assignment = self.create_assignment(active=True)
+        self.submit_code(assignment)
+
+        def change_settings(*_args, **_kwargs):
+            response = self.client.post("/api/assignments/update", headers=self.teacher_headers, json={
+                "assignmentId": assignment["id"], "maxScore": 5,
+            })
+            self.assertEqual(response.status_code, 200)
+            return {"ok": True, "text": json.dumps({
+                "effort": "clear", "strength": "The loop meets the stated assignment requirements.", "deductions": [],
+            })}
+
+        with patch.object(eagle, "call_ollama_generate", side_effect=change_settings):
+            eagle._run_assignment_ai_grading(assignment["id"], self.student_email)
+        submission = eagle._load_assignment(assignment["id"])["submissions"][0]
+        self.assertEqual(submission["aiGradingStatus"], "failed")
+        self.assertIsNone(submission["codeScore"])
+        self.assertIn("changed", submission["aiGradingError"])
+
+    def test_queued_grade_rejects_changed_settings_before_calling_ai(self):
+        assignment = self.create_assignment(active=True)
+        self.submit_code(assignment)
+        queued = eagle._load_assignment(assignment["id"])
+        queued["submissions"][0]["aiGradingStatus"] = "queued"
+        queued["submissions"][0]["aiGradingSettingsHash"] = eagle._assignment_grading_settings_hash(queued)
+        eagle._save_assignment(queued)
+        response = self.client.post("/api/assignments/update", headers=self.teacher_headers, json={
+            "assignmentId": assignment["id"], "aiGradingRigor": 10,
+        })
+        self.assertEqual(response.status_code, 200)
+        with patch.object(eagle, "call_ollama_generate") as ai:
+            eagle._run_assignment_ai_grading(assignment["id"], self.student_email)
+            ai.assert_not_called()
+        submission = eagle._load_assignment(assignment["id"])["submissions"][0]
+        self.assertEqual(submission["aiGradingStatus"], "failed")
+        self.assertIsNone(submission["codeScore"])
+        self.assertIn("changed while queued", submission["aiGradingError"])
+
+    def test_full_beta_feedback_survives_persistence_and_switching_modes(self):
+        assignment = self.create_assignment(active=True)
+        self.submit_code(assignment)
+        saved = eagle._load_assignment(assignment["id"])
+        saved["aiGradingMode"] = "rubric_beta"
+        feedback = "Detailed criterion feedback. " * 100 + "Last criterion deduction."
+        saved["submissions"][0]["aiFeedback"] = feedback
+        eagle._save_assignment(saved)
+        self.assertEqual(eagle._load_assignment(assignment["id"])["submissions"][0]["aiFeedback"], feedback)
+        response = self.client.post("/api/assignments/update", headers=self.teacher_headers, json={
+            "assignmentId": assignment["id"], "aiGradingMode": "legacy",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(eagle._load_assignment(assignment["id"])["submissions"][0]["aiFeedback"], feedback)
 
     def test_grade_all_ai_uses_alphabetical_batches_of_three(self):
         assignment = self.create_assignment(active=True)
@@ -617,6 +889,9 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         student_assignment = response.get_json()["assignments"][0]
         self.assertEqual(student_assignment["studentSubmissionSummary"]["codeScore"], 8)
         self.assertNotIn("Teacher-only rationale", response.get_data(as_text=True))
+        self.assertNotIn("aiGradingInstructions", student_assignment)
+        self.assertNotIn("aiGradingCriteria", student_assignment)
+        self.assertNotIn("aiGradingRubric", student_assignment)
 
         shared = self.client.post(
             "/api/assignments/update",
