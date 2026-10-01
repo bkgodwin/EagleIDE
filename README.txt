@@ -133,6 +133,7 @@ AI/OLLAMA CONFIGURATION
 "ai_ollama_url": "http://192.168.0.105:11434"  # Ollama server URL
 "ai_model": "gemma3:4b"              # AI model name
 "ai_request_timeout_seconds": 120    # Bounded 15-300 second model timeout
+"ai_rubric_context_tokens": 16384    # Rubric creation/beta grading only; match model capacity (2048-65536)
 
 Ollama URL Examples:
 - Local installation: "http://127.0.0.1:11434" or "http://localhost:11434"
@@ -594,7 +595,8 @@ AI grading systems (per assignment):
   grader enables grading. Generation alone does not replace the accepted rubric.
 - Beta grading uses only selected, accepted rubric criteria, not legacy rigor or
   automatic extra penalties. The server verifies every criterion was evaluated
-  and computes the score from deductions capped at each criterion's points.
+  and sums earned credit, deriving deductions from each criterion's budget.
+  Full credit means earned points equal the budget, not a deduction of that value.
 - Changing the assignment description, point maximum, or checklist requires a
   new accepted rubric. Jobs reject changed grading settings instead of saving a
   stale result. You can switch back to Legacy grader and save its settings.
@@ -611,11 +613,21 @@ AI grading systems (per assignment):
   allocation. This removes exact arithmetic from the model's responsibilities;
   teachers still review/edit all final point values before accepting. All-zero
   weights, missing/extra criteria, and incomplete descriptions are rejected.
-  The shorter prompt does not repeat the full per-criterion schema, and only
-  rubric generation requests an explicit bounded 8,192-token context. This can
-  increase Ollama memory use; other AI features retain their existing context.
-  Invalid model output
-  receives one correction attempt; invalid drafts are never accepted or saved.
+  All criteria may be selected. Each generated criterion has one short full-credit
+  expectation (120 characters maximum), with shared proportional partial/zero
+  credit rules. Drafts are limited to 4,000 characters; teacher edits still allow
+  12,000. Creation never sends submissions, legacy instructions, or editor context.
+  Beta grading returns one compact earned-credit entry per selected criterion,
+  without repeating criterion IDs, separate coverage lists, or missing-part lists.
+  Invalid creation/grading output receives one correction attempt; copied rubric
+  expectations and placeholder feedback cannot replace a saved grade.
+  Admin Settings > AI Features > Rubric context limit defaults to 16,384 tokens
+  and accepts 2,048-65,536. Match it to the model's supported context; larger
+  settings may require more memory. Creation and beta grading conservatively
+  budget serialized input bytes plus output and template headroom, allocating
+  smaller contexts when possible. Oversized requests warn without truncation or
+  saving. Creation also has a 12,000-byte request ceiling. Shorten the description
+  or rubric if warned. Legacy grading and other AI features retain their settings.
   Use a current local Ollama server with JSON-schema structured-output support.
 - Troubleshooting: generation/save errors show the HTTP status and endpoint.
   Server-generated rubric errors also include a reference ID, failure stage,
