@@ -80,8 +80,10 @@ function assignmentViewHarness(assignments) {
     currentTeacherClassId: 'class-a', activeAssignmentsClassId: 'class-a', currentAdminAssignmentName: null,
     TEACHER_TOKEN: 'teacher-token', document: { getElementById: id => nodes[id] || null },
     assignmentGradingCriteria: [
-      { id: 'objectives', label: 'All outlined objectives met', description: 'All required outcomes are present.' },
-      { id: 'comments', label: 'Use of comments', description: 'Comments explain intent.' },
+      { id: 'comments', rigorLevel: 6, label: 'Use of comments', description: 'Comments explain intent.' },
+      { id: 'objectives', rigorLevel: 2, label: 'All outlined objectives met', description: 'All required outcomes are present.' },
+      { id: 'validation', rigorLevel: 8, label: 'Input validation', description: 'Validate input.' },
+      { id: 'security', rigorLevel: 10, label: 'Security', description: 'Safe handling.' },
     ],
     escapeHtml: value => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'),
     getAssignmentByName: id => assignments.find(a => a.id === id),
@@ -107,6 +109,11 @@ test('teacher assignment titles sort chronologically and expand into grading', (
   assert.match(detail.innerHTML, /AI Grade All/);
   assert.match(detail.innerHTML, /Legacy grader/);
   assert.match(detail.innerHTML, /All outlined objectives met/);
+  assert.ok(detail.innerHTML.indexOf('Foundation') < detail.innerHTML.indexOf('Working and clear code'));
+  assert.ok(detail.innerHTML.indexOf('Working and clear code') < detail.innerHTML.indexOf('Robustness and maintainability'));
+  assert.ok(detail.innerHTML.indexOf('Robustness and maintainability') < detail.innerHTML.indexOf('Advanced quality'));
+  assert.ok(detail.innerHTML.indexOf('All outlined objectives met') < detail.innerHTML.indexOf('Use of comments'));
+  assert.doesNotMatch(detail.innerHTML, /class="assignment-criterion-check"[^>]*checked/);
 });
 
 test('teacher reference panel shows only unlocked assignments for active class', () => {
@@ -137,4 +144,93 @@ test('assignment refresh preserves an unsaved grader draft until it is saved', (
   detail.dataset.aiSettingsDirty = 'false';
   context.views.renderAdminAssignments();
   assert.match(detail.innerHTML, /Teacher-approved rubric/);
+});
+
+function rubricRequestHarness(fetch) {
+  const start = source.indexOf('function selectedAssignmentGradingCriteria(detail)');
+  const end = source.indexOf('async function saveAssignmentAiSettings(', start);
+  const controls = {
+    '#generateAssignmentRubricBtn': { disabled: false, textContent: 'Generate rubric' },
+    '#assignmentAiRubric': { disabled: false, value: 'Existing accepted rubric' },
+    '#assignmentRubricStatus': { textContent: '' },
+    '#acceptAssignmentRubricBtn': { disabled: false },
+    '#assignmentAiGradingMode': { disabled: false },
+    '#gradeAllSubmissionsBtn': { disabled: false },
+  };
+  const criterion = { value: 'objectives', disabled: false };
+  const detail = {
+    dataset: { rubricContext: 'original-context' }, isConnected: true,
+    querySelector: selector => controls[selector] || null,
+    querySelectorAll: selector => selector.startsWith('.assignment-criterion-check') ? [criterion] : [],
+  };
+  const context = {
+    fetch, document: { getElementById: () => detail },
+    getAssignmentByName: () => ({ id: 'assignment-id' }),
+    assignmentManagerHeaders: () => ({}), buildAiContext: value => value,
+    assignmentRequestPayload: (assignment, extra) => ({ assignmentId: assignment.id, ...extra }),
+  };
+  vm.runInNewContext(`${source.slice(start, end)}\nglobalThis.rubric = { generateAssignmentRubric, readAssignmentAiResponse };`, context);
+  return { context, controls, criterion, detail };
+}
+
+test('non-JSON server and proxy failures show status and troubleshooting without rendering HTML', async () => {
+  for (const status of [404, 500, 502, 504]) {
+    const { context, controls, criterion, detail } = rubricRequestHarness(async () => ({
+      ok: false, status, statusText: 'Error', headers: { get: () => 'text/html' },
+      json: async () => { throw new SyntaxError('<html>private server traceback</html>'); },
+    }));
+    await context.rubric.generateAssignmentRubric('assignment-id');
+    const message = controls['#assignmentRubricStatus'].textContent;
+    assert.match(message, new RegExp(`HTTP ${status}`));
+    assert.match(message, /POST \/api\/assignments\/generate-rubric/);
+    assert.match(message, /server|proxy/);
+    assert.doesNotMatch(message, /private server traceback|<html>/);
+    assert.equal(controls['#generateAssignmentRubricBtn'].disabled, false);
+    assert.equal(controls['#acceptAssignmentRubricBtn'].disabled, false);
+    assert.equal(criterion.disabled, false);
+    assert.equal(controls['#assignmentAiRubric'].value, 'Existing accepted rubric');
+    assert.equal(detail.dataset.rubricContext, 'original-context');
+  }
+});
+
+test('JSON failure shows reference ID and safe model diagnostics', async () => {
+  const { context, controls } = rubricRequestHarness(async () => ({
+    ok: false, status: 502, headers: { get: () => 'application/json' },
+    json: async () => ({ ok: false, error: 'Malformed JSON', errorCode: 'rubric_invalid_output', requestId: 'reference-123',
+      details: { stage: 'output_validation', model: 'test-model', attempt: 2, finishReason: 'length', prompt: 'private assignment' } }),
+  }));
+  await context.rubric.generateAssignmentRubric('assignment-id');
+  const message = controls['#assignmentRubricStatus'].textContent;
+  assert.match(message, /Malformed JSON/);
+  assert.match(message, /Reference: reference-123/);
+  assert.match(message, /stage: output_validation/);
+  assert.match(message, /model: test-model/);
+  assert.match(message, /attempt: 2/);
+  assert.doesNotMatch(message, /private assignment/);
+});
+
+test('network failures include connection guidance and incomplete success never replaces the draft', async () => {
+  const network = rubricRequestHarness(async () => { throw new TypeError('Failed to fetch'); });
+  await network.context.rubric.generateAssignmentRubric('assignment-id');
+  assert.match(network.controls['#assignmentRubricStatus'].textContent, /Check the connection/);
+  assert.match(network.controls['#assignmentRubricStatus'].textContent, /Elapsed:/);
+  const incomplete = rubricRequestHarness(async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) }));
+  await incomplete.context.rubric.generateAssignmentRubric('assignment-id');
+  assert.match(incomplete.controls['#assignmentRubricStatus'].textContent, /incomplete success response/);
+  assert.equal(incomplete.controls['#assignmentAiRubric'].value, 'Existing accepted rubric');
+});
+
+test('successful rubric generation locks controls while pending then displays the editable draft', async () => {
+  let resolve;
+  const pending = new Promise(done => { resolve = done; });
+  const { context, controls, criterion, detail } = rubricRequestHarness(() => pending);
+  const generation = context.rubric.generateAssignmentRubric('assignment-id');
+  assert.equal(criterion.disabled, true);
+  assert.equal(controls['#assignmentAiRubric'].disabled, true);
+  resolve({ ok: true, status: 200, json: async () => ({ ok: true, rubric: 'New reviewed draft', rubricContext: 'new-context' }) });
+  await generation;
+  assert.equal(criterion.disabled, false);
+  assert.equal(controls['#assignmentAiRubric'].value, 'New reviewed draft');
+  assert.equal(detail.dataset.rubricContext, 'new-context');
+  assert.equal(controls['#generateAssignmentRubricBtn'].textContent, 'Regenerate rubric');
 });

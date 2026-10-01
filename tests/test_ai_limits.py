@@ -67,6 +67,17 @@ class AiLimitTestCase(unittest.TestCase):
         self.assertTrue(second["cached"])
         self.assertEqual(post.call_count, 1)
 
+    def test_structured_output_schema_reaches_ollama_and_has_distinct_cache_key(self):
+        schema = {"type": "object", "properties": {"criteria": {"type": "object"}}, "required": ["criteria"]}
+        with mock.patch.object(eagle.requests, "post", return_value=_Response()) as post:
+            first = eagle.call_ollama_generate("http://127.0.0.1:11434", "model", "same prompt", response_schema=schema)
+            second = eagle.call_ollama_generate("http://127.0.0.1:11434", "model", "same prompt", json_response=True)
+        self.assertTrue(first["ok"])
+        self.assertTrue(second["ok"])
+        self.assertEqual(post.call_count, 2)
+        self.assertEqual(post.call_args_list[0].kwargs["json"]["format"], schema)
+        self.assertEqual(post.call_args_list[1].kwargs["json"]["format"], "json")
+
     def test_background_ai_generation_accepts_explicit_identity_without_request_context(self):
         with mock.patch.object(eagle.requests, "post", return_value=_Response()) as post:
             result = eagle.call_ollama_generate(
@@ -177,6 +188,14 @@ class AiLimitTestCase(unittest.TestCase):
         self.assertEqual(result["status"], 504)
         self.assertNotIn("/root", result["error"])
         self.assertIn("30 seconds", result["error"])
+
+    def test_connection_timeout_is_not_reported_as_model_generation_timeout(self):
+        with mock.patch.object(eagle.requests, "post", side_effect=eagle.requests.exceptions.ConnectTimeout("/private/path")):
+            result = eagle.call_ollama_generate("http://127.0.0.1:11434", "model", "prompt", timeout=120)
+        self.assertEqual(result["status"], 502)
+        self.assertIn("connect to Ollama within 3 seconds", result["error"])
+        self.assertNotIn("120 seconds", result["error"])
+        self.assertNotIn("/private/path", result["error"])
 
     def test_admin_ai_test_validates_model_name(self):
         token = "ai-test-admin-token"

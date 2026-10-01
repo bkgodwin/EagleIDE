@@ -7631,6 +7631,31 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         || String(a.id || a.name || '').localeCompare(String(b.id || b.name || '')));
     }
 
+    function renderAssignmentGradingCriteria(selected) {
+      const groups = [
+        { min: 1, max: 4, title: 'Foundation', description: 'Core objectives and course concepts' },
+        { min: 5, max: 6, title: 'Working and clear code', description: 'Execution, output, and everyday coding practices' },
+        { min: 7, max: 8, title: 'Robustness and maintainability', description: 'Structure, validation, and testing' },
+        { min: 9, max: 10, title: 'Advanced quality', description: 'Efficiency and safe handling' },
+      ];
+      return groups.map(group => {
+        const criteria = assignmentGradingCriteria.filter(item => {
+          const level = Number(item.rigorLevel) || 4;
+          return level >= group.min && level <= group.max;
+        }).sort((a, b) => (Number(a.rigorLevel) || 4) - (Number(b.rigorLevel) || 4));
+        if (!criteria.length) return '';
+        return `<section class="assignment-criteria-group" aria-label="${group.title}">
+          <h5>${group.title} <span>Rigor ${group.min}–${group.max}</span></h5>
+          <p>${group.description}</p>
+          ${criteria.map(criterion => `
+            <label class="assignment-criterion-option">
+              <input type="checkbox" class="assignment-criterion-check" value="${escapeHtml(criterion.id)}" ${selected.includes(criterion.id) ? 'checked' : ''}>
+              <span><strong>${escapeHtml(criterion.label)}</strong><small>${escapeHtml(criterion.description)}</small></span>
+            </label>`).join('')}
+        </section>`;
+      }).join('');
+    }
+
     function renderTeacherReferenceAssignments() {
       const list = document.getElementById('teacherReferenceAssignmentList');
       const heading = document.getElementById('teacherReferenceAssignmentsTitle');
@@ -7742,13 +7767,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             <p>Choose exactly what the grader may consider. Generate a point-based rubric from the saved assignment description, review or edit it, then accept it before grading.</p>
             <fieldset class="assignment-criteria-fieldset">
               <legend>Grading criteria</legend>
+              <p class="assignment-criteria-guidance">Ordered from foundational to advanced rigor. Groups are guidance only: nothing is selected automatically, and Beta grades only checked criteria.</p>
               <div class="assignment-criteria-grid">
-                ${assignmentGradingCriteria.map(criterion => `
-                  <label class="assignment-criterion-option">
-                    <input type="checkbox" class="assignment-criterion-check" value="${escapeHtml(criterion.id)}" ${selectedGradingCriteria.includes(criterion.id) ? 'checked' : ''}>
-                    <span><strong>${escapeHtml(criterion.label)}</strong><small>${escapeHtml(criterion.description)}</small></span>
-                  </label>
-                `).join('')}
+                ${renderAssignmentGradingCriteria(selectedGradingCriteria)}
               </div>
             </fieldset>
             <div class="assignment-rubric-actions">
@@ -9111,6 +9132,33 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         .filter(Boolean);
     }
 
+    async function readAssignmentAiResponse(response, action, endpoint) {
+      const http = `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`;
+      const contentType = response.headers?.get('content-type') || 'unspecified content type';
+      let result;
+      try {
+        result = await response.json();
+      } catch (_) {
+        const hint = response.status === 404
+          ? 'The endpoint may be missing. Confirm the server is updated and restarted, then reload the page.'
+          : [502, 503, 504].includes(response.status)
+            ? 'The server or reverse proxy may be unavailable or timing out. Ask the administrator to check its logs and AI timeout settings.'
+            : 'The server returned a non-JSON or empty response. Ask the administrator to check application and reverse-proxy logs.';
+        throw new Error(`${action} failed: ${http}; ${contentType}. Endpoint: POST ${endpoint}. ${hint} No changes were saved.`);
+      }
+      if (!response.ok || !result || result.ok !== true) {
+        const details = result?.details || {};
+        const context = [
+          result?.errorCode ? `Code: ${result.errorCode}` : '',
+          result?.requestId ? `Reference: ${result.requestId}` : '',
+          ...['stage', 'model', 'timeoutSeconds', 'criteriaCount', 'attempt', 'numPredict', 'responseChars', 'finishReason', 'upstreamStatus', 'exceptionType']
+            .filter(key => details[key] !== undefined).map(key => `${key}: ${details[key]}`),
+        ].filter(Boolean).join('; ');
+        throw new Error(`${action} failed: ${result?.error || 'The server did not return a successful result.'} (${http}). Endpoint: POST ${endpoint}.${context ? ` ${context}.` : ''}`);
+      }
+      return result;
+    }
+
     async function generateAssignmentRubric(assignmentReference) {
       const assignment = getAssignmentByName(assignmentReference);
       const detail = document.getElementById('assignmentDetailPanel');
@@ -9130,22 +9178,27 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       lockedControls.forEach(control => { control.disabled = true; });
       [detail.querySelector('#gradeAllSubmissionsBtn'), ...detail.querySelectorAll('.ai-grade-submission-btn')].filter(Boolean)
         .forEach(control => { control.disabled = true; });
-      if (status) status.textContent = 'Generating a rubric with AI…';
+      if (status) status.textContent = 'Generating a rubric with AI… This may wait for the AI queue; keep this page open.';
+      const startedAt = Date.now();
       try {
         const response = await fetch('/api/assignments/generate-rubric', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...assignmentManagerHeaders() },
           body: JSON.stringify(buildAiContext(assignmentRequestPayload(assignment, { criteria }))),
         });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok || !result.ok) throw new Error(result.error || 'Could not generate the rubric.');
+        const result = await readAssignmentAiResponse(response, 'Rubric generation', '/api/assignments/generate-rubric');
+        if (typeof result.rubric !== 'string' || !result.rubric.trim() || !result.rubricContext) {
+          throw new Error(`Rubric generation failed: the server returned an incomplete success response (HTTP ${response.status}). Reload the page and check that the server is updated. No rubric was accepted.`);
+        }
         if (!detail.isConnected) return;
         if (rubric) rubric.value = result.rubric || '';
         detail.dataset.rubricContext = result.rubricContext || '';
         if (button) button.textContent = 'Regenerate rubric';
         if (status) status.textContent = 'Rubric generated. Review and edit it, then accept it to enable beta grading.';
       } catch (error) {
-        if (status) status.textContent = error?.message || 'Could not generate the rubric.';
+        const message = error?.message || 'Unknown browser error';
+        const networkHint = error?.name === 'TypeError' ? ' The request or response could not be read. Check the connection and server availability.' : '';
+        if (status) status.textContent = `${message}${networkHint} Elapsed: ${Math.max(0, Math.round((Date.now() - startedAt) / 1000))}s.`;
       } finally {
         if (button) button.disabled = false;
         lockedControls.forEach(control => { control.disabled = false; });
@@ -9188,8 +9241,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           headers: { 'Content-Type': 'application/json', ...assignmentManagerHeaders() },
           body: JSON.stringify(assignmentRequestPayload(assignment, payload)),
         });
-        const result = await response.json().catch(() => ({}));
-        if (!result.ok) throw new Error(result.error || 'Could not save AI settings.');
+        await readAssignmentAiResponse(response, 'Grading settings save', '/api/assignments/update');
         setAssignmentStatus(mode === 'rubric_beta' ? 'Beta rubric accepted and grading system saved.' : 'Legacy AI grading settings saved.');
         if (detail) detail.dataset.aiSettingsDirty = 'false';
         await loadAssignments();
