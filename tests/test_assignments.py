@@ -538,11 +538,11 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         self.assertEqual(failed.status_code, 503)
         self.assertEqual(eagle._load_assignment(assignment["id"])["aiGradingRubric"], "")
 
-    def test_structured_rubric_generation_formats_headings_and_repairs_bad_point_totals(self):
+    def test_structured_rubric_generation_formats_headings_and_repairs_invalid_descriptions(self):
         assignment = self.create_assignment()
         section = {"points": 6, "fullCredit": "All required behavior is present.",
                    "partialCredit": "Some required behavior is present.", "noCredit": "Required behavior is absent."}
-        bad = {"criteria": {"objectives": dict(section), "comments": dict(section)}}
+        bad = {"criteria": {"objectives": dict(section), "comments": {**section, "noCredit": ""}}}
         corrected = {"criteria": {"objectives": {**section, "points": 7}, "comments": {**section, "points": 3}}}
         with patch.object(eagle, "_effective_ai_enabled", return_value=(True, None)), patch.object(
             eagle, "call_ollama_generate", side_effect=[
@@ -554,7 +554,7 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
             })
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         self.assertEqual(ai.call_count, 2)
-        self.assertIn("received 12", ai.call_args.args[2])
+        self.assertIn("noCredit for comments", ai.call_args.args[2])
         schema = ai.call_args.kwargs["response_schema"]
         self.assertEqual(set(schema["properties"]["criteria"]["required"]), {"objectives", "comments"})
         self.assertFalse(schema["properties"]["criteria"]["additionalProperties"])
@@ -573,16 +573,54 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
                 "assignmentId": assignment["id"], "criteria": ["objectives"],
             })
         body = response.get_json()
-        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.status_code, 422)
         self.assertEqual(ai.call_count, 2)
         self.assertEqual(body["errorCode"], "rubric_invalid_output")
         self.assertEqual(body["details"]["stage"], "output_validation")
         self.assertEqual(body["details"]["finishReason"], "length")
         self.assertEqual(body["details"]["responseChars"], 12)
+        self.assertIn("malformed or truncated JSON", body["details"]["validationError"])
+        self.assertIn(body["details"]["validationError"], " ".join(logs.output))
         self.assertIn(body["requestId"], " ".join(logs.output))
         self.assertNotIn(assignment["task"], json.dumps(body))
         self.assertNotIn(self.teacher_email, json.dumps(body))
         self.assertEqual(eagle._load_assignment(assignment["id"])["aiGradingRubric"], "")
+
+    def test_nine_criteria_generation_scales_weights_without_retry_or_saving(self):
+        assignment = self.create_assignment()
+        criteria = [item["id"] for item in eagle.ASSIGNMENT_GRADING_CRITERIA[:9]]
+        section = {"points": 10, "fullCredit": "All relevant assignment expectations are present.",
+                   "partialCredit": "Some relevant expectations are incomplete.", "noCredit": "Relevant expectations are absent."}
+        output = json.dumps({"criteria": {key: dict(section) for key in criteria}})
+        with patch.object(eagle, "_effective_ai_enabled", return_value=(True, None)), patch.object(
+            eagle, "call_ollama_generate", return_value={"ok": True, "text": output, "done_reason": "stop"}
+        ) as ai:
+            response = self.client.post("/api/assignments/generate-rubric", headers=self.teacher_headers, json={
+                "assignmentId": assignment["id"], "criteria": criteria,
+            })
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(ai.call_count, 1)
+        self.assertEqual(ai.call_args.kwargs["num_ctx"], 8192)
+        # Do not repeat a per-criterion JSON schema in the prompt; only the API format needs it.
+        self.assertNotIn('"additionalProperties"', ai.call_args.args[2])
+        rubric = response.get_json()["rubric"]
+        points = eagle._assignment_rubric_points(rubric, criteria, 10)
+        self.assertEqual(sum(points.values()), 10)
+        self.assertEqual(list(points.values()), [2] + [1] * 8)
+        self.assertEqual(eagle._load_assignment(assignment["id"])["aiGradingRubric"], "")
+
+    def test_point_weight_scaling_preserves_ratios_zero_weights_and_small_maximum(self):
+        self.assertEqual(eagle._assignment_rubric_allocate_points({"objectives": 6, "comments": 3, "testing": 0}, 10),
+                         {"objectives": 7, "comments": 3, "testing": 0})
+        self.assertEqual(eagle._assignment_rubric_allocate_points({"objectives": 1, "comments": 1, "testing": 1}, 2),
+                         {"objectives": 1, "comments": 1, "testing": 0})
+        with self.assertRaisesRegex(ValueError, "only zero"):
+            eagle._assignment_rubric_allocate_points({"objectives": 0}, 10)
+        # Acceptance still rejects bad totals: scaling is generation-only.
+        section = {"points": 6, "fullCredit": "All relevant expectations are present.",
+                   "partialCredit": "Some expectations are incomplete.", "noCredit": "Relevant expectations are absent."}
+        with self.assertRaisesRegex(ValueError, "add up to 10"):
+            eagle._parse_generated_assignment_rubric(json.dumps({"criteria": {"objectives": section}}), ["objectives"], 10)
 
     def test_rubric_unexpected_exceptions_return_json_without_internal_details(self):
         assignment = self.create_assignment()
