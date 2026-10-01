@@ -52,6 +52,12 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn('"public, max-age=31536000, immutable"', source)
         self.assertIn('"public, max-age=300, must-revalidate"', source)
 
+    def test_assignment_criteria_stay_in_one_column_with_aligned_checkboxes(self):
+        css = (BASE_DIR / "static/css/features/resources.css").read_text(encoding="utf-8")
+        self.assertRegex(css, r"\.assignment-criteria-grid\s*\{[^}]*grid-template-columns:minmax\(0,1fr\)")
+        # Beat the shared .modal-content label:not(.choice-item) specificity.
+        self.assertRegex(css, r"\.assignment-ai-controls label\.assignment-criterion-option\s*\{[^}]*display:flex;[^}]*margin:0;")
+
     def test_heavy_network_simulator_is_loaded_on_demand(self):
         feature_loader = (BASE_DIR / "static" / "js" / "feature-loader.js").read_text(encoding="utf-8")
         self.assertIn('/static/js/feature-loader.js?v=', self.raw)

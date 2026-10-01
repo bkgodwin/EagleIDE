@@ -601,6 +601,21 @@ AI grading systems (per assignment):
 - AI reviews source code; it does not execute submissions or prove runtime
   behavior. Teachers should review suggested scores and can override them.
   Feedback stays teacher-only unless the teacher explicitly shares it.
+- The checklist is one column ordered into Foundation (rigor 1-4), Working and
+  clear code (5-6), Robustness and maintainability (7-8), and Advanced quality
+  (9-10). These groups guide selection only; they never apply automatic penalties
+  or select extra criteria. Existing checklists and accepted rubrics are preserved.
+- Generation requests structured criterion data from Ollama, then the server
+  formats canonical headings and verifies the point total. Invalid model output
+  receives one correction attempt; invalid drafts are never accepted or saved.
+  Use a current local Ollama server with JSON-schema structured-output support.
+- Troubleshooting: generation/save errors show the HTTP status and endpoint.
+  Server-generated rubric errors also include a reference ID, failure stage,
+  model, timeout, and available output-size/finish details. Give the reference
+  to the administrator to correlate server logs. HTTP 404 with a non-JSON response
+  can indicate an outdated/unrestarted server; non-JSON 502/504 responses can
+  indicate a reverse-proxy failure or timeout. Do not share credentials or student
+  code to troubleshoot these errors; neither is included in the diagnostics.
 
 Notebook assignments use the same teacher-owned skill catalog shown in Dashboard
 > Skills. The prompt composer includes a searchable, scrollable skill sidebar

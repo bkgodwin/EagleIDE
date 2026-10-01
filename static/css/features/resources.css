@@ -94,8 +94,14 @@
     .assignment-rubric-beta > p{ margin:0; color:var(--theme-text-dim); font-size:13px; line-height:1.45; }
     .assignment-criteria-fieldset{ min-width:0; margin:0; padding:10px; border:1px solid var(--theme-border-mid); border-radius:8px; }
     .assignment-criteria-fieldset legend{ padding:0 5px; color:var(--theme-text); font-weight:800; }
-    .assignment-criteria-grid{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; max-height:310px; overflow:auto; padding:2px; }
-    .assignment-criterion-option{ display:flex; gap:8px; align-items:flex-start; min-width:0; padding:8px; border:1px solid var(--theme-border-mid); border-radius:7px; background:var(--theme-input-bg); cursor:pointer; }
+    .assignment-criteria-grid{ display:grid; grid-template-columns:minmax(0,1fr); gap:16px; max-height:460px; overflow:auto; padding:2px; }
+    .assignment-criteria-guidance{ margin:0 0 10px; color:var(--theme-text-dim); font-size:12px; line-height:1.45; }
+    .assignment-criteria-group{ display:grid; grid-template-columns:minmax(0,1fr); gap:7px; min-width:0; }
+    .assignment-criteria-group h5{ margin:0; color:var(--theme-text); font-size:14px; }
+    .assignment-criteria-group h5 span{ color:var(--theme-text-dim); font-size:12px; font-weight:normal; margin-left:6px; }
+    .assignment-criteria-group > p{ margin:0 0 2px; color:var(--theme-text-dim); font-size:12px; }
+    #assignmentRubricStatus{ overflow-wrap:anywhere; line-height:1.5; }
+    .assignment-ai-controls label.assignment-criterion-option{ display:flex; gap:8px; align-items:flex-start; min-width:0; margin:0; padding:8px; border:1px solid var(--theme-border-mid); border-radius:7px; background:var(--theme-input-bg); cursor:pointer; }
     .assignment-criterion-option:has(input:checked){ border-color:var(--columbia-blue); background:color-mix(in srgb,var(--columbia-blue) 10%,var(--theme-input-bg)); }
     .assignment-criterion-option input{ flex:0 0 auto; margin-top:3px; accent-color:var(--columbia-blue); }
     .assignment-criterion-option span{ display:grid; gap:2px; min-width:0; }

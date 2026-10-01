@@ -538,6 +538,86 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         self.assertEqual(failed.status_code, 503)
         self.assertEqual(eagle._load_assignment(assignment["id"])["aiGradingRubric"], "")
 
+    def test_structured_rubric_generation_formats_headings_and_repairs_bad_point_totals(self):
+        assignment = self.create_assignment()
+        section = {"points": 6, "fullCredit": "All required behavior is present.",
+                   "partialCredit": "Some required behavior is present.", "noCredit": "Required behavior is absent."}
+        bad = {"criteria": {"objectives": dict(section), "comments": dict(section)}}
+        corrected = {"criteria": {"objectives": {**section, "points": 7}, "comments": {**section, "points": 3}}}
+        with patch.object(eagle, "_effective_ai_enabled", return_value=(True, None)), patch.object(
+            eagle, "call_ollama_generate", side_effect=[
+                {"ok": True, "text": json.dumps(bad)}, {"ok": True, "text": json.dumps(corrected)},
+            ]
+        ) as ai:
+            response = self.client.post("/api/assignments/generate-rubric", headers=self.teacher_headers, json={
+                "assignmentId": assignment["id"], "criteria": ["objectives", "comments"],
+            })
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(ai.call_count, 2)
+        self.assertIn("received 12", ai.call_args.args[2])
+        schema = ai.call_args.kwargs["response_schema"]
+        self.assertEqual(set(schema["properties"]["criteria"]["required"]), {"objectives", "comments"})
+        self.assertFalse(schema["properties"]["criteria"]["additionalProperties"])
+        rubric = response.get_json()["rubric"]
+        self.assertIn("All outlined objectives met (7 points)", rubric)
+        self.assertIn("Use of comments (3 points)", rubric)
+        self.assertTrue(rubric.endswith("Total: 10 points"))
+        self.assertEqual(eagle._load_assignment(assignment["id"])["aiGradingRubric"], "")
+
+    def test_rubric_errors_include_safe_reference_and_model_diagnostics(self):
+        assignment = self.create_assignment()
+        with patch.object(eagle, "_effective_ai_enabled", return_value=(True, None)), patch.object(
+            eagle, "call_ollama_generate", return_value={"ok": True, "text": '{"criteria":', "done_reason": "length"}
+        ) as ai, self.assertLogs(eagle.app.logger, level="WARNING") as logs:
+            response = self.client.post("/api/assignments/generate-rubric", headers=self.teacher_headers, json={
+                "assignmentId": assignment["id"], "criteria": ["objectives"],
+            })
+        body = response.get_json()
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(ai.call_count, 2)
+        self.assertEqual(body["errorCode"], "rubric_invalid_output")
+        self.assertEqual(body["details"]["stage"], "output_validation")
+        self.assertEqual(body["details"]["finishReason"], "length")
+        self.assertEqual(body["details"]["responseChars"], 12)
+        self.assertIn(body["requestId"], " ".join(logs.output))
+        self.assertNotIn(assignment["task"], json.dumps(body))
+        self.assertNotIn(self.teacher_email, json.dumps(body))
+        self.assertEqual(eagle._load_assignment(assignment["id"])["aiGradingRubric"], "")
+
+    def test_rubric_unexpected_exceptions_return_json_without_internal_details(self):
+        assignment = self.create_assignment()
+        with patch.object(eagle, "_effective_ai_enabled", return_value=(True, None)), patch.object(
+            eagle, "call_ollama_generate", side_effect=RuntimeError("secret-token /private/server/path")
+        ), self.assertLogs(eagle.app.logger, level="ERROR") as logs:
+            response = self.client.post("/api/assignments/generate-rubric", headers=self.teacher_headers, json={
+                "assignmentId": assignment["id"], "criteria": ["objectives"],
+            })
+        body = response.get_json()
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(body["errorCode"], "rubric_internal_error")
+        self.assertEqual(body["details"]["stage"], "ai_request")
+        self.assertIn(body["requestId"], " ".join(logs.output))
+        self.assertNotIn("secret-token", response.get_data(as_text=True))
+        self.assertNotIn("secret-token", " ".join(logs.output))
+
+    def test_structured_rubric_rejects_missing_unselected_and_invalid_sections(self):
+        section = {"points": 10, "fullCredit": "All behavior is complete.",
+                   "partialCredit": "Some behavior is complete.", "noCredit": "No behavior is complete."}
+        for sections in ({}, {"comments": section}, {"objectives": section, "comments": section},
+                         {"objectives": {**section, "points": True}},
+                         {"objectives": {**section, "noCredit": ""}}):
+            with self.assertRaises(ValueError):
+                eagle._parse_generated_assignment_rubric(json.dumps({"criteria": sections}), ["objectives"], 10)
+
+    def test_criteria_catalog_orders_rigor_without_changing_default_selections(self):
+        assignment = self.create_assignment()
+        body = self.client.get("/api/assignments", headers=self.teacher_headers).get_json()
+        catalog = body["gradingCriteria"]
+        levels = [item["rigorLevel"] for item in catalog]
+        self.assertEqual(levels, sorted(levels))
+        self.assertEqual(len(catalog), 18)
+        self.assertEqual(assignment["aiGradingCriteria"], [])
+
     def test_changed_settings_cannot_save_a_stale_grade(self):
         assignment = self.create_assignment(active=True)
         self.submit_code(assignment)
