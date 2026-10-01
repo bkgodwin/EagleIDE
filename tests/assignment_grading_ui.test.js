@@ -18,6 +18,10 @@ test('teacher assignment table includes missing, manual, AI, and export controls
   assert.match(source, /aiFeedback/);
   assert.match(source, /openAssignmentAiQueueBtn/);
   assert.match(source, /assignmentShareAiFeedback/);
+  assert.match(source, /Rubric grader \(Beta test\)/);
+  assert.match(source, /generateAssignmentRubric/);
+  assert.match(source, /Accept rubric &amp; save beta grader/);
+  assert.match(source, /assignment-criterion-check/);
   assert.match(html, /id="assignmentAiQueueModal"/);
 });
 
@@ -54,7 +58,7 @@ function assignmentViewHarness(assignments) {
   const start = source.indexOf('function sortAssignmentsChronologically(assignments)');
   const end = source.indexOf('function renderStudentAssignments()', start);
   assert.ok(start >= 0 && end > start);
-  const detail = { innerHTML: '', querySelector: () => null, querySelectorAll: () => [] };
+  const detail = { innerHTML: '', dataset: {}, querySelector: () => null, querySelectorAll: () => [] };
   const list = {
     innerHTML: '', buttons: [],
     querySelector(selector) { return selector === '#assignmentDetailPanel' && this.innerHTML.includes('id="assignmentDetailPanel"') ? detail : null; },
@@ -75,6 +79,10 @@ function assignmentViewHarness(assignments) {
     teacherClasses: [{ id: 'class-a', name: 'Period A', students: [] }, { id: 'class-b', name: 'Period B', students: [] }],
     currentTeacherClassId: 'class-a', activeAssignmentsClassId: 'class-a', currentAdminAssignmentName: null,
     TEACHER_TOKEN: 'teacher-token', document: { getElementById: id => nodes[id] || null },
+    assignmentGradingCriteria: [
+      { id: 'objectives', label: 'All outlined objectives met', description: 'All required outcomes are present.' },
+      { id: 'comments', label: 'Use of comments', description: 'Comments explain intent.' },
+    ],
     escapeHtml: value => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'),
     getAssignmentByName: id => assignments.find(a => a.id === id),
     rigorLevelLabel: () => 'High School', assignmentRigorSummary: () => 'Core objectives',
@@ -97,6 +105,8 @@ test('teacher assignment titles sort chronologically and expand into grading', (
   assert.match(detail.innerHTML, /First task text/);
   assert.match(detail.innerHTML, /scores-table/);
   assert.match(detail.innerHTML, /AI Grade All/);
+  assert.match(detail.innerHTML, /Legacy grader/);
+  assert.match(detail.innerHTML, /All outlined objectives met/);
 });
 
 test('teacher reference panel shows only unlocked assignments for active class', () => {
@@ -113,4 +123,18 @@ test('teacher reference panel shows only unlocked assignments for active class',
   assert.doesNotMatch(reference.innerHTML, /Locked Task|Other Class|Hidden task|Wrong class/);
   assert.match(reference.innerHTML, /Present &lt;this&gt;/);
   assert.match(html, /id="teacherReferenceAssignmentList"/);
+});
+
+test('assignment refresh preserves an unsaved grader draft until it is saved', () => {
+  const assignments = [{ id: 'draft', name: 'Draft', task: 'Task', targetClassId: 'class-a', submissions: [], maxScore: 10 }];
+  const { context, list, detail } = assignmentViewHarness(assignments);
+  context.views.renderAdminAssignments();
+  list.buttons[0].click();
+  detail.dataset.aiSettingsDirty = 'true';
+  detail.innerHTML = 'Unsaved rubric draft';
+  context.views.renderAdminAssignments();
+  assert.equal(detail.innerHTML, 'Unsaved rubric draft');
+  detail.dataset.aiSettingsDirty = 'false';
+  context.views.renderAdminAssignments();
+  assert.match(detail.innerHTML, /Teacher-approved rubric/);
 });
