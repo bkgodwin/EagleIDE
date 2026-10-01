@@ -44,7 +44,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261001-rubric-compatibility-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261001-rubric-compact-3">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -1646,6 +1646,8 @@
               <label><span>Ollama URL</span><input type="text" id="aiUrlInputModal" placeholder="http://127.0.0.1:11434"></label>
               <label><span>Model</span><input type="text" id="aiModelInputModal" placeholder="gemma3:4b"></label>
               <label><span>Response timeout (seconds)</span><input type="number" id="aiTimeoutInputModal" min="15" max="300" step="5" inputmode="numeric"></label>
+              <label><span>Rubric context limit (tokens)</span><input type="number" id="aiRubricContextInputModal" min="2048" max="65536" step="1024" inputmode="numeric"></label>
+              <p class="admin-setting-help full-width">Match the rubric context ceiling to your model (16,384 for a 16k model). Smaller requests allocate less context. Oversized requests show a warning instead of truncating assignment or submission content. This setting affects rubric creation and beta grading only; other AI features keep their current settings.</p>
               <div class="admin-ai-runtime-test">
                 <button class="btn secondary" id="aiTestBtn" type="button">Test Ollama &amp; Model</button>
                 <span id="aiTestStatus" role="status" aria-live="polite"></span>
@@ -1779,12 +1781,12 @@
   <script src="/static/js/editor-init.js?v=20260929-fold-indicators-1"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js"></script>
-  <script src="/static/js/app-core.js?v=20261001-rubric-compatibility-1"></script>
+  <script src="/static/js/app-core.js?v=20261001-rubric-compact-3"></script>
   <script src="/static/js/step-mode.js?v=20260920-4"></script>
-  <script src="/static/js/wiki-reader.js?v=20261001-rubric-compatibility-1"></script>
+  <script src="/static/js/wiki-reader.js?v=20261001-rubric-compact-3"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
   <script src="/static/js/lesson-plans.js?v=20260816-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20261001-rubric-compatibility-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20261001-rubric-compact-3"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20260918-10"></script>
   <script src="/static/js/student-notebook.js?v=20260918-10"></script>

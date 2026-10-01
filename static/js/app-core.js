@@ -3554,6 +3554,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       document.getElementById('aiUrlInputModal').value = currentConfig?.ai_ollama_url || 'http://127.0.0.1:11434';
       document.getElementById('aiModelInputModal').value = currentConfig?.ai_model || 'gemma3:4b';
       document.getElementById('aiTimeoutInputModal').value = Number(currentConfig?.ai_request_timeout_seconds || 120);
+      document.getElementById('aiRubricContextInputModal').value = Number(currentConfig?.ai_rubric_context_tokens || 16384);
       document.getElementById('assistantPromptInputModal').value = currentConfig?.ai_assistant_preprompt || '';
       const aiTestStatus = document.getElementById('aiTestStatus');
       if (aiTestStatus) {
@@ -4035,6 +4036,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const ai_ollama_url = document.getElementById('aiUrlInputModal').value.trim();
       const ai_model = document.getElementById('aiModelInputModal').value.trim();
       const ai_request_timeout_seconds = parseInt(document.getElementById('aiTimeoutInputModal').value, 10) || 120;
+      const ai_rubric_context_tokens = Number(document.getElementById('aiRubricContextInputModal').value);
       const ai_assistant_preprompt = document.getElementById('assistantPromptInputModal').value.trim();
 
       // HTML runtime settings
@@ -4065,6 +4067,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         ai_ollama_url, 
         ai_model, 
         ai_request_timeout_seconds,
+        ai_rubric_context_tokens,
         ai_assistant_preprompt,
         html_runtime_enabled,
         html_runtime_timeout_seconds,
@@ -7774,7 +7777,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             </fieldset>
             <div class="assignment-rubric-actions">
               <button class="btn secondary" id="generateAssignmentRubricBtn" type="button">${assignment.aiGradingRubric ? 'Regenerate rubric' : 'Generate rubric'}</button>
-              <span>Uses the assignment description and ${assignment.maxScore || 0}-point maximum.</span>
+              <span>Compact rubric: uses only the description, selected criteria, and ${assignment.maxScore || 0}-point maximum.</span>
             </div>
             <label for="assignmentAiRubric">Teacher-approved rubric</label>
             <p class="assignment-ai-rigor-help">Edit descriptions and point values. Keep each heading as Criterion name (N points), with criterion points adding up to ${assignment.maxScore || 0}, and finish with Total: ${assignment.maxScore || 0} points.</p>
@@ -9151,7 +9154,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const context = [
           result?.errorCode ? `Code: ${result.errorCode}` : '',
           result?.requestId ? `Reference: ${result.requestId}` : '',
-          ...['stage', 'model', 'timeoutSeconds', 'contextTokens', 'criteriaCount', 'attempt', 'numPredict', 'responseChars', 'finishReason', 'validationError', 'upstreamStatus', 'exceptionType']
+          ...['stage', 'model', 'timeoutSeconds', 'contextLimitTokens', 'contextTokens', 'criteriaCount', 'attempt', 'numPredict', 'promptBytes', 'requestBytes', 'maxRequestBytes', 'maxRubricChars', 'responseChars', 'finishReason', 'validationError', 'upstreamStatus', 'exceptionType']
             .filter(key => details[key] !== undefined).map(key => `${key}: ${details[key]}`),
         ].filter(Boolean).join('; ');
         throw new Error(`${action} failed: ${result?.error || 'The server did not return a successful result.'} (${http}). Endpoint: POST ${endpoint}.${context ? ` ${context}.` : ''}`);
@@ -9172,25 +9175,29 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         return;
       }
       if (button) button.disabled = true;
+      const previousDirty = detail.dataset.aiSettingsDirty || 'false';
+      let generated = false;
       detail.dataset.aiSettingsDirty = 'true';
       const lockedControls = [rubric, detail.querySelector('#acceptAssignmentRubricBtn'), detail.querySelector('#assignmentAiGradingMode'),
         ...detail.querySelectorAll('.assignment-criterion-check')].filter(Boolean);
       lockedControls.forEach(control => { control.disabled = true; });
-      [detail.querySelector('#gradeAllSubmissionsBtn'), ...detail.querySelectorAll('.ai-grade-submission-btn')].filter(Boolean)
-        .forEach(control => { control.disabled = true; });
+      const gradingControls = [detail.querySelector('#gradeAllSubmissionsBtn'), ...detail.querySelectorAll('.ai-grade-submission-btn')]
+        .filter(Boolean).map(control => ({ control, disabled: control.disabled }));
+      gradingControls.forEach(({ control }) => { control.disabled = true; });
       if (status) status.textContent = 'Generating a rubric with AI… This may wait for the AI queue; keep this page open.';
       const startedAt = Date.now();
       try {
         const response = await fetch('/api/assignments/generate-rubric', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...assignmentManagerHeaders() },
-          body: JSON.stringify(buildAiContext(assignmentRequestPayload(assignment, { criteria }))),
+          body: JSON.stringify(assignmentRequestPayload(assignment, { criteria })),
         });
         const result = await readAssignmentAiResponse(response, 'Rubric generation', '/api/assignments/generate-rubric');
         if (typeof result.rubric !== 'string' || !result.rubric.trim() || !result.rubricContext) {
           throw new Error(`Rubric generation failed: the server returned an incomplete success response (HTTP ${response.status}). Reload the page and check that the server is updated. No rubric was accepted.`);
         }
         if (!detail.isConnected) return;
+        generated = true;
         if (rubric) rubric.value = result.rubric || '';
         detail.dataset.rubricContext = result.rubricContext || '';
         if (button) button.textContent = 'Regenerate rubric';
@@ -9202,6 +9209,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       } finally {
         if (button) button.disabled = false;
         lockedControls.forEach(control => { control.disabled = false; });
+        if (!generated) {
+          detail.dataset.aiSettingsDirty = previousDirty;
+          gradingControls.forEach(({ control, disabled }) => { control.disabled = disabled; });
+        }
       }
     }
 

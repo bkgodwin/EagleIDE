@@ -97,7 +97,7 @@ class AiLimitTestCase(unittest.TestCase):
             eagle.call_ollama_generate("http://127.0.0.1:11434", "model", "other prompt", num_ctx=999999)
         self.assertNotIn("num_ctx", post.call_args_list[0].kwargs["json"]["options"])
         self.assertEqual(post.call_args_list[1].kwargs["json"]["options"]["num_ctx"], 8192)
-        self.assertEqual(post.call_args_list[2].kwargs["json"]["options"]["num_ctx"], 8192)
+        self.assertEqual(post.call_args_list[2].kwargs["json"]["options"]["num_ctx"], 65536)
         self.assertEqual(post.call_count, 3)
 
     def test_ai_requests_queue_instead_of_hitting_the_old_per_minute_rejection(self):
@@ -112,6 +112,23 @@ class AiLimitTestCase(unittest.TestCase):
         self.assertTrue(accepted["ok"])
         self.assertTrue(queued["ok"])
         self.assertEqual(post.call_count, 2)
+
+    def test_request_budget_counts_serialized_unicode_and_allocates_smaller_context(self):
+        with mock.patch.object(eagle.requests, "post", return_value=_Response()) as post:
+            accepted = eagle.call_ollama_generate("http://127.0.0.1:11434", "model", "Short rubric request",
+                                                   num_ctx=16384, num_predict=500, max_request_bytes=12000, use_cache=False)
+            oversized = eagle.call_ollama_generate("http://127.0.0.1:11434", "model", "😀" * 1100,
+                                                    num_ctx=16384, num_predict=500, max_request_bytes=12000, use_cache=False)
+            no_room = eagle.call_ollama_generate("http://127.0.0.1:11434", "model", "x" * 1000,
+                                                  num_ctx=2048, num_predict=1000, max_request_bytes=12000, use_cache=False)
+        self.assertTrue(accepted["ok"])
+        self.assertEqual(post.call_count, 1)
+        context = post.call_args.kwargs["json"]["options"]["num_ctx"]
+        self.assertLess(context, 16384)
+        self.assertGreaterEqual(context, accepted["request_bytes"] + 500 + 1024)
+        self.assertFalse(oversized["ok"])
+        self.assertGreater(oversized["request_bytes"], 12000)
+        self.assertTrue(no_room["context_limit_hit"])
 
     def test_ollama_capacity_response_pauses_and_retries_failed_job(self):
         busy = _Response()
@@ -159,6 +176,7 @@ class AiLimitTestCase(unittest.TestCase):
                             "ai_ollama_url": "http://127.0.0.1:11434/",
                             "ai_model": "deepseek-coder:6.7b",
                             "ai_request_timeout_seconds": 180,
+                            "ai_rubric_context_tokens": 16384,
                         }
                     },
                 )
@@ -168,6 +186,12 @@ class AiLimitTestCase(unittest.TestCase):
                 self.assertEqual(stored["ai_model"], "deepseek-coder:6.7b")
                 self.assertEqual(stored["ai_ollama_url"], "http://127.0.0.1:11434")
                 self.assertEqual(stored["ai_request_timeout_seconds"], 180)
+                self.assertEqual(stored["ai_rubric_context_tokens"], 16384)
+                for invalid in (True, 1024, 65537, 16384.5, "abc"):
+                    invalid_response = self.client.post("/api/config/save", headers={"X-Admin-Token": admin_token},
+                                                        json={"data": {"ai_rubric_context_tokens": invalid}})
+                    self.assertEqual(invalid_response.status_code, 400)
+                    self.assertEqual(eagle._load_config()["ai_rubric_context_tokens"], 16384)
 
                 with mock.patch.object(eagle.requests, "post", return_value=_Response()) as post:
                     explained = self.client.post("/api/explain", json={"code": "print('hello')"})
@@ -175,6 +199,7 @@ class AiLimitTestCase(unittest.TestCase):
                 request_kwargs = post.call_args.kwargs
                 self.assertEqual(request_kwargs["json"]["model"], "deepseek-coder:6.7b")
                 self.assertEqual(request_kwargs["timeout"], (3.0, 180.0))
+                self.assertNotIn("num_ctx", request_kwargs["json"]["options"])
         finally:
             eagle._admin_tokens.discard(admin_token)
             eagle.PERSIST_FILE = original_persist_file

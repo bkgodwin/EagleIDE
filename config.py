@@ -27,6 +27,7 @@ DEFAULT_CONFIG = {
     "ai_ollama_url": "http://192.168.0.105:11434",
     "ai_model": "gemma3:4b",
     "ai_request_timeout_seconds": 120,
+    "ai_rubric_context_tokens": 16384,
 
     # NEW: AI Assistant preprompt (editable in Admin)
     "ai_assistant_preprompt": (
