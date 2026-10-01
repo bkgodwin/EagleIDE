@@ -582,6 +582,26 @@ FOR TEACHERS
 11. Review AI score feedback and override AI scores at any time
 12. Export student-number/score CSV files as points or one-decimal percentages
 
+AI grading systems (per assignment):
+- Legacy grader remains the default, with its existing instructions and rigor.
+- To try the new system, expand the assignment in Manage & Grade and select
+  "Rubric grader (Beta test)". Check the criteria the grader should consider,
+  then click Generate rubric. The AI uses the saved assignment description,
+  selected criteria, and maximum code score to propose point-based criteria.
+- Review the rubric, edit its expectations or point weights, or regenerate it.
+  Keep each heading as "Criterion name (N points)" and the final "Total: N points"
+  line. Criterion weights must add up to the maximum. Accept rubric & save beta
+  grader enables grading. Generation alone does not replace the accepted rubric.
+- Beta grading uses only selected, accepted rubric criteria, not legacy rigor or
+  automatic extra penalties. The server verifies every criterion was evaluated
+  and computes the score from deductions capped at each criterion's points.
+- Changing the assignment description, point maximum, or checklist requires a
+  new accepted rubric. Jobs reject changed grading settings instead of saving a
+  stale result. You can switch back to Legacy grader and save its settings.
+- AI reviews source code; it does not execute submissions or prove runtime
+  behavior. Teachers should review suggested scores and can override them.
+  Feedback stays teacher-only unless the teacher explicitly shares it.
+
 Notebook assignments use the same teacher-owned skill catalog shown in Dashboard
 > Skills. The prompt composer includes a searchable, scrollable skill sidebar
 with each tag's description plus Select visible and Clear actions. Selecting a
