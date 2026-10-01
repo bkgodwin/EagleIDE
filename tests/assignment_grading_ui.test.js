@@ -190,6 +190,7 @@ test('non-JSON server and proxy failures show status and troubleshooting without
     assert.equal(criterion.disabled, false);
     assert.equal(controls['#assignmentAiRubric'].value, 'Existing accepted rubric');
     assert.equal(detail.dataset.rubricContext, 'original-context');
+    assert.equal(controls['#gradeAllSubmissionsBtn'].disabled, false);
   }
 });
 
@@ -211,6 +212,55 @@ test('JSON failure shows reference ID and safe model diagnostics', async () => {
   assert.match(message, /contextTokens: 8192/);
   assert.match(message, /validationError: AI returned malformed or truncated JSON/);
   assert.doesNotMatch(message, /private assignment/);
+});
+
+test('rubric request includes only assignment reference and selected criteria', async () => {
+  let sent;
+  const { context } = rubricRequestHarness(async (_url, options) => {
+    sent = JSON.parse(options.body);
+    return { ok: true, status: 200, headers: { get: () => 'application/json' },
+      json: async () => ({ ok: true, rubric: 'Generated scoring rubric', rubricContext: 'new-context' }) };
+  });
+  context.buildAiContext = () => { throw new Error('Editor context must not be requested'); };
+  await context.rubric.generateAssignmentRubric('assignment-id');
+  assert.deepEqual(sent, { assignmentId: 'assignment-id', criteria: ['objectives'] });
+});
+
+test('context-limit warning preserves rubric draft and exposes only safe size diagnostics', async () => {
+  const { context, controls, detail } = rubricRequestHarness(async () => ({
+    ok: false, status: 422, headers: { get: () => 'application/json' },
+    json: async () => ({ ok: false, error: 'Rubric context/request size limit reached. Nothing was truncated or saved.',
+      errorCode: 'rubric_context_limit', details: { contextLimitTokens: 16384, requestBytes: 13000, maxRequestBytes: 12000,
+        prompt: 'private source' } }),
+  }));
+  await context.rubric.generateAssignmentRubric('assignment-id');
+  const message = controls['#assignmentRubricStatus'].textContent;
+  assert.match(message, /context\/request size limit reached/);
+  assert.match(message, /contextLimitTokens: 16384/);
+  assert.match(message, /requestBytes: 13000/);
+  assert.doesNotMatch(message, /private source/);
+  assert.equal(controls['#assignmentAiRubric'].value, 'Existing accepted rubric');
+  assert.equal(detail.dataset.rubricContext, 'original-context');
+  assert.equal(detail.dataset.aiSettingsDirty, 'false');
+  assert.equal(controls['#gradeAllSubmissionsBtn'].disabled, false);
+});
+
+test('failed regeneration never enables grading for an unsaved draft', async () => {
+  const { context, controls, detail } = rubricRequestHarness(async () => ({
+    ok: false, status: 422, headers: { get: () => 'application/json' }, json: async () => ({ ok: false, error: 'Invalid output' }),
+  }));
+  detail.dataset.aiSettingsDirty = 'true';
+  controls['#gradeAllSubmissionsBtn'].disabled = true;
+  await context.rubric.generateAssignmentRubric('assignment-id');
+  assert.equal(detail.dataset.aiSettingsDirty, 'true');
+  assert.equal(controls['#gradeAllSubmissionsBtn'].disabled, true);
+});
+
+test('admin rubric context setting is bounded and wired to persisted AI settings', () => {
+  assert.match(html, /id="aiRubricContextInputModal" min="2048" max="65536"/);
+  assert.match(source, /aiRubricContextInputModal'\)\.value = Number\(currentConfig\?\.ai_rubric_context_tokens/);
+  assert.match(source, /ai_rubric_context_tokens = Number\(document\.getElementById\('aiRubricContextInputModal'\)\.value\)/);
+  assert.match(source, /ai_request_timeout_seconds,\s*ai_rubric_context_tokens,/);
 });
 
 test('network failures include connection guidance and incomplete success never replaces the draft', async () => {
