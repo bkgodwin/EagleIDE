@@ -5669,6 +5669,7 @@ def call_ollama_generate(
     request_identity: Optional[str] = None,
     json_response: bool = False,
     response_schema: Optional[Dict[str, Any]] = None,
+    num_ctx: Optional[int] = None,
     temperature: Optional[float] = None,
     request_kind: str = "interactive",
     request_label: str = "",
@@ -5703,6 +5704,8 @@ def call_ollama_generate(
         payload["format"] = "json"
     if temperature is not None:
         payload["options"]["temperature"] = max(0.0, min(2.0, float(temperature)))
+    if num_ctx is not None:
+        payload["options"]["num_ctx"] = _bounded_int(num_ctx, 8192, 2048, 8192)
     cache_key = hashlib.sha256(
         json.dumps([url, model, prompt, payload.get("format"), payload["options"]], sort_keys=True).encode("utf-8")
     ).hexdigest()
@@ -9803,23 +9806,25 @@ def _build_assignment_rubric_generation_prompt(*, task: str, max_score: int, cri
     return (
         "Create a practical scoring rubric for a classroom code assignment. The assignment description and selected criteria are trusted "
         "teacher content. Use only the selected criteria; do not add style, robustness, documentation, testing, or other requirements unless "
-        "the teacher selected that criterion or the assignment description explicitly places it inside a selected criterion. Allocate exactly "
-        f"{max_score} total points across the criteria. Weight the assignment's core objectives most heavily when that criterion is selected. "
+        "the teacher selected that criterion or the assignment description explicitly places it inside a selected criterion. Propose "
+        f"relative whole-number point weights for a {max_score}-point assignment. Weight the assignment's core objectives most heavily when that criterion is selected. "
         "For each criterion, state its point value and concise descriptions for full, partial, and no credit. Make the levels observable from "
         "submitted source code. Do not claim the code will be executed; execution-related judgments must be phrased around evident blockers, "
         "the supplied syntax result, and visible logic. Avoid double-counting the same defect.\n\n"
-        "Return ONLY compact JSON matching the supplied schema. Put each selected criterion ID exactly once inside criteria. "
+        "Return ONLY compact JSON. Put each selected criterion ID exactly once inside criteria. "
         "Each criterion has points (a whole number), fullCredit, partialCredit, and noCredit (concise plain-text expectations). "
         "Do not generate headings, a total line, or Markdown; the server formats the editable rubric. "
-        "The points across all criteria must add up to the maximum. Zero-point criteria are allowed.\n\n"
-        "JSON schema: " + json.dumps(_assignment_rubric_response_schema(criteria, max_score), separators=(",", ":")) + "\n\n"
+        "The server scales your point weights proportionally to the exact assignment maximum; you do not need to calculate an exact sum. "
+        "At least one weight must be positive. Zero-point criteria are allowed. Keep each description to one short sentence.\n\n"
+        'Example shape (replace the example with ALL selected IDs): {"criteria":{"' + criteria[0] +
+        '":{"points":1,"fullCredit":"Complete observable behavior.","partialCredit":"Some behavior is incomplete.","noCredit":"Required behavior is absent."}}}\n\n'
         f"Maximum points: {max_score}\n"
         "Selected criteria:\n" + "\n".join(criterion_lines) + "\n\n"
         "<assignment_description>\n" + str(task or "").strip() + "\n</assignment_description>"
     )
 
 
-def _parse_generated_assignment_rubric(raw: str, criteria: list[str], max_score: int) -> str:
+def _parse_generated_assignment_rubric(raw: str, criteria: list[str], max_score: int, *, normalize_weights: bool = False) -> str:
     text = str(raw or "").strip()
     try:
         start = text.index("{")
@@ -9832,18 +9837,23 @@ def _parse_generated_assignment_rubric(raw: str, criteria: list[str], max_score:
         sections = payload["criteria"]
         if not isinstance(sections, dict) or set(sections) != set(criteria):
             raise ValueError("AI must return every selected criterion ID exactly once, with no additional criteria")
+        weights = {}
+        for criterion_id in criteria:
+            section = sections[criterion_id]
+            if not isinstance(section, dict) or type(section.get("points")) is not int or not 0 <= section["points"] <= max_score:
+                raise ValueError(f"AI returned invalid whole-number points for {criterion_id}")
+            weights[criterion_id] = section["points"]
+        points = _assignment_rubric_allocate_points(weights, max_score) if normalize_weights else weights
         parts = ["Assignment scoring rubric"]
         for criterion_id in criteria:
             section = sections[criterion_id]
-            if not isinstance(section, dict) or type(section.get("points")) is not int or section["points"] < 0:
-                raise ValueError(f"AI returned invalid whole-number points for {criterion_id}")
             descriptions = []
             for key, label in (("fullCredit", "Full"), ("partialCredit", "Partial"), ("noCredit", "No credit")):
                 value = section.get(key)
                 if not isinstance(value, str) or not value.strip() or len(value) > 800:
                     raise ValueError(f"AI omitted or exceeded the length of {key} for {criterion_id}")
                 descriptions.append(f"{label}: " + re.sub(r"\s+", " ", value).strip())
-            heading = f'{_ASSIGNMENT_GRADING_CRITERIA_BY_ID[criterion_id]["label"]} ({section["points"]} points)'
+            heading = f'{_ASSIGNMENT_GRADING_CRITERIA_BY_ID[criterion_id]["label"]} ({points[criterion_id]} points)'
             parts.append(heading + "\n" + "\n".join(descriptions))
         parts.append(f"Total: {max_score} points")
         rubric = "\n\n".join(parts)
@@ -9857,6 +9867,19 @@ def _parse_generated_assignment_rubric(raw: str, criteria: list[str], max_score:
         raise ValueError("AI returned a rubric that is too long; nothing was saved")
     _assignment_rubric_points(rubric, criteria, max_score)
     return rubric
+
+
+def _assignment_rubric_allocate_points(weights: dict[str, int], maximum: int) -> dict[str, int]:
+    """Largest-remainder apportionment: preserve relative weights without AI arithmetic."""
+    total = sum(weights.values())
+    if total <= 0:
+        raise ValueError("AI returned only zero point weights; at least one selected criterion must have a positive weight")
+    points = {key: weight * maximum // total for key, weight in weights.items()}
+    # Stable catalog/request order resolves ties; zero weights cannot gain points.
+    remainder_order = sorted(weights, key=lambda key: -(weights[key] * maximum % total))
+    for key in remainder_order[:maximum - sum(points.values())]:
+        points[key] += 1
+    return points
 
 
 @app.post("/api/assignments/generate-rubric")
@@ -9933,7 +9956,7 @@ def _generate_assignment_rubric_response(reference_id: str, diagnostics: dict):
         model = _normalize_ollama_model(cfg.get("ai_model", "gemma3:4b"))
     except ValueError as exc:
         return fail(str(exc), 422, "rubric_configuration_error")
-    diagnostics.update(model=model, timeoutSeconds=_configured_ai_timeout(cfg), criteriaCount=len(criteria))
+    diagnostics.update(model=model, timeoutSeconds=_configured_ai_timeout(cfg), criteriaCount=len(criteria), contextTokens=8192)
     prompt = _build_assignment_rubric_generation_prompt(task=task, max_score=max_score, criteria=criteria)
     diagnostics["numPredict"] = min(4096, 1400 + 220 * len(criteria))
     for attempt in range(1, 3):
@@ -9941,7 +9964,7 @@ def _generate_assignment_rubric_response(reference_id: str, diagnostics: dict):
         result = call_ollama_generate(
             cfg.get("ai_ollama_url", ""), model, prompt,
             timeout=diagnostics["timeoutSeconds"], num_predict=diagnostics["numPredict"],
-            use_cache=False, json_response=True, response_schema=_assignment_rubric_response_schema(criteria, max_score), temperature=0,
+            use_cache=False, json_response=True, response_schema=_assignment_rubric_response_schema(criteria, max_score), num_ctx=diagnostics["contextTokens"], temperature=0,
             request_identity=f"teacher:{str(actor.get('email') or '').strip().lower() or 'unknown'}",
             request_kind="assignment-rubric", request_label=f"Rubric · {assignment.get('name') or 'Assignment'}",
             request_metadata={"assignmentId": assignment.get("id"), "criteria": criteria, "referenceId": reference_id},
@@ -9954,13 +9977,16 @@ def _generate_assignment_rubric_response(reference_id: str, diagnostics: dict):
         diagnostics.update(stage="output_validation", responseChars=len(str(result.get("text") or "")),
                            finishReason=result.get("done_reason") or "unknown")
         try:
-            rubric = _parse_generated_assignment_rubric(result.get("text") or "", criteria, max_score)
+            rubric = _parse_generated_assignment_rubric(result.get("text") or "", criteria, max_score, normalize_weights=True)
         except ValueError as exc:
+            diagnostics["validationError"] = str(exc)
+            app.logger.warning("Rubric output rejected reference=%s diagnostics=%s",
+                               reference_id, json.dumps(diagnostics, sort_keys=True))
             if attempt == 1:
                 prompt += "\n\nYour previous response failed validation: " + str(exc) + ". Return a complete corrected criteria object."
                 continue
             return fail(f"AI rubric rejected after {attempt} attempts: {exc}. No rubric was saved. Try fewer criteria or another installed model.",
-                        502, "rubric_invalid_output")
+                        422, "rubric_invalid_output")
         return jsonify(ok=True, rubric=rubric, criteria=criteria, maxScore=max_score, requestId=reference_id,
                        rubricContext=_assignment_rubric_context(task, max_score, criteria))
 
