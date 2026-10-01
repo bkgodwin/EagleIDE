@@ -195,9 +195,10 @@ test('non-JSON server and proxy failures show status and troubleshooting without
 
 test('JSON failure shows reference ID and safe model diagnostics', async () => {
   const { context, controls } = rubricRequestHarness(async () => ({
-    ok: false, status: 502, headers: { get: () => 'application/json' },
+    ok: false, status: 422, headers: { get: () => 'application/json' },
     json: async () => ({ ok: false, error: 'Malformed JSON', errorCode: 'rubric_invalid_output', requestId: 'reference-123',
-      details: { stage: 'output_validation', model: 'test-model', attempt: 2, finishReason: 'length', prompt: 'private assignment' } }),
+      details: { stage: 'output_validation', model: 'test-model', attempt: 2, finishReason: 'length', contextTokens: 8192,
+        validationError: 'AI returned malformed or truncated JSON', prompt: 'private assignment' } }),
   }));
   await context.rubric.generateAssignmentRubric('assignment-id');
   const message = controls['#assignmentRubricStatus'].textContent;
@@ -206,6 +207,9 @@ test('JSON failure shows reference ID and safe model diagnostics', async () => {
   assert.match(message, /stage: output_validation/);
   assert.match(message, /model: test-model/);
   assert.match(message, /attempt: 2/);
+  assert.match(message, /HTTP 422/);
+  assert.match(message, /contextTokens: 8192/);
+  assert.match(message, /validationError: AI returned malformed or truncated JSON/);
   assert.doesNotMatch(message, /private assignment/);
 });
 

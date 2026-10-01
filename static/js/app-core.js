@@ -9151,7 +9151,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const context = [
           result?.errorCode ? `Code: ${result.errorCode}` : '',
           result?.requestId ? `Reference: ${result.requestId}` : '',
-          ...['stage', 'model', 'timeoutSeconds', 'criteriaCount', 'attempt', 'numPredict', 'responseChars', 'finishReason', 'upstreamStatus', 'exceptionType']
+          ...['stage', 'model', 'timeoutSeconds', 'contextTokens', 'criteriaCount', 'attempt', 'numPredict', 'responseChars', 'finishReason', 'validationError', 'upstreamStatus', 'exceptionType']
             .filter(key => details[key] !== undefined).map(key => `${key}: ${details[key]}`),
         ].filter(Boolean).join('; ');
         throw new Error(`${action} failed: ${result?.error || 'The server did not return a successful result.'} (${http}). Endpoint: POST ${endpoint}.${context ? ` ${context}.` : ''}`);
