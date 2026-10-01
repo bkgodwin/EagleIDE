@@ -90,6 +90,16 @@ class AiLimitTestCase(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(post.call_count, 1)
 
+    def test_context_option_is_bounded_opt_in_and_part_of_cache_key(self):
+        with mock.patch.object(eagle.requests, "post", return_value=_Response()) as post:
+            eagle.call_ollama_generate("http://127.0.0.1:11434", "model", "same prompt")
+            eagle.call_ollama_generate("http://127.0.0.1:11434", "model", "same prompt", num_ctx=8192)
+            eagle.call_ollama_generate("http://127.0.0.1:11434", "model", "other prompt", num_ctx=999999)
+        self.assertNotIn("num_ctx", post.call_args_list[0].kwargs["json"]["options"])
+        self.assertEqual(post.call_args_list[1].kwargs["json"]["options"]["num_ctx"], 8192)
+        self.assertEqual(post.call_args_list[2].kwargs["json"]["options"]["num_ctx"], 8192)
+        self.assertEqual(post.call_count, 3)
+
     def test_ai_requests_queue_instead_of_hitting_the_old_per_minute_rejection(self):
         eagle.MAX_AI_PROMPT_CHARS = 10
         with eagle.app.test_request_context("/api/explain", method="POST"):

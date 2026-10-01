@@ -606,12 +606,24 @@ AI grading systems (per assignment):
   (9-10). These groups guide selection only; they never apply automatic penalties
   or select extra criteria. Existing checklists and accepted rubrics are preserved.
 - Generation requests structured criterion data from Ollama, then the server
-  formats canonical headings and verifies the point total. Invalid model output
+  formats canonical headings and scales the AI's nonnegative relative point
+  weights to the exact assignment maximum using deterministic largest-remainder
+  allocation. This removes exact arithmetic from the model's responsibilities;
+  teachers still review/edit all final point values before accepting. All-zero
+  weights, missing/extra criteria, and incomplete descriptions are rejected.
+  The shorter prompt does not repeat the full per-criterion schema, and only
+  rubric generation requests an explicit bounded 8,192-token context. This can
+  increase Ollama memory use; other AI features retain their existing context.
+  Invalid model output
   receives one correction attempt; invalid drafts are never accepted or saved.
   Use a current local Ollama server with JSON-schema structured-output support.
 - Troubleshooting: generation/save errors show the HTTP status and endpoint.
   Server-generated rubric errors also include a reference ID, failure stage,
-  model, timeout, and available output-size/finish details. Give the reference
+  model, timeout, context size, and available output-size/finish details. Each
+  rejected attempt logs the specific validation reason without raw model text.
+  Rejected model output returns JSON HTTP 422 instead of 502 so reverse proxies
+  that intercept server errors do not replace the details with an HTML error.
+  Give the reference
   to the administrator to correlate server logs. HTTP 404 with a non-JSON response
   can indicate an outdated/unrestarted server; non-JSON 502/504 responses can
   indicate a reverse-proxy failure or timeout. Do not share credentials or student
