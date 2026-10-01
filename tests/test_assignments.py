@@ -410,7 +410,7 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
             eagle._run_assignment_ai_grading(assignment["id"], self.student_email)
         prompt = grader.call_args.args[2]
         self.assertIn("Use only the accepted rubric", prompt)
-        self.assertIn("`objectives`: All outlined objectives met", prompt)
+        self.assertIn("0: objectives (available: 10 points)", prompt)
         self.assertNotIn("`comments`: Use of comments", prompt)
         self.assertEqual(grader.call_args.kwargs["request_metadata"]["gradingMode"], "rubric_beta")
         submission = eagle._load_assignment(assignment["id"])["submissions"][0]
@@ -556,8 +556,10 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         self.assertEqual(ai.call_count, 2)
         self.assertIn("noCredit for comments", ai.call_args.args[2])
         schema = ai.call_args.kwargs["response_schema"]
-        self.assertEqual(set(schema["properties"]["criteria"]["required"]), {"objectives", "comments"})
-        self.assertFalse(schema["properties"]["criteria"]["additionalProperties"])
+        self.assertEqual(schema["properties"]["criteria"]["minItems"], 2)
+        self.assertEqual(schema["properties"]["criteria"]["maxItems"], 2)
+        self.assertEqual(schema["properties"]["criteria"]["items"]["required"], ["points", "expectation"])
+        self.assertFalse(schema["properties"]["criteria"]["items"]["additionalProperties"])
         rubric = response.get_json()["rubric"]
         self.assertIn("All outlined objectives met (7 points)", rubric)
         self.assertIn("Use of comments (3 points)", rubric)
@@ -600,7 +602,7 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
             })
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         self.assertEqual(ai.call_count, 1)
-        self.assertEqual(ai.call_args.kwargs["num_ctx"], 8192)
+        self.assertEqual(ai.call_args.kwargs["num_ctx"], 16384)
         # Do not repeat a per-criterion JSON schema in the prompt; only the API format needs it.
         self.assertNotIn('"additionalProperties"', ai.call_args.args[2])
         rubric = response.get_json()["rubric"]
@@ -621,6 +623,161 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
                    "partialCredit": "Some expectations are incomplete.", "noCredit": "Relevant expectations are absent."}
         with self.assertRaisesRegex(ValueError, "add up to 10"):
             eagle._parse_generated_assignment_rubric(json.dumps({"criteria": {"objectives": section}}), ["objectives"], 10)
+
+    def compact_rubric(self, criteria, maximum=20):
+        return eagle._parse_generated_assignment_rubric(json.dumps({"criteria": [
+            {"points": 1, "expectation": "Implement the requested loop and print its values."} for key in criteria
+        ]}), criteria, maximum, normalize_weights=True)
+
+    def test_compact_generation_supports_every_criterion_and_keeps_private_data_off_wire(self):
+        assignment = self.create_assignment(active=True)
+        self.submit_code(assignment)
+        saved = eagle._load_assignment(assignment["id"])
+        saved["submissions"][0]["code"] = "PRIVATE_SUBMISSION" * 10000
+        saved["aiGradingInstructions"] = "PRIVATE_LEGACY_INSTRUCTIONS"
+        eagle._save_assignment(saved)
+        criteria = [item["id"] for item in eagle.ASSIGNMENT_GRADING_CRITERIA]
+        generated = {"criteria": [{"points": 1, "expectation": "Print the requested sequence of loop values."} for key in criteria]}
+
+        class Response:
+            status_code = 200
+            headers = {}
+            def raise_for_status(self): pass
+            def close(self): pass
+            def iter_content(self, chunk_size=16384):
+                yield json.dumps({"response": json.dumps(generated), "done_reason": "stop"}).encode()
+
+        with patch.object(eagle, "_effective_ai_enabled", return_value=(True, None)), patch.object(
+            eagle.requests, "post", return_value=Response()
+        ) as post:
+            response = self.client.post("/api/assignments/generate-rubric", headers=self.teacher_headers, json={
+                "assignmentId": assignment["id"], "criteria": criteria, "code": "PRIVATE_EDITOR", "fileName": "PRIVATE_FILENAME",
+            })
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(post.call_count, 1)
+        wire = post.call_args.kwargs["json"]
+        serialized = json.dumps(wire)
+        for private in ("PRIVATE_SUBMISSION", "PRIVATE_EDITOR", "PRIVATE_FILENAME", "PRIVATE_LEGACY_INSTRUCTIONS", self.student_email):
+            self.assertNotIn(private, serialized)
+        self.assertIn(assignment["task"], wire["prompt"])
+        self.assertLess(len(json.dumps(wire["format"])), 1000)
+        self.assertNotIn("id", wire["format"]["properties"]["criteria"]["items"]["properties"])
+        self.assertLessEqual(wire["options"]["num_predict"], 2048)
+        self.assertLess(wire["options"]["num_ctx"], 16384)
+        rubric = response.get_json()["rubric"]
+        self.assertLessEqual(len(rubric), 4000)
+        budgets = eagle._assignment_rubric_points(rubric, criteria, 10)
+        self.assertEqual(set(budgets), set(criteria))
+        self.assertEqual(sum(budgets.values()), 10)
+        self.assertEqual(eagle._load_assignment(assignment["id"])["aiGradingRubric"], "")
+
+    def test_compact_generation_rejects_missing_duplicate_unknown_and_verbose_sections(self):
+        good = {"id": "objectives", "points": 10, "expectation": "Print the required loop values."}
+        for sections in ([], [good, good], [{**good, "id": "unknown"}], [{**good, "expectation": "x" * 121}]):
+            with self.subTest(sections=sections), self.assertRaises(ValueError):
+                eagle._parse_generated_assignment_rubric(json.dumps({"criteria": sections}), ["objectives"], 10, normalize_weights=True)
+
+    def test_rubric_context_limit_warns_without_calling_ai_or_saving(self):
+        assignment = self.create_assignment()
+        saved = eagle._load_assignment(assignment["id"])
+        saved["task"] = "A long assignment description. " * 500
+        eagle._save_assignment(saved)
+        with patch.object(eagle, "_effective_ai_enabled", return_value=(True, None)), patch.object(eagle, "call_ollama_generate") as ai:
+            response = self.client.post("/api/assignments/generate-rubric", headers=self.teacher_headers,
+                                        json={"assignmentId": assignment["id"], "criteria": ["objectives"]})
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.get_json()["errorCode"], "rubric_context_limit")
+        self.assertIn("Nothing was truncated", response.get_json()["error"])
+        self.assertEqual(response.get_json()["details"]["contextLimitTokens"], 16384)
+        ai.assert_not_called()
+
+    def test_ordered_earned_credit_totals_all_criteria_and_partial_credit(self):
+        criteria = [item["id"] for item in eagle.ASSIGNMENT_GRADING_CRITERIA]
+        rubric = self.compact_rubric(criteria)
+        budgets = eagle._assignment_rubric_points(rubric, criteria, 20)
+        result = {"effort": "clear", "strength": "The range loop prints the requested values.", "integrityWarning": "",
+                  "results": [{"earned": budgets[key], "reason": ""} for key in criteria]}
+        score, feedback = eagle._parse_assignment_rubric_ai_result(json.dumps(result), 20, criteria, rubric=rubric)
+        self.assertEqual(score, 20)
+        self.assertIn("Score: 20/20", feedback)
+        result["results"][0]["earned"] -= 1
+        result["results"][0]["reason"] = "The range stops before the required final value."
+        score, feedback = eagle._parse_assignment_rubric_ai_result(json.dumps(result), 20, criteria, rubric=rubric)
+        self.assertEqual(score, 19)
+        self.assertIn("−1 points", feedback)
+        for key, item in zip(criteria, result["results"]):
+            item.update(earned=0, reason="The required loop and output are absent from this code.")
+        score, _ = eagle._parse_assignment_rubric_ai_result(json.dumps(result), 20, criteria, rubric=rubric)
+        self.assertEqual(score, 0)
+
+    def test_ordered_credit_rejects_incomplete_invalid_and_placeholder_feedback(self):
+        rubric = self.compact_rubric(["objectives"])
+        base = {"effort": "clear", "strength": "The range loop prints the requested values.",
+                "results": [{"earned": 20, "reason": ""}]}
+        for results in ([], [{"earned": True, "reason": ""}], [{"earned": 21, "reason": ""}],
+                        [{"points": 20, "reason": ""}], [{"earned": 0, "reason": ""}],
+                        [{"earned": 0, "reason": "Implement the requested loop and print its values."}]):
+            with self.subTest(results=results), self.assertRaises(ValueError):
+                eagle._parse_assignment_rubric_ai_result(json.dumps({**base, "results": results}), 20, ["objectives"], rubric=rubric)
+        with self.assertRaisesRegex(ValueError, "placeholder"):
+            eagle._parse_assignment_rubric_ai_result(json.dumps({**base, "strength": "one specific rubric-aligned strength"}),
+                                                     20, ["objectives"], rubric=rubric)
+
+    def test_reported_seven_five_eight_credit_is_twenty_not_zero(self):
+        criteria = [item["id"] for item in eagle.ASSIGNMENT_GRADING_CRITERIA[:3]]
+        # Use the catalog's order, matching the protocol rather than browser checkbox order.
+        criteria = eagle._normalize_assignment_grading_criteria(criteria)
+        budgets = dict(zip(criteria, [7, 5, 8]))
+        rubric = "\n\n".join(f'{eagle._ASSIGNMENT_GRADING_CRITERIA_BY_ID[key]["label"]} ({budgets[key]} points)\n'
+                               f'Full: {eagle._ASSIGNMENT_GRADING_CRITERIA_BY_ID[key]["description"]}' for key in criteria) + "\nTotal: 20 points"
+        payload = {"effort": "clear", "strength": "The range loop prints the requested sequence.", "integrityWarning": "",
+                   "results": [{"earned": budgets[key], "reason": ""} for key in criteria]}
+        score, feedback = eagle._parse_assignment_rubric_ai_result(json.dumps(payload), 20, criteria, rubric=rubric)
+        self.assertEqual(score, 20)
+        self.assertIn("Score: 20/20", feedback)
+        payload.pop("results")
+        payload.update(evaluatedCriteria=criteria, strength="one specific rubric-aligned strength",
+                       deductions=[{"criterion": key, "points": budgets[key],
+                                    "reason": eagle._ASSIGNMENT_GRADING_CRITERIA_BY_ID[key]["description"]} for key in criteria])
+        with self.assertRaisesRegex(ValueError, "rubric expectation|placeholder"):
+            eagle._parse_assignment_rubric_ai_result(json.dumps(payload), 20, criteria, rubric=rubric)
+
+    def test_beta_retry_recovers_missing_evaluations_without_saving_bad_score(self):
+        assignment = self.create_assignment(active=True)
+        self.submit_code(assignment)
+        saved = eagle._load_assignment(assignment["id"])
+        criteria = [item["id"] for item in eagle.ASSIGNMENT_GRADING_CRITERIA]
+        rubric = self.compact_rubric(criteria, 10)
+        saved.update(aiGradingMode="rubric_beta", aiGradingCriteria=criteria, aiGradingRubric=rubric,
+                     aiGradingRubricContext=eagle._assignment_rubric_context(saved["task"], 10, criteria))
+        saved["submissions"][0].update(codeScore=7, aiSuggestedScore=7)
+        eagle._save_assignment(saved)
+        budgets = eagle._assignment_rubric_points(rubric, criteria, 10)
+        valid = {"effort": "clear", "strength": "The range loop prints the requested values.", "integrityWarning": "",
+                 "results": [{"earned": budgets[key], "reason": ""} for key in criteria]}
+        responses = [{"ok": True, "text": json.dumps({**valid, "results": valid["results"][:3]})},
+                     {"ok": True, "text": json.dumps(valid)}]
+        with patch.object(eagle, "call_ollama_generate", side_effect=responses) as ai:
+            eagle._run_assignment_ai_grading(assignment["id"], self.student_email)
+        self.assertEqual(ai.call_count, 2)
+        self.assertIn("Correction:", ai.call_args.args[2])
+        self.assertNotIn("one specific rubric-aligned strength", ai.call_args.args[2])
+        self.assertIn("earned", json.dumps(ai.call_args.kwargs["response_schema"]))
+        submission = eagle._load_assignment(assignment["id"])["submissions"][0]
+        self.assertEqual(submission["aiGradingStatus"], "completed")
+        self.assertEqual(submission["codeScore"], 10)
+        self.assertEqual(submission["totalScore"], 10)
+        with patch.object(eagle, "call_ollama_generate", return_value=responses[0]) as ai:
+            eagle._run_assignment_ai_grading(assignment["id"], self.student_email)
+        self.assertEqual(ai.call_count, 2)
+        submission = eagle._load_assignment(assignment["id"])["submissions"][0]
+        self.assertEqual(submission["aiGradingStatus"], "failed")
+        self.assertEqual(submission["codeScore"], 10)
+        with patch.object(eagle, "call_ollama_generate", return_value={"ok": False, "context_limit_hit": True}):
+            eagle._run_assignment_ai_grading(assignment["id"], self.student_email)
+        submission = eagle._load_assignment(assignment["id"])["submissions"][0]
+        self.assertIn("context/request size limit reached", submission["aiGradingError"])
+        self.assertEqual(submission["codeScore"], 10)
 
     def test_rubric_unexpected_exceptions_return_json_without_internal_details(self):
         assignment = self.create_assignment()
