@@ -3,6 +3,7 @@ import csv
 import getpass
 import io
 import json
+import re
 import tempfile
 import threading
 import time
@@ -680,7 +681,7 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
     def test_rubric_context_limit_warns_without_calling_ai_or_saving(self):
         assignment = self.create_assignment()
         saved = eagle._load_assignment(assignment["id"])
-        saved["task"] = "A long assignment description. " * 500
+        saved["task"] = "A long assignment description. " * 2500
         eagle._save_assignment(saved)
         with patch.object(eagle, "_effective_ai_enabled", return_value=(True, None)), patch.object(eagle, "call_ollama_generate") as ai:
             response = self.client.post("/api/assignments/generate-rubric", headers=self.teacher_headers,
@@ -746,7 +747,7 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         assignment = self.create_assignment(active=True)
         self.submit_code(assignment)
         saved = eagle._load_assignment(assignment["id"])
-        criteria = [item["id"] for item in eagle.ASSIGNMENT_GRADING_CRITERIA]
+        criteria = [item["id"] for item in eagle.ASSIGNMENT_GRADING_CRITERIA[:3]]
         rubric = self.compact_rubric(criteria, 10)
         saved.update(aiGradingMode="rubric_beta", aiGradingCriteria=criteria, aiGradingRubric=rubric,
                      aiGradingRubricContext=eagle._assignment_rubric_context(saved["task"], 10, criteria))
@@ -755,7 +756,7 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         budgets = eagle._assignment_rubric_points(rubric, criteria, 10)
         valid = {"effort": "clear", "strength": "The range loop prints the requested values.", "integrityWarning": "",
                  "results": [{"earned": budgets[key], "reason": ""} for key in criteria]}
-        responses = [{"ok": True, "text": json.dumps({**valid, "results": valid["results"][:3]})},
+        responses = [{"ok": True, "text": json.dumps({**valid, "results": valid["results"][:1]})},
                      {"ok": True, "text": json.dumps(valid)}]
         with patch.object(eagle, "call_ollama_generate", side_effect=responses) as ai:
             eagle._run_assignment_ai_grading(assignment["id"], self.student_email)
@@ -776,8 +777,73 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         with patch.object(eagle, "call_ollama_generate", return_value={"ok": False, "context_limit_hit": True}):
             eagle._run_assignment_ai_grading(assignment["id"], self.student_email)
         submission = eagle._load_assignment(assignment["id"])["submissions"][0]
-        self.assertIn("context/request size limit reached", submission["aiGradingError"])
+        self.assertIn("context limit is too small", submission["aiGradingError"])
         self.assertEqual(submission["codeScore"], 10)
+
+    def test_long_submission_with_every_criterion_uses_complete_source_and_batched_responses(self):
+        assignment = self.create_assignment(active=True)
+        self.submit_code(assignment)
+        saved = eagle._load_assignment(assignment["id"])
+        criteria = [item["id"] for item in eagle.ASSIGNMENT_GRADING_CRITERIA]
+        rubric = self.compact_rubric(criteria, 10)
+        long_code = "value = 0\n" + "value = value + 1\n" * 10000
+        self.assertGreater(len(long_code), 180000)
+        self.assertLessEqual(len(long_code), eagle.MAX_RUN_CODE_CHARS)
+        saved.update(aiGradingMode="rubric_beta", aiGradingCriteria=criteria, aiGradingRubric=rubric,
+                     aiGradingRubricContext=eagle._assignment_rubric_context(saved["task"], 10, criteria))
+        saved["submissions"][0]["code"] = long_code
+        eagle._save_assignment(saved)
+        budgets = eagle._assignment_rubric_points(rubric, criteria, 10)
+        source_chunks = []
+        criterion_calls = []
+
+        def model_response(_url, _model, prompt, **kwargs):
+            metadata = kwargs["request_metadata"]
+            phase = metadata["phase"]
+            self.assertLessEqual(
+                eagle._estimate_ai_input_tokens(prompt, kwargs["response_schema"]), kwargs["max_input_tokens"]
+            )
+            if phase == "evidence":
+                source_chunks.append(prompt.split("<student_code_chunk>\n", 1)[1].rsplit("\n</student_code_chunk>", 1)[0])
+                count = kwargs["response_schema"]["properties"]["evidence"]["minItems"]
+                return {"ok": True, "done_reason": "stop", "text": json.dumps({
+                    "evidence": [
+                        {"observed": "The chunk contains visible implementation code.", "concern": ""}
+                        for _ in range(count)
+                    ],
+                })}
+            self.assertEqual(phase, "criteria")
+            criterion_calls.append(metadata)
+            if len(criterion_calls) == 1:
+                return {"ok": True, "done_reason": "length", "text": '{"results":['}
+            batch_ids = re.findall(r"^\d+: ([a-z_]+) —", prompt, re.MULTILINE)
+            return {"ok": True, "done_reason": "stop", "text": json.dumps({
+                "effort": "clear", "strength": "The implementation consistently updates the requested value.",
+                "integrityWarning": "", "results": [
+                    {"earned": budgets[criterion_id], "reason": ""} for criterion_id in batch_ids
+                ],
+            })}
+
+        with patch.object(eagle, "call_ollama_generate", side_effect=model_response) as ai:
+            eagle._run_assignment_ai_grading(assignment["id"], self.student_email)
+
+        self.assertGreater(len(source_chunks), 1)
+        self.assertEqual("".join(source_chunks), long_code)
+        self.assertEqual(len(criterion_calls), 4)  # Three batches plus one truncated-response retry.
+        self.assertEqual(ai.call_count, len(source_chunks) + len(criterion_calls))
+        submission = eagle._load_assignment(assignment["id"])["submissions"][0]
+        self.assertEqual(submission["aiGradingStatus"], "completed")
+        self.assertEqual(submission["codeScore"], 10)
+        self.assertIn("Rubric Beta", submission["aiFeedback"])
+
+    def test_source_chunking_preserves_unicode_and_every_character(self):
+        code = "name = 'Águila'\n" + "print('😀')\n" * 500
+        chunks = eagle._split_ai_source(code, 128, 300)
+        self.assertGreater(len(chunks), 1)
+        self.assertEqual("".join(chunk["text"] for chunk in chunks), code)
+        self.assertTrue(all(eagle._estimate_ai_tokens(chunk["text"]) <= 128 for chunk in chunks))
+        self.assertTrue(all(len(chunk["text"]) <= 300 for chunk in chunks))
+        self.assertEqual([chunk["startLine"] for chunk in chunks], sorted(chunk["startLine"] for chunk in chunks))
 
     def test_rubric_unexpected_exceptions_return_json_without_internal_details(self):
         assignment = self.create_assignment()

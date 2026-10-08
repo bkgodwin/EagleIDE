@@ -617,17 +617,21 @@ AI grading systems (per assignment):
   expectation (120 characters maximum), with shared proportional partial/zero
   credit rules. Drafts are limited to 4,000 characters; teacher edits still allow
   12,000. Creation never sends submissions, legacy instructions, or editor context.
-  Beta grading returns one compact earned-credit entry per selected criterion,
-  without repeating criterion IDs, separate coverage lists, or missing-part lists.
-  Invalid creation/grading output receives one correction attempt; copied rubric
-  expectations and placeholder feedback cannot replace a saved grade.
+  Small beta grading requests return one compact earned-credit entry per selected
+  criterion. With many criteria or a long submission, EagleIDE inspects every
+  source character in line-labelled chunks, collects compact rubric evidence,
+  grades at most six criteria per response, and combines validated earned credit
+  on the server. Invalid or length-truncated output receives one correction
+  attempt; copied rubric expectations and placeholder feedback cannot replace a
+  saved grade.
   Admin Settings > AI Features > Rubric context limit defaults to 16,384 tokens
   and accepts 2,048-65,536. Match it to the model's supported context; larger
   settings may require more memory. Creation and beta grading conservatively
-  budget serialized input bytes plus output and template headroom, allocating
-  smaller contexts when possible. Oversized requests warn without truncation or
-  saving. Creation also has a 12,000-byte request ceiling. Shorten the description
-  or rubric if warned. Legacy grading and other AI features retain their settings.
+  estimate context tokens from text and UTF-8 size, reserve output/template
+  headroom, and keep the HTTP byte safeguard separate from the model context.
+  Smaller calls allocate less context. A stage that still cannot fit fails without
+  truncating source or replacing a saved grade. Legacy grading and other AI
+  features retain their settings.
   Use a current local Ollama server with JSON-schema structured-output support.
 - Troubleshooting: generation/save errors show the HTTP status and endpoint.
   Server-generated rubric errors also include a reference ID, failure stage,

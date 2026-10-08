@@ -113,7 +113,7 @@ class AiLimitTestCase(unittest.TestCase):
         self.assertTrue(queued["ok"])
         self.assertEqual(post.call_count, 2)
 
-    def test_request_budget_counts_serialized_unicode_and_allocates_smaller_context(self):
+    def test_request_budget_separates_http_bytes_from_estimated_context_tokens(self):
         with mock.patch.object(eagle.requests, "post", return_value=_Response()) as post:
             accepted = eagle.call_ollama_generate("http://127.0.0.1:11434", "model", "Short rubric request",
                                                    num_ctx=16384, num_predict=500, max_request_bytes=12000, use_cache=False)
@@ -125,7 +125,8 @@ class AiLimitTestCase(unittest.TestCase):
         self.assertEqual(post.call_count, 1)
         context = post.call_args.kwargs["json"]["options"]["num_ctx"]
         self.assertLess(context, 16384)
-        self.assertGreaterEqual(context, accepted["request_bytes"] + 500 + 1024)
+        self.assertGreaterEqual(context, accepted["input_tokens"] + 500 + eagle.AI_CONTEXT_HEADROOM_TOKENS)
+        self.assertLess(accepted["input_tokens"], accepted["request_bytes"])
         self.assertFalse(oversized["ok"])
         self.assertGreater(oversized["request_bytes"], 12000)
         self.assertTrue(no_room["context_limit_hit"])
