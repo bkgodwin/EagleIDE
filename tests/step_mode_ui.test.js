@@ -1,5 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const {
   clampStepDelay,
   findPlaybackPosition,
@@ -37,4 +39,14 @@ test('autoplay delay is bounded to half-second increments from 0.5 to 5 seconds'
   assert.equal(clampStepDelay(0.76), 1);
   assert.equal(clampStepDelay(3.26), 3.5);
   assert.equal(clampStepDelay(9), 5);
+});
+
+test('playback renders output by line and exposes class and object members', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../static/js/step-mode.js'), 'utf8');
+  const app = fs.readFileSync(path.join(__dirname, '../static/js/app-core.js'), 'utf8');
+  assert.match(source, /Inspect members/);
+  assert.match(source, /Dataclass fields/);
+  assert.match(source, /setStepShellOutput/);
+  assert.match(app, /className = 'step-shell-output-line'/);
+  assert.match(app, /value\.split\('\\n'\)/);
 });

@@ -25,6 +25,7 @@ MAX_CONTAINER_ITEMS = 12
 MAX_CONTAINER_DEPTH = 3
 MAX_TRACE_ESTIMATED_CHARS = 3_500_000
 MAX_DEFINED_ITEMS = 200
+MAX_MEMBER_ITEMS = 16
 
 
 class TraceLimitReached(BaseException):
@@ -111,6 +112,79 @@ def _value_kind(value: Any) -> str:
     if callable(value):
         return "callable"
     return _safe_type_name(value)
+
+
+def _safe_object_details(value: Any) -> dict[str, Any] | None:
+    """Describe student functions, classes, and objects without resolving descriptors."""
+
+    details: dict[str, Any] = {}
+    value_type = type(value)
+    if value_type is FunctionType:
+        try:
+            code = value.__code__
+            count = int(code.co_argcount) + int(code.co_kwonlyargcount)
+            parameters = list(code.co_varnames[:count])
+            next_index = count
+            if code.co_flags & 0x04:
+                parameters.append("*" + code.co_varnames[next_index])
+                next_index += 1
+            if code.co_flags & 0x08:
+                parameters.append("**" + code.co_varnames[next_index])
+            details["parameters"] = [_clip(name, 80) for name in parameters][:MAX_MEMBER_ITEMS]
+        except BaseException:
+            pass
+        return details or None
+
+    instance_namespace: dict[str, Any] = {}
+    class_value = value if isinstance(value, type) else value_type
+    try:
+        class_namespace = dict(type.__getattribute__(class_value, "__dict__"))
+    except BaseException:
+        class_namespace = {}
+    if not isinstance(value, type) and value_type not in {
+        str, bytes, bool, int, float, complex, list, tuple, set, frozenset, dict, range, slice, ModuleType
+    }:
+        try:
+            raw_namespace = object.__getattribute__(value, "__dict__")
+            if type(raw_namespace) is dict:
+                instance_namespace = raw_namespace
+        except BaseException:
+            pass
+
+    attributes = []
+    for name, member in sorted(instance_namespace.items(), key=lambda item: str(item[0]).casefold()):
+        if not isinstance(name, str) or name.startswith("__"):
+            continue
+        attributes.append({"name": _clip(name, 80), "type": _value_kind(member), "value": _clip(safe_value(member), 120)})
+        if len(attributes) >= MAX_MEMBER_ITEMS:
+            break
+
+    methods = []
+    class_attributes = []
+    for name, member in sorted(class_namespace.items(), key=lambda item: str(item[0]).casefold()):
+        is_method = type(member) in {FunctionType, staticmethod, classmethod} or isinstance(member, property)
+        if not isinstance(name, str) or (name.startswith("__") and name.endswith("__") and not is_method):
+            continue
+        if is_method:
+            if len(methods) < MAX_MEMBER_ITEMS:
+                label = "property" if isinstance(member, property) else "method"
+                methods.append({"name": _clip(name, 80), "type": label})
+        elif isinstance(value, type) and len(class_attributes) < MAX_MEMBER_ITEMS:
+            class_attributes.append({"name": _clip(name, 80), "type": _value_kind(member), "value": _clip(safe_value(member), 120)})
+
+    dataclass_fields = []
+    raw_fields = class_namespace.get("__dataclass_fields__")
+    if type(raw_fields) is dict:
+        dataclass_fields = [_clip(name, 80) for name in list(raw_fields)[:MAX_MEMBER_ITEMS] if isinstance(name, str)]
+    if attributes:
+        details["attributes"] = attributes
+    if class_attributes:
+        details["classAttributes"] = class_attributes
+    if methods:
+        details["methods"] = methods[:MAX_MEMBER_ITEMS]
+    if dataclass_fields:
+        details["dataclassFields"] = dataclass_fields
+    return details or None
 
 
 class TraceOutput(io.TextIOBase):
@@ -227,7 +301,9 @@ class SourceNarrator:
                 qualified = f"{owner}.{node.name}" if owner else node.name
                 self.user_classes.add(qualified)
                 self.definition_by_line[line] = (qualified, "class")
-                self._add_defined_item(qualified, "class", line, f"defined in this file at line {line}")
+                decorators = {self._call_path(item.func if isinstance(item, ast.Call) else item) for item in node.decorator_list}
+                kind = "dataclass" if any(name == "dataclass" or name.endswith(".dataclass") for name in decorators) else "class"
+                self._add_defined_item(qualified, kind, line, f"defined in this file at line {line}")
                 self._index_definitions(node.body, qualified)
 
     def source_line(self, line: int) -> str:
@@ -573,7 +649,17 @@ class SourceNarrator:
                 return f"Define method {qualified} for objects of this class. Its body runs only when the method is called."
             return f"Create function {qualified} so it can be called later. Its body does not run yet."
         if isinstance(node, ast.ClassDef):
-            return f"Create class {node.name}. The class groups data and methods into a reusable object type."
+            decorators = {self._call_path(item.func if isinstance(item, ast.Call) else item) for item in node.decorator_list}
+            if any(name == "dataclass" or name.endswith(".dataclass") for name in decorators):
+                fields = [
+                    child.target.id for child in node.body
+                    if isinstance(child, ast.AnnAssign) and isinstance(child.target, ast.Name)
+                ]
+                field_text = f" Its declared fields are {', '.join(fields)}." if fields else ""
+                return f"Create dataclass {node.name}. Python generates common data-object methods automatically.{field_text}"
+            bases = [self._segment(base) for base in node.bases]
+            inheritance = f" It inherits behavior from {', '.join(bases)}." if bases else ""
+            return f"Create class {node.name}. The class groups data and methods into a reusable object type.{inheritance}"
         if isinstance(node, ast.Return):
             return f"Send {self._segment(node.value, 'None')} back to the code that called this function."
         if isinstance(node, ast.Expr):
@@ -655,14 +741,16 @@ class TraceRecorder:
                 if not isinstance(name, str) or name.startswith("__") or (skip and name in skip):
                     continue
                 value = mapping[name]
-                result.append(
-                    {
-                        "name": _clip(name, 100),
-                        "type": _value_kind(value),
-                        "value": safe_value(value),
-                        "scope": scope,
-                    }
-                )
+                row = {
+                    "name": _clip(name, 100),
+                    "type": _value_kind(value),
+                    "value": safe_value(value),
+                    "scope": scope,
+                }
+                details = _safe_object_details(value)
+                if details:
+                    row["details"] = details
+                result.append(row)
             return result
 
         locals_rows = rows(frame.f_locals, "local")
@@ -692,6 +780,7 @@ class TraceRecorder:
         estimate = len(str(step.get("narration", ""))) + len(str(step.get("source", ""))) + 180
         for row in (*step.get("locals", []), *step.get("globals", [])):
             estimate += len(row.get("name", "")) + len(row.get("type", "")) + len(row.get("value", "")) + 40
+            estimate += len(str(row.get("details", "")))
         if self._estimated_chars + estimate > MAX_TRACE_ESTIMATED_CHARS:
             self.truncated = True
             raise TraceLimitReached("Step Mode stopped after reaching its trace size limit")

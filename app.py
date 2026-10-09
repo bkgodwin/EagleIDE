@@ -8956,6 +8956,11 @@ def _normalize_assignment_schema(assignment: dict) -> dict:
     if not released_at and (normalized.get("active") or normalized.get("submissions")):
         released_at = str(normalized.get("createdAt") or "").strip() or _current_timestamp()
     normalized["releasedAt"] = released_at
+    try:
+        normalized["dueAt"] = _normalize_assignment_due_at(normalized.get("dueAt"))
+    except ValueError:
+        normalized["dueAt"] = ""
+    normalized["dueLockOverride"] = bool(normalized.get("dueLockOverride", False))
     normalized["skillTags"] = _normalize_skill_tags(normalized.get("skillTags") or [])
     normalized["aiGradingInstructions"] = str(normalized.get("aiGradingInstructions") or "").strip()[:4000]
     try:
@@ -9030,6 +9035,79 @@ def _normalize_assignment_schema(assignment: dict) -> dict:
         submissions.append(sub_n)
     normalized["submissions"] = submissions
     return normalized
+
+
+def _normalize_assignment_due_at(value: Any) -> str:
+    """Return a canonical UTC due timestamp, rejecting ambiguous local times."""
+
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if len(raw) > 80:
+        raise ValueError("Assignment due date is invalid")
+    try:
+        parsed = datetime.fromisoformat(raw[:-1] + "+00:00" if raw.endswith("Z") else raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Assignment due date is invalid") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("Assignment due date must include a time zone")
+    return parsed.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _assignment_due_has_passed(assignment: dict, *, now: Optional[datetime] = None) -> bool:
+    due_at = str((assignment or {}).get("dueAt") or "").strip()
+    if not due_at:
+        return False
+    try:
+        due = datetime.fromisoformat(due_at[:-1] + "+00:00" if due_at.endswith("Z") else due_at)
+    except (TypeError, ValueError):
+        return False
+    if due.tzinfo is None or due.utcoffset() is None:
+        return False
+    current = now or datetime.now(timezone.utc)
+    return current.astimezone(timezone.utc) >= due.astimezone(timezone.utc)
+
+
+def _assignment_is_active(assignment: dict, *, now: Optional[datetime] = None) -> bool:
+    if not bool((assignment or {}).get("active", False)):
+        return False
+    if not _assignment_due_has_passed(assignment, now=now):
+        return True
+    return bool((assignment or {}).get("dueLockOverride", False))
+
+
+def _assignment_effective_payload(assignment: dict) -> dict:
+    """Expose scheduled/effective lock state without rewriting stored metadata."""
+
+    payload = dict(assignment or {})
+    payload["scheduledActive"] = bool(payload.get("active", False))
+    payload["dueExpired"] = _assignment_due_has_passed(payload)
+    payload["active"] = _assignment_is_active(payload)
+    return payload
+
+
+def _assignment_quiz_complete(assignment: dict, submission: Optional[dict]) -> tuple[bool, int, int]:
+    questions = [q for q in ((assignment.get("quiz") or {}).get("questions") or []) if isinstance(q, dict)]
+    if not questions:
+        return True, 0, 0
+    response_by_id = {
+        str(response.get("questionId") or ""): response
+        for response in ((submission or {}).get("quizResponses") or [])
+        if isinstance(response, dict)
+    }
+    answered = 0
+    for question in questions:
+        response = response_by_id.get(str(question.get("id") or ""))
+        if not response:
+            continue
+        answer = response.get("answer")
+        if question.get("type") in {"multiple_choice", "multiple_choice_code"}:
+            is_answered = isinstance(answer, int) and not isinstance(answer, bool)
+        else:
+            is_answered = bool(str(answer or "").strip())
+        if is_answered:
+            answered += 1
+    return answered == len(questions), answered, len(questions)
 
 
 def _assignment_total_max_score(assignment: dict) -> int:
@@ -9276,7 +9354,7 @@ def _assignment_request_reference(data: dict) -> tuple[str, Optional[str]]:
 
 
 def _student_assignment_payload(assignment: dict, student_email: str, *, include_submission: bool = False) -> dict:
-    payload = dict(assignment)
+    payload = _assignment_effective_payload(assignment)
     payload.pop("submissions", None)
     for teacher_only_field in (
         "aiGradingInstructions",
@@ -9300,12 +9378,16 @@ def _student_assignment_payload(assignment: dict, student_email: str, *, include
     )
     summary = None
     if submission:
+        quiz_complete, quiz_answered, quiz_total = _assignment_quiz_complete(assignment, submission)
         summary = {
             "submittedAt": submission.get("submittedAt"),
             "codeScore": submission.get("codeScore"),
             "quizScore": submission.get("quizScore"),
             "totalScore": submission.get("totalScore"),
             "aiFeedback": submission.get("aiFeedback") if assignment.get("shareAiFeedback") else "",
+            "quizComplete": quiz_complete,
+            "quizAnsweredCount": quiz_answered,
+            "quizQuestionCount": quiz_total,
         }
     payload["studentSubmissionSummary"] = summary
     if include_submission and submission:
@@ -9339,7 +9421,7 @@ def get_assignments():
         teacher_assignments = [a for a in all_assignments if (a.get("createdByEmail") or "").lower() == teacher_email.lower()]
         return jsonify(
             ok=True,
-            assignments=teacher_assignments,
+            assignments=[_assignment_effective_payload(a) for a in teacher_assignments],
             gradingCriteria=list(ASSIGNMENT_GRADING_CRITERIA),
             isAdmin=False,
             isTeacher=True,
@@ -9358,7 +9440,7 @@ def get_assignments():
     visible_assignments = []
     for a in all_assignments:
         target_class = a.get("targetClassId")
-        if not target_class or target_class not in class_ids or not a.get("active", False):
+        if not target_class or target_class not in class_ids or not _assignment_is_active(a):
             continue
         visible_assignments.append(_student_assignment_payload(a, user.get("email") or ""))
     return jsonify(ok=True, assignments=visible_assignments, isAdmin=False, isTeacher=False, canManage=False)
@@ -9380,7 +9462,7 @@ def get_past_assignments():
         _student_assignment_payload(assignment, user.get("email") or "", include_submission=True)
         for assignment in _list_assignments()
         if assignment.get("targetClassId") in class_ids
-        and not assignment.get("active", False)
+        and not _assignment_is_active(assignment)
         and bool(str(assignment.get("releasedAt") or "").strip())
     ]
     past.sort(key=lambda row: (str(row.get("releasedAt") or row.get("createdAt") or ""), str(row.get("name") or "").casefold()), reverse=True)
@@ -9442,6 +9524,10 @@ def create_assignment():
         except ValueError as exc:
             return jsonify(ok=False, error=str(exc)), 400
     rubric_context = _assignment_rubric_context(task, max_score, ai_grading_criteria) if ai_grading_rubric else ""
+    try:
+        due_at = _normalize_assignment_due_at(data.get("dueAt"))
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
     assignment = {
         "id": _new_assignment_id(),
         "createdAt": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
@@ -9450,6 +9536,8 @@ def create_assignment():
         "maxScore": max_score,
         "allowFileSubmission": bool(data.get("allowFileSubmission", True)),
         "active": False,
+        "dueAt": due_at,
+        "dueLockOverride": False,
         "releasedAt": "",
         "shareAiFeedback": bool(data.get("shareAiFeedback", False)),
         "quiz": data.get("quiz") or None,
@@ -9470,7 +9558,7 @@ def create_assignment():
     }
     
     if _save_assignment(assignment):
-        return jsonify(ok=True, assignment=assignment)
+        return jsonify(ok=True, assignment=_assignment_effective_payload(assignment))
     return jsonify(ok=False, error="Failed to save assignment"), 500
 
 @app.post("/api/assignments/update")
@@ -9505,8 +9593,17 @@ def _update_assignment_locked():
         assignment["maxScore"] = data["maxScore"]
     if "allowFileSubmission" in data:
         assignment["allowFileSubmission"] = bool(data.get("allowFileSubmission"))
+    if "dueAt" in data:
+        try:
+            new_due_at = _normalize_assignment_due_at(data.get("dueAt"))
+        except ValueError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+        if new_due_at != assignment.get("dueAt"):
+            assignment["dueLockOverride"] = False
+        assignment["dueAt"] = new_due_at
     if "active" in data:
         assignment["active"] = bool(data["active"])
+        assignment["dueLockOverride"] = bool(assignment["active"] and _assignment_due_has_passed(assignment))
         if assignment["active"] and not assignment.get("releasedAt"):
             assignment["releasedAt"] = _current_timestamp()
     if "shareAiFeedback" in data:
@@ -9581,7 +9678,7 @@ def _update_assignment_locked():
         return jsonify(ok=False, error="An assignment with this name already exists in the selected class"), 409
     
     if _save_assignment(assignment):
-        return jsonify(ok=True, assignment=assignment)
+        return jsonify(ok=True, assignment=_assignment_effective_payload(assignment))
     return jsonify(ok=False, error="Failed to save assignment"), 500
 
 
@@ -9624,6 +9721,8 @@ def copy_assignment_to_class():
         "maxScore": source.get("maxScore", 100),
         "allowFileSubmission": bool(source.get("allowFileSubmission", True)),
         "active": False,
+        "dueAt": source.get("dueAt") or "",
+        "dueLockOverride": False,
         "releasedAt": "",
         "shareAiFeedback": bool(source.get("shareAiFeedback", False)),
         "quiz": copy.deepcopy(source.get("quiz") or None),
@@ -9643,7 +9742,7 @@ def copy_assignment_to_class():
         "submissions": [],
     }
     if _save_assignment(new_assignment):
-        return jsonify(ok=True, assignment=new_assignment)
+        return jsonify(ok=True, assignment=_assignment_effective_payload(new_assignment))
     return jsonify(ok=False, error="Failed to copy assignment"), 500
 
 @app.post("/api/assignments/delete")
@@ -9701,7 +9800,7 @@ def submit_assignment():
     assignment = _load_assignment(assignment_name, class_hint)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
-    if not assignment.get("active", False):
+    if not _assignment_is_active(assignment):
         return jsonify(ok=False, error="Assignment is not active"), 403
     allow_file_submission = bool(assignment.get("allowFileSubmission", True))
 
@@ -9756,6 +9855,8 @@ def submit_assignment():
         "codeScore": None,
         "quizResponses": previous.get("quizResponses", []),
         "quizScore": previous.get("quizScore"),
+        "quizSubmissionCount": previous.get("quizSubmissionCount", 0),
+        "quizLastSubmittedByClose": previous.get("quizLastSubmittedByClose", False),
         "totalScore": None,
         "aiSuggestedScore": None,
         "aiFeedback": "",
@@ -11782,7 +11883,7 @@ def get_student_scores():
                     "totalScore": sub.get("totalScore"),
                     "submittedAt": sub.get("submittedAt", ""),
                     "submittedFileName": sub.get("submittedFileName", ""),
-                    "active": assignment.get("active", False)
+                    "active": _assignment_is_active(assignment)
                 })
             else:
                 student_scores.append({
@@ -11792,7 +11893,7 @@ def get_student_scores():
                     "maxTotal": _assignment_total_max_score(assignment),
                     "score": sub.get("score"),
                     "submittedAt": sub.get("submittedAt", ""),
-                    "active": assignment.get("active", False)
+                    "active": _assignment_is_active(assignment)
                 })
             break
 
@@ -11813,18 +11914,30 @@ def get_quiz(assignment_reference: str):
     user = _require_user(request)
     if not user:
         return jsonify(ok=False, error="Student login required"), 401
+    if not _assignment_is_active(assignment):
+        return jsonify(ok=False, error="Assignment is not active"), 403
     target_class_id = assignment.get("targetClassId")
     if not target_class_id or not _user_in_class(_find_user((user or {}).get("email", "")) or user, target_class_id):
         return jsonify(ok=False, error="Quiz not assigned to your class"), 403
     # Remove correct answers from multiple choice questions for students
     quiz_copy = copy.deepcopy(quiz)
     submission_count = 0
+    saved_responses = []
     for sub in assignment.get("submissions", []):
         if (sub.get("email") or "").lower() == ((user.get("email") or "").strip().lower()):
             try:
                 submission_count = max(0, int(sub.get("quizSubmissionCount", 0)))
             except Exception:
                 submission_count = 0
+            saved_responses = [
+                {
+                    "questionId": response.get("questionId"),
+                    "answer": response.get("answer"),
+                    "questionType": response.get("questionType"),
+                }
+                for response in (sub.get("quizResponses") or [])
+                if isinstance(response, dict)
+            ]
             break
     for question in quiz_copy.get("questions", []):
         if question.get("type") in {"multiple_choice", "multiple_choice_code"}:
@@ -11837,6 +11950,7 @@ def get_quiz(assignment_reference: str):
         quizSettings={"maxSubmissions": max_submissions},
         submissionCount=submission_count,
         remainingSubmissions=remaining,
+        savedResponses=saved_responses,
     )
 
 @app.post("/api/quiz/submit")
@@ -11859,7 +11973,7 @@ def submit_quiz():
     assignment = _load_assignment(assignment_name, class_hint)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
-    if not assignment.get("active", False):
+    if not _assignment_is_active(assignment):
         return jsonify(ok=False, error="Assignment is not active"), 403
     target_class_id = assignment.get("targetClassId")
     if not target_class_id or not _user_in_class(_find_user(student_email) or user, target_class_id):

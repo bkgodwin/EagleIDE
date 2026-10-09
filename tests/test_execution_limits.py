@@ -278,6 +278,41 @@ class ExecutionLimitTestCase(unittest.TestCase):
         self.assertTrue(any(row["name"] == "csv" and row["type"] == "imported module" for row in rows))
         self.assertTrue(any(row["name"] == "Box" and row["type"] == "class" for row in rows))
         self.assertTrue(any(row["name"] == "helper" and row["type"] == "function" for row in rows))
+        box_class = next(row for row in rows if row["name"] == "Box" and row.get("details"))
+        self.assertIn("doubled", [item["name"] for item in box_class["details"]["methods"]])
+        box_instance = next(row for row in rows if row["name"] == "box" and row.get("details", {}).get("attributes"))
+        self.assertEqual(box_instance["details"]["attributes"][0]["name"], "value")
+        self.assertEqual(box_instance["details"]["attributes"][0]["value"], "3")
+
+    def test_step_mode_preserves_output_lines_and_describes_dataclasses(self):
+        client = self._socket()
+        code = (
+            "class Student:\n"
+            "    def __init__(self, name, score=0):\n"
+            "        self.name = name\n"
+            "        self.score = score\n"
+            "    def passed(self):\n"
+            "        return self.score >= 70\n"
+            "Student.__dataclass_fields__ = {'name': None, 'score': None}\n"
+            "student = Student('Avery', 91)\n"
+            "print('first')\n"
+            "print('second')\n"
+        )
+        client.emit("trace_code", self._payload(code))
+        trace = self._trace_payload(self._collect_until_finished(client))
+
+        self.assertIsNotNone(trace)
+        self.assertEqual(trace["output"], "first\nsecond\n")
+        rows = [row for step in trace["steps"] for row in (*step.get("locals", []), *step.get("globals", []))]
+        student = next(row for row in rows if row["name"] == "student" and row.get("details", {}).get("dataclassFields"))
+        self.assertEqual(student["details"]["dataclassFields"], ["name", "score"])
+        self.assertIn("passed", [item["name"] for item in student["details"]["methods"]])
+
+        from trace_support import SourceNarrator
+        narrator = SourceNarrator("@dataclass\nclass Record:\n    name: str\n")
+        defined = {item["name"]: item["type"] for item in narrator.defined_items}
+        self.assertEqual(defined["Record"], "dataclass")
+        self.assertIn("generates common data-object methods", narrator.describe_line(2))
 
     def test_step_mode_blocks_step_over_when_custom_call_raises(self):
         client = self._socket()

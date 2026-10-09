@@ -29,6 +29,7 @@
 }
 
 #output * { font-size: inherit; }
+.step-shell-output-line { display:block; min-height:1.45em; white-space:pre-wrap; }
 
 .shell-input-bar {
   display: flex;
@@ -59,12 +60,12 @@
   gap: 8px 10px;
 }
 .btn.run-btn-hero.shell-run-btn {
-  flex: 1 1 150px;
-  width: min(240px, 100%);
-  min-width: 112px;
+  flex: 0 1 132px;
+  width: min(160px, 100%);
+  min-width: 94px;
   min-height: 44px;
   margin: 0;
-  padding: 9px 24px;
+  padding: 9px 16px;
   font-size: 17px;
   border-radius: 10px;
 }
@@ -101,6 +102,18 @@
 }
 .shell-font-control input { width: clamp(68px, 9vw, 112px); accent-color: var(--eagle-red); }
 .shell-font-control output { min-width: 2ch; color: var(--theme-text); text-align: right; }
+.right-pane-visibility-controls { display:flex; align-items:center; gap:6px; margin-left:auto; }
+.right-pane-visibility-controls .btn { min-height:34px; padding:6px 9px; font-size:12px; white-space:nowrap; }
+.right-pane-visibility-controls .btn:disabled { opacity:.5; cursor:not-allowed; }
+body.shell-hidden .shell-panel-header { min-height:58px; flex-wrap:nowrap; }
+body.shell-hidden .shell-panel-header > h3 { margin-right:auto; }
+
+@media (max-width: 900px) {
+  .shell-panel-header { gap:6px; }
+  .btn.run-btn-hero.shell-run-btn { flex-basis:104px; min-width:82px; padding-inline:10px; }
+  .shell-font-control input { width:68px; }
+  .right-pane-visibility-controls .btn { padding-inline:7px; }
+}
 
 .shell-input-bar .btn {
   flex: 0 0 auto;

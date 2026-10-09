@@ -176,6 +176,17 @@
       host.innerHTML = '<div class="step-variable-empty">No visible variables at this step.</div>';
       return;
     }
+    const detailHtml = (row) => {
+      const details = row.details || {};
+      const sections = [];
+      if ((details.parameters || []).length) sections.push(`<div><strong>Parameters:</strong> ${details.parameters.map(escapeHtml).join(', ')}</div>`);
+      if ((details.dataclassFields || []).length) sections.push(`<div><strong>Dataclass fields:</strong> ${details.dataclassFields.map(escapeHtml).join(', ')}</div>`);
+      const attributes = [...(details.attributes || []), ...(details.classAttributes || [])];
+      if (attributes.length) sections.push(`<div><strong>Attributes</strong><ul>${attributes.map(item => `<li><code>${escapeHtml(item.name)}</code> <span>${escapeHtml(item.type)}</span>${item.value !== undefined ? ` = ${escapeHtml(item.value)}` : ''}</li>`).join('')}</ul></div>`);
+      if ((details.methods || []).length) sections.push(`<div><strong>Methods</strong><ul>${details.methods.map(item => `<li><code>${escapeHtml(item.name)}()</code>${item.type === 'property' ? ' <span>property</span>' : ''}</li>`).join('')}</ul></div>`);
+      if (!sections.length) return '';
+      return `<details class="step-variable-members"><summary>Inspect members</summary>${sections.join('')}</details>`;
+    };
     host.innerHTML = `
       <table class="step-variable-table">
         <thead><tr><th>Name</th><th>Type</th><th>Value</th></tr></thead>
@@ -183,7 +194,7 @@
           <tr class="step-variable-row${changed.has(row.name) ? ' is-changed' : ''}">
             <td><strong>${escapeHtml(row.name)}</strong><br><span class="step-variable-scope">${escapeHtml(row.scope)}</span></td>
             <td>${escapeHtml(row.type)}</td>
-            <td>${escapeHtml(row.value)}</td>
+            <td>${escapeHtml(row.value)}${detailHtml(row)}</td>
           </tr>`).join('')}</tbody>
       </table>`;
   }
@@ -257,7 +268,9 @@
     renderVariables(step);
     renderExecution(step);
     highlightStep(step);
-    ctx().setShellOutput?.(String(trace.output || '').slice(0, Number(step.outputLength || 0)));
+    const visibleOutput = String(trace.output || '').slice(0, Number(step.outputLength || 0));
+    if (ctx().setStepShellOutput) ctx().setStepShellOutput(visibleOutput);
+    else ctx().setShellOutput?.(visibleOutput.replace(/\r\n?/g, '\n'));
     if (step.event === 'call' && step.supportsStepChoice) {
       if (autoplayActive) stopAutoplay();
       if (step.hasException) {

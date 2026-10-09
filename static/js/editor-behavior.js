@@ -34,6 +34,25 @@
     }
   }
 
+  function normalizePastedIndentation(text) {
+    const source = String(text ?? '');
+    const lines = source.split('\n');
+    const counts = lines
+      .filter(line => line.trim())
+      .map(line => (line.match(/^ +/) || [''])[0].length)
+      .filter(count => count > 0);
+    if (!counts.length || Math.max(...counts) < 2) return source;
+    const gcd = (left, right) => right ? gcd(right, left % right) : left;
+    const common = counts.reduce(gcd);
+    const unit = common >= 2 ? Math.min(4, common) : (counts.every(count => count % 4 === 0) ? 4 : 0);
+    if (!unit) return source;
+    return lines.map(line => {
+      const spaces = (line.match(/^ +/) || [''])[0].length;
+      if (spaces < unit) return line;
+      return '\t'.repeat(Math.floor(spaces / unit)) + ' '.repeat(spaces % unit) + line.slice(spaces);
+    }).join('\n');
+  }
+
   function foldRange(cm, start, codeMirror) {
     const mode = String(cm.getOption('mode') || '').toLowerCase();
     if (mode.includes('python')) {
@@ -54,5 +73,5 @@
     cm.scrollIntoView?.({ line, ch: 0 }, 80);
   }
 
-  return { nextPythonIndent, enter, foldRange, unfoldLine };
+  return { nextPythonIndent, normalizePastedIndentation, enter, foldRange, unfoldLine };
 });
