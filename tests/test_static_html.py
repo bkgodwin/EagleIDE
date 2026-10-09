@@ -73,6 +73,9 @@ class StaticHtmlTestCase(unittest.TestCase):
             app_core,
             r"socket\.on\('finished',[\s\S]{0,120}flushQueuedShellOutput\(\)",
         )
+        shell_css = (BASE_DIR / "static/css/features/shell.css").read_text(encoding="utf-8")
+        self.assertIn(".shell-warning { color: #ffd54f; }", shell_css)
+        self.assertIn("WARNING_LINE_PATTERN", app_core)
 
     def test_wiki_asset_cache_versions_stay_in_sync(self):
         main_css = (BASE_DIR / "static" / "css" / "main.css").read_text(encoding="utf-8")
