@@ -411,8 +411,12 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
             eagle._run_assignment_ai_grading(assignment["id"], self.student_email)
         prompt = grader.call_args.args[2]
         self.assertIn("Use only the accepted rubric", prompt)
+        self.assertIn("begin each criterion at zero", prompt)
+        self.assertIn("Every reason is required", prompt)
         self.assertIn("0: objectives (available: 10 points)", prompt)
         self.assertNotIn("`comments`: Use of comments", prompt)
+        self.assertEqual(grader.call_args.kwargs["response_schema"]["properties"]["results"]["items"]
+                         ["properties"]["reason"]["minLength"], 15)
         self.assertEqual(grader.call_args.kwargs["request_metadata"]["gradingMode"], "rubric_beta")
         submission = eagle._load_assignment(assignment["id"])["submissions"][0]
         self.assertEqual(submission["aiGradingStatus"], "completed")
@@ -697,10 +701,13 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         rubric = self.compact_rubric(criteria)
         budgets = eagle._assignment_rubric_points(rubric, criteria, 20)
         result = {"effort": "clear", "strength": "The range loop prints the requested values.", "integrityWarning": "",
-                  "results": [{"earned": budgets[key], "reason": ""} for key in criteria]}
+                  "results": [{"earned": budgets[key], "reason": "The range loop and print call visibly produce the requested sequence."}
+                              for key in criteria]}
         score, feedback = eagle._parse_assignment_rubric_ai_result(json.dumps(result), 20, criteria, rubric=rubric)
         self.assertEqual(score, 20)
         self.assertIn("Score: 20/20", feedback)
+        self.assertIn("Criterion evidence", feedback)
+        self.assertIn("The range loop and print call visibly produce", feedback)
         result["results"][0]["earned"] -= 1
         result["results"][0]["reason"] = "The range stops before the required final value."
         score, feedback = eagle._parse_assignment_rubric_ai_result(json.dumps(result), 20, criteria, rubric=rubric)
@@ -714,9 +721,10 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
     def test_ordered_credit_rejects_incomplete_invalid_and_placeholder_feedback(self):
         rubric = self.compact_rubric(["objectives"])
         base = {"effort": "clear", "strength": "The range loop prints the requested values.",
-                "results": [{"earned": 20, "reason": ""}]}
+                "results": [{"earned": 20, "reason": "The range loop and print call visibly produce the requested sequence."}]}
         for results in ([], [{"earned": True, "reason": ""}], [{"earned": 21, "reason": ""}],
                         [{"points": 20, "reason": ""}], [{"earned": 0, "reason": ""}],
+                        [{"earned": 20, "reason": "The code meets all requirements."}],
                         [{"earned": 0, "reason": "Implement the requested loop and print its values."}]):
             with self.subTest(results=results), self.assertRaises(ValueError):
                 eagle._parse_assignment_rubric_ai_result(json.dumps({**base, "results": results}), 20, ["objectives"], rubric=rubric)
@@ -732,7 +740,8 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         rubric = "\n\n".join(f'{eagle._ASSIGNMENT_GRADING_CRITERIA_BY_ID[key]["label"]} ({budgets[key]} points)\n'
                                f'Full: {eagle._ASSIGNMENT_GRADING_CRITERIA_BY_ID[key]["description"]}' for key in criteria) + "\nTotal: 20 points"
         payload = {"effort": "clear", "strength": "The range loop prints the requested sequence.", "integrityWarning": "",
-                   "results": [{"earned": budgets[key], "reason": ""} for key in criteria]}
+                   "results": [{"earned": budgets[key], "reason": "The range loop and print call visibly produce the requested sequence."}
+                               for key in criteria]}
         score, feedback = eagle._parse_assignment_rubric_ai_result(json.dumps(payload), 20, criteria, rubric=rubric)
         self.assertEqual(score, 20)
         self.assertIn("Score: 20/20", feedback)
@@ -755,7 +764,8 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         eagle._save_assignment(saved)
         budgets = eagle._assignment_rubric_points(rubric, criteria, 10)
         valid = {"effort": "clear", "strength": "The range loop prints the requested values.", "integrityWarning": "",
-                 "results": [{"earned": budgets[key], "reason": ""} for key in criteria]}
+                 "results": [{"earned": budgets[key], "reason": "The range loop and print call visibly produce the requested sequence."}
+                             for key in criteria]}
         responses = [{"ok": True, "text": json.dumps({**valid, "results": valid["results"][:1]})},
                      {"ok": True, "text": json.dumps(valid)}]
         with patch.object(eagle, "call_ollama_generate", side_effect=responses) as ai:
@@ -820,7 +830,9 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
             return {"ok": True, "done_reason": "stop", "text": json.dumps({
                 "effort": "clear", "strength": "The implementation consistently updates the requested value.",
                 "integrityWarning": "", "results": [
-                    {"earned": budgets[criterion_id], "reason": ""} for criterion_id in batch_ids
+                    {"earned": budgets[criterion_id],
+                     "reason": "The repeated assignment visibly updates value in each loop step."}
+                    for criterion_id in batch_ids
                 ],
             })}
 
@@ -933,7 +945,7 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(eagle._load_assignment(assignment["id"])["submissions"][0]["aiFeedback"], feedback)
 
-    def test_grade_all_ai_uses_alphabetical_batches_of_three(self):
+    def test_grade_all_ai_serializes_submissions_to_avoid_local_model_timeouts(self):
         assignment = self.create_assignment(active=True)
         first = self.submit_code(assignment)
         loaded = eagle._load_assignment(assignment["id"])
@@ -950,9 +962,6 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         started = []
         completed = []
         events = []
-        first_batch = threading.Barrier(3)
-        second_batch = threading.Barrier(3)
-
         def grade_one(_url, _model, prompt, **_kwargs):
             nonlocal active, maximum_active
             name = next(name for name in ("Anna", "Beta", "Charlie", "Delta", "Echo", "Foxtrot", "Zebra") if f"print('{name}')" in prompt)
@@ -961,15 +970,14 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
                 maximum_active = max(maximum_active, active)
                 started.append(name)
                 events.append(("start", name))
-            if name in {"Anna", "Beta", "Charlie"}:
-                first_batch.wait(timeout=5)
-            elif name in {"Delta", "Echo", "Foxtrot"}:
-                second_batch.wait(timeout=5)
+                overloaded = active > 1
             time.sleep(0.02)
             with guard:
                 active -= 1
                 completed.append(name)
                 events.append(("done", name))
+            if overloaded:
+                return {"ok": False, "status": 504, "error": "simulated local-model timeout"}
             return {"ok": True, "text": '{"effort":"clear","strength":"The solution includes the required print call.","deductions":[{"points":2,"category":"core","reason":"The loop required by the task is absent from the code."}]}'}
 
         with patch.object(eagle, "_effective_ai_enabled", return_value=(True, None)), patch.object(
@@ -990,14 +998,10 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
                 time.sleep(0.02)
 
         self.assertEqual(grader.call_count, 7)
-        self.assertEqual(maximum_active, 3)
-        self.assertEqual(set(started[:3]), {"Anna", "Beta", "Charlie"})
-        self.assertEqual(set(started[3:6]), {"Delta", "Echo", "Foxtrot"})
-        self.assertEqual(started[6], "Zebra")
-        self.assertLess(
-            max(events.index(("done", name)) for name in ("Anna", "Beta", "Charlie")),
-            min(events.index(("start", name)) for name in ("Delta", "Echo", "Foxtrot")),
-        )
+        self.assertEqual(maximum_active, 1)
+        self.assertEqual(started, ["Anna", "Beta", "Charlie", "Delta", "Echo", "Foxtrot", "Zebra"])
+        self.assertEqual(completed, started)
+        self.assertTrue(all(events[index][0] != events[index + 1][0] for index in range(len(events) - 1)))
         self.assertEqual(statuses, ["completed"] * 7)
 
     def test_ai_grade_rejects_unsupported_or_unexplained_scores(self):
