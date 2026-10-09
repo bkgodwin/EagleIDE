@@ -33,6 +33,8 @@ function surface() {
       for (const handler of [...(handlers.get(name) || [])]) handler({ preventDefault() {}, ...event });
     },
     querySelectorAll: () => [],
+    appendChild(child) { child.parentElement = this; },
+    focus() { document.activeElement = this; },
     setPointerCapture() {}, releasePointerCapture() {},
     getBoundingClientRect: () => ({ top: 0, left: 0, width: 1000, height: 500 })
   };
@@ -41,7 +43,7 @@ function surface() {
 const elements = new Map();
 for (const id of ['outer', 'rightstack', 'hsplitter', 'vsplitter', 'editorContentStack', 'studentEditorWrap',
   'teacherStreamPane', 'editorStreamSplitter', 'teacherPaneToggleBtn', 'rightEdgeToggleBtn',
-  'editor', 'output']) elements.set(id, surface());
+  'editor', 'output', 'paneViewBtn', 'paneViewLabel', 'rightPaneControls', 'workspaceControls']) elements.set(id, surface());
 elements.get('hsplitter').setAttribute('aria-orientation', 'vertical');
 elements.get('vsplitter').setAttribute('aria-orientation', 'horizontal');
 elements.get('editorStreamSplitter').setAttribute('aria-orientation', 'horizontal');
@@ -58,6 +60,7 @@ const body = surface();
 const document = Object.assign(surface(), {
   documentElement: root, body,
   getElementById: (id) => elements.get(id) || null,
+  querySelector: (selector) => selector === '.workspace-floating-controls' ? elements.get('workspaceControls') : null,
   querySelectorAll: () => [{ clientWidth: 400, clientHeight: 300,
     CodeMirror: { refresh: () => editorRefreshes++ } }]
 });
@@ -128,7 +131,38 @@ const appCore = fs.readFileSync('static/js/app-core.js', 'utf8');
 const start = appCore.indexOf('// ---- Layout controls (sidebar toggle + splitters) ----');
 const end = appCore.indexOf('// ---- Login UI ----', start);
 assert.ok(start >= 0 && end > start);
+// Older saved states could hide both panes; migrate them to the resources view.
+storage.set('eagleide-shell-hidden', '1');
+storage.set('eagleide-resources-collapsed', '1');
 vm.runInContext(appCore.slice(start, end), context);
+const viewButton = elements.get('paneViewBtn');
+const viewLabel = elements.get('paneViewLabel');
+const edgeButton = elements.get('rightEdgeToggleBtn');
+assert.equal(viewLabel.textContent, 'Resources');
+assert.equal(body.classList.contains('resources-collapsed'), false);
+viewButton.fire('click');
+assert.equal(viewLabel.textContent, 'Both');
+assert.equal(edgeButton.parentElement, elements.get('rightPaneControls'));
+for (const expected of ['Shell', 'Resources', 'Both']) {
+  viewButton.fire('click');
+  assert.equal(viewLabel.textContent, expected, 'one control cycles all three visible layouts');
+  assert.equal(body.classList.contains('shell-hidden'), expected === 'Resources');
+  assert.equal(body.classList.contains('resources-collapsed'), expected === 'Shell');
+  assert.equal(storage.get('eagleide-shell-hidden'), expected === 'Resources' ? '1' : '0');
+  assert.equal(storage.get('eagleide-resources-collapsed'), expected === 'Shell' ? '1' : '0');
+}
+viewButton.fire('click');
+viewButton.fire('click');
+edgeButton.focus();
+edgeButton.fire('click');
+assert.equal(edgeButton.parentElement, elements.get('workspaceControls'), 'reopen button shares the Files/Editor row');
+assert.equal(edgeButton.getAttribute('aria-expanded'), 'false');
+assert.equal(document.activeElement, edgeButton, 'keyboard focus follows the moved control');
+edgeButton.fire('click');
+assert.equal(edgeButton.parentElement, elements.get('rightPaneControls'));
+assert.equal(viewLabel.textContent, 'Resources', 'reopening preserves the selected pane view');
+vm.runInContext("setRightPaneView('both')", context);
+assert.equal(body.classList.contains('shell-hidden'), false, 'starting a run can reveal the shell without advancing the cycle');
 const divider = elements.get('hsplitter');
 divider.fire('pointerdown', { isPrimary: true, button: 0, pointerId: 1 });
 window.fire('pointermove', { pointerId: 2, clientX: 200 });
