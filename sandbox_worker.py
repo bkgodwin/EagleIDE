@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import ast as _ast
 import json
 import os
 import re
@@ -55,6 +56,285 @@ BLOCKED_OS_CALLS = (
 )
 READ_GUARDED_OS_PATH_CALLS = ("listdir", "scandir", "walk", "readlink")
 WRITE_GUARDED_OS_PATH_CALLS = ("remove", "unlink", "rmdir", "removedirs", "mkdir", "makedirs")
+MAX_EDUCATIONAL_WARNINGS = 50
+
+
+def _annotation_spec(node: Any) -> tuple:
+    """Convert a type annotation AST into a small, non-evaluating runtime spec."""
+
+    if node is None:
+        return ("any",)
+    if isinstance(node, _ast.Constant):
+        if node.value is None:
+            return ("type", "None")
+        if isinstance(node.value, str):
+            try:
+                return _annotation_spec(_ast.parse(node.value, mode="eval").body)
+            except (SyntaxError, ValueError):
+                return ("type", node.value)
+        return ("literal", (node.value,))
+    if isinstance(node, _ast.Name):
+        return ("type", node.id)
+    if isinstance(node, _ast.Attribute):
+        parts = []
+        current = node
+        while isinstance(current, _ast.Attribute):
+            parts.append(current.attr)
+            current = current.value
+        if isinstance(current, _ast.Name):
+            parts.append(current.id)
+            return ("type", ".".join(reversed(parts)))
+        return ("any",)
+    if isinstance(node, _ast.BinOp) and isinstance(node.op, _ast.BitOr):
+        return ("union", (_annotation_spec(node.left), _annotation_spec(node.right)))
+    if isinstance(node, _ast.Subscript):
+        origin_spec = _annotation_spec(node.value)
+        origin = origin_spec[1] if origin_spec[0] == "type" else ""
+        origin = origin.removeprefix("typing.")
+        elements = list(node.slice.elts) if isinstance(node.slice, _ast.Tuple) else [node.slice]
+        if origin == "Optional":
+            return ("union", (_annotation_spec(elements[0]), ("type", "None")))
+        if origin == "Union":
+            return ("union", tuple(_annotation_spec(item) for item in elements))
+        if origin == "Annotated":
+            return _annotation_spec(elements[0])
+        if origin == "Literal":
+            values = tuple(item.value for item in elements if isinstance(item, _ast.Constant))
+            return ("literal", values)
+        return ("generic", origin, tuple(_annotation_spec(item) for item in elements))
+    return ("any",)
+
+
+def _annotation_label(node: Any) -> str:
+    try:
+        return _ast.unparse(node)
+    except Exception:
+        return "the annotated type"
+
+
+def _value_matches_annotation(value: Any, spec: tuple, *, _type=type, _isinstance=isinstance) -> bool:
+    kind = spec[0]
+    if kind == "any":
+        return True
+    if kind == "union":
+        return any(_value_matches_annotation(value, item) for item in spec[1])
+    if kind == "literal":
+        if _type(value) not in {str, int, float, bool, bytes, type(None)}:
+            return True
+        return any(_type(value) is _type(expected) and value == expected for expected in spec[1])
+    if kind == "generic":
+        origin = spec[1].split(".")[-1]
+        origin_names = {
+            "List": "list", "Sequence": "sequence", "MutableSequence": "list",
+            "Dict": "dict", "Mapping": "mapping", "MutableMapping": "dict",
+            "Set": "set", "FrozenSet": "frozenset", "Tuple": "tuple",
+            "Iterable": "iterable", "Iterator": "iterable", "Generator": "iterable",
+            "Collection": "collection",
+        }
+        normalized = origin_names.get(origin, origin)
+        if normalized == "sequence" and not _isinstance(value, (str, bytes, list, tuple, range)):
+            return False
+        if normalized == "mapping" and not _isinstance(value, dict):
+            return False
+        if normalized in {"iterable", "collection"}:
+            if not _isinstance(value, (str, bytes, list, tuple, set, frozenset, dict, range)):
+                # Avoid invoking arbitrary student __iter__ methods just to emit
+                # an advisory warning. Unknown custom iterables are accepted.
+                return True
+        elif normalized not in {"sequence", "mapping"} and _type(value).__name__ != normalized:
+            return False
+        children = spec[2]
+        if not children or not _isinstance(value, (list, tuple, set, frozenset, dict)):
+            return True
+        if _isinstance(value, dict) and len(children) >= 2:
+            return all(
+                _value_matches_annotation(key, children[0]) and _value_matches_annotation(item, children[1])
+                for key, item in list(value.items())[:50]
+            )
+        if normalized == "tuple" and len(children) > 1 and not (
+            len(children) == 2 and children[1][0] == "type" and children[1][1] == "Ellipsis"
+        ):
+            return len(value) == len(children) and all(
+                _value_matches_annotation(item, expected) for item, expected in zip(value, children)
+            )
+        expected = children[0]
+        return all(_value_matches_annotation(item, expected) for item in list(value)[:50])
+    name = str(spec[1]).removeprefix("typing.").split(".")[-1]
+    if name in {"Any", "object"}:
+        return True
+    if name in {"None", "NoneType"}:
+        return value is None
+    if name == "float":
+        return _isinstance(value, (int, float)) and not _isinstance(value, bool)
+    if name == "complex":
+        return _isinstance(value, (int, float, complex)) and not _isinstance(value, bool)
+    if name == "int":
+        return _isinstance(value, int) and not _isinstance(value, bool)
+    builtin_names = {
+        "str", "bool", "list", "dict", "tuple", "set", "frozenset", "bytes",
+        "bytearray", "range", "memoryview",
+    }
+    if name in builtin_names:
+        return _type(value).__name__ == name
+    try:
+        return any(base.__name__ == name for base in _type(value).__mro__)
+    except (AttributeError, TypeError):
+        return True
+
+
+def _analyze_educational_contracts(source: str) -> tuple[list[dict[str, Any]], list[str]]:
+    """Collect function contracts and conventional member-access warnings."""
+
+    try:
+        tree = _ast.parse(source)
+    except SyntaxError:
+        return [], []
+    contracts: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    seen_accesses: set[tuple[int, int, str]] = set()
+
+    class Visitor(_ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.class_depth = 0
+
+        def visit_ClassDef(self, node: _ast.ClassDef) -> None:
+            self.class_depth += 1
+            self.generic_visit(node)
+            self.class_depth -= 1
+
+        def _visit_function(self, node: Any) -> None:
+            parameters = []
+            positional = list(node.args.posonlyargs) + list(node.args.args)
+            for parameter in positional + list(node.args.kwonlyargs):
+                if parameter.annotation is not None:
+                    parameters.append({
+                        "name": parameter.arg,
+                        "kind": "value",
+                        "spec": _annotation_spec(parameter.annotation),
+                        "label": _annotation_label(parameter.annotation),
+                    })
+            if node.args.vararg and node.args.vararg.annotation is not None:
+                parameters.append({
+                    "name": node.args.vararg.arg,
+                    "kind": "vararg",
+                    "spec": _annotation_spec(node.args.vararg.annotation),
+                    "label": _annotation_label(node.args.vararg.annotation),
+                })
+            if node.args.kwarg and node.args.kwarg.annotation is not None:
+                parameters.append({
+                    "name": node.args.kwarg.arg,
+                    "kind": "kwarg",
+                    "spec": _annotation_spec(node.args.kwarg.annotation),
+                    "label": _annotation_label(node.args.kwarg.annotation),
+                })
+            decorator_lines = [getattr(item, "lineno", node.lineno) for item in node.decorator_list]
+            contracts.append({
+                "name": node.name,
+                "start_line": min([node.lineno, *decorator_lines]),
+                "definition_line": node.lineno,
+                "parameters": parameters,
+                "return_spec": _annotation_spec(node.returns) if node.returns is not None else None,
+                "return_label": _annotation_label(node.returns) if node.returns is not None else "",
+            })
+            self.generic_visit(node)
+
+        visit_FunctionDef = _visit_function
+        visit_AsyncFunctionDef = _visit_function
+
+        def visit_Attribute(self, node: _ast.Attribute) -> None:
+            name = node.attr
+            is_private = (name.startswith("__") and not name.endswith("__")) or bool(
+                re.match(r"^_[A-Za-z]\w*__[^_]", name)
+            )
+            is_protected = name.startswith("_") and not name.startswith("__") and not is_private
+            base_name = node.value.id if isinstance(node.value, _ast.Name) else ""
+            is_super = isinstance(node.value, _ast.Call) and isinstance(node.value.func, _ast.Name) and node.value.func.id == "super"
+            allowed_inside_class = self.class_depth > 0 and (base_name in {"self", "cls"} or is_super)
+            if (is_private or is_protected) and not allowed_inside_class:
+                key = (node.lineno, node.col_offset, name)
+                if key not in seen_accesses and len(warnings) < MAX_EDUCATIONAL_WARNINGS:
+                    seen_accesses.add(key)
+                    visibility = "private" if is_private else "protected"
+                    warnings.append(
+                        f"[Warning] Line {node.lineno}: access to {visibility} member '{name}' outside its class.\n"
+                    )
+            self.generic_visit(node)
+
+    Visitor().visit(tree)
+    return contracts, warnings
+
+
+def _make_contract_trace(
+    contracts: list[dict[str, Any]],
+    display_name: str,
+    output: Any,
+    *,
+    disable_line_events: bool = True,
+):
+    by_name: dict[str, list[dict[str, Any]]] = {}
+    for contract in contracts:
+        by_name.setdefault(str(contract["name"]), []).append(contract)
+    warned: set[tuple[Any, ...]] = set()
+    unwinding: set[int] = set()
+
+    def warn(key: tuple[Any, ...], message: str) -> None:
+        if key in warned or len(warned) >= MAX_EDUCATIONAL_WARNINGS:
+            return
+        warned.add(key)
+        output.write(f"[Warning] {message}\n")
+        output.flush()
+
+    def trace(frame: Any, event: str, arg: Any):
+        if frame.f_code.co_filename != display_name:
+            return None
+        if disable_line_events and event == "call" and hasattr(frame, "f_trace_lines"):
+            # Contract checks need call/return/exception events, not every line.
+            # Disabling line callbacks keeps tight student loops inexpensive.
+            frame.f_trace_lines = False
+        candidates = by_name.get(frame.f_code.co_name, ())
+        contract = next((item for item in candidates if item["start_line"] <= frame.f_code.co_firstlineno <= item["definition_line"]), None)
+        if contract is None:
+            return trace
+        frame_key = id(frame)
+        if event == "call":
+            for parameter in contract["parameters"]:
+                name = parameter["name"]
+                if name not in frame.f_locals:
+                    continue
+                supplied = frame.f_locals[name]
+                values = supplied if parameter["kind"] == "vararg" else supplied.values() if parameter["kind"] == "kwarg" else (supplied,)
+                for value in values:
+                    if not _value_matches_annotation(value, parameter["spec"]):
+                        actual = type(value).__name__
+                        caller = frame.f_back
+                        call_line = (
+                            caller.f_lineno
+                            if caller is not None and caller.f_code.co_filename == display_name
+                            else contract["definition_line"]
+                        )
+                        warn(
+                            (contract["definition_line"], name, actual),
+                            f"Line {call_line}: {contract['name']}() argument '{name}' expected {parameter['label']}, received {actual}.",
+                        )
+                        break
+        elif event == "exception":
+            unwinding.add(frame_key)
+        elif event == "return":
+            if frame_key in unwinding:
+                unwinding.discard(frame_key)
+            elif (
+                not (frame.f_code.co_flags & (0x20 | 0x200))  # generator or async generator
+                and contract["return_spec"] is not None
+                and not _value_matches_annotation(arg, contract["return_spec"])
+            ):
+                actual = type(arg).__name__
+                warn(
+                    (contract["definition_line"], "return", actual),
+                    f"Line {frame.f_lineno}: {contract['name']}() return expected {contract['return_label']}, received {actual}.",
+                )
+        return trace
+
+    return trace if by_name else None
 
 
 class PathPolicy:
@@ -844,6 +1124,7 @@ def main() -> int:
     except Exception:
         print("The Python program could not be prepared. Ask an administrator to check the server log.", file=sys.stderr)
         return 1
+    contracts, educational_warnings = _analyze_educational_contracts(user_code)
 
     trace_mode = os.environ.get("EAGLE_RUN_MODE") == "trace"
     trace_token = str(os.environ.get("EAGLE_TRACE_TOKEN") or "")
@@ -887,6 +1168,10 @@ def main() -> int:
     real_stdout = sys.stdout
     real_stderr = sys.stderr
     real_settrace = getattr(sys, "settrace", None)
+    for warning in educational_warnings:
+        real_stderr.write(warning)
+    if educational_warnings:
+        real_stderr.flush()
     if trace_recorder is not None:
         safe_builtins["input"] = trace_recorder.make_input(real_stdout, sys.stdin, INPUT_TOKEN)
     _install_audit_hook(policy, code_path, write_budget, blocked_roots, blocked_exact)
@@ -898,13 +1183,27 @@ def main() -> int:
         "__file__": display_name,
         "__package__": None,
     }
+    contract_trace = _make_contract_trace(
+        contracts,
+        display_name,
+        real_stderr,
+        disable_line_events=trace_recorder is None,
+    )
     if trace_recorder is not None:
         exit_code = 0
         try:
             sys.stdout = trace_recorder.output
             sys.stderr = trace_recorder.output
             if real_settrace:
-                real_settrace(trace_recorder.trace)
+                if contract_trace is not None:
+                    def combined_trace(frame: Any, event: str, arg: Any):
+                        contract_trace(frame, event, arg)
+                        trace_recorder.trace(frame, event, arg)
+                        return combined_trace
+
+                    real_settrace(combined_trace)
+                else:
+                    real_settrace(trace_recorder.trace)
             # Student code must not inspect, replace, or disable the trusted
             # callback.  Cleanup retains the original built-in reference.
             if hasattr(sys, "gettrace"):
@@ -946,6 +1245,12 @@ def main() -> int:
         return exit_code
 
     try:
+        if contract_trace is not None and real_settrace:
+            real_settrace(contract_trace)
+            if hasattr(sys, "gettrace"):
+                sys.gettrace = _blocked_call
+            if hasattr(sys, "settrace"):
+                sys.settrace = _blocked_call
         exec(compile(user_code, display_name, "exec"), sandbox_globals, sandbox_globals)
     except SystemExit:
         raise
@@ -963,6 +1268,9 @@ def main() -> int:
             end="",
         )
         return 1
+    finally:
+        if contract_trace is not None and real_settrace:
+            real_settrace(None)
     return 0
 
 

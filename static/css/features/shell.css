@@ -110,6 +110,7 @@
 }
 
 .sys-msg { color: #ff9933; }
+.shell-warning { color: #ffd54f; }
 .shell-error { color: #ff5555; }
 .shell-user-input { color: #4caf50; font-weight: normal; }
 .cm-error-line { background-color: rgba(255, 85, 85, 0.15); }

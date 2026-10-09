@@ -940,6 +940,19 @@ class ExecutionLimitTestCase(unittest.TestCase):
         self.assertTrue(any(row["name"] == "sqlite3" for row in payload["module_catalog"]))
         self.assertIn("subprocess", payload["security_locked_modules"])
 
+    def test_autocomplete_catalog_lists_only_effectively_available_modules(self):
+        with mock.patch.object(eagle, "_load_config", return_value={"python_module_access": {"time": False}}):
+            response = self.http.get("/api/autocomplete/catalog")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        modules = {row["name"] for row in payload["modules"]}
+        self.assertIn("datetime", modules)
+        self.assertIn("json", modules)
+        self.assertNotIn("time", modules)
+        self.assertNotIn("subprocess", modules)
+        self.assertGreater(len(payload["entries"]), 400)
+
     def test_admin_disabled_module_is_rejected_by_worker(self):
         client = self._socket()
         settings = {
