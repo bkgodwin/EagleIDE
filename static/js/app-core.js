@@ -7634,6 +7634,84 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         || String(a.id || a.name || '').localeCompare(String(b.id || b.name || '')));
     }
 
+    function parseAssignmentAiFeedback(value) {
+      const headingKeys = {
+        'academic integrity note': 'integrity',
+        'what worked': 'strengths',
+        'criterion evidence': 'criteria',
+        'rubric gaps': 'gaps',
+        'missing requirements': 'gaps',
+        'points deducted': 'deductions',
+      };
+      const parsed = { score: '', beta: false, sections: [] };
+      let current = { key: 'notes', lines: [] };
+      const flush = () => {
+        if (current.lines.some(line => line.trim())) parsed.sections.push(current);
+        current = { key: 'notes', lines: [] };
+      };
+      String(value || '').replace(/\r/g, '').split('\n').forEach(rawLine => {
+        const line = rawLine.trim();
+        if (/^score\s*:/i.test(line)) {
+          parsed.score = line.replace(/^score\s*:\s*/i, '');
+          return;
+        }
+        if (line.toLowerCase() === 'rubric beta') {
+          parsed.beta = true;
+          return;
+        }
+        const key = headingKeys[line.toLowerCase()];
+        if (key) {
+          flush();
+          current = { key, lines: [] };
+          return;
+        }
+        if (line) current.lines.push(line);
+      });
+      flush();
+      return parsed;
+    }
+
+    function renderAssignmentAiFeedback(value, options = {}) {
+      const audience = options.audience === 'student' ? 'student' : 'teacher';
+      const parsed = parseAssignmentAiFeedback(value);
+      const titles = audience === 'student' ? {
+        strengths: 'What you did well', criteria: 'How your work was scored', gaps: 'Next steps',
+        deductions: 'Points to improve', notes: 'Feedback',
+      } : {
+        integrity: 'Academic integrity review', strengths: 'What worked', criteria: 'Criterion breakdown',
+        gaps: 'Rubric gaps', deductions: 'Deductions', notes: 'Notes',
+      };
+      const visibleSections = parsed.sections.filter(section => audience !== 'student' || section.key !== 'integrity');
+      const renderLines = (section) => {
+        const items = section.lines.map(line => line.replace(/^[•*-]\s*/, '').trim()).filter(Boolean);
+        if (!items.length) return '';
+        if (section.key === 'criteria') {
+          return `<ul class="assignment-feedback-criteria">${items.map(item => {
+            const match = item.match(/^(.*?)\s+—\s+([^:]+):\s*(.*)$/);
+            if (!match) return `<li>${escapeHtml(item)}</li>`;
+            return `<li><div><strong>${escapeHtml(match[1])}</strong><span>${escapeHtml(match[2])}</span></div><p>${escapeHtml(match[3])}</p></li>`;
+          }).join('')}</ul>`;
+        }
+        if (items.length > 1 || section.lines.some(line => /^[•*-]\s*/.test(line))) {
+          return `<ul>${items.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`;
+        }
+        return `<p>${escapeHtml(items[0])}</p>`;
+      };
+      const sections = visibleSections.map(section => `
+        <section class="assignment-feedback-section is-${escapeHtml(section.key)}">
+          <h5>${escapeHtml(titles[section.key] || titles.notes)}</h5>
+          ${renderLines(section)}
+        </section>`).join('');
+      if (!parsed.score && !sections) return '';
+      return `<div class="assignment-feedback-view ${audience === 'student' ? 'is-student' : 'is-teacher'}">
+        <header>${parsed.score ? `<span class="assignment-feedback-score">${escapeHtml(parsed.score)}</span>` : ''}
+          <span>${audience === 'student' ? 'Teacher feedback' : (parsed.beta ? 'Rubric Beta suggestion' : 'AI grading suggestion')}</span>
+        </header>
+        ${sections}
+      </div>`;
+    }
+    window.EagleIDE.renderAssignmentAiFeedback = renderAssignmentAiFeedback;
+
     function renderAssignmentGradingCriteria(selected) {
       const groups = [
         { min: 1, max: 4, title: 'Foundation', description: 'Core objectives and course concepts' },
@@ -7821,7 +7899,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
                 <td>${escapeHtml(sub.submittedFileName || '—')}</td>
                 <td>${assignment.allowFileSubmission === false ? '—' : `<input class="assignment-grade-input" type="number" min="0" max="${assignment.maxScore || 0}" step="1" value="${sub.codeScore ?? sub.score ?? ''}" data-email="${escapeHtml(sub.email)}" aria-label="Score for ${escapeHtml(sub.name || sub.email)}"><div class="meta">${sub.manualScoreOverride ? 'Manual override' : (sub.aiSuggestedScore !== null && sub.aiSuggestedScore !== undefined ? `AI ${sub.aiSuggestedScore}` : '')}</div>`}</td>
                 <td>${assignmentScoreValue(sub) ?? '—'} / ${assignmentTotalMaxScore(assignment)}<div class="meta">${assignmentPercentValue(sub, assignment) ?? '—'}</div></td>
-                <td class="assignment-ai-feedback">${escapeHtml(sub.aiFeedback || '—')}</td>
+                <td class="assignment-ai-feedback">${sub.aiFeedback ? `<details class="assignment-feedback-details"><summary>View feedback</summary>${renderAssignmentAiFeedback(sub.aiFeedback)}</details>` : '—'}</td>
                 <td><div style="display:flex; gap:6px; flex-wrap:wrap;">
                   ${assignment.allowFileSubmission === false ? '' : `<button class="btn secondary open-submission-btn" data-email="${escapeHtml(sub.email)}">Open</button><button class="btn secondary ai-grade-submission-btn" data-email="${escapeHtml(sub.email)}" ${['queued', 'running'].includes(aiStatus) || aiGradingDisabled ? 'disabled' : ''} ${aiGradingDisabled ? 'title="Accept a current beta rubric before grading"' : ''}>AI Grade</button>`}
                   ${assignment.quiz?.questions?.length ? `<button class="btn secondary grade-quiz-btn" data-email="${escapeHtml(sub.email)}">Grade Quiz</button>` : ''}
@@ -7943,7 +8021,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
             <div class="meta">Max Score: ${assignmentTotalMaxScore(a)}${a.allowFileSubmission === false ? ' (Quiz only)' : ''}${a.quiz?.questions?.length ? ` · ${a.quiz.questions.length} question(s)` : ''}${a.quizSettings?.maxSubmissions > 0 ? ` · ${a.quizSettings.maxSubmissions} quiz attempt(s)` : ''}</div>
             ${scoreBadge(a)}
-            ${a.studentSubmissionSummary?.aiFeedback ? `<div class="assignment-student-ai-feedback"><strong>Teacher-shared AI feedback</strong><pre>${escapeHtml(a.studentSubmissionSummary.aiFeedback)}</pre></div>` : ''}
+            ${a.studentSubmissionSummary?.aiFeedback ? `<details class="assignment-student-ai-feedback assignment-feedback-details"><summary>View teacher feedback</summary>${renderAssignmentAiFeedback(a.studentSubmissionSummary.aiFeedback, { audience: 'student' })}</details>` : ''}
             ${(a.skillTags || []).length ? `<div class="skill-tags">${(a.skillTags || []).map(tag => `<span class="skill-chip">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
             <div class="assignment-actions">
               ${a.allowFileSubmission === false ? '' : `<button class="btn run submit-assignment-btn" data-id="${escapeHtml(a.id || a.name)}" ${canSubmit && joinedClass && files.length ? '' : 'disabled'}>Submit File</button>`}
@@ -8713,7 +8791,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           <div style="font-size:13px; margin-bottom:6px;"><strong>Assignment:</strong> ${escapeHtml(report.assignmentName || getAssignmentByName(assignmentReference)?.name || 'Assignment')}</div>
           <div style="font-size:13px; margin-bottom:6px;"><strong>Submitted:</strong> ${escapeHtml(report.submittedAt || '—')}</div>
           <div style="font-size:13px; margin-bottom:10px;"><strong>Total Score:</strong> ${report.totalScore ?? '—'} / ${report.maxTotal ?? '—'}</div>
-          ${report.aiFeedback ? `<div class="assignment-student-ai-feedback" style="margin-bottom:12px;"><strong>Teacher-shared AI feedback</strong><pre>${escapeHtml(report.aiFeedback)}</pre></div>` : ''}
+          ${report.aiFeedback ? `<div class="assignment-student-ai-feedback" style="margin-bottom:12px;">${renderAssignmentAiFeedback(report.aiFeedback, { audience: 'student' })}</div>` : ''}
           <div style="font-size:12px; color:#888; margin-bottom:10px;">Correct quiz answers are never shown.</div>
           <div class="score-report-list">
             ${Object.keys(tags).map(tag => `
@@ -8943,7 +9021,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       aiBtn.textContent = submission.aiGradingStatus === 'running' ? 'AI Grading…' : (submission.aiGradingStatus === 'queued' ? 'AI Queued' : 'AI Grade');
       if (feedback) {
         feedback.style.display = submission.aiFeedback ? '' : 'none';
-        feedback.textContent = submission.aiFeedback || '';
+        feedback.innerHTML = submission.aiFeedback ? renderAssignmentAiFeedback(submission.aiFeedback) : '';
       }
       const submitted = (assignment.submissions || []).filter(row => row.code).sort((a, b) => String(a.name || a.email || '').localeCompare(String(b.name || b.email || ''), undefined, { sensitivity: 'base' }));
       const index = submitted.findIndex(row => String(row.email || '').toLowerCase() === String(submission.email || '').toLowerCase());
