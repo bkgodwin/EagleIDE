@@ -22,6 +22,16 @@ test('Enter preserves existing indentation and clears it after a blank line', ()
   assert.deepEqual(cm.cursor, { line: 3, ch: 0 });
 });
 
+test('pasted Python indentation converts consistent leading spaces to tabs', () => {
+  const pasted = 'if ready:\n    print("yes")\n    if nested:\n        print("done")';
+  assert.equal(
+    behavior.normalizePastedIndentation(pasted),
+    'if ready:\n\tprint("yes")\n\tif nested:\n\t\tprint("done")',
+  );
+  assert.equal(behavior.normalizePastedIndentation('  one\n    two'), '\tone\n\t\ttwo');
+  assert.equal(behavior.normalizePastedIndentation(' a sentence\n continues'), ' a sentence\n continues');
+});
+
 test('only real Python block headers fold and hidden error lines unfold', () => {
   const lines = ['if ready:', '    print("yes")', 'print("done")', 'value = 3'];
   const cm = { getOption: () => 'python', getLine: line => lines[line] };

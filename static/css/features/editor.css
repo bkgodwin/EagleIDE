@@ -82,8 +82,9 @@
     }
     .workspace-floating-controls > *{ pointer-events:auto; }
     .workspace-switch-btn{
+      min-width:104px;
       min-height:34px;
-      padding:6px 11px;
+      padding:6px 16px;
       border:1px solid var(--glass-border-highlight);
       border-radius:8px;
       background:color-mix(in srgb,var(--theme-panel-hdr) 94%,transparent);
