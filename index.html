@@ -44,7 +44,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261009-assignment-step-2">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261009-compact-shell-1">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -281,7 +281,6 @@
     <div class="wiki-popover-heading"><strong>Search results</strong><button class="wiki-icon-btn" id="wikiSearchCloseBtn" type="button" aria-label="Close search">×</button></div>
     <div id="wikiSearchResults"></div>
   </section>
-  <button class="edge-toggle" id="rightEdgeToggleBtn" title="Hide shell and resources panes" aria-label="Hide shell and resources panes" style="display:none;">◀</button>
   <button class="teacher-pane-toggle" id="teacherPaneToggleBtn" title="Show teacher code stream" aria-label="Show teacher code stream" aria-expanded="false">▲</button>
 
   <main class="network-view" id="networkView" aria-label="Network Simulator">
@@ -535,20 +534,20 @@
               <button class="btn run run-btn-hero shell-run-btn" id="runBtn">Run ▶</button>
               <button class="btn secondary step-mode-launch-btn" id="stepModeBtn" type="button" title="Start Step Mode" aria-label="Start Step Mode">👣</button>
             </div>
-            <div class="execution-queue-status" id="executionQueueStatus" role="status" aria-live="polite" hidden>
-              <span id="executionQueueStatusText">Awaiting execution…</span>
-              <button type="button" id="executionQueueCancelBtn">Cancel</button>
-            </div>
             <label class="shell-font-control" for="shellFontRange" title="Shell text size">
               <span>Text</span>
               <input id="shellFontRange" type="range" min="12" max="50" value="14" step="1">
               <output id="shellFontVal" for="shellFontRange">14</output>
             </label>
-            <div class="right-pane-visibility-controls guest-hidden" aria-label="Shell and resources visibility">
-              <button class="btn secondary" id="toggleShellBtn" type="button" title="Hide shell" aria-label="Hide shell" aria-expanded="true">Shell ▼</button>
-              <button class="btn secondary" id="resourcesToggleBtn" type="button" aria-expanded="true" aria-controls="rightStackPanel" title="Hide wiki, assignments, and other resources">Resources ▼</button>
+            <div class="right-pane-visibility-controls" id="rightPaneControls" aria-label="Shell and resources visibility">
+              <button class="btn secondary guest-hidden" id="paneViewBtn" type="button" aria-controls="shellPanel rightStackPanel" title="Showing shell and resources. Click to show only the shell." aria-label="Showing shell and resources. Click to show only the shell."><span id="paneViewLabel">Both</span><span aria-hidden="true">↻</span></button>
+              <button class="btn secondary pane-collapse-btn" id="rightEdgeToggleBtn" type="button" title="Hide shell and resources panes" aria-label="Hide shell and resources panes" aria-controls="rightColumn" aria-expanded="true" style="display:none;">▶</button>
             </div>
           </header>
+          <div class="execution-queue-status" id="executionQueueStatus" role="status" aria-live="polite" hidden>
+            <span id="executionQueueStatusText">Awaiting execution…</span>
+            <button type="button" id="executionQueueCancelBtn">Cancel</button>
+          </div>
           <section class="step-mode-panel" id="stepModePanel" hidden aria-label="Step Mode controls">
             <div class="step-mode-toolbar">
               <button class="step-arrow-btn" id="stepModePreviousBtn" type="button" aria-label="Previous execution step" title="Previous step (Left Arrow)">⬅</button>
@@ -1783,12 +1782,12 @@
   <script src="/static/js/editor-init.js?v=20261009-assignment-step-2"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js"></script>
-  <script src="/static/js/app-core.js?v=20261009-assignment-step-2"></script>
+  <script src="/static/js/app-core.js?v=20261009-compact-shell-1"></script>
   <script src="/static/js/step-mode.js?v=20261009-assignment-step-2"></script>
-  <script src="/static/js/wiki-reader.js?v=20261009-assignment-step-2"></script>
+  <script src="/static/js/wiki-reader.js?v=20261009-compact-shell-1"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
   <script src="/static/js/lesson-plans.js?v=20260816-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20261009-assignment-step-2"></script>
+  <script src="/static/js/wiki-admin.js?v=20261009-compact-shell-1"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20260918-10"></script>
   <script src="/static/js/student-notebook.js?v=20260918-10"></script>
