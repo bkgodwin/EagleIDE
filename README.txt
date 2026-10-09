@@ -595,8 +595,12 @@ AI grading systems (per assignment):
   grader enables grading. Generation alone does not replace the accepted rubric.
 - Beta grading uses only selected, accepted rubric criteria, not legacy rigor or
   automatic extra penalties. The server verifies every criterion was evaluated
-  and sums earned credit, deriving deductions from each criterion's budget.
-  Full credit means earned points equal the budget, not a deduction of that value.
+  and sums earned credit, deriving deductions from each criterion's budget. Each
+  result must cite concrete source evidence even when awarding full credit; the
+  grader starts at zero and awards only behavior demonstrated by the submission.
+  Teacher feedback includes each criterion's earned points and evidence so a
+  generous or unsupported judgment is visible during review. Full credit means
+  earned points equal the budget, not a deduction of that value.
 - Changing the assignment description, point maximum, or checklist requires a
   new accepted rubric. Jobs reject changed grading settings instead of saving a
   stale result. You can switch back to Legacy grader and save its settings.
@@ -622,8 +626,11 @@ AI grading systems (per assignment):
   source character in line-labelled chunks, collects compact rubric evidence,
   grades at most six criteria per response, and combines validated earned credit
   on the server. Invalid or length-truncated output receives one correction
-  attempt; copied rubric expectations and placeholder feedback cannot replace a
-  saved grade.
+  attempt; copied rubric expectations, generic full-credit claims, and placeholder
+  feedback cannot replace a saved grade. Grade All processes one submission at a
+  time by default so multi-stage requests do not compete for local Ollama memory
+  and expire. Operators with a model proven to sustain parallel grading may raise
+  `EAGLE_ASSIGNMENT_AI_BATCH_SIZE` up to the global AI concurrency setting.
   Admin Settings > AI Features > Rubric context limit defaults to 16,384 tokens
   and accepts 2,048-65,536. Match it to the model's supported context; larger
   settings may require more memory. Creation and beta grading conservatively
