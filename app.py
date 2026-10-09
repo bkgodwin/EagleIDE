@@ -46,6 +46,7 @@ from network_features import register as register_network_features
 from sandbox_containment import landlock_status
 from sandbox_policy import (
     SECURITY_LOCKED_MODULES,
+    autocomplete_module_catalog,
     disabled_module_roots,
     normalize_module_access,
     public_module_catalog,
@@ -5980,7 +5981,9 @@ def api_autocomplete_catalog():
         rows = _read_autocomplete_metadata()
     except FileNotFoundError:
         return jsonify(ok=False, error="autocomplete_metadata.csv not found"), 404
-    response = jsonify(ok=True, entries=rows)
+    runtime_settings = _normalized_python_runtime_settings()
+    modules = autocomplete_module_catalog(runtime_settings.get("python_module_access"))
+    response = jsonify(ok=True, entries=rows, modules=modules)
     response.headers["Cache-Control"] = "private, max-age=0, must-revalidate"
     return response
 

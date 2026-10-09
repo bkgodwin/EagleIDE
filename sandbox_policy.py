@@ -8,7 +8,9 @@ administrator is most likely to enable or disable deliberately.
 
 from __future__ import annotations
 
+import importlib.util
 import sys
+from functools import lru_cache
 from typing import Any
 
 
@@ -386,3 +388,44 @@ def public_module_catalog() -> list[dict[str, Any]]:
         }
         for row in MODULE_CATALOG
     ]
+
+
+@lru_cache(maxsize=1)
+def _installed_student_module_roots() -> tuple[str, ...]:
+    candidates = STUDENT_STDLIB_MODULES | STUDENT_THIRD_PARTY_MODULES
+    installed = []
+    for name in candidates:
+        if not name.isidentifier() or name.startswith("_") or name in SECURITY_LOCKED_MODULES:
+            continue
+        try:
+            if importlib.util.find_spec(name) is not None:
+                installed.append(name)
+        except (ImportError, AttributeError, ValueError):
+            continue
+    return tuple(sorted(installed, key=str.casefold))
+
+
+def autocomplete_module_catalog(value: Any = None) -> list[dict[str, str]]:
+    """Return importable public module roots allowed by the student policy.
+
+    Managed modules honor the administrator's current access switches. Private
+    implementation modules and security-locked roots are never advertised.
+    ``find_spec`` avoids suggesting platform-specific stdlib names that are not
+    installed on the running server.
+    """
+
+    access = normalize_module_access(value)
+    disabled = disabled_module_roots(access)
+    rows: list[dict[str, str]] = []
+    for name in _installed_student_module_roots():
+        if name in disabled:
+            continue
+        managed = _CATALOG_BY_NAME.get(name)
+        if managed:
+            description = str(managed.get("description") or f"Python {name} module.")
+        elif name in STUDENT_THIRD_PARTY_MODULES:
+            description = "Third-party module available in the student Python environment."
+        else:
+            description = "Python standard-library module available in the student environment."
+        rows.append({"name": name, "description": description})
+    return rows

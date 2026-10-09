@@ -668,6 +668,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     const SYSTEM_MESSAGE_PATTERN = /^\[.*?\]/;
+    const WARNING_LINE_PATTERN = /^\[Warning\](?:\s|$)/;
     const SHELL_DEBUG_MESSAGE_PATTERN = /^\[(?:Connected|Socket error|Sending code|Run acknowledged|Process started|Process finished|Stopped|Could not start run)\](?:\s|$)/;
     const TRACEBACK_START_PATTERN = /^Traceback \(most recent call last\):/;
     const TRACEBACK_EXCEPTION_LINE_PATTERN = /^\w[\w.]*(?:Error|Exception|Warning|Interrupt)[:\s]/;
@@ -1451,6 +1452,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     // Append a single line (no embedded newlines) to the shell output with correct coloring.
     function _appendLine(line, parent = outputEl) {
       if (!line) return; // skip null, undefined, and empty string
+      if (WARNING_LINE_PATTERN.test(line)) {
+        const span = document.createElement('span');
+        span.className = 'shell-warning';
+        span.textContent = line;
+        parent.appendChild(span);
+        return;
+      }
       // System messages: [Connected], [Process started], etc.
       if (SYSTEM_MESSAGE_PATTERN.test(line)) {
         if (SHELL_DEBUG_MESSAGE_PATTERN.test(line) && !showSystemShellMessages()) return;

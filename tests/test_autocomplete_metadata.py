@@ -1,4 +1,5 @@
 import csv
+import re
 import unittest
 from pathlib import Path
 
@@ -59,6 +60,22 @@ class AutocompleteMetadataTestCase(unittest.TestCase):
         for name in ("if", "for", "while", "in", "not", "and", "or"):
             self.assertGreaterEqual(len(keywords[name]["description"]), 75)
 
+    def test_every_admin_togglable_module_has_member_completions(self):
+        policy_source = (BASE_DIR / "sandbox_policy.py").read_text(encoding="utf-8")
+        managed_names = set()
+        in_catalog = False
+        for line in policy_source.splitlines():
+            if line.startswith("MODULE_CATALOG:"):
+                in_catalog = True
+            elif in_catalog and line.startswith("_CATALOG_BY_NAME"):
+                break
+            elif in_catalog:
+                match = re.search(r'"name": "([A-Za-z0-9_]+)"', line)
+                if match:
+                    managed_names.add(match.group(1))
+        owners = {row["owner"].split(".", 1)[0] for row in self.rows}
+        self.assertEqual(managed_names - owners, set())
+
     def test_object_math_and_chart_helpers_are_cataloged(self):
         expected = {
             "csv.DictReader": {"fieldnames", "line_num"},
@@ -84,6 +101,7 @@ class AutocompleteMetadataTestCase(unittest.TestCase):
         self.assertRegex(page, r'/static/js/autocomplete\.js\?v=[^" ]+')
         self.assertIn("cache: 'no-store'", client_source)
         self.assertIn('metadata = catalogIndex(payload.entries);', client_source)
+        self.assertIn('availableModules = Array.isArray(payload.modules)', client_source)
         self.assertIn('schedule();', client_source)
 
 
