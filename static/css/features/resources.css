@@ -24,6 +24,12 @@
     .assignment-card{ background:var(--theme-input-bg); border:1px solid var(--theme-border-mid); border-radius:10px; padding:12px; margin-bottom:12px; }
     .assignment-card h4{ margin:0 0 8px; color:var(--columbia-blue); font-size:16px; }
     .assignment-card .task{ color:var(--theme-text); margin:8px 0; white-space:pre-wrap; }
+    .assignment-markdown{ color:var(--theme-text); line-height:1.55; white-space:normal!important; overflow-wrap:anywhere; }
+    .assignment-markdown>:first-child{ margin-top:0; }
+    .assignment-markdown>:last-child{ margin-bottom:0; }
+    .assignment-markdown pre{ position:relative; max-width:100%; overflow:auto; padding:10px 12px; border:1px solid var(--theme-border-mid); border-radius:7px; background:var(--theme-output-bg); white-space:pre; }
+    .assignment-markdown code{ font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+    .assignment-markdown blockquote{ margin:10px 0; padding:8px 12px; border-left:4px solid var(--columbia-blue); background:var(--theme-input-bg); color:var(--theme-text-dim); }
     .assignment-card .meta{ color:var(--theme-text-dim); font-size:12px; margin-top:8px; }
     .assignment-actions{ display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
     .submission-item{ background:var(--theme-output-bg); border:1px solid var(--theme-border); border-radius:8px; padding:10px; margin:8px 0; cursor:pointer; }

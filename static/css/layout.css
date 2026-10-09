@@ -179,20 +179,21 @@ body:not(.wiki-mode) .site-primary-nav { flex: 0 0 auto; }
 }
 
 .file-chip {
-  max-width: 200px;
+  max-width: 260px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 500;
-  font-size: 12px;
-  padding: 4px 10px;
+  font-weight: 800;
+  font-size: 13px;
+  padding: 7px 13px;
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.15);
-  border: 1px solid var(--glass-border);
-  color: var(--theme-topbar-txt);
+  background: rgba(7, 31, 52, .82);
+  border: 1px solid rgba(149, 203, 244, .72);
+  color: #f5fbff;
+  box-shadow: 0 2px 9px rgba(0, 0, 0, .28);
 }
 
-body.light-mode .file-chip { background: rgba(255, 255, 255, 0.45); }
+body.light-mode .file-chip { background: #fff; border-color: #315f86; color: #15324a; }
 
 .role-menu { position: relative; }
 .role-menu.open { z-index: 20; }
@@ -472,16 +473,23 @@ body.guest-mode .vsplitter { display: none !important; }
 body.guest-mode #rightstack { grid-template-rows: 1fr !important; }
 body.guest-mode #shellPanel { grid-row: 1 / 2 !important; }
 body.guest-mode #workspaceSwitchBtn { display: none !important; }
+body.guest-mode #resourcesToggleBtn { display: none !important; }
 
 body.right-collapsed #rightColumn { display: none !important; }
 body.right-collapsed #hsplitter { display: none !important; }
 body.right-collapsed .outer.no-sidebar { grid-template-columns: 1fr !important; }
 body.right-collapsed .outer.no-sidebar #editorPanel { grid-column: 1 / 2; }
 
-body.shell-hidden #shellPanel { display: none !important; }
+body.shell-hidden #shellPanel { grid-row: 1 / 2 !important; min-height: 58px; }
+body.shell-hidden #shellPanel > .content,
+body.shell-hidden #shellPanel > .step-mode-panel,
+body.shell-hidden #shellPanel > .shell-input-bar,
+body.shell-hidden #shellPanel .shell-run-actions,
+body.shell-hidden #shellPanel .execution-queue-status,
+body.shell-hidden #shellPanel .shell-font-control { display: none !important; }
 body.shell-hidden .vsplitter { display: none !important; }
-body.shell-hidden .rightstack { grid-template-rows: 1fr !important; }
-body.shell-hidden #rightStackPanel { grid-row: 1 / 2 !important; }
+body.shell-hidden .rightstack { grid-template-rows: auto 0 minmax(0, 1fr) !important; }
+body.shell-hidden #rightStackPanel { grid-row: 3 / 4 !important; }
 
 body.resources-collapsed #rightStackPanel { display: none !important; }
 body.resources-collapsed #rightColumn .vsplitter { display: none !important; }

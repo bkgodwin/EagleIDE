@@ -25,6 +25,12 @@ function eagleFoldRange(cm, pos) {
           matchBrackets: true,
           viewportMargin: 20
         });
+        cm.on('beforeChange', (_instance, change) => {
+          if (change.origin !== 'paste' || !String(cm.getOption('mode') || '').toLowerCase().includes('python')) return;
+          const pasted = (change.text || []).join('\n');
+          const normalized = window.EagleEditorBehavior?.normalizePastedIndentation(pasted) ?? pasted;
+          if (normalized !== pasted) change.update(change.from, change.to, normalized.split('\n'), change.origin);
+        });
         let dirty = true;
         cm.on('change', () => { dirty = true; });
         window.__isDirty = () => dirty;
@@ -60,6 +66,18 @@ function eagleFoldRange(cm, pos) {
             ta.value = ta.value.slice(0, from) + next.text + ta.value.slice(to);
             ta.selectionStart = ta.selectionEnd = from + next.text.length;
           }
+        });
+        ta.addEventListener('paste', (event) => {
+          if (!String(document.getElementById('languageSelector')?.value || 'python').toLowerCase().includes('python')) return;
+          const pasted = event.clipboardData?.getData('text/plain') || '';
+          const normalized = window.EagleEditorBehavior?.normalizePastedIndentation(pasted) ?? pasted;
+          if (normalized === pasted) return;
+          event.preventDefault();
+          const start = ta.selectionStart;
+          const end = ta.selectionEnd;
+          ta.value = ta.value.slice(0, start) + normalized + ta.value.slice(end);
+          ta.selectionStart = ta.selectionEnd = start + normalized.length;
+          ta.dispatchEvent(new Event('input', { bubbles: true }));
         });
         window.__isDirty = () => true;
         return { getValue: () => ta.value, setValue: (v) => { ta.value = v; } };

@@ -126,6 +126,39 @@ test('teacher assignment titles sort chronologically and expand into grading', (
   assert.doesNotMatch(detail.innerHTML, /class="assignment-criterion-check"[^>]*checked/);
 });
 
+test('student questions can close without submission and reopen with draft answers', () => {
+  assert.match(source, /Close for Now/);
+  assert.match(source, /quizDrafts\.set/);
+  assert.match(source, /savedResponses/);
+  assert.match(source, /does not use an attempt/);
+  assert.doesNotMatch(source, /autoSubmitOnClose/);
+  assert.doesNotMatch(source, /textarea\.addEventListener\('paste', \(e\) => e\.preventDefault/);
+  assert.match(source, /!refreshed\.studentSubmissionSummary\?\.quizComplete/);
+});
+
+test('assignment descriptions render sanitized markdown and newest student work sorts first', () => {
+  assert.match(source, /renderMarkdownTo\(element, text, 'python'\)/);
+  assert.match(source, /data-assignment-markdown/);
+  assert.match(source, /String\(b\.createdAt \|\| ''\)\.localeCompare\(String\(a\.createdAt/);
+  assert.match(source, /Markdown is supported/);
+});
+
+test('assignment editor exposes due time and live deadline refresh', () => {
+  assert.match(source, /id="modalAssignmentDueAt"/);
+  assert.match(source, /new Date\(dueLocal\)\.toISOString\(\)/);
+  assert.match(source, /scheduleAssignmentDeadlineRefresh/);
+  assert.match(source, /Deadline passed/);
+});
+
+test('shell and resource controls share the shell bar and cannot hide both panes', () => {
+  const shellHeader = html.slice(html.indexOf('<header class="shell-panel-header">'), html.indexOf('</header>', html.indexOf('<header class="shell-panel-header">')));
+  assert.match(shellHeader, /id="shellFontRange"/);
+  assert.ok(shellHeader.indexOf('id="shellFontRange"') < shellHeader.indexOf('id="toggleShellBtn"'));
+  assert.ok(shellHeader.indexOf('id="toggleShellBtn"') < shellHeader.indexOf('id="resourcesToggleBtn"'));
+  assert.match(source, /shellButton\.disabled = resourcesHidden/);
+  assert.match(source, /resourcesButton\.disabled = shellHidden/);
+});
+
 test('assignment feedback is structured for teachers and simplified for students', () => {
   const { context } = assignmentViewHarness([]);
   const feedback = [

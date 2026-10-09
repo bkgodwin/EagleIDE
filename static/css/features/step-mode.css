@@ -184,6 +184,12 @@
 .step-variable-row.is-changed { background: rgba(243, 201, 79, .18); }
 .step-variable-scope { color: var(--theme-text-dim); font-size: 9px; text-transform: uppercase; }
 .step-variable-empty { padding: 9px; color: var(--theme-text-dim); font-size: 11px; }
+.step-variable-members { margin-top:5px; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; color:var(--theme-text-dim); }
+.step-variable-members summary { cursor:pointer; color:var(--columbia-blue); font-weight:800; }
+.step-variable-members>div { margin-top:5px; }
+.step-variable-members ul { margin:3px 0 0; padding-left:18px; }
+.step-variable-members li { margin:2px 0; }
+.step-variable-members code { color:#f3c94f; }
 
 .step-execution-summary {
   min-height: 72px;
