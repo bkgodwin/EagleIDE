@@ -13,6 +13,7 @@ from sandbox_policy import (
     MODULE_CATALOG,
     SECURITY_LOCKED_MODULES,
     STUDENT_THIRD_PARTY_MODULES,
+    autocomplete_module_catalog,
     disabled_module_roots,
     normalize_module_access,
 )
@@ -84,6 +85,81 @@ class PythonSandboxPolicyTests(unittest.TestCase):
                 CONTAINMENT_REQUIRED_MODULES
             )
         )
+
+    def test_autocomplete_module_catalog_honors_admin_access_and_security_policy(self):
+        available = {row["name"] for row in autocomplete_module_catalog({"time": False})}
+
+        self.assertIn("datetime", available)
+        self.assertIn("json", available)
+        self.assertNotIn("time", available)
+        self.assertNotIn("subprocess", available)
+        self.assertFalse(any(name.startswith("_") for name in available))
+
+    def test_worker_warns_for_contract_and_private_member_violations_without_stopping(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self._run_worker(
+                Path(tmp),
+                (
+                    "def convert(value: int) -> float:\n"
+                    "    return 'not a float'\n"
+                    "class Box:\n"
+                    "    def __init__(self):\n"
+                    "        self._protected = 3\n"
+                    "        self.__private = 4\n"
+                    "    def _helper(self):\n"
+                    "        return self._protected\n"
+                    "box = Box()\n"
+                    "print(convert('wrong'))\n"
+                    "print(box._protected, box._Box__private, box._helper())\n"
+                    "print('execution continued')\n"
+                ),
+            )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("execution continued", result.stdout)
+        self.assertIn("argument 'value' expected int, received str", result.stderr)
+        self.assertIn("return expected float, received str", result.stderr)
+        self.assertIn("access to protected member '_protected'", result.stderr)
+        self.assertIn("access to private member '_Box__private'", result.stderr)
+        self.assertIn("access to protected member '_helper'", result.stderr)
+
+    def test_worker_contract_checks_accept_valid_values_and_ignore_raised_returns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self._run_worker(
+                Path(tmp),
+                (
+                    "def half(value: int) -> float:\n"
+                    "    return value / 2\n"
+                    "def fail(value: str) -> int:\n"
+                    "    raise ValueError(value)\n"
+                    "print(half(5))\n"
+                    "try:\n"
+                    "    fail('expected')\n"
+                    "except ValueError:\n"
+                    "    print('caught')\n"
+                ),
+            )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("caught", result.stdout)
+        self.assertNotIn("[Warning]", result.stderr)
+
+    def test_worker_does_not_treat_generator_yields_as_return_contracts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self._run_worker(
+                Path(tmp),
+                (
+                    "from typing import Iterator\n"
+                    "def numbers(limit: int) -> Iterator[int]:\n"
+                    "    for value in range(limit):\n"
+                    "        yield value\n"
+                    "print(list(numbers(3)))\n"
+                ),
+            )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("[0, 1, 2]", result.stdout)
+        self.assertNotIn("[Warning]", result.stderr)
 
     def test_chart_artifacts_increment_and_rotate_at_the_history_limit(self):
         with tempfile.TemporaryDirectory() as tmp:

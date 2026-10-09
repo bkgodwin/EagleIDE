@@ -38,6 +38,65 @@ test('Python analysis collects functions, methods, attributes, types, and docstr
   assert.equal(result.varTypes.get('words'), 'str');
 });
 
+test('Python analysis propagates input, string, and list result types through aliases', () => {
+  const result = autocomplete.analyzePython([
+    'answer = input("Answer: ")',
+    'copied_answer = answer',
+    'words = copied_answer.split()',
+    'copied_words = words',
+  ].join('\n'));
+
+  assert.equal(result.varTypes.get('answer'), 'str');
+  assert.equal(result.varTypes.get('copied_answer'), 'str');
+  assert.equal(result.varTypes.get('words'), 'list');
+  assert.equal(result.varTypes.get('copied_words'), 'list');
+
+  const catalog = autocomplete.catalogIndex([
+    { language: 'python', owner: 'str', name: 'upper', kind: 'method', signature: '()', returns: 'str', description: 'Uppercase text.' },
+    { language: 'python', owner: 'list', name: 'append', kind: 'method', signature: '(item)', returns: 'None', description: 'Append an item.' },
+  ]);
+  const suggestions = object => autocomplete.buildSuggestionSet({
+    language: 'python', analysis: result, catalog,
+    context: { mode: 'member', object, partial: '', fromCh: 0 },
+  }).map(item => item.name);
+  assert.ok(suggestions('copied_answer').includes('upper'));
+  assert.ok(suggestions('copied_words').includes('append'));
+});
+
+test('import and from contexts suggest available modules and module members', () => {
+  const analysis = autocomplete.analyzePython('');
+  const modules = [
+    { name: 'datetime', description: 'Date and time helpers.' },
+    { name: 'time', description: 'Clock helpers.' },
+  ];
+  const catalog = autocomplete.catalogIndex([
+    { language: 'python', owner: 'datetime', name: 'date', kind: 'class', signature: '(year, month, day)', returns: 'datetime.date', description: 'A calendar date.' },
+  ]);
+  const importContext = autocomplete.contextAt('import dat', 10);
+  assert.deepEqual(importContext, { mode: 'module', object: '', partial: 'dat', fromCh: 7 });
+  const importItems = autocomplete.buildSuggestionSet({ language: 'python', analysis, catalog, modules, context: importContext });
+  assert.deepEqual(importItems.map(item => item.name), ['datetime']);
+  assert.equal(importItems[0].kind, 'module');
+
+  const fromContext = autocomplete.contextAt('from ti', 7);
+  assert.deepEqual(fromContext, { mode: 'module', object: '', partial: 'ti', fromCh: 5 });
+  assert.deepEqual(
+    autocomplete.buildSuggestionSet({ language: 'python', analysis, catalog, modules, context: fromContext }).map(item => item.name),
+    ['time'],
+  );
+
+  const memberContext = autocomplete.contextAt('from datetime import da', 23);
+  assert.deepEqual(memberContext, { mode: 'import-member', object: 'datetime', partial: 'da', fromCh: 21 });
+  assert.deepEqual(
+    autocomplete.buildSuggestionSet({ language: 'python', analysis, catalog, modules, context: memberContext }).map(item => item.name),
+    ['date'],
+  );
+  assert.deepEqual(
+    autocomplete.buildSuggestionSet({ language: 'javascript', analysis: autocomplete.analyzeJavascript(''), catalog, modules, context: importContext }),
+    [],
+  );
+});
+
 test('member suggestions combine catalog methods with user class members', () => {
   const source = [
     'class Robot:',

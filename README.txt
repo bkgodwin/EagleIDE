@@ -231,9 +231,12 @@ Students can:
 Features:
 - Syntax highlighting for Python, JavaScript, HTML, and CSS
 - Intelligent autocomplete with Python file, CSV reader/writer, collection, NumPy,
-  and Matplotlib object members; math and other common module helpers; user-defined
+  and Matplotlib object members; every admin-togglable module and the effective
+  student import catalog after `import` or `from`; user-defined
   functions, methods, variables, attributes, signatures, and docstrings; and a
   keyboard-navigable help panel showing arguments, return types, and descriptions.
+  Values returned by input(), common collection methods, and aliases inherit their
+  inferred types so string and list member suggestions remain available.
   Press an arrow key before Enter or Tab to accept a suggested completion; otherwise
   those keys keep their normal editing behavior. Clicking a suggestion also inserts it.
   Autocomplete can be disabled from the IDE toolbar; while disabled it does not
@@ -826,6 +829,10 @@ Python:
 - Matplotlib uses the Agg backend with one thread for common numerical runtimes
 - Wall-clock timeout enforced per execution
 - Output capped at a maximum byte limit to prevent flooding
+- Supported function parameter and return annotations are checked while Python
+  runs. Access to underscore-prefixed protected/private members outside a class is
+  also diagnosed. These educational warnings appear in yellow, are capped, and do
+  not stop execution or change the program's result.
 
 JavaScript:
 - Code runs in a Node.js subprocess

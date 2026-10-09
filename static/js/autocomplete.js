@@ -133,6 +133,7 @@
     if (/^csv\.(?:reader|DictReader|writer|DictWriter)$/.test(simpleHint)) return simpleHint;
     if (classNames.has(simpleHint)) return simpleHint;
     const expression = String(value || '').trim();
+    if (/^input\s*\(/.test(expression)) return 'str';
     if (/^(?:[rubf]{0,2})?["']/i.test(expression) || /^str\s*\(/.test(expression)) return 'str';
     if (/^\[/.test(expression) || /^list\s*\(/.test(expression) || /\.split\s*\(/.test(expression)) return 'list';
     if (/^dict\s*\(/.test(expression) || /^\{\s*\}/.test(expression) || /^\{[^{}]*:/.test(expression)) return 'dict';
@@ -157,6 +158,7 @@
     if (!call) return '';
     const parts = call[1].split('.');
     const canonical = [varTypes.get(parts[0]) || parts[0], ...parts.slice(1)].join('.');
+    if (canonical === 'input') return 'str';
     if (/^csv\.(?:reader|DictReader|writer|DictWriter)$/.test(canonical)) return canonical;
     if (/^pathlib\.Path$/.test(canonical)) return 'pathlib.Path';
     if (/^(?:pathlib\.Path\.open|io\.(?:StringIO|BytesIO))$/.test(canonical)) return 'file';
@@ -446,6 +448,16 @@
   function contextAt(line, cursorCh) {
     const before = String(line || '').slice(0, cursorCh);
     if (isInsideCommentOrString(String(line || ''), cursorCh)) return null;
+    const fromMember = before.match(/^\s*from\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s+import\s+([A-Za-z_]\w*)?$/);
+    if (fromMember) {
+      const partial = fromMember[2] || '';
+      return { mode: 'import-member', object: fromMember[1], partial, fromCh: cursorCh - partial.length };
+    }
+    const moduleImport = before.match(/^\s*(?:import|from)\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)?$/);
+    if (moduleImport) {
+      const partial = moduleImport[1] || '';
+      return { mode: 'module', object: '', partial, fromCh: cursorCh - partial.length };
+    }
     const attr = before.match(/((?:[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*\([^()\n]*\)|[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*|(?:[rubf]{0,2})?["'][^"']*["']|\[[^\]]*\]))\.((?:[A-Za-z_$][\w$]*)?)$/i);
     if (attr) {
       return { mode: 'member', object: attr[1], partial: attr[2], fromCh: cursorCh - attr[2].length };
@@ -485,8 +497,22 @@
       seen.add(item.name);
       results.push(item);
     };
+    if (language !== 'python' && (context.mode === 'module' || context.mode === 'import-member')) return [];
 
-    if (context.mode === 'member') {
+    if (context.mode === 'module' && language === 'python') {
+      (Array.isArray(options.modules) ? options.modules : []).forEach(raw => add(createSymbol(
+        String(raw?.name || raw || ''), 'module', {
+          returns: 'module',
+          description: String(raw?.description || 'Module available in the student Python environment.'),
+        }
+      )));
+    } else if (context.mode === 'import-member' && language === 'python') {
+      for (const entry of index.values()) {
+        if (entry.language === 'python' && String(entry.owner).toLowerCase() === String(context.object).toLowerCase()) {
+          add(Object.assign({}, entry));
+        }
+      }
+    } else if (context.mode === 'member') {
       if (language === 'python') {
         let owner = '';
         const objectName = context.object;
@@ -562,6 +588,7 @@
     let analysisSource = null;
     let analysisLanguage = null;
     let metadata = new Map();
+    let availableModules = [];
     let catalogPromise = null;
     let catalogAbort = null;
 
@@ -578,6 +605,7 @@
         .then(payload => {
           if (!active) return;
           metadata = catalogIndex(payload.entries);
+          availableModules = Array.isArray(payload.modules) ? payload.modules.slice() : [];
           schedule();
         })
         .catch(() => {})
@@ -710,6 +738,7 @@
       const analysis = currentAnalysis(source, currentLanguage);
       const items = buildSuggestionSet({
         language: currentLanguage, context, analysis, catalog: metadata,
+        modules: availableModules,
         currentClass: currentLanguage === 'python' ? (analysis.classAtLine[cursor.line] || '') : ''
       });
       show(items, context, cursor);
