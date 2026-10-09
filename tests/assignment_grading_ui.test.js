@@ -7,6 +7,7 @@ const vm = require('node:vm');
 const root = path.resolve(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'static', 'js', 'app-core.js'), 'utf8');
 const studentDashboard = fs.readFileSync(path.join(root, 'static', 'js', 'student-dashboard.js'), 'utf8');
+const resourceCss = fs.readFileSync(path.join(root, 'static', 'css', 'features', 'resources.css'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 
 test('teacher assignment table includes missing, manual, AI, and export controls', () => {
@@ -19,6 +20,11 @@ test('teacher assignment table includes missing, manual, AI, and export controls
   assert.match(source, /openAssignmentAiQueueBtn/);
   assert.match(source, /assignmentShareAiFeedback/);
   assert.match(source, /Rubric grader \(Beta test\)/);
+  assert.match(source, /External AI/);
+  assert.match(source, /Download grading package/);
+  assert.match(source, /Upload completed CSV/);
+  assert.match(source, /external-grading-package/);
+  assert.match(source, /external-grades/);
   assert.match(source, /generateAssignmentRubric/);
   assert.match(source, /Accept rubric &amp; save beta grader/);
   assert.match(source, /assignment-criterion-check/);
@@ -88,6 +94,9 @@ function assignmentViewHarness(assignments) {
     ],
     escapeHtml: value => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'),
     getAssignmentByName: id => assignments.find(a => a.id === id),
+    assignmentScoreValue: submission => submission.totalScore ?? submission.codeScore ?? null,
+    assignmentTotalMaxScore: assignment => assignment.maxScore || 0,
+    assignmentPercentValue: () => '80.0%',
     rigorLevelLabel: () => 'High School', assignmentRigorSummary: () => 'Core objectives',
   };
   vm.runInNewContext(`${source.slice(start, end)}\nglobalThis.views = { renderAdminAssignments, renderTeacherReferenceAssignments, renderAssignmentAiFeedback };`, context);
@@ -138,6 +147,41 @@ test('assignment feedback is structured for teachers and simplified for students
   assert.match(student, /How your work was scored/);
   assert.match(student, /Next steps/);
   assert.doesNotMatch(student, /integrity|influence the grader/i);
+});
+
+test('teacher feedback expands in a full-width row below the submission', () => {
+  const assignments = [{
+    id: 'feedback-row', name: 'Feedback Row', task: 'Task', targetClassId: 'class-a', maxScore: 10,
+    submissions: [{ email: 'student@example.com', name: 'Student', code: 'print(1)', codeScore: 8,
+      aiSuggestedScore: 8, aiFeedback: 'Score: 8/10\n\nExternal grading\n\nFeedback\nGood start.', submittedAt: 'today' }],
+  }];
+  const { context, list, detail } = assignmentViewHarness(assignments);
+  context.teacherClasses[0].students = [{ email: 'student@example.com', name: 'Student' }];
+  context.views.renderAdminAssignments();
+  list.buttons[0].click();
+  assert.match(detail.innerHTML, /class="assignment-feedback-row"/);
+  assert.match(detail.innerHTML, /colspan="6"/);
+  assert.match(detail.innerHTML, /View feedback for student@example\.com/);
+  assert.match(detail.innerHTML, /External grading result/);
+  assert.doesNotMatch(detail.innerHTML, /<th>AI feedback<\/th>/);
+  assert.match(resourceCss, /\.assignment-feedback-view\{[^}]*grid-template-columns:repeat\(auto-fit/);
+  assert.match(resourceCss, /\.assignment-feedback-row>td\{[^}]*white-space:normal/);
+});
+
+test('external mode exposes package workflow and hides the built-in queue controls', () => {
+  const assignments = [{
+    id: 'external', name: 'External', task: 'Task', targetClassId: 'class-a', maxScore: 10,
+    aiGradingMode: 'external', aiGradingCriteria: ['objectives'], aiGradingRubric: 'Rubric',
+    aiGradingRubricContext: 'context', submissions: [{ email: 'student@example.com', code: 'print(1)' }],
+  }];
+  const { context, list, detail } = assignmentViewHarness(assignments);
+  context.views.renderAdminAssignments();
+  list.buttons[0].click();
+  assert.match(detail.innerHTML, /value="external" selected/);
+  assert.match(detail.innerHTML, /id="assignmentExternalGraderPanel" class="assignment-grader-panel assignment-external-grader" >/);
+  assert.match(detail.innerHTML, /id="assignmentInternalAiActions" class="assignment-ai-rigor" hidden/);
+  assert.match(detail.innerHTML, /Student identity metadata is limited to email addresses/);
+  assert.doesNotMatch(detail.innerHTML, /class="btn secondary ai-grade-submission-btn"/);
 });
 
 test('teacher reference panel shows only unlocked assignments for active class', () => {
