@@ -123,7 +123,7 @@ class StaticHtmlTestCase(unittest.TestCase):
     def test_student_account_resources_and_question_controls_are_wired(self):
         ids = set(self.parser.ids)
         self.assertTrue({
-            "resourcesToggleBtn", "studentPasswordForm", "studentCurrentPassword",
+            "paneViewBtn", "studentPasswordForm", "studentCurrentPassword",
             "studentNewPassword", "studentConfirmPassword", "studentChangePasswordBtn",
             "studentPasswordStatus",
         }.issubset(ids))
@@ -158,7 +158,7 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn("eagleide-shell-font-size", app_core)
         self.assertIn("ide_solid_background_enabled", app_core)
         self.assertNotIn("workspaceFilesTabBtn", app_core)
-        for label in [">Lang<", ">Text<", ">Guide On<", ">Auto On<", ">Resources ▼<", "📡 Stream Off", "📝 Prompt"]:
+        for label in [">Lang<", ">Text<", ">Guide On<", ">Auto On<", ">Both<", "📡 Stream Off", "📝 Prompt"]:
             self.assertIn(label, self.raw)
 
     def test_attribute_ampersands_are_html_escaped(self):
