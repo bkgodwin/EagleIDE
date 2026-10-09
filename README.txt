@@ -578,13 +578,25 @@ FOR TEACHERS
 8. Review the complete class roster, including students marked Not turned in
 9. Open submissions in the teacher editor, move between them with previous/next
    controls, and return through the minimized dashboard bar
-10. Set manual scores or queue individual/all submissions for background AI
-    grading with assignment-specific instructions and adjustable rigor
-11. Review AI score feedback and override AI scores at any time
+10. Set manual scores, queue built-in AI grading, or export all submissions for
+    grading by an external AI
+11. Review grading feedback and override suggested scores at any time
 12. Export student-number/score CSV files as points or one-decimal percentages
 
 AI grading systems (per assignment):
 - Legacy grader remains the default, with its existing instructions and rigor.
+- External AI is the third option. Select criteria, enter or generate a valid
+  point-based rubric, then save it. Download grading package creates one text
+  file with a system prompt, assignment details, approved rubric, and every code
+  submission. EagleIDE excludes roster names, class details, teacher identity,
+  filenames, and its name/timestamp submission headers; each submission is keyed
+  only by student email. Student-authored source remains verbatim.
+- The package instructs the external AI to return only RFC 4180 CSV with the exact
+  columns `student_email,score,feedback`. Upload completed CSV validates the exact
+  header, one unique row for every current submission, score range/precision, and
+  feedback limits before changing anything. A valid file atomically fills code
+  scores and feedback. Built-in AI queue controls are unavailable in External AI
+  mode.
 - To try the new system, expand the assignment in Manage & Grade and select
   "Rubric grader (Beta test)". Check the criteria the grader should consider,
   then click Generate rubric. The AI uses the saved assignment description,
@@ -601,8 +613,9 @@ AI grading systems (per assignment):
   demonstrated expectations, partial credit for meaningful incomplete work, and
   zero only when a requirement is absent or fundamentally incorrect. Teacher
   feedback presents the score, strengths, criterion-by-criterion evidence, gaps,
-  and deductions as readable cards. Full credit means earned points equal the
-  budget, not a deduction of that value.
+  and deductions as readable cards. In the teacher table, feedback opens in a
+  full-width row and its cards flow across the available width. Full credit means
+  earned points equal the budget, not a deduction of that value.
 - Changing the assignment description, point maximum, or checklist requires a
   new accepted rubric. Jobs reject changed grading settings instead of saving a
   stale result. You can switch back to Legacy grader and save its settings.
