@@ -185,6 +185,111 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         self.assertEqual([row["id"] for row in returned], [active["id"]])
         self.assertNotIn(locked["id"], [row["id"] for row in returned])
 
+    def test_due_date_auto_locks_and_teacher_can_unlock_or_lock_early(self):
+        assignment = self.create_assignment(name="Timed")
+        activated = self.client.post(
+            "/api/assignments/update",
+            headers=self.teacher_headers,
+            json={"assignmentId": assignment["id"], "active": True},
+        )
+        self.assertEqual(activated.status_code, 200)
+        expired = self.client.post(
+            "/api/assignments/update",
+            headers=self.teacher_headers,
+            json={"assignmentId": assignment["id"], "dueAt": "2000-01-01T12:00:00Z"},
+        )
+        self.assertEqual(expired.status_code, 200, expired.get_data(as_text=True))
+        self.assertFalse(expired.get_json()["assignment"]["active"])
+        self.assertTrue(expired.get_json()["assignment"]["dueExpired"])
+        self.assertEqual(self.client.get("/api/assignments", headers=self.student_headers).get_json()["assignments"], [])
+
+        student_root = eagle._get_user_dir(self.student_email)
+        student_root.mkdir(parents=True, exist_ok=True)
+        (student_root / "answer.py").write_text("print('late')\n", encoding="utf-8")
+        blocked = self.client.post(
+            "/api/assignments/submit",
+            headers=self.student_headers,
+            json={"assignmentId": assignment["id"], "filePath": "answer.py"},
+        )
+        self.assertEqual(blocked.status_code, 403)
+
+        unlocked = self.client.post(
+            "/api/assignments/update",
+            headers=self.teacher_headers,
+            json={"assignmentId": assignment["id"], "active": True},
+        )
+        self.assertEqual(unlocked.status_code, 200)
+        self.assertTrue(unlocked.get_json()["assignment"]["active"])
+        self.assertTrue(eagle._load_assignment(assignment["id"])["dueLockOverride"])
+        self.assertEqual(self.client.post(
+            "/api/assignments/submit",
+            headers=self.student_headers,
+            json={"assignmentId": assignment["id"], "filePath": "answer.py"},
+        ).status_code, 200)
+        edited = self.client.post(
+            "/api/assignments/update",
+            headers=self.teacher_headers,
+            json={"assignmentId": assignment["id"], "task": "Late work accepted", "dueAt": "2000-01-01T12:00:00Z"},
+        )
+        self.assertTrue(edited.get_json()["assignment"]["active"])
+
+        early_lock = self.client.post(
+            "/api/assignments/update",
+            headers=self.teacher_headers,
+            json={"assignmentId": assignment["id"], "dueAt": "2999-01-01T12:00:00Z", "active": False},
+        )
+        self.assertEqual(early_lock.status_code, 200)
+        self.assertFalse(early_lock.get_json()["assignment"]["active"])
+
+    def test_due_date_requires_an_unambiguous_timezone(self):
+        assignment = self.create_assignment()
+        response = self.client.post(
+            "/api/assignments/update",
+            headers=self.teacher_headers,
+            json={"assignmentId": assignment["id"], "dueAt": "2027-02-03T15:30"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("time zone", response.get_json()["error"])
+
+    def test_student_summary_reports_unanswered_and_completed_assignment_questions(self):
+        assignment = self.create_assignment(active=True)
+        configured = self.client.post(
+            "/api/assignments/update",
+            headers=self.teacher_headers,
+            json={
+                "assignmentId": assignment["id"],
+                "quiz": {"questions": [
+                    {"id": "q1", "type": "multiple_choice", "question": "Pick one", "points": 2, "options": ["A", "B"], "correctAnswer": 0},
+                    {"id": "q2", "type": "written", "question": "Explain", "points": 3},
+                ]},
+            },
+        )
+        self.assertEqual(configured.status_code, 200)
+        self.submit_code(assignment)
+        summary = self.client.get("/api/assignments", headers=self.student_headers).get_json()["assignments"][0]["studentSubmissionSummary"]
+        self.assertFalse(summary["quizComplete"])
+        self.assertEqual(summary["quizAnsweredCount"], 0)
+
+        submitted = self.client.post(
+            "/api/quiz/submit",
+            headers=self.student_headers,
+            json={"assignmentId": assignment["id"], "quizResponses": [
+                {"questionId": "q1", "answer": 0},
+                {"questionId": "q2", "answer": "Because it is first."},
+            ]},
+        )
+        self.assertEqual(submitted.status_code, 200, submitted.get_data(as_text=True))
+        quiz = self.client.get(f"/api/quiz/{assignment['id']}", headers=self.student_headers)
+        self.assertEqual(quiz.status_code, 200)
+        self.assertEqual(quiz.get_json()["submissionCount"], 1)
+        self.assertNotIn("isCorrect", quiz.get_data(as_text=True))
+        self.assertNotIn("pointsEarned", quiz.get_data(as_text=True))
+        self.submit_code(assignment)
+        self.assertEqual(eagle._load_assignment(assignment["id"])["submissions"][0]["quizSubmissionCount"], 1)
+        summary = self.client.get("/api/assignments", headers=self.student_headers).get_json()["assignments"][0]["studentSubmissionSummary"]
+        self.assertTrue(summary["quizComplete"])
+        self.assertEqual(summary["quizAnsweredCount"], 2)
+
     def test_submission_storage_is_separate_and_not_counted_in_teacher_workspace(self):
         assignment = self.create_assignment(active=True)
         teacher_root = eagle._get_user_dir(self.teacher_email)

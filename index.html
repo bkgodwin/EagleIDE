@@ -44,7 +44,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261009-autocomplete-warnings-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261009-assignment-step-2">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -86,7 +86,6 @@
         </label>
         <button class="btn secondary" id="guidesBtn" title="Show or hide indent guides">Guide On</button>
         <button class="btn secondary" id="autocompleteBtn" title="Toggle autocomplete">Auto On</button>
-        <button class="btn secondary guest-hidden" id="resourcesToggleBtn" type="button" aria-expanded="true" aria-controls="rightStackPanel" title="Show or hide wiki, assignments, and other resources">Res On</button>
         <div id="classSelectorWrap" class="guest-hidden">
           <div class="class-selector-row">
             <label class="control-label" for="classSelector">Class</label>
@@ -545,6 +544,10 @@
               <input id="shellFontRange" type="range" min="12" max="50" value="14" step="1">
               <output id="shellFontVal" for="shellFontRange">14</output>
             </label>
+            <div class="right-pane-visibility-controls guest-hidden" aria-label="Shell and resources visibility">
+              <button class="btn secondary" id="toggleShellBtn" type="button" title="Hide shell" aria-label="Hide shell" aria-expanded="true">Shell ▼</button>
+              <button class="btn secondary" id="resourcesToggleBtn" type="button" aria-expanded="true" aria-controls="rightStackPanel" title="Hide wiki, assignments, and other resources">Resources ▼</button>
+            </div>
           </header>
           <section class="step-mode-panel" id="stepModePanel" hidden aria-label="Step Mode controls">
             <div class="step-mode-toolbar">
@@ -591,7 +594,6 @@
         <section class="panel" id="rightStackPanel" style="grid-row:3 / 4; grid-column:1;">
           <header>
             <h3>Resources:</h3>
-            <button class="btn secondary" id="toggleShellBtn" title="Toggle shell visibility" aria-label="Toggle shell">Hide Shell ▼</button>
           </header>
 
           <div class="notes-toolbar">
@@ -1777,16 +1779,16 @@
   <script src="/static/js/lazy-libs.js?v=20250608"></script>
   <script src="/static/js/layout.js?v=20260929-editor-notebook-layout-1"></script>
   <script src="/static/js/autocomplete.js?v=20261009-autocomplete-warnings-1"></script>
-  <script src="/static/js/editor-behavior.js?v=20260929-editor-fold-1"></script>
-  <script src="/static/js/editor-init.js?v=20260929-fold-indicators-1"></script>
+  <script src="/static/js/editor-behavior.js?v=20261009-assignment-step-2"></script>
+  <script src="/static/js/editor-init.js?v=20261009-assignment-step-2"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js"></script>
-  <script src="/static/js/app-core.js?v=20261009-autocomplete-warnings-1"></script>
-  <script src="/static/js/step-mode.js?v=20260920-4"></script>
-  <script src="/static/js/wiki-reader.js?v=20261009-autocomplete-warnings-1"></script>
+  <script src="/static/js/app-core.js?v=20261009-assignment-step-2"></script>
+  <script src="/static/js/step-mode.js?v=20261009-assignment-step-2"></script>
+  <script src="/static/js/wiki-reader.js?v=20261009-assignment-step-2"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
   <script src="/static/js/lesson-plans.js?v=20260816-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20261009-autocomplete-warnings-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20261009-assignment-step-2"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20260918-10"></script>
   <script src="/static/js/student-notebook.js?v=20260918-10"></script>

@@ -1277,6 +1277,21 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       scheduleShellScroll();
     }
 
+    function setStepShellOutput(text) {
+      const value = String(text || '').replace(/\r\n?/g, '\n');
+      cancelQueuedShellOutput();
+      const fragment = document.createDocumentFragment();
+      value.split('\n').forEach(line => {
+        const row = document.createElement('span');
+        row.className = 'step-shell-output-line';
+        row.textContent = line || '\u00a0';
+        fragment.appendChild(row);
+      });
+      outputEl.replaceChildren(fragment);
+      shellOutputChars = value.length;
+      scheduleShellScroll();
+    }
+
     function refreshEagleIDEContext() {
       const prev = window.EagleIDE || {};
       window.EagleIDE = {
@@ -1306,6 +1321,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           startStepTrace,
           stopStepTrace,
           setShellOutput,
+          setStepShellOutput,
           isProgramRunning,
           activeRunSource,
           showSystemShellMessages: showSystemShellMessages(),
@@ -1652,7 +1668,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const savedState = localStorage.getItem(SHELL_TOGGLE_KEY);
         if (savedState === '1') {
           document.body.classList.add('shell-hidden');
-          btn.textContent = 'Show Shell ▲';
         }
       } catch (e) {
         console.warn('Failed to restore shell toggle state:', e);
@@ -1661,7 +1676,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       // Handle toggle button clicks
       btn.addEventListener('click', () => {
         const isHidden = document.body.classList.toggle('shell-hidden');
-        btn.textContent = isHidden ? 'Show Shell ▲' : 'Hide Shell ▼';
+        syncRightPaneToggleAvailability();
         
         // Save state to localStorage
         try {
@@ -1670,6 +1685,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           console.warn('Failed to save shell toggle state:', e);
         }
       });
+      syncRightPaneToggleAvailability();
     })();
 
     // Initialize Socket.IO only if available
@@ -2551,6 +2567,30 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     })();
 
     // ---- Layout controls (sidebar toggle + splitters) ----
+    function syncRightPaneToggleAvailability() {
+      const shellButton = document.getElementById('toggleShellBtn');
+      const resourcesButton = document.getElementById('resourcesToggleBtn');
+      const shellHidden = document.body.classList.contains('shell-hidden');
+      const resourcesHidden = document.body.classList.contains('resources-collapsed');
+      const guestMode = document.body.classList.contains('guest-mode');
+      if (shellButton) {
+        shellButton.disabled = resourcesHidden && !guestMode;
+        shellButton.textContent = shellHidden ? 'Shell ▲' : 'Shell ▼';
+        shellButton.title = resourcesHidden ? 'Show resources before hiding the shell' : (shellHidden ? 'Show shell' : 'Hide shell');
+        shellButton.setAttribute('aria-label', shellButton.title);
+        shellButton.setAttribute('aria-expanded', shellHidden ? 'false' : 'true');
+      }
+      if (resourcesButton) {
+        resourcesButton.disabled = shellHidden || guestMode;
+        resourcesButton.textContent = resourcesHidden ? 'Resources ▲' : 'Resources ▼';
+        resourcesButton.title = shellHidden ? 'Show the shell before hiding resources' : (resourcesHidden
+          ? 'Show wiki, assignments, and other resources'
+          : 'Hide wiki, assignments, and other resources');
+        resourcesButton.setAttribute('aria-label', resourcesButton.title);
+        resourcesButton.setAttribute('aria-expanded', resourcesHidden ? 'false' : 'true');
+      }
+    }
+
     (function initLayoutControls() {
       const root = document.documentElement;
       const outer = document.getElementById('outer');
@@ -2603,14 +2643,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
 
       function applyResourcesState(collapsed, persist = true) {
+        if (collapsed && document.body.classList.contains('shell-hidden')) collapsed = false;
         document.body.classList.toggle('resources-collapsed', collapsed);
-        if (resourcesToggleBtn) {
-          resourcesToggleBtn.textContent = collapsed ? 'Res Off' : 'Res On';
-          resourcesToggleBtn.title = collapsed
-            ? 'Show wiki, assignments, and other resources'
-            : 'Hide wiki, assignments, and other resources';
-          resourcesToggleBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-        }
+        syncRightPaneToggleAvailability();
         if (persist) {
           try { localStorage.setItem(RESOURCES_COLLAPSE_KEY, collapsed ? '1' : '0'); } catch {}
         }
@@ -7342,7 +7377,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let assignmentAiPollTimer = null;
     let assignmentsLoadPromise = null;
     let assignmentsReloadQueued = false;
+    let assignmentDeadlineTimer = null;
     let activeQuizSession = null;
+    const quizDrafts = new Map();
     let currentMasteryData = null;
     let masteryTagChart = null;
     let masterySummaryChart = null;
@@ -7475,6 +7512,44 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       );
     }
 
+    function assignmentDueLabel(value) {
+      if (!value) return '';
+      const due = new Date(value);
+      if (Number.isNaN(due.getTime())) return '';
+      return due.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+    }
+
+    function assignmentDueInputValue(value) {
+      if (!value) return '';
+      const due = new Date(value);
+      if (Number.isNaN(due.getTime())) return '';
+      const pad = number => String(number).padStart(2, '0');
+      return `${due.getFullYear()}-${pad(due.getMonth() + 1)}-${pad(due.getDate())}T${pad(due.getHours())}:${pad(due.getMinutes())}`;
+    }
+
+    function scheduleAssignmentDeadlineRefresh(assignments) {
+      if (assignmentDeadlineTimer) clearTimeout(assignmentDeadlineTimer);
+      assignmentDeadlineTimer = null;
+      const now = Date.now();
+      const nextDue = (assignments || [])
+        .filter(assignment => assignment.active && assignment.dueAt && !assignment.dueExpired)
+        .map(assignment => new Date(assignment.dueAt).getTime())
+        .filter(timestamp => Number.isFinite(timestamp) && timestamp > now)
+        .sort((a, b) => a - b)[0];
+      if (!nextDue) return;
+      assignmentDeadlineTimer = setTimeout(() => loadAssignments(), Math.min(2147483000, Math.max(250, nextDue - now + 250)));
+    }
+
+    function renderAssignmentMarkdown(root) {
+      if (!root?.querySelectorAll) return;
+      root.querySelectorAll('[data-assignment-markdown]').forEach(element => {
+        const assignment = getAssignmentByName(element.dataset.assignmentMarkdown);
+        const text = assignment?.task || '(No task description)';
+        if (typeof renderMarkdownTo === 'function') renderMarkdownTo(element, text, 'python');
+        else element.textContent = text;
+      });
+    }
+
     function flattenFiles(items, output = []) {
       (items || []).forEach(item => {
         if (item.type === 'file') output.push(item);
@@ -7588,6 +7663,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           return;
         }
         currentAssignments = data.assignments || [];
+        scheduleAssignmentDeadlineRefresh(currentAssignments);
         assignmentGradingCriteria = Array.isArray(data.gradingCriteria) ? data.gradingCriteria : [];
         isAdmin = data.canManage || data.isAdmin || false;
         if (isAdmin) {
@@ -7764,10 +7840,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       list.innerHTML = visible.length ? visible.map(a => `
         <article class="teacher-reference-assignment-card">
           <h4>${escapeHtml(a.name)}</h4>
-          <div class="teacher-reference-assignment-task">${escapeHtml(a.task || '(No task description)')}</div>
-          <div class="teacher-reference-assignment-meta">${escapeHtml(a.allowFileSubmission === false ? 'Quiz assignment' : 'Code assignment')}${a.quiz?.questions?.length ? ` · ${a.quiz.questions.length} quiz question(s)` : ''}</div>
+          <div class="teacher-reference-assignment-task assignment-markdown" data-assignment-markdown="${escapeHtml(a.id || a.name)}">${escapeHtml(a.task || '(No task description)')}</div>
+          <div class="teacher-reference-assignment-meta">${escapeHtml(a.allowFileSubmission === false ? 'Quiz assignment' : 'Code assignment')}${a.quiz?.questions?.length ? ` · ${a.quiz.questions.length} quiz question(s)` : ''}${a.dueAt ? ` · Due ${escapeHtml(assignmentDueLabel(a.dueAt))}` : ''}</div>
         </article>
       `).join('') : '<p class="teacher-reference-assignment-meta">No unlocked assignments for this class yet.</p>';
+      if (typeof renderAssignmentMarkdown === 'function') renderAssignmentMarkdown(list);
     }
 
     function renderAdminAssignments() {
@@ -7822,8 +7899,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const usesRubric = gradingMode === 'rubric_beta' || gradingMode === 'external';
       detail.innerHTML = `
         <h4>${escapeHtml(assignment.name)}</h4>
-        <div class="meta" style="margin-bottom:12px; white-space:pre-wrap;">${escapeHtml(assignment.task || '(No task description)')}</div>
-        <div class="meta" style="margin-bottom:12px;">Max score ${(assignment.allowFileSubmission === false ? 0 : (assignment.maxScore || 0)) + (assignment.quiz?.totalPoints || 0)}${assignment.allowFileSubmission === false ? ' (Quiz only)' : ''}${assignment.quiz?.totalPoints ? ` · Quiz ${assignment.quiz.totalPoints} pts` : ''} · Class ${escapeHtml(assignment.targetClassName || 'All')} · Quiz max submissions ${assignment.quizSettings?.maxSubmissions > 0 ? assignment.quizSettings.maxSubmissions : 'Unlimited'}</div>
+        <div class="meta assignment-markdown" data-assignment-markdown="${escapeHtml(assignment.id || assignment.name)}" style="margin-bottom:12px;">${escapeHtml(assignment.task || '(No task description)')}</div>
+        <div class="meta" style="margin-bottom:12px;">Max score ${(assignment.allowFileSubmission === false ? 0 : (assignment.maxScore || 0)) + (assignment.quiz?.totalPoints || 0)}${assignment.allowFileSubmission === false ? ' (Quiz only)' : ''}${assignment.quiz?.totalPoints ? ` · Quiz ${assignment.quiz.totalPoints} pts` : ''} · Class ${escapeHtml(assignment.targetClassName || 'All')} · Quiz max submissions ${assignment.quizSettings?.maxSubmissions > 0 ? assignment.quizSettings.maxSubmissions : 'Unlimited'}${assignment.dueAt ? ` · Due ${escapeHtml(assignmentDueLabel(assignment.dueAt))}` : ' · No due date'}${assignment.dueExpired ? ' · Deadline passed' : ''}</div>
         ${(assignment.skillTags || []).length ? `<div class="skill-tags" style="margin-bottom:12px;">${(assignment.skillTags || []).map(tag => `<span class="skill-chip">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
         ${assignment.quiz?.questions?.length ? `<section class="assignment-quiz-preview"><h5>Quiz questions</h5><ol>${assignment.quiz.questions.map(question => `<li>${escapeHtml(question.question || '(Untitled question)')} <span class="meta">(${Number(question.points) || 0} pts)</span>${question.codeSnippet ? `<pre>${escapeHtml(question.codeSnippet)}</pre>` : ''}</li>`).join('')}</ol></section>` : ''}
         <div class="assignment-manage-actions">
@@ -7936,6 +8013,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           </tbody>
         </table>
       `;
+      if (typeof renderAssignmentMarkdown === 'function') renderAssignmentMarkdown(detail);
       detail.querySelector('.edit-assignment-btn')?.addEventListener('click', () => showAssignmentModal(assignment));
       detail.querySelector('.lock-assignment-btn')?.addEventListener('click', (event) => toggleAssignmentActive(assignment.id, event.currentTarget.dataset.active !== 'true'));
       detail.querySelector('.delete-assignment-btn')?.addEventListener('click', () => deleteAssignment(assignment.id));
@@ -8037,7 +8115,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (joinPanelTitle) joinPanelTitle.textContent = joinedClass ? 'Add Class' : 'Join Class';
       if (joinClassBtn) joinClassBtn.textContent = joinedClass ? 'Add Class' : 'Join Class';
 
-      const visibleAssignments = (currentAssignments || []).filter(a => !selectedClassId || a.targetClassId === selectedClassId);
+      const visibleAssignments = (currentAssignments || [])
+        .filter(a => !selectedClassId || a.targetClassId === selectedClassId)
+        .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
+          || String(b.id || b.name || '').localeCompare(String(a.id || a.name || '')));
       const activeAssignments = visibleAssignments.filter(a => a.active);
 
       function scoreBadge(a) {
@@ -8060,8 +8141,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         activeList.innerHTML = activeAssignments.map(a => `
           <div class="assignment-card">
             <h4>${escapeHtml(a.name)}</h4>
-            <div class="task">${escapeHtml(a.task || '(No task description)')}</div>
-            <div class="meta">Max Score: ${assignmentTotalMaxScore(a)}${a.allowFileSubmission === false ? ' (Quiz only)' : ''}${a.quiz?.questions?.length ? ` · ${a.quiz.questions.length} question(s)` : ''}${a.quizSettings?.maxSubmissions > 0 ? ` · ${a.quizSettings.maxSubmissions} quiz attempt(s)` : ''}</div>
+            <div class="task assignment-markdown" data-assignment-markdown="${escapeHtml(a.id || a.name)}">${escapeHtml(a.task || '(No task description)')}</div>
+            <div class="meta">Max Score: ${assignmentTotalMaxScore(a)}${a.allowFileSubmission === false ? ' (Quiz only)' : ''}${a.quiz?.questions?.length ? ` · ${a.quiz.questions.length} question(s)` : ''}${a.quizSettings?.maxSubmissions > 0 ? ` · ${a.quizSettings.maxSubmissions} quiz attempt(s)` : ''}${a.dueAt ? ` · Due ${escapeHtml(assignmentDueLabel(a.dueAt))}` : ''}</div>
             ${scoreBadge(a)}
             ${a.studentSubmissionSummary?.aiFeedback ? `<details class="assignment-student-ai-feedback assignment-feedback-details"><summary>View teacher feedback</summary>${renderAssignmentAiFeedback(a.studentSubmissionSummary.aiFeedback, { audience: 'student' })}</details>` : ''}
             ${(a.skillTags || []).length ? `<div class="skill-tags">${(a.skillTags || []).map(tag => `<span class="skill-chip">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
@@ -8072,6 +8153,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             </div>
           </div>
         `).join('');
+        renderAssignmentMarkdown(activeList);
         activeList.querySelectorAll('.submit-assignment-btn').forEach(btn => btn.addEventListener('click', () => showAssignmentSubmitModal(btn.dataset.id)));
         activeList.querySelectorAll('.open-questions-btn').forEach(btn => btn.addEventListener('click', () => openQuestions(btn.dataset.id)));
         activeList.querySelectorAll('.view-score-report-btn').forEach(btn => btn.addEventListener('click', () => openStudentScoreReport(btn.dataset.id)));
@@ -8192,6 +8274,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           <input type="text" id="modalAssignmentName" value="${escapeHtml(existingAssignment?.name || '')}" ${existingAssignment ? 'disabled' : ''} placeholder="e.g., Loops Practice 1" />
           <label>Task Description</label>
           <textarea id="modalAssignmentTask" placeholder="Describe what students need to do...">${escapeHtml(existingAssignment?.task || '')}</textarea>
+          <div class="option-help">Markdown is supported, including headings, bold text, lists, quotes, links, and fenced code blocks.</div>
+          <label for="modalAssignmentDueAt">Due Date and Time (optional)</label>
+          <input type="datetime-local" id="modalAssignmentDueAt" value="${escapeHtml(assignmentDueInputValue(existingAssignment?.dueAt))}" />
+          <div class="option-help">The assignment locks automatically at this time. You can unlock it again after the deadline if needed.</div>
           <label>Max Score (Code)</label>
           <input type="number" id="modalAssignmentMaxScore" value="${existingAssignment?.maxScore || 100}" min="1" />
           <label style="margin-bottom:2px;">Assignment Options</label>
@@ -8286,6 +8372,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           ? existingAssignment.name
           : document.getElementById('modalAssignmentName').value.trim();
         const task = document.getElementById('modalAssignmentTask').value.trim();
+        const dueLocal = document.getElementById('modalAssignmentDueAt')?.value || '';
+        const dueAt = dueLocal ? new Date(dueLocal).toISOString() : '';
         const maxScore = parseInt(document.getElementById('modalAssignmentMaxScore').value, 10) || 100;
         const allowFileSubmission = !!document.getElementById('modalAssignmentAllowFileSubmission')?.checked;
         const classId = document.getElementById('modalAssignmentClassId')?.value || (TEACHER_TOKEN ? currentTeacherClassId : null);
@@ -8297,6 +8385,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           assignmentId: existingAssignment?.id || undefined,
           name,
           task,
+          dueAt,
           maxScore,
           allowFileSubmission,
           classId,
@@ -8624,6 +8713,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           modal.remove();
           alert('Assignment submitted successfully.');
           await loadAssignments();
+          const refreshed = getAssignmentByName(assignment?.id || assignmentReference);
+          if (refreshed?.quiz?.questions?.length && !refreshed.studentSubmissionSummary?.quizComplete) {
+            await openQuestions(refreshed.id || assignmentReference);
+          }
           window.StudentDashboard?.checkAchievements?.().catch(() => {});
         } catch (error) {
           alert('Network error');
@@ -8631,9 +8724,34 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       });
     }
 
+    function captureQuizDraft(assignmentReference, questions, modal) {
+      const draft = {};
+      (questions || []).forEach(question => {
+        if (question.type === 'multiple_choice' || question.type === 'multiple_choice_code') {
+          const selected = modal.querySelector(`input[name="question_${question.id}"]:checked`);
+          if (selected) draft[question.id] = parseInt(selected.value, 10);
+        } else {
+          draft[question.id] = modal.querySelector(`#written_answer_${question.id}`)?.value || '';
+        }
+      });
+      quizDrafts.set(String(assignmentReference), draft);
+    }
+
+    function closeQuestionsWindow(assignment, questions, modal) {
+      if (!modal?.isConnected) return;
+      captureQuizDraft(assignment?.id || assignment?.name || '', questions, modal);
+      if (socket) socket.emit('quiz_close', { assignmentId: assignment?.id });
+      modal.remove();
+      if (activeQuizSession?.modal === modal) activeQuizSession = null;
+    }
+
     async function openQuestions(assignmentReference) {
       if (!USER_TOKEN || !currentUser) {
         alert('Please sign in with a student account first.');
+        return;
+      }
+      if (activeQuizSession?.modal?.isConnected) {
+        activeQuizSession.modal.querySelector('textarea, input')?.focus();
         return;
       }
       const assignment = getAssignmentByName(assignmentReference);
@@ -8657,11 +8775,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         modal.className = 'modal workspace-modal glass-modal';
         modal.innerHTML = `
           <div class="modal-content">
-            <h3 style="margin-top:0; color:var(--columbia-blue);">Assignment Questions: ${escapeHtml(assignment?.name || 'Assignment')}</h3>
-            <p style="color:#aaa; font-size:14px; margin:10px 0 20px;">Submitting as <strong style="color:#eee;">${escapeHtml(currentUser.name || currentUser.email)}</strong>. You must submit to exit this window.</p>
+            <div class="workspace-modal-header">
+              <h3 style="margin:0; color:var(--columbia-blue);">Assignment Questions: ${escapeHtml(assignment?.name || 'Assignment')}</h3>
+              <button class="btn secondary modal-close-questions-btn" type="button">Close</button>
+            </div>
+            <p style="color:#aaa; font-size:14px; margin:10px 0 20px;">Answering as <strong style="color:#eee;">${escapeHtml(currentUser.name || currentUser.email)}</strong>. You may close this window and return before submitting.</p>
             <div class="quiz-lock-note">
               ${maxSubmissions > 0 ? `Attempts used: ${submissionCount}/${maxSubmissions}. Remaining: ${Math.max(0, maxSubmissions - submissionCount)}.` : 'Unlimited resubmissions are enabled for this assignment.'}
-              <div class="no-exit-text">Closing the browser tab/window will record a submission attempt with your current answers.</div>
+              <div class="no-exit-text">Closing this response window does not use an attempt. Your in-progress answers are kept while this page remains open.</div>
             </div>
             <div id="questionsContainer" style="margin:20px 0;">
               ${questions.map((q, idx) => (q.type === 'multiple_choice' || q.type === 'multiple_choice_code') ? `
@@ -8713,6 +8834,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
               `).join('')}
             </div>
             <div class="modal-actions" style="display:flex; gap:12px; justify-content:flex-end; margin-top:30px; padding-top:20px; border-top:1px solid #333;">
+              <button class="btn secondary modal-close-questions-btn" type="button">Close for Now</button>
               <button class="btn run modal-submit-questions-btn">Submit Answers</button>
             </div>
           </div>
@@ -8720,28 +8842,23 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         document.body.appendChild(modal);
         if (socket) socket.emit('quiz_open', { assignmentId: assignment?.id });
         activeQuizSession = { assignmentId: assignment?.id || assignmentReference, questions, modal, submitted: false };
-        modal.querySelectorAll('textarea[id^="written_answer_"]').forEach(textarea => {
-          textarea.addEventListener('paste', (e) => e.preventDefault());
+        const saved = Object.fromEntries((data.savedResponses || []).map(response => [response.questionId, response.answer]));
+        const draft = { ...saved, ...(quizDrafts.get(String(assignment?.id || assignmentReference)) || {}) };
+        questions.forEach(question => {
+          const answer = draft[question.id];
+          if (question.type === 'multiple_choice' || question.type === 'multiple_choice_code') {
+            const option = modal.querySelector(`input[name="question_${question.id}"][value="${answer}"]`);
+            if (option) option.checked = true;
+          } else {
+            const textarea = modal.querySelector(`#written_answer_${question.id}`);
+            if (textarea && answer !== undefined && answer !== null) textarea.value = String(answer);
+          }
         });
-        const autoSubmitOnClose = () => {
-          if (!activeQuizSession || activeQuizSession.submitted) return;
-          if (socket) socket.emit('quiz_close', { assignmentId: assignment?.id });
-          const payload = buildQuizResponsesFromModal(questions, modal, true);
-          fetch('/api/quiz/submit', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
-            body: JSON.stringify(assignmentRequestPayload(assignment, { quizResponses: payload.responses, closedByStudent: true })),
-            keepalive: true
-          }).catch(() => {});
-        };
-        activeQuizSession.autoSubmitOnClose = autoSubmitOnClose;
-        window.addEventListener('beforeunload', autoSubmitOnClose);
+        const closeWindow = () => closeQuestionsWindow(assignment, questions, modal);
+        modal.querySelectorAll('.modal-close-questions-btn').forEach(button => button.addEventListener('click', closeWindow));
+        modal.addEventListener('click', event => { if (event.target === modal) closeWindow(); });
         modal.querySelector('.modal-submit-questions-btn').addEventListener('click', async () => {
           await submitQuestionAnswers(assignment?.id || assignmentReference, questions, modal);
-          if (activeQuizSession?.submitted) {
-            window.removeEventListener('beforeunload', autoSubmitOnClose);
-            activeQuizSession = null;
-          }
         });
       } catch (error) {
         alert('Network error loading questions');
@@ -8789,8 +8906,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const submitData = await submitResp.json().catch(() => ({}));
         if (!submitData.ok) { alert(submitData.error || 'Failed to submit answers'); return; }
         if (activeQuizSession) activeQuizSession.submitted = true;
+        quizDrafts.delete(String(assignment?.id || assignmentReference));
         if (socket) socket.emit('quiz_close', { assignmentId: assignment?.id });
         modal.remove();
+        activeQuizSession = null;
         alert('Your answers were submitted successfully.');
         await openStudentScoreReport(assignment?.id || assignmentReference);
         await loadAssignments();
