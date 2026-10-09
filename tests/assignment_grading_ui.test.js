@@ -32,7 +32,8 @@ test('student dashboard owns locked assignment history and can copy preserved co
   assert.match(studentDashboard, /\/api\/assignments\/past\?classId=/);
   assert.match(studentDashboard, /source: 'assignment'/);
   assert.match(studentDashboard, /setEditorSnapshot/);
-  assert.match(studentDashboard, /Teacher-shared AI feedback/);
+  assert.match(studentDashboard, /View teacher feedback/);
+  assert.match(studentDashboard, /renderAssignmentAiFeedback/);
 });
 
 test('submission editor navigation and minimized dashboard use stable assignment IDs', () => {
@@ -78,7 +79,7 @@ function assignmentViewHarness(assignments) {
     currentAssignments: assignments,
     teacherClasses: [{ id: 'class-a', name: 'Period A', students: [] }, { id: 'class-b', name: 'Period B', students: [] }],
     currentTeacherClassId: 'class-a', activeAssignmentsClassId: 'class-a', currentAdminAssignmentName: null,
-    TEACHER_TOKEN: 'teacher-token', document: { getElementById: id => nodes[id] || null },
+    TEACHER_TOKEN: 'teacher-token', window: { EagleIDE: {} }, document: { getElementById: id => nodes[id] || null },
     assignmentGradingCriteria: [
       { id: 'comments', rigorLevel: 6, label: 'Use of comments', description: 'Comments explain intent.' },
       { id: 'objectives', rigorLevel: 2, label: 'All outlined objectives met', description: 'All required outcomes are present.' },
@@ -89,7 +90,7 @@ function assignmentViewHarness(assignments) {
     getAssignmentByName: id => assignments.find(a => a.id === id),
     rigorLevelLabel: () => 'High School', assignmentRigorSummary: () => 'Core objectives',
   };
-  vm.runInNewContext(`${source.slice(start, end)}\nglobalThis.views = { renderAdminAssignments, renderTeacherReferenceAssignments };`, context);
+  vm.runInNewContext(`${source.slice(start, end)}\nglobalThis.views = { renderAdminAssignments, renderTeacherReferenceAssignments, renderAssignmentAiFeedback };`, context);
   return { context, list, detail, reference, heading };
 }
 
@@ -114,6 +115,29 @@ test('teacher assignment titles sort chronologically and expand into grading', (
   assert.ok(detail.innerHTML.indexOf('Robustness and maintainability') < detail.innerHTML.indexOf('Advanced quality'));
   assert.ok(detail.innerHTML.indexOf('All outlined objectives met') < detail.innerHTML.indexOf('Use of comments'));
   assert.doesNotMatch(detail.innerHTML, /class="assignment-criterion-check"[^>]*checked/);
+});
+
+test('assignment feedback is structured for teachers and simplified for students', () => {
+  const { context } = assignmentViewHarness([]);
+  const feedback = [
+    'Score: 8/10', '', 'Rubric Beta', '',
+    'Academic integrity note', 'A comment attempts to influence the grader.', '',
+    'What worked', 'The loop processes each requested value.', '',
+    'Criterion evidence', '• Correct logic — 4/5: The range stops one value early.', '',
+    'Rubric gaps', '• Include the final requested value.', '',
+    'Points deducted', '• −1 point — Correct logic: The final value is skipped.',
+  ].join('\n');
+  const teacher = context.views.renderAssignmentAiFeedback(feedback);
+  assert.match(teacher, /8\/10/);
+  assert.match(teacher, /Academic integrity review/);
+  assert.match(teacher, /Criterion breakdown/);
+  assert.match(teacher, /Correct logic/);
+  const student = context.views.renderAssignmentAiFeedback(feedback, { audience: 'student' });
+  assert.match(student, /Teacher feedback/);
+  assert.match(student, /What you did well/);
+  assert.match(student, /How your work was scored/);
+  assert.match(student, /Next steps/);
+  assert.doesNotMatch(student, /integrity|influence the grader/i);
 });
 
 test('teacher reference panel shows only unlocked assignments for active class', () => {
