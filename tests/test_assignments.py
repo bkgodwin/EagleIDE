@@ -123,6 +123,22 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         return response.get_json()["submission"]
 
+    def enable_external_grading(self, assignment):
+        rubric = "All outlined objectives met (10 points)\nThe submitted program fulfills the assignment requirements.\n\nTotal: 10 points"
+        response = self.client.post(
+            "/api/assignments/update",
+            headers=self.teacher_headers,
+            json={
+                "assignmentId": assignment["id"],
+                "aiGradingMode": "external",
+                "aiGradingCriteria": ["objectives"],
+                "aiGradingRubric": rubric,
+                "aiGradingRubricContext": "",
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        return response.get_json()["assignment"]
+
     def test_same_name_is_allowed_in_different_classes_but_not_same_class(self):
         first = self.create_assignment(self.class_one, "Shared Title")
         second = self.create_assignment(self.class_two, "Shared Title")
@@ -1337,6 +1353,82 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         self.assertIn(["123456", "8"], points_rows)
         self.assertIn(["654321", ""], points_rows)
         self.assertIn(["123456", "80.0%"], percent_rows)
+
+    def test_external_grading_package_contains_prompt_rubric_and_email_only_identity(self):
+        assignment = self.create_assignment(active=True)
+        self.submit_code(assignment)
+        assignment = self.enable_external_grading(assignment)
+
+        response = self.client.get(
+            f"/api/assignments/{assignment['id']}/external-grading-package",
+            headers=self.teacher_headers,
+        )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(response.headers.get("Cache-Control"), "no-store")
+        package = response.get_data(as_text=True)
+        self.assertIn("SYSTEM PROMPT — EXTERNAL ASSIGNMENT GRADER", package)
+        self.assertIn("student_email,score,feedback", package)
+        self.assertIn("Return exactly 1 data rows", package)
+        payload = json.loads(package.split("GRADING DATA JSON\n", 1)[1])
+        self.assertEqual(payload["assignment"]["title"], "Loops")
+        self.assertEqual(payload["assignment"]["maximum_score"], 10)
+        self.assertIn("All outlined objectives met (10 points)", payload["assignment"]["teacher_approved_rubric"])
+        self.assertEqual(payload["submissions"][0]["student_email"], self.student_email)
+        self.assertIn("for i in range(3)", payload["submissions"][0]["source_code"])
+        self.assertNotIn("Student One", package)
+        self.assertNotIn("Period One", package)
+        self.assertNotIn(self.teacher_email, package)
+        self.assertNotIn("answer.py", package)
+        self.assertNotIn("Submitted at:", package)
+
+        student_attempt = self.client.get(
+            f"/api/assignments/{assignment['id']}/external-grading-package",
+            headers=self.student_headers,
+        )
+        self.assertEqual(student_attempt.status_code, 401)
+
+    def test_external_grade_csv_import_atomically_applies_score_and_feedback(self):
+        assignment = self.create_assignment(active=True)
+        self.submit_code(assignment)
+        assignment = self.enable_external_grading(assignment)
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["student_email", "score", "feedback"])
+        writer.writerow([self.student_email, "8.5", "The loop is clear, but explain the stopping condition."])
+
+        response = self.client.post(
+            f"/api/assignments/{assignment['id']}/external-grades",
+            headers=self.teacher_headers,
+            data={"file": (io.BytesIO(output.getvalue().encode("utf-8")), "grades.csv")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(response.get_json()["imported"], 1)
+        submission = eagle._load_assignment(assignment["id"])["submissions"][0]
+        self.assertEqual(submission["codeScore"], 8.5)
+        self.assertEqual(submission["totalScore"], 8.5)
+        self.assertEqual(submission["gradingSource"], "external")
+        self.assertEqual(submission["aiGradingStatus"], "completed")
+        self.assertIn("External grading", submission["aiFeedback"])
+        self.assertIn("explain the stopping condition", submission["aiFeedback"])
+
+    def test_external_grade_csv_rejects_wrong_rows_without_changing_scores(self):
+        assignment = self.create_assignment(active=True)
+        self.submit_code(assignment)
+        assignment = self.enable_external_grading(assignment)
+        invalid = "student_email,score,feedback\nunknown@example.com,8,Looks good\n"
+
+        response = self.client.post(
+            f"/api/assignments/{assignment['id']}/external-grades",
+            headers=self.teacher_headers,
+            data={"file": (io.BytesIO(invalid.encode("utf-8")), "grades.csv")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("exactly one row", response.get_json()["error"])
+        submission = eagle._load_assignment(assignment["id"])["submissions"][0]
+        self.assertIsNone(submission["codeScore"])
+        self.assertEqual(submission["aiFeedback"], "")
 
 
 if __name__ == "__main__":

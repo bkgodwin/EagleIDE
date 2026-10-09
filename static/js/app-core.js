@@ -7642,8 +7642,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         'rubric gaps': 'gaps',
         'missing requirements': 'gaps',
         'points deducted': 'deductions',
+        'feedback': 'notes',
       };
-      const parsed = { score: '', beta: false, sections: [] };
+      const parsed = { score: '', beta: false, external: false, sections: [] };
       let current = { key: 'notes', lines: [] };
       const flush = () => {
         if (current.lines.some(line => line.trim())) parsed.sections.push(current);
@@ -7657,6 +7658,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         }
         if (line.toLowerCase() === 'rubric beta') {
           parsed.beta = true;
+          return;
+        }
+        if (line.toLowerCase() === 'external grading') {
+          parsed.external = true;
           return;
         }
         const key = headingKeys[line.toLowerCase()];
@@ -7705,7 +7710,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (!parsed.score && !sections) return '';
       return `<div class="assignment-feedback-view ${audience === 'student' ? 'is-student' : 'is-teacher'}">
         <header>${parsed.score ? `<span class="assignment-feedback-score">${escapeHtml(parsed.score)}</span>` : ''}
-          <span>${audience === 'student' ? 'Teacher feedback' : (parsed.beta ? 'Rubric Beta suggestion' : 'AI grading suggestion')}</span>
+          <span>${audience === 'student' ? 'Teacher feedback' : (parsed.external ? 'External grading result' : (parsed.beta ? 'Rubric Beta suggestion' : 'AI grading suggestion'))}</span>
         </header>
         ${sections}
       </div>`;
@@ -7802,10 +7807,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       });
       roster.sort((a, b) => String(a.name || a.email || '').localeCompare(String(b.name || b.email || ''), undefined, { sensitivity: 'base' }));
       const pendingCount = submissions.filter(sub => ['queued', 'running'].includes(sub.aiGradingStatus)).length;
-      const gradingMode = assignment.aiGradingMode === 'rubric_beta' ? 'rubric_beta' : 'legacy';
+      const gradingMode = ['legacy', 'rubric_beta', 'external'].includes(assignment.aiGradingMode) ? assignment.aiGradingMode : 'legacy';
       const selectedGradingCriteria = Array.isArray(assignment.aiGradingCriteria) ? assignment.aiGradingCriteria : [];
       const betaRubricReady = !!(assignment.aiGradingRubric && assignment.aiGradingRubricContext && selectedGradingCriteria.length);
       const aiGradingDisabled = gradingMode === 'rubric_beta' && !betaRubricReady;
+      const usesRubric = gradingMode === 'rubric_beta' || gradingMode === 'external';
       detail.innerHTML = `
         <h4>${escapeHtml(assignment.name)}</h4>
         <div class="meta" style="margin-bottom:12px; white-space:pre-wrap;">${escapeHtml(assignment.task || '(No task description)')}</div>
@@ -7825,11 +7831,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         ${assignment.allowFileSubmission === false ? '' : `
         <section class="assignment-ai-controls">
           <div class="assignment-ai-heading">
-            <div><strong>AI grading</strong><span class="assignment-beta-badge">Rubric Beta available</span></div>
+            <div><strong>Grading</strong><span class="assignment-beta-badge">Three grading options</span></div>
             <label for="assignmentAiGradingMode">Grading system</label>
             <select id="assignmentAiGradingMode">
               <option value="legacy" ${gradingMode === 'legacy' ? 'selected' : ''}>Legacy grader</option>
               <option value="rubric_beta" ${gradingMode === 'rubric_beta' ? 'selected' : ''}>Rubric grader (Beta test)</option>
+              <option value="external" ${gradingMode === 'external' ? 'selected' : ''}>External AI</option>
             </select>
           </div>
           <div id="assignmentLegacyGraderPanel" class="assignment-grader-panel" ${gradingMode === 'legacy' ? '' : 'hidden'}>
@@ -7844,11 +7851,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             <p id="assignmentAiRigorHelp" class="assignment-ai-rigor-help">${escapeHtml(assignmentRigorSummary(assignment.aiGradingRigor || 6))}</p>
             <button class="btn secondary" id="saveAssignmentAiSettingsBtn" type="button">Save legacy grader settings</button>
           </div>
-          <div id="assignmentRubricGraderPanel" class="assignment-grader-panel assignment-rubric-beta" ${gradingMode === 'rubric_beta' ? '' : 'hidden'}>
-            <p>Choose exactly what the grader may consider. Generate a point-based rubric from the saved assignment description, review or edit it, then accept it before grading.</p>
+          <div id="assignmentRubricGraderPanel" class="assignment-grader-panel assignment-rubric-beta" ${usesRubric ? '' : 'hidden'}>
+            <p>${gradingMode === 'external' ? 'Choose what the external grader may consider, then review or write the point-based rubric that will travel with every submission.' : 'Choose exactly what the grader may consider. Generate a point-based rubric from the saved assignment description, review or edit it, then accept it before grading.'}</p>
             <fieldset class="assignment-criteria-fieldset">
               <legend>Grading criteria</legend>
-              <p class="assignment-criteria-guidance">Ordered from foundational to advanced rigor. Groups are guidance only: nothing is selected automatically, and Beta grades only checked criteria.</p>
+              <p class="assignment-criteria-guidance">Ordered from foundational to advanced rigor. Groups are guidance only: nothing is selected automatically, and the selected rubric grader uses only checked criteria.</p>
               <div class="assignment-criteria-grid">
                 ${renderAssignmentGradingCriteria(selectedGradingCriteria)}
               </div>
@@ -7861,17 +7868,27 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             <p class="assignment-ai-rigor-help">Edit descriptions and point values. Keep each heading as Criterion name (N points), with criterion points adding up to ${assignment.maxScore || 0}, and finish with Total: ${assignment.maxScore || 0} points.</p>
             <textarea id="assignmentAiRubric" maxlength="12000" placeholder="Generate a rubric, then review and edit it here before accepting.">${escapeHtml(assignment.aiGradingRubric || '')}</textarea>
             <div class="assignment-rubric-actions">
-              <button class="btn run" id="acceptAssignmentRubricBtn" type="button">Accept rubric &amp; save beta grader</button>
+              <button class="btn run" id="acceptAssignmentRubricBtn" type="button">${gradingMode === 'external' ? 'Save external grading rubric' : 'Accept rubric &amp; save beta grader'}</button>
               <span>${assignment.aiGradingRubricAcceptedAt ? `Accepted ${escapeHtml(assignment.aiGradingRubricAcceptedAt)}` : 'No accepted rubric yet.'}</span>
             </div>
             <div id="assignmentRubricStatus" class="meta" role="status" aria-live="polite">${betaRubricReady ? 'The accepted rubric is ready for grading.' : 'Generate and accept a rubric before grading.'}</div>
           </div>
-          <label class="assignment-feedback-sharing"><input id="assignmentShareAiFeedback" type="checkbox" ${assignment.shareAiFeedback ? 'checked' : ''}> Show AI feedback to students for this assignment</label>
-          <div class="assignment-ai-rigor">
+          <div id="assignmentExternalGraderPanel" class="assignment-grader-panel assignment-external-grader" ${gradingMode === 'external' ? '' : 'hidden'}>
+            <strong>Grade with another AI</strong>
+            <p class="assignment-ai-rigor-help">Download one text file containing the system prompt, assignment, rubric, and all submitted code. Student identity metadata is limited to email addresses. Give the file to the external AI, then upload its completed CSV.</p>
+            <div class="assignment-rubric-actions">
+              <button class="btn run" id="downloadExternalGradingBtn" type="button" ${betaRubricReady ? '' : 'disabled'}>Download grading package</button>
+              <button class="btn secondary" id="uploadExternalGradesBtn" type="button" ${betaRubricReady ? '' : 'disabled'}>Upload completed CSV</button>
+              <input id="externalGradesFile" type="file" accept=".csv,text/csv" hidden>
+            </div>
+            <div id="externalGradingStatus" class="meta" role="status" aria-live="polite">${betaRubricReady ? `${submissions.filter(sub => sub.code).length} submitted program(s) ready to export.` : 'Save a valid external grading rubric before exporting.'}</div>
+          </div>
+          <label class="assignment-feedback-sharing"><input id="assignmentShareAiFeedback" type="checkbox" ${assignment.shareAiFeedback ? 'checked' : ''}> Show grading feedback to students for this assignment</label>
+          <div id="assignmentInternalAiActions" class="assignment-ai-rigor" ${gradingMode === 'external' ? 'hidden' : ''}>
             <button class="btn run" id="gradeAllSubmissionsBtn" ${submissions.some(sub => sub.code) && !aiGradingDisabled ? '' : 'disabled'} ${aiGradingDisabled ? 'title="Accept a current beta rubric before grading"' : ''}>AI Grade All</button>
             <button class="btn secondary" id="openAssignmentAiQueueBtn" type="button">View AI Queue</button>
           </div>
-          <div class="meta">${pendingCount ? `${pendingCount} submission(s) currently queued or grading. You can close this dashboard; grading continues on the server.` : 'Queued grading continues on the server after you leave this page.'}</div>
+          <div id="assignmentInternalAiNote" class="meta" ${gradingMode === 'external' ? 'hidden' : ''}>${pendingCount ? `${pendingCount} submission(s) currently queued or grading. You can close this dashboard; grading continues on the server.` : 'Queued grading continues on the server after you leave this page.'}</div>
         </section>`}
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
           <label for="gradeExportFormat">Grade export</label>
@@ -7880,7 +7897,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         </div>
         <table class="scores-table">
           <thead>
-            <tr><th>Student</th><th>Status</th><th>File</th><th>Score</th><th>Total</th><th>AI feedback</th><th>Actions</th></tr>
+            <tr><th>Student</th><th>Status</th><th>File</th><th>Score</th><th>Total</th><th>Actions</th></tr>
           </thead>
           <tbody>
             ${roster.length ? roster.map(student => {
@@ -7889,7 +7906,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
               <tr>
                 <td>${escapeHtml(student.name || student.email || 'Unknown')}<div class="meta">${escapeHtml(student.email || '')}</div></td>
                 <td><span class="assignment-not-turned-in">Not turned in</span></td>
-                <td>—</td><td>—</td><td>—</td><td>—</td><td>—</td>
+                <td>—</td><td>—</td><td>—</td><td>—</td>
               </tr>`;
               const aiStatus = sub.aiGradingStatus || '';
               return `
@@ -7897,17 +7914,17 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
                 <td>${escapeHtml(sub.name || sub.email || 'Unknown')}<div class="meta">${escapeHtml(sub.email || '')}</div></td>
                 <td>Turned in${aiStatus ? `<div><span class="assignment-ai-status ${escapeHtml(aiStatus)}">${escapeHtml(aiStatus)}</span></div>` : ''}${sub.aiGradingError ? `<div class="assignment-not-turned-in">${escapeHtml(sub.aiGradingError)}</div>` : ''}</td>
                 <td>${escapeHtml(sub.submittedFileName || '—')}</td>
-                <td>${assignment.allowFileSubmission === false ? '—' : `<input class="assignment-grade-input" type="number" min="0" max="${assignment.maxScore || 0}" step="1" value="${sub.codeScore ?? sub.score ?? ''}" data-email="${escapeHtml(sub.email)}" aria-label="Score for ${escapeHtml(sub.name || sub.email)}"><div class="meta">${sub.manualScoreOverride ? 'Manual override' : (sub.aiSuggestedScore !== null && sub.aiSuggestedScore !== undefined ? `AI ${sub.aiSuggestedScore}` : '')}</div>`}</td>
+                <td>${assignment.allowFileSubmission === false ? '—' : `<input class="assignment-grade-input" type="number" min="0" max="${assignment.maxScore || 0}" step="1" value="${sub.codeScore ?? sub.score ?? ''}" data-email="${escapeHtml(sub.email)}" aria-label="Score for ${escapeHtml(sub.name || sub.email)}"><div class="meta">${sub.manualScoreOverride ? 'Manual override' : (sub.aiSuggestedScore !== null && sub.aiSuggestedScore !== undefined ? `${sub.gradingSource === 'external' ? 'External' : 'AI'} ${sub.aiSuggestedScore}` : '')}</div>`}</td>
                 <td>${assignmentScoreValue(sub) ?? '—'} / ${assignmentTotalMaxScore(assignment)}<div class="meta">${assignmentPercentValue(sub, assignment) ?? '—'}</div></td>
-                <td class="assignment-ai-feedback">${sub.aiFeedback ? `<details class="assignment-feedback-details"><summary>View feedback</summary>${renderAssignmentAiFeedback(sub.aiFeedback)}</details>` : '—'}</td>
                 <td><div style="display:flex; gap:6px; flex-wrap:wrap;">
-                  ${assignment.allowFileSubmission === false ? '' : `<button class="btn secondary open-submission-btn" data-email="${escapeHtml(sub.email)}">Open</button><button class="btn secondary ai-grade-submission-btn" data-email="${escapeHtml(sub.email)}" ${['queued', 'running'].includes(aiStatus) || aiGradingDisabled ? 'disabled' : ''} ${aiGradingDisabled ? 'title="Accept a current beta rubric before grading"' : ''}>AI Grade</button>`}
+                  ${assignment.allowFileSubmission === false ? '' : `<button class="btn secondary open-submission-btn" data-email="${escapeHtml(sub.email)}">Open</button>${gradingMode === 'external' ? '' : `<button class="btn secondary ai-grade-submission-btn" data-email="${escapeHtml(sub.email)}" ${['queued', 'running'].includes(aiStatus) || aiGradingDisabled ? 'disabled' : ''} ${aiGradingDisabled ? 'title="Accept a current beta rubric before grading"' : ''}>AI Grade</button>`}`}
                   ${assignment.quiz?.questions?.length ? `<button class="btn secondary grade-quiz-btn" data-email="${escapeHtml(sub.email)}">Grade Quiz</button>` : ''}
                   ${assignment.quiz?.questions?.length ? `<button class="btn secondary reset-quiz-counter-btn" data-email="${escapeHtml(sub.email)}">Reset Attempts</button>` : ''}
                 </div><div class="meta">${escapeHtml(sub.submittedAt || '—')}</div>
                 </td>
               </tr>
-            `;}).join('') : '<tr><td colspan="7" style="color:#888;">No students are enrolled in this class.</td></tr>'}
+              ${sub.aiFeedback ? `<tr class="assignment-feedback-row"><td colspan="6"><details class="assignment-feedback-details"><summary>View feedback for ${escapeHtml(sub.email)}</summary>${renderAssignmentAiFeedback(sub.aiFeedback)}</details></td></tr>` : ''}
+            `;}).join('') : '<tr><td colspan="6" style="color:#888;">No students are enrolled in this class.</td></tr>'}
           </tbody>
         </table>
       `;
@@ -7924,7 +7941,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       });
       const disableAiGradingUntilSave = () => {
         detail.dataset.aiSettingsDirty = 'true';
-        const buttons = [detail.querySelector('#gradeAllSubmissionsBtn'), ...detail.querySelectorAll('.ai-grade-submission-btn')].filter(Boolean);
+        const buttons = [detail.querySelector('#gradeAllSubmissionsBtn'), detail.querySelector('#downloadExternalGradingBtn'),
+          detail.querySelector('#uploadExternalGradesBtn'), ...detail.querySelectorAll('.ai-grade-submission-btn')].filter(Boolean);
         buttons.forEach(button => {
           button.disabled = true;
           button.title = 'Save the selected grading system and accept its current rubric before grading';
@@ -7934,8 +7952,21 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const mode = detail.querySelector('#assignmentAiGradingMode')?.value || 'legacy';
         const legacyPanel = detail.querySelector('#assignmentLegacyGraderPanel');
         const rubricPanel = detail.querySelector('#assignmentRubricGraderPanel');
+        const externalPanel = detail.querySelector('#assignmentExternalGraderPanel');
+        const internalActions = detail.querySelector('#assignmentInternalAiActions');
+        const internalNote = detail.querySelector('#assignmentInternalAiNote');
+        const acceptButton = detail.querySelector('#acceptAssignmentRubricBtn');
+        const externalChanged = mode === 'external' && mode !== gradingMode;
         if (legacyPanel) legacyPanel.hidden = mode !== 'legacy';
-        if (rubricPanel) rubricPanel.hidden = mode !== 'rubric_beta';
+        if (rubricPanel) rubricPanel.hidden = !['rubric_beta', 'external'].includes(mode);
+        if (externalPanel) externalPanel.hidden = mode !== 'external';
+        if (internalActions) internalActions.hidden = mode === 'external';
+        if (internalNote) internalNote.hidden = mode === 'external';
+        if (acceptButton) acceptButton.textContent = mode === 'external' ? 'Save external grading rubric' : 'Accept rubric & save beta grader';
+        const downloadButton = detail.querySelector('#downloadExternalGradingBtn');
+        const uploadButton = detail.querySelector('#uploadExternalGradesBtn');
+        if (downloadButton) downloadButton.disabled = !betaRubricReady || externalChanged;
+        if (uploadButton) uploadButton.disabled = !betaRubricReady || externalChanged;
         if (mode !== gradingMode) disableAiGradingUntilSave();
       };
       detail.querySelector('#assignmentAiGradingMode')?.addEventListener('change', syncGradingModePanels);
@@ -7959,9 +7990,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       });
       detail.querySelector('#saveAssignmentAiSettingsBtn')?.addEventListener('click', () => saveAssignmentAiSettings(assignment.id, 'legacy'));
       detail.querySelector('#generateAssignmentRubricBtn')?.addEventListener('click', () => generateAssignmentRubric(assignment.id));
-      detail.querySelector('#acceptAssignmentRubricBtn')?.addEventListener('click', () => saveAssignmentAiSettings(assignment.id, 'rubric_beta'));
+      detail.querySelector('#acceptAssignmentRubricBtn')?.addEventListener('click', () => saveAssignmentAiSettings(assignment.id, detail.querySelector('#assignmentAiGradingMode')?.value || 'rubric_beta'));
       detail.querySelector('#gradeAllSubmissionsBtn')?.addEventListener('click', () => queueAllAssignmentAiGrades(assignment.id));
       detail.querySelector('#openAssignmentAiQueueBtn')?.addEventListener('click', openAssignmentAiQueue);
+      detail.querySelector('#downloadExternalGradingBtn')?.addEventListener('click', () => downloadExternalGradingPackage(assignment.id || assignment.name, assignment.name));
+      detail.querySelector('#uploadExternalGradesBtn')?.addEventListener('click', () => detail.querySelector('#externalGradesFile')?.click());
+      detail.querySelector('#externalGradesFile')?.addEventListener('change', event => uploadExternalGrades(assignment.id || assignment.name, event.target.files?.[0]));
       detail.querySelector('#downloadScoresBtn')?.addEventListener('click', () => downloadCSV(assignment.id || assignment.name, assignment.name, detail.querySelector('#gradeExportFormat')?.value || 'points'));
       detail.querySelectorAll('.open-submission-btn').forEach(btn => btn.addEventListener('click', () => openAssignmentSubmission(assignment.id || assignment.name, btn.dataset.email)));
       detail.querySelectorAll('.ai-grade-submission-btn').forEach(btn => btn.addEventListener('click', () => queueAssignmentAiGrade(assignment.id || assignment.name, btn.dataset.email)));
@@ -9303,7 +9337,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const rigor = parseInt(detail?.querySelector('#assignmentAiRigor')?.value || '5', 10);
       const shareAiFeedback = !!detail?.querySelector('#assignmentShareAiFeedback')?.checked;
       const payload = { aiGradingMode: mode, shareAiFeedback };
-      if (mode === 'rubric_beta') {
+      if (mode === 'rubric_beta' || mode === 'external') {
         payload.aiGradingCriteria = selectedAssignmentGradingCriteria(detail);
         payload.aiGradingRubric = detail?.querySelector('#assignmentAiRubric')?.value?.trim() || '';
         payload.aiGradingRubricContext = detail?.dataset.rubricContext || '';
@@ -9313,10 +9347,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           return;
         }
         if (!payload.aiGradingRubric) {
-          if (status) status.textContent = 'Generate or enter a rubric before accepting the beta grader.';
+          if (status) status.textContent = 'Generate or enter a rubric before saving this grader.';
           return;
         }
-        if (!payload.aiGradingRubricContext) {
+        if (!payload.aiGradingRubricContext && mode !== 'external') {
           if (status) status.textContent = 'Generate a rubric for the current checklist before accepting it.';
           return;
         }
@@ -9331,13 +9365,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           body: JSON.stringify(assignmentRequestPayload(assignment, payload)),
         });
         await readAssignmentAiResponse(response, 'Grading settings save', '/api/assignments/update');
-        setAssignmentStatus(mode === 'rubric_beta' ? 'Beta rubric accepted and grading system saved.' : 'Legacy AI grading settings saved.');
+        setAssignmentStatus(mode === 'rubric_beta' ? 'Beta rubric accepted and grading system saved.' : (mode === 'external' ? 'External grading rubric saved.' : 'Legacy AI grading settings saved.'));
         if (detail) detail.dataset.aiSettingsDirty = 'false';
         await loadAssignments();
       } catch (error) {
         setAssignmentStatus(error?.message || 'Could not save AI settings.', true);
         const status = detail?.querySelector('#assignmentRubricStatus');
-        if (status && mode === 'rubric_beta') status.textContent = error?.message || 'Could not save the rubric.';
+        if (status && (mode === 'rubric_beta' || mode === 'external')) status.textContent = error?.message || 'Could not save the rubric.';
       }
     }
 
@@ -9361,6 +9395,58 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       event.stopPropagation();
       navigateAssignmentSubmission(1);
     });
+
+    async function downloadExternalGradingPackage(assignmentReference, assignmentName) {
+      const status = document.getElementById('assignmentDetailPanel')?.querySelector('#externalGradingStatus');
+      try {
+        if (status) status.textContent = 'Preparing the privacy-limited grading package…';
+        const response = await fetch(`/api/assignments/${encodeURIComponent(assignmentReference)}/external-grading-package`, {
+          headers: assignmentManagerHeaders(),
+        });
+        if (!response.ok) {
+          const result = await response.json().catch(() => ({}));
+          throw new Error(result.error || `Export failed (HTTP ${response.status}).`);
+        }
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = `${assignmentName || 'assignment'}_external_grading.txt`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+        if (status) status.textContent = 'Package downloaded. Give the text file to the external AI and upload its CSV response here.';
+      } catch (error) {
+        if (status) status.textContent = error?.message || 'Could not download the grading package.';
+      }
+    }
+
+    async function uploadExternalGrades(assignmentReference, file) {
+      if (!file) return;
+      const detail = document.getElementById('assignmentDetailPanel');
+      const status = detail?.querySelector('#externalGradingStatus');
+      const uploadButton = detail?.querySelector('#uploadExternalGradesBtn');
+      if (uploadButton) uploadButton.disabled = true;
+      if (status) status.textContent = 'Validating the CSV before applying any grades…';
+      try {
+        const form = new FormData();
+        form.append('file', file, file.name || 'external_grades.csv');
+        const response = await fetch(`/api/assignments/${encodeURIComponent(assignmentReference)}/external-grades`, {
+          method: 'POST', headers: assignmentManagerHeaders(), body: form,
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || result.ok !== true) throw new Error(result.error || `Import failed (HTTP ${response.status}).`);
+        await loadAssignments();
+        setAssignmentStatus(`${result.imported || 0} external grade(s) and feedback entries imported.`);
+      } catch (error) {
+        if (status) status.textContent = `${error?.message || 'Could not import external grades.'} No grades were changed.`;
+        if (uploadButton) uploadButton.disabled = false;
+      } finally {
+        const input = detail?.querySelector('#externalGradesFile');
+        if (input) input.value = '';
+      }
+    }
 
     async function downloadCSV(assignmentReference, assignmentName, format = 'points') {
       const url = `/api/assignments/${encodeURIComponent(assignmentReference)}/csv?format=${encodeURIComponent(format)}`;
