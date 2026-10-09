@@ -29,6 +29,12 @@
       .replace(/"/g, '&quot;');
   }
 
+  function renderAssignmentFeedback(value) {
+    const renderer = window.EagleIDE?.renderAssignmentAiFeedback;
+    if (typeof renderer === 'function') return renderer(value, { audience: 'student' });
+    return `<p>${escapeHtml(value)}</p>`;
+  }
+
   function isStudent() {
     const c = ctx();
     return !!(c.USER_TOKEN && !c.TEACHER_TOKEN && !c.ADMIN_TOKEN);
@@ -269,7 +275,7 @@
             <p class="student-past-task">${escapeHtml(assignment.task || '(No task description)')}</p>
             ${submission ? `
               <div class="student-past-meta">Submitted ${escapeHtml(submission.submittedAt || '—')} · ${escapeHtml(submission.fileName || 'submission')}</div>
-              ${submission.aiFeedback ? `<section class="student-past-feedback"><strong>Teacher-shared AI feedback</strong><pre>${escapeHtml(submission.aiFeedback)}</pre></section>` : ''}
+              ${submission.aiFeedback ? `<details class="student-past-feedback assignment-feedback-details"><summary>View teacher feedback</summary>${renderAssignmentFeedback(submission.aiFeedback)}</details>` : ''}
               ${codePreview ? `<details class="student-past-code"><summary>View preserved submission</summary><pre><code>${escapeHtml(codePreview)}${String(submission.code || '').length > codePreview.length ? '\n…' : ''}</code></pre></details>` : '<div class="student-past-meta">No code file was submitted.</div>'}
               ${codePreview ? `<button class="btn run student-past-copy-btn" type="button" data-index="${index}">Copy to Editor</button>` : ''}
             ` : '<div class="student-past-meta">You did not submit work for this assignment.</div>'}

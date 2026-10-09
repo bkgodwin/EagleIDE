@@ -411,7 +411,9 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
             eagle._run_assignment_ai_grading(assignment["id"], self.student_email)
         prompt = grader.call_args.args[2]
         self.assertIn("Use only the accepted rubric", prompt)
-        self.assertIn("begin each criterion at zero", prompt)
+        self.assertIn("balanced, proportional best-fit judgment", prompt)
+        self.assertIn("Award zero only when the requirement is absent", prompt)
+        self.assertIn("Do not invent requirements", prompt)
         self.assertIn("Every reason is required", prompt)
         self.assertIn("0: objectives (available: 10 points)", prompt)
         self.assertNotIn("`comments`: Use of comments", prompt)

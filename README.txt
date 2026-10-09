@@ -597,16 +597,19 @@ AI grading systems (per assignment):
   automatic extra penalties. The server verifies every criterion was evaluated
   and sums earned credit, deriving deductions from each criterion's budget. Each
   result must cite concrete source evidence even when awarding full credit; the
-  grader starts at zero and awards only behavior demonstrated by the submission.
-  Teacher feedback includes each criterion's earned points and evidence so a
-  generous or unsupported judgment is visible during review. Full credit means
-  earned points equal the budget, not a deduction of that value.
+  grader uses proportional best-fit judgment: full credit for reasonably
+  demonstrated expectations, partial credit for meaningful incomplete work, and
+  zero only when a requirement is absent or fundamentally incorrect. Teacher
+  feedback presents the score, strengths, criterion-by-criterion evidence, gaps,
+  and deductions as readable cards. Full credit means earned points equal the
+  budget, not a deduction of that value.
 - Changing the assignment description, point maximum, or checklist requires a
   new accepted rubric. Jobs reject changed grading settings instead of saving a
   stale result. You can switch back to Legacy grader and save its settings.
 - AI reviews source code; it does not execute submissions or prove runtime
   behavior. Teachers should review suggested scores and can override them.
-  Feedback stays teacher-only unless the teacher explicitly shares it.
+  Feedback stays teacher-only unless the teacher explicitly shares it. Shared
+  student views use friendlier labels and hide the teacher integrity-review card.
 - The checklist is one column ordered into Foundation (rigor 1-4), Working and
   clear code (5-6), Robustness and maintainability (7-8), and Advanced quality
   (9-10). These groups guide selection only; they never apply automatic penalties
