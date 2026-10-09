@@ -103,7 +103,6 @@ body.light-mode .topbar-primary .topbar-tools-btn {
 
 .ide-topbar-tools #guidesBtn,
 .ide-topbar-tools #autocompleteBtn,
-.ide-topbar-tools #resourcesToggleBtn,
 #roleMenuBtn {
   border-color: rgba(255, 255, 255, .42);
   background: #234d70;
@@ -113,12 +112,10 @@ body.light-mode .topbar-primary .topbar-tools-btn {
 
 .ide-topbar-tools #guidesBtn:hover,
 .ide-topbar-tools #autocompleteBtn:hover,
-.ide-topbar-tools #resourcesToggleBtn:hover,
 #roleMenuBtn:hover { background: #173a57; }
 
 body.light-mode .ide-topbar-tools #guidesBtn,
 body.light-mode .ide-topbar-tools #autocompleteBtn,
-body.light-mode .ide-topbar-tools #resourcesToggleBtn,
 body.light-mode #roleMenuBtn {
   border-color: #173a57;
   background: #315f86;
@@ -473,14 +470,14 @@ body.guest-mode .vsplitter { display: none !important; }
 body.guest-mode #rightstack { grid-template-rows: 1fr !important; }
 body.guest-mode #shellPanel { grid-row: 1 / 2 !important; }
 body.guest-mode #workspaceSwitchBtn { display: none !important; }
-body.guest-mode #resourcesToggleBtn { display: none !important; }
+body.guest-mode #paneViewBtn { display: none !important; }
 
 body.right-collapsed #rightColumn { display: none !important; }
 body.right-collapsed #hsplitter { display: none !important; }
 body.right-collapsed .outer.no-sidebar { grid-template-columns: 1fr !important; }
 body.right-collapsed .outer.no-sidebar #editorPanel { grid-column: 1 / 2; }
 
-body.shell-hidden #shellPanel { grid-row: 1 / 2 !important; min-height: 58px; }
+body.shell-hidden #shellPanel { grid-row: 1 / 2 !important; min-height: 52px; }
 body.shell-hidden #shellPanel > .content,
 body.shell-hidden #shellPanel > .step-mode-panel,
 body.shell-hidden #shellPanel > .shell-input-bar,

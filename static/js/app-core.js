@@ -1658,36 +1658,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       document.getElementById('clearErrorsBtn').hidden = true;
     }
 
-    // Shell toggle button - moved before Socket.IO to ensure it always works
-    (function() {
-      const btn = document.getElementById('toggleShellBtn');
-      const SHELL_TOGGLE_KEY = 'eagleide-shell-hidden';
-      
-      // Restore saved toggle state on page load
-      try {
-        const savedState = localStorage.getItem(SHELL_TOGGLE_KEY);
-        if (savedState === '1') {
-          document.body.classList.add('shell-hidden');
-        }
-      } catch (e) {
-        console.warn('Failed to restore shell toggle state:', e);
-      }
-      
-      // Handle toggle button clicks
-      btn.addEventListener('click', () => {
-        const isHidden = document.body.classList.toggle('shell-hidden');
-        syncRightPaneToggleAvailability();
-        
-        // Save state to localStorage
-        try {
-          localStorage.setItem(SHELL_TOGGLE_KEY, isHidden ? '1' : '0');
-        } catch (e) {
-          console.warn('Failed to save shell toggle state:', e);
-        }
-      });
-      syncRightPaneToggleAvailability();
-    })();
-
     // Initialize Socket.IO only if available
     let socket = null;
     if (typeof io !== 'undefined') {
@@ -2153,7 +2123,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       // Auto-show shell if hidden
       const shellHidden = document.body.classList.contains('shell-hidden');
       if (shellHidden) {
-        document.getElementById('toggleShellBtn').click();
+        setRightPaneView('both');
       }
       clearShellOutput();
       clearErrorHighlights();
@@ -2263,7 +2233,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     async function runFileFromShell(item, language) {
       if (!socket || !item?.path) return false;
       const shellHidden = document.body.classList.contains('shell-hidden');
-      if (shellHidden) document.getElementById('toggleShellBtn')?.click();
+      if (shellHidden) setRightPaneView('both');
       clearShellOutput();
       clearErrorHighlights();
       _inTraceback = false;
@@ -2567,28 +2537,36 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     })();
 
     // ---- Layout controls (sidebar toggle + splitters) ----
-    function syncRightPaneToggleAvailability() {
-      const shellButton = document.getElementById('toggleShellBtn');
-      const resourcesButton = document.getElementById('resourcesToggleBtn');
+    function syncRightPaneView() {
+      const viewButton = document.getElementById('paneViewBtn');
+      const label = document.getElementById('paneViewLabel');
       const shellHidden = document.body.classList.contains('shell-hidden');
       const resourcesHidden = document.body.classList.contains('resources-collapsed');
-      const guestMode = document.body.classList.contains('guest-mode');
-      if (shellButton) {
-        shellButton.disabled = resourcesHidden && !guestMode;
-        shellButton.textContent = shellHidden ? 'Shell ▲' : 'Shell ▼';
-        shellButton.title = resourcesHidden ? 'Show resources before hiding the shell' : (shellHidden ? 'Show shell' : 'Hide shell');
-        shellButton.setAttribute('aria-label', shellButton.title);
-        shellButton.setAttribute('aria-expanded', shellHidden ? 'false' : 'true');
+      const view = shellHidden ? 'resources' : (resourcesHidden ? 'shell' : 'both');
+      if (label) label.textContent = { both: 'Both', shell: 'Shell', resources: 'Resources' }[view];
+      if (viewButton) {
+        const titles = {
+          both: 'Showing shell and resources. Click to show only the shell.',
+          shell: 'Showing only the shell. Click to show only resources.',
+          resources: 'Showing only resources. Click to show shell and resources.'
+        };
+        viewButton.title = titles[view];
+        viewButton.setAttribute('aria-label', titles[view]);
+        viewButton.setAttribute('data-view', view);
       }
-      if (resourcesButton) {
-        resourcesButton.disabled = shellHidden || guestMode;
-        resourcesButton.textContent = resourcesHidden ? 'Resources ▲' : 'Resources ▼';
-        resourcesButton.title = shellHidden ? 'Show the shell before hiding resources' : (resourcesHidden
-          ? 'Show wiki, assignments, and other resources'
-          : 'Hide wiki, assignments, and other resources');
-        resourcesButton.setAttribute('aria-label', resourcesButton.title);
-        resourcesButton.setAttribute('aria-expanded', resourcesHidden ? 'false' : 'true');
+    }
+
+    function setRightPaneView(view, persist = true) {
+      document.body.classList.toggle('shell-hidden', view === 'resources');
+      document.body.classList.toggle('resources-collapsed', view === 'shell');
+      syncRightPaneView();
+      if (persist) {
+        try {
+          localStorage.setItem('eagleide-shell-hidden', view === 'resources' ? '1' : '0');
+          localStorage.setItem('eagleide-resources-collapsed', view === 'shell' ? '1' : '0');
+        } catch {}
       }
+      window.EagleIDE?.layout?.refreshEditors?.();
     }
 
     (function initLayoutControls() {
@@ -2601,7 +2579,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const editorStreamSplitter = document.getElementById('editorStreamSplitter');
       const teacherPaneToggleBtn = document.getElementById('teacherPaneToggleBtn');
       const rightEdgeToggleBtn = document.getElementById('rightEdgeToggleBtn');
-      const resourcesToggleBtn = document.getElementById('resourcesToggleBtn');
+      const paneViewBtn = document.getElementById('paneViewBtn');
+      const paneControls = document.getElementById('rightPaneControls');
+      const workspaceControls = document.querySelector('.workspace-floating-controls');
       const RIGHT_COLLAPSE_KEY = 'eagleide-right-collapsed';
       const RESOURCES_COLLAPSE_KEY = 'eagleide-resources-collapsed';
       const LEFT_WIDTH_KEY = 'eagleide-left-width';
@@ -2631,23 +2611,18 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       function applyRightSidebarState(collapsed, persist = true) {
         document.body.classList.toggle('right-collapsed', collapsed);
         if (rightEdgeToggleBtn) {
+          const hadFocus = document.activeElement === rightEdgeToggleBtn;
+          // Share the editor's control row when closed so the reopen arrow cannot cover Files/Editor.
+          const host = collapsed ? workspaceControls : paneControls;
+          if (host) host.appendChild(rightEdgeToggleBtn);
           rightEdgeToggleBtn.textContent = collapsed ? '◀' : '▶';
           rightEdgeToggleBtn.title = collapsed ? 'Show shell and resources panes' : 'Hide shell and resources panes';
           rightEdgeToggleBtn.setAttribute('aria-label', rightEdgeToggleBtn.title);
           rightEdgeToggleBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+          if (hadFocus) rightEdgeToggleBtn.focus({ preventScroll: true });
         }
         if (persist) {
           try { localStorage.setItem(RIGHT_COLLAPSE_KEY, collapsed ? '1' : '0'); } catch {}
-        }
-        window.EagleIDE?.layout?.refreshEditors?.();
-      }
-
-      function applyResourcesState(collapsed, persist = true) {
-        if (collapsed && document.body.classList.contains('shell-hidden')) collapsed = false;
-        document.body.classList.toggle('resources-collapsed', collapsed);
-        syncRightPaneToggleAvailability();
-        if (persist) {
-          try { localStorage.setItem(RESOURCES_COLLAPSE_KEY, collapsed ? '1' : '0'); } catch {}
         }
         window.EagleIDE?.layout?.refreshEditors?.();
       }
@@ -2658,8 +2633,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           applyRightSidebarState(collapsed);
         });
       }
-      resourcesToggleBtn?.addEventListener('click', () => {
-        applyResourcesState(!document.body.classList.contains('resources-collapsed'));
+      paneViewBtn?.addEventListener('click', () => {
+        const current = document.body.classList.contains('shell-hidden') ? 'resources'
+          : (document.body.classList.contains('resources-collapsed') ? 'shell' : 'both');
+        setRightPaneView({ both: 'shell', shell: 'resources', resources: 'both' }[current]);
       });
 
       try {
@@ -2670,10 +2647,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const storedTeacherPane = parseFloat(localStorage.getItem(TEACHER_PANE_SIZE_KEY) || '');
         if (Number.isFinite(storedTeacherPane)) setTeacherPaneSize(storedTeacherPane, false);
         applyRightSidebarState(localStorage.getItem(RIGHT_COLLAPSE_KEY) === '1', false);
-        applyResourcesState(localStorage.getItem(RESOURCES_COLLAPSE_KEY) === '1', false);
+        const view = localStorage.getItem('eagleide-shell-hidden') === '1' ? 'resources'
+          : (localStorage.getItem(RESOURCES_COLLAPSE_KEY) === '1' ? 'shell' : 'both');
+        setRightPaneView(view, false);
       } catch {
         applyRightSidebarState(false, false);
-        applyResourcesState(false, false);
+        setRightPaneView('both', false);
         setTeacherPaneSize(50, false);
       }
 
@@ -2820,6 +2799,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (rightEdgeToggleBtn) rightEdgeToggleBtn.style.display = isLoggedIn ? 'flex' : 'none';
       if (workspaceSwitchBtn) workspaceSwitchBtn.style.display = isLoggedIn ? '' : 'none';
       if (!isLoggedIn) {
+        if (document.body.classList.contains('right-collapsed')) rightEdgeToggleBtn?.click();
+        setRightPaneView('both', false);
         hideFileBrowser();
       }
       // Toggle sign-in/sign-out buttons

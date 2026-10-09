@@ -150,15 +150,6 @@ test('assignment editor exposes due time and live deadline refresh', () => {
   assert.match(source, /Deadline passed/);
 });
 
-test('shell and resource controls share the shell bar and cannot hide both panes', () => {
-  const shellHeader = html.slice(html.indexOf('<header class="shell-panel-header">'), html.indexOf('</header>', html.indexOf('<header class="shell-panel-header">')));
-  assert.match(shellHeader, /id="shellFontRange"/);
-  assert.ok(shellHeader.indexOf('id="shellFontRange"') < shellHeader.indexOf('id="toggleShellBtn"'));
-  assert.ok(shellHeader.indexOf('id="toggleShellBtn"') < shellHeader.indexOf('id="resourcesToggleBtn"'));
-  assert.match(source, /shellButton\.disabled = resourcesHidden/);
-  assert.match(source, /resourcesButton\.disabled = shellHidden/);
-});
-
 test('assignment feedback is structured for teachers and simplified for students', () => {
   const { context } = assignmentViewHarness([]);
   const feedback = [
