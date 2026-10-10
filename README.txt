@@ -237,15 +237,28 @@ Features:
   keyboard-navigable help panel showing arguments, return types, and descriptions.
   Values returned by input(), common collection methods, and aliases inherit their
   inferred types so string and list member suggestions remain available.
-  Press an arrow key before Enter or Tab to accept a suggested completion; otherwise
-  those keys keep their normal editing behavior. Clicking a suggestion also inserts it.
+  Enter or Tab accepts the highlighted suggestion; arrow keys change the selection.
+  Clicking a suggestion also inserts it. Suggestions appear only at word endings
+  or after a new member dot, never at the beginning or middle of an existing word.
   Autocomplete can be disabled from the IDE toolbar; while disabled it does not
   load its metadata catalog or analyze editor changes.
 - Python Enter indentation preserves the current level; Enter on an empty indented
   line clears the indentation. A block header ending in a colon adds one level.
 - Line numbers and +/- folding controls beside code blocks; Ctrl+Q toggles the
   block at the cursor. An error inside a folded block expands it for highlighting.
-- Error highlighting
+- Caret highlighting finds uses of user-defined names (excluding builtins and
+  text in strings/comments). Selected text highlights literal matches in all
+  editor languages, including strings and comments. Multiline selections work too.
+- Local editor hints underline unclosed/mismatched brackets, unclosed strings,
+  missing Python block colons, and potentially undefined Python/JavaScript names. Click the
+  editor-hint button, then an issue to jump to its line. Name hints are conservative
+  lexical checks, not full scope/type analysis; run the program to check it fully.
+  Analysis pauses above 100,000 characters, with at most 100 hints and 1,000 matches.
+- Bracket groups shade from the opening delimiter through its matching closer;
+  an unclosed group shades through the end of the file. Code-block guides follow
+  actual blocks and multiline groups; the caret line has horizontal outlines.
+- Leading spaces are marked red to encourage tab indentation. Insert cannot
+  switch the code editor into overwrite mode; Shift+Insert still pastes.
 - Real-time code execution (30 second timeout)
 - Python Step Mode beside Run records one sandboxed execution and lets students
   or teachers move backward and forward through line or function events. The

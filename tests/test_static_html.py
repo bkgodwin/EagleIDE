@@ -148,6 +148,7 @@ class StaticHtmlTestCase(unittest.TestCase):
             "shellFontRange", "shellFontVal", "ideSolidBackgroundEnabled",
             "ideSolidBackgroundColor",
         }.issubset(ids))
+        self.assertNotIn("guidesBtn", ids)
         self.assertNotIn("toolTray", ids)
         self.assertNotIn("topbarToolsBtn", ids)
         self.assertNotIn("workspaceEditorTabBtn", ids)
@@ -158,7 +159,9 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn("eagleide-shell-font-size", app_core)
         self.assertIn("ide_solid_background_enabled", app_core)
         self.assertNotIn("workspaceFilesTabBtn", app_core)
-        for label in [">Lang<", ">Text<", ">Guide On<", ">Auto On<", ">Both<", "📡 Stream Off", "📝 Prompt"]:
+        self.assertNotIn("applyGuides", app_core)
+        self.assertIn("/static/js/editor-feedback.js", self.raw)
+        for label in [">Lang<", ">Text<", ">Auto On<", ">Both<", "📡 Stream Off", "📝 Prompt"]:
             self.assertIn(label, self.raw)
 
     def test_attribute_ampersands_are_html_escaped(self):

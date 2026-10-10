@@ -67,8 +67,6 @@
   --cm-font-size: 14px;
   --shell-font-size: 14px;
   --ide-solid-background-color: #101827;
-  --indent-ch: 4;
-  --indent-tabs: 4;
 
   --transition-fast: 150ms ease-out;
   --transition-panel: 250ms cubic-bezier(0.4, 0, 0.2, 1);

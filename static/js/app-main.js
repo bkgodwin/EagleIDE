@@ -73,13 +73,10 @@ async function loadConfig(){
       const MAX_FONT_SIZE = 40;
       const DEFAULT_FONT_SIZE = 14;
       const FONT_KEY = 'eagleide-font-size';
-      const GUIDES_KEY = 'eagleide-indent-guides';
       const AUTOCOMPLETE_KEY = 'eagleide-autocomplete';
       const fontRange = document.getElementById('fontRange');
       const fontVal = document.getElementById('fontVal');
-      const guidesBtn = document.getElementById('guidesBtn');
       const autocompleteBtn = document.getElementById('autocompleteBtn');
-      let guidesEnabled = true;
       let autocompleteEnabled = true;
       let fontFrame = 0;
 
@@ -98,15 +95,6 @@ async function loadConfig(){
         }
       }
 
-      function applyGuides(enabled, persist = true) {
-        guidesEnabled = !!enabled;
-        document.body.classList.toggle('guides-off', !guidesEnabled);
-        guidesBtn.textContent = `Guides: ${guidesEnabled ? 'On' : 'Off'}`;
-        if (persist) {
-          try { localStorage.setItem(GUIDES_KEY, guidesEnabled ? '1' : '0'); } catch {}
-        }
-      }
-
       function applyAutocomplete(enabled, persist = true) {
         autocompleteEnabled = !!enabled;
         window.toggleEagleCompletion?.(autocompleteEnabled);
@@ -118,16 +106,13 @@ async function loadConfig(){
 
       try {
         applyFontSize(localStorage.getItem(FONT_KEY) || fontRange.value, false);
-        applyGuides(localStorage.getItem(GUIDES_KEY) !== '0', false);
         applyAutocomplete(localStorage.getItem(AUTOCOMPLETE_KEY) !== '0', false);
       } catch {
         applyFontSize(fontRange.value, false);
-        applyGuides(true, false);
         applyAutocomplete(true, false);
       }
 
       fontRange.addEventListener('input', (e) => applyFontSize(e.target.value));
-      guidesBtn.addEventListener('click', () => applyGuides(!guidesEnabled));
       autocompleteBtn.addEventListener('click', () => applyAutocomplete(!autocompleteEnabled));
       document.getElementById('languageSelector')?.addEventListener('change', () => syncEditorLanguage());
       syncEditorLanguage();
