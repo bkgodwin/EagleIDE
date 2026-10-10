@@ -15,7 +15,7 @@ function eagleFoldRange(cm, pos) {
           gutters: ['CodeMirror-linenumbers', 'CodeMirror-foldgutter'],
           foldGutter: { rangeFinder: eagleFoldRange, indicatorOpen: 'eagle-fold-open', indicatorFolded: 'eagle-fold-closed' },
           foldOptions: { rangeFinder: eagleFoldRange, widget: '⋯' },
-          extraKeys: { Enter: cm => window.EagleEditorBehavior.enter(cm), 'Ctrl-Q': cm => cm.foldCode?.(cm.getCursor()) },
+          extraKeys: { Insert: cm => cm.toggleOverwrite(false), Enter: cm => window.EagleEditorBehavior.enter(cm), 'Ctrl-Q': cm => cm.foldCode?.(cm.getCursor()) },
           indentUnit: 4,
           tabSize: 4,
           indentWithTabs: true,
@@ -31,6 +31,7 @@ function eagleFoldRange(cm, pos) {
           const normalized = window.EagleEditorBehavior?.normalizePastedIndentation(pasted) ?? pasted;
           if (normalized !== pasted) change.update(change.from, change.to, normalized.split('\n'), change.origin);
         });
+        window.eagleEditorFeedback = window.EagleEditorFeedback?.attach(cm);
         let dirty = true;
         cm.on('change', () => { dirty = true; });
         window.__isDirty = () => dirty;
@@ -47,7 +48,9 @@ function eagleFoldRange(cm, pos) {
         ta.style.width = "100%"; ta.style.height = "100%"; ta.style.background = "var(--bg-dark)";
         ta.style.color = "var(--text-light)"; ta.style.border = "0"; ta.style.outline = "none";
         ta.addEventListener("keydown", (e) => {
-          if (e.key === "Tab") { e.preventDefault();
+          if (e.key === "Insert" && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+            e.preventDefault();
+          } else if (e.key === "Tab") { e.preventDefault();
             const s = ta.selectionStart, e2 = ta.selectionEnd;
             ta.value = ta.value.substring(0, s) + "\t" + ta.value.substring(e2);
             ta.selectionStart = ta.selectionEnd = s + 1;
