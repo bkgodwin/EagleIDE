@@ -1,4 +1,9 @@
 .CodeMirror{ height:100%; background:var(--theme-cm-bg); color:var(--text-light); font-size: var(--cm-font-size); line-height:1.4 }
+    .CodeMirror-lines,
+    .CodeMirror pre.CodeMirror-line,
+    .CodeMirror pre.CodeMirror-line-like,
+    .CodeMirror-linenumber{ line-height:inherit; }
+    .CodeMirror-linenumber{ font-variant-numeric:tabular-nums; }
     .CodeMirror {
       --eagle-block-guide: rgba(190, 205, 225, .26);
       --eagle-occurrence: rgba(140, 185, 220, .16);

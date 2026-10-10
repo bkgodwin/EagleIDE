@@ -3,6 +3,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     function setMainEditorReadOnly(readOnly) {
       try { window.eagleEditor?.setOption('readOnly', !!readOnly); } catch {}
+      const textarea = document.getElementById('editor');
+      if (textarea) textarea.readOnly = !!readOnly;
     }
 
     function getMainEditor() {
@@ -47,6 +49,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let teacherStreamLiveClasses = {};
     let currentOpenFile = null; // { path, name } of open file in sidebar
     let currentBufferDirty = false;
+    let fileSavePromise = null;
+    let fileOpenRequestId = 0;
     let auditPreviewActive = false;
     let auditPreviewMeta = null;
     let auditEditorBackup = null;
@@ -265,6 +269,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     function refreshEditors() {
+      if (window.EagleIDE?.layout?.refreshEditors) {
+        window.EagleIDE.layout.refreshEditors();
+        return;
+      }
       try { window.eagleEditor?.refresh?.(); } catch {}
       try { teacherEditor?.refresh?.(); } catch {}
     }
@@ -546,7 +554,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const params = new URLSearchParams({ path: item.path });
       if (tableName) params.set('table', tableName);
       try {
-        const response = await fetch('/api/files/database-preview?' + params.toString(), {
+        const response = await fetchWithDeadline('/api/files/database-preview?' + params.toString(), {
           headers: fileAuthHeaders(),
           cache: 'no-store'
         });
@@ -609,7 +617,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
       if (icon) icon.textContent = '🖼️';
       try {
-        const response = await fetch('/api/files/preview?path=' + encodeURIComponent(item.path), {
+        const response = await fetchWithDeadline('/api/files/preview?path=' + encodeURIComponent(item.path), {
           headers: fileAuthHeaders(),
           cache: 'no-store'
         });
@@ -1154,7 +1162,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       let createdWikiFile = null;
       if (isAuthenticated() && snapshot.source === 'wiki') {
         try {
-          const response = await fetch('/api/files/wiki-example', {
+          const response = await fetchWithDeadline('/api/files/wiki-example', {
             method: 'POST',
             headers: fileJsonHeaders(),
             body: JSON.stringify({
@@ -1202,7 +1210,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     function runNotebookCode({ code, language, fileName, onOutput, onFinished, onAck } = {}) {
-      if (isProgramRunning || !socket) return false;
+      if (isProgramRunning || !canExecuteCode()) return false;
       notebookRunHandlers = {
         onOutput: typeof onOutput === 'function' ? onOutput : null,
         onFinished: typeof onFinished === 'function' ? onFinished : null,
@@ -1222,19 +1230,19 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     function sendNotebookInput(data) {
-      if (!isProgramRunning || activeRunSource !== 'notebook' || !socket) return false;
+      if (!isProgramRunning || activeRunSource !== 'notebook' || !canExecuteCode()) return false;
       socket.emit('send_input', { data: String(data ?? '') });
       return true;
     }
 
     function stopNotebookRun() {
       if (!isProgramRunning || activeRunSource !== 'notebook') return false;
-      if (socket) socket.emit('stop', {});
+      if (socket?.connected) socket.emit('stop', {});
       return true;
     }
 
     async function startStepTrace(snapshot = null) {
-      if (isProgramRunning || !socket) return false;
+      if (isProgramRunning || !canExecuteCode()) return false;
       const source = snapshot || getEditorSnapshot();
       const language = String(source?.language || '').toLowerCase();
       if (!language.includes('python')) return false;
@@ -1468,6 +1476,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     // Append a single line (no embedded newlines) to the shell output with correct coloring.
     function _appendLine(line, parent = outputEl) {
       if (!line) return; // skip null, undefined, and empty string
+      if (/^\[(?:Run rejected:|Connection error:|Save failed|Execution connection lost)/.test(line)) {
+        const span = document.createElement('span');
+        span.className = 'shell-error';
+        span.textContent = line;
+        parent.appendChild(span);
+        return;
+      }
       if (WARNING_LINE_PATTERN.test(line)) {
         const span = document.createElement('span');
         span.className = 'shell-warning';
@@ -1662,7 +1677,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let socket = null;
     if (typeof io !== 'undefined') {
       try {
-        socket = io({ transports: ["websocket", "polling"], timeout: 20000 });
+        // Start with same-origin HTTP for school proxies that block WebSockets.
+        socket = io({ transports: ["polling", "websocket"], timeout: 10000, reconnectionDelayMax: 10000 });
         window.eagleSocket = socket;
         window.dispatchEvent(new CustomEvent('eagle-socket-ready', { detail: { socket } }));
         socket.on('connected', (m) => {
@@ -1672,14 +1688,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         });
         socket.on('connect', () => {
           rejoinClassRooms();
+          setRunButtonState(isProgramRunning);
         });
         socket.on('disconnect', () => {
-          if (!executionQueueState) return;
-          appendOut('[Queued execution cancelled because the connection closed]\n');
-          clearExecutionQueueState();
-          setRunButtonState(false, 'editor');
+          resetDisconnectedExecution();
         });
-        socket.on('connect_error', err => appendOut('[Socket error] ' + (err?.message || err) + '\n'));
+        // The persistent connection notice avoids flooding the shell on retries.
+        socket.on('connect_error', resetDisconnectedExecution);
         socket.on('run_queued', msg => {
           executionQueueState = {
             executionId: String(msg?.execution_id || ''),
@@ -1966,11 +1981,43 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       renderExecutionQueueState();
     }
 
+    function canExecuteCode() {
+      const ready = !!socket?.connected && !window.EagleIDE?.connection?.isLost();
+      if (!ready) appendOut('[Connection error: check your network connection and keep this tab open until you reconnect.]\n');
+      return ready;
+    }
+
+    function resetDisconnectedExecution() {
+      if (executionQueueState) appendOut('[Queued execution cancelled because the connection closed]\n');
+      else if (isProgramRunning) appendOut('[Execution connection lost. Reconnect before running again.]\n');
+      clearExecutionQueueState();
+      waitingForUserInput = false;
+      _inTraceback = false;
+      if (activeRunSource === 'notebook') {
+        notebookRunHandlers?.onOutput?.('[Connection lost. Check your network connection and keep this tab open.]\n');
+        notebookRunHandlers?.onFinished?.();
+        notebookRunHandlers = null;
+      }
+      if (activeRunSource === 'step') window.StepMode?.onConnectionLost?.();
+      setRunButtonState(false);
+    }
+
     function setRunButtonState(running, source = activeRunSource || 'editor') {
       isProgramRunning = !!running;
       activeRunSource = isProgramRunning ? source : null;
       const runBtn = document.getElementById('runBtn');
       if (!runBtn) {
+        notifyRunState();
+        refreshEagleIDEContext();
+        return;
+      }
+      if (window.EagleIDE?.connection?.isLost() || !socket?.connected) {
+        runBtn.disabled = true;
+        runBtn.textContent = 'Run ▶';
+        runBtn.classList.remove('stop', 'run');
+        runBtn.classList.add('run-disabled');
+        runBtn.title = 'Reconnect to run code';
+        document.getElementById('stepModeBtn')?.setAttribute('disabled', 'disabled');
         notifyRunState();
         refreshEagleIDEContext();
         return;
@@ -2015,7 +2062,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     function stopCurrentRun() {
       closeHtmlRuntimeWindow();
-      if (socket) socket.emit('stop', {});
+      if (socket?.connected) socket.emit('stop', {});
       setRunButtonState(false, 'editor');
     }
 
@@ -2098,6 +2145,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     window.addEventListener('message', (event) => {
+      // Only the actual preview popup on this origin may post runtime logs.
+      if (event.origin !== window.location.origin || event.source !== htmlRuntimeWindow?.popup) return;
       const payload = event.data || {};
       if (payload.type !== 'eagle-html-runtime-log') return;
       const lvl = String(payload.level || 'info').toUpperCase();
@@ -2107,6 +2156,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     });
 
     document.getElementById('runBtn').addEventListener('click', async () => {
+      if (!canExecuteCode()) return;
       window.StepMode?.exit?.();
       if (isProgramRunning && activeRunSource !== 'editor') {
         return;
@@ -2151,7 +2201,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         setRunButtonState(true, 'editor');
         if (currentOpenFile && (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN)) {
           try {
-            await saveCurrentFile();
+            if (!await saveCurrentFile() || currentBufferDirty) {
+              notifyHtmlRuntimePopup({ type: 'error', message: 'Save did not complete. Check your connection before running HTML.' });
+              appendOut('[HTML Runtime Error] Save did not complete; preview was not started.\n');
+              setRunButtonState(false);
+              return;
+            }
           } catch (err) {
             appendOut(`[Warning: could not save "${currentOpenFile.name}" before running: ${err}]\n`);
           }
@@ -2188,6 +2243,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         });
       }
       appendOut('[Sending code]\n');
+      if (!canExecuteCode()) return;
       setRunButtonState(true, 'editor');
       if (socket) {
         socket.emit('run_code', {
@@ -2218,7 +2274,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (e.target === exceptionHelpModal) closeExceptionHelpModal();
     });
     document.getElementById('executionQueueCancelBtn')?.addEventListener('click', (event) => {
-      if (!executionQueueState || !socket) return;
+      if (!executionQueueState || !canExecuteCode()) return;
       event.currentTarget.disabled = true;
       event.currentTarget.textContent = 'Cancelling…';
       socket.emit('stop', {});
@@ -2231,7 +2287,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     async function runFileFromShell(item, language) {
-      if (!socket || !item?.path) return false;
+      if (isProgramRunning || !item?.path || !canExecuteCode()) return false;
       const shellHidden = document.body.classList.contains('shell-hidden');
       if (shellHidden) setRightPaneView('both');
       clearShellOutput();
@@ -2246,7 +2302,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const filePath = _normalizeTreePath(item.path);
       let code = '';
       try {
-        const res = await fetch('/api/files/read?path=' + encodeURIComponent(filePath), { headers: fileAuthHeaders() });
+        const res = await fetchWithDeadline('/api/files/read?path=' + encodeURIComponent(filePath), { headers: fileAuthHeaders() });
         const j = await res.json().catch(() => ({}));
         if (!j?.ok) {
           appendOut(`[Error: could not read "${item.name}"]\n`);
@@ -2258,6 +2314,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         return false;
       }
       appendOut(`[Running ${item.name}]\n`);
+      if (isProgramRunning || !canExecuteCode()) return false;
       setRunButtonState(true, 'editor');
       socket.emit('run_code', {
         code,
@@ -2280,10 +2337,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     async function sendInput(){
+      if (window.EagleIDE?.connection?.isLost()) return;
       const v = stdinEl.value ?? '';
       stdinEl.value = '';
       if (isProgramRunning && waitingForUserInput) {
-        if (socket) socket.emit('send_input', { data: v });
+        if (socket?.connected) socket.emit('send_input', { data: v });
         return;
       }
       if (shellCommandModeActive()) {
@@ -2295,7 +2353,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         appendOut('[Input ignored: program is running]\n');
         return;
       }
-      if (socket) socket.emit('send_input', { data: v });
+      if (socket?.connected) socket.emit('send_input', { data: v });
     }
     document.getElementById('sendBtn').addEventListener('click', sendInput);
     stdinEl.addEventListener('keydown', (e) => {
@@ -3113,6 +3171,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     async function fetchWithDeadline(url, options = {}, timeoutMs = 12000) {
+      if (window.EagleIDE?.connection) return window.EagleIDE.connection.request(url, options, timeoutMs);
       if (typeof AbortController === 'undefined') return fetch(url, options);
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -3331,7 +3390,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const token = TEACHER_TOKEN;
       const role = TEACHER_TOKEN ? 'teacher' : '';
       const activeClassId = getCurrentClassContext()?.id;
-      if (!token || !role || !activeClassId || !socket) return;
+      if (!token || !role || !activeClassId || !socket?.connected || window.EagleIDE?.connection?.isLost()) return;
       const currentCode = editor.getValue();
       const langInfo = getActiveLanguageInfo();
       const language = langInfo?.highlight || 'python';
@@ -5755,6 +5814,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     function updateFileActionButtons() {
+      if (window.EagleIDE?.connection?.isLost()) {
+        document.querySelectorAll('#fileBrowserTabPane button, #fileBrowserTabPane input').forEach(control => { control.disabled = true; });
+        return;
+      }
+      document.querySelectorAll('#fileBrowserTabPane button, #fileBrowserTabPane input').forEach(control => { control.disabled = false; });
       const selected = getSelectedTreeItems();
       const hasTrashItems = selected.some(item => item.in_trash);
       const allTrashItems = selected.length > 0 && selected.every(item => item.in_trash);
@@ -5844,7 +5908,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         return;
       }
       try {
-        const res = await fetch('/api/files/storage', { headers: fileAuthHeaders() });
+        const res = await fetchWithDeadline('/api/files/storage', { headers: fileAuthHeaders() });
         const j = await res.json().catch(() => ({}));
         if (!j?.ok) throw new Error(j?.error || 'Storage request failed');
         setFileStorageStats(j.used_bytes, j.limit_bytes);
@@ -5857,6 +5921,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let _fileTreeLoadContext = null;
 
     async function fetchFileTreeData() {
+      if (window.EagleIDE?.connection?.isLost()) return false;
       if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return false;
       if (!canCurrentUserAccessIDE()) return false;
       const requestContext = JSON.stringify(fileAuthHeaders());
@@ -5888,6 +5953,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     async function loadFileTree() {
+      if (window.EagleIDE?.connection?.isLost()) return;
       if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return;
       const requestContext = JSON.stringify(fileAuthHeaders());
       if (_fileTreeLoadPromise) {
@@ -5897,7 +5963,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
       _fileTreeLoadContext = requestContext;
       const treeEl = document.getElementById('fileTree');
-      if (treeEl) treeEl.innerHTML = '<div class="skeleton file-tree-skeleton" aria-hidden="true"></div>';
+      // Keep the current folder visible while a slow refresh is pending.
+      if (treeEl && !treeEl.firstChild) treeEl.innerHTML = '<div class="skeleton file-tree-skeleton" aria-hidden="true"></div>';
       _fileTreeLoadPromise = (async () => {
         const ok = await fetchFileTreeData();
         if (requestContext !== JSON.stringify(fileAuthHeaders())) return;
@@ -5912,7 +5979,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       try {
         await _fileTreeLoadPromise;
       } catch (error) {
-        if (treeEl && requestContext === JSON.stringify(fileAuthHeaders())) treeEl.innerHTML = '<div class="file-tree-empty" role="alert">Could not load files. Check your connection and choose Refresh.</div>';
+        if (treeEl && requestContext === JSON.stringify(fileAuthHeaders()) && !window.EagleIDE?.connection?.isLost()) treeEl.innerHTML = '<div class="file-tree-empty" role="alert">Could not load files. Check your connection and choose Refresh.</div>';
       } finally {
         _fileTreeLoadPromise = null;
       }
@@ -6179,7 +6246,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     async function moveItem(srcPath, destFolderPath) {
       if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return;
-      const res = await fetch('/api/files/move', {
+      const res = await fetchWithDeadline('/api/files/move', {
         method: 'POST',
         headers: fileJsonHeaders(),
         body: JSON.stringify({ src: srcPath, dest: destFolderPath })
@@ -6213,7 +6280,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const failures = [];
       for (const item of selected) {
         try {
-          const res = await fetch('/api/files/duplicate', {
+          const res = await fetchWithDeadline('/api/files/duplicate', {
             method: 'POST',
             headers: fileJsonHeaders(),
             body: JSON.stringify({ src: item.path })
@@ -6245,7 +6312,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const failures = [];
       for (const item of selected) {
         try {
-          const res = await fetch('/api/files/delete', {
+          const res = await fetchWithDeadline('/api/files/delete', {
             method: 'DELETE',
             headers: fileJsonHeaders(),
             body: JSON.stringify({ path: item.path })
@@ -6271,7 +6338,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const failures = [];
       for (const item of restorable) {
         try {
-          const res = await fetch('/api/files/restore', {
+          const res = await fetchWithDeadline('/api/files/restore', {
             method: 'POST',
             headers: fileJsonHeaders(),
             body: JSON.stringify({ path: item.path })
@@ -6352,7 +6419,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           continue;
         }
         try {
-          const res = await fetch('/api/files/move', {
+          const res = await fetchWithDeadline('/api/files/move', {
             method: 'POST',
             headers: fileJsonHeaders(),
             body: JSON.stringify({ src: srcPath, dest: destination || '' })
@@ -6372,12 +6439,24 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     // Save the currently open file (if any).
     // Returns true on success (or if nothing to save), false on error.
     async function saveCurrentFile() {
+      // Serialize writes so an older slow request cannot overwrite a newer save.
+      while (fileSavePromise) {
+        if (!await fileSavePromise) return false;
+      }
+      const pending = writeCurrentFile();
+      fileSavePromise = pending;
+      try { return await pending; }
+      finally { if (fileSavePromise === pending) fileSavePromise = null; }
+    }
+
+    async function writeCurrentFile() {
       if (auditPreviewActive || currentOpenFile?.audit) return true;
       if (currentOpenFile?.notebook) return true;
       if (currentOpenFile?.draft) return true;
       if (fileArtifactPreviewActive || (currentOpenFile?.kind && currentOpenFile.kind !== 'text')) return true;
       if (!currentOpenFile || (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN)) return true;
       if (!currentBufferDirty) return true;
+      if (window.EagleIDE?.connection?.isLost()) return false;
       syncEditorBridge();
       const content = csvEditorActive ? stringifyCsvRows(csvEditorRows) : editor.getValue();
       const savedFile = currentOpenFile;
@@ -6403,7 +6482,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             submission.aiFeedback = '';
             submission.aiSuggestedScore = null;
           }
-          if (currentOpenFile === savedFile && content === editor.getValue()) currentBufferDirty = false;
+          if (currentOpenFile === savedFile && savedContext === JSON.stringify(fileAuthHeaders()) && content === editor.getValue()) currentBufferDirty = false;
           return true;
         }
         const res = await fetchWithDeadline('/api/files/write', {
@@ -6431,6 +6510,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     async function saveDraftAsFile() {
+      if (window.EagleIDE?.connection?.isLost()) return false;
       if (!currentOpenFile?.draft) return true;
       if (!isAuthenticated()) {
         document.getElementById('loginBtn')?.click();
@@ -6441,12 +6521,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const fileName = String(requested || '').trim().split(/[\\/]/).pop();
       if (!fileName) { window.alert('A file name is required.'); return false; }
       try {
-        const existing = await fetch('/api/files/read?path=' + encodeURIComponent(fileName), { headers: fileAuthHeaders() });
+        const existing = await fetchWithDeadline('/api/files/read?path=' + encodeURIComponent(fileName), { headers: fileAuthHeaders() });
         if (existing.ok) {
           window.alert('A file with that name already exists. Choose a different name.');
           return false;
         }
-        const created = await fetch('/api/files/create', {
+        const created = await fetchWithDeadline('/api/files/create', {
           method: 'POST',
           headers: fileJsonHeaders(),
           body: JSON.stringify({ name: fileName, type: 'file', parent: '' }),
@@ -6454,7 +6534,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const createdJson = await created.json().catch(() => ({}));
         if (!created.ok || !createdJson.ok) throw new Error(createdJson.error || 'Could not create file');
         syncEditorBridge();
-        const written = await fetch('/api/files/write', {
+        const written = await fetchWithDeadline('/api/files/write', {
           method: 'POST',
           headers: fileJsonHeaders(),
           body: JSON.stringify({ path: createdJson.path || fileName, content: editor.getValue() }),
@@ -6477,6 +6557,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     // Autosave: save current file 1.5 s after the last edit
     let _autosaveTimer = null;
     function scheduleAutosave() {
+      if (window.EagleIDE?.connection?.isLost()) return;
       if (csvEditorActive) return;
       if (currentOpenFile?.notebook) return;
       if (currentOpenFile?.draft) return;
@@ -6510,7 +6591,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     window.addEventListener('beforeunload', (event) => {
-      if (!currentBufferDirty || (!currentOpenFile?.draft && isAuthenticated())) return;
+      if (!currentBufferDirty && !window.StudentNotebook?.hasUnsavedChanges?.()) return;
       event.preventDefault();
       event.returnValue = '';
     });
@@ -6519,6 +6600,28 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's' && currentOpenFile?.draft) {
         event.preventDefault();
         saveDraftAsFile();
+      }
+    });
+
+    window.EagleIDE?.connection?.subscribe(lost => {
+      clearTimeout(_autosaveTimer);
+      clearTimeout(csvAutosaveTimer);
+      clearTimeout(teacherBroadcastFlushTimer);
+      if (lost) _ctxMenu?.remove();
+      document.getElementById('sendBtn').disabled = lost;
+      setRunButtonState(isProgramRunning);
+      updateFileActionButtons();
+      // Suspend completion menus so Enter/arrows always edit during an outage.
+      window.eagleCompletionEngine?.setSuspended?.(lost);
+      if (!lost) {
+        // Save the retained buffer before refreshing file metadata; never reload it.
+        saveCurrentFile().then(ok => {
+          if (!ok) appendOut('[Save failed after reconnecting. Keep this tab open and try saving again.]\n');
+          else if (currentBufferDirty) scheduleAutosave();
+          else if (currentOpenFile) appendOut('[Connection restored. Your current file is saved.]\n');
+        });
+        loadFileTree();
+        scheduleTeacherBroadcastFlush(true);
       }
     });
 
@@ -6636,15 +6739,21 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     async function openFile(item) {
+      if (window.EagleIDE?.connection?.isLost()) return;
       if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return;
+      const requestId = ++fileOpenRequestId;
+      const requestContext = JSON.stringify(fileAuthHeaders());
       if (auditPreviewActive) closeAuditPreview();
       syncEditorBridge();
       setMainEditorReadOnly(false);
       // Save the currently open file before switching
-      if (!await saveCurrentFile()) {
+      if (!await saveCurrentFile() || (currentBufferDirty && currentOpenFile && !currentOpenFile.draft && !currentOpenFile.notebook && !currentOpenFile.audit)) {
         alert('Your current file could not be saved. Check your connection before opening another file.');
         return;
       }
+      if (requestId !== fileOpenRequestId || requestContext !== JSON.stringify(fileAuthHeaders())) return;
+      const previousFile = currentOpenFile;
+      const previousContent = csvEditorActive ? stringifyCsvRows(csvEditorRows) : editor.getValue();
       let res;
       try {
         res = await fetchWithDeadline('/api/files/read?path=' + encodeURIComponent(item.path), { headers: fileAuthHeaders() });
@@ -6653,6 +6762,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         return;
       }
       const j = await res.json().catch(() => ({}));
+      if (requestId !== fileOpenRequestId || requestContext !== JSON.stringify(fileAuthHeaders()) || currentOpenFile !== previousFile
+          || previousContent !== (csvEditorActive ? stringifyCsvRows(csvEditorRows) : editor.getValue()) || window.EagleIDE?.connection?.isLost()) return;
       if (!res.ok || !j.ok) { alert(j.error || 'Cannot open file'); return; }
       const kind = j.kind || item.kind || 'text';
       currentOpenFile = { path: item.path, name: item.name, kind };
@@ -6689,7 +6800,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let _ctxMenu = null;
     async function downloadFileItem(item) {
       try {
-        const response = await fetch('/api/files/download?path=' + encodeURIComponent(item.path), { headers: fileAuthHeaders() });
+        const response = await fetchWithDeadline('/api/files/download?path=' + encodeURIComponent(item.path), { headers: fileAuthHeaders() });
         if (!response.ok) {
           const data = await response.json().catch(() => ({}));
           throw new Error(data.error || 'Download failed');
@@ -6774,7 +6885,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         duplicateBtn.textContent = '📑 Duplicate';
         duplicateBtn.onclick = async () => {
           _ctxMenu.remove();
-          const res = await fetch('/api/files/duplicate', {
+          const res = await fetchWithDeadline('/api/files/duplicate', {
             method: 'POST', headers: fileJsonHeaders(), body: JSON.stringify({ src: item.path })
           });
           const data = await res.json().catch(() => ({}));
@@ -6892,7 +7003,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         onSubmit: async newName => {
           if (newName === item.name) return;
           if (!await saveCurrentFile()) throw new Error('Save your open file before renaming. Check your connection.');
-          const res = await fetch('/api/files/rename', {
+          const res = await fetchWithDeadline('/api/files/rename', {
             method: 'POST', headers: fileJsonHeaders(),
             body: JSON.stringify({ old_path: item.path, new_name: newName })
           });
@@ -6906,20 +7017,23 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     async function deleteItem(item) {
+      if (window.EagleIDE?.connection?.isLost()) return;
       const message = item.in_trash
         ? `Permanently delete "${item.name}"? This cannot be undone.`
         : `Move "${item.name}" to Trash?`;
       if (!confirm(message)) return;
-      const res = await fetch('/api/files/delete', {
-        method: 'DELETE',
-        headers: fileJsonHeaders(),
-        body: JSON.stringify({ path: item.path })
-      });
-      const j = await res.json().catch(() => ({}));
-      if (j.ok) {
-        applyFilePathChange(item.path, null);
-        loadFileTree();
-      } else alert(j.error || 'Delete failed');
+      try {
+        const res = await fetchWithDeadline('/api/files/delete', {
+          method: 'DELETE',
+          headers: fileJsonHeaders(),
+          body: JSON.stringify({ path: item.path })
+        });
+        const j = await res.json().catch(() => ({}));
+        if (j.ok) {
+          applyFilePathChange(item.path, null);
+          loadFileTree();
+        } else alert(j.error || 'Delete failed');
+      } catch (error) { alert(error.message || 'Delete failed. Check your connection.'); }
     }
 
     function createWorkspaceItem(type) {
@@ -6931,7 +7045,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         hint: `Location: ${parent || 'Home'}. ` + (type === 'file' ? 'Examples: main.py, script.js, index.html, styles.css. No extension adds .py.' : ''),
         onSubmit: async name => {
           if (type === 'file' && !name.includes('.')) name += '.py';
-          const res = await fetch('/api/files/create', {
+          const res = await fetchWithDeadline('/api/files/create', {
             method: 'POST', headers: fileJsonHeaders(),
             body: JSON.stringify({ name, type, parent })
           });
@@ -6952,18 +7066,22 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     document.getElementById('sidebarFileInput').addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (!file) return;
-      const formData = new FormData();
-      formData.append('file', file);
-      if (_currentFolderPath) formData.append('parent', _currentFolderPath);
-      const res = await fetch('/api/files/upload', {
-        method: 'POST',
-        headers: fileAuthHeaders(),
-        body: formData
-      });
-      const j = await res.json().catch(() => ({}));
-      e.target.value = '';
-      if (j.ok) loadFileTree();
-      else alert(j.error || 'Upload failed');
+      if (window.EagleIDE?.connection?.isLost()) { e.target.value = ''; return; }
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        if (_currentFolderPath) formData.append('parent', _currentFolderPath);
+        const res = await fetchWithDeadline('/api/files/upload', {
+          method: 'POST',
+          headers: fileAuthHeaders(),
+          body: formData
+        });
+        const j = await res.json().catch(() => ({}));
+        e.target.value = '';
+        if (j.ok) loadFileTree();
+        else alert(j.error || 'Upload failed');
+      } catch (error) { alert(error.message || 'Upload failed. Check your connection.'); }
+      finally { e.target.value = ''; }
     });
 
     document.getElementById('refreshFilesBtn').addEventListener('click', loadFileTree);

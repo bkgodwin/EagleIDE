@@ -50,3 +50,19 @@ test('playback renders output by line and exposes class and object members', () 
   assert.match(app, /className = 'step-shell-output-line'/);
   assert.match(app, /value\.split\('\\n'\)/);
 });
+
+test('connection loss exits recording and playback so the editor is unlocked', () => {
+  const vm = require('node:vm');
+  const source = fs.readFileSync(path.join(__dirname, '../static/js/step-mode.js'), 'utf8');
+  const handler = source.slice(source.indexOf('  function onConnectionLost()'), source.indexOf('  function bindSocket()'));
+  for (const state of ['generating', 'playback']) {
+    const context = { state, exits: 0, locked: true,
+      exit() { this.exits++; this.state = 'idle'; this.locked = false; }, setStatus() {} };
+    // Bind the UI collaborators to the harness, as the real exit restores readOnly.
+    context.exit = context.exit.bind(context);
+    vm.runInNewContext(handler + 'onConnectionLost();', context);
+    assert.equal(context.exits, 1);
+    assert.equal(context.locked, false);
+    assert.equal(context.state, 'idle');
+  }
+});

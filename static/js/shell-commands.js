@@ -3,6 +3,7 @@
  */
 (function () {
   'use strict';
+  const workspaceRequest = (...args) => window.EagleIDE?.connection?.request(...args) || fetch(...args);
 
   let deps = null;
   const commandHistory = [];
@@ -238,7 +239,7 @@ Use the Up/Down arrow keys to recall previous commands.`;
       return;
     }
     try {
-      const res = await fetch('/api/files/read?path=' + encodeURIComponent(apiPath), {
+      const res = await workspaceRequest('/api/files/read?path=' + encodeURIComponent(apiPath), {
         headers: deps.getAuthHeaders?.() || {},
       });
       const j = await res.json().catch(() => ({}));
@@ -278,7 +279,7 @@ Use the Up/Down arrow keys to recall previous commands.`;
       ? resolved.path.slice(0, resolved.path.lastIndexOf('/'))
       : '';
     try {
-      const res = await fetch('/api/files/create', {
+      const res = await workspaceRequest('/api/files/create', {
         method: 'POST',
         headers: deps.getJsonHeaders?.() || {},
         body: JSON.stringify({ name: fileName, type: 'file', parent }),
@@ -313,7 +314,7 @@ Use the Up/Down arrow keys to recall previous commands.`;
       return;
     }
     try {
-      const res = await fetch('/api/files/create', {
+      const res = await workspaceRequest('/api/files/create', {
         method: 'POST',
         headers: deps.getJsonHeaders?.() || {},
         body: JSON.stringify({ name: folderName, type: 'folder', parent: parentPath }),
@@ -369,7 +370,7 @@ Use the Up/Down arrow keys to recall previous commands.`;
         continue;
       }
       try {
-        const res = await fetch('/api/files/delete', {
+        const res = await workspaceRequest('/api/files/delete', {
           method: 'DELETE',
           headers: deps.getJsonHeaders?.() || {},
           body: JSON.stringify({ path: apiPath }),
@@ -443,6 +444,10 @@ Use the Up/Down arrow keys to recall previous commands.`;
     }
     if (cmd === 'clear') {
       cmdClear();
+      return true;
+    }
+    if (window.EagleIDE?.connection?.isLost()) {
+      err('Connection error: check your network connection. Keep this tab open until you reconnect.');
       return true;
     }
     if (!requireAuth()) return true;
