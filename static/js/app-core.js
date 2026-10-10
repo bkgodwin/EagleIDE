@@ -2571,25 +2571,28 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const RESOURCES_COLLAPSE_KEY = 'eagleide-resources-collapsed';
       const LEFT_WIDTH_KEY = 'eagleide-left-width';
       const SHELL_SIZE_KEY = 'eagleide-shell-size';
+      const EDITOR_HEIGHT_KEY = 'eagleide-editor-height';
+      const SHELL_WIDTH_KEY = 'eagleide-shell-width';
+      const horizontalLayout = () => document.body.classList.contains('workspace-horizontal');
 
       const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
       function setLeftWidth(percent, persist = true) {
         const normalized = clamp(percent, 20, 80);
-        root.style.setProperty('--left-width', `${normalized}%`);
+        root.style.setProperty(horizontalLayout() ? '--editor-height' : '--left-width', `${normalized}%`);
         hsplitter?.setAttribute('aria-valuenow', String(Math.round(normalized)));
         window.EagleIDE?.layout?.refreshEditors?.();
         if (persist) {
-          try { localStorage.setItem(LEFT_WIDTH_KEY, String(normalized)); } catch {}
+          try { localStorage.setItem(horizontalLayout() ? EDITOR_HEIGHT_KEY : LEFT_WIDTH_KEY, String(normalized)); } catch {}
         }
       }
 
       function setShellSize(percent, persist = true) {
         const normalized = clamp(percent, 15, 75);
-        root.style.setProperty('--shell-size', `${normalized}%`);
+        root.style.setProperty(horizontalLayout() ? '--shell-width' : '--shell-size', `${normalized}%`);
         vsplitter?.setAttribute('aria-valuenow', String(Math.round(normalized)));
         if (persist) {
-          try { localStorage.setItem(SHELL_SIZE_KEY, String(normalized)); } catch {}
+          try { localStorage.setItem(horizontalLayout() ? SHELL_WIDTH_KEY : SHELL_SIZE_KEY, String(normalized)); } catch {}
         }
       }
 
@@ -2600,7 +2603,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           // Share the editor's control row when closed so the reopen arrow cannot cover Files/Editor.
           const host = collapsed ? workspaceControls : paneControls;
           if (host) host.appendChild(rightEdgeToggleBtn);
-          rightEdgeToggleBtn.textContent = collapsed ? '◀' : '▶';
+          rightEdgeToggleBtn.textContent = horizontalLayout() ? (collapsed ? '▲' : '▼') : (collapsed ? '◀' : '▶');
           rightEdgeToggleBtn.title = collapsed ? 'Show shell and resources panes' : 'Hide shell and resources panes';
           rightEdgeToggleBtn.setAttribute('aria-label', rightEdgeToggleBtn.title);
           rightEdgeToggleBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
@@ -2624,11 +2627,21 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         setRightPaneView({ both: 'shell', shell: 'resources', resources: 'both' }[current]);
       });
 
+      function syncOrientation() {
+        hsplitter?.setAttribute('aria-orientation', horizontalLayout() ? 'horizontal' : 'vertical');
+        vsplitter?.setAttribute('aria-orientation', horizontalLayout() ? 'vertical' : 'horizontal');
+        let left = NaN, shell = NaN;
+        try {
+          left = parseFloat(localStorage.getItem(horizontalLayout() ? EDITOR_HEIGHT_KEY : LEFT_WIDTH_KEY));
+          shell = parseFloat(localStorage.getItem(horizontalLayout() ? SHELL_WIDTH_KEY : SHELL_SIZE_KEY));
+        } catch {}
+        setLeftWidth(Number.isFinite(left) ? left : (horizontalLayout() ? 55 : 50), false);
+        setShellSize(Number.isFinite(shell) ? shell : (horizontalLayout() ? 50 : 35), false);
+        applyRightSidebarState(document.body.classList.contains('right-collapsed'), false);
+      }
+      window.EagleIDE?.layout?.onOrientationChange?.(syncOrientation);
+      syncOrientation();
       try {
-        const storedLeft = parseFloat(localStorage.getItem(LEFT_WIDTH_KEY) || '');
-        if (Number.isFinite(storedLeft)) setLeftWidth(storedLeft, false);
-        const storedShell = parseFloat(localStorage.getItem(SHELL_SIZE_KEY) || '');
-        if (Number.isFinite(storedShell)) setShellSize(storedShell, false);
         const storedTeacherPane = parseFloat(localStorage.getItem(TEACHER_PANE_SIZE_KEY) || '');
         if (Number.isFinite(storedTeacherPane)) setTeacherPaneSize(storedTeacherPane, false);
         applyRightSidebarState(localStorage.getItem(RIGHT_COLLAPSE_KEY) === '1', false);
@@ -2682,7 +2695,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         element.setAttribute('aria-label', element.title || 'Resize panel');
         element.setAttribute('aria-valuemin', String(min));
         element.setAttribute('aria-valuemax', String(max));
-        const currentValue = () => parseFloat(getComputedStyle(root).getPropertyValue(variable)) || defaultValue;
+        const currentDefault = () => typeof defaultValue === 'function' ? defaultValue() : defaultValue;
+        const currentValue = () => parseFloat(getComputedStyle(root).getPropertyValue(typeof variable === 'function' ? variable() : variable)) || currentDefault();
         element.setAttribute('aria-valuenow', String(Math.round(currentValue())));
         element.addEventListener('keydown', (event) => {
           const horizontal = element.getAttribute('aria-orientation') === 'horizontal';
@@ -2698,20 +2712,20 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           event.preventDefault();
           setter(next);
         });
-        element.addEventListener('dblclick', () => setter(defaultValue));
+        element.addEventListener('dblclick', () => setter(currentDefault()));
       }
 
-      attachKeyboardResize(hsplitter, '--left-width', setLeftWidth, 20, 80, 50);
-      attachKeyboardResize(vsplitter, '--shell-size', setShellSize, 15, 75, 35);
+      attachKeyboardResize(hsplitter, () => horizontalLayout() ? '--editor-height' : '--left-width', setLeftWidth, 20, 80, () => horizontalLayout() ? 55 : 50);
+      attachKeyboardResize(vsplitter, () => horizontalLayout() ? '--shell-width' : '--shell-size', setShellSize, 15, 75, () => horizontalLayout() ? 50 : 35);
       attachKeyboardResize(editorStreamSplitter, '--teacher-pane-size', setTeacherPaneSize, 25, 70, 50, true);
 
       attachPointerDrag(hsplitter,
         () => !document.body.classList.contains('right-collapsed'),
         (moveEvent) => {
           const rect = outer.getBoundingClientRect();
-          const relativeX = moveEvent.clientX - rect.left;
-          if (!rect.width) return;
-          const next = (relativeX / rect.width) * 100;
+          const length = horizontalLayout() ? rect.height : rect.width;
+          if (!length) return;
+          const next = ((horizontalLayout() ? moveEvent.clientY - rect.top : moveEvent.clientX - rect.left) / length) * 100;
           setLeftWidth(next);
         }
       );
@@ -2720,9 +2734,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         () => !document.body.classList.contains('shell-hidden'),
         (moveEvent) => {
           const rect = rightstack.getBoundingClientRect();
-          const relativeY = moveEvent.clientY - rect.top;
-          if (!rect.height) return;
-          const next = (relativeY / rect.height) * 100;
+          const length = horizontalLayout() ? rect.width : rect.height;
+          if (!length) return;
+          const next = ((horizontalLayout() ? moveEvent.clientX - rect.left : moveEvent.clientY - rect.top) / length) * 100;
           setShellSize(next);
         }
       );

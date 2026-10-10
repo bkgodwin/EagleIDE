@@ -280,6 +280,8 @@ body.light-mode .file-chip { background: #fff; border-color: #315f86; color: #15
 }
 
 .rightstack .panel { min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+#shellPanel { grid-column: 1; grid-row: 1 / 2; }
+#rightStackPanel { grid-column: 1; grid-row: 3 / 4; }
 
 .vsplitter, .hsplitter, .editor-stream-splitter {
   position: relative;
@@ -495,4 +497,96 @@ body.guest-mode .ide-topbar-tools .guest-hidden { display: none !important; }
 body.ide-solid-background:not(.wiki-mode) {
   background-color: var(--ide-solid-background-color);
   background-image: none !important;
+}
+
+/* Horizontal workspace: transpose both splitters without sacrificing panel height. */
+body.workspace-horizontal .outer.no-sidebar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, var(--editor-height, 55%)) var(--vsplitter-size) minmax(0, 1fr);
+  overflow: hidden;
+}
+body.workspace-horizontal .outer.no-sidebar #editorPanel { grid-column: 1; grid-row: 1; height: 100%; }
+body.workspace-horizontal .outer.no-sidebar #hsplitter { display: block; grid-column: 1; grid-row: 2; cursor: row-resize; }
+body.workspace-horizontal .outer.no-sidebar #rightColumn { grid-column: 1; grid-row: 3; height: 100%; }
+body.workspace-horizontal #rightstack {
+  grid-template-rows: minmax(0, 1fr) !important;
+  grid-template-columns: minmax(0, var(--shell-width, 50%)) var(--splitter-size) minmax(0, 1fr);
+}
+body.workspace-horizontal #shellPanel { grid-column: 1; grid-row: 1 !important; }
+body.workspace-horizontal #vsplitter { grid-column: 2; grid-row: 1; cursor: col-resize; }
+body.workspace-horizontal #rightStackPanel { grid-column: 3; grid-row: 1 !important; }
+body.workspace-horizontal #hsplitter::before {
+  width: auto; height: calc(var(--vsplitter-size) + 2 * var(--splitter-hit));
+  inset: calc(-1 * var(--splitter-hit)) 0; transform: none;
+}
+body.workspace-horizontal #hsplitter::after { width: 48px; height: 4px; }
+body.workspace-horizontal #vsplitter::before {
+  height: auto; width: calc(var(--splitter-size) + 2 * var(--splitter-hit));
+  inset: 0 calc(-1 * var(--splitter-hit)); transform: none;
+}
+body.workspace-horizontal #vsplitter::after { width: 4px; height: 48px; }
+body.workspace-horizontal.right-collapsed .outer.no-sidebar { grid-template-rows: minmax(0, 1fr); }
+body.workspace-horizontal.resources-collapsed #rightstack,
+body.workspace-horizontal.guest-mode #rightstack { grid-template-columns: minmax(0, 1fr); }
+/* Retain the pane controls above Resources when Shell is hidden. */
+body.workspace-horizontal.shell-hidden #rightstack {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) !important;
+}
+body.workspace-horizontal.shell-hidden #rightStackPanel { grid-column: 1; grid-row: 2 !important; }
+
+/* A consistent compact control strip, with generous touch targets on iPad. */
+body:not(.wiki-mode) header.topbar.topbar-primary {
+  background: #172332;
+  border-bottom: 1px solid #34465c;
+  border-radius: 0;
+}
+body:not(.wiki-mode) .topbar-primary .btn,
+body:not(.wiki-mode) .topbar-primary #autocompleteBtn,
+body:not(.wiki-mode) .topbar-primary #roleMenuBtn,
+body:not(.wiki-mode) .topbar-primary .site-nav-link,
+body:not(.wiki-mode) .topbar-primary .select,
+body:not(.wiki-mode) .topbar-primary .class-selector-row,
+body:not(.wiki-mode) .topbar-primary .control-group {
+  border-radius: 2px;
+  min-height: 38px;
+  border: 1px solid #3b4d63;
+  background: #253548;
+  color: #edf2f8;
+  box-shadow: none;
+}
+body:not(.wiki-mode) .topbar-primary .btn {
+  padding: 7px 10px;
+  justify-content: center;
+  font-size: 13px;
+  transform: none;
+}
+@media (min-width: 761px) and (max-width: 1100px) {
+  body:not(.wiki-mode) header.topbar.topbar-primary {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: "leading navigation actions";
+    min-height: 58px;
+  }
+}
+body:not(.wiki-mode) .topbar-primary .btn:hover,
+body:not(.wiki-mode) .topbar-primary #autocompleteBtn:hover,
+body:not(.wiki-mode) .topbar-primary #roleMenuBtn:hover { background: #354b64; transform: none; }
+body:not(.wiki-mode) .topbar-primary .btn:focus-visible { outline: 2px solid #90caff; outline-offset: -2px; }
+body:not(.wiki-mode) .topbar-primary .control-group { padding: 2px 6px; }
+body:not(.wiki-mode) .topbar-primary .control-group .select { min-height: 30px; border: 0; }
+body:not(.wiki-mode) .topbar-primary #classSelectorWrap { padding: 0; border: 0; background: transparent; }
+body:not(.wiki-mode) .topbar-primary .class-selector-row { padding: 2px 6px; }
+body:not(.wiki-mode) .topbar-primary .class-selector-row .select { min-height: 30px; border: 0; }
+body:not(.wiki-mode) .topbar-primary #layoutToggleBtn { white-space: nowrap; }
+body:not(.wiki-mode) .topbar-primary #notebookOpenBtn { background: #785a18; color: #fff3cf; border-color: #a27f2d; box-shadow: none; }
+body:not(.wiki-mode) .topbar-primary #activeFileChip { border-radius: 2px; box-shadow: none; }
+body:not(.wiki-mode) .topbar-primary .brand { color: #d5e8ff; }
+@media (pointer: coarse) {
+  body:not(.wiki-mode) .topbar-primary .btn,
+  body:not(.wiki-mode) .topbar-primary #autocompleteBtn,
+  body:not(.wiki-mode) .topbar-primary #roleMenuBtn,
+  body:not(.wiki-mode) .topbar-primary .site-nav-link,
+  body:not(.wiki-mode) .topbar-primary .class-selector-row,
+  body:not(.wiki-mode) .topbar-primary .control-group { min-height: 44px; }
 }
