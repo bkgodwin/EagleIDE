@@ -8,6 +8,46 @@ const root = path.resolve(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'static/js/student-notebook.js'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'static/css/features/student-notebook.css'), 'utf8');
 
+test('slow notebook saves retain newer edits, serialize writes, and pause offline', async () => {
+  const requests = [];
+  let lost = false;
+  const context = { window: { EagleIDE: { connection: { isLost: () => lost, request(url, options) {
+    return new Promise(resolve => requests.push({ body: JSON.parse(options.body), resolve }));
+  } } } }, console, clearTimeout, setTimeout };
+  const saveSource = source.slice(source.indexOf('  async function saveNotebook('), source.indexOf('  function scheduleSave('));
+  vm.runInNewContext(`
+    let notebook = { value: 'first' }, activeClassId = 'class-1', dirty = false, saving = null, saveTimer = null;
+    const SAVE_DELAY_MS = 1;
+    function isStudentInClass() { return true; }
+    function currentClassId() { return activeClassId; }
+    function persistActivePageFromDom() {}
+    function userJsonHeaders() { return {}; }
+    function setStatus() {}
+    function ensureNotebookShape(value) { return value; }
+    ${saveSource}
+    globalThis.api = { saveNotebook, edit(value) { notebook.value = value; dirty = true; },
+      state() { return { value: notebook.value, dirty }; } };
+  `, context);
+  const first = context.api.saveNotebook({ immediate: true });
+  context.api.edit('newer');
+  const second = context.api.saveNotebook({ immediate: true });
+  assert.equal(requests.length, 1);
+  requests[0].resolve({ json: async () => ({ ok: true, notebook: { value: 'first' } }) });
+  await first;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].body.notebook.value, 'newer');
+  assert.equal(context.api.state().dirty, true);
+  requests[1].resolve({ json: async () => ({ ok: true, notebook: { value: 'newer' } }) });
+  await second;
+  assert.equal(context.api.state().value, 'newer');
+  assert.equal(context.api.state().dirty, false);
+  lost = true; context.api.edit('offline');
+  await context.api.saveNotebook({ immediate: true });
+  assert.equal(requests.length, 2);
+  assert.equal(context.api.state().dirty, true);
+});
+
 test('notebook toggle closes the drawer and tracks the visible iPad viewport', async () => {
   const properties = {};
   const style = { setProperty(name, value) { properties[name] = value; } };

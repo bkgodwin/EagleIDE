@@ -5,6 +5,8 @@
   const TABLET_BP = 1200;
   let viewportFrame = null;
   let editorFrame = null;
+  let lastViewportHeight = null;
+  let lastViewportOffsetTop = null;
   const LAYOUT_KEY = 'eagleide-layout-orientation';
   const layoutListeners = new Set();
 
@@ -39,7 +41,11 @@
     editorFrame = requestAnimationFrame(() => {
       editorFrame = null;
       document.querySelectorAll('#editorPanel .CodeMirror').forEach((element) => {
-        if (element.clientWidth && element.clientHeight) element.CodeMirror?.refresh?.();
+        const cm = element.CodeMirror;
+        if (!element.clientWidth || !element.clientHeight || !cm?.refresh) return;
+        const scroll = cm.getScrollInfo?.();
+        cm.refresh();
+        if (Number.isFinite(scroll?.left) && Number.isFinite(scroll?.top)) cm.scrollTo?.(scroll.left, scroll.top);
       });
     });
   }
@@ -52,14 +58,22 @@
       // Pinch zoom must not reflow the workspace. Keyboard/browser chrome changes
       // at normal zoom do resize it, keeping the bottom controls on screen.
       if (viewport && Math.abs(viewport.scale - 1) > 0.01) {
-        refreshEditors();
         return;
       }
       const viewportHeight = viewport?.height || window.innerHeight;
       if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return;
-      document.documentElement.style.setProperty('--app-height', `${Math.round(viewportHeight)}px`);
-      document.documentElement.style.setProperty('--app-offset-top', `${Math.round(viewport?.offsetTop || 0)}px`);
-      refreshEditors();
+      const height = Math.round(viewportHeight), offset = Math.round(viewport?.offsetTop || 0);
+      const heightChanged = height !== lastViewportHeight;
+      if (heightChanged) {
+        lastViewportHeight = height;
+        document.documentElement.style.setProperty('--app-height', `${height}px`);
+      }
+      if (offset !== lastViewportOffsetTop) {
+        lastViewportOffsetTop = offset;
+        document.documentElement.style.setProperty('--app-offset-top', `${offset}px`);
+      }
+      // iPad keyboard panning sends scroll events without resizing the editor.
+      if (heightChanged) refreshEditors();
     });
   }
 

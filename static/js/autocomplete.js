@@ -579,6 +579,7 @@
     const request = settings.fetch || (win && win.fetch ? win.fetch.bind(win) : null);
     const debounceMs = Number.isFinite(settings.debounceMs) ? settings.debounceMs : 90;
     let active = settings.enabled !== false;
+    let suspended = !!win?.EagleIDE?.connection?.isLost();
     let timer = null;
     let popup = null;
     let listNode = null;
@@ -599,7 +600,7 @@
     }
 
     function loadCatalog() {
-      if (!active || metadata.size || catalogPromise || !request) return catalogPromise;
+      if (!active || suspended || metadata.size || catalogPromise || !request) return catalogPromise;
       catalogAbort = typeof AbortController !== 'undefined' ? new AbortController() : null;
       const fetchOptions = catalogAbort ? { signal: catalogAbort.signal, cache: 'no-store' } : { cache: 'no-store' };
       catalogPromise = request('/api/autocomplete/catalog', fetchOptions)
@@ -730,7 +731,7 @@
     }
 
     function check() {
-      if (!active) return;
+      if (!active || suspended) return;
       const cursor = cm.getCursor();
       if (cm.somethingSelected && cm.somethingSelected()) { hide(); return; }
       if (/(?:comment|string)/.test(cm.getTokenAt?.(cursor)?.type || '')) { hide(); return; }
@@ -748,7 +749,7 @@
     }
 
     function schedule() {
-      if (!active) return;
+      if (!active || suspended) return;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => { timer = null; check(); }, debounceMs);
     }
@@ -757,7 +758,7 @@
       if (!item || !visibleContext) return false;
       const cursor = cm.getCursor();
       const context = contextAt(cm.getLine(cursor.line), cursor.ch);
-      if (!context || cursor.line !== visibleContext.line || context.fromCh !== visibleContext.fromCh || context.mode !== visibleContext.mode || context.object !== visibleContext.object) {
+      if (!context || cursor.line !== visibleContext.line || cursor.ch !== visibleContext.cursorCh || context.fromCh !== visibleContext.fromCh || context.mode !== visibleContext.mode || context.object !== visibleContext.object) {
         hide();
         return false;
       }
@@ -784,7 +785,7 @@
     }
 
     cm.on('inputRead', () => {
-      if (!active) return;
+      if (!active || suspended) return;
       hide();
       schedule();
     });
@@ -804,7 +805,9 @@
     cm.on('blur', () => { if (visibleContext) hide(); });
     cm.on('optionChange', (_instance, option) => { if (option === 'mode') { analysisCache = null; hide(); } });
     cm.on('keydown', (_instance, event) => {
-      if (!active || !suggestions.length) return;
+      if (!active || suspended || !suggestions.length || event.isComposing) return;
+      const cursor = cm.getCursor();
+      if (!visibleContext || cursor.line !== visibleContext.line || cursor.ch !== visibleContext.cursorCh) { hide(); return; }
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
         select(selectedIndex + (event.key === 'ArrowDown' ? 1 : -1));
@@ -821,7 +824,12 @@
     if (win) win.addEventListener('resize', hide);
     if (active) loadCatalog();
 
-    return { setEnabled, check, hide, isEnabled: () => active, getSuggestions: () => suggestions.slice() };
+    function setSuspended(value) {
+      suspended = !!value;
+      if (suspended) { clearTimeout(timer); timer = null; hide(); }
+      else if (active) loadCatalog();
+    }
+    return { setEnabled, setSuspended, check, hide, isEnabled: () => active, getSuggestions: () => suggestions.slice() };
   }
 
   return {

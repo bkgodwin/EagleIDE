@@ -58,6 +58,7 @@
   function updateLaunchButton() {
     const button = $('stepModeBtn');
     if (!button) return;
+    button.disabled = !!window.EagleIDE?.connection?.isLost();
     button.classList.toggle('is-active', state === 'playback');
     if (state === 'generating') {
       button.textContent = '⏹';
@@ -418,6 +419,10 @@
   }
 
   async function start() {
+    if (window.EagleIDE?.connection?.isLost() && state !== 'playback') {
+      setStatus('Connection error: check your network connection and keep this tab open until you reconnect.', 'error');
+      return;
+    }
     if (state === 'generating') {
       ctx().stopStepTrace?.();
       return;
@@ -453,7 +458,7 @@
     const started = await context.startStepTrace?.(snapshot);
     if (!started) {
       state = 'idle';
-      setStatus('Step Mode could not start because another program is running.', 'error');
+      setStatus(window.EagleIDE?.connection?.isLost() ? 'Connection error: reconnect before recording Step Mode.' : 'Step Mode could not start because another program is running or the execution connection is unavailable.', 'error');
       updateLaunchButton();
     }
   }
@@ -484,6 +489,12 @@
     state = 'idle';
     updateLaunchButton();
     setStatus(pendingError || 'Step Mode stopped before a trace was ready.', pendingError ? 'error' : '');
+  }
+
+  function onConnectionLost() {
+    if (state === 'idle') return;
+    exit({ preservePanel: true });
+    setStatus('Connection lost. Step Mode closed so you can keep editing; check your network connection and keep this tab open.', 'error');
   }
 
   function bindSocket() {
@@ -520,6 +531,9 @@
   }
 
   function bindUi() {
+    window.addEventListener('eagle-connection-changed', event => {
+      if (event.detail.lost) onConnectionLost();
+    });
     $('stepModeBtn')?.addEventListener('click', start);
     $('stepModePreviousBtn')?.addEventListener('click', () => move(-1));
     $('stepModeNextBtn')?.addEventListener('click', () => move(1));
@@ -580,6 +594,7 @@
     exit,
     move,
     onRunnerFinished,
+    onConnectionLost,
     isActive: () => state !== 'idle',
     getState: () => state,
   };

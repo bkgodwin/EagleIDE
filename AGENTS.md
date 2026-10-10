@@ -32,6 +32,7 @@ Required runtime components:
 |-- network_store.py             Validated simulator persistence, reachability, and lab grading
 |-- network_content.py           Source-controlled example topologies, labs, and CLI reference
 |-- sandbox_worker.py            Restricted Python execution worker launched by app.py
+|-- js_worker.js                 Student JavaScript VM realm, safe I/O, timers, and denied imports
 |-- trace_support.py             Bounded Python Step Mode snapshots and deterministic narration
 |-- sandbox_policy.py            Student module catalog, ACL normalization, and locked imports
 |-- sandbox_containment.py       Per-worker Linux Landlock filesystem boundary
@@ -50,6 +51,7 @@ Required runtime components:
 |   |   `-- features/            Feature-specific styles
 |   `-- js/
 |       |-- app.js               Creates the `window.EagleIDE` namespace
+|       |-- connection.js        Client outage warnings, health probes, and bounded workspace requests
 |       |-- feature-loader.js    On-demand loading for large optional browser features
 |       |-- app-core.js          Active main UI state, APIs, sockets, auth, files, quizzes, admin
 |       |-- editor-init.js       CodeMirror setup and textarea fallback
@@ -80,6 +82,8 @@ Required runtime components:
 |-- tests/
 |   |-- test_execution_limits.py Execution admission, runner limits, files, and stream safeguards
 |   |-- test_file_browser.py     Student file operations, creation races, and workspace path safety
+|   |-- connection_ui.test.js    Offline warnings, file guards, reconnect state, and stalled response checks
+|   |-- js_worker.test.js        JavaScript constructor escapes, imports, input, and timer limits
 |   |-- test_auth_frontend.py    Session restoration and sign-in/class-refresh JavaScript checks
 |   |-- test_layout_runtime.py   Pointer/keyboard resize and visual-viewport JavaScript checks
 |   |-- test_classroom_signals.py Atomic simultaneous classroom signal persistence
@@ -131,7 +135,7 @@ All Ollama generation goes through the shared in-memory AI dispatcher in `app.py
 
 `index.html` contains the complete UI markup. Scripts are classic global scripts, not ES modules, and their order is significant. The active order at the end of the page is:
 
-1. `app.js`, then shared modal/lazy/layout/editor/Markdown/shell helpers.
+1. `app.js`, then `connection.js` and shared modal/lazy/layout/editor/Markdown/shell helpers.
 2. `app-core.js`, which owns the central mutable state and main socket connection.
 3. The wiki reader/admin, classroom, notebook, and student dashboard feature scripts. These consume state exposed through `window.EagleIDE`. The feature loader fetches the base and advanced network simulator scripts together when the simulator is first requested; the advanced simulator uses the explicit `window.NetworkSim` integration API and `network-sim:*` DOM events.
 
@@ -140,6 +144,8 @@ All Ollama generation goes through the shared in-memory AI dispatcher in `app.py
 `static/css/main.css` is the only local stylesheet entry point. It imports tokens, foundations, feature styles, and finally `legacy.css`. Prefer the closest feature file for new rules and preserve the import order. Check desktop, tablet, mobile, light, and dark appearances after layout or token changes.
 
 ### Execution Flows
+
+`connection.js` combines browser online/offline events, the execution socket, and bounded same-origin `/health` probes. Outages keep the editor local and editable, show red page/Shell/file warnings, and block workspace requests and execution. Reconnection saves the retained buffer without reloading its source. Saves are serialized; file opens reject stale account, file, and editor-buffer responses. The close-tab warning applies to an outage or actual unsaved editor/notebook work, so saved connected sessions can exit immediately. No service worker, offline execution, third-party cookies, or browser security-policy relaxation is used. Autocomplete menus pause during outages without changing the saved preference; local indentation and highlighting remain available.
 
 Python and JavaScript runs begin with the Socket.IO `run_code` event. Output returns through `output`, startup is acknowledged by `run_ack`, and completion returns through `finished`. `send_input` and `stop` control the active runner for a socket session.
 
@@ -153,7 +159,7 @@ Rubric generation uses a compact array JSON schema passed through the dispatcher
 
 - Python: `Runner` writes a temporary script, launches `sandbox_worker.py`, reserves the configured per-run memory, restricts filesystem access to the user's root, and applies import, CPU, process, memory, file, file descriptor, wall-time, write-budget, and output limits. `sandbox_policy.py` permits standard-library, reviewed chart-dependency, and student-workspace imports while keeping process/network/FFI modules locked. On Linux, `sandbox_containment.py` applies Landlock before enabling SQLite, Inspect, NumPy, or Matplotlib. Matplotlib's reviewed `mpl_toolkits` namespace enables static 3D projections without adding a native/browser GUI. `plt.show()` uses Agg and writes uniquely indexed PNG artifacts beside the Python source file, retaining at most 20 per source; new images are announced through `run_artifacts`. Before execution, the worker performs bounded, non-blocking educational checks for protected/private member access; a trusted trace callback checks supported parameter and return annotations at runtime without evaluating student annotations. These checks emit capped `[Warning]` lines and never reject or stop a run. Student tracebacks retain source names and line numbers but redact server and sandbox paths.
 - Python Step Mode: `trace_code` uses `TraceRunner` and the same execution admission, authentication, resource limits, module policy, workspace boundary, and `sandbox_worker.py` process as ordinary Python runs. `trace_support.py` records bounded student-file line/call/return/input/exception events with safe value serialization, deterministic AST narration, defined-item metadata, and recorded custom-call boundaries. Imported-module frames remain outside the trace. Trace payloads are framed separately from student output and chunked for Socket.IO delivery. Playback, step-over, and autoplay are browser-side, so navigation never re-executes code or requests captured input again; calls that raised exceptions cannot be stepped over.
-- JavaScript: `JsRunner` invokes Node with a restricted `vm` context, a 384 MB V8 heap, a separate 1.5 GB POSIX virtual-address ceiling for V8 startup/native overhead, and CPU, process, wall-time, and output controls.
+- JavaScript: `JsRunner` invokes `js_worker.js` in Node with a restricted `vm` context, a 384 MB V8 heap, a separate 1.5 GB POSIX virtual-address ceiling for V8 startup/native overhead, and CPU, process, wall-time, and output controls. Student globals and I/O wrappers use the VM's own realm; host functions, Errors, and Timeout objects must never be returned. Dynamic imports are denied with a realm-created Error (the VM-module flag is needed to invoke the deny hook); timers return numeric handles and callback/microtask execution is bounded. Node's VM remains defense in depth, not an OS security boundary. Windows Python venv workers launch the actual interpreter directly with only the trusted venv package path so the redirector cannot exceed the one-process Job Object limit.
 - Operating-system containment: POSIX runners use process groups, resource limits, lower priority, and per-worker Landlock for native Python modules; Windows runners are assigned to kill-on-close Job Objects with CPU, memory, and active-process limits but native modules fail closed because Landlock is unavailable.
 - HTML/CSS: `/api/html-runtime/*` serves files from the user's live workspace. JavaScript is enabled only through an operator-attested, cross-site preview origin; otherwise the preview applies `script-src 'none'` and safely renders HTML/CSS only. See `docs/HARDENING_AND_PERFORMANCE.md`.
 - Interactive input: `INPUT_TOKEN` must remain identical in `app.py`, `sandbox_worker.py`, and the browser runtime.
@@ -276,7 +282,7 @@ Run the automated suite from the repository root:
 
 ```bash
 python -m unittest discover -s tests -v
-node --test tests/*_ui.test.js
+node --test tests/*.test.js
 ```
 
 Focused runs:

@@ -51,6 +51,7 @@ elements.get('output').scrollTop = 12;
 elements.get('output').scrollHeight = 200;
 
 let editorRefreshes = 0;
+let editorScrollRestores = 0;
 let observer;
 let frameId = 0;
 const frames = new Map();
@@ -62,7 +63,8 @@ const document = Object.assign(surface(), {
   getElementById: (id) => elements.get(id) || null,
   querySelector: (selector) => selector === '.workspace-floating-controls' ? elements.get('workspaceControls') : null,
   querySelectorAll: () => [{ clientWidth: 400, clientHeight: 300,
-    CodeMirror: { refresh: () => editorRefreshes++ } }]
+    CodeMirror: { getScrollInfo: () => ({ left: 17, top: 240 }), refresh: () => editorRefreshes++,
+      scrollTo: (left, top) => { assert.equal(left, 17); assert.equal(top, 240); editorScrollRestores++; } } }]
 });
 const window = Object.assign(surface(), {
   innerHeight: 900,
@@ -107,6 +109,13 @@ assert.equal(elements.get('output').scrollTop, 12, 'resize preserves shell readi
 assert.equal(observer.observed.length, 4);
 assert.ok(observer.observed.includes(elements.get('studentEditorWrap')), 'editor pane changes trigger CodeMirror remeasurement');
 
+const beforePan = editorRefreshes;
+window.visualViewport.offsetTop = 24;
+window.visualViewport.fire('scroll');
+flushFrames();
+assert.equal(root.styles.get('--app-offset-top'), '24px');
+assert.equal(editorRefreshes, beforePan, 'keyboard panning must not refresh the virtual editor');
+assert.ok(editorScrollRestores > 0, 'layout refreshes preserve text and gutter scrolling');
 window.visualViewport.height = 360;
 window.visualViewport.offsetTop = 90;
 window.visualViewport.fire('resize');
@@ -119,7 +128,7 @@ const zoomRefreshesBefore = editorRefreshes;
 window.visualViewport.fire('resize');
 flushFrames();
 assert.equal(root.styles.get('--app-height'), '360px', 'pinch zoom does not reflow layout');
-assert.ok(editorRefreshes > zoomRefreshesBefore, 'pinch zoom refreshes editor text measurements');
+assert.equal(editorRefreshes, zoomRefreshesBefore, 'pinch zoom must not repeatedly refresh editor measurements');
 const returnRefreshesBefore = editorRefreshes;
 window.fire('pageshow');
 flushFrames();
