@@ -101,7 +101,6 @@ body.light-mode .topbar-primary .topbar-tools-btn {
 .ide-topbar-tools #classSelectorWrap { min-width: 160px; padding: 2px 5px; }
 .ide-topbar-tools #classSelector { max-width: 150px; }
 
-.ide-topbar-tools #guidesBtn,
 .ide-topbar-tools #autocompleteBtn,
 #roleMenuBtn {
   border-color: rgba(255, 255, 255, .42);
@@ -110,11 +109,9 @@ body.light-mode .topbar-primary .topbar-tools-btn {
   box-shadow: 0 2px 7px rgba(4, 20, 36, .3);
 }
 
-.ide-topbar-tools #guidesBtn:hover,
 .ide-topbar-tools #autocompleteBtn:hover,
 #roleMenuBtn:hover { background: #173a57; }
 
-body.light-mode .ide-topbar-tools #guidesBtn,
 body.light-mode .ide-topbar-tools #autocompleteBtn,
 body.light-mode #roleMenuBtn {
   border-color: #173a57;

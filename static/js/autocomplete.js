@@ -446,6 +446,8 @@
   }
 
   function contextAt(line, cursorCh) {
+    // Never offer a replacement for only the left half of an existing word.
+    if (/[\w$]/.test(String(line || '')[cursorCh] || '')) return null;
     const before = String(line || '').slice(0, cursorCh);
     if (isInsideCommentOrString(String(line || ''), cursorCh)) return null;
     const fromMember = before.match(/^\s*from\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s+import\s+([A-Za-z_]\w*)?$/);
@@ -731,6 +733,7 @@
       if (!active) return;
       const cursor = cm.getCursor();
       if (cm.somethingSelected && cm.somethingSelected()) { hide(); return; }
+      if (/(?:comment|string)/.test(cm.getTokenAt?.(cursor)?.type || '')) { hide(); return; }
       const context = contextAt(cm.getLine(cursor.line), cursor.ch);
       if (!context) { hide(); return; }
       const currentLanguage = language();

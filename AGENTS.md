@@ -53,6 +53,7 @@ Required runtime components:
 |       |-- feature-loader.js    On-demand loading for large optional browser features
 |       |-- app-core.js          Active main UI state, APIs, sockets, auth, files, quizzes, admin
 |       |-- editor-init.js       CodeMirror setup and textarea fallback
+|       |-- editor-feedback.js   Local occurrences, delimiters, diagnostics, block guides, and caret visibility
 |       |-- editor-behavior.js   Predictable Python Enter indentation and CodeMirror block folding
 |       |-- autocomplete.js      Bounded code analysis, catalog-backed suggestions, and completion UI
 |       |-- layout.js            Responsive panels and layout controls
@@ -83,6 +84,7 @@ Required runtime components:
 |   |-- test_layout_runtime.py   Pointer/keyboard resize and visual-viewport JavaScript checks
 |   |-- test_classroom_signals.py Atomic simultaneous classroom signal persistence
 |   |-- *_ui.test.js            Dependency-free Node tests for classroom/file UI state races
+|   |-- editor_feedback_ui.test.js Local symbol, selection, diagnostics, bracket, and block-guide regressions
 |   |-- editor_behavior_ui.test.js Editor indentation, folding, and error-unfold regression checks
 |   |-- student_notebook_ui.test.js Notebook toggle and visible-viewport regression test
 |   |-- test_python_sandbox.py   Module ACL, native containment, SQLite, and chart security
@@ -197,6 +199,7 @@ Network simulator definitions are source data in `network_content.py`; assignmen
 - Weekly lesson plans: `lesson_plan_features.py`, `lesson_plan_store.py`, `lesson-plans.js`, `lesson-plan-renderer.js`, `lesson-plan-public.js`, `lesson_plan_public.html`, and `features/lesson-plans.css`.
 - Wiki catalog/search/assets/backup or HTTP authorization: `wiki_store.py` and `wiki_features.py`; reader/teacher actions: `wiki-reader.js`; admin authoring: `wiki-admin.js`; visuals: `features/wiki.css`.
 - Editor initialization or teacher stream editor: `editor-init.js`; predictable Enter indentation and folding: `editor-behavior.js`; most run/open/save behavior remains in `app-core.js`. CodeMirror folding uses the pinned CDN fold addons loaded by `index.html`.
+- Editor occurrences, local lexical diagnostics, delimiter shading, block guides, and caret-line visuals: `editor-feedback.js` and `features/editor.css`. Feedback is bounded, debounced, and browser-local; no student code is sent or executed. Undefined-name hints are advisory Python/JavaScript checks, not full scope analysis. The removed indent-guide toggle must not be restored; guides follow actual blocks. Insert overwrite is disabled in the editable editor (including its textarea fallback), while Shift+Insert keeps paste.
 - Autocomplete analysis, popup lifecycle, import/from-module suggestions, and user-symbol inference: `autocomplete.js`; editable Python member help belongs in `autocomplete_metadata.csv`, while the effective import-module list comes from `sandbox_policy.py` through the read-only catalog API in `app.py`.
 - Virtual shell parsing: `shell-commands.js`; it must call workspace APIs and must never expose an operating-system shell.
 - DOM structure or third-party CDN versions: `index.html`.
