@@ -2461,15 +2461,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const DEFAULT_FONT_SIZE = 14;
       const FONT_KEY = 'eagleide-font-size';
       const SHELL_FONT_KEY = 'eagleide-shell-font-size';
-      const GUIDES_KEY = 'eagleide-indent-guides';
       const AUTOCOMPLETE_KEY = 'eagleide-autocomplete';
       const fontRange = document.getElementById('fontRange');
       const fontVal = document.getElementById('fontVal');
       const shellFontRange = document.getElementById('shellFontRange');
       const shellFontVal = document.getElementById('shellFontVal');
-      const guidesBtn = document.getElementById('guidesBtn');
       const autocompleteBtn = document.getElementById('autocompleteBtn');
-      let guidesEnabled = true;
       let autocompleteEnabled = true;
       let fontFrame = 0;
 
@@ -2498,15 +2495,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         }
       }
 
-      function applyGuides(enabled, persist = true) {
-        guidesEnabled = !!enabled;
-        document.body.classList.toggle('guides-off', !guidesEnabled);
-        guidesBtn.textContent = `Guide ${guidesEnabled ? 'On' : 'Off'}`;
-        if (persist) {
-          try { localStorage.setItem(GUIDES_KEY, guidesEnabled ? '1' : '0'); } catch {}
-        }
-      }
-
       function applyAutocomplete(enabled, persist = true) {
         autocompleteEnabled = !!enabled;
         window.toggleEagleCompletion?.(autocompleteEnabled);
@@ -2519,18 +2507,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       try {
         applyFontSize(localStorage.getItem(FONT_KEY) || fontRange.value, false);
         applyShellFontSize(localStorage.getItem(SHELL_FONT_KEY) || shellFontRange.value, false);
-        applyGuides(localStorage.getItem(GUIDES_KEY) !== '0', false);
         applyAutocomplete(localStorage.getItem(AUTOCOMPLETE_KEY) !== '0', false);
       } catch {
         applyFontSize(fontRange.value, false);
         applyShellFontSize(shellFontRange.value, false);
-        applyGuides(true, false);
         applyAutocomplete(true, false);
       }
 
       fontRange.addEventListener('input', (e) => applyFontSize(e.target.value));
       shellFontRange.addEventListener('input', (e) => applyShellFontSize(e.target.value));
-      guidesBtn.addEventListener('click', () => applyGuides(!guidesEnabled));
       autocompleteBtn.addEventListener('click', () => applyAutocomplete(!autocompleteEnabled));
       document.getElementById('languageSelector')?.addEventListener('change', () => syncEditorLanguage());
       syncEditorLanguage();
