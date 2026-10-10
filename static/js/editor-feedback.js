@@ -111,7 +111,7 @@
   }
 
   function analyze(source, language, autocomplete, tokenMask, tabSize = 4) {
-    const result = { source, language, offsets: offsetsFor(source), diagnostics: [], brackets: [], guides: [], names: new Set(), builtins: new Set(), tooLarge: source.length > MAX_SOURCE };
+    const result = { source, language, offsets: offsetsFor(source), diagnostics: [], brackets: [], openLines: [], guides: [], names: new Set(), builtins: new Set(), tooLarge: source.length > MAX_SOURCE };
     if (result.tooLarge) return result;
     const lexical = maskSource(source, language);
     const masked = result.masked = tokenMask ?? lexical.masked;
@@ -141,11 +141,24 @@
     });
     // Token masks exclude multiline literals; only trust the lexer for strings when
     // its opening quote is also classified as a string by the language mode.
-    lexical.strings.filter(item => !item.closed && (!tokenMask || tokenMask[item.start] === ' ')).forEach(item => {
+    const openStrings = lexical.strings.filter(item => !item.closed && (!tokenMask || tokenMask[item.start] === ' '));
+    openStrings.forEach(item => {
       report(item.start, item.start + item.delimiter.length, `Unclosed string. Add a matching ${item.delimiter} quote.`);
     });
 
     const lines = masked.split('\n');
+    // Full-width backgrounds cover every visible row in an unfinished construct.
+    // Merge ranges once so viewport updates stay linear in visible rows.
+    const openDepth = new Int32Array(lines.length + 1);
+    [...result.brackets.filter(item => !item.closed && !item.orphan), ...openStrings].forEach(item => {
+      const from = positionAt(result.offsets, item.start).line;
+      const to = positionAt(result.offsets, Math.max(item.start, item.end - (item.delimiter ? 1 : 0))).line;
+      openDepth[from]++; openDepth[to + 1]--;
+    });
+    let openCount = 0;
+    for (let line = 0; line < lines.length; line++) {
+      openCount += openDepth[line]; result.openLines[line] = openCount > 0;
+    }
     // A difference array avoids rescanning every bracket on every source line.
     const continuation = new Int32Array(lines.length + 1);
     result.brackets.forEach(item => {
@@ -308,7 +321,7 @@
     const doc = options.document || (typeof document !== 'undefined' ? document : null);
     const autocomplete = options.autocomplete || (typeof window !== 'undefined' ? window.EagleAutocomplete : null);
     let model = null, sourceTimer = null, cursorTimer = null, generation = 0;
-    let issueMarks = [], cursorMarks = [], spaceMarks = [], activeLine = null;
+    let issueMarks = [], cursorMarks = [], spaceMarks = [], openLineHandles = [], activeLine = null;
     const wrapper = cm.getWrapperElement();
     const status = doc.createElement('button');
     status.type = 'button'; status.className = 'eagle-editor-status';
@@ -322,13 +335,21 @@
     const mark = (ranges, collection, className) => ranges.forEach(item => {
       collection.push(cm.markText(positionAt(model.offsets, item.start), positionAt(model.offsets, item.end), { className, title: item.message }));
     });
+    function updateActiveLine() {
+      const line = cm.getCursor().line;
+      if (activeLine != null && cm.getLineNumber(activeLine) === line) return;
+      if (activeLine != null) cm.removeLineClass(activeLine, 'background', 'eagle-active-line');
+      activeLine = cm.addLineClass(line, 'background', 'eagle-active-line');
+    }
+    function clearOpenLines() {
+      openLineHandles.forEach(handle => cm.removeLineClass(handle, 'background', 'eagle-open-range-line'));
+      openLineHandles = [];
+    }
     function updateCursor() {
       if (!model || model.source !== cm.getValue()) return;
       cm.operation(() => {
         clear(cursorMarks);
         const cursor = cm.getCursor(), index = model.offsets[cursor.line] + cursor.ch;
-        if (activeLine != null) cm.removeLineClass(activeLine, 'background', 'eagle-active-line');
-        activeLine = cm.addLineClass(cursor.line, 'background', 'eagle-active-line');
         const selection = cm.getSelection();
         // Multiple selections have no single unambiguous occurrence target.
         if (cm.listSelections().length !== 1) return;
@@ -341,10 +362,12 @@
     }
     function updateSpaces() {
       clear(spaceMarks);
+      clearOpenLines();
       const viewport = cm.getViewport();
       cm.operation(() => {
         let count = 0;
-        for (let line = viewport.from; line < viewport.to && count < MAX_MARKS; line++) {
+        for (let line = viewport.from; line < Math.min(viewport.to, viewport.from + MAX_MARKS) && count < MAX_MARKS; line++) {
+          if (model?.openLines[line]) openLineHandles.push(cm.addLineClass(line, 'background', 'eagle-open-range-line'));
           const prefix = (cm.getLine(line) || '').match(/^[\t ]*/)[0];
           for (const match of prefix.matchAll(/ +/g)) {
             if (count++ >= MAX_MARKS) break;
@@ -394,7 +417,7 @@
       cm.operation(() => {
         clear(issueMarks);
         for (const severity of ['error', 'warning']) mark(model.diagnostics.filter(item => item.severity === severity), issueMarks, `eagle-diagnostic-${severity}`);
-        updateSpaces(); updateCursor();
+        updateSpaces(); updateActiveLine(); updateCursor();
       });
       renderStatus();
       cm.refresh();
@@ -402,7 +425,7 @@
     function invalidate() {
       generation++;
       clearTimeout(sourceTimer); clearTimeout(cursorTimer);
-      cm.operation(() => { clear(issueMarks); clear(cursorMarks); clear(spaceMarks); });
+      cm.operation(() => { clear(issueMarks); clear(cursorMarks); clear(spaceMarks); clearOpenLines(); updateActiveLine(); });
       model = null;
       panel.hidden = true; status.setAttribute('aria-expanded', 'false'); status.textContent = 'Checking…';
       sourceTimer = setTimeout(rebuild, 180);
@@ -410,6 +433,8 @@
     cm.on('changes', invalidate);
     cm.on('optionChange', (_cm, option) => { if (option === 'mode' || option === 'tabSize') invalidate(); });
     cm.on('cursorActivity', () => {
+      // Caret guidance is immediate, including while source analysis is pending.
+      updateActiveLine();
       clearTimeout(cursorTimer);
       const current = generation;
       cursorTimer = setTimeout(() => { if (generation === current) updateCursor(); }, 40);

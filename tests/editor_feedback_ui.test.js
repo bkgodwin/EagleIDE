@@ -117,8 +117,16 @@ function editorHarness(source) {
     getViewport() { return this.viewport; },
     getCursor() { return this.cursor; }, getSelection() { return this.selection; },
     listSelections() { return this.selections; },
-    addLineClass(line, _where, name) { this.active = { line, name }; return line; },
-    removeLineClass() { this.active = null; },
+    lineClasses: new Map(),
+    addLineClass(line, _where, name) {
+      this.lineClasses.set(`${line}:${name}`, true);
+      if (name === 'eagle-active-line') this.active = { line, name };
+      return line;
+    },
+    removeLineClass(line, _where, name) {
+      this.lineClasses.delete(`${line}:${name}`);
+      if (name === 'eagle-active-line') this.active = null;
+    },
     markText(from, to, options) {
       const mark = { from, to, ...options, clear() { this.cleared = true; } };
       marks.push(mark); return mark;
@@ -158,6 +166,27 @@ test('live hints clear stale marks on edits/mode changes and preserve runtime hi
   assert.equal(runtime.cleared, undefined);
   cm.keyMap.Insert(cm);
   assert.equal(cm.overwrite, false);
+});
+
+test('caret row moves immediately even while source analysis is pending', () => {
+  const { cm } = editorHarness('x = 1\nprint(x)');
+  cm.setCursor({ line: 1, ch: 0 });
+  assert.equal(cm.active.line, 1);
+  cm.source = 'x = 1\nprint(x)\nprint(x)'; cm.emit('changes');
+  cm.setCursor({ line: 2, ch: 0 });
+  assert.equal(cm.active.line, 2);
+});
+
+test('unfinished groups shade full rows to EOF; single-line strings stop at the row end', async () => {
+  const { cm, controller } = editorHarness('values = [\n\t1,\n\t2');
+  assert.deepEqual(controller.getModel().openLines, [true, true, true]);
+  assert.equal(cm.lineClasses.has('2:eagle-open-range-line'), true);
+  cm.source += '\n]'; cm.emit('changes');
+  assert.equal(cm.lineClasses.has('2:eagle-open-range-line'), false);
+  await new Promise(resolve => setTimeout(resolve, 220));
+  assert.ok(controller.getModel().openLines.every(open => !open));
+  assert.deepEqual(feedback.analyze('message = "hello\nprint(1)', 'python', autocomplete).openLines, [true, false]);
+  assert.deepEqual(feedback.analyze('message = """hello\nworld', 'python', autocomplete).openLines, [true, true]);
 });
 
 test('viewport leading-space warnings and multiple-selection handling stay bounded', async () => {

@@ -229,6 +229,12 @@ Students can:
 9. View lessons and Home content in the sidebar
 
 Features:
+- The Vertical/Horizontal button beside the theme button switches between the
+  default side-by-side workspace and an editor-above layout. In Horizontal mode,
+  Shell and Resources share the bottom row, and file actions occupy a scrollable
+  rail on the right. Your browser remembers the layout and separate splitter sizes
+  between sessions. Drag splitters or focus them and use arrow keys to resize;
+  double-click a splitter to restore that layout's default size.
 - Syntax highlighting for Python, JavaScript, HTML, and CSS
 - Intelligent autocomplete with Python file, CSV reader/writer, collection, NumPy,
   and Matplotlib object members; every admin-togglable module and the effective
