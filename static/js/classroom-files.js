@@ -3,6 +3,7 @@
  */
 (function () {
   'use strict';
+  const fileRequest = (...args) => window.EagleIDE?.connection?.request(...args) || fetch(...args);
 
   let sendItems = [];
   let sendKind = 'files';
@@ -66,7 +67,7 @@
     const c = ctx();
     if (!c.USER_TOKEN || !classId) return [];
     try {
-      const rosterRes = await fetch(`/api/student/class-roster?classId=${encodeURIComponent(classId)}`, {
+      const rosterRes = await fileRequest(`/api/student/class-roster?classId=${encodeURIComponent(classId)}`, {
         headers: { 'X-User-Token': c.USER_TOKEN },
       });
       const roster = await rosterRes.json().catch(() => ({}));
@@ -189,6 +190,7 @@
   }
 
   async function submitSendFile() {
+    if (window.EagleIDE?.connection?.isLost()) return alert('Connection lost. Check your network connection and keep this tab open until you reconnect.');
     if (sendInProgress) return;
     const c = ctx();
     const classCtx = getClassContext();
@@ -224,7 +226,7 @@
 
     sendInProgress = true;
     try {
-      const res = await fetch(sendKind === 'notebook' ? '/api/notebook/share-tab' : '/api/classroom/send-file', {
+      const res = await fileRequest(sendKind === 'notebook' ? '/api/notebook/share-tab' : '/api/classroom/send-file', {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
@@ -279,7 +281,7 @@
     title.textContent = `Files: ${studentName || studentEmail}`;
     tree.innerHTML = 'Loading…';
     modal.style.display = 'flex';
-    const res = await fetch(
+    const res = await fileRequest(
       `/api/teacher/students/files/list?classId=${encodeURIComponent(classId)}&studentEmail=${encodeURIComponent(studentEmail)}`,
       { headers: { 'X-Teacher-Token': c.TEACHER_TOKEN } }
     );
@@ -303,7 +305,7 @@
           ? 'Permanently delete this file from the student’s Trash? This cannot be undone.'
           : 'Move this file to the student’s Trash?';
         if (!confirm(message)) return;
-        const delRes = await fetch('/api/teacher/students/files/delete', {
+        const delRes = await fileRequest('/api/teacher/students/files/delete', {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json', 'X-Teacher-Token': c.TEACHER_TOKEN },
           body: JSON.stringify({
@@ -321,7 +323,7 @@
 
   async function viewAuditFile(path) {
     const c = ctx();
-    const res = await fetch('/api/teacher/students/files/read', {
+    const res = await fileRequest('/api/teacher/students/files/read', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Teacher-Token': c.TEACHER_TOKEN },
       body: JSON.stringify({
@@ -339,7 +341,7 @@
   async function resetStudentExamples(classId, studentEmail, studentName) {
     const c = ctx();
     if (!confirm(`Reset default example files for ${studentName || studentEmail}?\n\nOnly original Examples files are overwritten. Other files in Examples/ are left unchanged.`)) return;
-    const res = await fetch('/api/teacher/students/reset-examples', {
+    const res = await fileRequest('/api/teacher/students/reset-examples', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Teacher-Token': c.TEACHER_TOKEN },
       body: JSON.stringify({ classId, studentEmail }),
@@ -355,7 +357,7 @@
     const feed = document.getElementById('classroomLogFeed');
     if (!feed) return;
     feed.textContent = 'Loading…';
-    const res = await fetch('/api/admin/classroom-events?limit=100', {
+    const res = await fileRequest('/api/admin/classroom-events?limit=100', {
       headers: { 'X-Admin-Token': c.ADMIN_TOKEN },
     });
     const j = await res.json().catch(() => ({}));

@@ -51,12 +51,13 @@ test('file selection changes only through the explicit checkbox selection helper
 });
 
 test('autosave does not mark new edits clean when an older request completes', async () => {
-  const context = vm.createContext({ assert });
+  const context = vm.createContext({ assert, window: {} });
   await vm.runInContext(`(async () => {
     let auditPreviewActive = false, fileArtifactPreviewActive = false, csvEditorActive = false;
     let currentOpenFile = {path:'main.py', name:'main.py'}, currentBufferDirty = true;
     let USER_TOKEN = 'student', TEACHER_TOKEN = null, ADMIN_TOKEN = null;
     let text = 'old text', release;
+    let fileSavePromise = null;
     const editor = {getValue: () => text};
     const syncEditorBridge = () => {};
     const fileAuthHeaders = () => ({'X-User-Token':USER_TOKEN});
@@ -67,6 +68,7 @@ test('autosave does not mark new edits clean when an older request completes', a
     };
     ${extract('fetchWithDeadline')}
     ${extract('saveCurrentFile')}
+    ${extract('writeCurrentFile')}
     const saving = saveCurrentFile();
     text = 'new edit';
     release({ok:true, json:async () => ({ok:true})});
@@ -89,5 +91,56 @@ test('late file-list authentication failures cannot sign out a newer session', a
     release({status:401, ok:false, json:async () => ({ok:false})});
     assert.equal(await loading, false);
     assert.equal(USER_TOKEN, 'new');
-  })()`, { assert });
+  })()`, { assert, window: {} });
+});
+
+test('concurrent saves serialize and the last save contains the newest edits', async () => {
+  await vm.runInNewContext(`(async () => {
+    let fileSavePromise = null;
+    let auditPreviewActive = false, fileArtifactPreviewActive = false, csvEditorActive = false;
+    let currentOpenFile = {path:'main.py', name:'main.py'}, currentBufferDirty = true;
+    let USER_TOKEN = 'student', TEACHER_TOKEN = null, ADMIN_TOKEN = null;
+    let text = 'first', release;
+    const bodies = [];
+    const editor = {getValue: () => text};
+    const syncEditorBridge = () => {};
+    const fileAuthHeaders = () => ({'X-User-Token':USER_TOKEN});
+    const fileJsonHeaders = fileAuthHeaders;
+    const fetch = (url, options) => {
+      bodies.push(JSON.parse(options.body).content);
+      return new Promise(resolve => { release = resolve; });
+    };
+    ${extract('fetchWithDeadline')}
+    ${extract('saveCurrentFile')}
+    ${extract('writeCurrentFile')}
+    const first = saveCurrentFile();
+    text = 'latest'; const second = saveCurrentFile();
+    assert.equal(bodies.length, 1);
+    release({ok:true, json:async () => ({ok:true})}); await first;
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(bodies, ['first','latest']);
+    release({ok:true, json:async () => ({ok:true})}); await second;
+    assert.equal(currentBufferDirty, false);
+  })()`, { assert, window: {}, setImmediate });
+});
+
+test('a slow file open cannot overwrite edits made while waiting for its response', async () => {
+  await vm.runInNewContext(`(async () => {
+    let fileOpenRequestId = 0, release;
+    let USER_TOKEN = 'student', TEACHER_TOKEN = null, ADMIN_TOKEN = null;
+    let auditPreviewActive = false, csvEditorActive = false, currentBufferDirty = false;
+    let currentOpenFile = {path:'main.py', name:'main.py'}, text = 'saved source';
+    const fileAuthHeaders = () => ({'X-User-Token':USER_TOKEN});
+    const syncEditorBridge = () => {}, setMainEditorReadOnly = () => {}, saveCurrentFile = async () => true;
+    const editor = {getValue: () => text, setValue() { throw new Error('must not overwrite new edits'); }};
+    const fetchWithDeadline = () => new Promise(resolve => { release = resolve; });
+    ${extract('openFile')}
+    const opening = openFile({path:'other.py', name:'other.py'});
+    await new Promise(resolve => setImmediate(resolve));
+    text = 'new offline edit'; currentBufferDirty = true;
+    release({ok:true, json:async () => ({ok:true, content:'other file'})});
+    await opening;
+    assert.equal(currentOpenFile.path,'main.py'); assert.equal(text,'new offline edit');
+    assert.equal(currentBufferDirty,true);
+  })()`, { assert, window: {}, setImmediate });
 });

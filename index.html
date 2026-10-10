@@ -44,10 +44,14 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261010-horizontal-layout-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261010-stability-1">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
+  <div id="connectionWarning" class="connection-warning" role="alert" hidden>
+    <span><strong>Connection lost.</strong> Check your network connection. Keep this tab open until you reconnect. You can continue editing; changes cannot be saved yet.</span>
+    <button id="connectionRetryBtn" class="btn secondary" type="button">Retry connection</button>
+  </div>
   <header class="topbar topbar-primary" id="topbarPrimary">
     <div class="topbar-primary-left">
       <div class="brand"><div>EagleIDE</div></div>
@@ -491,6 +495,7 @@
           <textarea id="teacherStreamEditor" style="display:none; resize:none;"></textarea>
         </section>
         <section class="embedded-file-browser" id="fileBrowserTabPane" aria-label="File browser tab">
+          <div id="fileConnectionWarning" class="connection-warning file-connection-warning" role="status" hidden>File operations paused. Check your network connection and keep this tab open. Your editor is still available.</div>
           <div class="file-sidebar-breadcrumb" id="fileBreadcrumb">
             <span class="crumb" data-path="">🏠 Home</span>
           </div>
@@ -528,6 +533,7 @@
       <div class="rightstack" id="rightstack">
         <!-- Shell -->
         <section class="panel" id="shellPanel">
+          <div id="shellConnectionWarning" class="connection-warning shell-connection-warning" role="status" hidden>Connection error: check your network connection. Do not close this tab until you reconnect. Run and file operations are paused; you can keep editing.</div>
           <header class="shell-panel-header">
             <h3>Shell:</h3>
             <div class="shell-run-actions">
@@ -1773,25 +1779,26 @@
   </div><!-- .app-shell -->
 
   <script src="/static/js/app.js"></script>
+  <script src="/static/js/connection.js?v=20261010-stability-1"></script>
   <script src="/static/js/feature-loader.js?v=20260921-1"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20250608"></script>
-  <script src="/static/js/layout.js?v=20261010-horizontal-layout-1"></script>
-  <script src="/static/js/autocomplete.js?v=20261010-horizontal-layout-1"></script>
+  <script src="/static/js/layout.js?v=20261010-stability-1"></script>
+  <script src="/static/js/autocomplete.js?v=20261010-stability-1"></script>
   <script src="/static/js/editor-behavior.js?v=20261009-assignment-step-2"></script>
-  <script src="/static/js/editor-feedback.js?v=20261010-horizontal-layout-1"></script>
-  <script src="/static/js/editor-init.js?v=20261010-horizontal-layout-1"></script>
+  <script src="/static/js/editor-feedback.js?v=20261010-stability-1"></script>
+  <script src="/static/js/editor-init.js?v=20261010-stability-1"></script>
   <script src="/static/js/markdown.js"></script>
-  <script src="/static/js/shell-commands.js"></script>
-  <script src="/static/js/app-core.js?v=20261010-horizontal-layout-1"></script>
-  <script src="/static/js/step-mode.js?v=20261009-assignment-step-2"></script>
-  <script src="/static/js/wiki-reader.js?v=20261010-horizontal-layout-1"></script>
+  <script src="/static/js/shell-commands.js?v=20261010-stability-1"></script>
+  <script src="/static/js/app-core.js?v=20261010-stability-1"></script>
+  <script src="/static/js/step-mode.js?v=20261010-stability-1"></script>
+  <script src="/static/js/wiki-reader.js?v=20261010-stability-1"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
   <script src="/static/js/lesson-plans.js?v=20260816-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20261010-horizontal-layout-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20261010-stability-1"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
-  <script src="/static/js/classroom-files.js?v=20260918-10"></script>
-  <script src="/static/js/student-notebook.js?v=20260918-10"></script>
+  <script src="/static/js/classroom-files.js?v=20261010-stability-1"></script>
+  <script src="/static/js/student-notebook.js?v=20261010-stability-1"></script>
   <script src="/static/js/student-dashboard.js?v=20261009-autocomplete-warnings-1"></script>
 
 </body>
