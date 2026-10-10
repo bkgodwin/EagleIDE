@@ -44,7 +44,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261010-editor-feedback-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261010-horizontal-layout-1">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -79,6 +79,7 @@
           </select>
         </div>
         <button class="btn secondary" id="themeToggleBtn" title="Toggle light/dark mode" aria-label="Toggle light or dark mode">🌙</button>
+        <button class="btn secondary" id="layoutToggleBtn" title="Switch to horizontal layout: editor above shell and resources" aria-pressed="false">▥ Vertical</button>
         <label class="control-group topbar-font-control" for="fontRange" title="Editor text size">
           <span class="control-label">Text</span>
           <input id="fontRange" type="range" min="12" max="50" value="14" step="1" class="font-range">
@@ -526,7 +527,7 @@
     <div id="rightColumn">
       <div class="rightstack" id="rightstack">
         <!-- Shell -->
-        <section class="panel" id="shellPanel" style="grid-row:1 / 2; grid-column:1;">
+        <section class="panel" id="shellPanel">
           <header class="shell-panel-header">
             <h3>Shell:</h3>
             <div class="shell-run-actions">
@@ -589,7 +590,7 @@
         <div class="vsplitter" id="vsplitter" role="separator" aria-orientation="horizontal" title="Drag to resize"></div>
 
         <!-- Tabs -->
-        <section class="panel" id="rightStackPanel" style="grid-row:3 / 4; grid-column:1;">
+        <section class="panel" id="rightStackPanel">
           <header>
             <h3>Resources:</h3>
           </header>
@@ -1775,19 +1776,19 @@
   <script src="/static/js/feature-loader.js?v=20260921-1"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20250608"></script>
-  <script src="/static/js/layout.js?v=20260929-editor-notebook-layout-1"></script>
-  <script src="/static/js/autocomplete.js?v=20261010-editor-feedback-1"></script>
+  <script src="/static/js/layout.js?v=20261010-horizontal-layout-1"></script>
+  <script src="/static/js/autocomplete.js?v=20261010-horizontal-layout-1"></script>
   <script src="/static/js/editor-behavior.js?v=20261009-assignment-step-2"></script>
-  <script src="/static/js/editor-feedback.js?v=20261010-editor-feedback-1"></script>
-  <script src="/static/js/editor-init.js?v=20261010-editor-feedback-1"></script>
+  <script src="/static/js/editor-feedback.js?v=20261010-horizontal-layout-1"></script>
+  <script src="/static/js/editor-init.js?v=20261010-horizontal-layout-1"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js"></script>
-  <script src="/static/js/app-core.js?v=20261010-editor-feedback-1"></script>
+  <script src="/static/js/app-core.js?v=20261010-horizontal-layout-1"></script>
   <script src="/static/js/step-mode.js?v=20261009-assignment-step-2"></script>
-  <script src="/static/js/wiki-reader.js?v=20261010-editor-feedback-1"></script>
+  <script src="/static/js/wiki-reader.js?v=20261010-horizontal-layout-1"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
   <script src="/static/js/lesson-plans.js?v=20260816-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20261010-editor-feedback-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20261010-horizontal-layout-1"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20260918-10"></script>
   <script src="/static/js/student-notebook.js?v=20260918-10"></script>

@@ -5,6 +5,34 @@
   const TABLET_BP = 1200;
   let viewportFrame = null;
   let editorFrame = null;
+  const LAYOUT_KEY = 'eagleide-layout-orientation';
+  const layoutListeners = new Set();
+
+  function isHorizontal() {
+    return document.body.classList.contains('workspace-horizontal');
+  }
+
+  function setOrientation(orientation, persist = true) {
+    const horizontal = orientation === 'horizontal';
+    document.body.classList.toggle('workspace-horizontal', horizontal);
+    const button = document.getElementById('layoutToggleBtn');
+    if (button) {
+      button.textContent = horizontal ? '▤ Horizontal' : '▥ Vertical';
+      button.title = horizontal ? 'Switch to vertical layout: editor beside shell and resources'
+        : 'Switch to horizontal layout: editor above shell and resources';
+      button.setAttribute('aria-label', button.title);
+      button.setAttribute('aria-pressed', String(horizontal));
+    }
+    if (persist) {
+      try { localStorage.setItem(LAYOUT_KEY, horizontal ? 'horizontal' : 'vertical'); } catch {}
+    }
+    layoutListeners.forEach(listener => listener());
+    refreshEditors();
+  }
+
+  // Apply before the application initializes its resizers, including restored sessions.
+  try { setOrientation(localStorage.getItem(LAYOUT_KEY), false); }
+  catch { setOrientation('vertical', false); }
 
   function refreshEditors() {
     if (editorFrame) return;
@@ -121,8 +149,12 @@
     initRoleMenu();
     observeWorkspaceSize();
     initLongPressContext();
+    document.getElementById('layoutToggleBtn')?.addEventListener('click', () => {
+      setOrientation(isHorizontal() ? 'vertical' : 'horizontal');
+    });
   });
 
   window.EagleIDE = window.EagleIDE || {};
-  window.EagleIDE.layout = { syncTabletMode, syncAppHeight, refreshEditors, isTabletWidth };
+  window.EagleIDE.layout = { syncTabletMode, syncAppHeight, refreshEditors, isTabletWidth,
+    isHorizontal, setOrientation, onOrientationChange: listener => layoutListeners.add(listener) };
 })();
