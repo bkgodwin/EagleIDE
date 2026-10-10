@@ -5,6 +5,17 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
+test('an already-open sharing dialog cannot send a file after connection loss', async () => {
+  const source = fs.readFileSync(path.join(__dirname, '../static/js/classroom-files.js'), 'utf8');
+  const handler = source.slice(source.indexOf('  async function submitSendFile()'), source.indexOf('  function renderAuditTree('));
+  const alerts = [];
+  const context = { window: { EagleIDE: { connection: { isLost: () => true } } }, alert: message => alerts.push(message) };
+  vm.runInNewContext(handler + 'globalThis.submit = submitSendFile;', context);
+  await context.submit();
+  assert.equal(alerts.length, 1);
+  assert.match(alerts[0], /keep this tab open/i);
+});
+
 function signalFixture() {
   const elements = new Map();
   const el = id => {

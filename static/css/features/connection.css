@@ -1,0 +1,30 @@
+.connection-warning {
+  flex: 0 0 auto;
+  background: #a71926;
+  color: #fff;
+  border: 2px solid #ff7c86;
+  padding: 9px 14px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+.connection-warning[hidden] { display: none !important; }
+#connectionWarning { display: flex; align-items: center; gap: 12px; z-index: 250; }
+#connectionWarning > span { flex: 1; }
+#connectionRetryBtn { flex-shrink: 0; color: #fff; background: #70111a; border-color: #fff; }
+.file-connection-warning, .shell-connection-warning { font-size: 13px; padding: 7px 10px; }
+.file-connection-warning { padding-right: 130px; min-height: 52px; }
+.connection-lost #fileTree, .connection-lost #fileBreadcrumb, .connection-lost .file-sidebar-actions {
+  opacity: .55;
+  cursor: not-allowed;
+}
+.connection-lost #fileBrowserTabPane button { pointer-events: none; }
+.connection-lost #runBtn, .connection-lost #stepModeBtn, .connection-lost #sendBtn {
+  background: #626771 !important;
+  color: #e6e6e6 !important;
+  border-color: #858a93 !important;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+@media (max-width: 600px) {
+  #connectionWarning { flex-wrap: wrap; gap: 5px; padding: 7px 10px; font-size: 13px; }
+}

@@ -322,6 +322,7 @@
     const autocomplete = options.autocomplete || (typeof window !== 'undefined' ? window.EagleAutocomplete : null);
     let model = null, sourceTimer = null, cursorTimer = null, generation = 0;
     let issueMarks = [], cursorMarks = [], spaceMarks = [], openLineHandles = [], activeLine = null;
+    const renderedLines = new Map();
     const wrapper = cm.getWrapperElement();
     const status = doc.createElement('button');
     status.type = 'button'; status.className = 'eagle-editor-status';
@@ -346,7 +347,9 @@
       openLineHandles = [];
     }
     function updateCursor() {
-      if (!model || model.source !== cm.getValue()) return;
+      // 'changes' invalidates the model synchronously; moving the caret does
+      // not need to copy and compare the entire document on every arrow key.
+      if (!model) return;
       cm.operation(() => {
         clear(cursorMarks);
         const cursor = cm.getCursor(), index = model.offsets[cursor.line] + cursor.ch;
@@ -377,6 +380,7 @@
       });
     }
     function renderStatus() {
+      const snapshot = model;
       panel.textContent = '';
       const issues = model.diagnostics;
       status.textContent = model.tooLarge ? 'Hints paused: large file' : issues.length ? `${issues.length} editor hint${issues.length === 1 ? '' : 's'}` : 'No editor hints';
@@ -391,7 +395,7 @@
         button.type = 'button'; button.className = `eagle-hint-${item.severity}`;
         button.textContent = `Line ${pos.line + 1}: ${item.message}`;
         button.addEventListener('click', () => {
-          if (model.source !== cm.getValue()) return;
+          if (model !== snapshot) return;
           if (typeof window !== 'undefined') window.EagleEditorBehavior?.unfoldLine(cm, pos.line);
           cm.setCursor(pos); cm.scrollIntoView(pos, 60); cm.focus();
         });
@@ -420,13 +424,14 @@
         updateSpaces(); updateActiveLine(); updateCursor();
       });
       renderStatus();
-      cm.refresh();
+      repaintGuides();
     }
     function invalidate() {
       generation++;
       clearTimeout(sourceTimer); clearTimeout(cursorTimer);
       cm.operation(() => { clear(issueMarks); clear(cursorMarks); clear(spaceMarks); clearOpenLines(); updateActiveLine(); });
       model = null;
+      repaintGuides();
       panel.hidden = true; status.setAttribute('aria-expanded', 'false'); status.textContent = 'Checking…';
       sourceTimer = setTimeout(rebuild, 180);
     }
@@ -440,14 +445,24 @@
       cursorTimer = setTimeout(() => { if (generation === current) updateCursor(); }, 40);
     });
     cm.on('viewportChange', () => { if (model) updateSpaces(); });
-    cm.on('renderLine', (_cm, line, element) => {
-      if (!model || model.tooLarge) return;
+    function paintGuides(line, element) {
+      if (!model || model.tooLarge) { element.style.backgroundImage = ''; return; }
       const lineNumber = cm.getLineNumber(line);
       const columns = new Set(model.guides.filter(guide => lineNumber >= guide.from && lineNumber <= guide.to).map(guide => guide.column));
       element.style.backgroundImage = [...columns].slice(0, 32).map(column => {
         const x = 4 + column * cm.defaultCharWidth();
         return `linear-gradient(to right, transparent ${x}px, var(--eagle-block-guide) ${x}px, var(--eagle-block-guide) ${x + 1}px, transparent ${x + 1}px)`;
       }).join(',');
+    }
+    function repaintGuides() {
+      for (const [line, element] of renderedLines) {
+        if (element.isConnected === false) renderedLines.delete(line);
+        else paintGuides(line, element);
+      }
+    }
+    cm.on('renderLine', (_cm, line, element) => {
+      renderedLines.set(line, element);
+      paintGuides(line, element);
     });
     // Consume Insert before CodeMirror's built-in toggleOverwrite binding.
     cm.addKeyMap({ Insert: editor => editor.toggleOverwrite(false) });

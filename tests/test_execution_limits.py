@@ -473,6 +473,39 @@ class ExecutionLimitTestCase(unittest.TestCase):
         self.assertTrue(any(event.get("name") == "finished" for event in events))
         self.assertFalse(eagle._active_runs_by_sid)
 
+    def test_windows_venv_worker_launch_keeps_one_process_limit(self):
+        environment = {"SAFE": "value"}
+        with mock.patch.object(eagle.os, "name", "nt"), \
+                mock.patch.object(eagle.sys, "prefix", "venv"), \
+                mock.patch.object(eagle.sys, "base_prefix", "base"), \
+                mock.patch.object(eagle.sys, "_base_executable", "base-python.exe"), \
+                mock.patch.object(eagle.sysconfig, "get_path", return_value="trusted-site-packages"):
+            executable = eagle._python_worker_executable(environment)
+        self.assertEqual(executable, "base-python.exe")
+        self.assertEqual(environment, {"SAFE": "value", "PYTHONPATH": "trusted-site-packages"})
+
+    def test_full_queue_rejects_with_visible_reason_and_releases_client_state(self):
+        eagle.MAX_CONCURRENT_RUNS = 1
+        first, queued, rejected = self._socket(), self._socket(), self._socket()
+        queued_token = self._add_student_token("full-queue-waiter")
+        rejected_token = self._add_student_token("full-queue-rejected")
+        first.emit("run_code", self._payload("input('Waiting: ')"))
+        deadline = time.time() + 5
+        received = []
+        while time.time() < deadline and eagle.INPUT_TOKEN not in self._output(received):
+            received.extend(first.get_received())
+            eagle.socketio.sleep(0.02)
+        self.assertIn(eagle.INPUT_TOKEN, self._output(received))
+        with mock.patch.object(eagle, "MAX_QUEUED_RUNS", 1):
+            queued.emit("run_code", self._payload("print('queued')", token=queued_token))
+            rejected.emit("run_code", self._payload("print('must not execute')", token=rejected_token))
+            events = rejected.get_received()
+        self.assertIn("Execution queue is full; try again shortly", self._output(events))
+        self.assertTrue(any(event["name"] == "finished" for event in events))
+        self.assertFalse(any(event["name"] in ("run_ack", "run_queued") for event in events))
+        self.assertEqual(len(eagle._execution_queue), 1)
+        self.assertFalse(any(entry.get("identity") == f"account:{eagle._student_tokens[rejected_token]['email']}" for entry in eagle._active_runs_by_sid.values()))
+
     def test_invalid_token_cannot_fall_back_to_guest_execution(self):
         client = self._socket()
         client.emit("run_code", self._payload("print('must not run')", token="invalid-token"))

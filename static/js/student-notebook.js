@@ -22,6 +22,7 @@
   let notebookButtonNext = null;
   let saveTimer = null;
   let dirty = false;
+  let saving = null;
   let activeEditorEl = null;
   let runningCodeId = null;
   let waitingForNotebookInput = false;
@@ -257,23 +258,36 @@
     }
     persistActivePageFromDom();
     dirty = true;
+    if (window.EagleIDE?.connection?.isLost()) { setStatus('Offline: keep this tab open', 'error'); return; }
     const doSave = async () => {
+      while (saving) await saving;
+      if (!dirty || window.EagleIDE?.connection?.isLost()) return;
+      const savedNotebook = notebook;
+      const classId = activeClassId || currentClassId();
+      const snapshot = JSON.stringify(notebook);
       setStatus('Saving...');
-      try {
-        const res = await fetch('/api/notebook/save', {
-          method: 'POST',
-          headers: userJsonHeaders(),
-          body: JSON.stringify({ classId: activeClassId || currentClassId(), notebook }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!data?.ok) throw new Error(data?.error || 'Save failed');
-        notebook = ensureNotebookShape(data.notebook);
-        dirty = false;
-        setStatus('Saved');
-      } catch (err) {
-        setStatus('Save failed', 'error');
-        console.warn('Notebook save failed:', err);
-      }
+      const pending = (async () => {
+        try {
+          const request = window.EagleIDE?.connection?.request || fetch;
+          const res = await request('/api/notebook/save', {
+            method: 'POST',
+            headers: userJsonHeaders(),
+            body: JSON.stringify({ classId, notebook: JSON.parse(snapshot) }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!data?.ok) throw new Error(data?.error || 'Save failed');
+          if (notebook === savedNotebook && classId === (activeClassId || currentClassId()) && JSON.stringify(notebook) === snapshot) {
+            notebook = ensureNotebookShape(data.notebook);
+            dirty = false;
+            setStatus('Saved');
+          } else setStatus('Unsaved');
+        } catch (err) {
+          setStatus('Save failed', 'error');
+          console.warn('Notebook save failed:', err);
+        }
+      })();
+      saving = pending;
+      try { await pending; } finally { if (saving === pending) saving = null; }
     };
     if (immediate) {
       await doSave();
@@ -288,6 +302,7 @@
     dirty = true;
     setStatus('Unsaved');
     if (saveTimer) clearTimeout(saveTimer);
+    if (window.EagleIDE?.connection?.isLost()) { setStatus('Offline: keep this tab open', 'error'); return; }
     saveTimer = setTimeout(() => saveNotebook({ immediate: true }), SAVE_DELAY_MS);
   }
 
@@ -1737,10 +1752,19 @@
   }
 
   window.StudentNotebook = {
+    hasUnsavedChanges: () => dirty,
     onAuthChanged,
     onTeacherDashboardOpen: loadTeacherNotebookPrompts,
     loadTeacherNotebookPrompts,
   };
+
+  window.addEventListener('eagle-connection-changed', event => {
+    if (event.detail.lost) {
+      clearTimeout(saveTimer);
+      if (dirty) setStatus('Offline: keep this tab open', 'error');
+    } else if (dirty) scheduleSave();
+    updateNotebookRunButtons();
+  });
 
   bindUi();
   updateEntryPoints();

@@ -277,6 +277,20 @@ test('disabled engine does not fetch metadata or schedule analysis work', async 
   engine.setEnabled(false);
 });
 
+test('offline suspension preserves autocomplete preference and leaves navigation keys alone', () => {
+  const handlers = {};
+  const cm = { on(name, fn) { handlers[name] = fn; } };
+  const engine = autocomplete.createEngine(cm, { document: null, window: null });
+  engine.setSuspended(true);
+  assert.equal(engine.isEnabled(), true);
+  for (const key of ['Enter','ArrowUp','ArrowDown','ArrowRight','Tab']) {
+    handlers.keydown(cm, {key, preventDefault() { throw new Error('offline keys must remain native'); }});
+  }
+  handlers.inputRead();
+  engine.setEnabled(false); engine.setSuspended(false);
+  assert.equal(engine.isEnabled(), false);
+});
+
 test('Enter and Tab accept the highlighted suggestion without a mouse click', () => {
   const handlers = {};
   const makeNode = () => ({

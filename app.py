@@ -25,6 +25,7 @@ import sqlite3
 import string
 import subprocess
 import sys
+import sysconfig
 import threading
 import time
 import uuid
@@ -7061,6 +7062,17 @@ def _runner_environment(extra: Optional[dict[str, str]] = None) -> dict[str, str
     return env
 
 
+def _python_worker_executable(env: dict[str, str]) -> str:
+    # Windows venv python.exe is a redirector that spawns the real interpreter.
+    # A one-process Job Object can reject that second process during startup.
+    # Launch the real interpreter directly with only the trusted venv packages.
+    if os.name == "nt" and sys.prefix != sys.base_prefix:
+        executable = getattr(sys, "_base_executable", sys.executable)
+        env["PYTHONPATH"] = sysconfig.get_path("purelib")
+        return executable
+    return sys.executable
+
+
 class _ProcessRunnerBase:
     def __init__(self, sid: str):
         self.sid = sid
@@ -7461,7 +7473,7 @@ class Runner(_ProcessRunnerBase):
             env["EAGLE_TRACE_TOKEN"] = trace_token
         try:
             self._launch(
-                [sys.executable, "-u", str(SANDBOX_WORKER), str(runner_py), str(allowed_root_path)],
+                [_python_worker_executable(env), "-u", str(SANDBOX_WORKER), str(runner_py), str(allowed_root_path)],
                 str(cwd_path),
                 env,
                 disk_root=allowed_root_path,
@@ -7570,52 +7582,11 @@ class JsRunner(_ProcessRunnerBase):
         runner_js = sbox / "runner.js"
         runner_js.write_text(code, encoding="utf-8")
         cwd_path = user_dir if user_dir and user_dir.exists() else sbox
-        wrapper_code = f"""
-const fs = require('fs');
-const vm = require('vm');
-const INPUT_TOKEN = {repr(INPUT_TOKEN)};
-function input(prompt) {{
-  if (prompt !== undefined && prompt !== null) process.stdout.write(String(prompt));
-  process.stdout.write(INPUT_TOKEN + '\\n');
-  const buf = Buffer.alloc(1);
-  let line = '';
-  while (true) {{
-    let bytes = 0;
-    try {{ bytes = fs.readSync(0, buf, 0, 1); }} catch (e) {{ break; }}
-    if (bytes === 0) break;
-    const ch = buf.toString('utf8', 0, 1);
-    if (ch === '\\n') break;
-    if (ch !== '\\r') line += ch;
-  }}
-  process.stdout.write(line + '\\n');
-  return line;
-}}
-const safeConsole = Object.freeze({{
-  log: (...args) => process.stdout.write(args.map(v => String(v)).join(' ') + '\\n'),
-  info: (...args) => process.stdout.write(args.map(v => String(v)).join(' ') + '\\n'),
-  warn: (...args) => process.stdout.write(args.map(v => String(v)).join(' ') + '\\n'),
-  error: (...args) => process.stderr.write(args.map(v => String(v)).join(' ') + '\\n')
-}});
-try {{
-  const __userCode = fs.readFileSync({repr(str(runner_js))}, 'utf8');
-  process.chdir({repr(str(cwd_path))});
-  const sandbox = {{
-    console: safeConsole, input, Math, Date, JSON,
-    parseInt, parseFloat, isNaN, isFinite, encodeURIComponent, decodeURIComponent,
-    setTimeout, setInterval, clearTimeout, clearInterval
-  }};
-  const context = vm.createContext(sandbox, {{ codeGeneration: {{ strings: false, wasm: false }} }});
-  const script = new vm.Script(__userCode, {{ filename: 'runner.js' }});
-  script.runInContext(context, {{ timeout: {int(MAX_WALL_TIME * 1000)} }});
-}} catch (e) {{
-  process.stderr.write((e && e.stack) ? e.stack : String(e));
-  process.stderr.write('\\n');
-  process.exit(1);
-}}
-"""
         try:
             self._launch(
-                [NODE_EXECUTABLE, f"--max-old-space-size={JS_HEAP_LIMIT_MB}", "-e", wrapper_code],
+                [NODE_EXECUTABLE, f"--max-old-space-size={JS_HEAP_LIMIT_MB}", "--experimental-vm-modules",
+                 str(BASE_DIR / "js_worker.js"), str(runner_js), str(cwd_path),
+                 str(max(1, int(MAX_WALL_TIME * 1000))), INPUT_TOKEN],
                 str(cwd_path),
                 _runner_environment({"NODE_DISABLE_COLORS": "1"}),
                 # V8 reserves substantially more virtual address space than its

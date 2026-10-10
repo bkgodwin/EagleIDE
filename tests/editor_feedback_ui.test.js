@@ -177,6 +177,15 @@ test('caret row moves immediately even while source analysis is pending', () => 
   assert.equal(cm.active.line, 2);
 });
 
+test('arrow-key feedback does not copy the full buffer or refresh the editor', async () => {
+  const { cm } = editorHarness('value = 1\nprint(value)');
+  cm.getValue = () => { throw new Error('arrow keys must not read the document'); };
+  cm.refresh = () => { throw new Error('feedback must not remeasure the viewport'); };
+  cm.setCursor({line:1, ch:7});
+  await new Promise(resolve => setTimeout(resolve,70));
+  assert.equal(cm.active.line,1);
+});
+
 test('unfinished groups shade full rows to EOF; single-line strings stop at the row end', async () => {
   const { cm, controller } = editorHarness('values = [\n\t1,\n\t2');
   assert.deepEqual(controller.getModel().openLines, [true, true, true]);

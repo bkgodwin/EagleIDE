@@ -3,6 +3,28 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const behavior = require('../static/js/editor-behavior.js');
+const vm = require('node:vm');
+
+test('textarea keyboard edits mark progress dirty and honor read-only and composition states', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../static/js/editor-init.js'), 'utf8');
+  const listeners = {}, inputs = [];
+  const ta = { value: 'if ready:', selectionStart: 9, selectionEnd: 9, style: {},
+    addEventListener(type, callback) { listeners[type] = callback; },
+    dispatchEvent(event) { inputs.push(event.type); } };
+  const context = { window: { EagleEditorBehavior: behavior }, Event,
+    document: { getElementById: () => ta }, localStorage: { getItem: () => null } };
+  vm.runInNewContext(source.slice(0, source.indexOf('var editor = initEditor();')) + 'initEditor();', context);
+  const press = (key, extra = {}) => listeners.keydown({ key, preventDefault() {}, ...extra });
+  press('Enter'); press('Tab');
+  assert.equal(ta.value, 'if ready:\n\t\t');
+  assert.deepEqual(inputs, ['input', 'input']);
+  ta.readOnly = true;
+  press('Enter'); press('Tab');
+  listeners.paste({ clipboardData: { getData: () => '    changed' }, preventDefault() {} });
+  ta.readOnly = false; press('Enter', { isComposing: true });
+  assert.equal(ta.value, 'if ready:\n\t\t');
+  assert.equal(inputs.length, 2);
+});
 
 test('Enter preserves existing indentation and clears it after a blank line', () => {
   assert.deepEqual(behavior.nextPythonIndent('\t\tprint("hi")', 13), { clearBlankLine: false, text: '\n\t\t' });

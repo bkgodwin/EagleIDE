@@ -32,15 +32,12 @@ function eagleFoldRange(cm, pos) {
           if (normalized !== pasted) change.update(change.from, change.to, normalized.split('\n'), change.origin);
         });
         window.eagleEditorFeedback = window.EagleEditorFeedback?.attach(cm);
-        let dirty = true;
-        cm.on('change', () => { dirty = true; });
-        window.__isDirty = () => dirty;
         
         // Custom autocomplete system
         window.eagleEditor = cm;
         return {
           getValue: () => cm.getValue(),
-          setValue: (v) => { cm.setValue(v); dirty = true; }
+          setValue: (v) => cm.setValue(v)
         };
       } else {
         // Fallback textarea uses the same predictable Python Enter rules.
@@ -48,12 +45,14 @@ function eagleFoldRange(cm, pos) {
         ta.style.width = "100%"; ta.style.height = "100%"; ta.style.background = "var(--bg-dark)";
         ta.style.color = "var(--text-light)"; ta.style.border = "0"; ta.style.outline = "none";
         ta.addEventListener("keydown", (e) => {
+          if (ta.readOnly || e.isComposing) return;
           if (e.key === "Insert" && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
             e.preventDefault();
           } else if (e.key === "Tab") { e.preventDefault();
             const s = ta.selectionStart, e2 = ta.selectionEnd;
             ta.value = ta.value.substring(0, s) + "\t" + ta.value.substring(e2);
             ta.selectionStart = ta.selectionEnd = s + 1;
+            ta.dispatchEvent(new Event('input', { bubbles: true }));
           } else if (e.key === "Enter") {
             e.preventDefault();
             const start = ta.selectionStart;
@@ -68,9 +67,11 @@ function eagleFoldRange(cm, pos) {
             const to = next.clearBlankLine && start === end ? lineEnd : end;
             ta.value = ta.value.slice(0, from) + next.text + ta.value.slice(to);
             ta.selectionStart = ta.selectionEnd = from + next.text.length;
+            ta.dispatchEvent(new Event('input', { bubbles: true }));
           }
         });
         ta.addEventListener('paste', (event) => {
+          if (ta.readOnly) return;
           if (!String(document.getElementById('languageSelector')?.value || 'python').toLowerCase().includes('python')) return;
           const pasted = event.clipboardData?.getData('text/plain') || '';
           const normalized = window.EagleEditorBehavior?.normalizePastedIndentation(pasted) ?? pasted;
@@ -82,7 +83,6 @@ function eagleFoldRange(cm, pos) {
           ta.selectionStart = ta.selectionEnd = start + normalized.length;
           ta.dispatchEvent(new Event('input', { bubbles: true }));
         });
-        window.__isDirty = () => true;
         return { getValue: () => ta.value, setValue: (v) => { ta.value = v; } };
       }
     }
@@ -208,13 +208,6 @@ function eagleFoldRange(cm, pos) {
       window.eagleCompletionEngine = completionEngine;
       window.toggleEagleCompletion = enabledState => completionEngine.setEnabled(enabledState);
     })();
-
-    // Warn before closing/reloading
-    window.addEventListener('beforeunload', (e) => {
-      if (typeof window.__isDirty === 'function' ? window.__isDirty() : true) {
-        e.preventDefault(); e.returnValue = '';
-      }
-    });
 
     // Starter example
     editor.setValue(`# Welcome Eagles!.
