@@ -3629,6 +3629,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       
       // AI settings
       document.getElementById('aiEnabledModal').checked = currentConfig?.ai_explainer_enabled || false;
+      document.getElementById('aiNotebookFeedbackEnabledModal').checked = currentConfig?.ai_notebook_feedback_enabled !== false;
       document.getElementById('aiUrlInputModal').value = currentConfig?.ai_ollama_url || 'http://127.0.0.1:11434';
       document.getElementById('aiModelInputModal').value = currentConfig?.ai_model || 'gemma3:4b';
       document.getElementById('aiTimeoutInputModal').value = Number(currentConfig?.ai_request_timeout_seconds || 120);
@@ -4128,6 +4129,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       
       // AI settings
       const ai_explainer_enabled = document.getElementById('aiEnabledModal').checked;
+      const ai_notebook_feedback_enabled = document.getElementById('aiNotebookFeedbackEnabledModal').checked;
       const ai_ollama_url = document.getElementById('aiUrlInputModal').value.trim();
       const ai_model = document.getElementById('aiModelInputModal').value.trim();
       const ai_request_timeout_seconds = parseInt(document.getElementById('aiTimeoutInputModal').value, 10) || 120;
@@ -4160,6 +4162,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         ide_solid_background_enabled,
         ide_solid_background_color,
         ai_explainer_enabled, 
+        ai_notebook_feedback_enabled,
         ai_ollama_url, 
         ai_model, 
         ai_request_timeout_seconds,

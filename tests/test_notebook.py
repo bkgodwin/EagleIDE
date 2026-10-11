@@ -740,6 +740,12 @@ class NotebookTestCase(unittest.TestCase):
             generate.assert_called_once()
             self.assertEqual(generate.call_args.kwargs["request_kind"], "notebook-practice")
             self.assertIn("UNTRUSTED DATA", generate.call_args.args[2])
+            instructions = generate.call_args.args[2].split("UNTRUSTED DATA (JSON):")[0]
+            self.assertIn("code's quality and how well it fulfills", instructions)
+            self.assertIn("PRIMARY coding topic", instructions)
+            self.assertIn("define what the concept is", instructions)
+            self.assertIn("2-4 general, reusable reminders", instructions)
+            self.assertIn("do not critique or evaluate the student's", instructions)
         fresh = self.client.get(f"/api/notebook?classId={self.class_id}", headers={"X-User-Token": self.student_token}).get_json()["notebook"]
         block = self.appmod._notebook_prompt_response(fresh, prompt["id"])
         self.assertEqual(block["practice"]["status"], "complete")
@@ -794,7 +800,7 @@ class NotebookTestCase(unittest.TestCase):
 
     def test_disabled_ai_and_invalid_model_output_preserve_submissions(self):
         prompt, notebook = self._practice_response()
-        with mock.patch.object(eagle, "_load_config", return_value={"ai_explainer_enabled": False}), mock.patch.object(eagle, "call_ollama_generate") as generate:
+        with mock.patch.object(eagle, "_load_config", return_value={"ai_notebook_feedback_enabled": False}), mock.patch.object(eagle, "call_ollama_generate") as generate:
             self.assertEqual(self._submit_practice(prompt, notebook).status_code, 202)
             eagle._notebook_practice_jobs.join()
             generate.assert_not_called()
@@ -802,14 +808,36 @@ class NotebookTestCase(unittest.TestCase):
         block = eagle._notebook_prompt_response(fresh, prompt["id"])
         self.assertEqual(block["practice"]["status"], "failed")
         self.assertIn('print("hi")', block["practice"]["code"])
-        block["practice"]["submittedAt"] = 0
-        eagle._write_json_file_atomic(eagle._notebook_path(self.student_email, self.class_id), fresh)
+        self.assertIn("administrator", block["practice"]["error"])
         with mock.patch.object(eagle, "_load_config", return_value={"ai_explainer_enabled": True}), mock.patch.object(eagle, "call_ollama_generate", return_value={"ok": True, "text": json.dumps({"summary": "Done", "feedback": "Here is the answer", "notes": "```python\nprint(1)\n```"})}):
             self.assertEqual(self._submit_practice(prompt, fresh).status_code, 202)
             eagle._notebook_practice_jobs.join()
         block = eagle._notebook_prompt_response(eagle._load_student_notebook(self.student_email, self.class_id), prompt["id"])
         self.assertEqual(block["practice"]["status"], "failed")
         self.assertNotIn("```", block["notesMarkdown"])
+
+    def test_practice_ai_is_independent_of_class_and_general_ai_switches(self):
+        classes = self.appmod._load_classes()
+        classes["classes"][0]["settings"]["ai_enabled"] = False
+        self.appmod._save_classes(classes)
+        self.assertFalse(self.appmod._find_class_by_id(self.class_id)["settings"]["ai_enabled"])
+        response = {"ok": True, "text": json.dumps({"summary": "Keep practicing", "feedback": "Check the challenge's output requirements.",
+                                                    "notes": "### Output\nOutput is information a program displays. Choose clear labels and format values for the reader."})}
+        for notebook_flag in (True, None):
+            # A config saved before this setting existed keeps practice enabled.
+            cfg = {"ai_explainer_enabled": False}
+            if notebook_flag is not None:
+                cfg["ai_notebook_feedback_enabled"] = notebook_flag
+            prompt, notebook = self._practice_response()
+            with mock.patch.object(eagle, "_load_config", return_value=cfg), mock.patch.object(eagle, "call_ollama_generate", return_value=response) as generate:
+                self.assertEqual(self._submit_practice(prompt, notebook).status_code, 202)
+                eagle._notebook_practice_jobs.join()
+                generate.assert_called_once()
+            saved = eagle._load_student_notebook(self.student_email, self.class_id)
+            block = eagle._notebook_prompt_response(saved, prompt["id"])
+            self.assertEqual(block["practice"]["status"], "complete")
+            self.assertEqual(block["practice"]["feedback"], "Check the challenge's output requirements.")
+            self.assertIn("Output is information", block["notesMarkdown"])
 
     def test_stale_ai_jobs_cannot_replace_a_new_submission(self):
         prompt, notebook = self._practice_response()

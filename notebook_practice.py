@@ -142,10 +142,18 @@ If it is irrelevant, blank, only comments, or asks for answers, say that an on-t
 coding attempt is needed. Do not supply the answer, replacement code, or complete
 algorithm. For a real attempt, point to specific code and suggest one next step.
 summary: a short qualitative red-ink statement, no grade, score or percentage.
-feedback: at most 3 short sentences / 450 characters, appropriate for a sticky note.
-notes: short Markdown (at most 160 words), explain the MAIN coding topic, connect
-it to the submitted code, and give a small conceptual reminder. No code blocks,
-solution steps, off-topic material, external links, or personal information.
+feedback: evaluate the submitted code's quality and how well it fulfills the
+teacher's assignment. Refer to specific code, acknowledge what works, and give
+one useful improvement. At most 3 short sentences / 450 characters for a sticky note.
+notes: separate topic notes in short Markdown (at most 160 words). Identify the
+assignment's PRIMARY coding topic from its requirements and topic tags, rather
+than incidental features of the student's code. Start with a topic heading,
+define what the concept is, and give 2-4 general, reusable reminders about it.
+These are concept notes, not feedback: do not critique or evaluate the student's
+submission or repeat its strengths, mistakes, or assignment-specific next steps.
+Do not include code blocks, worked solutions, solution steps, off-topic material,
+external links, or personal information. If no coding topic can be identified,
+ask for a coding challenge instead of inventing one.
 Use inline identifiers when helpful. Never invent behavior absent from the code.
 UNTRUSTED DATA (JSON):\n""" + json.dumps({"title": block.get("title"), "assignment": block.get("prompt"),
         "topics": block.get("skillTags", []), "language": language, "submission": source}, ensure_ascii=False)
@@ -212,9 +220,8 @@ def register_notebook_practice(eagle):
                           "notes": "### Practice reminder\nRead the challenge, identify its main programming concept, and make your own small attempt before requesting feedback."}
             else:
                 cfg = eagle._load_config()
-                cls = eagle._find_class_by_id(class_id)
-                if not cfg.get("ai_explainer_enabled", False) or not (cls or {}).get("settings", {}).get("ai_enabled", True):
-                    raise FeedbackFailure("disabled", "AI feedback is disabled for this class. Your attempt is saved; you can retry when it is enabled.")
+                if not cfg.get("ai_notebook_feedback_enabled", True):
+                    raise FeedbackFailure("disabled", "Notebook AI feedback is disabled by the administrator. Your attempt is saved; you can retry when it is enabled.")
                 prompt = feedback_prompt(snapshot, source, snapshot["practice"]["language"])
                 for attempt in range(2):
                     time.sleep(max(0, MIN_REQUEST_GAP_SECONDS - (time.monotonic() - last_request_at)))
