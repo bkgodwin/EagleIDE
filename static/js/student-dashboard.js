@@ -224,21 +224,6 @@
       + Number(assignment.quiz?.totalPoints || 0);
   }
 
-  async function copyPastAssignmentToEditor(index) {
-    const assignment = pastAssignments[index];
-    const submission = assignment?.studentSubmission;
-    const c = ctx();
-    if (!submission || !c.setEditorSnapshot) return;
-    const opened = await c.setEditorSnapshot({
-      code: submission.code || '',
-      language: assignmentLanguage(submission.fileName),
-      fileName: submission.fileName || 'past-assignment.py',
-      source: 'assignment',
-      draft: true,
-    });
-    if (opened !== false) closeDashboard();
-  }
-
   async function renderPastAssignmentsPane() {
     const pane = document.getElementById('studentPastAssignmentsPane');
     if (!pane) return;
@@ -277,13 +262,13 @@
               <div class="student-past-meta">Submitted ${escapeHtml(submission.submittedAt || '—')} · ${escapeHtml(submission.fileName || 'submission')}</div>
               ${submission.aiFeedback ? `<details class="student-past-feedback assignment-feedback-details"><summary>View teacher feedback</summary>${renderAssignmentFeedback(submission.aiFeedback)}</details>` : ''}
               ${codePreview ? `<details class="student-past-code"><summary>View preserved submission</summary><pre><code>${escapeHtml(codePreview)}${String(submission.code || '').length > codePreview.length ? '\n…' : ''}</code></pre></details>` : '<div class="student-past-meta">No code file was submitted.</div>'}
-              ${codePreview ? `<button class="btn run student-past-copy-btn" type="button" data-index="${index}">Copy to Editor</button>` : ''}
+              <button class="btn secondary student-past-view-btn" type="button" data-index="${index}">View submission</button>
             ` : '<div class="student-past-meta">You did not submit work for this assignment.</div>'}
           </article>
         `;
       }).join('');
-      pane.querySelectorAll('.student-past-copy-btn').forEach(button => {
-        button.addEventListener('click', () => copyPastAssignmentToEditor(Number(button.dataset.index)));
+      pane.querySelectorAll('.student-past-view-btn').forEach(button => {
+        button.addEventListener('click', () => window.AssignmentWorkflow.openFiles(pastAssignments[Number(button.dataset.index)].id));
       });
     } catch (error) {
       pastAssignments = [];

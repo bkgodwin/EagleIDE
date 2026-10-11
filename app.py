@@ -42,6 +42,7 @@ from collections import defaultdict, deque
 from cryptography.fernet import Fernet, InvalidToken
 
 from classroom_features import merge_class_settings, register as register_classroom_features
+import assignment_workflow
 from lesson_plan_features import register as register_lesson_plan_features
 from network_features import register as register_network_features
 from sandbox_containment import landlock_status
@@ -1127,6 +1128,7 @@ def _load_classes(*, class_id: Optional[str] = None) -> dict:
                 "settings": normalized_settings,
                 "students": students,
                 "coteachers": [e for e in c.get("coteachers", []) if e in students],
+                "accommodations": {email: assignment_workflow.accommodation(value) for email, value in (c.get("accommodations") if isinstance(c.get("accommodations"), dict) else {}).items() if email in students},
                 "created_at": c.get("created_at") or _current_timestamp(),
             })
         normalized = {"classes": classes}
@@ -4786,6 +4788,7 @@ def teacher_list_classes():
                 "email": student_email,
                 **_profile_fields(student_user),
                 "is_coteacher": _is_coteacher(student_email, c),
+                "accommodations": assignment_workflow.accommodation((c.get("accommodations") or {}).get(student_email)),
                 "enabled": student_user.get("enabled", True),
             })
         result.append({
@@ -6039,6 +6042,8 @@ def _normalize_language_hint(language: Any, file_name: str = "") -> str:
 
 
 def _language_label(language: str) -> str:
+    if language == "mixed":
+        return "Python and JavaScript"
     if language == "javascript":
         return "JavaScript"
     if language == "html":
@@ -9100,6 +9105,12 @@ def _normalize_assignment_schema(assignment: dict) -> dict:
     normalized = dict(assignment or {})
     normalized["id"] = str(normalized.get("id") or "").strip().lower()
     normalized["allowFileSubmission"] = bool(normalized.get("allowFileSubmission", True))
+    normalized["allowMultiFileSubmission"] = bool(normalized.get("allowMultiFileSubmission", False))
+    normalized["allowSubmissionAnyTime"] = bool(normalized.get("allowSubmissionAnyTime", False))
+    try:
+        normalized["maxFileSubmissions"] = max(0, min(100, int(normalized.get("maxFileSubmissions", 0))))
+    except (TypeError, ValueError):
+        normalized["maxFileSubmissions"] = 0
     normalized["shareAiFeedback"] = bool(normalized.get("shareAiFeedback", False))
     released_at = str(normalized.get("releasedAt") or "").strip()
     if not released_at and (normalized.get("active") or normalized.get("submissions")):
@@ -9171,6 +9182,12 @@ def _normalize_assignment_schema(assignment: dict) -> dict:
         if not isinstance(sub, dict):
             continue
         sub_n = dict(sub)
+        sub_n["history"] = [s for s in (sub_n.get("history") if isinstance(sub_n.get("history"), list) else []) if isinstance(s, dict)][:assignment_workflow.HISTORY_LIMIT]
+        sub_n["teacherFeedback"] = _sanitize_ai_feedback_text(sub_n.get("teacherFeedback") or "")[:MAX_ASSIGNMENT_RUBRIC_CHARS]
+        try:
+            sub_n["fileSubmissionCount"] = max(0, int(sub_n.get("fileSubmissionCount", 1 if sub_n.get("submissionPath") or sub_n.get("code") else 0)))
+        except (TypeError, ValueError):
+            sub_n["fileSubmissionCount"] = 0
         try:
             sub_n["quizSubmissionCount"] = max(0, int(sub_n.get("quizSubmissionCount", 0)))
         except Exception:
@@ -9366,6 +9383,10 @@ def _migrate_assignment_submission_files(assignment: dict) -> bool:
     for submission in assignment.get("submissions") or []:
         if not isinstance(submission, dict) or not assignment.get("allowFileSubmission", True):
             continue
+        if submission.get("files"):
+            # Bundle files are authoritative. Missing attachments must not be
+            # reconstructed from the combined AI source or another revision.
+            continue
         existing_relative = str(submission.get("submissionPath") or "").strip()
         existing_path = _assignment_submission_path(assignment, existing_relative) if existing_relative else None
         if existing_path and existing_path.exists() and existing_path.is_file():
@@ -9504,6 +9525,7 @@ def _assignment_request_reference(data: dict) -> tuple[str, Optional[str]]:
 
 def _student_assignment_payload(assignment: dict, student_email: str, *, include_submission: bool = False) -> dict:
     payload = _assignment_effective_payload(assignment)
+    payload.update(assignment_workflow.student_state(sys.modules[__name__], assignment, student_email))
     payload.pop("submissions", None)
     for teacher_only_field in (
         "aiGradingInstructions",
@@ -9530,10 +9552,14 @@ def _student_assignment_payload(assignment: dict, student_email: str, *, include
         quiz_complete, quiz_answered, quiz_total = _assignment_quiz_complete(assignment, submission)
         summary = {
             "submittedAt": submission.get("submittedAt"),
+            "withdrawn": bool(submission.get("withdrawn")),
+            "files": assignment_workflow.public_files(submission),
+            "fileSubmissionCount": submission.get("fileSubmissionCount", 0),
+            "teacherFeedback": submission.get("teacherFeedback") if assignment.get("shareAiFeedback") else "",
             "codeScore": submission.get("codeScore"),
             "quizScore": submission.get("quizScore"),
             "totalScore": submission.get("totalScore"),
-            "aiFeedback": submission.get("aiFeedback") if assignment.get("shareAiFeedback") else "",
+            "aiFeedback": assignment_workflow.student_feedback(assignment, submission),
             "quizComplete": quiz_complete,
             "quizAnsweredCount": quiz_answered,
             "quizQuestionCount": quiz_total,
@@ -9542,18 +9568,20 @@ def _student_assignment_payload(assignment: dict, student_email: str, *, include
     if include_submission and submission:
         code = str(submission.get("code") or "")
         stored_path = _assignment_submission_path(assignment, submission.get("submissionPath") or "")
-        if stored_path and stored_path.exists() and stored_path.is_file():
+        if not submission.get("files") and stored_path and stored_path.exists() and stored_path.is_file():
             try:
                 code = stored_path.read_text(encoding="utf-8")
             except Exception:
                 pass
         payload["studentSubmission"] = {
             **(summary or {}),
-            "code": code,
+            "code": code[:4000],
             "fileName": str(submission.get("submittedFileName") or "submission.py"),
         }
     else:
         payload["studentSubmission"] = None
+    maximum = payload.get("maxFileSubmissions", 0)
+    payload["canSubmitFiles"] = bool(payload["canSubmit"] and (not maximum or (submission or {}).get("fileSubmissionCount", 0) < maximum))
     return payload
 
 @app.get("/api/assignments")
@@ -9570,7 +9598,7 @@ def get_assignments():
         teacher_assignments = [a for a in all_assignments if _assignment_access(actor, a)]
         return jsonify(
             ok=True,
-            assignments=[_assignment_effective_payload(a) for a in teacher_assignments],
+            assignments=[assignment_workflow.teacher_payload(sys.modules[__name__], a) for a in teacher_assignments],
             gradingCriteria=list(ASSIGNMENT_GRADING_CRITERIA),
             isAdmin=False,
             isTeacher=True,
@@ -9589,7 +9617,7 @@ def get_assignments():
     visible_assignments = []
     for a in all_assignments:
         target_class = a.get("targetClassId")
-        if not target_class or target_class not in class_ids or not _assignment_is_active(a):
+        if not target_class or target_class not in class_ids or not (a.get("releasedAt") or a.get("active")):
             continue
         visible_assignments.append(_student_assignment_payload(a, user.get("email") or ""))
     return jsonify(ok=True, assignments=visible_assignments, isAdmin=False, isTeacher=False, canManage=False)
@@ -9611,7 +9639,7 @@ def get_past_assignments():
         _student_assignment_payload(assignment, user.get("email") or "", include_submission=True)
         for assignment in _list_assignments()
         if assignment.get("targetClassId") in class_ids
-        and not _assignment_is_active(assignment)
+        and assignment_workflow.student_state(sys.modules[__name__], assignment, user.get("email") or "")["isPast"]
         and bool(str(assignment.get("releasedAt") or "").strip())
     ]
     past.sort(key=lambda row: (str(row.get("releasedAt") or row.get("createdAt") or ""), str(row.get("name") or "").casefold()), reverse=True)
@@ -9675,8 +9703,16 @@ def create_assignment():
     rubric_context = _assignment_rubric_context(task, max_score, ai_grading_criteria) if ai_grading_rubric else ""
     try:
         due_at = _normalize_assignment_due_at(data.get("dueAt"))
+        for key in ("allowMultiFileSubmission", "allowSubmissionAnyTime"):
+            if key in data and not isinstance(data[key], bool):
+                raise ValueError("Submission options must be enabled or disabled")
+        attempts = data.get("maxFileSubmissions", 0)
+        if isinstance(attempts, bool) or int(attempts) != float(attempts) or not 0 <= int(attempts) <= 100:
+            raise ValueError("File submission attempts must be a whole number from 0 to 100")
     except ValueError as exc:
         return jsonify(ok=False, error=str(exc)), 400
+    except (TypeError, OverflowError):
+        return jsonify(ok=False, error="Invalid file submission attempts"), 400
     assignment = {
         "id": _new_assignment_id(),
         "createdAt": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
@@ -9684,6 +9720,9 @@ def create_assignment():
         "task": task,
         "maxScore": max_score,
         "allowFileSubmission": bool(data.get("allowFileSubmission", True)),
+        "allowMultiFileSubmission": bool(data.get("allowMultiFileSubmission", False)),
+        "allowSubmissionAnyTime": bool(data.get("allowSubmissionAnyTime", False)),
+        "maxFileSubmissions": int(attempts),
         "active": False,
         "dueAt": due_at,
         "dueLockOverride": False,
@@ -9745,6 +9784,19 @@ def _update_assignment_locked():
         assignment["maxScore"] = data["maxScore"]
     if "allowFileSubmission" in data:
         assignment["allowFileSubmission"] = bool(data.get("allowFileSubmission"))
+    for key in ("allowMultiFileSubmission", "allowSubmissionAnyTime"):
+        if key in data:
+            if not isinstance(data[key], bool):
+                return jsonify(ok=False, error="Submission options must be enabled or disabled"), 400
+            assignment[key] = bool(data[key])
+    if "maxFileSubmissions" in data:
+        try:
+            attempts = int(data["maxFileSubmissions"])
+            if isinstance(data["maxFileSubmissions"], bool) or attempts != float(data["maxFileSubmissions"]) or not 0 <= attempts <= 100:
+                raise ValueError()
+        except (TypeError, ValueError, OverflowError):
+            return jsonify(ok=False, error="File submission attempts must be from 0 to 100"), 400
+        assignment["maxFileSubmissions"] = attempts
     if "dueAt" in data:
         try:
             new_due_at = _normalize_assignment_due_at(data.get("dueAt"))
@@ -9874,6 +9926,9 @@ def copy_assignment_to_class():
         "task": source.get("task") or "",
         "maxScore": source.get("maxScore", 100),
         "allowFileSubmission": bool(source.get("allowFileSubmission", True)),
+        "allowMultiFileSubmission": bool(source.get("allowMultiFileSubmission", False)),
+        "allowSubmissionAnyTime": bool(source.get("allowSubmissionAnyTime", False)),
+        "maxFileSubmissions": source.get("maxFileSubmissions", 0),
         "active": False,
         "dueAt": source.get("dueAt") or "",
         "dueLockOverride": False,
@@ -9940,127 +9995,7 @@ def delete_assignment():
 
 @app.post("/api/assignments/submit")
 def submit_assignment():
-    """Submit a selected file for an assignment using the logged-in student account."""
-    user = _require_user(request)
-    if not user:
-        return jsonify(ok=False, error="Student login required"), 401
-
-    data = request.get_json(silent=True) or {}
-    assignment_name, class_hint = _assignment_request_reference(data)
-    file_path = (data.get("filePath") or "").strip()
-    quiz_responses = data.get("quizResponses", [])
-
-    if not assignment_name:
-        return jsonify(ok=False, error="Assignment name required"), 400
-
-    assignment = _load_assignment(assignment_name, class_hint)
-    if not assignment:
-        return jsonify(ok=False, error="Assignment not found"), 404
-    if not _assignment_is_active(assignment):
-        return jsonify(ok=False, error="Assignment is not active"), 403
-    allow_file_submission = bool(assignment.get("allowFileSubmission", True))
-
-    student_email = (user.get("email") or "").strip().lower()
-    student_name = user.get("name") or student_email
-    source_file = None
-    original_code = ""
-    if allow_file_submission:
-        if not file_path:
-            return jsonify(ok=False, error="File path required for this assignment"), 400
-        student_dir = _get_user_dir(student_email)
-        source_file = _validate_user_path(student_dir, file_path)
-        if not source_file or not source_file.exists() or not source_file.is_file():
-            return jsonify(ok=False, error="Selected file not found"), 404
-        try:
-            original_code = source_file.read_text(encoding="utf-8")
-        except Exception:
-            return jsonify(ok=False, error="Could not read selected file"), 500
-
-    submissions = assignment.get("submissions", [])
-    existing_idx = next((i for i, sub in enumerate(submissions) if sub.get("email", "").lower() == student_email), None)
-    previous = submissions[existing_idx] if existing_idx is not None else {}
-
-    submitted_at = _current_timestamp()
-    submitted_code = _prepend_submission_timestamp(original_code, submitted_at, student_name) if allow_file_submission else ""
-    target_class_id = assignment.get("targetClassId")
-    if not target_class_id or not _user_in_class(_find_user(student_email) or user, target_class_id):
-        return jsonify(ok=False, error="This assignment is not assigned to your class"), 403
-
-    admin_file_path = ""
-    submitted_filename = ""
-    if allow_file_submission:
-        owner_email = (assignment.get("createdByEmail") or "").strip().lower()
-        if not owner_email:
-            return jsonify(ok=False, error="Assignment owner not found"), 500
-        try:
-            submission_path = _write_assignment_submission_copy(assignment, student_name, student_email, source_file.name, submitted_code)
-        except Exception as exc:
-            print(f"Error copying assignment submission for {assignment_name}: {exc}")
-            return jsonify(ok=False, error="Could not store assignment submission"), 500
-        submitted_filename = Path(submission_path).name
-
-    submission = {
-        "name": student_name,
-        "email": student_email,
-        "sourceFilePath": file_path if allow_file_submission else "",
-        "submittedFileName": submitted_filename,
-        "adminFilePath": "",
-        "submissionPath": submission_path if allow_file_submission else "",
-        "code": submitted_code,
-        "submittedAt": submitted_at,
-        "codeScore": None,
-        "quizResponses": previous.get("quizResponses", []),
-        "quizScore": previous.get("quizScore"),
-        "quizSubmissionCount": previous.get("quizSubmissionCount", 0),
-        "quizLastSubmittedByClose": previous.get("quizLastSubmittedByClose", False),
-        "totalScore": None,
-        "aiSuggestedScore": None,
-        "aiFeedback": "",
-        "aiGradingStatus": "",
-        "aiGradingError": "",
-        "manualScoreOverride": False,
-    }
-
-    if quiz_responses and assignment.get("quiz"):
-        quiz = assignment["quiz"]
-        quiz_score = 0
-        for response in quiz_responses:
-            question_id = response.get("questionId")
-            question = next((q for q in quiz.get("questions", []) if q.get("id") == question_id), None)
-            if not question:
-                continue
-            if question.get("type") in {"multiple_choice", "multiple_choice_code"}:
-                if response.get("answer") == question.get("correctAnswer"):
-                    response["isCorrect"] = True
-                    response["pointsEarned"] = question.get("points", 0)
-                    quiz_score += question.get("points", 0)
-                else:
-                    response["isCorrect"] = False
-                    response["pointsEarned"] = 0
-            else:
-                response["pointsEarned"] = 0
-                response["aiScore"] = None
-                response["manualScore"] = None
-        submission["quizResponses"] = quiz_responses
-        submission["quizScore"] = quiz_score
-
-    code_score_value = submission.get("codeScore") if submission.get("codeScore") is not None else 0
-    quiz_score_value = submission.get("quizScore") if submission.get("quizScore") is not None else 0
-    has_any_score = submission.get("codeScore") is not None or submission.get("quizScore") is not None
-    submission["totalScore"] = code_score_value + quiz_score_value if has_any_score else None
-
-    if existing_idx is not None:
-        submissions[existing_idx] = submission
-    else:
-        submissions.append(submission)
-
-    assignment["submissions"] = submissions
-    if _save_assignment(assignment):
-        student_visible = {key: value for key, value in submission.items() if key not in {
-            "aiFeedback", "aiGradingError", "aiGradingStatus", "aiSuggestedScore", "manualScoreOverride"
-        }}
-        return jsonify(ok=True, message="Submission saved successfully", submission=student_visible)
-    return jsonify(ok=False, error="Failed to save submission"), 500
+    return assignment_workflow.submit(sys.modules[__name__])
 
 @app.post("/api/assignments/score")
 def score_submission():
@@ -10750,7 +10685,7 @@ def _parse_assignment_rubric_ai_result(
     return score, feedback[:MAX_ASSIGNMENT_RUBRIC_CHARS]
 
 
-def _set_assignment_ai_failure(assignment_id: str, student_email: str, error: str, submitted_at=None) -> None:
+def _set_assignment_ai_failure(assignment_id: str, student_email: str, error: str, submitted_at=None, revision_id=None) -> None:
     with _assignment_lock:
         assignment = _load_assignment(assignment_id)
         if not assignment:
@@ -10758,6 +10693,8 @@ def _set_assignment_ai_failure(assignment_id: str, student_email: str, error: st
         for submission in assignment.get("submissions", []):
             if (submission.get("email") or "").lower() == student_email.lower():
                 if submitted_at is not None and submission.get("submittedAt") != submitted_at:
+                    return
+                if revision_id is not None and submission.get("revisionId") != revision_id:
                     return
                 if submission.get("aiGradingStatus") not in {"queued", "running"}:
                     return
@@ -11242,7 +11179,7 @@ def _run_assignment_ai_grading(assignment_id: str, student_email: str) -> None:
             (row for row in assignment.get("submissions", []) if (row.get("email") or "").lower() == student_email.lower()),
             None,
         )
-        if not submission:
+        if not submission or submission.get("withdrawn") or not assignment_workflow.has_gradable_files(submission):
             return
         settings_hash = _assignment_grading_settings_hash(assignment)
         if submission.get("aiGradingSettingsHash") and submission["aiGradingSettingsHash"] != settings_hash:
@@ -11251,6 +11188,7 @@ def _run_assignment_ai_grading(assignment_id: str, student_email: str) -> None:
         submission["aiGradingStatus"] = "running"
         submission["aiGradingError"] = ""
         submitted_at = submission.get("submittedAt")
+        revision_id = submission.get("revisionId")
         _save_assignment(assignment)
     try:
         cfg = _load_config()
@@ -11269,17 +11207,17 @@ def _run_assignment_ai_grading(assignment_id: str, student_email: str) -> None:
             raise ValueError(f"{rubric_error}; no score was saved")
         file_name = str(submission.get("submittedFileName") or "")
         language = _normalize_language_hint("", file_name)
+        if submission.get("files"):
+            suffixes = {Path(f.get("name") or "").suffix.lower() for f in submission["files"]} & assignment_workflow.CODE_EXTENSIONS
+            language = "mixed" if len(suffixes) > 1 else "javascript" if ".js" in suffixes else "python"
         syntax_note = ""
         syntax_error = ""
-        if language == "python":
-            try:
-                ast.parse(code)
-                if grading_mode == "rubric_beta" or rigor >= 5:
-                    syntax_note = "Python syntax check: passed. This does not prove the code runs correctly."
-            except SyntaxError as exc:
-                syntax_error = f"an error on line {exc.lineno}: {exc.msg}"
-                if grading_mode == "rubric_beta" or rigor >= 5:
-                    syntax_note = f"Python syntax check: {syntax_error}."
+        if language in {"python", "mixed"}:
+            syntax_error = assignment_workflow.python_syntax(sys.modules[__name__], assignment, submission)
+            if grading_mode == "rubric_beta" or rigor >= 5:
+                syntax_note = f"Python syntax check: {syntax_error}." if syntax_error else "Python syntax check: no syntax errors found; files checked separately. This does not prove the code runs correctly."
+        if len(submission.get("files") or []) > 1:
+            syntax_note += " Source-file labels separate independent files; do not treat the combined source as one executable program."
         integrity_warning = _detect_assignment_prompt_injection(code)
         if grading_mode == "rubric_beta":
             context_limit = _bounded_int(cfg.get("ai_rubric_context_tokens"), RUBRIC_CONTEXT_TOKENS, 2048, 65536)
@@ -11378,7 +11316,7 @@ def _run_assignment_ai_grading(assignment_id: str, student_email: str) -> None:
             )
             if not latest_submission:
                 return
-            if latest_submission.get("submittedAt") != submitted_at or latest_submission.get("code") != code:
+            if latest_submission.get("submittedAt") != submitted_at or latest_submission.get("code") != code or latest_submission.get("revisionId") != revision_id or latest_submission.get("withdrawn"):
                 return
             if latest_submission.get("aiGradingStatus") != "running":
                 return
@@ -11399,7 +11337,7 @@ def _run_assignment_ai_grading(assignment_id: str, student_email: str) -> None:
             if not _save_assignment(latest):
                 raise RuntimeError("Could not save AI grade")
     except Exception as exc:
-        _set_assignment_ai_failure(assignment_id, student_email, str(exc), submitted_at)
+        _set_assignment_ai_failure(assignment_id, student_email, str(exc), submitted_at, revision_id)
 
 
 def _assignment_ai_worker_loop() -> None:
@@ -11454,7 +11392,7 @@ def _enqueue_assignment_ai_grade(assignment: dict, student_email: str, *, queue_
             (row for row in assignment.get("submissions", []) if (row.get("email") or "").lower() == student_email.lower()),
             None,
         )
-        if not submission or not submission.get("code"):
+        if not submission or not submission.get("code") or submission.get("withdrawn") or not assignment_workflow.has_gradable_files(submission):
             with _assignment_ai_queue_lock:
                 _assignment_ai_queued_keys.discard(key)
             return False
@@ -11527,7 +11465,7 @@ def grade_assignment_ai():
     submission = next((row for row in assignment.get("submissions", []) if (row.get("email") or "").lower() == student_email.lower()), None)
     if not submission:
         return jsonify(ok=False, error="Submission not found"), 404
-    if not submission.get("code"):
+    if not submission.get("code") or submission.get("withdrawn") or not assignment_workflow.has_gradable_files(submission):
         return jsonify(ok=False, error="This submission has no code file to grade"), 400
     queued = _enqueue_assignment_ai_grade(assignment, student_email)
     return jsonify(ok=True, queued=queued, status="queued" if queued else submission.get("aiGradingStatus") or "queued"), 202
@@ -11559,7 +11497,7 @@ def grade_all_assignments_ai():
     pending = []
     for submission in sorted(assignment.get("submissions", []), key=lambda row: (str(row.get("name") or "").casefold(), str(row.get("email") or "").casefold())):
         email = str(submission.get("email") or "")
-        if submission.get("code") and _enqueue_assignment_ai_grade(assignment, email, queue_now=False):
+        if submission.get("code") and not submission.get("withdrawn") and assignment_workflow.has_gradable_files(submission) and _enqueue_assignment_ai_grade(assignment, email, queue_now=False):
             queued += 1
             pending.append((str(assignment.get("id") or ""), email.lower()))
         assignment = _load_assignment(assignment.get("id")) or assignment
@@ -11720,6 +11658,8 @@ def update_assignment_submission_file():
             return jsonify(ok=False, error="Submission not found"), 404
         if not assignment.get("allowFileSubmission", True):
             return jsonify(ok=False, error="This assignment does not accept file submissions"), 400
+        if len(assignment_workflow.files_for(submission)) > 1 or not assignment_workflow.has_gradable_files(submission):
+            return jsonify(ok=False, error="Open attachments using the read-only submission viewer"), 400
 
         stored_path = _assignment_submission_path(assignment, submission.get("submissionPath") or "")
         try:
@@ -11746,6 +11686,8 @@ def update_assignment_submission_file():
             return jsonify(ok=False, error="Could not save submission"), 500
 
         submission["code"] = content
+        if submission.get("files"):
+            submission["files"][0]["size"] = len(content.encode("utf-8"))
         submission["teacherEditedAt"] = _current_timestamp()
         submission["aiGradingStatus"] = ""
         submission["aiGradingError"] = ""
@@ -11809,6 +11751,10 @@ def download_assignment_csv(assignment_reference: str):
 
 
 def _external_grading_submission_code(assignment: dict, submission: dict) -> str:
+    if not assignment_workflow.has_gradable_files(submission):
+        return ""
+    if submission.get("files"):
+        return assignment_workflow.grading_code(sys.modules[__name__], assignment, submission, anonymous=True)
     content = str(submission.get("code") or "")
     stored_path = _assignment_submission_path(assignment, submission.get("submissionPath") or "")
     if stored_path and stored_path.exists() and stored_path.is_file():
@@ -11853,7 +11799,7 @@ def download_external_grading_package(assignment_reference: str):
 
     submissions = [
         row for row in assignment.get("submissions", [])
-        if str(row.get("email") or "").strip() and str(row.get("code") or "")
+        if str(row.get("email") or "").strip() and str(row.get("code") or "") and not row.get("withdrawn") and assignment_workflow.has_gradable_files(row)
     ]
     submissions.sort(key=lambda row: str(row.get("email") or "").casefold())
     if not submissions:
@@ -11961,7 +11907,7 @@ def import_external_assignment_grades(assignment_reference: str):
     expected_emails = {
         str(row.get("email") or "").strip().lower()
         for row in assignment.get("submissions", [])
-        if str(row.get("email") or "").strip() and str(row.get("code") or "")
+        if str(row.get("email") or "").strip() and str(row.get("code") or "") and not row.get("withdrawn") and assignment_workflow.has_gradable_files(row)
     }
     if not expected_emails:
         return jsonify(ok=False, error="No code submissions are available to import grades for"), 400
@@ -11985,7 +11931,7 @@ def import_external_assignment_grades(assignment_reference: str):
         current_emails = {
             str(row.get("email") or "").strip().lower()
             for row in latest.get("submissions", [])
-            if str(row.get("email") or "").strip() and str(row.get("code") or "")
+            if str(row.get("email") or "").strip() and str(row.get("code") or "") and not row.get("withdrawn") and assignment_workflow.has_gradable_files(row)
         }
         if current_emails != expected_emails:
             return jsonify(ok=False, error="Submissions changed after the CSV was read; export and grade a new package"), 409
@@ -12046,7 +11992,7 @@ def get_student_scores():
                     "totalScore": sub.get("totalScore"),
                     "submittedAt": sub.get("submittedAt", ""),
                     "submittedFileName": sub.get("submittedFileName", ""),
-                    "active": _assignment_is_active(assignment)
+                    "active": assignment_workflow.student_state(sys.modules[__name__], assignment, email)["active"]
                 })
             else:
                 student_scores.append({
@@ -12056,7 +12002,7 @@ def get_student_scores():
                     "maxTotal": _assignment_total_max_score(assignment),
                     "score": sub.get("score"),
                     "submittedAt": sub.get("submittedAt", ""),
-                    "active": _assignment_is_active(assignment)
+                    "active": assignment_workflow.student_state(sys.modules[__name__], assignment, email)["active"]
                 })
             break
 
@@ -12077,7 +12023,7 @@ def get_quiz(assignment_reference: str):
     user = _require_user(request)
     if not user:
         return jsonify(ok=False, error="Student login required"), 401
-    if not _assignment_is_active(assignment):
+    if not assignment_workflow.student_state(sys.modules[__name__], assignment, user.get("email") or "")["deadlineOpen"]:
         return jsonify(ok=False, error="Assignment is not active"), 403
     target_class_id = assignment.get("targetClassId")
     if not target_class_id or not _user_in_class(_find_user((user or {}).get("email", "")) or user, target_class_id):
@@ -12118,6 +12064,11 @@ def get_quiz(assignment_reference: str):
 
 @app.post("/api/quiz/submit")
 def submit_quiz():
+    with _assignment_lock:
+        return _submit_quiz_locked()
+
+
+def _submit_quiz_locked():
     """Submit quiz responses using the logged-in student account."""
     user = _require_user(request)
     if not user:
@@ -12136,8 +12087,9 @@ def submit_quiz():
     assignment = _load_assignment(assignment_name, class_hint)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
-    if not _assignment_is_active(assignment):
-        return jsonify(ok=False, error="Assignment is not active"), 403
+    error = assignment_workflow.submission_error(sys.modules[__name__], assignment, user)
+    if error:
+        return jsonify(ok=False, error=error), 403
     target_class_id = assignment.get("targetClassId")
     if not target_class_id or not _user_in_class(_find_user(student_email) or user, target_class_id):
         return jsonify(ok=False, error="Quiz not assigned to your class"), 403
@@ -12181,8 +12133,17 @@ def submit_quiz():
     if max_submissions > 0 and current_count >= max_submissions:
         return jsonify(ok=False, error="Maximum quiz submissions reached"), 403
 
+    previous = copy.deepcopy(submissions[existing_idx]) if existing_idx is not None else {}
     if existing_idx is not None:
         existing = submissions[existing_idx]
+        try:
+            existing.update(assignment_workflow.clone_revision(sys.modules[__name__], assignment, previous))
+        except (ValueError, OSError):
+            return jsonify(ok=False, error="Could not preserve previous submission files"), 500
+        existing["history"] = assignment_workflow.archive(previous)
+        existing["withdrawn"] = False
+        if existing.get("aiGradingStatus") in {"queued", "running"}:
+            existing["aiGradingStatus"] = ""
         existing["name"] = student_name
         existing["email"] = student_email
         existing["quizResponses"] = quiz_responses
@@ -12191,7 +12152,7 @@ def submit_quiz():
         existing["quizLastSubmittedByClose"] = closed_by_student
         code_score = existing.get("codeScore") or 0
         existing["totalScore"] = code_score + quiz_score if existing.get("codeScore") is not None else quiz_score
-        existing["submittedAt"] = existing.get("submittedAt") or _current_timestamp()
+        existing["submittedAt"] = _current_timestamp()
     else:
         submissions.append({
             "name": student_name,
@@ -12201,6 +12162,8 @@ def submit_quiz():
             "submittedFileName": "",
             "adminFilePath": "",
             "submittedAt": _current_timestamp(),
+            "revisionId": uuid.uuid4().hex,
+            "history": [],
             "codeScore": None,
             "quizResponses": quiz_responses,
             "quizScore": quiz_score,
@@ -12211,6 +12174,7 @@ def submit_quiz():
 
     assignment["submissions"] = submissions
     if _save_assignment(assignment):
+        assignment_workflow.prune_history(sys.modules[__name__], assignment, previous)
         next_count = (current_count + 1) if max_submissions > 0 else None
         remaining = None if max_submissions <= 0 else max(0, max_submissions - (current_count + 1))
         return jsonify(
@@ -12221,6 +12185,11 @@ def submit_quiz():
             remainingSubmissions=remaining,
             maxSubmissions=max_submissions,
         )
+    if existing_idx is not None and existing.get("revisionDirectory") != previous.get("revisionDirectory"):
+        path = _assignment_submission_path(assignment, existing.get("submissionPath") or "")
+        if path:
+            import shutil
+            shutil.rmtree(path.parent, ignore_errors=True)
     return jsonify(ok=False, error="Failed to save quiz submission"), 500
 
 @app.get("/api/quiz/report/<assignment_reference>")
@@ -12269,7 +12238,7 @@ def get_student_quiz_report(assignment_reference: str):
         "maxTotal": assignment_max_total,
         "assignmentPercent": assignment_percent,
         "skillScores": resolved_skill_scores,
-        "aiFeedback": submission.get("aiFeedback") if assignment.get("shareAiFeedback") else "",
+        "aiFeedback": assignment_workflow.student_feedback(assignment, submission),
     })
 
 @app.post("/api/quiz/grade-written")
@@ -13082,6 +13051,7 @@ register_network_features(
 register_classroom_features(app, socketio)
 from workspace_data import register as register_workspace_data
 register_workspace_data(app, sys.modules[__name__])
+assignment_workflow.register(app, sys.modules[__name__])
 
 # -------------------------
 # Main

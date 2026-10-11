@@ -6,6 +6,7 @@ const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'static', 'js', 'app-core.js'), 'utf8');
+const workflow = fs.readFileSync(path.join(root, 'static', 'js', 'assignment-workflow.js'), 'utf8');
 const studentDashboard = fs.readFileSync(path.join(root, 'static', 'js', 'student-dashboard.js'), 'utf8');
 const resourceCss = fs.readFileSync(path.join(root, 'static', 'css', 'features', 'resources.css'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
@@ -31,13 +32,13 @@ test('teacher assignment table includes missing, manual, AI, and export controls
   assert.match(html, /id="assignmentAiQueueModal"/);
 });
 
-test('student dashboard owns locked assignment history and can copy preserved code to a draft editor', () => {
+test('student dashboard opens locked assignment submissions as read-only copies', () => {
   assert.doesNotMatch(html, /id="studentPastAssignmentList"/);
   assert.match(html, /data-view="student-dash-past"/);
   assert.match(html, /id="studentPastAssignmentsPane"/);
   assert.match(studentDashboard, /\/api\/assignments\/past\?classId=/);
-  assert.match(studentDashboard, /source: 'assignment'/);
-  assert.match(studentDashboard, /setEditorSnapshot/);
+  assert.match(studentDashboard, /AssignmentWorkflow\.openFiles/);
+  assert.doesNotMatch(studentDashboard, /copyPastAssignmentToEditor/);
   assert.match(studentDashboard, /View teacher feedback/);
   assert.match(studentDashboard, /renderAssignmentAiFeedback/);
 });
@@ -78,14 +79,14 @@ function assignmentViewHarness(assignments) {
       return this.buttons;
     },
   };
-  const reference = { innerHTML: '' };
+  const reference = { innerHTML: '', querySelectorAll: () => [] };
   const heading = { textContent: '' };
   const nodes = { assignmentList: list, teacherReferenceAssignmentList: reference, teacherReferenceAssignmentsTitle: heading };
   const context = {
     currentAssignments: assignments,
     teacherClasses: [{ id: 'class-a', name: 'Period A', students: [] }, { id: 'class-b', name: 'Period B', students: [] }],
     currentTeacherClassId: 'class-a', activeAssignmentsClassId: 'class-a', currentAdminAssignmentName: null,
-    TEACHER_TOKEN: 'teacher-token', window: { EagleIDE: {} }, document: { getElementById: id => nodes[id] || null },
+    TEACHER_TOKEN: 'teacher-token', window: { EagleIDE: {}, AssignmentWorkflow: { teacherFiles: () => '', bindTeacher() {} } }, document: { getElementById: id => nodes[id] || null },
     assignmentGradingCriteria: [
       { id: 'comments', rigorLevel: 6, label: 'Use of comments', description: 'Comments explain intent.' },
       { id: 'objectives', rigorLevel: 2, label: 'All outlined objectives met', description: 'All required outcomes are present.' },
@@ -135,7 +136,7 @@ test('student questions can close without submission and reopen with draft answe
   assert.match(source, /does not use an attempt/);
   assert.doesNotMatch(source, /autoSubmitOnClose/);
   assert.doesNotMatch(source, /textarea\.addEventListener\('paste', \(e\) => e\.preventDefault/);
-  assert.match(source, /!refreshed\.studentSubmissionSummary\?\.quizComplete/);
+  assert.match(workflow, /!refreshed\.studentSubmissionSummary\?\.quizComplete/);
 });
 
 test('assignment descriptions render sanitized markdown and newest student work sorts first', () => {

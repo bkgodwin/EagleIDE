@@ -1786,6 +1786,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           updateAuthUI();
           await loadAssignments();
         });
+        socket.on('assignment_workflow_updated', (msg) => {
+          if (msg?.classId === currentTeacherClassId || msg?.classId === getSelectedStudentClassId()) loadAssignments();
+        });
         socket.on('classroom_settings_updated', (msg) => {
           if (!msg?.class_id || !msg?.settings) return;
           const activeClassId = getCurrentClassContext()?.id;
@@ -4723,13 +4726,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             </div>
           </section>
           <div style="font-size:13px; font-weight:600; color:var(--columbia-blue); margin-bottom:6px;">Students</div>
-          <div class="class-students-scroll"><table class="scores-table class-students-table"><thead><tr><th>First name</th><th>Last name</th><th>Student ID</th><th>Presence</th><th>Open file</th><th>Actions</th></tr></thead><tbody>
+          ${activeClass.canManageClass !== false ? window.AssignmentWorkflow.windowForm(activeClass) : ''}
+          <div class="class-students-scroll"><table class="scores-table class-students-table"><thead><tr><th>First name</th><th>Last name</th><th>Student ID</th><th>Presence</th><th>Open file</th><th>Accommodations</th><th>Actions</th></tr></thead><tbody>
           ${[...(activeClass.students || [])].sort(studentNameSort).map(student => `
             <tr data-class-student="${escapeHtml(student.email)}">
               ${studentNameCells(student)}<td>${escapeHtml(student.student_id || '')}${student.is_coteacher ? '<span class="skill-chip">CoTeacher</span>' : ''}</td>
               <td data-presence>Offline</td><td data-open-file>—</td>
+              <td>${escapeHtml(window.AssignmentWorkflow.accommodationLabel(student))}${activeClass.canManageClass !== false ? `<button type="button" class="btn secondary assignment-accommodation-edit" data-email="${escapeHtml(student.email)}">Edit accommodations</button>` : ''}</td>
               <td>${activeClass.canManageClass !== false ? teacherStudentActionsHtml(activeClass.id, student) + `<button type="button" class="btn secondary cls-coteacher-btn" data-email="${escapeHtml(student.email)}" data-enabled="${student.is_coteacher ? 'true' : 'false'}">${student.is_coteacher ? 'Remove CoTeacher' : 'Make CoTeacher'}</button>` : ''}</td>
-            </tr>`).join('') || '<tr><td colspan="6">No students enrolled.</td></tr>'}
+            </tr>`).join('') || '<tr><td colspan="7">No students enrolled.</td></tr>'}
           </tbody></table></div>
         </div>
       ` : '';
@@ -4738,6 +4743,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         wrap.querySelectorAll('.cls-rigor-label').forEach(node => node.parentElement.hidden = true);
       }
       refreshActiveStudentsForClass(activeClass?.id);
+      if (activeClass && activeClass.canManageClass !== false) window.AssignmentWorkflow.bindClass(wrap, activeClass);
       wrap.querySelectorAll('.cls-coteacher-btn').forEach(btn => btn.onclick = async () => {
         const res = await fetch('/api/teacher/classes/coteacher', {method:'POST', headers:{'Content-Type':'application/json', 'X-Teacher-Token':TEACHER_TOKEN}, body:JSON.stringify({classId:activeClass.id, email:btn.dataset.email, enabled:btn.dataset.enabled !== 'true'})});
         const data = await res.json();
@@ -6048,6 +6054,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       dirty: () => { currentBufferDirty = true; },
     });
     window.eagleEditor?.on?.('change', () => window.WorkspaceData.changed());
+    window.AssignmentWorkflow.configure({
+      request: fetchWithDeadline, assignment: getAssignmentByName,
+      studentHeaders: () => ({'X-User-Token': USER_TOKEN}), managerHeaders: assignmentManagerHeaders,
+      files: () => flattenFiles(_allFileTree || []), openFile: () => currentOpenFile, save: saveCurrentFile,
+      reloadAssignments: loadAssignments, renderStudent: renderStudentAssignments,
+      questions: openQuestions, scoreReport: openStudentScoreReport,
+      maxScore: assignmentTotalMaxScore, feedback: renderAssignmentAiFeedback, markdown: renderMarkdownTo,
+      reloadClasses: async () => {await loadTeacherClasses(); renderTeacherClassManagement();},
+    });
     document.getElementById('editor')?.addEventListener('input', () => window.WorkspaceData.changed());
 
     const FILE_TREE_VIRTUAL_LIMIT = 100;
@@ -7682,8 +7697,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       assignmentDeadlineTimer = null;
       const now = Date.now();
       const nextDue = (assignments || [])
-        .filter(assignment => assignment.active && assignment.dueAt && !assignment.dueExpired)
-        .map(assignment => new Date(assignment.dueAt).getTime())
+        .flatMap(assignment => [assignment.active && !assignment.dueExpired ? assignment.dueAt : '', assignment.nextWindowChangeAt])
+        .filter(Boolean)
+        .map(value => new Date(value).getTime())
         .filter(timestamp => Number.isFinite(timestamp) && timestamp > now)
         .sort((a, b) => a - b)[0];
       if (!nextDue) return;
@@ -7992,9 +8008,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           <h4>${escapeHtml(a.name)}</h4>
           <div class="teacher-reference-assignment-task assignment-markdown" data-assignment-markdown="${escapeHtml(a.id || a.name)}">${escapeHtml(a.task || '(No task description)')}</div>
           <div class="teacher-reference-assignment-meta">${escapeHtml(a.allowFileSubmission === false ? 'Quiz assignment' : 'Code assignment')}${a.quiz?.questions?.length ? ` · ${a.quiz.questions.length} quiz question(s)` : ''}${a.dueAt ? ` · Due ${escapeHtml(assignmentDueLabel(a.dueAt))}` : ''}</div>
+          <button type="button" class="btn secondary assignment-present-btn" data-id="${escapeHtml(a.id)}">Present</button>
         </article>
       `).join('') : '<p class="teacher-reference-assignment-meta">No unlocked assignments for this class yet.</p>';
       if (typeof renderAssignmentMarkdown === 'function') renderAssignmentMarkdown(list);
+      list.querySelectorAll('.assignment-present-btn').forEach(button => button.onclick = () => window.AssignmentWorkflow.present(button.dataset.id));
     }
 
     function renderAdminAssignments() {
@@ -8116,11 +8134,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
               <button class="btn secondary" id="uploadExternalGradesBtn" type="button" ${betaRubricReady ? '' : 'disabled'}>Upload completed CSV</button>
               <input id="externalGradesFile" type="file" accept=".csv,text/csv" hidden>
             </div>
-            <div id="externalGradingStatus" class="meta" role="status" aria-live="polite">${betaRubricReady ? `${submissions.filter(sub => sub.code).length} submitted program(s) ready to export.` : 'Save a valid external grading rubric before exporting.'}</div>
+            <div id="externalGradingStatus" class="meta" role="status" aria-live="polite">${betaRubricReady ? `${submissions.filter(sub => !sub.withdrawn && (sub.hasGradableFiles ?? sub.code)).length} submitted program(s) ready to export.` : 'Save a valid external grading rubric before exporting.'}</div>
           </div>
           <label class="assignment-feedback-sharing"><input id="assignmentShareAiFeedback" type="checkbox" ${assignment.shareAiFeedback ? 'checked' : ''}> Show grading feedback to students for this assignment</label>
           <div id="assignmentInternalAiActions" class="assignment-ai-rigor" ${gradingMode === 'external' ? 'hidden' : ''}>
-            <button class="btn run" id="gradeAllSubmissionsBtn" ${submissions.some(sub => sub.code) && !aiGradingDisabled ? '' : 'disabled'} ${aiGradingDisabled ? 'title="Accept a current beta rubric before grading"' : ''}>AI Grade All</button>
+            <button class="btn run" id="gradeAllSubmissionsBtn" ${submissions.some(sub => !sub.withdrawn && (sub.hasGradableFiles ?? sub.code)) && !aiGradingDisabled ? '' : 'disabled'} ${aiGradingDisabled ? 'title="Accept a current beta rubric before grading"' : ''}>AI Grade All</button>
             <button class="btn secondary" id="openAssignmentAiQueueBtn" type="button">View AI Queue</button>
           </div>
           <div id="assignmentInternalAiNote" class="meta" ${gradingMode === 'external' ? 'hidden' : ''}>${pendingCount ? `${pendingCount} submission(s) currently queued or grading. You can close this dashboard; grading continues on the server.` : 'Queued grading continues on the server after you leave this page.'}</div>
@@ -8147,23 +8165,26 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
               return `
               <tr>
                 ${studentNameCells(student)}
-                <td>Turned in${aiStatus ? `<div><span class="assignment-ai-status ${escapeHtml(aiStatus)}">${escapeHtml(aiStatus)}</span></div>` : ''}${sub.aiGradingError ? `<div class="assignment-not-turned-in">${escapeHtml(sub.aiGradingError)}</div>` : ''}</td>
-                <td>${escapeHtml(sub.submittedFileName || '—')}</td>
+                <td>${sub.withdrawn ? 'Un-submitted' : '<span class="assignment-submitted-check" aria-label="Submitted">✓</span> Turned in'}${aiStatus ? `<div><span class="assignment-ai-status ${escapeHtml(aiStatus)}">${escapeHtml(aiStatus)}</span></div>` : ''}${sub.aiGradingError ? `<div class="assignment-not-turned-in">${escapeHtml(sub.aiGradingError)}</div>` : ''}</td>
+                <td>${window.AssignmentWorkflow.teacherFiles(assignment, sub)}</td>
                 <td>${assignment.allowFileSubmission === false ? '—' : `<input class="assignment-grade-input" type="number" min="0" max="${assignment.maxScore || 0}" step="1" value="${sub.codeScore ?? sub.score ?? ''}" data-email="${escapeHtml(sub.email)}" aria-label="Score for ${escapeHtml(sub.name || sub.email)}"><div class="meta">${sub.manualScoreOverride ? 'Manual override' : (sub.aiSuggestedScore !== null && sub.aiSuggestedScore !== undefined ? `${sub.gradingSource === 'external' ? 'External' : 'AI'} ${sub.aiSuggestedScore}` : '')}</div>`}</td>
                 <td>${assignmentScoreValue(sub) ?? '—'} / ${assignmentTotalMaxScore(assignment)}<div class="meta">${assignmentPercentValue(sub, assignment) ?? '—'}</div></td>
                 <td><div style="display:flex; gap:6px; flex-wrap:wrap;">
-                  ${assignment.allowFileSubmission === false ? '' : `<button class="btn secondary open-submission-btn" data-email="${escapeHtml(sub.email)}">Open</button>${gradingMode === 'external' ? '' : `<button class="btn secondary ai-grade-submission-btn" data-email="${escapeHtml(sub.email)}" ${['queued', 'running'].includes(aiStatus) || aiGradingDisabled ? 'disabled' : ''} ${aiGradingDisabled ? 'title="Accept a current beta rubric before grading"' : ''}>AI Grade</button>`}`}
+                  ${assignment.allowFileSubmission === false ? '' : `<button class="btn secondary open-submission-btn" data-email="${escapeHtml(sub.email)}">Open</button>${gradingMode === 'external' ? '' : `<button class="btn secondary ai-grade-submission-btn" data-email="${escapeHtml(sub.email)}" ${['queued', 'running'].includes(aiStatus) || aiGradingDisabled || sub.withdrawn || !(sub.hasGradableFiles ?? sub.code) ? 'disabled' : ''} ${aiGradingDisabled ? 'title="Accept a current beta rubric before grading"' : ''}>AI Grade</button>`}`}
                   ${assignment.quiz?.questions?.length ? `<button class="btn secondary grade-quiz-btn" data-email="${escapeHtml(sub.email)}">Grade Quiz</button>` : ''}
                   ${assignment.quiz?.questions?.length ? `<button class="btn secondary reset-quiz-counter-btn" data-email="${escapeHtml(sub.email)}">Reset Attempts</button>` : ''}
+                  <button type="button" class="btn secondary assignment-edit-feedback" data-email="${escapeHtml(sub.email)}">Edit feedback</button>
+                  ${!isCoTeacher() && !sub.withdrawn && (assignment.maxFileSubmissions > 0 || assignment.quizSettings?.maxSubmissions > 0) ? `<button type="button" class="btn secondary assignment-unsubmit" data-email="${escapeHtml(sub.email)}">Un-submit</button>` : ''}
                 </div><div class="meta">${escapeHtml(sub.submittedAt || '—')}</div>
                 </td>
               </tr>
-              ${sub.aiFeedback ? `<tr class="assignment-feedback-row"><td colspan="7"><details class="assignment-feedback-details"><summary>View feedback for ${escapeHtml(sub.email)}</summary>${renderAssignmentAiFeedback(sub.aiFeedback)}</details></td></tr>` : ''}
+              ${sub.teacherFeedbackEdited || sub.aiFeedback ? `<tr class="assignment-feedback-row"><td colspan="7"><details class="assignment-feedback-details"><summary>View feedback for ${escapeHtml(sub.email)}</summary>${renderAssignmentAiFeedback(sub.teacherFeedbackEdited ? sub.teacherFeedback : sub.aiFeedback)}</details></td></tr>` : ''}
             `;}).join('') : '<tr><td colspan="7" style="color:#888;">No students are enrolled in this class.</td></tr>'}
           </tbody>
         </table>
       `;
       if (typeof renderAssignmentMarkdown === 'function') renderAssignmentMarkdown(detail);
+      window.AssignmentWorkflow.bindTeacher(detail, assignment, !isCoTeacher());
       detail.querySelector('.edit-assignment-btn')?.addEventListener('click', () => showAssignmentModal(assignment));
       detail.querySelector('.lock-assignment-btn')?.addEventListener('click', (event) => toggleAssignmentActive(assignment.id, event.currentTarget.dataset.active !== 'true'));
       detail.querySelector('.delete-assignment-btn')?.addEventListener('click', () => deleteAssignment(assignment.id));
@@ -8273,45 +8294,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         .filter(a => !selectedClassId || a.targetClassId === selectedClassId)
         .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
           || String(b.id || b.name || '').localeCompare(String(a.id || a.name || '')));
-      const activeAssignments = visibleAssignments.filter(a => a.active);
-
-      function scoreBadge(a) {
-        const s = a.studentSubmissionSummary;
-        if (!s) return '';
-        const total = s.totalScore ?? s.codeScore ?? null;
-        const maxTotal = assignmentTotalMaxScore(a);
-        if (total != null) {
-          return `<div><span class="assignment-score-badge scored">✓ Score: ${total} / ${maxTotal || a.maxScore}</span></div>`;
-        }
-        if (s.submittedAt) {
-          return `<div><span class="assignment-score-badge pending">⏳ Submitted – awaiting grade</span></div>`;
-        }
-        return '';
-      }
-
-      if (!activeAssignments.length) {
-        activeList.innerHTML = `<p style="color:#888;">${joinedClass ? 'No active assignments for this class.' : 'Join a class to see active assignments.'}</p>`;
-      } else {
-        activeList.innerHTML = activeAssignments.map(a => `
-          <div class="assignment-card">
-            <h4>${escapeHtml(a.name)}</h4>
-            <div class="task assignment-markdown" data-assignment-markdown="${escapeHtml(a.id || a.name)}">${escapeHtml(a.task || '(No task description)')}</div>
-            <div class="meta">Max Score: ${assignmentTotalMaxScore(a)}${a.allowFileSubmission === false ? ' (Quiz only)' : ''}${a.quiz?.questions?.length ? ` · ${a.quiz.questions.length} question(s)` : ''}${a.quizSettings?.maxSubmissions > 0 ? ` · ${a.quizSettings.maxSubmissions} quiz attempt(s)` : ''}${a.dueAt ? ` · Due ${escapeHtml(assignmentDueLabel(a.dueAt))}` : ''}</div>
-            ${scoreBadge(a)}
-            ${a.studentSubmissionSummary?.aiFeedback ? `<details class="assignment-student-ai-feedback assignment-feedback-details"><summary>View teacher feedback</summary>${renderAssignmentAiFeedback(a.studentSubmissionSummary.aiFeedback, { audience: 'student' })}</details>` : ''}
-            ${(a.skillTags || []).length ? `<div class="skill-tags">${(a.skillTags || []).map(tag => `<span class="skill-chip">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
-            <div class="assignment-actions">
-              ${a.allowFileSubmission === false ? '' : `<button class="btn run submit-assignment-btn" data-id="${escapeHtml(a.id || a.name)}" ${canSubmit && joinedClass && files.length ? '' : 'disabled'}>Submit File</button>`}
-              ${a.quiz?.questions?.length ? `<button class="btn secondary open-questions-btn" data-id="${escapeHtml(a.id || a.name)}" ${canSubmit && joinedClass ? '' : 'disabled'}>Questions (${a.quiz.questions.length})</button>` : ''}
-              ${hasSubmissionSummary(a.studentSubmissionSummary) ? `<button class="btn secondary view-score-report-btn" data-id="${escapeHtml(a.id || a.name)}" ${canSubmit ? '' : 'disabled'}>Score Report</button>` : ''}
-            </div>
-          </div>
-        `).join('');
-        renderAssignmentMarkdown(activeList);
-        activeList.querySelectorAll('.submit-assignment-btn').forEach(btn => btn.addEventListener('click', () => showAssignmentSubmitModal(btn.dataset.id)));
-        activeList.querySelectorAll('.open-questions-btn').forEach(btn => btn.addEventListener('click', () => openQuestions(btn.dataset.id)));
-        activeList.querySelectorAll('.view-score-report-btn').forEach(btn => btn.addEventListener('click', () => openStudentScoreReport(btn.dataset.id)));
-      }
+      const selectedTab = window.AssignmentWorkflow.studentTab(currentUser?.email || '');
+      const activeAssignments = visibleAssignments.filter(a => (a.isPast ?? !a.active) === (selectedTab === 'past'));
+      activeList.setAttribute('aria-label', selectedTab === 'past' ? 'Past assignments' : 'Current assignments');
+      activeList.innerHTML = activeAssignments.length
+        ? activeAssignments.map(a => window.AssignmentWorkflow.card(a, canSubmit && joinedClass)).join('')
+        : `<p class="assignment-empty">${joinedClass ? (selectedTab === 'past' ? 'No past assignments for this class.' : 'No current assignments for this class.') : 'Join a class to see assignments.'}</p>`;
+      renderAssignmentMarkdown(activeList);
+      window.AssignmentWorkflow.bindStudent(activeList);
     }
 
     async function loadStudentScores() {
@@ -8435,6 +8425,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           <label>Max Score (Code)</label>
           <input type="number" id="modalAssignmentMaxScore" value="${existingAssignment?.maxScore || 100}" min="1" />
           <label style="margin-bottom:2px;">Assignment Options</label>
+          <label class="choice-item"><input type="checkbox" id="modalAssignmentMultiFile" ${existingAssignment?.allowMultiFileSubmission ? 'checked' : ''}> Allow multiple files and attachments</label>
+          <label class="choice-item"><input type="checkbox" id="modalAssignmentAnyTime" ${existingAssignment?.allowSubmissionAnyTime ? 'checked' : ''}> Allow submission at any time (ignore the class submission window)</label>
+          <label>Maximum file submission attempts (0 = unlimited)<input type="number" id="modalAssignmentFileAttempts" min="0" max="100" step="1" value="${existingAssignment?.maxFileSubmissions || 0}"></label>
           <div class="assignment-option-card">
             <label class="option-title">
               <input type="checkbox" id="modalAssignmentAllowFileSubmission" ${existingAssignment?.allowFileSubmission === false ? '' : 'checked'}>
@@ -8542,6 +8535,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           dueAt,
           maxScore,
           allowFileSubmission,
+          allowMultiFileSubmission: !!document.getElementById('modalAssignmentMultiFile')?.checked,
+          allowSubmissionAnyTime: !!document.getElementById('modalAssignmentAnyTime')?.checked,
+          maxFileSubmissions: Number(document.getElementById('modalAssignmentFileAttempts')?.value || 0),
           classId,
           skillTags: mergedSkillTags,
           quizSettings: { maxSubmissions: maxQuizSubmissions },
@@ -8812,70 +8808,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     function showAssignmentSubmitModal(assignmentReference) {
-      if (!USER_TOKEN || !currentUser) {
-        alert('Please sign in with a student account first.');
-        return;
-      }
-      const assignment = getAssignmentByName(assignmentReference);
-      if (assignment?.allowFileSubmission === false) {
-        alert('File submissions are disabled for this assignment.');
-        return;
-      }
-      const files = flattenFiles(_allFileTree || []);
-      if (!files.length) {
-        alert('Create or upload a file in your account before submitting.');
-        return;
-      }
-      const selectedPath = currentOpenFile?.path && files.some(file => file.path === currentOpenFile.path) ? currentOpenFile.path : files[0].path;
-      const modal = document.createElement('div');
-      modal.className = 'modal glass-modal';
-      modal.innerHTML = `
-        <div class="modal-content" style="max-width:520px;">
-          <h3>Submit: ${escapeHtml(assignment?.name || 'Assignment')}</h3>
-          <p style="color:#888; font-size:13px;">Submitting as <strong>${escapeHtml(currentUser.name || currentUser.email)}</strong>. Pick the file from your account to store with this class assignment.</p>
-          <label for="assignmentFileSelect">File to submit</label>
-          <select id="assignmentFileSelect" style="width:100%; padding:10px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border); border-radius:8px;">
-            ${files.map(file => `<option value="${escapeHtml(file.path)}" ${file.path === selectedPath ? 'selected' : ''}>${escapeHtml(file.path)}</option>`).join('')}
-          </select>
-          <div class="modal-actions">
-            <button class="btn secondary modal-cancel-btn">Cancel</button>
-            <button class="btn run modal-submit-btn">Submit File</button>
-          </div>
-        </div>
-      `;
-      document.body.appendChild(modal);
-      modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
-      modal.querySelector('.modal-cancel-btn').addEventListener('click', () => modal.remove());
-      modal.querySelector('.modal-submit-btn').addEventListener('click', async () => {
-        const filePath = document.getElementById('assignmentFileSelect').value;
-        if (!filePath) { alert('Select a file first.'); return; }
-        if (currentOpenFile?.path === filePath) {
-          const saved = await saveCurrentFile();
-          if (!saved) {
-            alert('Your latest edits could not be saved. Please save the file again before submitting.');
-            return;
-          }
-        }
-        try {
-          const resp = await fetch('/api/assignments/submit', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-User-Token': USER_TOKEN },
-            body: JSON.stringify(assignmentRequestPayload(assignment, { filePath }))
-          });
-          const data = await resp.json().catch(() => ({}));
-          if (!data.ok) { alert(data.error || 'Failed to submit assignment'); return; }
-          modal.remove();
-          alert('Assignment submitted successfully.');
-          await loadAssignments();
-          const refreshed = getAssignmentByName(assignment?.id || assignmentReference);
-          if (refreshed?.quiz?.questions?.length && !refreshed.studentSubmissionSummary?.quizComplete) {
-            await openQuestions(refreshed.id || assignmentReference);
-          }
-          window.StudentDashboard?.checkAchievements?.().catch(() => {});
-        } catch (error) {
-          alert('Network error');
-        }
-      });
+      window.AssignmentWorkflow.submitDialog(assignmentReference);
     }
 
     function captureQuizDraft(assignmentReference, questions, modal) {
@@ -9138,6 +9071,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const { assignment, submission } = getSubmissionForAssignment(assignmentReference, email);
       if (!assignment || !submission) return;
       currentAdminAssignmentName = assignment.id || assignment.name;
+      if ((submission.files || []).length > 1 || !/\.(py|js)$/i.test(submission.submittedFileName || 'submission.py')) {
+        await window.AssignmentWorkflow.openFiles(assignment.id, submission.email || email);
+        return;
+      }
       if (!await saveCurrentFile()) {
         alert('Your current file could not be saved before opening the submission.');
         return;
@@ -9162,7 +9099,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         editor.setValue(result.content || submission.code || '');
         currentBufferDirty = false;
         syncEditorLanguage(result.fileName || submission.submittedFileName || 'submission.py');
-        setMainEditorReadOnly(false);
+        setMainEditorReadOnly(isCoTeacher());
         updateActiveFileName();
         updateEditorOverlay();
         setWorkspaceTab('editor');
@@ -9338,7 +9275,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         feedback.style.display = submission.aiFeedback ? '' : 'none';
         feedback.innerHTML = submission.aiFeedback ? renderAssignmentAiFeedback(submission.aiFeedback) : '';
       }
-      const submitted = (assignment.submissions || []).filter(row => row.code).sort((a, b) => String(a.name || a.email || '').localeCompare(String(b.name || b.email || ''), undefined, { sensitivity: 'base' }));
+      const submitted = (assignment.submissions || []).filter(row => !row.withdrawn && (row.hasGradableFiles ?? row.code)).sort((a, b) => String(a.name || a.email || '').localeCompare(String(b.name || b.email || ''), undefined, { sensitivity: 'base' }));
       const index = submitted.findIndex(row => String(row.email || '').toLowerCase() === String(submission.email || '').toLowerCase());
       const previousDisabled = index <= 0;
       const nextDisabled = index < 0 || index >= submitted.length - 1;
@@ -9660,7 +9597,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (!activeSubmissionContext) return;
       const assignment = getAssignmentByName(activeSubmissionContext.assignmentId);
       if (!assignment) return;
-      const submitted = (assignment.submissions || []).filter(row => row.code).sort((a, b) => String(a.name || a.email || '').localeCompare(String(b.name || b.email || ''), undefined, { sensitivity: 'base' }));
+      const submitted = (assignment.submissions || []).filter(row => !row.withdrawn && (row.hasGradableFiles ?? row.code)).sort((a, b) => String(a.name || a.email || '').localeCompare(String(b.name || b.email || ''), undefined, { sensitivity: 'base' }));
       const index = submitted.findIndex(row => String(row.email || '').toLowerCase() === String(activeSubmissionContext.studentEmail || '').toLowerCase());
       const target = submitted[index + direction];
       if (target) await openAssignmentSubmission(assignment.id || assignment.name, target.email);
