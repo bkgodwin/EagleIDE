@@ -138,7 +138,8 @@ class LessonPlanRouteTests(unittest.TestCase):
             base_dir=Path(self.temp.name) / "plans",
             public_dir=Path(__file__).resolve().parents[1],
             wiki_store=FakeWikiStore(),
-            require_teacher=lambda req: {"email": "teacher@example.com"} if req.headers.get("X-Teacher-Token") == "teacher-token" else None,
+            require_teacher=lambda req: {"email": "teacher@example.com"} if req.headers.get("X-Teacher-Token") == "teacher-token" else
+                ({"email":"student@example.com", "is_coteacher":True} if req.headers.get("X-Teacher-Token") == "co-token" else None),
             require_user=lambda req: self.users["student@example.com"] if req.headers.get("X-User-Token") == "student-token" else None,
             find_user=lambda email: self.users.get(email),
             get_user_class_ids=lambda user: list((user or {}).get("class_ids") or []),
@@ -151,6 +152,16 @@ class LessonPlanRouteTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_coteacher_edits_only_assigned_class_without_owner_controls(self):
+        self.classes['class-1'].update(students=['student@example.com'], coteachers=['student@example.com'])
+        headers = {'X-Teacher-Token':'co-token'}
+        changed = self.client.put(f'/api/teacher/classes/class-1/lesson-plans/{self.current_week}', headers=headers,
+            json={'expected_version':0, **plan_payload()})
+        self.assertEqual(changed.status_code,200)
+        self.assertEqual(self.client.get('/api/teacher/classes/class-2/lesson-plans',headers=headers).status_code,404)
+        self.assertEqual(self.client.put('/api/teacher/classes/class-1/lesson-plans/source',headers=headers,json={'source_class_id':'class-3'}).status_code,403)
+        self.assertEqual(self.client.post('/api/teacher/classes/class-1/lesson-plans/sharing/reset',headers=headers).status_code,403)
 
     def publish(self, week=None):
         selected = week or self.current_week

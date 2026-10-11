@@ -243,6 +243,26 @@ class NotebookTestCase(unittest.TestCase):
         self.assertTrue(set(selected_ids).isdisjoint(remaining_ids))
         self.assertIn("foreign-skill", remaining_ids)
 
+    def test_coteacher_can_create_and_grade_prompts_but_cannot_lock_or_delete(self):
+        owner_headers = {"X-Teacher-Token": self.teacher_token}
+        co_headers = {"X-Teacher-Token": self.second_student_token}
+        self.assertEqual(self.client.post('/api/teacher/classes/coteacher', headers=owner_headers,
+            json={'classId':self.class_id,'email':self.second_student_email,'enabled':True}).status_code, 200)
+        created = self.client.post('/api/teacher/notebook-prompts/create', headers=co_headers,
+            json={'classId':self.class_id,'prompt':'Explain loops','title':'Co-created','maxScore':10})
+        self.assertEqual(created.status_code, 200)
+        prompt = created.get_json()['prompt']
+        notebook = self.client.get(f'/api/notebook?classId={self.class_id}', headers={'X-User-Token':self.student_token}).get_json()['notebook']
+        next(tab for tab in notebook['tabs'] if tab['id']=='assignments')['blocks'][0]['responseHtml']='<p>Repeat a block.</p>'
+        self.client.post('/api/notebook/save', headers={'X-User-Token':self.student_token}, json={'classId':self.class_id,'notebook':notebook})
+        graded = self.client.post('/api/teacher/notebook-prompts/grade', headers=co_headers,
+            json={'classId':self.class_id,'promptId':prompt['id'],'studentEmail':self.student_email,'score':'8','feedback':'Good'})
+        self.assertEqual(graded.status_code, 200)
+        for route in ('lock','delete'):
+            response = self.client.post('/api/teacher/notebook-prompts/'+route, headers=co_headers,
+                json={'classId':self.class_id,'promptId':prompt['id'],'locked':True})
+            self.assertIn(response.status_code,(401,403))
+
     def _create_prompt(
         self,
         prompt="Reflect on today's loop practice.",

@@ -1221,6 +1221,11 @@ class ExecutionLimitTestCase(unittest.TestCase):
     def test_infinite_loop_is_stopped_by_parent_deadline(self):
         eagle.MAX_WALL_TIME = 0.25
         eagle.MAX_INTERACTIVE_WALL_TIME = 1.0
+        configured = eagle._normalized_python_runtime_settings()
+        configured["python_execution_timeout_seconds"] = 0.25
+        limiter = mock.patch.object(eagle, "_normalized_python_runtime_settings", return_value=configured)
+        limiter.start()
+        self.addCleanup(limiter.stop)
         client = self._socket()
         client.emit("run_code", self._payload("while True:\n    pass"))
         events = self._collect_until_finished(client, timeout=4.0)

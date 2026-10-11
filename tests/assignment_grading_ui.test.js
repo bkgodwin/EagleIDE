@@ -99,7 +99,9 @@ function assignmentViewHarness(assignments) {
     assignmentPercentValue: () => '80.0%',
     rigorLevelLabel: () => 'High School', assignmentRigorSummary: () => 'Core objectives',
   };
-  vm.runInNewContext(`${source.slice(start, end)}\nglobalThis.views = { renderAdminAssignments, renderTeacherReferenceAssignments, renderAssignmentAiFeedback };`, context);
+  const helpers = source.slice(source.indexOf('function studentNameCells('), source.indexOf('function renderTeacherClassManagement()'));
+  context.currentTeacher = null;
+  vm.runInNewContext(`function isCoTeacher() { return !!currentTeacher?.is_coteacher; }\n${helpers}\n${source.slice(start, end)}\nglobalThis.views = { renderAdminAssignments, renderTeacherReferenceAssignments, renderAssignmentAiFeedback };`, context);
   return { context, list, detail, reference, heading };
 }
 
@@ -184,7 +186,7 @@ test('teacher feedback expands in a full-width row below the submission', () => 
   context.views.renderAdminAssignments();
   list.buttons[0].click();
   assert.match(detail.innerHTML, /class="assignment-feedback-row"/);
-  assert.match(detail.innerHTML, /colspan="6"/);
+  assert.match(detail.innerHTML, /colspan="7"/);
   assert.match(detail.innerHTML, /View feedback for student@example\.com/);
   assert.match(detail.innerHTML, /External grading result/);
   assert.doesNotMatch(detail.innerHTML, /<th>AI feedback<\/th>/);
