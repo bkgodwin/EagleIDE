@@ -1442,3 +1442,9 @@ body.notebook-drawer-open #notebookOpenBtn {
     animation: none;
   }
 }
+/* Device photos stay on the paper without expanding the drawer or storing data URLs. */
+.student-notebook-photo { position: relative; display: block; max-width: 100%; margin: 20px 0; padding: 12px; background: #fffdf5; border: 1px solid #d8cfb7; box-shadow: 2px 4px 10px #0002; border-radius: 3px; }
+.student-notebook-photo img { display: block; max-width: 100%; height: auto; max-height: 680px; object-fit: contain; margin: 0 auto; }
+.student-notebook-photo figcaption { color: #65553b; font-size: 13px; padding: 9px 0 0; overflow-wrap: anywhere; }
+.student-notebook-photo [data-photo-control] { display: block; margin: 8px 0 0 auto; min-height: 36px; border: 1px solid #bcad92; border-radius: 4px; background: #fff7df; color: #773c25; padding: 6px 12px; cursor: pointer; font: inherit; font-size: 13px; }
+.student-notebook-photo [data-photo-status] { color: #65553b; font-size: 14px; }

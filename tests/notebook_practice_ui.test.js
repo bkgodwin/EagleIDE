@@ -62,7 +62,7 @@ test('notebook input tokens are recognized across every output chunk boundary', 
     const context = { Node: { TEXT_NODE: 3 }, document: { createTextNode: textNode }, setTimeout() {},
       shell: { querySelector(selector) { return selector === '.notebook-shell-output' ? out : null; } } };
     vm.runInNewContext(`const INPUT_TOKEN='${token}', MAX_INLINE_OUTPUT_CHARS=120000;
-      let outputRemainder='', waitingForNotebookInput=false;
+      let outputRemainder='', waitingForNotebookInput=false, inputMarkerNewline=false;
       function ctx() { return {showSystemShellMessages:true}; } function updateNotebookRunButtons() {}
       ${functionSource('function appendNotebookOutput(', 'function updateNotebookRunButtons(')}
       globalThis.feed = text => appendNotebookOutput(shell, text); globalThis.waiting = () => waitingForNotebookInput;`, context);
@@ -70,6 +70,35 @@ test('notebook input tokens are recognized across every output chunk boundary', 
     context.feed(token.slice(split)); assert.equal(context.waiting(), true);
     assert.equal(out.lastChild.data, 'Name: ');
   }
+});
+
+test('worker input marker newlines are hidden and its single echo stays beside the prompt', () => {
+  const token = '[[_IDE_INPUT_]]';
+  for (const stream of [`Name: ${token}\nJoe\nHello, Joe!\n`, `Name: ${token}\r\nJoe\nHello, Joe!\n`]) {
+    // Every possible two-chunk boundary, then one-character delivery.
+    for (const chunks of [...Array.from({length:stream.length - 1}, (_,index) => [stream.slice(0,index+1),stream.slice(index+1)]), Array.from(stream)]) {
+      const out = {lastChild:null,appendChild(node){this.lastChild=node;}};
+      const context = {Node:{TEXT_NODE:3},document:{createTextNode(data){return {nodeType:3,data,get length(){return this.data.length;},appendData(text){this.data+=text;}};}}, setTimeout(){},
+        shell:{querySelector(){return out;}}};
+      vm.runInNewContext(`const INPUT_TOKEN='${token}', MAX_INLINE_OUTPUT_CHARS=120000; let outputRemainder='', inputMarkerNewline=false, waitingForNotebookInput=false;
+        function ctx(){return {showSystemShellMessages:true};} function updateNotebookRunButtons(){}
+        ${functionSource('function appendNotebookOutput(', 'function updateNotebookRunButtons(')} globalThis.feed=text=>appendNotebookOutput(shell,text);`,context);
+      chunks.forEach(context.feed);
+      assert.equal(out.lastChild.data,'Name: Joe\nHello, Joe!\n');
+    }
+  }
+});
+
+test('sending notebook stdin does not add a second browser echo', () => {
+  let handler, appended=0, sent='';
+  const input = {value:'Joe'};
+  const block = {querySelector(selector){return selector.includes('send-input') ? {addEventListener(type,fn){handler=fn;}} : input;}};
+  const start = source.indexOf("      block.querySelector('[data-code-action=\"send-input\"]')?.addEventListener");
+  const end = source.indexOf("      block.querySelector('.notebook-shell-input input')?.addEventListener",start);
+  const context={block,ctx(){return {activeRunSource:'notebook',isProgramRunning:true,sendNotebookInput(value){sent=value;return true;}};},appendNotebookOutput(){appended++;},updateNotebookRunButtons(){}};
+  vm.runInNewContext(`let runningCodeBlock=block, waitingForNotebookInput=true; ${source.slice(start,end)}`,context);
+  handler({preventDefault(){},stopPropagation(){}});
+  assert.equal(sent,'Joe');assert.equal(appended,0);assert.equal(input.value,'');
 });
 
 test('tab padlock persists the buffer before locking and can unlock assignment tabs', () => {
@@ -97,7 +126,7 @@ test('notebook run claims the shared execution state synchronously before emitti
 
 test('class changes preserve the old draft and invalidate in-flight loads', () => {
   const backups = [];
-  const context = { clearTimeout() {}, document:{getElementById(){return null;}}, updateEntryPoints() {}, hideAllCodeBlockShells() {},
+  const context = { window:{}, clearTimeout() {}, document:{getElementById(){return null;}}, updateEntryPoints() {}, hideAllCodeBlockShells() {},
     persistActivePageFromDom() {}, storeDraft() { backups.push(context.state()); }, loadNotebook() { return Promise.resolve(); } };
   vm.runInNewContext(`let notebook={tabs:[{html:'Unsaved work'}]}, baseNotebook={}, loadedClassId='old-class', loadedOwner='old-user', dirty=true,
     readOnlyCheck=false, drawerOpen=false, loadSequence=1, checkSequence=1, saveTimer=null, feedbackTimer=null, expandedPromptId='one', recoveryCount=0, localBackupOk=true;
@@ -175,9 +204,38 @@ test('notebook redraws keep the live code block and its input/output handlers', 
   const rendered = {dataset:{codeId:'one'},replaceWith(block){replacement=block;}};
   const page = {querySelectorAll(){return [rendered];}};
   const context = {document:{getElementById(id){return id === 'studentNotebookPage' ? page : null;}}, ctx(){return {isProgramRunning:true,activeRunSource:'notebook'};},
-    renderTabRail(){},activeTab(){return {id:'notes'};},updateNotebookToolbarMode(){},renderEditablePage(){},bindCodeBlockActions(){},highlightCodeBlocks(){},
+    renderTabRail(){},activeTab(){return {id:'notes'};},updateNotebookToolbarMode(){},renderEditablePage(){},bindCodeBlockActions(){},hydrateNotebookPhotos(){},highlightCodeBlocks(){},
     getCodeBlockText(){return 'name = input()';},tabIsReadOnly(){return false;},live};
   vm.runInNewContext(`let notebook={},runningCodeBlock=live,readOnlyCheck=false; const ASSIGNMENTS_TAB_ID='assignments';
     ${functionSource('function renderNotebook(', 'function updateNotebookToolbarMode(')} renderNotebook();`,context);
   assert.equal(replacement, live);
+});
+
+test('feedback refresh settles queued state during editing or a run without replacing the editor',async()=>{
+  for (const running of [false,true]) {
+    const base=initial(),local=clone(base),remote=clone(base);local.tabs[2].blocks[0].responseHtml='<p>Unsaved attempt</p>';
+    local.tabs[2].blocks[0].notesMarkdown='My draft notes';local.tabs[2].blocks[0].notesEdited=true;
+    remote.tabs[2].blocks[0].practice={status:'failed',error:'Retry now'};remote.revision=2;
+    let redraws=0,updates=0,saves=0;
+    const context={window:{NotebookSync:merger()},base,local,remote,
+      fetch:async()=>({json:async()=>({ok:true,notebook:remote})}),userHeaders(){return {};},ctx(){return {isProgramRunning:running};},
+      currentClassId(){return 'class';},ownerKey(){return 'owner';},isStudentInClass(){return true;},
+      document:{activeElement:{closest(){return running ? null : {};}}},persistActivePageFromDom(){},
+      ensureNotebookShape:value=>value,cloneNotebook:clone,storeDraft(){},scheduleSave(){saves++;},renderNotebook(){redraws++;},updatePracticeFeedback(){updates++;},activeTab(){return {id:'assignments'};},console};
+    vm.runInNewContext(`let notebook=local,baseNotebook=base,drawerOpen=true,readOnlyCheck=false,refreshPending=null,loadedClassId='class',loadedOwner='owner',dirty=true,recoveryCount=0;
+      const ASSIGNMENTS_TAB_ID='assignments';${functionSource('async function refreshAssignmentsFromServer(', 'function updatePracticeFeedback(')}
+      globalThis.refresh=refreshAssignmentsFromServer;globalThis.value=()=>notebook;`,context);
+    await context.refresh();
+    const block=context.value().tabs.find(tab=>tab.id === 'assignments').blocks[0];
+    assert.equal(block.practice.status,'failed');assert.equal(block.notesMarkdown,'My draft notes');assert.match(block.responseHtml,/Unsaved/);
+    assert.equal(redraws,0);assert.equal(updates,1);assert.equal(saves,1);
+  }
+});
+
+test('failed feedback enables retry controls immediately without changing its timestamp',()=>{
+  const button={},status={},badge={};const block={promptId:'one',practice:{status:'failed',submittedAt:Date.now()/1000}};
+  const card={dataset:{promptId:'one'},querySelector(selector){return selector.includes('badges') ? badge : selector.includes('submit') ? button : status;}};
+  const context={document:{querySelectorAll(){return [card];}},assignmentsTab(){return {blocks:[block]};},isAssignmentResponseLocked(){return false;}};
+  vm.runInNewContext(`${functionSource('function updatePracticeFeedback(', 'function updateFeedbackPolling(')} updatePracticeFeedback({content:false});`,context);
+  assert.equal(button.disabled,false);assert.match(status.textContent,/submit again/);assert.equal(badge.textContent,'failed');
 });
