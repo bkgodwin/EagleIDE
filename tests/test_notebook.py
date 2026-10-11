@@ -1119,6 +1119,14 @@ class NotebookTestCase(unittest.TestCase):
             with Image.open(io.BytesIO(encoded)) as stored:
                 self.assertFalse(stored.getexif())
 
+    def test_photo_size_limit_applies_to_the_saved_encoding(self):
+        from PIL import Image
+        output = io.BytesIO(); Image.new('RGB', (4, 2), 'navy').save(output, format='PNG'); output.seek(0)
+        with mock.patch.object(eagle, 'MAX_UPLOAD_FILE_BYTES', 512):
+            response = self.client.post('/api/notebook/images', headers={"X-User-Token": self.student_token}, data={"classId": self.class_id, "image": (output, 'board.png')})
+        self.assertEqual(response.status_code, 413)
+        self.assertIn('resized photo', response.get_json()['error'])
+
 
 if __name__ == "__main__":
     unittest.main()

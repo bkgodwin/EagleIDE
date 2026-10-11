@@ -126,6 +126,8 @@ def register_notebook_media(eagle):
                 data, extension, dimensions = photo_bytes(payload)
             except Exception:
                 return jsonify(ok=False, error="This photo could not be decoded safely. Choose a JPEG, PNG, WebP, or GIF image."), 422
+            if len(data) > eagle.MAX_UPLOAD_FILE_BYTES:
+                return jsonify(ok=False, error="The resized photo exceeds the image size limit"), 413
             root = eagle._get_user_dir(email)
             root.mkdir(parents=True, exist_ok=True)
             stem = re.sub(r"[^A-Za-z0-9_-]", "-", Path(str(upload.filename or "photo").replace("\\", "/")).stem)[:35].strip("-") or "photo"
