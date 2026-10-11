@@ -650,7 +650,7 @@
     const practice = block.practice || {};
     const feedback = practice.status === 'failed' ? practice.error || block.feedback : block.feedback || practice.feedback || practice.error;
     return `<div data-practice-feedback><div class="student-notebook-red-ink">${escapeHtml(practice.status === 'failed' ? 'Feedback unavailable · try again' : practice.summary || (block.feedback ? 'Teacher feedback' : 'Ready to practice'))}</div>`
-      + (feedback ? `<aside class="student-notebook-grade-note"><strong>Feedback</strong><span>${escapeHtml(feedback)}</span></aside>` : '') + '</div>';
+      + (feedback ? `<aside class="student-notebook-grade-note" aria-label="Feedback on code quality and assignment requirements"><strong>Feedback</strong><span>${escapeHtml(feedback)}</span></aside>` : '') + '</div>';
   }
 
   function renderNotes(block, target) {
@@ -666,7 +666,7 @@
     const pending = ['queued', 'running'].includes(practice.status);
     const hasNotes = block.notesEdited || !!(block.notesMarkdown || practice.notes);
     const submitted = !!practice.submittedAt;
-    return `<div class="student-notebook-prompt-text">${escapeHtml(block.prompt || '')}</div>
+    return `<span class="student-notebook-challenge-label">Challenge</span><div class="student-notebook-prompt-text">${escapeHtml(block.prompt || '')}</div>
       ${submitted ? `<h4>Your submitted attempt</h4><div class="student-notebook-submitted-preview">${sanitizeHtml(practice.submittedHtml || '')}</div>${assignmentGradeHtml(block)}<details class="student-notebook-next-attempt" ${practice.submittedHtml !== block.responseHtml ? 'open' : ''}><summary>${locked ? 'Saved response' : 'Prepare your next attempt'}</summary>` : ''}
       ${block.responseType === 'code' && !locked ? `<button type="button" class="btn secondary student-notebook-assignment-code-btn" data-assignment-code="${escapeHtml(block.promptId)}">${String(block.responseHtml || '').includes('student-notebook-code-block') ? 'Update code from editor' : 'Insert code from editor'}</button>` : ''}
       <div class="student-notebook-response-wrap${block.responseType === 'code' ? ' code-response-wrap' : ''}">
@@ -675,7 +675,7 @@
       </div>
       ${!readOnlyCheck && ctx().USER_TOKEN && !ctx().TEACHER_TOKEN ? `<div class="student-notebook-practice-actions"><button type="button" class="btn run" data-practice-submit="${escapeHtml(block.promptId)}" ${locked || cooldown || pending ? 'disabled' : ''}>${practice.submittedAt ? 'Submit again' : 'Submit for feedback'}</button><span data-practice-status>${escapeHtml(pending ? 'Feedback ' + practice.status : cooldown ? `Submit again in ${Math.ceil(cooldown / 60)} min` : 'Coding practice · no score')}</span></div>` : ''}
       ${submitted ? '</details>' : ''}
-      <section class="student-notebook-topic-notes"><div class="student-notebook-notes-heading"><strong>Topic notes</strong>${!tabIsReadOnly() ? '<button type="button" class="btn secondary" data-edit-notes>Edit / add notes</button>' : ''}</div>
+      <section class="student-notebook-topic-notes"><div class="student-notebook-notes-heading"><div><strong>Topic notes</strong><p class="student-notebook-notes-description">The coding concept and reminders to keep.</p></div>${!tabIsReadOnly() ? '<button type="button" class="btn student-notebook-notes-edit" data-edit-notes aria-pressed="false">✎ Edit / add notes</button>' : ''}</div>
         ${block.notesEdited && practice.notes && practice.notes !== block.notesMarkdown ? '<details><summary>Latest AI topic notes</summary><div class="student-notebook-markdown" data-ai-topic-notes></div></details>' : ''}
         <div class="student-notebook-markdown" data-topic-notes>${hasNotes ? '' : '<p>Your topic notes will appear here after feedback.</p>'}</div>
         <textarea class="student-notebook-notes-source" data-notes-source maxlength="16000" aria-label="Edit topic notes in Markdown" hidden>${escapeHtml(block.notesEdited ? block.notesMarkdown : block.notesMarkdown || practice.notes || '')}</textarea>
@@ -716,6 +716,7 @@
     body.querySelector('.student-notebook-assignment-code-btn')?.addEventListener('click', () => insertAssignmentCode(block.promptId));
     body.querySelector('[data-practice-submit]')?.addEventListener('click', () => submitPractice(block.promptId));
     const source = body.querySelector('[data-notes-source]'), rendered = body.querySelector('[data-topic-notes]');
+    const editNotes = body.querySelector('[data-edit-notes]');
     if (block.notesEdited || block.notesMarkdown || block.practice?.notes) renderNotes(block, rendered);
     const latestNotes = body.querySelector('[data-ai-topic-notes]');
     if (latestNotes) renderNotes({ notesMarkdown: block.practice.notes, practice: block.practice }, latestNotes);
@@ -723,9 +724,13 @@
       if (tabIsReadOnly()) return;
       source.hidden = !source.hidden; rendered.hidden = !source.hidden;
       body.querySelector('[data-notes-hint]').hidden = source.hidden;
+      if (editNotes) {
+        editNotes.textContent = source.hidden ? '✎ Edit / add notes' : '✓ Done editing';
+        editNotes.setAttribute('aria-pressed', String(!source.hidden));
+      }
       if (!source.hidden) source.focus(); else renderNotes((assignmentsTab()?.blocks || []).find(row => row.promptId === block.promptId) || block, rendered);
     };
-    body.querySelector('[data-edit-notes]')?.addEventListener('click', toggleNotes);
+    editNotes?.addEventListener('click', toggleNotes);
     rendered.addEventListener('click', event => { if (!event.target.closest('a,button')) toggleNotes(); });
     source.addEventListener('input', () => {
       const current = (assignmentsTab()?.blocks || []).find(row => row.promptId === block.promptId);

@@ -190,7 +190,11 @@ AI results check submission identity and current enrollment before applying.
 A bounded local check rejects blank/comment-only and clearly noncoding attempts
 before model admission. The model reviews relevance for remaining code. Prompts
 treat all source as untrusted coding data; solution code blocks are rejected.
-Admin/class AI switches apply. Student-edited Markdown notes survive later AI
+`ai_notebook_feedback_enabled` (admin AI settings, default true) applies independently
+of general `ai_explainer_enabled` and class `ai_enabled`. Feedback evaluates code
+quality and assignment fulfillment; topic notes define the primary coding concept
+and give reusable reminders without critiquing the submitted attempt.
+Student-edited Markdown notes survive later AI
 results. Teacher comments remain editable without grading controls.
 
 Notebooks carry an incrementing `revision`; stale saves return HTTP 409 plus the
