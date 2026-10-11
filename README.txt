@@ -595,12 +595,18 @@ FOR STUDENTS
 1. View assignments in the Assignments tab only after joining a class
 2. Join a class from the Assignments tab using the 6-character class code
    (once joined, students cannot self-leave)
-3. Unlocked assignments appear in the assignment area; locked assignments are hidden
+3. Current and Past tabs show released assignment titles and due dates. Click a
+   title to expand details. Unreleased drafts stay hidden.
 4. Sign in with your student account
-5. Choose one of your saved files to submit
-6. The selected file is copied to the protected assignment submission store,
-   organized by class and assignment, with student name and timestamp metadata
-7. Resubmissions replace your previous file for that assignment
+5. Submit selects your open file by default. When multiple files are enabled,
+   add other workspace files or upload attachments of any type.
+6. Submitted work shows a green checkmark. View submission opens your saved
+   files read-only; scores and shared feedback also remain available in Past.
+7. A teacher-provided extended deadline skips weekends and stays in Current
+   until that deadline. With a no-deadline accommodation, late submissions
+   remain available in Past while the assignment is explicitly unlocked.
+8. Class submission windows apply on weekdays in the displayed class time zone,
+   unless the assignment allows submissions at any time.
 
 --------------------------------------------------
 FOR TEACHERS
@@ -624,6 +630,19 @@ FOR TEACHERS
     grading by an external AI
 11. Review grading feedback and override suggested scores at any time
 12. Export student-number/score CSV files as points or one-decimal percentages
+13. In Classes, edit each student's extended weekdays or no-deadline
+    accommodation, and set the class submission hours/time zone. Accommodations
+    are private to that student. Manual assignment locks still apply.
+14. Assignment creation/editing controls multiple files, maximum file attempts
+    (0 means unlimited), and whether to ignore the class submission window.
+15. Submitted files are kept together in protected student/revision folders.
+    Select any file to preview/download; History retains three prior submissions.
+    Grading always uses the latest; AI includes only its .py and .js files.
+16. Edit feedback under a student's submission. Students see the edited version
+    only when assignment feedback sharing is enabled. Un-submit restores one
+    used attempt after accidental submission and keeps the previous evidence.
+17. In Resources > Assignments, Present opens a large title/details display for
+    classroom screens. Close or Escape returns to the ordinary view.
 
 AI grading systems (per assignment):
 - Legacy grader remains the default, with its existing instructions and rigor.
