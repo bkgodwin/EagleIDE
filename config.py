@@ -74,6 +74,7 @@ DEFAULT_CONFIG = {
     # Student Python execution. The server retains a hard upper bound from its
     # environment; admins can reduce these limits without restarting.
     "python_memory_limit_mb": 750,
+    "python_execution_timeout_seconds": 30,
     "python_max_concurrent_runs": 8,
     "python_module_access": {},
 

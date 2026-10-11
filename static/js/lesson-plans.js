@@ -146,6 +146,8 @@
     const select = $('lessonPlanTeacherSource');
     const note = $('lessonPlanTeacherSourceNote');
     if (!select) return;
+    const coTeacher = !!context().currentTeacher?.is_coteacher;
+    ['lessonPlanCopyPublic', 'lessonPlanCopyCurrent', 'lessonPlanCopyEmbed', 'lessonPlanResetLink'].forEach(id => { $(id).hidden = coTeacher; });
     const sourceId = state.teacherData?.class?.id === state.teacherClassId
       ? state.teacherData?.plan_source?.id || state.teacherClassId
       : state.teacherClassId;
@@ -161,7 +163,7 @@
       select.appendChild(option);
     });
     select.value = sourceId && sourceId !== state.teacherClassId ? sourceId : '';
-    select.disabled = !state.teacherClassId;
+    select.disabled = !state.teacherClassId || coTeacher;
     if (note) {
       const sourceName = state.teacherData?.plan_source?.name || 'this class';
       note.textContent = select.value
