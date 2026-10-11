@@ -1071,7 +1071,14 @@ def _issue_access_token(role: str, user_info: dict, token: Optional[str] = None)
     return token
 
 
-def _load_classes() -> dict:
+def _class_catalog_snapshot(data: dict, class_id: Optional[str]) -> dict:
+    """Copy only the requested class for frequent workspace access checks."""
+    if class_id is not None:
+        data = {"classes": [c for c in data.get("classes", []) if c.get("id") == class_id]}
+    return copy.deepcopy(data)
+
+
+def _load_classes(*, class_id: Optional[str] = None) -> dict:
     global _classes_cache
     with _classes_lock:
         if CLASSES_FILE.exists():
@@ -1079,7 +1086,7 @@ def _load_classes() -> dict:
                 cache_path = str(CLASSES_FILE.resolve())
                 mtime_ns = CLASSES_FILE.stat().st_mtime_ns
                 if _classes_cache and _classes_cache[0] == cache_path and _classes_cache[1] == mtime_ns:
-                    return copy.deepcopy(_classes_cache[2])
+                    return _class_catalog_snapshot(_classes_cache[2], class_id)
                 data = json.loads(CLASSES_FILE.read_text(encoding="utf-8"))
             except Exception:
                 data = {}
@@ -1125,7 +1132,7 @@ def _load_classes() -> dict:
         normalized = {"classes": classes}
         if CLASSES_FILE.exists():
             _classes_cache = (str(CLASSES_FILE.resolve()), CLASSES_FILE.stat().st_mtime_ns, normalized)
-        return copy.deepcopy(normalized)
+        return _class_catalog_snapshot(normalized, class_id)
 
 
 def _save_classes(data: dict) -> None:
@@ -1151,7 +1158,7 @@ def _find_class_by_id(class_id: str) -> Optional[dict]:
     cid = str(class_id or "").strip()
     if not cid:
         return None
-    for c in _load_classes().get("classes", []):
+    for c in _load_classes(class_id=cid).get("classes", []):
         if c.get("id") == cid:
             return c
     return None
