@@ -733,7 +733,34 @@ Notebook assignments use the same teacher-owned skill catalog shown in Dashboard
 > Skills. The prompt composer includes a searchable, scrollable skill sidebar
 with each tag's description plus Select visible and Clear actions. Selecting a
 skill for a notebook assignment attaches it to that class automatically so the
-tag, description, and notebook scores appear consistently in mastery reports.
+tag and description stay consistent with the class skill catalog. Notebook
+practice is formative and does not add scores to mastery reports.
+
+Notebook practice and reliability:
+- Students expand one challenge at a time, insert an editor code snapshot or
+  write a coding explanation, then choose Submit for feedback. Feedback is
+  queued automatically through the shared AI dispatcher. A red-ink comment and
+  short sticky note describe the attempt; Markdown topic notes appear below it.
+- Edit / add notes lets students personalize the generated notes. Personal edits
+  survive later feedback. Empty, comment-only, and unrelated responses receive
+  a request for a coding attempt, rather than a worked answer. AI feedback stays
+  within the programming topic. Admin and class AI switches still apply.
+- Wait three minutes before resubmitting the same prompt. One feedback job per
+  student may be pending; the notebook queue is bounded. Failed feedback never
+  deletes the submitted response. Pending work resumes when the student next
+  opens the notebook after a server restart.
+- Drag the notebook's left edge, or focus it and use the arrow keys, to resize.
+  The padlock locks only the current tab for browsing. Unlock to edit again.
+  Teachers can choose View notebook beside a student in Dashboard > Classes for
+  a read-only notebook check; class co-teachers have the same viewing access.
+- Notes save after a typing pause. Unsaved drafts are also kept on this device
+  when browser storage is available, including on class changes or page hiding.
+  Reopening restores drafts. Newer server changes are merged; overlapping edits
+  are preserved in a Recovered notes tab. Use Save copy if storage or networking
+  fails. Device recovery is not a substitute for a successful server save.
+- Run Here uses the same execution slot as the IDE. Only the active code block
+  accepts input. Edit code opens a dedicated code editor that preserves mobile
+  indentation; notes, code, and legacy prompt responses remain readable.
 
 ================================================================================
                             8. ADMIN PANEL

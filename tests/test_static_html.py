@@ -296,10 +296,12 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn("skill.description", notebook)
         self.assertIn("teacherNotebookSelectedSkills", notebook)
         self.assertIn("X-Teacher-Token", notebook)
-        self.assertIn("teacherNotebookPracticeInput", notebook)
+        self.assertIn("submitPractice", notebook)
         self.assertIn("openNotebookShareModal", classroom_files)
         self.assertIn('font-family: "Arial Rounded MT Bold"', notebook_css)
-        self.assertIn("teacherNotebookPracticeInput", self.parser.ids)
+        self.assertIn("studentNotebookLockBtn", self.parser.ids)
+        self.assertIn("studentNotebookResizeHandle", self.parser.ids)
+        self.assertNotIn("teacherNotebookPromptMaxScoreInput", self.parser.ids)
         self.assertNotIn("open-class-bookmarks-btn", core)
 
     def test_ide_pane_controls_are_easy_to_reach(self):
