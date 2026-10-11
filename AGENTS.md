@@ -86,6 +86,7 @@ Required runtime components:
 |-- tests/
 |   |-- test_execution_limits.py Execution admission, runner limits, files, and stream safeguards
 |   |-- test_file_browser.py     Student file operations, creation races, and workspace path safety
+|   |-- test_file_open_performance.py Bounded class snapshots and live workspace permission changes
 |   |-- connection_ui.test.js    Offline warnings, file guards, reconnect state, and stalled response checks
 |   |-- js_worker.test.js        JavaScript constructor escapes, imports, input, and timer limits
 |   |-- test_auth_frontend.py    Session restoration and sign-in/class-refresh JavaScript checks
