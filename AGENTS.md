@@ -25,6 +25,7 @@ Required runtime components:
 |-- app.py                       Main Flask/Socket.IO app, APIs, auth, persistence, and runners
 |-- assignment_workflow.py       Private deadlines/windows, submission bundles/history, and previews
 |-- notebook_practice.py         Bounded practice feedback, revision guards, and protected notebook checks
+|-- notebook_media.py            Quota-counted photo uploads, protected previews, and shared-tab copies
 |-- workspace_data.py            Bounded CSV pages and version-checked streaming workspace edits
 |-- server_metrics.py            On-demand Linux/Windows per-core CPU counters
 |-- classroom_features.py        Classroom signals, file sharing, audit routes, and socket events
@@ -74,6 +75,7 @@ Required runtime components:
 |       |-- classroom-files.js   Sharing and teacher file-audit UI
 |       |-- student-notebook.js  Notebook tabs, practice feedback/notes, recovery, checks, and inline runs
 |       |-- notebook-sync.js     Pure three-way draft merging and conflict recovery
+|       |-- notebook-photos.js   Device-photo resizing, lazy authenticated previews, and URL cleanup
 |       |-- student-dashboard.js Student mastery dashboard and achievements
 |       |-- lesson-plans.js      Teacher editing and student home lesson-plan controller
 |       |-- lesson-plan-renderer.js Shared safe weekly-plan renderer
@@ -105,6 +107,7 @@ Required runtime components:
 |   |-- test_html_runtime.py     HTML runtime security, assets, bridge, and cleanup
 |   |-- test_notebook.py         Notebook persistence, practice queue, cooldowns, legacy data, and access
 |   |-- notebook_practice_ui.test.js Draft merging, output framing, tab locks, and shared runner checks
+|   |-- notebook_photos_ui.test.js Photo scaling, lazy loading, read-only checks, and stale uploads
 |   |-- test_assignments.py      Assignment ownership, submissions, legacy/beta grading, and rubric validation
 |   |-- test_assignment_workflow.py Deadlines/windows, multi-file storage/history, and submission access
 |   |-- assignment_workflow_ui.test.js Current/past cards, submission state, and attachment rendering
@@ -173,8 +176,16 @@ Notebook prompts are formative practice, without numeric scores or mastery
 contributions. Preserve legacy score/feedback fields on disk. `notebook_practice.py`
 registers student submission and teacher read-only notebook-check routes against
 the loaded app module. Its durable per-block snapshot/status is protected from
-student saves; a bounded 64-job worker uses only the shared AI dispatcher, with
+student saves; a bounded 256-job worker uses only the shared AI dispatcher, with
 one pending job per student and a 180-second per-prompt resubmission cooldown.
+Failed feedback bypasses that cooldown while preserving its submission timestamp.
+The private `notebooks/.practice-queue.json` identity journal restores accepted
+jobs at startup without an open browser; preserve FIFO order and never put source
+in this journal. Background admission waits for dispatcher capacity without
+spending generation timeout. Overload pauses/retries remain in the shared
+dispatcher. Practice requests run sequentially with minimum start spacing and
+one bounded correction for invalid feedback format; exceptions must settle
+status instead of leaving stale queued labels.
 AI results check submission identity and current enrollment before applying.
 A bounded local check rejects blank/comment-only and clearly noncoding attempts
 before model admission. The model reviews relevance for remaining code. Prompts
@@ -194,6 +205,18 @@ Only one prompt body is mounted at a time; highlighting and output are bounded.
 Notebook resizing uses pointer capture and visualViewport bounds. Inline runners
 claim the IDE's shared execution state before emitting, frame split input tokens,
 and accept input only from the active notebook block.
+Execution workers own stdin echo. Strip INPUT_TOKEN's following protocol newline,
+including split CRLF/chunks, without removing the student's prompt spacing.
+
+Notebook photos are bounded, metadata-free static JPEG/PNG files under each
+workspace's `images/` folder, at most 1920 pixels per edge and subject to storage
+and file-count quotas. Protected previews use current notebook/class access,
+including read-only teacher/co-teacher checks. Persist `data-notebook-image`
+paths, never tokens, blob URLs, or preview controls. Lazy previews limit parallel
+loads and release offscreen/closed image URLs. Removing a photo from a page keeps
+the workspace file available in Files; ordinary file deletion remains recoverable
+through Trash. Sharing a tab copies referenced photos to the recipient workspace
+and checks its quotas rather than granting access to the sender's files.
 
 `connection.js` combines browser online/offline events, the execution socket, and bounded same-origin `/health` probes. Outages keep the editor local and editable, show red page/Shell/file warnings, and block workspace requests and execution. Reconnection saves the retained buffer without reloading its source. Saves are serialized; file opens reject stale account, file, and editor-buffer responses. The close-tab warning applies to an outage or actual unsaved editor/notebook work, so saved connected sessions can exit immediately. No service worker, offline execution, third-party cookies, or browser security-policy relaxation is used. Autocomplete menus pause during outages without changing the saved preference; local indentation and highlighting remain available.
 

@@ -14,13 +14,32 @@ import threading
 import time
 import uuid
 from html.parser import HTMLParser
+from pathlib import Path
 
 from flask import jsonify, request
 
 COOLDOWN_SECONDS = 180
 MAX_RESPONSE_CHARS = 16000
 MAX_NOTES_CHARS = 16000
-MAX_PENDING = 64
+MAX_PENDING = 256
+MIN_REQUEST_GAP_SECONDS = 0.5
+
+
+class FeedbackFailure(Exception):
+    def __init__(self, code, message):
+        self.code = code
+        super().__init__(message)
+
+
+def service_failure(response):
+    status = response.get("status")
+    if status == 504:
+        return FeedbackFailure("timeout", "The AI service took too long. Your attempt is saved; you can retry now.")
+    if status in (429, 503):
+        return FeedbackFailure("capacity", "The AI service is busy after automatic retries. You can retry now.")
+    if status == 422:
+        return FeedbackFailure("configuration", "The AI request could not be accepted. Ask your teacher to check AI settings; you can retry now.")
+    return FeedbackFailure("service", "The AI service could not be reached or returned an invalid response. Your attempt is saved; you can retry now.")
 
 
 def normalize_practice(block):
@@ -135,8 +154,34 @@ UNTRUSTED DATA (JSON):\n""" + json.dumps({"title": block.get("title"), "assignme
 def register_notebook_practice(eagle):
     jobs = queue.Queue(maxsize=MAX_PENDING)
     pending = set()
-    pending_lock = threading.Lock()
-    worker_started = False
+    pending_order = []
+    pending_lock = threading.RLock()
+    worker_thread = None
+    last_request_at = 0.0
+
+    def write_journal():
+        # Called only with pending_lock. This small journal stores job identities,
+        # never source; notebook snapshots remain the source of truth.
+        eagle._write_json_file_atomic(Path(eagle.NOTEBOOKS_DIR) / ".practice-queue.json",
+                                      {"jobs": [list(job) for job in pending_order]})
+
+    def notify(email, class_id, prompt_id):
+        for sid, info in list(eagle._socket_sid_info.items()):
+            if info.get("email") == email:
+                eagle.socketio.emit("notebook_feedback_updated", {"class_id": class_id, "promptId": prompt_id}, to=sid)
+
+    def fail_job(job, error):
+        email, class_id, prompt_id, revision_id = job
+        with eagle._notebooks_lock:
+            if not eagle._student_can_access_notebook(email, class_id):
+                return
+            notebook = eagle._load_student_notebook(email, class_id)
+            block = eagle._notebook_prompt_response(notebook, prompt_id)
+            if not block or block["practice"]["id"] != revision_id or block["practice"].get("status") not in {"queued", "running"}:
+                return
+            block["practice"].update(status="failed", summary="Feedback unavailable", error=str(error)[:200])
+            persist(email, class_id, notebook)
+        notify(email, class_id, prompt_id)
 
     def persist(email, class_id, notebook):
         if len(json.dumps(notebook, ensure_ascii=False)) > eagle.MAX_NOTEBOOK_JSON_CHARS:
@@ -146,13 +191,14 @@ def register_notebook_practice(eagle):
         eagle._write_json_file_atomic(eagle._notebook_path(email, class_id), notebook)
 
     def process(job):
+        nonlocal last_request_at
         email, class_id, prompt_id, revision_id = job
         with eagle._notebooks_lock:
             if not eagle._student_can_access_notebook(email, class_id):
                 return
             notebook = eagle._load_student_notebook(email, class_id)
             block = eagle._notebook_prompt_response(notebook, prompt_id)
-            if not block or block["practice"]["id"] != revision_id:
+            if not block or block["practice"]["id"] != revision_id or block["practice"].get("status") not in {"queued", "running"}:
                 return
             block["practice"]["status"] = "running"
             persist(email, class_id, notebook)
@@ -168,25 +214,38 @@ def register_notebook_practice(eagle):
                 cfg = eagle._load_config()
                 cls = eagle._find_class_by_id(class_id)
                 if not cfg.get("ai_explainer_enabled", False) or not (cls or {}).get("settings", {}).get("ai_enabled", True):
-                    raise RuntimeError("AI feedback is disabled")
+                    raise FeedbackFailure("disabled", "AI feedback is disabled for this class. Your attempt is saved; you can retry when it is enabled.")
                 prompt = feedback_prompt(snapshot, source, snapshot["practice"]["language"])
-                response = eagle.call_ollama_generate(
-                    cfg.get("ai_ollama_url", ""), cfg.get("ai_model", "gemma3:4b"),
-                    prompt,
-                    timeout=eagle._configured_ai_timeout(cfg), num_predict=700,
-                    use_cache=False, json_response=True, temperature=0,
-                    response_schema={"type": "object", "properties": {k: {"type": "string"} for k in ("summary", "feedback", "notes")},
-                                     "required": ["summary", "feedback", "notes"], "additionalProperties": False},
-                    request_identity=f"student:{email}", request_kind="notebook-practice",
-                    request_label="Notebook practice feedback", num_ctx=16384,
-                    max_input_tokens=14600, max_request_bytes=128000)
-                if not response.get("ok"):
-                    raise RuntimeError("Feedback service is unavailable. Your submission is saved; try again later.")
-                result = safe_result(response.get("text") or "")
+                for attempt in range(2):
+                    time.sleep(max(0, MIN_REQUEST_GAP_SECONDS - (time.monotonic() - last_request_at)))
+                    last_request_at = time.monotonic()
+                    response = eagle.call_ollama_generate(
+                        cfg.get("ai_ollama_url", ""), cfg.get("ai_model", "gemma3:4b"), prompt,
+                        timeout=eagle._configured_ai_timeout(cfg), num_predict=700,
+                        use_cache=False, json_response=True, temperature=0,
+                        response_schema={"type": "object", "properties": {k: {"type": "string"} for k in ("summary", "feedback", "notes")},
+                                         "required": ["summary", "feedback", "notes"], "additionalProperties": False},
+                        request_identity=f"student:{email}", request_kind="notebook-practice",
+                        request_label="Notebook practice feedback", num_ctx=16384,
+                        max_input_tokens=14600, max_request_bytes=128000, wait_for_capacity=True)
+                    if not response.get("ok"):
+                        raise service_failure(response)
+                    try:
+                        result = safe_result(response.get("text") or "")
+                        break
+                    except (ValueError, TypeError):
+                        if attempt:
+                            raise FeedbackFailure("format", "The AI returned unusable feedback. Your attempt is saved; you can retry now.")
+                        prompt += "\nCorrection: return a JSON object with nonempty summary, feedback, and notes strings. Keep it brief and conceptual, without fenced code or a worked solution."
             error = ""
+        except FeedbackFailure as exc:
+            result = None
+            error = str(exc)
+            eagle.app.logger.warning("Notebook feedback failed reason=%s", exc.code)
         except Exception:
             result = None
-            error = "Feedback could not be generated. Your submission is saved; try again after the cooldown."
+            error = "Feedback could not be generated. Your attempt is saved; you can retry now."
+            eagle.app.logger.warning("Notebook feedback failed reason=worker_error")
         with eagle._notebooks_lock:
             if not eagle._student_can_access_notebook(email, class_id):
                 return
@@ -197,6 +256,8 @@ def register_notebook_practice(eagle):
             practice = block["practice"]
             before_result = copy.deepcopy(notebook)
             practice.update(status="complete" if result else "failed", error=error)
+            if not result:
+                practice["summary"] = "Feedback unavailable"
             if result:
                 practice.update(result)
                 if not block.get("notesEdited"):
@@ -206,13 +267,11 @@ def register_notebook_practice(eagle):
             except ValueError:
                 notebook = before_result
                 practice = eagle._notebook_prompt_response(notebook, prompt_id)["practice"]
-                practice.update(status="failed", error="Notebook is full. Make space before submitting again.")
+                practice.update(status="failed", summary="Feedback unavailable", error="Notebook is full. Make space before submitting again.")
                 if len(json.dumps(notebook, ensure_ascii=False)) > eagle.MAX_NOTEBOOK_JSON_CHARS:
                     practice.update(error="", summary="", feedback="", notes="")
                 persist(email, class_id, notebook)
-        for sid, info in list(eagle._socket_sid_info.items()):
-            if info.get("email") == email:
-                eagle.socketio.emit("notebook_feedback_updated", {"class_id": class_id, "promptId": prompt_id}, to=sid)
+        notify(email, class_id, prompt_id)
 
     def worker():
         while True:
@@ -220,24 +279,42 @@ def register_notebook_practice(eagle):
             try:
                 process(job)
             except Exception:
-                eagle.app.logger.warning("Notebook feedback job failed")
+                eagle.app.logger.warning("Notebook feedback failed reason=persistence")
+                try:
+                    fail_job(job, "Feedback could not be generated. Your attempt is saved; you can retry now.")
+                except Exception:
+                    eagle.app.logger.warning("Notebook feedback failure could not be saved")
             finally:
                 with pending_lock:
                     pending.discard(job)
+                    if job in pending_order:
+                        pending_order.remove(job)
+                    try:
+                        write_journal()
+                    except Exception:
+                        eagle.app.logger.warning("Notebook feedback journal could not be saved")
                 jobs.task_done()
 
-    def enqueue(job):
-        nonlocal worker_started
+    def enqueue(job, *, journal=True, start=True):
+        nonlocal worker_thread
         with pending_lock:
             if job in pending:
                 return True
             if len(pending) >= MAX_PENDING or any(existing[0] == job[0] for existing in pending):
                 return False
             pending.add(job)
+            pending_order.append(job)
+            if journal:
+                try:
+                    write_journal()
+                except Exception:
+                    pending.discard(job)
+                    pending_order.remove(job)
+                    raise
             jobs.put_nowait(job)
-            if not worker_started:
-                threading.Thread(target=worker, name="notebook-practice", daemon=True).start()
-                worker_started = True
+            if start and (worker_thread is None or not worker_thread.is_alive()):
+                worker_thread = threading.Thread(target=worker, name="notebook-practice", daemon=True)
+                worker_thread.start()
         return True
 
     def recover(email, class_id, notebook):
@@ -248,6 +325,25 @@ def register_notebook_practice(eagle):
 
     eagle._recover_notebook_practice = recover
     eagle._notebook_practice_jobs = jobs
+    eagle._enqueue_notebook_practice = enqueue
+
+    def restore_queue():
+        nonlocal worker_thread
+        journal_path = Path(eagle.NOTEBOOKS_DIR) / ".practice-queue.json"
+        if not journal_path.exists():
+            return
+        raw = eagle._read_json_file(journal_path, {})
+        rows = raw.get("jobs", []) if isinstance(raw, dict) else []
+        for row in rows[:MAX_PENDING] if isinstance(rows, list) else []:
+            if isinstance(row, list) and len(row) == 4 and all(isinstance(v, str) and 0 < len(v) <= 254 for v in row):
+                enqueue(tuple(row), journal=False, start=False)
+        with pending_lock:
+            if pending and (worker_thread is None or not worker_thread.is_alive()):
+                worker_thread = threading.Thread(target=worker, name="notebook-practice", daemon=True)
+                worker_thread.start()
+    # Resume accepted jobs even when students have closed their browsers.
+    eagle._restore_notebook_practice_queue = restore_queue
+    restore_queue()
 
     @eagle.app.post("/api/notebook/submit")
     def submit():
@@ -267,23 +363,31 @@ def register_notebook_practice(eagle):
                 return jsonify(ok=False, error="Your teacher has locked this prompt"), 409
             if data.get("revision") != notebook.get("revision"):
                 return jsonify(ok=False, error="Save your latest notebook before submitting", notebook=notebook), 409
-            remaining = COOLDOWN_SECONDS - (time.time() - block["practice"]["submittedAt"])
+            remaining = 0 if block["practice"].get("status") == "failed" else COOLDOWN_SECONDS - (time.time() - block["practice"]["submittedAt"])
             if remaining > 0:
                 return jsonify(ok=False, error="Wait three minutes between submissions", retryAfter=int(remaining) + 1), 429
             with pending_lock:
                 if any(job[0] == email for job in pending) or len(pending) >= MAX_PENDING:
                     return jsonify(ok=False, error="Your feedback is still queued, or the feedback queue is full. Try again shortly."), 429
-            source, language = response_source(block)
-            if len(source) > MAX_RESPONSE_CHARS:
-                return jsonify(ok=False, error="Practice responses must be under 16,000 characters"), 413
-            revision_id = uuid.uuid4().hex
-            block["practice"] = {"id": revision_id, "status": "queued", "submittedAt": time.time(),
-                "submittedHtml": block.get("responseHtml", ""), "code": source, "language": language,
-                "summary": "Feedback queued", "feedback": "", "notes": "", "error": ""}
-            if len(json.dumps(notebook, ensure_ascii=False)) + 16000 > eagle.MAX_NOTEBOOK_JSON_CHARS:
-                return jsonify(ok=False, error="Notebook is full. Make space before requesting feedback."), 413
-            persist(email, class_id, notebook)
-            enqueue((email, class_id, prompt_id, revision_id))
+                source, language = response_source(block)
+                if len(source) > MAX_RESPONSE_CHARS:
+                    return jsonify(ok=False, error="Practice responses must be under 16,000 characters"), 413
+                revision_id = uuid.uuid4().hex
+                block["practice"] = {"id": revision_id, "status": "queued", "submittedAt": time.time(),
+                    "submittedHtml": block.get("responseHtml", ""), "code": source, "language": language,
+                    "summary": "Feedback queued", "feedback": "", "notes": "", "error": ""}
+                if len(json.dumps(notebook, ensure_ascii=False)) + 16000 > eagle.MAX_NOTEBOOK_JSON_CHARS:
+                    return jsonify(ok=False, error="Notebook is full. Make space before requesting feedback."), 413
+                persist(email, class_id, notebook)
+                # Admission and the identity journal are atomic with respect to
+                # recovery and other submitters; never acknowledge a lost job.
+                try:
+                    enqueue((email, class_id, prompt_id, revision_id))
+                except Exception:
+                    block["practice"].update(status="failed", summary="Feedback unavailable", error="Feedback could not be queued. Your attempt is saved; you can retry now.")
+                    persist(email, class_id, notebook)
+                    eagle.app.logger.warning("Notebook feedback failed reason=queue_storage")
+                    return jsonify(ok=False, error=block["practice"]["error"], notebook=notebook), 503
             return jsonify(ok=True, notebook=notebook, retryAfter=COOLDOWN_SECONDS), 202
 
     @eagle.app.get("/api/teacher/notebook")
