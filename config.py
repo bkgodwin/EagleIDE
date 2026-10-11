@@ -24,6 +24,8 @@ DEFAULT_CONFIG = {
     # Admin Dashboard changes are runtime data saved in config.txt; this
     # source-controlled file is intentionally not rewritten by the dashboard.
     "ai_explainer_enabled": True,
+    # Notebook practice feedback is independent of general/class AI access.
+    "ai_notebook_feedback_enabled": True,
     "ai_ollama_url": "http://192.168.0.105:11434",
     "ai_model": "gemma3:4b",
     "ai_request_timeout_seconds": 120,

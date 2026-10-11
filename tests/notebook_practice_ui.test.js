@@ -54,6 +54,61 @@ test('a notebook at its tab limit keeps its local draft instead of dropping conf
 
 function functionSource(name, next) { return source.slice(source.indexOf(`  ${name}`), source.indexOf(`  ${next}`, source.indexOf(`  ${name}`))); }
 
+test('topic notes edit button opens Markdown, saves additions, and returns to the rendered notes', () => {
+  const block = {promptId:'one',notesMarkdown:'### Loops\nRepeat a task.',responseType:'code',practice:{notes:'### Loops\nRepeat a task.'}};
+  const handlers = {}, attrs = {};
+  const textarea = {hidden:true,value:block.notesMarkdown,focus(){this.focused=true;},addEventListener(type,fn){handlers.input=fn;}};
+  const rendered = {hidden:false,addEventListener(type,fn){handlers.rendered=fn;}};
+  const edit = {addEventListener(type,fn){handlers.edit=fn;},setAttribute(key,value){attrs[key]=value;}};
+  const hint = {hidden:true}; let locked=false,saves=0,renders=0;
+  const body = {querySelector(selector){return ({'.student-notebook-prompt-response':{addEventListener(){}},'[data-notes-source]':textarea,'[data-topic-notes]':rendered,'[data-edit-notes]':edit,'[data-notes-hint]':hint})[selector] || null;}};
+  const context = {body,block,assignmentBodyHtml(){return '';},isAssignmentResponseLocked(){return false;},tabIsReadOnly(){return locked;},assignmentsTab(){return {blocks:[block]};},
+    renderNotes(){renders++;},bindCodeBlockActions(){},highlightCodeBlocks(){},scheduleSave(){saves++;}};
+  vm.runInNewContext(`${functionSource('function mountPracticeBody(', 'async function submitPractice(')} mountPracticeBody(body,block);`,context);
+  handlers.edit();
+  assert.equal(textarea.hidden,false);assert.equal(rendered.hidden,true);assert.equal(textarea.focused,true);assert.equal(hint.hidden,false);
+  assert.equal(attrs['aria-pressed'],'true');assert.equal(edit.textContent,'✓ Done editing');
+  textarea.value+='\nMy reminder';handlers.input();
+  assert.match(block.notesMarkdown,/My reminder/);assert.equal(block.notesEdited,true);assert.equal(saves,1);
+  handlers.edit();
+  assert.equal(textarea.hidden,true);assert.equal(rendered.hidden,false);assert.equal(hint.hidden,true);
+  assert.equal(attrs['aria-pressed'],'false');assert.equal(edit.textContent,'✎ Edit / add notes');assert.equal(renders,2);
+  locked=true;handlers.edit();assert.equal(textarea.hidden,true);
+});
+
+test('practice cards keep code feedback separate from concept notes and omit editing for notebook checks', () => {
+  let readOnly=false;
+  const context = {Date,escapeHtml:value=>String(value || '').replaceAll('<','&lt;'),sanitizeHtml:value=>value,
+    isAssignmentResponseLocked(){return readOnly;},tabIsReadOnly(){return readOnly;},ctx(){return {USER_TOKEN:'student'};},assignmentResponseHtml(){return '';}};
+  vm.runInNewContext(`let readOnlyCheck=false; ${functionSource('function assignmentGradeHtml(', 'function renderNotes(')}
+    ${functionSource('function assignmentBodyHtml(', 'function renderAssignmentsPage(')} globalThis.card=assignmentBodyHtml;globalThis.checkView=()=>{readOnlyCheck=true;};`,context);
+  const block={prompt:'Use a loop',notesMarkdown:'### Iteration',responseType:'code',practice:{submittedAt:1,summary:'Keep going',feedback:'Check the loop bounds.',notes:'### Iteration'}};
+  let html=context.card(block);
+  assert.match(html,/Feedback on code quality and assignment requirements/);assert.match(html,/Check the loop bounds/);
+  assert.match(html,/Topic notes/);assert.match(html,/student-notebook-notes-edit/);assert.match(html,/aria-pressed="false"/);
+  assert.ok(html.indexOf('data-practice-feedback') < html.indexOf('student-notebook-topic-notes'));
+  readOnly=true;context.checkView();html=context.card(block);assert.doesNotMatch(html,/data-edit-notes|data-practice-submit/);assert.match(html,/data-topic-notes/);
+});
+
+test('admin settings save independent notebook and general AI choices', async () => {
+  const core=fs.readFileSync(path.join(root,'static/js/app-core.js'),'utf8');
+  const start=core.indexOf("    document.getElementById('settingsSaveBtn').addEventListener");
+  const end=core.indexOf('    // ---- Admin Users Management ----',start);
+  for (const notebookEnabled of [false,true]) {
+    let handler,saved;
+    const fields=new Map();
+    const document={getElementById(id){if (!fields.has(id)) fields.set(id,{value:'30',checked:false,addEventListener(type,fn){handler=fn;}});return fields.get(id);}};
+    document.getElementById('aiEnabledModal').checked=!notebookEnabled;
+    document.getElementById('aiNotebookFeedbackEnabledModal').checked=notebookEnabled;
+    const context={document,ADMIN_TOKEN:'admin',currentConfig:{},collectPythonModuleAccess(){return {};},
+      async saveConfig(config){saved=config;return {ok:true};},async fetch(){return {json:async()=>({ok:true})};},applyConfig(){},loadPythonRuntimeAdmin(){}};
+    vm.runInNewContext(core.slice(start,end),context);
+    await handler();
+    assert.equal(saved.ai_notebook_feedback_enabled,notebookEnabled);assert.equal(saved.ai_explainer_enabled,!notebookEnabled);
+    assert.equal(fields.get('adminSettingsStatus').textContent,'Settings saved.');
+  }
+});
+
 test('notebook input tokens are recognized across every output chunk boundary', () => {
   const token = '[[_IDE_INPUT_]]';
   for (let split = 1; split < token.length; split++) {

@@ -282,6 +282,7 @@ except Exception:
         "lesson_use_local": False,
         "lesson_html": "<p>(No local lesson yet)</p>",
         "ai_explainer_enabled": True,
+        "ai_notebook_feedback_enabled": True,
         "ai_ollama_url": "http://127.0.0.1:11434",
         "ai_model": "gemma3:4b",
         "ai_rubric_context_tokens": 16384,
@@ -548,6 +549,9 @@ def _normalize_config_partial(partial: Dict[str, Any]) -> Dict[str, Any]:
         normalized["ai_rubric_context_tokens"] = tokens
     if "guest_ide_access_enabled" in normalized:
         normalized["guest_ide_access_enabled"] = bool(normalized["guest_ide_access_enabled"])
+    if "ai_notebook_feedback_enabled" in normalized:
+        if not isinstance(normalized["ai_notebook_feedback_enabled"], bool):
+            raise ValueError("Notebook AI feedback must be enabled or disabled with a boolean")
     if "ide_solid_background_enabled" in normalized:
         normalized["ide_solid_background_enabled"] = bool(normalized["ide_solid_background_enabled"])
     if "ide_solid_background_color" in normalized:
