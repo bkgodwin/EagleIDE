@@ -24,6 +24,7 @@ Required runtime components:
 .
 |-- app.py                       Main Flask/Socket.IO app, APIs, auth, persistence, and runners
 |-- assignment_workflow.py       Private deadlines/windows, submission bundles/history, and previews
+|-- notebook_practice.py         Bounded practice feedback, revision guards, and protected notebook checks
 |-- workspace_data.py            Bounded CSV pages and version-checked streaming workspace edits
 |-- server_metrics.py            On-demand Linux/Windows per-core CPU counters
 |-- classroom_features.py        Classroom signals, file sharing, audit routes, and socket events
@@ -71,7 +72,8 @@ Required runtime components:
 |       |-- step-mode.js         Python trace playback, variables, narration, and navigation
 |       |-- classroom-signals.js Raise-hand/question UI and socket handling
 |       |-- classroom-files.js   Sharing and teacher file-audit UI
-|       |-- student-notebook.js  Notebook tabs, blocks, prompts, saving, and grading UI
+|       |-- student-notebook.js  Notebook tabs, practice feedback/notes, recovery, checks, and inline runs
+|       |-- notebook-sync.js     Pure three-way draft merging and conflict recovery
 |       |-- student-dashboard.js Student mastery dashboard and achievements
 |       |-- lesson-plans.js      Teacher editing and student home lesson-plan controller
 |       |-- lesson-plan-renderer.js Shared safe weekly-plan renderer
@@ -101,7 +103,8 @@ Required runtime components:
 |   |-- test_python_sandbox.py   Module ACL, native containment, SQLite, and chart security
 |   |-- test_startup.py          Launcher safety, dependency pinning, and environment checks
 |   |-- test_html_runtime.py     HTML runtime security, assets, bridge, and cleanup
-|   |-- test_notebook.py         Notebook prompts, locking, grading, and mastery integration
+|   |-- test_notebook.py         Notebook persistence, practice queue, cooldowns, legacy data, and access
+|   |-- notebook_practice_ui.test.js Draft merging, output framing, tab locks, and shared runner checks
 |   |-- test_assignments.py      Assignment ownership, submissions, legacy/beta grading, and rubric validation
 |   |-- test_assignment_workflow.py Deadlines/windows, multi-file storage/history, and submission access
 |   |-- assignment_workflow_ui.test.js Current/past cards, submission state, and attachment rendering
@@ -165,6 +168,32 @@ All Ollama generation goes through the shared in-memory AI dispatcher in `app.py
 `static/css/main.css` is the only local stylesheet entry point. It imports tokens, foundations, feature styles, and finally `legacy.css`. Prefer the closest feature file for new rules and preserve the import order. Check desktop, tablet, mobile, light, and dark appearances after layout or token changes.
 
 ### Execution Flows
+
+Notebook prompts are formative practice, without numeric scores or mastery
+contributions. Preserve legacy score/feedback fields on disk. `notebook_practice.py`
+registers student submission and teacher read-only notebook-check routes against
+the loaded app module. Its durable per-block snapshot/status is protected from
+student saves; a bounded 64-job worker uses only the shared AI dispatcher, with
+one pending job per student and a 180-second per-prompt resubmission cooldown.
+AI results check submission identity and current enrollment before applying.
+A bounded local check rejects blank/comment-only and clearly noncoding attempts
+before model admission. The model reviews relevance for remaining code. Prompts
+treat all source as untrusted coding data; solution code blocks are rejected.
+Admin/class AI switches apply. Student-edited Markdown notes survive later AI
+results. Teacher comments remain editable without grading controls.
+
+Notebooks carry an incrementing `revision`; stale saves return HTTP 409 plus the
+authorized current notebook. `notebook-sync.js` merges disjoint editable fields
+and preserves overlapping local work in recovery tabs. Scoped device drafts cover
+offline edits, slow responses, class/account changes, and iPad page suspension;
+never apply a stale load/save after its account/class changes. Browser-storage
+failure must remain visible. `editLocked` is a student's per-tab padlock, separate
+from the fixed Assignments tab and teacher prompt locks. Serialize only source
+HTML, never CodeMirror controls, runtime shells/output, or highlight spans.
+Only one prompt body is mounted at a time; highlighting and output are bounded.
+Notebook resizing uses pointer capture and visualViewport bounds. Inline runners
+claim the IDE's shared execution state before emitting, frame split input tokens,
+and accept input only from the active notebook block.
 
 `connection.js` combines browser online/offline events, the execution socket, and bounded same-origin `/health` probes. Outages keep the editor local and editable, show red page/Shell/file warnings, and block workspace requests and execution. Reconnection saves the retained buffer without reloading its source. Saves are serialized; file opens reject stale account, file, and editor-buffer responses. The close-tab warning applies to an outage or actual unsaved editor/notebook work, so saved connected sessions can exit immediately. No service worker, offline execution, third-party cookies, or browser security-policy relaxation is used. Autocomplete menus pause during outages without changing the saved preference; local indentation and highlighting remain available.
 

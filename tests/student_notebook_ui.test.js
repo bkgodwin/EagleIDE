@@ -16,7 +16,7 @@ test('slow notebook saves retain newer edits, serialize writes, and pause offlin
   } } } }, console, clearTimeout, setTimeout };
   const saveSource = source.slice(source.indexOf('  async function saveNotebook('), source.indexOf('  function scheduleSave('));
   vm.runInNewContext(`
-    let notebook = { value: 'first' }, activeClassId = 'class-1', dirty = false, saving = null, saveTimer = null;
+    let notebook = { value: 'first' }, activeClassId = 'class-1', loadedClassId = 'class-1', loadedOwner = 'owner', baseNotebook = null, readOnlyCheck = false, recoveryCount = 0, localBackupOk = true, dirty = false, saving = null, saveTimer = null;
     const SAVE_DELAY_MS = 1;
     function isStudentInClass() { return true; }
     function currentClassId() { return activeClassId; }
@@ -24,6 +24,10 @@ test('slow notebook saves retain newer edits, serialize writes, and pause offlin
     function userJsonHeaders() { return {}; }
     function setStatus() {}
     function ensureNotebookShape(value) { return value; }
+    function ownerKey() { return loadedOwner; }
+    function storeDraft() {}
+    function clearDraft() {}
+    function cloneNotebook(value) { return JSON.parse(JSON.stringify(value)); }
     ${saveSource}
     globalThis.api = { saveNotebook, edit(value) { notebook.value = value; dirty = true; },
       state() { return { value: notebook.value, dirty }; } };
@@ -70,7 +74,7 @@ test('notebook toggle closes the drawer and tracks the visible iPad viewport', a
     } } },
     document: { body, documentElement: { style }, getElementById: id => nodes[id] || null, querySelectorAll: () => [] },
     fetch: async () => { throw new Error('offline test'); },
-    console: { warn() {} },
+    console: { warn() {} }, clearTimeout, setTimeout,
     alert() {},
   };
   vm.runInNewContext(source, context);
@@ -89,7 +93,7 @@ test('notebook toggle closes the drawer and tracks the visible iPad viewport', a
   assert.equal(button.parentNode, home);
   assert.equal(button['aria-expanded'], 'false');
   assert.match(css, /right: calc\(var\(--notebook-viewport-right/);
-  assert.match(css, /width: min\(860px, calc\(var\(--notebook-viewport-width/);
+  assert.match(css, /width: min\(var\(--notebook-width, 860px\), calc\(var\(--notebook-viewport-width/);
 });
 
 test('long editable code scrolls inside its notebook block without widening the page', () => {
