@@ -44,7 +44,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261011-assignment-workflow-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261011-notebook-1">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -1132,15 +1132,18 @@
   <!-- Student Notebook Drawer -->
   <div id="studentNotebookOverlay" class="student-notebook-overlay" hidden></div>
   <aside id="studentNotebookDrawer" class="student-notebook-drawer" aria-hidden="true" aria-label="Class notebook">
+    <div id="studentNotebookResizeHandle" class="student-notebook-resize" role="separator" tabindex="0" aria-label="Resize notebook" aria-orientation="vertical" aria-valuemin="360" aria-valuemax="1600" aria-valuenow="860"></div>
     <div class="student-notebook-spine" aria-hidden="true"></div>
     <div class="student-notebook-book">
       <div class="student-notebook-cover">
         <div>
           <div class="student-notebook-kicker">EagleIDE</div>
-          <h2>Notebook</h2>
+          <h2 id="studentNotebookTitle">Class notebook</h2>
         </div>
         <div class="student-notebook-cover-actions">
           <span id="studentNotebookSaveStatus" class="student-notebook-save-status">Not loaded</span>
+          <button class="btn secondary" id="studentNotebookLockBtn" type="button" aria-pressed="false" title="Lock current tab for browsing">🔓 Edit</button>
+          <button class="btn secondary" id="studentNotebookDraftExportBtn" type="button" title="Download a recovery copy of your notebook">Save copy</button>
           <button class="btn secondary" id="studentNotebookExportBtn" title="Export notebook as PDF">Export PDF</button>
           <button class="btn secondary btn--icon" id="studentNotebookCloseBtn" title="Close notebook" aria-label="Close notebook">✕</button>
         </div>
@@ -1187,12 +1190,10 @@
           <label for="teacherNotebookPromptTitleInput">Assignment Title</label>
           <input id="teacherNotebookPromptTitleInput" type="text" maxlength="80" placeholder="Notebook assignment title">
           <div class="teacher-notebook-response-type" role="radiogroup" aria-label="Notebook response type">
-            <label><input type="radio" name="teacherNotebookResponseType" value="written" checked> Written response</label>
-            <label><input type="radio" name="teacherNotebookResponseType" value="code"> Code response</label>
+            <label><input type="radio" name="teacherNotebookResponseType" value="written"> Written coding explanation</label>
+            <label><input type="radio" name="teacherNotebookResponseType" value="code" checked> Code response</label>
           </div>
-          <label for="teacherNotebookPromptMaxScoreInput">Maximum Score</label>
-          <input id="teacherNotebookPromptMaxScoreInput" type="number" min="0" max="1000" step="1" value="10">
-          <label class="teacher-notebook-practice-option"><input id="teacherNotebookPracticeInput" type="checkbox"> Practice / ungraded assignment</label>
+          <p class="teacher-notebook-practice-option">In-class practice · automatic feedback and topic notes · no scores</p>
           <label for="teacherNotebookPromptInput">Prompt</label>
           <textarea id="teacherNotebookPromptInput" placeholder="Type the reflection or notebook prompt for your selected class..."></textarea>
         </div>
@@ -1802,17 +1803,18 @@
   <script src="/static/js/shell-commands.js?v=20261011-files-5"></script>
   <script src="/static/js/server-performance.js?v=20261011-files-5"></script>
   <script src="/static/js/workspace-data.js?v=20261011-files-5"></script>
-  <script src="/static/js/assignment-workflow.js?v=20261011-assignment-workflow-1"></script>
-  <script src="/static/js/app-core.js?v=20261011-assignment-workflow-1"></script>
+  <script src="/static/js/assignment-workflow.js?v=20261011-notebook-1"></script>
+  <script src="/static/js/app-core.js?v=20261011-notebook-1"></script>
   <script src="/static/js/step-mode.js?v=20261011-files-5"></script>
-  <script src="/static/js/wiki-reader.js?v=20261011-assignment-workflow-1"></script>
+  <script src="/static/js/wiki-reader.js?v=20261011-notebook-1"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
   <script src="/static/js/lesson-plans.js?v=20261011-files-5"></script>
-  <script src="/static/js/wiki-admin.js?v=20261011-assignment-workflow-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20261011-notebook-1"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20261011-files-5"></script>
-  <script src="/static/js/student-notebook.js?v=20261011-files-5"></script>
-  <script src="/static/js/student-dashboard.js?v=20261011-assignment-workflow-1"></script>
+  <script src="/static/js/notebook-sync.js?v=20261011-notebook-1"></script>
+  <script src="/static/js/student-notebook.js?v=20261011-notebook-1"></script>
+  <script src="/static/js/student-dashboard.js?v=20261011-notebook-1"></script>
 
 </body>
 </html>

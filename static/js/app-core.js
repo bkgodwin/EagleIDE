@@ -4733,7 +4733,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
               ${studentNameCells(student)}<td>${escapeHtml(student.student_id || '')}${student.is_coteacher ? '<span class="skill-chip">CoTeacher</span>' : ''}</td>
               <td data-presence>Offline</td><td data-open-file>—</td>
               <td>${escapeHtml(window.AssignmentWorkflow.accommodationLabel(student))}${activeClass.canManageClass !== false ? `<button type="button" class="btn secondary assignment-accommodation-edit" data-email="${escapeHtml(student.email)}">Edit accommodations</button>` : ''}</td>
-              <td>${activeClass.canManageClass !== false ? teacherStudentActionsHtml(activeClass.id, student) + `<button type="button" class="btn secondary cls-coteacher-btn" data-email="${escapeHtml(student.email)}" data-enabled="${student.is_coteacher ? 'true' : 'false'}">${student.is_coteacher ? 'Remove CoTeacher' : 'Make CoTeacher'}</button>` : ''}</td>
+              <td><button type="button" class="btn secondary cls-notebook-check" data-email="${escapeHtml(student.email)}">View notebook</button>${activeClass.canManageClass !== false ? teacherStudentActionsHtml(activeClass.id, student) + `<button type="button" class="btn secondary cls-coteacher-btn" data-email="${escapeHtml(student.email)}" data-enabled="${student.is_coteacher ? 'true' : 'false'}">${student.is_coteacher ? 'Remove CoTeacher' : 'Make CoTeacher'}</button>` : ''}</td>
             </tr>`).join('') || '<tr><td colspan="7">No students enrolled.</td></tr>'}
           </tbody></table></div>
         </div>
@@ -4743,6 +4743,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         wrap.querySelectorAll('.cls-rigor-label').forEach(node => node.parentElement.hidden = true);
       }
       refreshActiveStudentsForClass(activeClass?.id);
+      wrap.querySelectorAll('.cls-notebook-check').forEach(button => button.addEventListener('click', () => window.StudentNotebook?.openStudentNotebook(activeClass.id, button.dataset.email)));
       if (activeClass && activeClass.canManageClass !== false) window.AssignmentWorkflow.bindClass(wrap, activeClass);
       wrap.querySelectorAll('.cls-coteacher-btn').forEach(btn => btn.onclick = async () => {
         const res = await fetch('/api/teacher/classes/coteacher', {method:'POST', headers:{'Content-Type':'application/json', 'X-Teacher-Token':TEACHER_TOKEN}, body:JSON.stringify({classId:activeClass.id, email:btn.dataset.email, enabled:btn.dataset.enabled !== 'true'})});
