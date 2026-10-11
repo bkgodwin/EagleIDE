@@ -1,4 +1,68 @@
 /* Student notebook drawer */
+.student-notebook-resize {
+  position: absolute; inset: 24px auto 24px -5px; width: 24px;
+  cursor: ew-resize; touch-action: none; z-index: 5;
+}
+.student-notebook-resize::after {
+  content: ""; position: absolute; top: 45%; left: 8px; width: 5px; height: 64px;
+  border-radius: 8px; background: #d6b577; box-shadow: 0 0 0 1px #72512e;
+}
+.student-notebook-resize:focus-visible { outline: 3px solid #2466aa; }
+.student-notebook-book { container-type: inline-size; }
+.student-notebook-page .student-notebook-grade-note {
+  position: relative; top: auto; right: auto; transform: rotate(-2deg);
+  max-width: 280px; width: fit-content; max-height: 150px; overflow-y: auto;
+  margin: 12px 8px 16px auto; color: #713521; font-size: 15px;
+  scrollbar-width: thin; -webkit-overflow-scrolling: touch;
+}
+.student-notebook-red-ink {
+  color: #b9232c; font-style: italic; font-weight: 800;
+  margin: 10px 0; line-height: 1.4; overflow-wrap: anywhere;
+}
+.student-notebook-topic-notes { margin: 22px 0 8px; border-top: 1px dashed #b3a98e; padding-top: 12px; }
+.student-notebook-notes-heading, .student-notebook-practice-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.student-notebook-notes-heading { justify-content: space-between; color: #244b7a; }
+.student-notebook-markdown { line-height: 1.7; overflow-wrap: anywhere; min-height: 32px; }
+.student-notebook-markdown p, .student-notebook-markdown ul { margin: 8px 0; }
+.student-notebook-markdown h3 { font-size: 18px; margin: 12px 0 4px; }
+.student-notebook-markdown pre { white-space: pre-wrap; max-width: 100%; overflow: auto; }
+.student-notebook-notes-source { width: 100%; box-sizing: border-box; min-height: 180px; resize: vertical; font-size: 16px; line-height: 1.6; background: #fffcf0; color: #244b7a; }
+.student-notebook-notes-hint, .student-notebook-practice-actions span { font-size: 12px; color: #6c5940; }
+.student-notebook-submitted-copy { margin: 12px 0; }
+.student-notebook-page .student-notebook-code-block { background: #1e2229; color: #dde4ed; border-color: #303844; }
+.student-notebook-code-input { width: 100%; min-height: 200px; font: 16px/1.45 monospace; white-space: pre; background: #1e2229; color: #dde4ed; box-sizing: border-box; }
+.student-notebook-code-block .hljs-keyword { color: #c792ea; }
+.student-notebook-code-block .hljs-title { color: #f1d488; }
+.student-notebook-code-block .hljs-string { color: #e8a782; }
+.student-notebook-code-block .hljs-number { color: #b5cea8; }
+.student-notebook-code-block .hljs-literal { color: #82b4ee; }
+.student-notebook-code-block .hljs-comment { color: #90ab89; }
+body.light-mode .student-notebook-page .student-notebook-code-block { background: #f8fafc; color: #253247; border-color: #dce3eb; }
+body.light-mode .student-notebook-code-block .hljs-keyword { color: #8243a3; }
+body.light-mode .student-notebook-code-block .hljs-title { color: #795913; }
+body.light-mode .student-notebook-code-block .hljs-string { color: #a1441a; }
+body.light-mode .student-notebook-code-block .hljs-number { color: #326b45; }
+body.light-mode .student-notebook-code-block .hljs-literal { color: #215dba; }
+body.light-mode .student-notebook-code-block .hljs-comment { color: #526c4d; }
+.student-notebook-page .student-notebook-inline-shell { background: var(--theme-shell-bg); color: var(--theme-shell-text); }
+.student-notebook-page .notebook-shell-output { white-space: pre-wrap; overflow-wrap: anywhere; color: inherit; }
+.student-notebook-drawer [hidden] { display: none !important; }
+.student-notebook-drawer .student-notebook-page { min-width: 0; }
+.student-notebook-drawer .student-notebook-assignment-toggle { min-height: 48px; }
+.student-notebook-drawer .student-notebook-cover h2 { font-size: clamp(18px, 4cqi, 28px); overflow-wrap: anywhere; }
+.student-notebook-drawer .student-notebook-code-head { flex-wrap: wrap; }
+@container (max-width: 560px) {
+  .student-notebook-cover { flex-wrap: wrap; padding: 10px 12px; gap: 6px; }
+  .student-notebook-cover-actions { width: 100%; justify-content: flex-start; gap: 6px; }
+  .student-notebook-page { padding: 18px 12px 40px 30px !important; }
+  .student-notebook-toolbar { padding: 8px 12px; }
+  .student-notebook-drawer button { min-height: 40px; }
+  .student-notebook-page .student-notebook-grade-note { margin-right: 0; max-width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .student-notebook-drawer { transition: none !important; }
+  .student-notebook-page.turning { animation: none !important; }
+}
 .student-notebook-drawer,
 #teacherNotebookPromptModal,
 #dash-notebook {
@@ -76,7 +140,7 @@ body.notebook-drawer-open #notebookOpenBtn {
   position: fixed;
   top: var(--notebook-viewport-top, var(--app-offset-top, 0px));
   right: calc(var(--notebook-viewport-right, 0px) + env(safe-area-inset-right, 0px));
-  width: min(860px, calc(var(--notebook-viewport-width, 100dvw) - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
+  width: min(var(--notebook-width, 860px), calc(var(--notebook-viewport-width, 100dvw) - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
   max-width: var(--notebook-viewport-width, 100dvw);
   box-sizing: border-box;
   height: var(--notebook-viewport-height, var(--app-height, 100dvh));
@@ -986,8 +1050,8 @@ body.notebook-drawer-open #notebookOpenBtn {
 }
 
 .student-notebook-grade-note:hover {
-  opacity: 0.08;
-  filter: blur(0.2px);
+  opacity: 1;
+  filter: none;
 }
 
 .teacher-notebook-feedback-note {

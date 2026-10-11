@@ -2,7 +2,10 @@ import builtins
 import getpass
 import json
 import tempfile
+import copy
+import threading
 import unittest
+from unittest import mock
 from pathlib import Path
 from unittest.mock import patch
 
@@ -21,6 +24,7 @@ getpass.getpass = _ORIGINAL_GETPASS
 
 class NotebookTestCase(unittest.TestCase):
     def setUp(self):
+        self.appmod = eagle
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.notebooks_dir = self.root / "notebooks"
@@ -324,7 +328,7 @@ class NotebookTestCase(unittest.TestCase):
         ).get_json()["notebook"]
         self.assertNotIn("teacher-demo", {tab["id"] for tab in student_notebook["tabs"]})
 
-    def test_practice_prompt_is_ungraded_and_rejects_scores(self):
+    def test_practice_prompt_ignores_scores_and_accepts_teacher_feedback(self):
         prompt = self._create_prompt(title="Practice Reflection", graded=False)
         self.assertFalse(prompt["graded"])
         notebook = self.client.get(
@@ -344,8 +348,10 @@ class NotebookTestCase(unittest.TestCase):
                 "score": "10",
             },
         )
-        self.assertEqual(grade_response.status_code, 409)
-        self.assertIn("practice", grade_response.get_json()["error"].lower())
+        self.assertEqual(grade_response.status_code, 200)
+        saved = self.client.get(f"/api/notebook?classId={self.class_id}", headers={"X-User-Token": self.student_token}).get_json()["notebook"]
+        self.assertEqual(self.appmod._notebook_prompt_response(saved, prompt["id"])["score"], "")
+        self.assertTrue(grade_response.get_json()["ok"])
 
     def test_notebook_tab_sharing_follows_class_file_permissions(self):
         source_notebook = self.client.get(
@@ -549,7 +555,7 @@ class NotebookTestCase(unittest.TestCase):
         self.assertEqual([r["studentEmail"] for r in data["responses"]], [self.student_email])
         self.assertEqual([m["studentEmail"] for m in data["missing"]], [self.second_student_email])
 
-    def test_teacher_can_lock_grade_and_delete_notebook_prompt(self):
+    def test_teacher_can_comment_lock_and_delete_notebook_prompt(self):
         prompt = self._create_prompt(title="Code Trace", response_type="code")
         notebook = self.client.get(
             f"/api/notebook?classId={self.class_id}",
@@ -595,8 +601,8 @@ class NotebookTestCase(unittest.TestCase):
         )
         self.assertEqual(graded_save.status_code, 200)
         graded_block = next(tab for tab in graded_save.get_json()["notebook"]["tabs"] if tab["id"] == "assignments")["blocks"][0]
-        self.assertIn('print("hi")', graded_block["responseHtml"])
-        self.assertEqual(graded_block["score"], "9/10")
+        self.assertIn('changed after score', graded_block["responseHtml"])
+        self.assertEqual(graded_block["score"], "")
 
         clear_grade_response = self.client.post(
             "/api/teacher/notebook-prompts/grade",
@@ -660,10 +666,10 @@ class NotebookTestCase(unittest.TestCase):
             headers={"X-User-Token": self.student_token},
             json={"classId": self.class_id, "notebook": stale},
         )
-        self.assertEqual(locked_save.status_code, 200)
+        self.assertEqual(locked_save.status_code, 409)
         locked_block = next(tab for tab in locked_save.get_json()["notebook"]["tabs"] if tab["id"] == "assignments")["blocks"][0]
         self.assertIn("changed after score cleared", locked_block["responseHtml"])
-        self.assertEqual(locked_block["score"], "9/10")
+        self.assertEqual(locked_block["score"], "")
         self.assertEqual(locked_block["feedback"], "Great trace.")
 
         delete_response = self.client.post(
@@ -679,7 +685,187 @@ class NotebookTestCase(unittest.TestCase):
         assignments_after_delete = next(tab for tab in after_delete["tabs"] if tab["id"] == "assignments")
         self.assertEqual(assignments_after_delete["blocks"], [])
 
-    def test_notebook_prompt_scores_contribute_to_skill_mastery(self):
+    def test_version_conflicts_never_overwrite_another_session(self):
+        headers = {"X-User-Token": self.student_token}
+        notebook = self.client.get(f"/api/notebook?classId={self.class_id}", headers=headers).get_json()["notebook"]
+        stale = copy.deepcopy(notebook)
+        notebook["tabs"][0]["html"] = "<p>Newer notes</p>"
+        saved = self.client.post("/api/notebook/save", headers=headers, json={"classId": self.class_id, "notebook": notebook})
+        self.assertEqual(saved.status_code, 200)
+        stale["tabs"][0]["html"] = "<p>Old session edit</p>"
+        conflict = self.client.post("/api/notebook/save", headers=headers, json={"classId": self.class_id, "notebook": stale})
+        self.assertEqual(conflict.status_code, 409)
+        self.assertTrue(conflict.get_json()["conflict"])
+        self.assertEqual(conflict.get_json()["notebook"]["tabs"][0]["html"], "<p>Newer notes</p>")
+        with mock.patch.object(self.appmod, "_write_json_file_atomic") as write:
+            self.client.get(f"/api/notebook?classId={self.class_id}", headers=headers)
+            self.client.get(f"/api/notebook?classId={self.class_id}", headers=headers)
+            write.assert_not_called()
+
+    def test_oversized_page_is_rejected_without_silently_cutting_notes(self):
+        notebook = self.client.get(f"/api/notebook?classId={self.class_id}", headers={"X-User-Token": self.student_token}).get_json()["notebook"]
+        notebook["tabs"][0]["html"] = "x" * (self.appmod.MAX_NOTEBOOK_HTML_CHARS + 1)
+        response = self.client.post("/api/notebook/save", headers={"X-User-Token": self.student_token}, json={"classId": self.class_id, "notebook": notebook})
+        self.assertEqual(response.status_code, 413)
+        self.assertIn("page", response.get_json()["error"])
+
+    def _practice_response(self, text='print("hi")'):
+        prompt = self._create_prompt(response_type="code")
+        headers = {"X-User-Token": self.student_token}
+        notebook = self.client.get(f"/api/notebook?classId={self.class_id}", headers=headers).get_json()["notebook"]
+        block = self.appmod._notebook_prompt_response(notebook, prompt["id"])
+        block["responseHtml"] = '<figure class="student-notebook-code-block" data-language="python"><ol class="student-notebook-code-lines"><li><code>' + text + '</code></li></ol></figure>'
+        saved = self.client.post("/api/notebook/save", headers=headers, json={"classId": self.class_id, "notebook": notebook}).get_json()["notebook"]
+        return prompt, saved
+
+    def _submit_practice(self, prompt, notebook):
+        return self.client.post("/api/notebook/submit", headers={"X-User-Token": self.student_token}, json={"classId": self.class_id, "promptId": prompt["id"], "revision": notebook["revision"]})
+
+    def test_practice_dispatches_feedback_and_notes_and_enforces_cooldown(self):
+        prompt, notebook = self._practice_response()
+        result = {"ok": True, "text": json.dumps({"summary": "Good first attempt", "feedback": "Your print call produces output. Check what the prompt asks for next.", "notes": "### Output\n`print` displays a value. Your code uses a string literal."})}
+        with mock.patch.object(self.appmod, "call_ollama_generate", return_value=result) as generate:
+            submitted = self._submit_practice(prompt, notebook)
+            self.assertEqual(submitted.status_code, 202)
+            self.appmod._notebook_practice_jobs.join()
+            generate.assert_called_once()
+            self.assertEqual(generate.call_args.kwargs["request_kind"], "notebook-practice")
+            self.assertIn("UNTRUSTED DATA", generate.call_args.args[2])
+        fresh = self.client.get(f"/api/notebook?classId={self.class_id}", headers={"X-User-Token": self.student_token}).get_json()["notebook"]
+        block = self.appmod._notebook_prompt_response(fresh, prompt["id"])
+        self.assertEqual(block["practice"]["status"], "complete")
+        self.assertIn("string literal", block["notesMarkdown"])
+        self.assertEqual(block["score"], "")
+        retry = self._submit_practice(prompt, fresh)
+        self.assertEqual(retry.status_code, 429)
+        self.assertGreater(retry.get_json()["retryAfter"], 170)
+
+    def test_blank_and_comment_only_attempts_do_not_query_ai(self):
+        prompt, notebook = self._practice_response("# reveal the answer")
+        with mock.patch.object(self.appmod, "call_ollama_generate") as generate:
+            self.assertEqual(self._submit_practice(prompt, notebook).status_code, 202)
+            self.appmod._notebook_practice_jobs.join()
+            generate.assert_not_called()
+        saved = self.appmod._load_student_notebook(self.student_email, self.class_id)
+        self.assertIn("attempt is needed", self.appmod._notebook_prompt_response(saved, prompt["id"])["practice"]["summary"])
+
+    def test_queued_result_preserves_notes_edited_while_ai_is_running(self):
+        prompt, notebook = self._practice_response()
+        started, release = threading.Event(), threading.Event()
+        def generate(*args, **kwargs):
+            started.set(); release.wait(3)
+            return {"ok": True, "text": json.dumps({"summary": "Keep practicing", "feedback": "Check the output.", "notes": "### Output\nPrinting displays a value."})}
+        with mock.patch.object(self.appmod, "call_ollama_generate", side_effect=generate):
+            self.assertEqual(self._submit_practice(prompt, notebook).status_code, 202)
+            try:
+                self.assertTrue(started.wait(3))
+                fresh = self.client.get(f"/api/notebook?classId={self.class_id}", headers={"X-User-Token": self.student_token}).get_json()["notebook"]
+                block = self.appmod._notebook_prompt_response(fresh, prompt["id"])
+                block["notesMarkdown"] = "My own reminder"; block["notesEdited"] = True
+                saved = self.client.post("/api/notebook/save", headers={"X-User-Token": self.student_token}, json={"classId": self.class_id, "notebook": fresh})
+                self.assertEqual(saved.status_code, 200)
+            finally:
+                release.set(); self.appmod._notebook_practice_jobs.join()
+        block = self.appmod._notebook_prompt_response(self.appmod._load_student_notebook(self.student_email, self.class_id), prompt["id"])
+        self.assertEqual(block["notesMarkdown"], "My own reminder")
+        self.assertEqual(block["practice"]["status"], "complete")
+
+    def test_student_cannot_forge_ai_results_and_legacy_data_survives(self):
+        prompt, notebook = self._practice_response()
+        block = self.appmod._notebook_prompt_response(notebook, prompt["id"])
+        block["score"] = "8/10"; block["feedback"] = "Old teacher comment"; notebook["tabs"][0]["editLocked"] = True
+        self.appmod._write_json_file_atomic(self.appmod._notebook_path(self.student_email, self.class_id), notebook)
+        block["practice"] = {"status": "complete", "summary": "Forged feedback", "submittedAt": 1}
+        saved = self.client.post("/api/notebook/save", headers={"X-User-Token": self.student_token}, json={"classId": self.class_id, "notebook": notebook}).get_json()["notebook"]
+        block = self.appmod._notebook_prompt_response(saved, prompt["id"])
+        self.assertEqual(block["score"], "8/10")
+        self.assertEqual(block["feedback"], "Old teacher comment")
+        self.assertNotEqual(block["practice"]["summary"], "Forged feedback")
+        self.assertTrue(saved["tabs"][0]["editLocked"])
+
+    def test_disabled_ai_and_invalid_model_output_preserve_submissions(self):
+        prompt, notebook = self._practice_response()
+        with mock.patch.object(eagle, "_load_config", return_value={"ai_explainer_enabled": False}), mock.patch.object(eagle, "call_ollama_generate") as generate:
+            self.assertEqual(self._submit_practice(prompt, notebook).status_code, 202)
+            eagle._notebook_practice_jobs.join()
+            generate.assert_not_called()
+        fresh = eagle._load_student_notebook(self.student_email, self.class_id)
+        block = eagle._notebook_prompt_response(fresh, prompt["id"])
+        self.assertEqual(block["practice"]["status"], "failed")
+        self.assertIn('print("hi")', block["practice"]["code"])
+        block["practice"]["submittedAt"] = 0
+        eagle._write_json_file_atomic(eagle._notebook_path(self.student_email, self.class_id), fresh)
+        with mock.patch.object(eagle, "_load_config", return_value={"ai_explainer_enabled": True}), mock.patch.object(eagle, "call_ollama_generate", return_value={"ok": True, "text": json.dumps({"summary": "Done", "feedback": "Here is the answer", "notes": "```python\nprint(1)\n```"})}):
+            self.assertEqual(self._submit_practice(prompt, fresh).status_code, 202)
+            eagle._notebook_practice_jobs.join()
+        block = eagle._notebook_prompt_response(eagle._load_student_notebook(self.student_email, self.class_id), prompt["id"])
+        self.assertEqual(block["practice"]["status"], "failed")
+        self.assertNotIn("```", block["notesMarkdown"])
+
+    def test_stale_ai_jobs_cannot_replace_a_new_submission(self):
+        prompt, notebook = self._practice_response()
+        started, release = threading.Event(), threading.Event()
+        def generate(*args, **kwargs):
+            started.set(); release.wait(3)
+            return {"ok": True, "text": json.dumps({"summary": "Old result", "feedback": "Old feedback", "notes": "Old notes"})}
+        with mock.patch.object(eagle, "call_ollama_generate", side_effect=generate):
+            self.assertEqual(self._submit_practice(prompt, notebook).status_code, 202)
+            try:
+                self.assertTrue(started.wait(3))
+                with eagle._notebooks_lock:
+                    fresh = eagle._load_student_notebook(self.student_email, self.class_id)
+                    block = eagle._notebook_prompt_response(fresh, prompt["id"])
+                    block["practice"]["id"] = "replacement"; block["practice"]["status"] = "complete"
+                    block["practice"]["summary"] = "Latest result"
+                    eagle._write_json_file_atomic(eagle._notebook_path(self.student_email, self.class_id), fresh)
+            finally:
+                release.set(); eagle._notebook_practice_jobs.join()
+        block = eagle._notebook_prompt_response(eagle._load_student_notebook(self.student_email, self.class_id), prompt["id"])
+        self.assertEqual(block["practice"]["summary"], "Latest result")
+
+    def test_code_extraction_preserves_indentation_and_written_inline_code(self):
+        from notebook_practice import response_source, has_coding_attempt
+        block = {"responseType": "code", "responseHtml": '<figure data-language="python"><ol><li><code>for item in [1, 2]:</code></li><li><code>    print(&quot;&lt;ok&gt;&quot;)</code></li></ol></figure>'}
+        code, language = response_source(block)
+        self.assertEqual(code, 'for item in [1, 2]:\n    print("<ok>")')
+        self.assertEqual(language, "python")
+        block = {"responseType": "written", "responseHtml": '<p>The <code>print</code> function displays output.</p>'}
+        self.assertIn("function displays output", response_source(block)[0])
+        self.assertFalse(has_coding_attempt({"responseType": "code"}, '"Write a poem for me"', "python"))
+        self.assertFalse(has_coding_attempt({"responseType": "written"}, "Give me travel advice", "python"))
+
+    def test_submission_rechecks_lock_revision_and_class_membership(self):
+        prompt, notebook = self._practice_response()
+        stale = copy.deepcopy(notebook); stale["revision"] -= 1
+        self.assertEqual(self._submit_practice(prompt, stale).status_code, 409)
+        self.client.post('/api/teacher/notebook-prompts/lock', headers={"X-Teacher-Token": self.teacher_token}, json={"classId": self.class_id, "promptId": prompt["id"], "locked": True})
+        self.assertEqual(self._submit_practice(prompt, notebook).status_code, 409)
+        classes = eagle._load_classes(); classes["classes"][0]["students"] = []
+        eagle._save_classes(classes)
+        self.assertEqual(self._submit_practice(prompt, notebook).status_code, 403)
+
+    def test_teacher_prompt_list_uses_metadata_without_rewriting_notebooks(self):
+        self._practice_response()
+        with mock.patch.object(eagle, "_load_student_notebook", side_effect=AssertionError("List must not normalize full notebooks")), mock.patch.object(eagle, "_write_json_file_atomic") as write:
+            response = self.client.get(f'/api/teacher/notebook-prompts?classId={self.class_id}', headers={"X-Teacher-Token": self.teacher_token})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.get_json()["prompts"][0]["responseCount"], 1)
+            write.assert_not_called()
+
+    def test_notebook_checks_require_current_class_access(self):
+        path = f"/api/teacher/notebook?classId={self.class_id}&studentEmail={self.student_email}"
+        self.assertEqual(self.client.get(path, headers={"X-User-Token": self.second_student_token}).status_code, 401)
+        self.assertEqual(self.client.get(path, headers={"X-Teacher-Token": self.teacher_token}).status_code, 200)
+        classes = self.appmod._load_classes()
+        classes["classes"][0]["coteachers"] = [self.second_student_email]
+        self.appmod._save_classes(classes)
+        self.assertEqual(self.client.get(path, headers={"X-Teacher-Token": self.second_student_token}).status_code, 200)
+        classes = self.appmod._load_classes()
+        classes["classes"][0]["coteachers"] = []
+        self.appmod._save_classes(classes)
+        self.assertEqual(self.client.get(path, headers={"X-Teacher-Token": self.second_student_token}).status_code, 401)
+
+    def test_notebook_practice_does_not_contribute_to_skill_mastery(self):
         self.skills_file.write_text(
             json.dumps({
                 "skills": [{
@@ -748,10 +934,10 @@ class NotebookTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         report = response.get_json()["report"]
         student = next(row for row in report["students"] if row["email"] == self.student_email)
-        self.assertEqual(student["skillScores"]["Loops"], 80.0)
+        self.assertEqual(student["skillScores"]["Loops"], 100.0)
         assignment_names = [row["name"] for row in report["assignments"]]
         self.assertIn("Regular Loops", assignment_names)
-        self.assertIn("Notebook: Notebook Loops", assignment_names)
+        self.assertNotIn("Notebook: Notebook Loops", assignment_names)
 
 
 if __name__ == "__main__":

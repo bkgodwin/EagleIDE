@@ -1723,6 +1723,7 @@ def _default_notebook(class_id: str) -> dict:
 
 
 def _normalize_assignment_blocks(raw_tabs: list, prompts: list[dict]) -> list[dict]:
+    from notebook_practice import normalize_practice
     existing_by_prompt = {}
     for tab in raw_tabs or []:
         if not isinstance(tab, dict) or tab.get("id") != "assignments":
@@ -1757,6 +1758,7 @@ def _normalize_assignment_blocks(raw_tabs: list, prompts: list[dict]) -> list[di
             "score": score,
             "feedback": _sanitize_notebook_feedback(existing.get("feedback")),
             "gradedAt": str(existing.get("gradedAt") or ""),
+            **normalize_practice(existing),
         })
     return blocks
 
@@ -1780,6 +1782,7 @@ def _normalize_notebook_payload(raw: Any, class_id: str, prompts: Optional[list[
             "label": _sanitize_notebook_label(tab.get("label"), "Notes"),
             "locked": False,
             "html": _sanitize_notebook_html(tab.get("html") or ""),
+            "editLocked": bool(tab.get("editLocked")),
             "color": _sanitize_notebook_color(tab.get("color")),
             "bookmarked": bool(tab.get("bookmarked")),
         })
@@ -1799,6 +1802,7 @@ def _normalize_notebook_payload(raw: Any, class_id: str, prompts: Optional[list[
         "label": "Assignments",
         "locked": True,
         "blocks": _normalize_assignment_blocks(raw_tabs, prompts),
+        "editLocked": any(bool(t.get("editLocked")) for t in raw_tabs if isinstance(t, dict) and t.get("id") == "assignments"),
         "color": "#f3c74d",
         "bookmarked": False,
     }
@@ -1812,7 +1816,8 @@ def _normalize_notebook_payload(raw: Any, class_id: str, prompts: Optional[list[
         "classId": class_id,
         "activeTabId": active_tab_id,
         "tabs": tabs,
-        "updatedAt": _current_timestamp(),
+        "updatedAt": str(raw.get("updatedAt") or _current_timestamp()),
+        "revision": max(0, int(raw.get("revision") or 0)),
     }
 
 
@@ -1827,12 +1832,26 @@ def _load_student_notebook(student_email: str, class_id: str) -> dict:
 
 
 def _save_student_notebook(student_email: str, class_id: str, notebook: dict) -> dict:
+    if not isinstance(notebook, dict) or not isinstance(notebook.get("tabs"), list):
+        raise ValueError("Notebook pages are required")
     if len(json.dumps(notebook or {}, ensure_ascii=False)) > MAX_NOTEBOOK_JSON_CHARS:
         raise ValueError("Notebook is too large")
+    for tab in notebook.get("tabs", []):
+        if not isinstance(tab, dict):
+            continue
+        if len(str(tab.get("html") or "")) > MAX_NOTEBOOK_HTML_CHARS:
+            raise ValueError("This page is too large; move some notes to a new tab")
+        for block in tab.get("blocks", []) if isinstance(tab.get("blocks"), list) else []:
+            if isinstance(block, dict) and len(str(block.get("responseHtml") or "")) > MAX_NOTEBOOK_HTML_CHARS:
+                raise ValueError("This practice response is too large")
+            if isinstance(block, dict) and len(str(block.get("notesMarkdown") or "")) > 16000:
+                raise ValueError("Topic notes must be under 16,000 characters")
     prompts = _load_notebook_prompts(class_id)
     existing_raw = _read_json_file(_notebook_path(student_email, class_id), _default_notebook(class_id))
     existing_normalized = _normalize_notebook_payload(existing_raw, class_id, prompts)
     normalized = _normalize_notebook_payload(notebook, class_id, prompts)
+    if "revision" in notebook and notebook.get("revision") != existing_normalized.get("revision"):
+        raise NotebookConflict(existing_normalized)
     locked_prompt_ids = {p.get("id") for p in prompts if p.get("locked")}
     assignments = _notebook_assignments_tab(normalized)
     if assignments:
@@ -1843,11 +1862,23 @@ def _save_student_notebook(student_email: str, class_id: str, notebook: dict) ->
                 block["score"] = _sanitize_notebook_score(existing_block.get("score"))
                 block["feedback"] = _sanitize_notebook_feedback(existing_block.get("feedback"))
                 block["gradedAt"] = str(existing_block.get("gradedAt") or "")
-                if prompt_id in locked_prompt_ids or block["score"]:
+                block["practice"] = copy.deepcopy(existing_block.get("practice") or {})
+                if prompt_id in locked_prompt_ids:
+                    from notebook_practice import response_source
+                    if response_source(block)[0] != response_source(existing_block)[0]:
+                        raise NotebookConflict(existing_normalized)
                     block["responseHtml"] = _sanitize_notebook_html(existing_block.get("responseHtml") or "")
                     block["updatedAt"] = str(existing_block.get("updatedAt") or "")
+    normalized["revision"] = existing_normalized.get("revision", 0) + 1
+    normalized["updatedAt"] = _current_timestamp()
     _write_json_file_atomic(_notebook_path(student_email, class_id), normalized)
     return normalized
+
+
+class NotebookConflict(ValueError):
+    def __init__(self, notebook):
+        super().__init__("Newer notebook changes exist; merge before saving")
+        self.notebook = notebook
 
 
 def _copy_notebook_tab_to_user(
@@ -1892,7 +1923,10 @@ def _copy_notebook_tab_to_user(
 
 def _student_can_access_notebook(student_email: str, class_id: str) -> bool:
     user_obj = _find_user(student_email)
-    return bool(user_obj and user_obj.get("role") == "student" and _user_in_class(user_obj, class_id))
+    cls = _find_class_by_id(class_id)
+    return bool(user_obj and user_obj.get("enabled", True) and user_obj.get("role") == "student"
+                and cls and student_email.lower() in {str(email).lower() for email in cls.get("students", [])}
+                and _user_in_class(user_obj, class_id))
 
 
 def _teacher_owns_class(teacher_email: str, class_id: str) -> Optional[dict]:
@@ -4473,6 +4507,8 @@ def get_notebook():
     actor_email = (actor.get("email") or "").strip().lower()
     with _notebooks_lock:
         notebook = _load_student_notebook(actor_email, class_id)
+    if _role == "student":
+        _recover_notebook_practice(actor_email, class_id, notebook)
     return jsonify(ok=True, notebook=notebook)
 
 
@@ -4493,6 +4529,8 @@ def save_notebook():
     try:
         with _notebooks_lock:
             notebook = _save_student_notebook(actor_email, class_id, notebook_payload)
+    except NotebookConflict as exc:
+        return jsonify(ok=False, error=str(exc), conflict=True, notebook=exc.notebook), 409
     except ValueError as exc:
         return jsonify(ok=False, error=str(exc)), 413
     return jsonify(ok=True, notebook=notebook)
@@ -4508,8 +4546,8 @@ def teacher_create_notebook_prompt():
     prompt_text = re.sub(r"\s+", " ", str(data.get("prompt") or "").strip())[:MAX_NOTEBOOK_PROMPT_CHARS]
     title = _sanitize_notebook_prompt_title(data.get("title") or prompt_text[:MAX_NOTEBOOK_PROMPT_TITLE_CHARS])
     response_type = _sanitize_notebook_response_type(data.get("responseType"))
-    max_score = _sanitize_notebook_max_score(data.get("maxScore"))
-    graded = data.get("graded") is not False
+    max_score = 0
+    graded = False
     requested_skill_tags = _normalize_skill_tags(data.get("skillTags") or [])
     if not class_id:
         return jsonify(ok=False, error="classId is required"), 400
@@ -4562,11 +4600,6 @@ def teacher_create_notebook_prompt():
         prompts = _load_notebook_prompts(class_id)
         prompts.append(prompt)
         _save_notebook_prompts(class_id, prompts)
-        for student_email in cls.get("students", []):
-            try:
-                _load_student_notebook(student_email, class_id)
-            except Exception:
-                pass
     socketio.emit("notebook_prompt_created", {"class_id": class_id, "prompt": prompt}, room=f"class_{class_id}")
     _emit_notebook_assignments_changed(class_id, "created", prompt)
     return jsonify(ok=True, prompt=prompt)
@@ -4589,17 +4622,22 @@ def teacher_list_notebook_prompts():
     result = []
     with _notebooks_lock:
         prompts = _load_notebook_prompts(class_id)
-        notebooks_by_email = {}
+        response_counts = {prompt["id"]: 0 for prompt in prompts}
         for student_email in students:
-            try:
-                notebooks_by_email[student_email.lower()] = _load_student_notebook(student_email, class_id)
-            except Exception:
-                notebooks_by_email[student_email.lower()] = _default_notebook(class_id)
+            # A list needs counts, not normalization of every personal page or
+            # eager writes to every student's notebook.
+            raw = _read_json_file(_notebook_path(student_email, class_id), {})
+            tab = _notebook_assignments_tab(raw) if isinstance(raw, dict) else None
+            seen = set()
+            for block in (tab or {}).get("blocks", []):
+                if not isinstance(block, dict):
+                    continue
+                prompt_id = block.get("promptId")
+                if prompt_id in response_counts and prompt_id not in seen and _notebook_response_is_present(block):
+                    response_counts[prompt_id] += 1
+                    seen.add(prompt_id)
         for prompt in reversed(prompts):
-            responded = 0
-            for notebook in notebooks_by_email.values():
-                if _notebook_response_is_present(_notebook_prompt_response(notebook, prompt.get("id", ""))):
-                    responded += 1
+            responded = response_counts[prompt["id"]]
             result.append({
                 **prompt,
                 "studentCount": len(students),
@@ -4651,12 +4689,13 @@ def teacher_notebook_prompt_responses():
                     "studentEmail": email,
                     "studentName": name,
                     **_profile_fields(user_row),
-                    "responseHtml": _sanitize_notebook_html(block.get("responseHtml") or ""),
-                    "responseText": _notebook_plain_text(block.get("responseHtml") or ""),
+                    "responseHtml": _sanitize_notebook_html((block.get("practice") or {}).get("submittedHtml") or block.get("responseHtml") or ""),
+                    "responseText": _notebook_plain_text((block.get("practice") or {}).get("submittedHtml") or block.get("responseHtml") or ""),
                     "updatedAt": block.get("updatedAt") or "",
                     "score": _sanitize_notebook_score(block.get("score")),
                     "feedback": _sanitize_notebook_feedback(block.get("feedback")),
                     "gradedAt": block.get("gradedAt") or "",
+                    **{key: copy.deepcopy(block.get(key)) for key in ("practice", "notesMarkdown", "notesEdited")},
                 })
             else:
                 missing.append({"studentEmail": email, "studentName": name, **_profile_fields(user_row)})
@@ -4688,11 +4727,6 @@ def teacher_lock_notebook_prompt():
         prompt["locked"] = locked
         _save_notebook_prompts(class_id, prompts)
         prompt = next((p for p in _load_notebook_prompts(class_id) if p.get("id") == prompt_id), prompt)
-        for student_email in cls.get("students", []):
-            try:
-                _load_student_notebook(student_email, class_id)
-            except Exception:
-                pass
     _emit_notebook_assignments_changed(class_id, "locked" if locked else "unlocked", prompt)
     return jsonify(ok=True, prompt=prompt)
 
@@ -4718,11 +4752,6 @@ def teacher_delete_notebook_prompt():
             return jsonify(ok=False, error="Prompt not found"), 404
         prompts = [p for p in prompts if p.get("id") != prompt_id]
         _save_notebook_prompts(class_id, prompts)
-        for student_email in cls.get("students", []):
-            try:
-                _load_student_notebook(student_email, class_id)
-            except Exception:
-                pass
     _emit_notebook_assignments_changed(class_id, "deleted", prompt)
     return jsonify(ok=True, promptId=prompt_id)
 
@@ -4736,7 +4765,6 @@ def teacher_grade_notebook_prompt_response():
     class_id = (data.get("classId") or "").strip()
     prompt_id = (data.get("promptId") or "").strip()
     student_email = (data.get("studentEmail") or "").strip().lower()
-    score = _sanitize_notebook_score(data.get("score"))
     feedback = _sanitize_notebook_feedback(data.get("feedback"))
     if not class_id or not prompt_id or not student_email:
         return jsonify(ok=False, error="classId, promptId, and studentEmail are required"), 400
@@ -4751,21 +4779,18 @@ def teacher_grade_notebook_prompt_response():
         prompt = next((p for p in prompts if p.get("id") == prompt_id), None)
         if not prompt:
             return jsonify(ok=False, error="Prompt not found"), 404
-        if prompt.get("graded") is False:
-            return jsonify(ok=False, error="Practice notebook assignments are not graded"), 409
         notebook = _load_student_notebook(student_email, class_id)
         block = _notebook_prompt_response(notebook, prompt_id)
         if not block:
             return jsonify(ok=False, error="Response not found"), 404
-        block["score"] = score
         block["feedback"] = feedback
-        block["gradedAt"] = _current_timestamp() if (score or feedback) else ""
+        block["gradedAt"] = _current_timestamp() if feedback else ""
+        notebook["revision"] = notebook.get("revision", 0) + 1
         _write_json_file_atomic(_notebook_path(student_email, class_id), notebook)
     _emit_notebook_assignments_changed(class_id, "graded", prompt)
     return jsonify(ok=True, response={
         "studentEmail": student_email,
         "promptId": prompt_id,
-        "score": score,
         "feedback": feedback,
         "gradedAt": block.get("gradedAt") or "",
     })
@@ -12478,38 +12503,15 @@ def _build_class_mastery_report_uncached(class_id: str, teacher_email: str) -> O
     users_by_email = {u.get("email", "").lower(): u for u in _load_users().get("users", [])}
     assignments = [a for a in _list_assignments() if (a.get("targetClassId") or "") == class_id]
     assignment_rows = []
-    assignment_names = set()
     for a in assignments:
         name = a.get("name", "")
-        assignment_names.add(name)
         assignment_rows.append({
             "name": name,
             "maxTotal": _assignment_total_max_score(a),
             "skillTags": _normalize_skill_tags(a.get("skillTags") or []),
             "source": "assignment",
         })
-    notebook_prompts = [
-        prompt for prompt in _load_notebook_prompts(class_id)
-        if prompt.get("graded") is not False
-        and _normalize_skill_tags(prompt.get("skillTags") or [])
-        and _sanitize_notebook_max_score(prompt.get("maxScore")) > 0
-    ]
-    notebook_assignment_rows = []
-    for prompt in notebook_prompts:
-        base_name = f"Notebook: {prompt.get('title') or 'Notebook Assignment'}"
-        name = base_name
-        if name in assignment_names:
-            name = f"{base_name} ({str(prompt.get('id') or '')[:6]})"
-        assignment_names.add(name)
-        row = {
-            "name": name,
-            "maxTotal": _sanitize_notebook_max_score(prompt.get("maxScore")),
-            "skillTags": _normalize_skill_tags(prompt.get("skillTags") or []),
-            "source": "notebook",
-            "promptId": prompt.get("id", ""),
-        }
-        assignment_rows.append(row)
-        notebook_assignment_rows.append(row)
+    # Legacy notebook scores remain on disk; practice is excluded from grades.
     skills_catalog = _get_teacher_skills(teacher_email)
     class_skill_rows = sorted(
         [s for s in skills_catalog if class_id in (s.get("class_ids") or [])],
@@ -12535,15 +12537,6 @@ def _build_class_mastery_report_uncached(class_id: str, teacher_email: str) -> O
     skill_descriptions = {tag: class_skill_descriptions.get(tag, "") for tag in tag_order}
 
     student_rows = []
-    notebooks_by_email = {}
-    if notebook_assignment_rows:
-        with _notebooks_lock:
-            for email in cls.get("students", []):
-                normalized_email = (email or "").strip().lower()
-                try:
-                    notebooks_by_email[normalized_email] = _load_student_notebook(normalized_email, class_id)
-                except Exception:
-                    notebooks_by_email[normalized_email] = _default_notebook(class_id)
     for email in cls.get("students", []):
         u = users_by_email.get((email or "").lower(), {})
         name = u.get("name") or email
@@ -12561,14 +12554,6 @@ def _build_class_mastery_report_uncached(class_id: str, teacher_email: str) -> O
             per_assignment[assignment.get("name", "")] = {
                 "percent": percent,
                 "totalScore": total_score,
-            }
-        notebook_row = notebooks_by_email.get(normalized_email)
-        for notebook_assignment in notebook_assignment_rows:
-            block = _notebook_prompt_response(notebook_row or {}, notebook_assignment.get("promptId", ""))
-            score_value = _notebook_score_value((block or {}).get("score"))
-            per_assignment[notebook_assignment.get("name", "")] = {
-                "percent": _score_percent(score_value, notebook_assignment.get("maxTotal")),
-                "totalScore": score_value,
             }
         skill_scores = {}
         for tag in tag_order:
@@ -13052,6 +13037,8 @@ register_classroom_features(app, socketio)
 from workspace_data import register as register_workspace_data
 register_workspace_data(app, sys.modules[__name__])
 assignment_workflow.register(app, sys.modules[__name__])
+from notebook_practice import register_notebook_practice
+register_notebook_practice(sys.modules[__name__])
 
 # -------------------------
 # Main
