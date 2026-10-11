@@ -145,3 +145,49 @@ test('a slow file open cannot overwrite edits made while waiting for its respons
     assert.equal(currentBufferDirty,true);
   })()`, { assert, window: {}, setImmediate });
 });
+
+test('CSV opens fetch one bounded page; text and JSON opens fetch their source once', async () => {
+  await vm.runInNewContext(`(async () => {
+    let fileOpenRequestId = 0;
+    let USER_TOKEN = 'student', TEACHER_TOKEN = null, ADMIN_TOKEN = null;
+    let auditPreviewActive = false, csvEditorActive = false, currentBufferDirty = false;
+    let currentOpenFile = null, text = '', csvPage;
+    const calls = [], alerts = [];
+    const alert = message => alerts.push(message);
+    const fileAuthHeaders = () => ({'X-User-Token':USER_TOKEN});
+    const syncEditorBridge = () => {}, setMainEditorReadOnly = () => {}, saveCurrentFile = async () => true;
+    const editor = {getValue: () => text, setValue(value) { text = value; }};
+    const csvBufferContent = () => '';
+    const clearFileArtifactPreview = () => {}, updateActiveFileName = () => {}, updateEditorOverlay = () => {};
+    const setWorkspaceTab = () => {}, renderCurrentFolder = () => {}, syncSubmissionScoringForOpenFile = () => {}, updateSendFileButtonVisibility = () => {};
+    const setCsvMode = (active, page) => { csvEditorActive = active; if(active) csvPage = page; };
+    const fetchWithDeadline = async url => {
+      calls.push(url);
+      return {ok:true, json:async () => url.includes('/csv-page') ? {ok:true, kind:'csv', rows:[{cells:['sample']}]} : {ok:true, kind:'text', content:'source'}};
+    };
+    ${extract('openFile')}
+    await openFile({path:'folder/LARGE.CSV', name:'LARGE.CSV'});
+    assert.deepEqual(calls, ['/api/files/csv-page?path=folder%2FLARGE.CSV']);
+    assert.equal(csvEditorActive,true); assert.equal(csvPage.rows.length,1);
+    await openFile({path:'main.py', name:'main.py'});
+    assert.equal(calls[1],'/api/files/read?path=main.py'); assert.equal(text,'source');
+    await openFile({path:'data.json', name:'data.json'});
+    assert.equal(calls[2],'/api/files/read?path=data.json');
+    assert.equal(calls.length,3); assert.deepEqual(alerts,[]);
+  })()`, { assert, window: {WorkspaceData:{jsonMode() {}}} });
+});
+
+test('unchanged editor languages preserve token state; language changes still apply', () => {
+  const modes = {student:'python', teacher:'python'}, changes = [];
+  const makeEditor = name => ({getOption: () => modes[name], setOption(option, value) {changes.push([name,option,value]); modes[name] = value;}});
+  vm.runInNewContext(`
+    let currentOpenFile = {name:'main.py'}, teacherEditor = teacher;
+    const getManualLanguageInfo = () => null;
+    const getLanguageInfoForFileName = name => ({mode:name.endsWith('.js') ? 'javascript' : 'python', label:'Language'});
+    ${extract('syncEditorLanguage')}
+    syncEditorLanguage(); syncEditorLanguage();
+    assert.equal(changes.length,0);
+    syncEditorLanguage('script.js'); syncEditorLanguage('script.js');
+  `, {assert, changes, teacher:makeEditor('teacher'), window:{eagleEditor:makeEditor('student')}, document:{querySelector: () => null}});
+  assert.deepEqual(changes,[['student','mode','javascript'],['teacher','mode','javascript']]);
+});

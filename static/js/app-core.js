@@ -280,8 +280,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     function syncEditorLanguage(fileName = currentOpenFile?.name || '') {
       const info = getManualLanguageInfo() || getLanguageInfoForFileName(fileName);
-      try { window.eagleEditor?.setOption('mode', info.mode); } catch {}
-      try { teacherEditor?.setOption('mode', info.mode); } catch {}
+      // Setting an unchanged CodeMirror mode still clears token state and
+      // restarts editor feedback. File opens call this from several UI helpers.
+      try { if (window.eagleEditor?.getOption('mode') !== info.mode) window.eagleEditor?.setOption('mode', info.mode); } catch {}
+      try { if (teacherEditor?.getOption('mode') !== info.mode) teacherEditor?.setOption('mode', info.mode); } catch {}
       const editorHeader = document.querySelector('#editorPanel header');
       if (editorHeader) {
         editorHeader.setAttribute('aria-label', `Code editor with ${info.label} syntax highlighting`);
@@ -6791,20 +6793,18 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (requestId !== fileOpenRequestId || requestContext !== JSON.stringify(fileAuthHeaders())) return;
       const previousFile = currentOpenFile;
       const previousContent = csvEditorActive ? csvBufferContent() : editor.getValue();
+      // The page endpoint already validates ownership and file type. Fetch it
+      // directly instead of waiting for CSV metadata before a second request.
+      const isCsv = String(item.path || item.name || '').toLowerCase().endsWith('.csv');
+      const endpoint = isCsv ? '/api/files/csv-page' : '/api/files/read';
       let res;
       try {
-        res = await fetchWithDeadline('/api/files/read?path=' + encodeURIComponent(item.path), { headers: fileAuthHeaders() });
+        res = await fetchWithDeadline(endpoint + '?path=' + encodeURIComponent(item.path), { headers: fileAuthHeaders() });
       } catch (error) {
         alert(error?.message || 'Could not reach the server to open this file.');
         return;
       }
       let j = await res.json().catch(() => ({}));
-      if (res.ok && j.kind === 'csv') {
-        try {
-          res = await fetchWithDeadline('/api/files/csv-page?path=' + encodeURIComponent(item.path), {headers:fileAuthHeaders()});
-          j = await res.json();
-        } catch (error) { alert(error.message || 'Could not read CSV'); return; }
-      }
       if (requestId !== fileOpenRequestId || requestContext !== JSON.stringify(fileAuthHeaders()) || currentOpenFile !== previousFile
           || previousContent !== (csvEditorActive ? csvBufferContent() : editor.getValue()) || window.EagleIDE?.connection?.isLost()) return;
       if (!res.ok || !j.ok) { alert(j.error || 'Cannot open file'); return; }
@@ -6824,7 +6824,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         updateSendFileButtonVisibility();
         return;
       }
-      const isCsv = String(item.name || '').toLowerCase().endsWith('.csv');
       if (isCsv) {
         setCsvMode(true, j);
         editor.setValue('');
