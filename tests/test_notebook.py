@@ -4,6 +4,8 @@ import json
 import tempfile
 import copy
 import threading
+import io
+import time
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -40,6 +42,10 @@ class NotebookTestCase(unittest.TestCase):
         self.original_users_file = eagle.USERS_FILE
         self.original_classes_file = eagle.CLASSES_FILE
         self.original_skills_file = eagle.SKILLS_FILE
+        self.original_user_files_dir = eagle.USER_FILES_DIR
+        eagle.USER_FILES_DIR = self.root / "user_files"
+        self.pacing = patch("notebook_practice.MIN_REQUEST_GAP_SECONDS", 0)
+        self.pacing.start()
         eagle.NOTEBOOKS_DIR = self.notebooks_dir
         eagle.ASSIGNMENTS_DIR = self.assignments_dir
         eagle.USERS_FILE = self.users_file
@@ -122,6 +128,9 @@ class NotebookTestCase(unittest.TestCase):
         self.client = eagle.app.test_client()
 
     def tearDown(self):
+        eagle._notebook_practice_jobs.join()
+        self.pacing.stop()
+        eagle.USER_FILES_DIR = self.original_user_files_dir
         eagle._teacher_tokens.pop(self.teacher_token, None)
         eagle._student_tokens.pop(self.student_token, None)
         eagle._student_tokens.pop(self.second_student_token, None)
@@ -938,6 +947,185 @@ class NotebookTestCase(unittest.TestCase):
         assignment_names = [row["name"] for row in report["assignments"]]
         self.assertIn("Regular Loops", assignment_names)
         self.assertNotIn("Notebook: Notebook Loops", assignment_names)
+
+
+    def test_failed_feedback_allows_immediate_retry_and_clears_queued_label(self):
+        prompt, notebook = self._practice_response()
+        with mock.patch.object(eagle, "call_ollama_generate", return_value={"ok": False, "status": 503}):
+            self.assertEqual(self._submit_practice(prompt, notebook).status_code, 202)
+            eagle._notebook_practice_jobs.join()
+        fresh = eagle._load_student_notebook(self.student_email, self.class_id)
+        practice = eagle._notebook_prompt_response(fresh, prompt["id"])["practice"]
+        self.assertEqual(practice["status"], "failed")
+        self.assertNotIn("queued", practice["summary"].lower())
+        self.assertGreater(practice["submittedAt"], time.time() - 30)
+        self.assertIn("retry now", practice["error"])
+        result = {"ok": True, "text": json.dumps({"summary": "On topic", "feedback": "You printed a string.", "notes": "### Strings\nA string is text."})}
+        with mock.patch.object(eagle, "call_ollama_generate", return_value=result):
+            self.assertEqual(self._submit_practice(prompt, fresh).status_code, 202)
+            eagle._notebook_practice_jobs.join()
+
+    def test_invalid_feedback_gets_one_bounded_format_correction(self):
+        prompt, notebook = self._practice_response()
+        good = {"ok": True, "text": json.dumps({"summary": "On topic", "feedback": "Try a different string.", "notes": "### Strings\nYour print call outputs text."})}
+        with mock.patch.object(eagle, "call_ollama_generate", side_effect=[{"ok": True, "text": "not JSON"}, good]) as generate:
+            self.assertEqual(self._submit_practice(prompt, notebook).status_code, 202)
+            eagle._notebook_practice_jobs.join()
+            self.assertEqual(generate.call_count, 2)
+            self.assertTrue(generate.call_args.kwargs["wait_for_capacity"])
+        block = eagle._notebook_prompt_response(eagle._load_student_notebook(self.student_email, self.class_id), prompt["id"])
+        self.assertEqual(block["practice"]["status"], "complete")
+
+    def test_large_class_burst_is_durable_and_processed_one_at_a_time(self):
+        prompt = self._create_prompt(response_type="code")
+        emails = [f"burst-{index}@example.com" for index in range(80)]
+        users = eagle._load_users()
+        users["users"].extend({"email": email, "role": "student", "enabled": True, "class_id": self.class_id, "class_ids": [self.class_id]} for email in emails)
+        eagle._save_users(users)
+        classes = eagle._load_classes()
+        classes["classes"][0]["students"].extend(emails)
+        eagle._save_classes(classes)
+        tokens = {f"burst-token-{index}": {"email": email, "role": "student", "class_ids": [self.class_id]} for index, email in enumerate(emails)}
+        entered, release = threading.Event(), threading.Event()
+        call_order, active, peak = [], 0, 0
+        result = {"ok": True, "text": json.dumps({"summary": "On topic", "feedback": "A print call is present.", "notes": "### Output\nPrint displays a value."})}
+        def generate(*args, **kwargs):
+            nonlocal active, peak
+            active += 1; peak = max(peak, active)
+            call_order.append(kwargs["request_identity"])
+            if len(call_order) == 1:
+                entered.set(); release.wait(15)
+            active -= 1
+            return result
+        with mock.patch.dict(eagle._student_tokens, tokens), mock.patch.object(eagle, "call_ollama_generate", side_effect=generate):
+            try:
+                for index, email in enumerate(emails):
+                    notebook = eagle._load_student_notebook(email, self.class_id)
+                    eagle._notebook_prompt_response(notebook, prompt["id"])["responseHtml"] = '<figure data-language="python"><code>print(1)</code></figure>'
+                    notebook = eagle._save_student_notebook(email, self.class_id, notebook)
+                    response = self.client.post('/api/notebook/submit', headers={"X-User-Token": f"burst-token-{index}"}, json={"classId": self.class_id, "promptId": prompt["id"], "revision": notebook["revision"]})
+                    self.assertEqual(response.status_code, 202, response.get_json())
+                    if index == 0:
+                        self.assertTrue(entered.wait(3))
+                journal = json.loads((self.notebooks_dir / '.practice-queue.json').read_text(encoding='utf-8'))
+                self.assertEqual(len(journal["jobs"]), 80)
+                self.assertEqual([row[0] for row in journal["jobs"]], emails)
+                self.assertNotIn("print", json.dumps(journal))
+            finally:
+                release.set(); eagle._notebook_practice_jobs.join()
+        self.assertEqual(peak, 1)
+        self.assertEqual(call_order, [f"student:{email}" for email in emails])
+        self.assertEqual(json.loads((self.notebooks_dir / '.practice-queue.json').read_text(encoding='utf-8'))["jobs"], [])
+        for email in emails:
+            self.assertEqual(eagle._notebook_prompt_response(eagle._load_student_notebook(email, self.class_id), prompt["id"])["practice"]["status"], "complete")
+
+    def test_journal_restores_jobs_without_a_student_browser_and_skips_completed_work(self):
+        prompt, notebook = self._practice_response()
+        block = eagle._notebook_prompt_response(notebook, prompt["id"])
+        block["practice"] = {"id": "restored", "status": "queued", "code": "print(1)", "language": "python", "submittedAt": time.time()}
+        eagle._write_json_file_atomic(eagle._notebook_path(self.student_email, self.class_id), notebook)
+        journal = {"jobs": [[self.student_email, self.class_id, prompt["id"], "restored"]]}
+        result = {"ok": True, "text": json.dumps({"summary": "On topic", "feedback": "A print call is present.", "notes": "### Output\nPrint displays a value."})}
+        with mock.patch.object(eagle, "call_ollama_generate", return_value=result) as generate:
+            for _ in range(2):
+                eagle._write_json_file_atomic(self.notebooks_dir / '.practice-queue.json', journal)
+                eagle._restore_notebook_practice_queue()
+                eagle._notebook_practice_jobs.join()
+            self.assertEqual(generate.call_count, 1)
+        self.assertEqual(eagle._notebook_prompt_response(eagle._load_student_notebook(self.student_email, self.class_id), prompt["id"])["practice"]["status"], "complete")
+
+    def _photo_upload(self, size=(100, 60), token=None):
+        from PIL import Image
+        output = io.BytesIO()
+        Image.new('RGB', size, 'navy').save(output, format='JPEG')
+        output.seek(0)
+        return self.client.post('/api/notebook/images', headers={"X-User-Token": token or self.student_token}, data={"classId": self.class_id, "image": (output, 'board.jpg')})
+
+    def test_photos_are_scaled_quota_counted_and_visible_to_authorized_teachers(self):
+        response = self._photo_upload((3000, 2000))
+        self.assertEqual(response.status_code, 200, response.get_json())
+        photo = response.get_json()
+        self.assertTrue(photo["path"].startswith('images/'))
+        self.assertLessEqual(max(photo['width'], photo['height']), 1920)
+        root = eagle._get_user_dir(self.student_email)
+        self.assertEqual(eagle._get_user_storage_used(root), photo['size'])
+        query = f'/api/notebook/images?classId={self.class_id}&path={photo["path"]}'
+        student = self.client.get(query, headers={"X-User-Token": self.student_token})
+        self.assertEqual(student.status_code, 200)
+        self.assertEqual(student.mimetype, 'image/jpeg')
+        student.close()
+        teacher = self.client.get(query + f'&studentEmail={self.student_email}', headers={"X-Teacher-Token": self.teacher_token})
+        self.assertEqual(teacher.status_code, 200)
+        self.assertEqual(teacher.headers['X-Content-Type-Options'], 'nosniff')
+        teacher.close()
+        preview = self.client.get(f'/api/files/preview?path={photo["path"]}', headers={"X-User-Token": self.student_token})
+        self.assertEqual(preview.status_code, 200)
+        preview.close()
+        self.assertEqual(self.client.get(query + f'&studentEmail={self.student_email}', headers={"X-User-Token": self.second_student_token}).status_code, 403)
+        classes = eagle._load_classes(); classes['classes'][0]['coteachers'] = [self.second_student_email]; eagle._save_classes(classes)
+        co = self.client.get(query + f'&studentEmail={self.student_email}', headers={"X-Teacher-Token": self.second_student_token})
+        self.assertEqual(co.status_code, 200); co.close()
+        classes = eagle._load_classes(); classes['classes'][0]['coteachers'] = []; eagle._save_classes(classes)
+        self.assertEqual(self.client.get(query + f'&studentEmail={self.student_email}', headers={"X-Teacher-Token": self.second_student_token}).status_code, 403)
+        classes = eagle._load_classes(); classes['classes'][0]['students'].remove(self.student_email); eagle._save_classes(classes)
+        self.assertEqual(self.client.get(query + f'&studentEmail={self.student_email}', headers={"X-Teacher-Token": self.teacher_token}).status_code, 403)
+
+    def test_photo_upload_rejects_over_quota_unsupported_content_and_traversal(self):
+        with mock.patch.object(eagle, 'USER_STORAGE_LIMIT_MB', 0):
+            self.assertEqual(self._photo_upload().status_code, 413)
+        self.assertFalse(list(eagle.USER_FILES_DIR.rglob('*.jpg')))
+        bad = self.client.post('/api/notebook/images', headers={"X-User-Token": self.student_token}, data={"classId": self.class_id, "image": (io.BytesIO(b'<svg onload="alert(1)"/>'), 'x.svg')})
+        self.assertEqual(bad.status_code, 422)
+        for path in ['images/../../users.json', '../board.jpg', 'Trash/board.jpg', 'images/nested/board.jpg']:
+            response = self.client.get('/api/notebook/images', query_string={"classId": self.class_id, "path": path}, headers={"X-User-Token": self.student_token})
+            self.assertEqual(response.status_code, 404)
+
+    def test_shared_notebook_tabs_copy_photos_into_the_recipients_workspace(self):
+        photo = self._photo_upload().get_json()
+        notebook = eagle._load_student_notebook(self.student_email, self.class_id)
+        notebook['tabs'][0]['html'] = f'<figure data-notebook-image="{photo["path"]}"><img alt="Board notes"></figure>'
+        eagle._save_student_notebook(self.student_email, self.class_id, notebook)
+        ok, error, tab = eagle._copy_notebook_tab_to_user(self.student_email, self.second_student_email, self.class_id, notebook['tabs'][0]['id'], 'Student')
+        self.assertTrue(ok, error)
+        self.assertIn(photo['path'], tab['html'])
+        original = eagle._get_user_dir(self.student_email) / photo['path']
+        copied = eagle._get_user_dir(self.second_student_email) / photo['path']
+        self.assertEqual(copied.read_bytes(), original.read_bytes())
+        self.assertGreater(eagle._get_user_storage_used(copied.parent.parent), 0)
+
+    def test_concurrent_photos_cannot_bypass_the_storage_limit(self):
+        from PIL import Image
+        from notebook_media import photo_bytes
+        from concurrent.futures import ThreadPoolExecutor
+        output = io.BytesIO(); Image.new('RGB', (100, 60), 'navy').save(output, format='JPEG')
+        raw = output.getvalue(); encoded, _, _ = photo_bytes(raw)
+        def upload():
+            with eagle.app.test_client() as client:
+                return client.post('/api/notebook/images', headers={"X-User-Token": self.student_token}, data={"classId": self.class_id, "image": (io.BytesIO(raw), 'board.jpg')}).status_code
+        with mock.patch.object(eagle, 'USER_STORAGE_LIMIT_MB', len(encoded) * 1.5 / (1024 * 1024)), ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: upload(), range(2)))
+        self.assertEqual(sorted(results), [200, 413])
+        self.assertEqual(eagle._get_user_storage_used(eagle._get_user_dir(self.student_email)), len(encoded))
+
+    def test_photo_orientation_is_applied_and_camera_metadata_is_removed(self):
+        from PIL import Image
+        from notebook_media import photo_bytes
+        for mode, format in [('RGB', 'JPEG'), ('RGBA', 'PNG')]:
+            image = Image.new(mode, (4, 2), 'navy')
+            exif = Image.Exif(); exif[274] = 6; exif[315] = 'Private camera owner'
+            output = io.BytesIO(); image.save(output, format=format, exif=exif)
+            encoded, _, dimensions = photo_bytes(output.getvalue())
+            self.assertEqual(dimensions, (2, 4))
+            with Image.open(io.BytesIO(encoded)) as stored:
+                self.assertFalse(stored.getexif())
+
+    def test_photo_size_limit_applies_to_the_saved_encoding(self):
+        from PIL import Image
+        output = io.BytesIO(); Image.new('RGB', (4, 2), 'navy').save(output, format='PNG'); output.seek(0)
+        with mock.patch.object(eagle, 'MAX_UPLOAD_FILE_BYTES', 512):
+            response = self.client.post('/api/notebook/images', headers={"X-User-Token": self.student_token}, data={"classId": self.class_id, "image": (output, 'board.png')})
+        self.assertEqual(response.status_code, 413)
+        self.assertIn('resized photo', response.get_json()['error'])
 
 
 if __name__ == "__main__":
