@@ -1361,7 +1361,8 @@
       return [];
     }
     try {
-      const res = await fetch('/api/teacher/skills', { headers: teacherHeaders() });
+      const currentContext = ctx();
+      const res = await fetch('/api/teacher/skills' + (currentContext.currentTeacher?.is_coteacher ? '?classId=' + encodeURIComponent(currentContext.currentTeacherClassId || '') : ''), { headers: teacherHeaders() });
       const data = await res.json().catch(() => ({}));
       teacherNotebookSkills = Array.isArray(data?.skills) ? data.skills : [];
     } catch {
@@ -1568,7 +1569,7 @@
         <article class="teacher-notebook-response-card${scored ? ' scored' : ''}" data-student-email="${escapeHtml(row.studentEmail || '')}">
           <div class="teacher-notebook-response-head">
             <div>
-              <strong>${escapeHtml(row.studentName || row.studentEmail)}</strong>
+              <div class="notebook-name-columns"><span>First name: <strong>${escapeHtml(row.first_name ?? row.studentName ?? row.studentEmail)}</strong></span><span>Last name: <strong>${escapeHtml(row.last_name || '')}</strong></span></div>
               <div class="meta">${escapeHtml(row.studentEmail || '')}${row.updatedAt ? ` · Submitted ${escapeHtml(formatLocalDateTime(row.updatedAt))}` : ''}</div>
             </div>
             <div class="teacher-notebook-score-actions">
@@ -1608,6 +1609,7 @@
           <div>${missing.map(s => escapeHtml(s.studentName || s.studentEmail)).join(', ') || 'Everyone has responded.'}</div>
         </div>
       `;
+      if (data.canManage === false) list.querySelectorAll('#teacherNotebookLockPromptBtn, #teacherNotebookDeletePromptBtn').forEach(node=>node.hidden=true);
       highlightCodeBlocks(list);
       document.getElementById('teacherNotebookLockPromptBtn')?.addEventListener('click', () => {
         setTeacherPromptLocked(classId, promptId, !prompt.locked).catch(err => alert(err.message || 'Could not update lock.'));

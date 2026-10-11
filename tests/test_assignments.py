@@ -62,8 +62,8 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
 
         self.users_file.write_text(json.dumps({"users": [
             {"email": self.teacher_email, "name": "Teacher", "role": "teacher", "enabled": True},
-            {"email": self.student_email, "name": "Student One", "role": "student", "enabled": True, "class_id": self.class_one, "class_ids": [self.class_one]},
-            {"email": self.missing_email, "name": "Student Two", "role": "student", "enabled": True, "class_id": self.class_one, "class_ids": [self.class_one]},
+            {"email": self.student_email, "name": "Student One", "student_id": "123456", "role": "student", "enabled": True, "class_id": self.class_one, "class_ids": [self.class_one]},
+            {"email": self.missing_email, "name": "Student Two", "student_id": "654321", "role": "student", "enabled": True, "class_id": self.class_one, "class_ids": [self.class_one]},
         ]}), encoding="utf-8")
         self.classes_file.write_text(json.dumps({"classes": [
             {"id": self.class_one, "name": "Period One", "teacher_email": self.teacher_email, "join_code": "ONE111", "settings": {}, "students": [self.student_email, self.missing_email]},

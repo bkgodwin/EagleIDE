@@ -197,7 +197,7 @@ class RolePermissionTestCase(unittest.TestCase):
         with patch("app._load_config", return_value={"registration_enabled": True}):
             response = self.http.post(
                 "/api/auth/register",
-                json={"email": "new.student@example.com", "name": "New Student", "password": "StrongPass123"},
+                json={"email": "new.student@example.com", "first_name": "New", "last_name": "Student", "student_id": "00123", "password": "StrongPass123"},
             )
 
         self.assertEqual(response.status_code, 200)
@@ -214,7 +214,7 @@ class RolePermissionTestCase(unittest.TestCase):
                     "/api/auth/register",
                     json={
                         "email": f"student{index}@school.test",
-                        "name": f"Student {index}",
+                        "first_name": f"Student {index}", "last_name": "Test", "student_id": str(index),
                         "password": "ClassPass123",
                     },
                     environ_base={"REMOTE_ADDR": shared_ip},
@@ -434,7 +434,7 @@ class RolePermissionTestCase(unittest.TestCase):
                         self.assertEqual(response.status_code, 400)
                         self.assertFalse(response.get_json()["ok"])
             response = self.http.post("/api/auth/register", json={
-                "email": "long@school.test", "password": "é" * 37, "name": "Student",
+                "email": "long@school.test", "password": "é" * 37, "name": "Student", "student_id": "123",
             })
         self.assertEqual(response.status_code, 400)
         self.assertIn("72", response.get_json()["error"])
@@ -799,7 +799,7 @@ class RolePermissionTestCase(unittest.TestCase):
         source = (Path(eagle.BASE_DIR) / "static/js/app-core.js").read_text(encoding="utf-8")
 
         self.assertIn("ADMIN_TOKEN || TEACHER_TOKEN || aiEnabledForClass", source)
-        self.assertIn("streamingToggleBtn.style.display = TEACHER_TOKEN ? '' : 'none'", source)
+        self.assertIn("streamingToggleBtn.style.display = TEACHER_TOKEN && !isCoTeacher() ? '' : 'none'", source)
         self.assertIn("const next = !!enabled && !!TEACHER_TOKEN", source)
         self.assertNotIn("role: ADMIN_TOKEN ? 'admin' : 'teacher'", source)
 

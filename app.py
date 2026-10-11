@@ -312,6 +312,7 @@ except Exception:
         "guest_ide_access_enabled": True,
         "network_sim_enabled": False,
         "python_memory_limit_mb": 750,
+        "python_execution_timeout_seconds": 30,
         "python_max_concurrent_runs": 8,
         "python_module_access": {},
         "wiki_max_asset_mb": 1024,
@@ -491,6 +492,7 @@ def _normalized_python_runtime_settings(cfg: Optional[Dict[str, Any]] = None) ->
             1,
             MAX_CONCURRENT_RUNS,
         ),
+        "python_execution_timeout_seconds": _bounded_int(source.get("python_execution_timeout_seconds"), 30, 1, 300),
         "python_module_access": normalize_module_access(source.get("python_module_access")),
     }
 
@@ -525,6 +527,15 @@ def _configured_ai_timeout(cfg: Optional[Dict[str, Any]] = None) -> int:
 
 def _normalize_config_partial(partial: Dict[str, Any]) -> Dict[str, Any]:
     normalized = dict(partial or {})
+    if "python_execution_timeout_seconds" in normalized:
+        value = normalized["python_execution_timeout_seconds"]
+        try:
+            seconds = int(value)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError("Python execution time must be a whole number from 1 through 300 seconds")
+        if isinstance(value, bool) or str(value) != str(seconds) or not 1 <= seconds <= 300:
+            raise ValueError("Python execution time must be a whole number from 1 through 300 seconds")
+        normalized["python_execution_timeout_seconds"] = seconds
     if "ai_rubric_context_tokens" in normalized:
         value = normalized["ai_rubric_context_tokens"]
         try:
@@ -556,7 +567,7 @@ def _normalize_config_partial(partial: Dict[str, Any]) -> Dict[str, Any]:
         )
     if any(
         key in normalized
-        for key in ("python_memory_limit_mb", "python_max_concurrent_runs", "python_module_access")
+        for key in ("python_memory_limit_mb", "python_max_concurrent_runs", "python_module_access", "python_execution_timeout_seconds")
     ):
         candidate = _load_config()
         candidate.update(normalized)
@@ -843,6 +854,10 @@ def _normalize_user_record(user: dict) -> dict:
     if role not in {"student", "teacher"}:
         role = "student"
     normalized["role"] = role
+    normalized["first_name"] = str(normalized.get("first_name", normalized.get("name") or "")).strip()[:120]
+    normalized["last_name"] = str(normalized.get("last_name") or "").strip()[:120]
+    normalized["student_id"] = str(normalized.get("student_id") or "").strip()[:64]
+    normalized["name"] = " ".join(filter(None, [normalized["first_name"], normalized["last_name"]]))
     class_ids = []
     for raw_class_id in normalized.get("class_ids") or []:
         class_id = str(raw_class_id or "").strip()
@@ -981,13 +996,16 @@ def _verify_user_password(user: dict, password: str) -> bool:
 
 
 def _user_info_from_record(user: dict) -> dict:
+    user = _normalize_user_record(user)
     email = str(user.get("email") or "").strip().lower()
+    profile = _profile_fields(user)
     role = str(user.get("role") or "student").strip().lower()
     if role == "teacher":
-        return {"email": email, "name": user.get("name", ""), "role": "teacher"}
+        return {"email": email, **profile, "role": "teacher"}
     return {
         "email": email,
-        "name": user.get("name", ""),
+        **profile,
+        "coteacher_class_ids": [c["id"] for c in _get_dashboard_classes(email) if _is_coteacher(email, c)],
         "role": "student",
         "class_id": user.get("class_id"),
         "class_ids": _get_user_class_ids(user),
@@ -1101,6 +1119,7 @@ def _load_classes() -> dict:
                 "join_code": str(c.get("join_code") or "").strip().upper(),
                 "settings": normalized_settings,
                 "students": students,
+                "coteachers": [e for e in c.get("coteachers", []) if e in students],
                 "created_at": c.get("created_at") or _current_timestamp(),
             })
         normalized = {"classes": classes}
@@ -1148,9 +1167,68 @@ def _generate_join_code(existing_codes: set[str]) -> str:
     raise RuntimeError("Could not generate unique class join code")
 
 
-def _require_teacher(req) -> Optional[dict]:
+def _require_teacher(req, *, allow_coteacher=False) -> Optional[dict]:
     token = req.headers.get("X-Teacher-Token", "").strip()
-    return _teacher_tokens.get(token)
+    teacher = _teacher_tokens.get(token)
+    if teacher:
+        return teacher
+    if allow_coteacher:
+        student = _student_tokens.get(token)
+        if student:
+            record = _find_user(student.get("email", ""))
+            if record and record.get("enabled", True) and any(_is_coteacher(record["email"], c) for c in _load_classes().get("classes", [])):
+                return {**_user_info_from_record(record), "role": "teacher", "is_coteacher": True}
+    return None
+
+
+def _is_coteacher(email, cls):
+    email = str(email or "").strip().lower()
+    return bool(cls and email in cls.get("coteachers", []) and email in cls.get("students", []))
+
+
+def _class_dashboard_access(email, class_id):
+    cls = _find_class_by_id(class_id)
+    if cls and (cls.get("teacher_email") == str(email or "").lower() or _is_coteacher(email, cls)):
+        return cls
+    return None
+
+
+def _get_dashboard_classes(email):
+    return [c for c in _load_classes().get("classes", [])
+            if c.get("teacher_email") == str(email or "").lower() or _is_coteacher(email, c)]
+
+
+def _profile_fields(user):
+    user = _normalize_user_record(user)
+    return {key: user.get(key, "") for key in ("name", "first_name", "last_name", "student_id")}
+
+
+def _student_sort_key(user):
+    user = _normalize_user_record(user)
+    return (user["last_name"].casefold(), user["first_name"].casefold(), str(user.get("email") or "").casefold())
+
+
+def _validated_profile(data, current=None):
+    current = _normalize_user_record(current or {})
+    result = {}
+    for key, limit in (("first_name", 120), ("last_name", 120), ("student_id", 64)):
+        value = data.get(key, data.get("name", current[key]) if key == "first_name" else current[key])
+        if not isinstance(value, str) or len(value.strip()) > limit or any(ord(c) < 32 for c in value):
+            raise ValueError(f"Invalid {key.replace('_', ' ')}")
+        result[key] = value.strip()
+    if not result["first_name"]:
+        raise ValueError("First name is required")
+    if result["student_id"] and not re.fullmatch(r"[0-9]{1,64}", result["student_id"]):
+        raise ValueError("Student ID must contain digits only")
+    result["name"] = " ".join(filter(None, [result["first_name"], result["last_name"]]))
+    return result
+
+
+def _refresh_profile_tokens(email, record):
+    for tokens in (_student_tokens, _teacher_tokens):
+        for info in list(tokens.values()):
+            if info.get("email") == email:
+                info.update(_profile_fields(record))
 
 def _current_timestamp() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
@@ -1878,10 +1956,9 @@ def _record_user_sign_in(email: str, ip: str = "") -> Optional[str]:
     return None
 
 def _sorted_assignment_submissions(submissions: list[dict]) -> list[dict]:
-    return sorted(
-        submissions or [],
-        key=lambda sub: ((sub.get("name") or sub.get("email") or "").lower(), (sub.get("email") or "").lower())
-    )
+    users = {u.get("email"): u for u in _load_users().get("users", [])}
+    return sorted(submissions or [], key=lambda sub: _student_sort_key(users.get(sub.get("email"), sub)))
+
 
 SUBMISSION_HEADER_PREFIX_PATTERN = re.compile(r"^(?:# Submitted (?:by|at): .*\n?)+")
 
@@ -2139,7 +2216,7 @@ def _require_user_for_files(req) -> Optional[dict]:
     user = _require_user(req)
     if user:
         return user
-    teacher = _require_teacher(req)
+    teacher = _require_teacher(req, allow_coteacher=True)
     if teacher:
         return teacher
     admin_token = req.headers.get("X-Admin-Token", "").strip()
@@ -2353,10 +2430,19 @@ def _validate_workspace_path(user_dir: Path, path_str, *, allow_root=False) -> O
 
 
 def _assignment_actor(req) -> Optional[dict]:
-    teacher = _require_teacher(req)
+    teacher = _require_teacher(req, allow_coteacher=True)
     if teacher:
-        return {"role": "teacher", "email": (teacher.get("email") or "").strip().lower()}
+        return {"role": "teacher", "email": (teacher.get("email") or "").strip().lower(), "is_coteacher": bool(teacher.get("is_coteacher"))}
     return None
+
+
+def _assignment_access(actor, assignment, *, owner_only=False):
+    if not actor or not assignment:
+        return False
+    email = str(actor.get("email") or "").lower()
+    if actor.get("is_coteacher"):
+        return not owner_only and _is_coteacher(email, _find_class_by_id(assignment.get("targetClassId")))
+    return str(assignment.get("createdByEmail") or "").lower() == email
 
 
 def _get_teacher_classes(teacher_email: str) -> list[dict]:
@@ -2454,7 +2540,7 @@ def _effective_ai_enabled(req, payload: Optional[dict] = None) -> tuple[bool, Op
         if not (cls.get("settings") or {}).get("ai_enabled", True):
             return False, "AI features disabled for your class"
         return True, None
-    teacher = _require_teacher(req)
+    teacher = _require_teacher(req, allow_coteacher=True)
     if teacher:
         class_id = str((payload or {}).get("classId") or "").strip()
         if class_id:
@@ -2468,7 +2554,7 @@ def _effective_ai_enabled(req, payload: Optional[dict] = None) -> tuple[bool, Op
 
 
 def _effective_challenges_enabled(req, payload: Optional[dict] = None) -> tuple[bool, Optional[str]]:
-    if _require_admin(req) or _require_teacher(req):
+    if _require_admin(req) or _require_teacher(req, allow_coteacher=True):
         return True, None
     user = _require_user(req)
     if not user:
@@ -2624,8 +2710,8 @@ def admin_python_runtime():
             "cpu_aware_concurrent_runs": _effective_execution_hard_capacity(),
             "service_cpu_reserve": RUNNER_CPU_RESERVE,
             "max_queued_runs": MAX_QUEUED_RUNS,
-            "cpu_seconds": MAX_CPU_TIME_SECONDS,
-            "wall_seconds": MAX_WALL_TIME,
+            "cpu_seconds": 300,
+            "wall_seconds": 300,
             "write_mb": MAX_RUN_WRITE_BYTES // (1024 * 1024),
         },
     )
@@ -2641,11 +2727,17 @@ def auth_register():
     
     ip = _get_request_ip(request)
     data = request.get_json(silent=True) or {}
-    if not isinstance(data, dict) or any(not isinstance(data.get(key), str) for key in ("email", "password", "name")):
+    if not isinstance(data, dict) or any(not isinstance(data.get(key), str) for key in ("email", "password")):
         return jsonify(ok=False, error="Email, password, and name are required"), 400
     email = (data.get("email") or "").strip().lower()
     password = (data.get("password") or "")
-    name = (data.get("name") or "").strip()
+    try:
+        profile = _validated_profile(data)
+        if not profile["student_id"]:
+            raise ValueError("Student ID is required")
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    name = profile["name"]
     
     if not email or not password or not name:
         return jsonify(ok=False, error="Email, password, and name are required"), 400
@@ -2675,7 +2767,7 @@ def auth_register():
     user = {
         "email": email,
         "password_hash": password_hash,
-        "name": name,
+        **profile,
         "role": "student",
         "class_id": None,
         "class_ids": [],
@@ -2708,7 +2800,7 @@ def auth_register():
     _seed_example_files(email)
     
     # Issue token
-    user_info = {"email": email, "name": name, "role": "student", "class_id": None, "class_ids": []}
+    user_info = _user_info_from_record(user)
     token = _issue_access_token("student", user_info)
     _record_sign_in_event(email, "student", ip, "registration")
     response = jsonify(ok=True, token=token, user=user_info, role="student")
@@ -2808,6 +2900,7 @@ def auth_logout():
     teacher_token = request.headers.get("X-Teacher-Token", "").strip()
     admin_token = request.headers.get("X-Admin-Token", "").strip()
     _student_tokens.pop(token, None)
+    _student_tokens.pop(teacher_token, None)
     _teacher_tokens.pop(teacher_token, None)
     _admin_tokens.discard(admin_token)
     response = jsonify(ok=True)
@@ -2818,10 +2911,62 @@ def auth_logout():
 def auth_me():
     user = _require_user(request)
     if not user:
-        user = _require_teacher(request)
+        user = _require_teacher(request, allow_coteacher=True)
     if not user:
         return jsonify(ok=False, error="Not authenticated"), 401
-    return jsonify(ok=True, user=user)
+    record = _find_user(user.get("email", ""))
+    fresh = _user_info_from_record(record) if record else user
+    if user.get("is_coteacher"):
+        fresh.update(role="teacher", is_coteacher=True)
+    return jsonify(ok=True, user=fresh)
+
+@app.post("/api/auth/profile")
+def update_account_profile():
+    actor = _require_user(request) or _require_teacher(request, allow_coteacher=True)
+    if not actor:
+        return jsonify(ok=False, error="Authentication required"), 401
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify(ok=False, error="Invalid profile"), 400
+    email = actor.get("email", "")
+    with _users_lock:
+        users = _load_users()
+        record = next((u for u in users["users"] if u.get("email") == email), None)
+        if not record:
+            return jsonify(ok=False, error="Account not found"), 404
+        try:
+            record.update(_validated_profile(data, record))
+        except ValueError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+        _save_users(users)
+        _refresh_profile_tokens(email, record)
+    return jsonify(ok=True, user=_user_info_from_record(record))
+
+
+@app.post("/api/teacher/classes/coteacher")
+def teacher_set_coteacher():
+    teacher = _require_teacher(request)
+    if not teacher:
+        return jsonify(ok=False, error="Class owner required"), 403
+    data = request.get_json(silent=True) or {}
+    email = str(data.get("email") or "").strip().lower()
+    with _classes_lock:
+        classes = _load_classes()
+        cls = next((c for c in classes["classes"] if c["id"] == data.get("classId") and c["teacher_email"] == teacher["email"]), None)
+        if not cls or email not in cls["students"]:
+            return jsonify(ok=False, error="Student or class not found"), 404
+        coteachers = set(cls.get("coteachers", []))
+        if data.get("enabled") is True:
+            coteachers.add(email)
+        else:
+            coteachers.discard(email)
+        cls["coteachers"] = sorted(coteachers)
+        _save_classes(classes)
+    for sid, info in list(_socket_sid_info.items()):
+        if info.get("email") == email:
+            socketio.emit("coteacher_access_changed", {"classId": cls["id"]}, to=sid)
+    return jsonify(ok=True)
+
 
 # -------------------------
 # File management endpoints
@@ -3030,8 +3175,9 @@ def files_create():
                 return jsonify(ok=False, error=f"Folder limit reached (max {MAX_FILES_PER_FOLDER} files per folder)"), 400
             if _count_all_files_for_user(user_dir) >= MAX_FILES_PER_ACCOUNT:
                 return jsonify(ok=False, error=f"Account limit reached (max {MAX_FILES_PER_ACCOUNT} files per account)"), 400
-            with target.open("xb"):
-                pass
+            with target.open("xb") as handle:
+                if target.suffix.lower() == ".json":
+                    handle.write(b"{}\n")
         _invalidate_workspace_tree_cache(user_dir)
         return jsonify(ok=True, path=target.relative_to(user_dir).as_posix(), name=name, type=file_type)
     except FileExistsError:
@@ -3144,6 +3290,8 @@ def files_read():
     if target.suffix.lower() not in ALLOWED_EXTENSIONS:
         return jsonify(ok=False, error="File type not allowed"), 400
     suffix = target.suffix.lower()
+    if suffix == ".csv":
+        return jsonify(ok=True, kind="csv", path=path_str, size=target.stat().st_size)
     try:
         if suffix in TEXT_EXTENSIONS and target.stat().st_size > MAX_EDITOR_FILE_BYTES:
             return jsonify(ok=False, error=f"File exceeds the {MAX_EDITOR_FILE_BYTES // (1024 * 1024)}MB editor limit"), 413
@@ -4343,7 +4491,7 @@ def save_notebook():
 
 @app.post("/api/teacher/notebook-prompts/create")
 def teacher_create_notebook_prompt():
-    teacher = _require_teacher(request)
+    teacher = _require_teacher(request, allow_coteacher=True)
     if not teacher:
         return jsonify(ok=False, error="Teacher token required"), 401
     data = request.get_json(silent=True) or {}
@@ -4359,9 +4507,10 @@ def teacher_create_notebook_prompt():
     if not prompt_text:
         return jsonify(ok=False, error="Prompt text is required"), 400
     teacher_email = (teacher.get("email") or "").strip().lower()
-    cls = _teacher_owns_class(teacher_email, class_id)
+    cls = _class_dashboard_access(teacher_email, class_id)
     if not cls:
         return jsonify(ok=False, error="Class not found"), 404
+    teacher_email = cls.get("teacher_email")
     _ensure_default_teacher_skills(teacher_email)
     skills_data = _load_skills()
     teacher_skill_lookup = {
@@ -4416,14 +4565,14 @@ def teacher_create_notebook_prompt():
 
 @app.get("/api/teacher/notebook-prompts")
 def teacher_list_notebook_prompts():
-    teacher = _require_teacher(request)
+    teacher = _require_teacher(request, allow_coteacher=True)
     if not teacher:
         return jsonify(ok=False, error="Teacher token required"), 401
     class_id = (request.args.get("classId") or "").strip()
     if not class_id:
         return jsonify(ok=False, error="classId is required"), 400
     teacher_email = (teacher.get("email") or "").strip().lower()
-    cls = _teacher_owns_class(teacher_email, class_id)
+    cls = _class_dashboard_access(teacher_email, class_id)
     if not cls:
         return jsonify(ok=False, error="Class not found"), 404
     users_by_email = {u.get("email", "").lower(): u for u in _load_users().get("users", [])}
@@ -4451,14 +4600,14 @@ def teacher_list_notebook_prompts():
     roster = []
     for student_email in students:
         u = users_by_email.get(student_email.lower(), {})
-        roster.append({"email": student_email, "name": u.get("name") or student_email})
-    roster.sort(key=lambda s: ((s.get("name") or "").lower(), (s.get("email") or "").lower()))
-    return jsonify(ok=True, prompts=result, students=roster)
+        roster.append({"email": student_email, **_profile_fields(u)})
+    roster.sort(key=_student_sort_key)
+    return jsonify(ok=True, prompts=result, students=roster, canManage=not teacher.get("is_coteacher"))
 
 
 @app.get("/api/teacher/notebook-prompts/responses")
 def teacher_notebook_prompt_responses():
-    teacher = _require_teacher(request)
+    teacher = _require_teacher(request, allow_coteacher=True)
     if not teacher:
         return jsonify(ok=False, error="Teacher token required"), 401
     class_id = (request.args.get("classId") or "").strip()
@@ -4466,7 +4615,7 @@ def teacher_notebook_prompt_responses():
     if not class_id or not prompt_id:
         return jsonify(ok=False, error="classId and promptId are required"), 400
     teacher_email = (teacher.get("email") or "").strip().lower()
-    cls = _teacher_owns_class(teacher_email, class_id)
+    cls = _class_dashboard_access(teacher_email, class_id)
     if not cls:
         return jsonify(ok=False, error="Class not found"), 404
     prompts = _load_notebook_prompts(class_id)
@@ -4492,6 +4641,7 @@ def teacher_notebook_prompt_responses():
                 responses.append({
                     "studentEmail": email,
                     "studentName": name,
+                    **_profile_fields(user_row),
                     "responseHtml": _sanitize_notebook_html(block.get("responseHtml") or ""),
                     "responseText": _notebook_plain_text(block.get("responseHtml") or ""),
                     "updatedAt": block.get("updatedAt") or "",
@@ -4500,10 +4650,10 @@ def teacher_notebook_prompt_responses():
                     "gradedAt": block.get("gradedAt") or "",
                 })
             else:
-                missing.append({"studentEmail": email, "studentName": name})
+                missing.append({"studentEmail": email, "studentName": name, **_profile_fields(user_row)})
     responses.sort(key=lambda s: ((s.get("studentName") or "").lower(), s.get("studentEmail", "")))
     missing.sort(key=lambda s: ((s.get("studentName") or "").lower(), s.get("studentEmail", "")))
-    return jsonify(ok=True, prompt=prompt, responses=responses, missing=missing)
+    return jsonify(ok=True, prompt=prompt, responses=sorted(responses, key=_student_sort_key), missing=sorted(missing, key=_student_sort_key), canManage=not teacher.get("is_coteacher"))
 
 
 @app.post("/api/teacher/notebook-prompts/lock")
@@ -4570,7 +4720,7 @@ def teacher_delete_notebook_prompt():
 
 @app.post("/api/teacher/notebook-prompts/grade")
 def teacher_grade_notebook_prompt_response():
-    teacher = _require_teacher(request)
+    teacher = _require_teacher(request, allow_coteacher=True)
     if not teacher:
         return jsonify(ok=False, error="Teacher token required"), 401
     data = request.get_json(silent=True) or {}
@@ -4582,7 +4732,7 @@ def teacher_grade_notebook_prompt_response():
     if not class_id or not prompt_id or not student_email:
         return jsonify(ok=False, error="classId, promptId, and studentEmail are required"), 400
     teacher_email = (teacher.get("email") or "").strip().lower()
-    cls = _teacher_owns_class(teacher_email, class_id)
+    cls = _class_dashboard_access(teacher_email, class_id)
     if not cls:
         return jsonify(ok=False, error="Class not found"), 404
     if student_email not in {(s or "").strip().lower() for s in cls.get("students", [])}:
@@ -4614,11 +4764,11 @@ def teacher_grade_notebook_prompt_response():
 
 @app.get("/api/teacher/classes")
 def teacher_list_classes():
-    teacher = _require_teacher(request)
+    teacher = _require_teacher(request, allow_coteacher=True)
     if not teacher:
         return jsonify(ok=False, error="Teacher token required"), 401
     teacher_email = (teacher.get("email") or "").strip().lower()
-    classes = _get_teacher_classes(teacher_email)
+    classes = _get_dashboard_classes(teacher_email)
     users_by_email = {u.get("email", "").lower(): u for u in _load_users().get("users", [])}
     result = []
     for c in classes:
@@ -4627,7 +4777,8 @@ def teacher_list_classes():
             student_user = users_by_email.get(student_email.lower(), {})
             students.append({
                 "email": student_email,
-                "name": student_user.get("name") or student_email,
+                **_profile_fields(student_user),
+                "is_coteacher": _is_coteacher(student_email, c),
                 "enabled": student_user.get("enabled", True),
             })
         result.append({
@@ -4635,7 +4786,8 @@ def teacher_list_classes():
             "name": c.get("name"),
             "join_code": c.get("join_code"),
             "settings": merge_class_settings(c.get("settings", {})),
-            "students": sorted(students, key=lambda s: ((s.get("name") or "").lower(), (s.get("email") or "").lower()))
+            "canManageClass": not _is_coteacher(teacher_email, c),
+            "students": sorted(students, key=_student_sort_key)
         })
     return jsonify(ok=True, classes=result)
 
@@ -4899,12 +5051,19 @@ def teacher_delete_class():
 
 @app.get("/api/teacher/skills")
 def teacher_list_skills():
-    teacher = _require_teacher(request)
+    teacher = _require_teacher(request, allow_coteacher=True)
     if not teacher:
         return jsonify(ok=False, error="Teacher token required"), 401
     teacher_email = (teacher.get("email") or "").strip().lower()
+    if teacher.get("is_coteacher"):
+        cls = _class_dashboard_access(teacher_email, request.args.get("classId", ""))
+        if not cls:
+            return jsonify(ok=False, error="Class not found"), 404
+        teacher_email = cls["teacher_email"]
     _ensure_default_teacher_skills(teacher_email)
     classes = _get_teacher_classes(teacher_email)
+    if teacher.get("is_coteacher"):
+        classes = [cls]
     class_lookup = {c.get("id"): c.get("name") for c in classes}
     skills = []
     for skill in _get_teacher_skills(teacher_email):
@@ -5145,10 +5304,11 @@ def teacher_reorder_skills():
 
 def _class_presence_payload(class_id: str, cls: Optional[dict] = None) -> dict:
     cls = cls or _find_class_by_id(class_id) or {}
+    open_files = {}
     active_emails = set()
     in_quiz_emails = set()
     users_by_email = {str(u.get("email") or "").strip().lower(): u for u in _load_users().get("users", [])}
-    for sid, info in _socket_sid_info.items():
+    for sid, info in list(_socket_sid_info.items()):
         if (info or {}).get("role") != "student":
             continue
         if class_id not in (_socket_sid_rooms.get(sid) or set()):
@@ -5156,6 +5316,7 @@ def _class_presence_payload(class_id: str, cls: Optional[dict] = None) -> dict:
         email = (info.get("email") or "").strip().lower()
         if email:
             active_emails.add(email)
+            open_files[email] = info.get("open_file", "")
             if info.get("in_quiz"):
                 in_quiz_emails.add(email)
     class_students = [(s or "").strip().lower() for s in (cls.get("students") or []) if (s or "").strip()]
@@ -5167,6 +5328,7 @@ def _class_presence_payload(class_id: str, cls: Optional[dict] = None) -> dict:
         "ok": True,
         "classId": class_id,
         "activeStudents": sorted(active_emails),
+        "openFilesByEmail": open_files,
         "inQuizStudents": sorted(in_quiz_emails),
         "lastSignInByEmail": last_sign_in_by_email,
     }
@@ -5179,11 +5341,11 @@ def _emit_class_presence(class_id: str) -> None:
 
 @app.get("/api/teacher/classes/<class_id>/active-students")
 def teacher_active_students(class_id: str):
-    teacher = _require_teacher(request)
+    teacher = _require_teacher(request, allow_coteacher=True)
     if not teacher:
         return jsonify(ok=False, error="Teacher token required"), 401
     cls = _find_class_by_id(class_id)
-    if not cls or (cls.get("teacher_email") or "").lower() != (teacher.get("email") or "").lower():
+    if not _class_dashboard_access(teacher.get("email"), class_id):
         return jsonify(ok=False, error="Class not found"), 404
     return jsonify(_class_presence_payload(class_id, cls))
 
@@ -5304,27 +5466,20 @@ def teacher_update_student():
         return jsonify(ok=False, error="Teacher token required"), 401
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
-    name = re.sub(r"\s+", " ", str(data.get("name") or "").strip())
-    if not email:
-        return jsonify(ok=False, error="Email required"), 400
-    if not name:
-        return jsonify(ok=False, error="Name required"), 400
     if not _student_in_teacher_class(teacher.get("email", ""), email):
         return jsonify(ok=False, error="Student is not in one of your classes"), 403
-    users_data = _load_users()
-    found = None
-    for u in users_data.get("users", []):
-        if (u.get("email") or "").lower() == email and u.get("role") == "student":
-            u["name"] = name[:120]
-            found = u
-            break
-    if not found:
-        return jsonify(ok=False, error="Student not found"), 404
-    _save_users(users_data)
-    for token, info in list(_student_tokens.items()):
-        if (info.get("email") or "").lower() == email:
-            info["name"] = name[:120]
-    return jsonify(ok=True, student={"email": email, "name": name[:120], "enabled": found.get("enabled", True)})
+    with _users_lock:
+        users = _load_users()
+        record = next((u for u in users["users"] if u.get("email") == email and u.get("role") == "student"), None)
+        if not record:
+            return jsonify(ok=False, error="Student not found"), 404
+        try:
+            record.update(_validated_profile(data, record))
+        except ValueError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+        _save_users(users)
+        _refresh_profile_tokens(email, record)
+    return jsonify(ok=True, student={"email": email, **_profile_fields(record), "enabled": record.get("enabled", True)})
 
 
 @app.post("/api/teacher/students/toggle")
@@ -6907,7 +7062,7 @@ def _attach_windows_job(proc: subprocess.Popen, memory_limit_bytes: int) -> Opti
         return None
 
 
-def _apply_posix_process_limits(proc: subprocess.Popen, memory_limit_bytes: int) -> None:
+def _apply_posix_process_limits(proc: subprocess.Popen, memory_limit_bytes: int, cpu_seconds: int = MAX_CPU_TIME_SECONDS) -> None:
     if os.name == "nt":
         return
     try:
@@ -6917,7 +7072,7 @@ def _apply_posix_process_limits(proc: subprocess.Popen, memory_limit_bytes: int)
     if hasattr(resource, "prlimit"):
         limits = [
             (resource.RLIMIT_AS, (memory_limit_bytes, memory_limit_bytes)),
-            (resource.RLIMIT_CPU, (MAX_CPU_TIME_SECONDS, MAX_CPU_TIME_SECONDS + 1)),
+            (resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 1)),
             (resource.RLIMIT_FSIZE, (MAX_EDITOR_FILE_BYTES, MAX_EDITOR_FILE_BYTES)),
             (resource.RLIMIT_NOFILE, (64, 64)),
         ]
@@ -7085,6 +7240,9 @@ class _ProcessRunnerBase:
         self.total_input_wait = 0.0
         self.run_id = 0
         self.job_handle: Optional[int] = None
+        self.wall_seconds = MAX_WALL_TIME
+        self.cpu_seconds = MAX_CPU_TIME_SECONDS
+        self.absolute_seconds = MAX_INTERACTIVE_WALL_TIME
         self.max_output_bytes = MAX_OUTPUT_BYTES
         self.sandbox_dir: Optional[Path] = None
         self._state_lock = _native_threading.RLock()
@@ -7138,7 +7296,7 @@ class _ProcessRunnerBase:
             close_fds=True,
             **_popen_isolation_kwargs(),
         )
-        _apply_posix_process_limits(proc, memory_limit_bytes)
+        _apply_posix_process_limits(proc, memory_limit_bytes, self.cpu_seconds)
         try:
             job_handle = _attach_windows_job(proc, memory_limit_bytes)
         except Exception as exc:
@@ -7260,14 +7418,14 @@ class _ProcessRunnerBase:
                     wait_started = self.input_wait_started
                     completed_wait = self.total_input_wait
                     started_at = self.started_at
-                if now - started_at > MAX_INTERACTIVE_WALL_TIME:
+                if now - started_at > self.absolute_seconds:
                     set_limit("Process stopped due to absolute interactive time limit")
                     break
                 if waiting and wait_started and now - wait_started > IDLE_TIMEOUT:
                     set_limit("Process stopped while waiting too long for input")
                     break
                 current_wait = max(0.0, now - wait_started) if waiting and wait_started else 0.0
-                if now - started_at - completed_wait - current_wait > MAX_WALL_TIME:
+                if now - started_at - completed_wait - current_wait > self.wall_seconds:
                     set_limit("Process stopped due to active wall-time limit")
                     break
                 if disk_root and disk_limit_bytes > 0 and now >= next_disk_check:
@@ -7433,6 +7591,9 @@ class Runner(_ProcessRunnerBase):
         source_name: str = "python-chart.py",
         trace_token: str = "",
     ) -> None:
+        self.wall_seconds = _normalized_python_runtime_settings().get("python_execution_timeout_seconds", 30)
+        self.cpu_seconds = max(1, int(self.wall_seconds))
+        self.absolute_seconds = max(MAX_INTERACTIVE_WALL_TIME, self.wall_seconds)
         sbox = _prepare_runner_sandbox("pyide", self.sid)
         self.sandbox_dir = sbox
         runner_py = sbox / "runner.py"
@@ -7456,7 +7617,7 @@ class Runner(_ProcessRunnerBase):
             "USERPROFILE": str(allowed_root_path),
             "TEMP": str(cwd_path),
             "TMP": str(cwd_path),
-            "EAGLE_MAX_CPU_SECONDS": str(MAX_CPU_TIME_SECONDS),
+            "EAGLE_MAX_CPU_SECONDS": str(self.cpu_seconds),
             "EAGLE_MAX_MEMORY_BYTES": str(memory_limit_bytes),
             "EAGLE_MAX_FILE_BYTES": str(max(1024, min(MAX_EDITOR_FILE_BYTES, write_budget or 1024))),
             "EAGLE_RUN_WRITE_BUDGET_BYTES": str(write_budget),
@@ -8457,6 +8618,16 @@ def on_stop(_=None):
     emit("output", {"data": "\n[Stopped]\n"})
     emit("finished", {})
 
+@socketio.on("workspace_file_opened")
+def on_workspace_file_opened(payload):
+    info = _socket_sid_info.get(request.sid)
+    if not info or info.get("role") != "student" or not isinstance(payload, dict):
+        return
+    info["open_file"] = str(payload.get("name") or "").replace("\\", "/").split("/")[-1][:160]
+    for class_id in list(_socket_sid_rooms.get(request.sid, set())):
+        _emit_class_presence(class_id)
+
+
 @socketio.on("teacher_code_update")
 def on_teacher_code_update(payload):
     """Broadcast code updates from the teacher who owns the class."""
@@ -9389,7 +9560,7 @@ def get_assignments():
     all_assignments = _list_assignments()
     
     if is_teacher:
-        teacher_assignments = [a for a in all_assignments if (a.get("createdByEmail") or "").lower() == teacher_email.lower()]
+        teacher_assignments = [a for a in all_assignments if _assignment_access(actor, a)]
         return jsonify(
             ok=True,
             assignments=[_assignment_effective_payload(a) for a in teacher_assignments],
@@ -9460,7 +9631,7 @@ def create_assignment():
         if not target_class_id:
             return jsonify(ok=False, error="Teachers must select a class"), 400
         teacher_class = _find_class_by_id(target_class_id)
-        if not teacher_class or (teacher_class.get("teacher_email") or "").lower() != actor.get("email", "").lower():
+        if not _class_dashboard_access(actor.get("email"), target_class_id):
             return jsonify(ok=False, error="Invalid class"), 403
         target_class_name = teacher_class.get("name")
     duplicate = next(
@@ -9516,7 +9687,8 @@ def create_assignment():
         "skillTags": _normalize_skill_tags(data.get("skillTags") or []),
         "targetClassId": target_class_id,
         "targetClassName": target_class_name,
-        "createdByEmail": actor.get("email"),
+        "createdByEmail": teacher_class.get("teacher_email"),
+        "authoredByEmail": actor.get("email"),
         "createdByRole": actor.get("role"),
         "aiGradingInstructions": str(data.get("aiGradingInstructions") or "").strip()[:4000],
         "aiGradingRigor": ai_grading_rigor,
@@ -9541,6 +9713,8 @@ def update_assignment():
 
 def _update_assignment_locked():
     actor = _assignment_actor(request)
+    if actor and actor.get("is_coteacher"):
+        return jsonify(ok=False, error="Class owner required for this action"), 403
     if not actor:
         return jsonify(ok=False, error="Teacher token required"), 401
     
@@ -9551,7 +9725,7 @@ def _update_assignment_locked():
     assignment = _load_assignment(reference, class_hint)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
-    if actor.get("role") == "teacher" and (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+    if not _assignment_access(actor, assignment):
         return jsonify(ok=False, error="You can only edit your own assignments"), 403
     
     previous_rubric_context = _assignment_rubric_context(
@@ -9656,6 +9830,8 @@ def _update_assignment_locked():
 @app.post("/api/assignments/copy-to-class")
 def copy_assignment_to_class():
     actor = _assignment_actor(request)
+    if actor and actor.get("is_coteacher"):
+        return jsonify(ok=False, error="Class owner required for this action"), 403
     if not actor:
         return jsonify(ok=False, error="Teacher token required"), 401
     data = request.get_json(silent=True) or {}
@@ -9667,7 +9843,7 @@ def copy_assignment_to_class():
     source = _load_assignment(source_name, source_class_hint)
     if not source:
         return jsonify(ok=False, error="Assignment not found"), 404
-    if actor.get("role") == "teacher" and (source.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+    if not _assignment_access(actor, source):
         return jsonify(ok=False, error="You can only copy your own assignments"), 403
     if actor.get("role") == "teacher":
         target_class = _find_class_by_id(target_class_id)
@@ -9720,6 +9896,8 @@ def copy_assignment_to_class():
 def delete_assignment():
     """Delete an assignment (teacher owner)."""
     actor = _assignment_actor(request)
+    if actor and actor.get("is_coteacher"):
+        return jsonify(ok=False, error="Class owner required for this action"), 403
     if not actor:
         return jsonify(ok=False, error="Teacher token required"), 401
     
@@ -9730,7 +9908,7 @@ def delete_assignment():
     assignment_data = _load_assignment(reference, class_hint)
     if not assignment_data:
         return jsonify(ok=False, error="Assignment not found"), 404
-    if actor.get("role") == "teacher" and (assignment_data.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+    if not _assignment_access(actor, assignment_data):
         return jsonify(ok=False, error="You can only delete your own assignments"), 403
 
     with _assignment_lock:
@@ -9893,7 +10071,7 @@ def score_submission():
     assignment = _load_assignment(reference, class_hint)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
-    if actor.get("role") == "teacher" and (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+    if not _assignment_access(actor, assignment):
         return jsonify(ok=False, error="You can only score your own assignments"), 403
     if not assignment.get("allowFileSubmission", True):
         return jsonify(ok=False, error="Code scoring is disabled for this assignment"), 400
@@ -10097,7 +10275,7 @@ def _generate_assignment_rubric_response(reference_id: str, diagnostics: dict):
     assignment = _load_assignment(reference, class_hint)
     if not assignment:
         return fail("Assignment not found. Refresh the assignment list and try again.", 404, "rubric_assignment_missing")
-    if (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+    if not _assignment_access(actor, assignment):
         return fail("You can only generate rubrics for your own assignments", 403, "rubric_forbidden")
     try:
         criteria = _normalize_assignment_grading_criteria(data.get("criteria"), strict=True)
@@ -11329,7 +11507,7 @@ def grade_assignment_ai():
     assignment = _load_assignment(reference, class_hint)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
-    if actor.get("role") == "teacher" and (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+    if not _assignment_access(actor, assignment):
         return jsonify(ok=False, error="You can only grade your own assignments"), 403
     if not assignment.get("allowFileSubmission", True):
         return jsonify(ok=False, error="Code scoring is disabled for this assignment"), 400
@@ -11361,7 +11539,7 @@ def grade_all_assignments_ai():
     assignment = _load_assignment(reference, class_hint)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
-    if (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+    if not _assignment_access(actor, assignment):
         return jsonify(ok=False, error="You can only grade your own assignments"), 403
     if not assignment.get("allowFileSubmission", True):
         return jsonify(ok=False, error="Code scoring is disabled for this assignment"), 400
@@ -11422,7 +11600,7 @@ def get_assignment_ai_queue():
     teacher_email = actor.get("email", "").lower()
     jobs = []
     for assignment in _list_assignments():
-        if (assignment.get("createdByEmail") or "").lower() != teacher_email:
+        if not _assignment_access(actor, assignment):
             continue
         for submission in assignment.get("submissions", []):
             status = str(submission.get("aiGradingStatus") or "")
@@ -11458,7 +11636,7 @@ def cancel_assignment_ai_queue_item():
     student_email = str(data.get("studentEmail") or "").strip().lower()
     if not assignment or not student_email:
         return jsonify(ok=False, error="Assignment and student are required"), 400
-    if (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+    if not _assignment_access(actor, assignment):
         return jsonify(ok=False, error="You can only cancel grading for your own assignments"), 403
     return jsonify(ok=True, canceled=_cancel_assignment_ai_grade(assignment, student_email))
 
@@ -11471,7 +11649,7 @@ def cancel_all_assignment_ai_queue_items():
     teacher_email = actor.get("email", "").lower()
     canceled = 0
     for assignment in _list_assignments():
-        if (assignment.get("createdByEmail") or "").lower() != teacher_email:
+        if not _assignment_access(actor, assignment):
             continue
         for submission in list(assignment.get("submissions", [])):
             if submission.get("aiGradingStatus") in {"queued", "running"}:
@@ -11489,7 +11667,7 @@ def get_assignment_submission_file():
     assignment = _load_assignment(reference)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
-    if (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+    if not _assignment_access(actor, assignment):
         return jsonify(ok=False, error="You can only open your own assignment submissions"), 403
     submission = next((row for row in assignment.get("submissions", []) if (row.get("email") or "").lower() == student_email), None)
     if not submission:
@@ -11508,6 +11686,8 @@ def get_assignment_submission_file():
 def update_assignment_submission_file():
     """Save teacher edits to a protected assignment submission copy."""
     actor = _assignment_actor(request)
+    if actor and actor.get("is_coteacher"):
+        return jsonify(ok=False, error="Class owner required for this action"), 403
     if not actor:
         return jsonify(ok=False, error="Teacher token required"), 401
     data = request.get_json(silent=True) or {}
@@ -11523,7 +11703,7 @@ def update_assignment_submission_file():
         assignment = _load_assignment(reference)
         if not assignment:
             return jsonify(ok=False, error="Assignment not found"), 404
-        if (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+        if not _assignment_access(actor, assignment):
             return jsonify(ok=False, error="You can only edit your own assignment submissions"), 403
         submission = next(
             (row for row in assignment.get("submissions", []) if (row.get("email") or "").lower() == student_email),
@@ -11578,7 +11758,7 @@ def download_assignment_csv(assignment_reference: str):
     assignment = _load_assignment(assignment_reference)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
-    if actor.get("role") == "teacher" and (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+    if not _assignment_access(actor, assignment):
         return jsonify(ok=False, error="You can only export your own assignments"), 403
     
     from flask import Response
@@ -11596,7 +11776,8 @@ def download_assignment_csv(assignment_reference: str):
     }
     cls = _find_class_by_id(assignment.get("targetClassId"))
     roster = [str(email or "").strip().lower() for email in (cls or {}).get("students", []) if str(email or "").strip()]
-    emails = sorted(set(roster) | set(submissions_by_email))
+    users = {u.get("email"): u for u in _load_users().get("users", [])}
+    emails = sorted(set(roster) | set(submissions_by_email), key=lambda e: _student_sort_key(users.get(e, {"email": e})))
     max_total = _assignment_total_max_score(assignment)
     for email in emails:
         submission = submissions_by_email.get(email)
@@ -11610,7 +11791,7 @@ def download_assignment_csv(assignment_reference: str):
             rendered_score = "" if percent is None else f"{percent:.1f}%"
         else:
             rendered_score = "" if score is None else score
-        writer.writerow([email.split("@", 1)[0], rendered_score])
+        writer.writerow([(users.get(email) or {}).get("student_id", ""), rendered_score])
     
     output.seek(0)
     return Response(
@@ -11648,12 +11829,14 @@ Return exactly {expected_count} data rows, one for every supplied student_email,
 def download_external_grading_package(assignment_reference: str):
     """Export a privacy-limited prompt and every code submission for external grading."""
     actor = _assignment_actor(request)
+    if actor and actor.get("is_coteacher"):
+        return jsonify(ok=False, error="Class owner required for this action"), 403
     if not actor:
         return jsonify(ok=False, error="Teacher token required"), 401
     assignment = _load_assignment(assignment_reference)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
-    if actor.get("role") == "teacher" and (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+    if not _assignment_access(actor, assignment):
         return jsonify(ok=False, error="You can only export your own assignments"), 403
     if not assignment.get("allowFileSubmission", True):
         return jsonify(ok=False, error="This assignment does not accept code submissions"), 400
@@ -11713,12 +11896,14 @@ def download_external_grading_package(assignment_reference: str):
 def import_external_assignment_grades(assignment_reference: str):
     """Atomically apply a complete external grader CSV to one owned assignment."""
     actor = _assignment_actor(request)
+    if actor and actor.get("is_coteacher"):
+        return jsonify(ok=False, error="Class owner required for this action"), 403
     if not actor:
         return jsonify(ok=False, error="Teacher token required"), 401
     assignment = _load_assignment(assignment_reference)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
-    if actor.get("role") == "teacher" and (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+    if not _assignment_access(actor, assignment):
         return jsonify(ok=False, error="You can only import grades for your own assignments"), 403
     grading_error = _assignment_external_grading_error(assignment)
     if grading_error:
@@ -12106,7 +12291,7 @@ def grade_written_response():
     assignment = _load_assignment(assignment_name, class_hint)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
-    if actor.get("role") == "teacher" and (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+    if not _assignment_access(actor, assignment):
         return jsonify(ok=False, error="You can only grade your own assignments"), 403
     question = next((q for q in ((assignment.get("quiz") or {}).get("questions") or []) if q.get("id") == question_id), {}) or {}
     if not question_text:
@@ -12229,7 +12414,7 @@ def override_quiz_score():
     assignment = _load_assignment(assignment_name, class_hint)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
-    if actor.get("role") == "teacher" and (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+    if not _assignment_access(actor, assignment):
         return jsonify(ok=False, error="You can only edit scores for your own assignments"), 403
     
     submissions = assignment.get("submissions", [])
@@ -12267,6 +12452,8 @@ def override_quiz_score():
 @app.post("/api/quiz/reset-counter")
 def reset_quiz_submission_counter():
     actor = _assignment_actor(request)
+    if actor and actor.get("is_coteacher"):
+        return jsonify(ok=False, error="Class owner required for this action"), 403
     if not actor:
         return jsonify(ok=False, error="Teacher token required"), 401
     data = request.get_json(silent=True) or {}
@@ -12277,7 +12464,7 @@ def reset_quiz_submission_counter():
     assignment = _load_assignment(assignment_name, class_hint)
     if not assignment:
         return jsonify(ok=False, error="Assignment not found"), 404
-    if actor.get("role") == "teacher" and (assignment.get("createdByEmail") or "").lower() != actor.get("email", "").lower():
+    if not _assignment_access(actor, assignment):
         return jsonify(ok=False, error="You can only edit your own assignments"), 403
     found = False
     for sub in assignment.get("submissions", []):
@@ -12309,8 +12496,9 @@ def _build_class_mastery_report_uncached(class_id: str, teacher_email: str) -> O
     cls = _find_class_by_id(class_id)
     if not cls:
         return None
-    if (cls.get("teacher_email") or "").lower() != (teacher_email or "").lower():
+    if not _class_dashboard_access(teacher_email, class_id):
         return None
+    teacher_email = cls.get("teacher_email")
     users_by_email = {u.get("email", "").lower(): u for u in _load_users().get("users", [])}
     assignments = [a for a in _list_assignments() if (a.get("targetClassId") or "") == class_id]
     assignment_rows = []
@@ -12417,7 +12605,7 @@ def _build_class_mastery_report_uncached(class_id: str, teacher_email: str) -> O
             skill_scores[tag] = round(sum(vals) / len(vals), 2) if vals else None
         student_rows.append({
             "email": email,
-            "name": name,
+            **_profile_fields(users_by_email.get(normalized_email, {"name": name})),
             "assignmentScores": per_assignment,
             "skillScores": skill_scores,
         })
@@ -12434,7 +12622,7 @@ def _build_class_mastery_report_uncached(class_id: str, teacher_email: str) -> O
     return {
         "class": {"id": cls.get("id"), "name": cls.get("name")},
         "assignments": assignment_rows,
-        "students": student_rows,
+        "students": sorted(student_rows, key=_student_sort_key),
         "skillTags": tag_order,
         "skillDescriptions": skill_descriptions,
         "analytics": analytics,
@@ -12466,7 +12654,7 @@ def _build_class_mastery_report(class_id: str, teacher_email: str) -> Optional[d
 
 @app.get("/api/teacher/classes/<class_id>/mastery")
 def teacher_class_mastery(class_id: str):
-    teacher = _require_teacher(request)
+    teacher = _require_teacher(request, allow_coteacher=True)
     if not teacher:
         return jsonify(ok=False, error="Teacher token required"), 401
     report = _build_class_mastery_report(class_id, (teacher.get("email") or "").lower())
@@ -12725,6 +12913,14 @@ def admin_kill_execution():
     return jsonify(ok=True, state="active")
 
 
+@app.get("/api/admin/cpu-sample")
+def admin_cpu_sample():
+    if not _require_admin(request):
+        return jsonify(ok=False, error="Admin token required"), 401
+    from server_metrics import cpu_counters
+    return jsonify(ok=True, cores=cpu_counters())
+
+
 @app.get("/api/admin/server-health")
 def admin_server_health():
     if not _require_admin(request):
@@ -12859,7 +13055,7 @@ register_lesson_plan_features(
     base_dir=LESSON_PLAN_DATA_DIR,
     public_dir=BASE_DIR,
     wiki_store=_wiki_store,
-    require_teacher=_require_teacher,
+    require_teacher=lambda req: _require_teacher(req, allow_coteacher=True),
     require_user=_require_user,
     find_user=_find_user,
     get_user_class_ids=_get_user_class_ids,
@@ -12877,6 +13073,8 @@ register_network_features(
     config_provider=_load_config,
 )
 register_classroom_features(app, socketio)
+from workspace_data import register as register_workspace_data
+register_workspace_data(app, sys.modules[__name__])
 
 # -------------------------
 # Main

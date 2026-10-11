@@ -95,6 +95,14 @@ class PythonSandboxPolicyTests(unittest.TestCase):
         self.assertNotIn("subprocess", available)
         self.assertFalse(any(name.startswith("_") for name in available))
 
+    def test_json_module_reads_and_writes_workspace_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            result = self._run_worker(workspace, 'import json\nwith open("data.json", "w") as f:\n    json.dump({"score": 42}, f)\nwith open("data.json") as f:\n    print(json.load(f)["score"])\n')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("42", result.stdout)
+            self.assertEqual(json.loads((workspace / "data.json").read_text()), {"score": 42})
+
     def test_worker_warns_for_contract_and_private_member_violations_without_stopping(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = self._run_worker(

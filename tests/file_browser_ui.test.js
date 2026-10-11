@@ -17,6 +17,7 @@ test('renaming and deleting a parent updates open files, working directories, an
     let _currentFolderPath = 'unit/nested', _shellCwd = 'unit/nested';
     let _selectedFileItems = new Set(['unit', 'unit/nested/main.py', 'other.py']);
     let _autosaveTimer = null, csvAutosaveTimer = null, currentBufferDirty = true;
+    let csvEditorActive = false;
     const clearFileArtifactPreview = () => {}, setCsvMode = () => {}, updateActiveFileName = () => {}, updateEditorOverlay = () => {};
     const editor = { setValue() {} };
     ${extract('_normalizeTreePath')}

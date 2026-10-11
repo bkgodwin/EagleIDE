@@ -23,6 +23,8 @@ Required runtime components:
 ```text
 .
 |-- app.py                       Main Flask/Socket.IO app, APIs, auth, persistence, and runners
+|-- workspace_data.py            Bounded CSV pages and version-checked streaming workspace edits
+|-- server_metrics.py            On-demand Linux/Windows per-core CPU counters
 |-- classroom_features.py        Classroom signals, file sharing, audit routes, and socket events
 |-- lesson_plan_features.py      Lesson-plan APIs, source linking, link previews, and public routes
 |-- lesson_plan_store.py         Atomic plans, external links, source mappings, and share tokens
@@ -54,6 +56,8 @@ Required runtime components:
 |       |-- connection.js        Client outage warnings, health probes, and bounded workspace requests
 |       |-- feature-loader.js    On-demand loading for large optional browser features
 |       |-- app-core.js          Active main UI state, APIs, sockets, auth, files, quizzes, admin
+|       |-- workspace-data.js    Paged editable CSV grid and lazy JSON tree/source controls
+|       |-- server-performance.js On-demand admin CPU graphs; browser history only
 |       |-- editor-init.js       CodeMirror setup and textarea fallback
 |       |-- editor-feedback.js   Local occurrences, delimiters, diagnostics, block guides, and caret visibility
 |       |-- editor-behavior.js   Predictable Python Enter indentation and CodeMirror block folding
@@ -129,6 +133,18 @@ Required runtime components:
 
 Authentication uses ephemeral in-memory token maps. Protected HTTP requests pass one of `X-Admin-Token`, `X-Teacher-Token`, or `X-User-Token`. Socket events carry the corresponding token in their payload and join role-specific rooms. Preserve authorization and class-ownership checks on every new route or event.
 
+Student profiles retain `name` as the joined display name and store `first_name`,
+`last_name`, and a string `student_id` (preserving leading zeroes). Legacy names
+become first names without splitting, and missing last names/IDs remain blank.
+Teacher rosters and grading views sort by last name, then first name. Assignment
+CSV exports use student IDs, with blank IDs for accounts that have not added one.
+Class `coteachers` are a subset of the student roster, not a global account role.
+Only routes explicitly using `allow_coteacher=True` may accept a promoted student's
+token in `X-Teacher-Token`; they must check current class membership on every
+request. CoTeachers can read class reports/rosters, edit lesson plans, create
+assignments/prompts, and grade submissions. Owners retain membership, profile,
+lock/unlock, delete, assignment-setting, and lesson-plan sharing/source controls.
+
 All Ollama generation goes through the shared in-memory AI dispatcher in `app.py`. It keeps the configured concurrency full while healthy, queues excess interactive and background work, applies a global cooldown when Ollama reports overload, and retries overloaded requests. Assignment grading adds a durable submission-status layer with teacher queue inspection and cancellation; do not bypass the dispatcher with direct Ollama HTTP calls.
 
 ### Frontend
@@ -167,6 +183,17 @@ Rubric generation uses a compact array JSON schema passed through the dispatcher
 Do not weaken path validation, sandbox restrictions, CSP, resource limits, or process cleanup to make a feature easier to implement. Treat execution code as a security boundary, not just application logic.
 
 ## Data and Persistence
+
+CSV reads return metadata followed by `workspace_data.py` pages of at most 50
+records and 40 columns, with a 512 KB page-content budget and 256 KB record cap.
+Edits stream through a temporary file with version checks, quota enforcement,
+and atomic replacement; keep byte-offset remapping and quoted newline handling.
+JSON files use the normal bounded text editor plus a lazy tree for files up to
+1 MB. Python's reviewed `json` module works with workspace files. Admin Python
+execution time is `python_execution_timeout_seconds` (default 30, range 1–300),
+sampled when a Python/Step Mode worker starts. JavaScript limits stay separate.
+Per-core CPU counters are sampled only while the admin performance menu is
+visible; no background collector or persistent history is created.
 
 Checked-in seed/reference data is limited to files such as `challenges.csv` and `exception_help.csv`. Normal application use creates local state including:
 
