@@ -10,3 +10,4 @@ cryptography==48.0.1      # Fernet encryption for stored admin credentials
 numpy==2.5.1              # Native numerical runtime required by Matplotlib
 matplotlib==3.11.1        # Headless student chart generation (Agg backend)
 Pillow==12.3.0            # Matplotlib image support and IDE image validation
+tzdata==2026.5            # IANA class time zones, including on Windows

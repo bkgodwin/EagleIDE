@@ -76,6 +76,7 @@ the system interpreter and is not a supported production start command.
 | `numpy` | Native numerical prerequisite used by Matplotlib inside contained Python workers |
 | `matplotlib` | Headless `Agg` 2D/3D rendering; `plt.show()` saves PNG artifacts beside the Python source file |
 | `Pillow` | Pinned image runtime used by Matplotlib and authenticated IDE image validation |
+| `tzdata` | IANA time-zone database for classroom submission windows and weekday deadline accommodations; provides Windows time zones |
 
 NumPy, Matplotlib, Pillow, bcrypt, and cryptography include native components.
 Pinned releases provide wheels for supported Python versions and common

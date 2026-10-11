@@ -201,7 +201,10 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         self.assertEqual(expired.status_code, 200, expired.get_data(as_text=True))
         self.assertFalse(expired.get_json()["assignment"]["active"])
         self.assertTrue(expired.get_json()["assignment"]["dueExpired"])
-        self.assertEqual(self.client.get("/api/assignments", headers=self.student_headers).get_json()["assignments"], [])
+        visible = self.client.get("/api/assignments", headers=self.student_headers).get_json()["assignments"]
+        self.assertEqual([row["id"] for row in visible], [assignment["id"]])
+        self.assertTrue(visible[0]["isPast"])
+        self.assertFalse(visible[0]["canSubmit"])
 
         student_root = eagle._get_user_dir(self.student_email)
         student_root.mkdir(parents=True, exist_ok=True)
@@ -304,7 +307,8 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         self.assertFalse(submission.get("adminFilePath"))
         stored = self.submissions_dir / submission["submissionPath"]
         self.assertTrue(stored.is_file())
-        self.assertEqual(stored.parents[1].name, self.class_one)
+        self.assertEqual(stored.parents[3].name, self.class_one)
+        self.assertTrue(stored.parent.parent.name.startswith("student--"))
 
     def test_legacy_assignment_and_teacher_workspace_file_migrate_on_load(self):
         teacher_root = eagle._get_user_dir(self.teacher_email)

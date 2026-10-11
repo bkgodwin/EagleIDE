@@ -44,7 +44,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261011-file-open-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261011-assignment-workflow-1">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -722,8 +722,11 @@
 
               <div id="assignmentStudentView" style="padding:12px;">
                 <div id="studentAccountNotice" class="account-notice">Sign in with a student account to submit assignment files and view your scores.</div>
-                <h3 style="color:var(--columbia-blue); margin-top:0;">Active Assignments</h3>
-                <div id="studentAssignmentList"></div>
+                <div class="student-assignment-tabs" role="tablist" aria-label="Assignments">
+                  <button type="button" class="btn secondary active" role="tab" aria-selected="true" aria-controls="studentAssignmentList" data-student-assignment-tab="current">Current assignments</button>
+                  <button type="button" class="btn secondary" role="tab" aria-selected="false" aria-controls="studentAssignmentList" data-student-assignment-tab="past">Past assignments</button>
+                </div>
+                <div id="studentAssignmentList" role="tabpanel" aria-label="Current assignments"></div>
               </div>
             </div>
 
@@ -1799,16 +1802,17 @@
   <script src="/static/js/shell-commands.js?v=20261011-files-5"></script>
   <script src="/static/js/server-performance.js?v=20261011-files-5"></script>
   <script src="/static/js/workspace-data.js?v=20261011-files-5"></script>
-  <script src="/static/js/app-core.js?v=20261011-file-open-1"></script>
+  <script src="/static/js/assignment-workflow.js?v=20261011-assignment-workflow-1"></script>
+  <script src="/static/js/app-core.js?v=20261011-assignment-workflow-1"></script>
   <script src="/static/js/step-mode.js?v=20261011-files-5"></script>
-  <script src="/static/js/wiki-reader.js?v=20261011-file-open-1"></script>
+  <script src="/static/js/wiki-reader.js?v=20261011-assignment-workflow-1"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
   <script src="/static/js/lesson-plans.js?v=20261011-files-5"></script>
-  <script src="/static/js/wiki-admin.js?v=20261011-file-open-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20261011-assignment-workflow-1"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20261011-files-5"></script>
   <script src="/static/js/student-notebook.js?v=20261011-files-5"></script>
-  <script src="/static/js/student-dashboard.js?v=20261009-autocomplete-warnings-1"></script>
+  <script src="/static/js/student-dashboard.js?v=20261011-assignment-workflow-1"></script>
 
 </body>
 </html>
