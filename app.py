@@ -1871,6 +1871,9 @@ def _save_student_notebook(student_email: str, class_id: str, notebook: dict) ->
                     block["updatedAt"] = str(existing_block.get("updatedAt") or "")
     normalized["revision"] = existing_normalized.get("revision", 0) + 1
     normalized["updatedAt"] = _current_timestamp()
+    if assignments and any((block.get("practice") or {}).get("status") in {"queued", "running"} for block in assignments.get("blocks", [])):
+        if len(json.dumps(normalized, ensure_ascii=False)) + 16000 > MAX_NOTEBOOK_JSON_CHARS:
+            raise ValueError("Notebook is full; leave space for pending feedback before saving more notes")
     _write_json_file_atomic(_notebook_path(student_email, class_id), normalized)
     return normalized
 
@@ -1900,6 +1903,12 @@ def _copy_notebook_tab_to_user(
     personal_tabs = [tab for tab in destination.get("tabs", []) if tab.get("id") != "assignments"]
     if len(personal_tabs) >= MAX_NOTEBOOK_TABS - 1:
         return False, "Recipient notebook has reached its tab limit", None
+    try:
+        _copy_notebook_photos(source_email, destination_email, source_tab.get("html") or "")
+    except ValueError as exc:
+        return False, str(exc), None
+    except OSError:
+        return False, "Photos could not be copied into the recipient's workspace", None
     copied_tab = {
         "id": f"shared_{uuid.uuid4().hex[:16]}",
         "label": _sanitize_notebook_label(source_tab.get("label"), "Shared Notes"),
@@ -5906,6 +5915,7 @@ def call_ollama_generate(
     request_kind: str = "interactive",
     request_label: str = "",
     request_metadata: Optional[Dict[str, Any]] = None,
+    wait_for_capacity: bool = False,
 ) -> Dict[str, Any]:
     prompt = str(prompt or "")
     if not prompt:
@@ -5998,7 +6008,13 @@ def call_ollama_generate(
         "event": threading.Event(),
     }
     with _ai_queue_condition:
-        active_count = sum(1 for item in _ai_jobs.values() if item.get("state") in {"queued", "retrying", "running"})
+        def queue_size():
+            return sum(1 for item in _ai_jobs.values() if item.get("state") in {"queued", "retrying", "running"})
+        # Durable background work waits for admission. Its generation timeout
+        # starts at the HTTP attempt, never while waiting behind other students.
+        while wait_for_capacity and queue_size() >= MAX_QUEUED_AI_REQUESTS:
+            _ai_queue_condition.wait(timeout=1.0)
+        active_count = queue_size()
         if active_count >= MAX_QUEUED_AI_REQUESTS:
             with _ai_lock:
                 _ai_metrics["capacity_rejected"] += 1
@@ -13039,6 +13055,8 @@ register_workspace_data(app, sys.modules[__name__])
 assignment_workflow.register(app, sys.modules[__name__])
 from notebook_practice import register_notebook_practice
 register_notebook_practice(sys.modules[__name__])
+from notebook_media import register_notebook_media
+register_notebook_media(sys.modules[__name__])
 
 # -------------------------
 # Main

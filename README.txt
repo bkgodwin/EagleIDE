@@ -746,9 +746,11 @@ Notebook practice and reliability:
   a request for a coding attempt, rather than a worked answer. AI feedback stays
   within the programming topic. Admin and class AI switches still apply.
 - Wait three minutes before resubmitting the same prompt. One feedback job per
-  student may be pending; the notebook queue is bounded. Failed feedback never
-  deletes the submitted response. Pending work resumes when the student next
-  opens the notebook after a server restart.
+  student may be pending; the notebook queue holds up to 256 jobs and sends
+  practice requests one at a time. Time waiting in the queue does not spend the
+  model's generation timeout; Ollama capacity errors trigger shared backoff and
+  retries. Accepted pending work resumes at server startup, even with browsers
+  closed. Failed feedback keeps the attempt and allows an immediate retry.
 - Drag the notebook's left edge, or focus it and use the arrow keys, to resize.
   The padlock locks only the current tab for browsing. Unlock to edit again.
   Teachers can choose View notebook beside a student in Dashboard > Classes for
@@ -761,6 +763,12 @@ Notebook practice and reliability:
 - Run Here uses the same execution slot as the IDE. Only the active code block
   accepts input. Edit code opens a dedicated code editor that preserves mobile
   indentation; notes, code, and legacy prompt responses remain readable.
+- Insert Photo opens the device photo picker (including the iPad camera/library).
+  Photos are scaled to at most 1920 pixels per edge and saved in the workspace's
+  images folder. They count toward storage and file limits and open in Files.
+  Teacher notebook checks include photos. Remove photo removes it from the page;
+  the image file stays available in Files and can be deleted there. Shared tabs
+  include independent, quota-counted image copies in the recipient's workspace.
 
 ================================================================================
                             8. ADMIN PANEL

@@ -3,6 +3,9 @@ import getpass
 import json
 import tempfile
 import unittest
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
 
@@ -149,6 +152,29 @@ class AiLimitTestCase(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(post.call_count, 2)
         self.assertGreaterEqual(eagle._ai_metrics["retried"], 1)
+
+    def test_background_admission_wait_does_not_consume_generation_timeout(self):
+        entered, release = threading.Event(), threading.Event()
+        calls = []
+        def post(*args, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                entered.set(); release.wait(5)
+            return _Response()
+        with mock.patch.object(eagle, 'MAX_QUEUED_AI_REQUESTS', 1), mock.patch.object(eagle, 'AI_MIN_TIMEOUT_SECONDS', 0.01), mock.patch.object(eagle.requests, 'post', side_effect=post), ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(eagle.call_ollama_generate, 'http://127.0.0.1:11434', 'model', 'first request', use_cache=False, timeout=0.03)
+            try:
+                self.assertTrue(entered.wait(3))
+                second = pool.submit(eagle.call_ollama_generate, 'http://127.0.0.1:11434', 'model', 'background practice', use_cache=False, timeout=0.03, wait_for_capacity=True, request_kind='notebook-practice')
+                time.sleep(0.12)  # Four times the model timeout, entirely in admission.
+                self.assertFalse(second.done())
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(eagle._ai_metrics['capacity_rejected'], 0)
+            finally:
+                release.set()
+            self.assertTrue(first.result(3)['ok'])
+            self.assertTrue(second.result(3)['ok'])
+            self.assertEqual(calls[1]['timeout'], (3.0, 0.03))
 
     def test_ai_url_rejects_credentials(self):
         with eagle.app.test_request_context("/api/explain", method="POST"):

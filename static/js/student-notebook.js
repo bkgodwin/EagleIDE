@@ -42,9 +42,12 @@
   let refreshPending = null;
   let feedbackTimer = null;
   let outputRemainder = '';
+  let inputMarkerNewline = false;
   let recoveryCount = 0;
   let teacherCheckReturn = false;
   let localBackupOk = false;
+  let photoTarget = null;
+  let photoUploadPending = false;
 
   function ctx() {
     return window.EagleIDE?.getContext?.() || {};
@@ -61,7 +64,7 @@
   function sanitizeHtml(html) {
     if (window.DOMPurify) {
       return DOMPurify.sanitize(String(html || ''), {
-        ADD_ATTR: ['contenteditable', 'data-language', 'data-file-name', 'data-code-id', 'hidden'],
+        ADD_ATTR: ['contenteditable', 'data-language', 'data-file-name', 'data-code-id', 'data-notebook-image', 'hidden'],
       });
     }
     return escapeHtml(html);
@@ -106,9 +109,9 @@
 
   function userHeaders() {
     const c = ctx();
-    return c.TEACHER_TOKEN
+    return c.TEACHER_TOKEN && (readOnlyCheck || !c.currentTeacher?.is_coteacher)
       ? { 'X-Teacher-Token': c.TEACHER_TOKEN }
-      : { 'X-User-Token': c.USER_TOKEN || '' };
+      : { 'X-User-Token': c.USER_TOKEN || c.TEACHER_TOKEN || '' };
   }
 
   function userJsonHeaders() {
@@ -238,6 +241,7 @@
         if (block && !isAssignmentResponseLocked(block)) {
           const cleanCopy = el.cloneNode(true);
           cleanCopy.querySelectorAll('.student-notebook-code-block').forEach(cleanCodeBlockForSave);
+          window.NotebookPhotos?.clean(cleanCopy);
           const response = sanitizeHtml(cleanCopy.innerHTML || assignmentDefaultHtml(block));
           if (response !== block.responseHtml) { block.responseHtml = response; block.updatedAt = new Date().toISOString(); }
         }
@@ -248,6 +252,7 @@
     if (editor) {
       const cleanCopy = editor.cloneNode(true);
       cleanCopy.querySelectorAll('.student-notebook-code-block').forEach(cleanCodeBlockForSave);
+      window.NotebookPhotos?.clean(cleanCopy);
       tab.html = sanitizeHtml(cleanCopy.innerHTML || '');
     }
   }
@@ -349,6 +354,7 @@
 
   function scheduleSave({ persist = true } = {}) {
     if (!notebook || readOnlyCheck) return;
+    window.NotebookPhotos?.prune();
     dirty = true; setStatus('Unsaved');
     if (saveTimer) clearTimeout(saveTimer);
     // Clone and serialize after a typing pause, never on each iPad keystroke.
@@ -540,6 +546,7 @@
       liveBlock._notebookCodeMirror?.setOption('readOnly', tabIsReadOnly());
     }
     bindCodeBlockActions();
+    hydrateNotebookPhotos();
     highlightCodeBlocks(page);
   }
 
@@ -548,6 +555,52 @@
     if (!toolbar) return;
     toolbar.classList.toggle('assignments-active', tab?.id === ASSIGNMENTS_TAB_ID);
     toolbar.querySelectorAll('button').forEach(button => button.disabled = tabIsReadOnly());
+    const photo = document.getElementById('studentNotebookInsertPhotoBtn');
+    if (photo) photo.disabled = tabIsReadOnly() || tab?.id === ASSIGNMENTS_TAB_ID || photoUploadPending;
+  }
+
+  function hydrateNotebookPhotos() {
+    if (!drawerOpen || !notebook) return;
+    const page = document.getElementById('studentNotebookPage');
+    if (page) window.NotebookPhotos?.mount(page, { classId: loadedClassId, studentEmail: readOnlyCheck ? loadedOwner : '',
+      headers: userHeaders(), readOnly: tabIsReadOnly() || activeTab()?.id === ASSIGNMENTS_TAB_ID, onRemove: scheduleSave });
+  }
+
+  function chooseNotebookPhoto() {
+    const tab = activeTab(), editor = document.getElementById('studentNotebookEditor');
+    if (!editor || !tab || tab.id === ASSIGNMENTS_TAB_ID || tabIsReadOnly() || photoUploadPending) return;
+    const selection = window.getSelection();
+    const range = selection?.rangeCount && editor.contains(selection.getRangeAt(0).commonAncestorContainer) ? selection.getRangeAt(0).cloneRange() : null;
+    photoTarget = { owner: loadedOwner, classId: loadedClassId, tabId: tab.id, range, headers: userHeaders() };
+    document.getElementById('studentNotebookPhotoInput')?.click();
+  }
+
+  async function insertNotebookPhoto(file) {
+    const target = photoTarget; photoTarget = null;
+    if (!file || !target || photoUploadPending || tabIsReadOnly() || target.owner !== loadedOwner || target.owner !== ownerKey() || target.classId !== loadedClassId || target.tabId !== activeTab()?.id) return;
+    photoUploadPending = true; updateNotebookToolbarMode(activeTab()); setStatus('Resizing and saving photo…');
+    try {
+      const data = await window.NotebookPhotos.upload(file, target.classId, target.headers);
+      if (target.owner !== loadedOwner || target.owner !== ownerKey() || target.classId !== loadedClassId || target.tabId !== activeTab()?.id || tabIsReadOnly()) return;
+      const editor = document.getElementById('studentNotebookEditor'); if (!editor) return;
+      const figure = document.createElement('figure'); figure.className = 'student-notebook-photo';
+      figure.dataset.notebookImage = data.path; figure.contentEditable = 'false';
+      const image = document.createElement('img'); image.alt = file.name || 'Notebook photo'; image.width = data.width; image.height = data.height;
+      figure.appendChild(image);
+      const caption = document.createElement('figcaption'); caption.textContent = file.name || 'Photo'; figure.appendChild(caption);
+      // Photos are whole blocks. Place after the current paragraph/list/code
+      // block rather than nesting a figure inside text or a live runner.
+      let anchor = target.range && editor.contains(target.range.startContainer) ? target.range.startContainer : null;
+      if (anchor === editor) anchor = editor.childNodes[target.range.startOffset - 1] || null;
+      while (anchor && anchor.parentNode !== editor) anchor = anchor.parentNode;
+      if (anchor) anchor.after(figure); else editor.appendChild(figure);
+      const paragraph = document.createElement('p'); paragraph.appendChild(document.createElement('br')); figure.after(paragraph);
+      const range = document.createRange();
+      editor.focus(); const selection = window.getSelection(); range.setStart(paragraph, 0); range.collapse(true); selection.removeAllRanges(); selection.addRange(range);
+      hydrateNotebookPhotos(); scheduleSave(); await saveNotebook({ immediate: true });
+      ctx().loadFileTree?.();
+    } catch (error) { if (target.owner === loadedOwner && target.classId === loadedClassId) setStatus(error.message || 'Photo could not be saved', 'error'); }
+    finally { photoUploadPending = false; updateNotebookToolbarMode(activeTab()); }
   }
 
   function renderEditablePage(page, tab) {
@@ -595,9 +648,9 @@
 
   function assignmentGradeHtml(block) {
     const practice = block.practice || {};
-    const feedback = block.feedback || practice.feedback || practice.error;
-    return `<div class="student-notebook-red-ink">${escapeHtml(practice.summary || (block.feedback ? 'Teacher feedback' : 'Ready to practice'))}</div>`
-      + (feedback ? `<aside class="student-notebook-grade-note"><strong>Feedback</strong><span>${escapeHtml(feedback)}</span></aside>` : '');
+    const feedback = practice.status === 'failed' ? practice.error || block.feedback : block.feedback || practice.feedback || practice.error;
+    return `<div data-practice-feedback><div class="student-notebook-red-ink">${escapeHtml(practice.status === 'failed' ? 'Feedback unavailable · try again' : practice.summary || (block.feedback ? 'Teacher feedback' : 'Ready to practice'))}</div>`
+      + (feedback ? `<aside class="student-notebook-grade-note"><strong>Feedback</strong><span>${escapeHtml(feedback)}</span></aside>` : '') + '</div>';
   }
 
   function renderNotes(block, target) {
@@ -609,7 +662,7 @@
 
   function assignmentBodyHtml(block) {
     const practice = block.practice || {}, locked = isAssignmentResponseLocked(block);
-    const cooldown = Math.max(0, Math.ceil(180 - (Date.now() / 1000 - (Number(practice.submittedAt) || 0))));
+    const cooldown = practice.status === 'failed' ? 0 : Math.max(0, Math.ceil(180 - (Date.now() / 1000 - (Number(practice.submittedAt) || 0))));
     const pending = ['queued', 'running'].includes(practice.status);
     const hasNotes = block.notesEdited || !!(block.notesMarkdown || practice.notes);
     const submitted = !!practice.submittedAt;
@@ -1074,8 +1127,18 @@
     const out = shell.querySelector('.notebook-shell-output');
     if (!out) return;
     let s = outputRemainder + String(text || ''); outputRemainder = '';
-    if (s.includes(INPUT_TOKEN)) {
-      s = s.split(INPUT_TOKEN).join('');
+    // The workers append a protocol newline to INPUT_TOKEN, then echo stdin
+    // themselves. Remove that newline even when it arrives in a later chunk.
+    if (inputMarkerNewline && s) {
+      if (s[0] === '\r' && s.length === 1) { outputRemainder = s; return; }
+      s = s.replace(/^\r?\n/, ''); inputMarkerNewline = false;
+    }
+    const marker = s.indexOf(INPUT_TOKEN);
+    if (marker >= 0) {
+      const before = s.slice(0, marker), after = s.slice(marker + INPUT_TOKEN.length);
+      inputMarkerNewline = !after || after === '\r';
+      s = before + after.replace(/^\r?\n/, '');
+      if (after === '\r') { outputRemainder = '\r'; s = before; }
       waitingForNotebookInput = true;
       setTimeout(() => shell.querySelector('input')?.focus(), 0);
       updateNotebookRunButtons();
@@ -1134,6 +1197,7 @@
     shell.querySelector('.notebook-shell-output').textContent = ctx().showSystemShellMessages ? '[Sending code]\n' : '';
     waitingForNotebookInput = false;
     outputRemainder = '';
+    inputMarkerNewline = false;
     runningCodeBlock = block;
     const ok = c.runNotebookCode?.({
       code: getCodeBlockText(block),
@@ -1213,7 +1277,6 @@
         const value = input?.value || '';
         if (input) input.value = '';
         if (!ctx().sendNotebookInput?.(value)) return;
-        appendNotebookOutput(block, `${value}\n`);
         waitingForNotebookInput = false;
         updateNotebookRunButtons();
       });
@@ -1258,7 +1321,7 @@
       toggle.title = 'Close notebook';
       toggle.setAttribute('aria-expanded', 'true');
     }
-    loadNotebook().catch(err => console.warn(err));
+    loadNotebook().then(hydrateNotebookPhotos).catch(err => console.warn(err));
     updateFeedbackPolling();
   }
 
@@ -1295,6 +1358,7 @@
     const overlay = document.getElementById('studentNotebookOverlay');
     if (overlay) overlay.hidden = true;
     if (dirty) await saveNotebook({ immediate: true });
+    window.NotebookPhotos?.reset();
     if (readOnlyCheck) {
       readOnlyCheck = false; notebook = null; baseNotebook = null; loadedClassId = null; loadedOwner = '';
       if (teacherCheckReturn) document.getElementById('teacherDashboardModal').style.display = 'flex';
@@ -1311,19 +1375,49 @@
         const request = window.EagleIDE?.connection?.request || fetch;
         const res = await request(`/api/notebook?classId=${encodeURIComponent(classId)}`, { headers: userHeaders() });
         const data = await res.json();
-        if (!data.ok || !notebook || owner !== loadedOwner || classId !== loadedClassId || readOnlyCheck) return;
-        // Do not redraw a focused editor or an active program while feedback arrives.
-        if (ctx().isProgramRunning || document.activeElement?.closest?.('[contenteditable="true"], textarea, .CodeMirror')) return;
+        if (!data.ok || !notebook || owner !== loadedOwner || owner !== ownerKey() || classId !== loadedClassId || classId !== currentClassId() || readOnlyCheck) return;
+        const editing = ctx().isProgramRunning || document.activeElement?.closest?.('[contenteditable="true"], textarea, .CodeMirror');
         persistActivePageFromDom();
         const merged = window.NotebookSync.merge(baseNotebook, notebook, ensureNotebookShape(data.notebook));
         baseNotebook = cloneNotebook(data.notebook); notebook = ensureNotebookShape(merged.notebook);
         recoveryCount += merged.recovered;
         if (dirty || merged.recovered) { dirty = true; storeDraft(); scheduleSave({ persist: false }); }
-        if (activeTab()?.id === ASSIGNMENTS_TAB_ID) renderNotebook();
+        if (activeTab()?.id === ASSIGNMENTS_TAB_ID && !editing) renderNotebook();
+        else updatePracticeFeedback();
       } catch (error) { console.warn('Notebook refresh:', error); }
     })();
     refreshPending = pending;
     try { await pending; } finally { if (refreshPending === pending) refreshPending = null; }
+  }
+
+  function updatePracticeFeedback({ content = true } = {}) {
+    document.querySelectorAll('.student-notebook-prompt-card').forEach(card => {
+      const block = (assignmentsTab()?.blocks || []).find(row => row.promptId === card.dataset.promptId);
+      if (!block) return;
+      const practice = block.practice || {}, pending = ['queued', 'running'].includes(practice.status);
+      const remaining = practice.status === 'failed' ? 0 : Math.max(0, Math.ceil(180 - (Date.now() / 1000 - (Number(practice.submittedAt) || 0))));
+      const badge = card.querySelector('.student-notebook-assignment-badges span');
+      if (badge) badge.textContent = practice.status === 'complete' ? '✓ Feedback ready' : practice.status || 'Practice';
+      const button = card.querySelector('[data-practice-submit]'), status = card.querySelector('[data-practice-status]');
+      if (button) button.disabled = isAssignmentResponseLocked(block) || remaining > 0 || pending;
+      if (status) status.textContent = pending ? 'Feedback ' + practice.status : remaining ? `Submit again in ${Math.ceil(remaining / 60)} min` : practice.status === 'failed' ? 'Feedback failed · submit again' : 'Coding practice · no score';
+      if (!content) return;
+      const feedback = card.querySelector('[data-practice-feedback]');
+      if (feedback) { const holder = document.createElement('div'); holder.innerHTML = assignmentGradeHtml(block); feedback.replaceWith(holder.firstElementChild); }
+      const source = card.querySelector('[data-notes-source]'), notes = card.querySelector('[data-topic-notes]');
+      if (notes && source?.hidden && (block.notesEdited || block.notesMarkdown || block.practice?.notes)) {
+        renderNotes(block, notes); source.value = block.notesEdited ? block.notesMarkdown : block.notesMarkdown || block.practice?.notes || '';
+      }
+      if (block.notesEdited && block.practice?.notes && block.practice.notes !== block.notesMarkdown) {
+        let latest = card.querySelector('[data-ai-topic-notes]');
+        if (!latest) {
+          const details = document.createElement('details'), summary = document.createElement('summary');
+          summary.textContent = 'Latest AI topic notes'; latest = document.createElement('div'); latest.dataset.aiTopicNotes = ''; latest.className = 'student-notebook-markdown';
+          details.appendChild(summary); details.appendChild(latest); card.querySelector('.student-notebook-topic-notes')?.appendChild(details);
+        }
+        renderNotes({ notesMarkdown: block.practice.notes, practice: block.practice }, latest);
+      }
+    });
   }
 
   function updateFeedbackPolling() {
@@ -1333,14 +1427,7 @@
       if (document.visibilityState !== 'hidden') {
         const blocks = assignmentsTab()?.blocks || [];
         if (blocks.some(block => ['queued', 'running'].includes(block.practice?.status))) await refreshAssignmentsFromServer();
-        const block = blocks.find(row => row.promptId === expandedPromptId);
-        const remaining = Math.max(0, Math.ceil(180 - (Date.now() / 1000 - (Number(block?.practice?.submittedAt) || 0))));
-        const button = document.querySelector('[data-practice-submit]'), status = document.querySelector('[data-practice-status]');
-        if (block && button) {
-          const pending = ['queued', 'running'].includes(block.practice?.status);
-          button.disabled = isAssignmentResponseLocked(block) || remaining > 0 || pending;
-          if (status && !pending) status.textContent = remaining ? `Submit again in ${Math.ceil(remaining / 60)} min` : 'Coding practice · no score';
-        }
+        updatePracticeFeedback({ content: false });
       }
       updateFeedbackPolling();
     }, 5000);
@@ -1895,6 +1982,7 @@
     updateEntryPoints();
     if (readOnlyCheck && owner === ctx().currentTeacher?.email?.toLowerCase()) return;
     if (nextClassId !== loadedClassId || owner !== loadedOwner) {
+      window.NotebookPhotos?.reset();
       if (dirty) { persistActivePageFromDom(); storeDraft(); }
       ++loadSequence; ++checkSequence; clearTimeout(saveTimer); clearTimeout(feedbackTimer);
       hideAllCodeBlockShells({ stop: true });
@@ -1922,6 +2010,8 @@
     document.getElementById('studentNotebookLockBtn')?.addEventListener('click', toggleTabLock);
     document.getElementById('studentNotebookDraftExportBtn')?.addEventListener('click', exportLocalDraft);
     document.getElementById('studentNotebookInsertCodeBtn')?.addEventListener('click', insertEditorCode);
+    document.getElementById('studentNotebookInsertPhotoBtn')?.addEventListener('click', chooseNotebookPhoto);
+    document.getElementById('studentNotebookPhotoInput')?.addEventListener('change', event => { const file = event.target.files?.[0]; event.target.value = ''; insertNotebookPhoto(file); });
     document.getElementById('studentNotebookWikiLinkBtn')?.addEventListener('click', openWikiLinkPicker);
     document.getElementById('studentNotebookWikiLinkSearch')?.addEventListener('input', event => renderWikiLinkChoices(event.target.value));
     document.getElementById('studentNotebookWikiLinkCancelBtn')?.addEventListener('click', () => {

@@ -301,6 +301,9 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn('font-family: "Arial Rounded MT Bold"', notebook_css)
         self.assertIn("studentNotebookLockBtn", self.parser.ids)
         self.assertIn("studentNotebookResizeHandle", self.parser.ids)
+        self.assertIn("studentNotebookInsertPhotoBtn", self.parser.ids)
+        self.assertIn("studentNotebookPhotoInput", self.parser.ids)
+        self.assertIn("notebook-photos.js", self.raw)
         self.assertNotIn("teacherNotebookPromptMaxScoreInput", self.parser.ids)
         self.assertNotIn("open-class-bookmarks-btn", core)
 
