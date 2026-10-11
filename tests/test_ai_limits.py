@@ -193,7 +193,11 @@ class AiLimitTestCase(unittest.TestCase):
                 eagle.PERSIST_FILE = Path(tmp) / "config.txt"
                 eagle._cfg_cache = None
                 eagle._cfg_cache_mtime_ns = None
-                eagle._save_config(dict(eagle.DEFAULT_CONFIG))
+                legacy_config = dict(eagle.DEFAULT_CONFIG)
+                legacy_config.pop("ai_notebook_feedback_enabled")
+                eagle._save_config(legacy_config)
+                eagle._cfg_cache = None
+                self.assertTrue(self.client.get("/api/config").get_json()["data"]["ai_notebook_feedback_enabled"])
 
                 saved = self.client.post(
                     "/api/config/save",
@@ -204,6 +208,7 @@ class AiLimitTestCase(unittest.TestCase):
                             "ai_model": "deepseek-coder:6.7b",
                             "ai_request_timeout_seconds": 180,
                             "ai_rubric_context_tokens": 16384,
+                            "ai_notebook_feedback_enabled": False,
                         }
                     },
                 )
@@ -214,6 +219,18 @@ class AiLimitTestCase(unittest.TestCase):
                 self.assertEqual(stored["ai_ollama_url"], "http://127.0.0.1:11434")
                 self.assertEqual(stored["ai_request_timeout_seconds"], 180)
                 self.assertEqual(stored["ai_rubric_context_tokens"], 16384)
+                self.assertFalse(stored["ai_notebook_feedback_enabled"])
+                self.assertFalse(self.client.get("/api/config").get_json()["data"]["ai_notebook_feedback_enabled"])
+                for invalid in ("false", 0, None):
+                    rejected = self.client.post("/api/config/save", headers={"X-Admin-Token": admin_token},
+                                                json={"data": {"ai_notebook_feedback_enabled": invalid}})
+                    self.assertEqual(rejected.status_code, 400)
+                    self.assertFalse(eagle._load_config()["ai_notebook_feedback_enabled"])
+                self.assertEqual(self.client.post("/api/config/save", json={"data": {"ai_notebook_feedback_enabled": True}}).status_code, 401)
+                enabled = self.client.post("/api/config/save", headers={"X-Admin-Token": admin_token},
+                                           json={"data": {"ai_notebook_feedback_enabled": True}})
+                self.assertEqual(enabled.status_code, 200)
+                self.assertTrue(eagle._load_config()["ai_notebook_feedback_enabled"])
                 for invalid in (True, 1024, 65537, 16384.5, "abc"):
                     invalid_response = self.client.post("/api/config/save", headers={"X-Admin-Token": admin_token},
                                                         json={"data": {"ai_rubric_context_tokens": invalid}})

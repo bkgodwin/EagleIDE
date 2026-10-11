@@ -149,7 +149,8 @@ prompts again on next start.
 --------------------------------------------------
 AI/OLLAMA CONFIGURATION
 --------------------------------------------------
-"ai_explainer_enabled": True          # Master toggle for all AI features
+"ai_explainer_enabled": True          # General AI features (separate from notebook practice)
+"ai_notebook_feedback_enabled": True # Notebook prompt feedback and topic notes
 "ai_ollama_url": "http://192.168.0.105:11434"  # Ollama server URL
 "ai_model": "gemma3:4b"              # AI model name
 "ai_request_timeout_seconds": 120    # Bounded 15-300 second model timeout
@@ -160,7 +161,10 @@ Ollama URL Examples:
 - Network server: "http://192.168.0.105:11434"
 - Remote server: "http://your-server-ip:11434"
 
-To disable AI features: Set "ai_explainer_enabled": False
+To disable general AI features: Set "ai_explainer_enabled": False.
+Notebook prompt AI feedback has its own admin switch and works even when general
+or class AI access is disabled. Set "ai_notebook_feedback_enabled": False to
+disable notebook AI feedback too. Both switches default to enabled.
 
 The Admin Dashboard includes "Test Ollama & Model". It runs a short generation
 against the values currently in the form, so the URL, selected model, model
@@ -740,11 +744,14 @@ Notebook practice and reliability:
 - Students expand one challenge at a time, insert an editor code snapshot or
   write a coding explanation, then choose Submit for feedback. Feedback is
   queued automatically through the shared AI dispatcher. A red-ink comment and
-  short sticky note describe the attempt; Markdown topic notes appear below it.
+  short sticky note evaluate code quality and the assignment requirements.
+  Separate Markdown topic notes explain the primary coding concept and give
+  general reminders. Expanded challenges sit on paper index cards in the notebook.
 - Edit / add notes lets students personalize the generated notes. Personal edits
   survive later feedback. Empty, comment-only, and unrelated responses receive
   a request for a coding attempt, rather than a worked answer. AI feedback stays
-  within the programming topic. Admin and class AI switches still apply.
+  within the programming topic. The admin notebook feedback switch applies;
+  general and class AI switches do not affect notebook prompt feedback.
 - Wait three minutes before resubmitting the same prompt. One feedback job per
   student may be pending; the notebook queue holds up to 256 jobs and sends
   practice requests one at a time. Time waiting in the queue does not spend the
@@ -781,7 +788,7 @@ ADMIN SETTINGS (⚙ button)
 --------------------------------------------------
 - Edit page title and top bar color
 - Configure AI settings (Ollama URL, model, assistant preprompt)
-- Enable/disable AI features globally
+- Enable/disable general AI features and notebook prompt AI feedback independently
 - Configure Python memory per run (750 MB by default)
 - Configure the site-wide concurrent run limit (8 by default; operator and CPU ceilings still apply)
 - Enable or disable managed Python modules through a dependency-aware access list
@@ -1077,6 +1084,8 @@ Solution:
 - Use "Test Ollama & Model"; the first load of a larger model can take longer
 - Verify model is installed: ollama list
 - Check ai_explainer_enabled is True
+- For notebook practice, check ai_notebook_feedback_enabled instead; general
+  and class AI switches do not control notebook prompt feedback
 - Increase the bounded response timeout if the selected model loads slowly
 - Runtime dashboard values are stored in config.txt; config.py is defaults only
 
