@@ -226,7 +226,7 @@ class StaticHtmlTestCase(unittest.TestCase):
         }.issubset(ids))
         self.assertIn('data-view="dash-lesson-plans"', self.raw)
         self.assertIn('/static/js/lesson-plan-renderer.js?v=20260816-1', self.raw)
-        self.assertIn('/static/js/lesson-plans.js?v=20260816-1', self.raw)
+        self.assertRegex(self.raw, r'/static/js/lesson-plans\.js\?v=[\w-]+')
         css = (BASE_DIR / "static" / "css" / "features" / "lesson-plans.css").read_text(encoding="utf-8")
         self.assertIn("overflow-y:auto", css.replace(" ", ""))
         self.assertIn("@page { size:landscape", css)

@@ -10,6 +10,26 @@ environments. Designed for public-facing classroom deployment.
 See docs/HARDENING_AND_PERFORMANCE.md for security controls, capacity tuning,
 isolated HTML preview deployment, monitoring, and load-test guidance.
 
+Workspace data and classroom accounts:
+- Create .csv and .json files with New File. CSV opens in an editable grid with
+  sticky headers, row/column paging, Save, Add row, and Add column. Large files
+  stay on the server; individual CSV records are limited to 256 KB in the viewer.
+- JSON supports source editing, formatting, validation, and a lazy tree preview
+  up to 1 MB. The Python json module can read/write these workspace files.
+- Students register with first name, last name, and student ID number. Existing
+  names become first names, leaving last name and student ID blank. Edit them
+  anytime in Dashboard > Account. Teachers can edit student profiles in Classes.
+- Teacher rosters/grade views sort by last name. Assignment grade CSV exports
+  use student IDs; missing IDs export as blank values, so fill them before export.
+- Classes shows signed-in students and their currently open filenames. Owners
+  can grant class-specific CoTeacher access there. Promoted students use the
+  CoTeacher dashboard button to view reports/classes, edit lesson plans, create
+  assignments/notebook prompts, and grade submissions manually or with AI.
+  Only the owner can lock/unlock/delete or change membership and grading settings.
+- Admin Python runtime settings include a 1–300 second execution limit (default
+  30 seconds). Server performance shows live per-core CPU graphs while open;
+  closing or hiding the menu stops graph sampling and clears its history.
+
 ================================================================================
                               TABLE OF CONTENTS
 ================================================================================

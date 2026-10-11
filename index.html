@@ -44,7 +44,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261010-stability-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261011-files-5">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -118,6 +118,7 @@
       <button class="btn secondary ide-only" id="notebookOpenBtn" title="Open notebook" style="display:none;">📓 Notebook</button>
       <button class="btn btn--admin" id="loginBtn" title="Login">Sign In</button>
       <div class="role-menu" id="roleMenu">
+        <button class="btn secondary" id="coteacherModeBtn" type="button" hidden>CoTeacher dashboard</button>
         <button class="btn btn--ghost btn--icon secondary" id="roleMenuBtn" type="button" aria-haspopup="true" aria-expanded="false" title="Account menu" style="display:none;">⋯</button>
         <div class="role-menu-panel glass-surface" id="roleMenuPanel">
           <button class="btn btn--admin admin" id="teacherDashboardBtn" title="Teacher Dashboard" style="display:none;">📋 Dashboard</button>
@@ -459,6 +460,8 @@
         </div>
         <div class="student-editor-wrap" id="studentEditorWrap">
           <textarea id="editor" style="display:none; resize:none;"></textarea>
+          <div id="jsonToolbar" class="data-viewer-toolbar" hidden><strong>JSON</strong><button class="btn secondary" id="jsonFormatBtn" type="button">Format JSON</button><button class="btn secondary" id="jsonTreeBtn" type="button">View tree</button><span id="jsonStatus" role="status"></span></div>
+          <div id="jsonTree" class="json-tree" hidden></div>
           <div id="csvEditor" class="csv-editor hidden"></div>
           <section id="fileArtifactPreview" class="file-artifact-preview hidden" aria-live="polite">
             <div class="file-artifact-preview-heading">
@@ -954,7 +957,7 @@
           </div>
           <div class="teacher-dash-scroll">
             <div style="max-width:480px;">
-              <div id="teacherPasswordSection">
+              <button class="btn secondary profile-edit-btn" type="button">Edit name and student ID</button><div id="teacherPasswordSection">
                 <h4 style="margin:0 0 16px; color:var(--columbia-blue); font-size:15px;">Change Password</h4>
                 <label style="display:block; margin-bottom:4px; font-weight:600; font-size:13px;">Current Password</label>
                 <input type="password" id="teacherCurrentPassword" placeholder="Current password" style="width:100%; padding:10px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; margin-bottom:12px;">
@@ -1086,6 +1089,7 @@
             </div>
           </div>
           <div class="teacher-dash-scroll student-account-layout">
+            <button class="btn secondary profile-edit-btn" type="button">Edit name and student ID</button>
             <form id="studentPasswordForm" class="student-account-card">
               <h3>Change password</h3>
               <p>Use at least 8 characters. Other signed-in devices will be signed out.</p>
@@ -1226,8 +1230,9 @@
       <label for="authPasswordInput">Password:</label>
       <input type="password" id="authPasswordInput" placeholder="Password" autocomplete="current-password">
       <div id="registerSection" style="display:none;">
-        <label for="regName">Name:</label>
-        <input type="text" id="regName" placeholder="Your full name">
+        <label for="regFirstName">First name:</label><input type="text" id="regFirstName" autocomplete="given-name" maxlength="120">
+        <label for="regLastName">Last name:</label><input type="text" id="regLastName" autocomplete="family-name" maxlength="120">
+        <label for="regStudentId">Student ID number:</label><input type="text" id="regStudentId" maxlength="64" placeholder="School-issued ID (preserves leading zeros)">
       </div>
       <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
         <button class="btn secondary" id="toggleRegisterBtn" style="font-size:12px; padding:4px 10px;">Create Student Account</button>
@@ -1298,6 +1303,7 @@
         <div class="server-health-card"><div class="label">Memory</div><div class="value" id="serverHealthMemory">—</div></div>
         <div class="server-health-card"><div class="label">Storage</div><div class="value" id="serverHealthStorage">—</div></div>
       </div>
+        <div id="cpuCoreGraphs" class="cpu-core-graphs" aria-label="Live CPU usage per core"></div>
       <div class="server-health-panel">
         <h4>Sign-ins</h4>
         <div id="serverHealthSignins">Last 24 hours: — | Last 7 days: — | Last 30 days: —</div>
@@ -1669,6 +1675,7 @@
               <strong>Checking native containment…</strong><span>SQLite, Inspect, NumPy, Pillow, and Matplotlib require Linux Landlock.</span>
             </div>
             <div class="admin-settings-fields two-column python-runtime-limit-grid">
+              <label><span>Maximum Python execution time (seconds)</span><input type="number" id="pythonExecutionTimeoutModal" min="1" max="300" step="1"><small>Default 30 seconds. Applies to Python and Step Mode; input waits have a separate limit.</small></label>
               <label><span>Memory per Python run (MB)</span><input type="number" id="pythonMemoryLimitModal" min="128" max="2048" step="32"><small id="pythonMemoryLimitHint">Default 750 MB</small></label>
               <label><span>Maximum concurrent runs</span><input type="number" id="pythonConcurrencyLimitModal" min="1" max="128" step="1"><small id="pythonConcurrencyLimitHint">Default 8. Applies across students, teachers, admins, and guests.</small></label>
             </div>
@@ -1779,26 +1786,28 @@
   </div><!-- .app-shell -->
 
   <script src="/static/js/app.js"></script>
-  <script src="/static/js/connection.js?v=20261010-stability-1"></script>
+  <script src="/static/js/connection.js?v=20261011-files-5"></script>
   <script src="/static/js/feature-loader.js?v=20260921-1"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20250608"></script>
-  <script src="/static/js/layout.js?v=20261010-stability-1"></script>
-  <script src="/static/js/autocomplete.js?v=20261010-stability-1"></script>
+  <script src="/static/js/layout.js?v=20261011-files-5"></script>
+  <script src="/static/js/autocomplete.js?v=20261011-files-5"></script>
   <script src="/static/js/editor-behavior.js?v=20261009-assignment-step-2"></script>
-  <script src="/static/js/editor-feedback.js?v=20261010-stability-1"></script>
-  <script src="/static/js/editor-init.js?v=20261010-stability-1"></script>
+  <script src="/static/js/editor-feedback.js?v=20261011-files-5"></script>
+  <script src="/static/js/editor-init.js?v=20261011-files-5"></script>
   <script src="/static/js/markdown.js"></script>
-  <script src="/static/js/shell-commands.js?v=20261010-stability-1"></script>
-  <script src="/static/js/app-core.js?v=20261010-stability-1"></script>
-  <script src="/static/js/step-mode.js?v=20261010-stability-1"></script>
-  <script src="/static/js/wiki-reader.js?v=20261010-stability-1"></script>
+  <script src="/static/js/shell-commands.js?v=20261011-files-5"></script>
+  <script src="/static/js/server-performance.js?v=20261011-files-5"></script>
+  <script src="/static/js/workspace-data.js?v=20261011-files-5"></script>
+  <script src="/static/js/app-core.js?v=20261011-files-5"></script>
+  <script src="/static/js/step-mode.js?v=20261011-files-5"></script>
+  <script src="/static/js/wiki-reader.js?v=20261011-files-5"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
-  <script src="/static/js/lesson-plans.js?v=20260816-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20261010-stability-1"></script>
+  <script src="/static/js/lesson-plans.js?v=20261011-files-5"></script>
+  <script src="/static/js/wiki-admin.js?v=20261011-files-5"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
-  <script src="/static/js/classroom-files.js?v=20261010-stability-1"></script>
-  <script src="/static/js/student-notebook.js?v=20261010-stability-1"></script>
+  <script src="/static/js/classroom-files.js?v=20261011-files-5"></script>
+  <script src="/static/js/student-notebook.js?v=20261011-files-5"></script>
   <script src="/static/js/student-dashboard.js?v=20261009-autocomplete-warnings-1"></script>
 
 </body>

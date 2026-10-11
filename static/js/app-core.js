@@ -66,7 +66,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let adminExecutionRequestPending = false;
     let notebookRunHandlers = null;
     let csvEditorActive = false;
-    let csvEditorRows = [];
     let csvAutosaveTimer = null;
     let fileArtifactPreviewActive = false;
     let fileArtifactObjectUrl = '';
@@ -94,11 +93,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       python: { mode: 'python', label: 'Python', highlight: 'python' },
       javascript: { mode: 'javascript', label: 'JavaScript', highlight: 'javascript' },
       html: { mode: 'htmlmixed', label: 'HTML', highlight: 'xml' },
+      json: { mode: {name:'javascript', json:true}, label:'JSON', highlight:'json' },
       css: { mode: 'css', label: 'CSS', highlight: 'css' }
     };
 
     function getLanguageInfoForFileName(fileName) {
       const lower = String(fileName || '').trim().toLowerCase();
+      if (lower.endsWith('.json')) return LANGUAGE_INFO.json;
       if (lower.endsWith('.js')) return LANGUAGE_INFO.javascript;
       if (lower.endsWith('.html') || lower.endsWith('.htm')) return LANGUAGE_INFO.html;
       if (lower.endsWith('.css')) return LANGUAGE_INFO.css;
@@ -288,84 +289,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       return info;
     }
 
-    function parseCsvContent(text) {
-      const src = String(text || '');
-      const rows = [];
-      let row = [];
-      let cell = '';
-      let inQuotes = false;
-      for (let i = 0; i < src.length; i++) {
-        const ch = src[i];
-        const next = src[i + 1];
-        if (ch === '"') {
-          if (inQuotes && next === '"') {
-            cell += '"';
-            i += 1;
-          } else {
-            inQuotes = !inQuotes;
-          }
-        } else if (ch === ',' && !inQuotes) {
-          row.push(cell);
-          cell = '';
-        } else if ((ch === '\n' || ch === '\r') && !inQuotes) {
-          if (ch === '\r' && next === '\n') i++;
-          row.push(cell);
-          rows.push(row);
-          row = [];
-          cell = '';
-        } else {
-          cell += ch;
-        }
-      }
-      row.push(cell);
-      // Keep one blank row for empty files, but avoid adding a redundant trailing empty row.
-      if (row.length > 1 || row[0] !== '' || rows.length === 0) rows.push(row);
-      return rows;
-    }
-
-    function stringifyCsvRows(rows) {
-      const escapeCell = (value) => {
-        const text = String(value ?? '');
-        if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
-        return text;
-      };
-      return (rows || []).map(r => (r || []).map(escapeCell).join(',')).join('\n');
-    }
-
-    function scheduleCsvAutosave() {
-      if (!csvEditorActive || !currentOpenFile) return;
-      if (csvAutosaveTimer) clearTimeout(csvAutosaveTimer);
-      csvAutosaveTimer = setTimeout(() => { saveCurrentFile(); }, 1200);
-    }
-
-    function renderCsvEditor() {
-      const wrap = document.getElementById('csvEditor');
-      if (!wrap) return;
-      const maxCols = Math.max(1, ...csvEditorRows.map(r => r.length), 8);
-      const colName = (index) => {
-        let n = index;
-        let out = '';
-        while (n >= 0) {
-          out = String.fromCharCode(65 + (n % 26)) + out;
-          n = Math.floor(n / 26) - 1;
-        }
-        return out;
-      };
-      const header = `<tr>${Array.from({ length: maxCols }, (_, i) => `<th>${colName(i)}</th>`).join('')}</tr>`;
-      const bodyRows = csvEditorRows.map((row, rIdx) => (
-        `<tr>${Array.from({ length: maxCols }, (_, cIdx) => `<td><input data-r="${rIdx}" data-c="${cIdx}" value="${escapeHtml((row || [])[cIdx] || '')}"></td>`).join('')}</tr>`
-      )).join('');
-      wrap.innerHTML = `<table><thead>${header}</thead><tbody>${bodyRows || `<tr>${Array.from({ length: maxCols }, (_, cIdx) => `<td><input data-r="0" data-c="${cIdx}" value=""></td>`).join('')}</tr>`}</tbody></table>`;
-      wrap.querySelectorAll('input[data-r][data-c]').forEach(input => {
-        input.addEventListener('input', (e) => {
-          const r = Number(e.target.dataset.r);
-          const c = Number(e.target.dataset.c);
-          if (!csvEditorRows[r]) csvEditorRows[r] = [];
-          csvEditorRows[r][c] = e.target.value;
-          currentBufferDirty = true;
-          scheduleCsvAutosave();
-        });
-      });
+    function csvBufferContent() {
+      return window.WorkspaceData?.signature() || '';
     }
 
     function setCsvMode(enabled, content = '') {
@@ -374,12 +299,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const ta = document.getElementById('editor');
       csvEditorActive = !!enabled;
       if (csvEditorActive) {
-        csvEditorRows = parseCsvContent(content);
-        renderCsvEditor();
+        window.WorkspaceData.showCsv(content, currentOpenFile);
         if (csvWrap) csvWrap.classList.remove('hidden');
         if (cmWrap) cmWrap.style.display = 'none';
         if (ta) ta.style.display = 'none';
       } else {
+        window.WorkspaceData?.closeCsv();
         if (csvWrap) {
           csvWrap.classList.add('hidden');
           csvWrap.innerHTML = '';
@@ -813,7 +738,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     function emitJoinClassRoom(role, token, classId) {
       if (!socket || !role || !token || !classId) return;
-      socket.emit('join_class_room', { role, token, class_id: classId });
+      socket.emit('join_class_room', { role: isCoTeacher() ? 'student' : role, token, class_id: classId });
+      if (role === 'student' || isCoTeacher()) socket.emit('workspace_file_opened', {name: currentOpenFile && !currentOpenFile.audit && !currentOpenFile.submission ? currentOpenFile.name : ''});
     }
 
     function emitLeaveClassRoom(classId) {
@@ -1038,7 +964,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         return [];
       }
       try {
-        const res = await fetch('/api/teacher/skills', { headers: { 'X-Teacher-Token': TEACHER_TOKEN } });
+        const res = await fetch('/api/teacher/skills' + (isCoTeacher() ? '?classId=' + encodeURIComponent(currentTeacherClassId || '') : ''), { headers: { 'X-Teacher-Token': TEACHER_TOKEN } });
         const j = await res.json().catch(() => ({}));
         teacherSkills = j?.skills || [];
         const availableIds = new Set(teacherSkills.map(skill => skill.id));
@@ -1135,7 +1061,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       syncEditorBridge();
       const info = getActiveLanguageInfo();
       return {
-        code: csvEditorActive ? stringifyCsvRows(csvEditorRows) : editor.getValue(),
+        code: csvEditorActive ? csvBufferContent() : editor.getValue(),
         language: info.mode,
         languageLabel: info.label,
         fileName: currentOpenFile?.name || fileNameForLanguage(info.mode),
@@ -1220,8 +1146,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       socket.emit('run_code', {
         code: String(code || ''),
         language: String(language || 'python'),
-        user_token: USER_TOKEN || '',
-        teacher_token: TEACHER_TOKEN || '',
+        user_token: isCoTeacher() ? TEACHER_TOKEN : (USER_TOKEN || ''),
+        teacher_token: isCoTeacher() ? '' : (TEACHER_TOKEN || ''),
         admin_token: ADMIN_TOKEN || '',
         class_id: getCurrentClassContext()?.id || '',
         file_path: '',
@@ -1262,8 +1188,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       socket.emit('trace_code', {
         code: String(source.code || ''),
         language: 'python',
-        user_token: USER_TOKEN || '',
-        teacher_token: TEACHER_TOKEN || '',
+        user_token: isCoTeacher() ? TEACHER_TOKEN : (USER_TOKEN || ''),
+        teacher_token: isCoTeacher() ? '' : (TEACHER_TOKEN || ''),
         admin_token: ADMIN_TOKEN || '',
         class_id: getCurrentClassContext()?.id || '',
         file_path: source.filePath || '',
@@ -1688,6 +1614,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         });
         socket.on('connect', () => {
           rejoinClassRooms();
+          updateActiveFileName();
           setRunButtonState(isProgramRunning);
         });
         socket.on('disconnect', () => {
@@ -1825,7 +1752,19 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           activeStudentsByClass[classKey] = new Set((data.activeStudents || []).map(e => String(e || '').toLowerCase()));
           inQuizStudentsByClass[classKey] = new Set((data.inQuizStudents || []).map(e => String(e || '').toLowerCase()));
           lastSignInByClass[classKey] = data.lastSignInByEmail || {};
+          openFilesByClass[classKey] = data.openFilesByEmail || {};
           updateRosterCells(classKey);
+        });
+        socket.on('coteacher_access_changed', async () => {
+          const token = USER_TOKEN || (isCoTeacher() ? TEACHER_TOKEN : '');
+          if (!token) return;
+          const response = await fetch('/api/auth/me', {headers:{'X-User-Token':token}}).catch(()=>null);
+          const data = await response?.json().catch(()=>null);
+          if (!data?.ok) return;
+          if (isCoTeacher()) {
+            document.getElementById('teacherDashboardModal').style.display = 'none';
+            await applyAuthLoginPayload({token, user:data.user, role:'student'});
+          } else { currentUser=data.user; saveAuthSession(); updateAuthUI(); refreshEagleIDEContext(); }
         });
         socket.on('class_membership_revoked', async (msg) => {
           if (!USER_TOKEN || !currentUser) return;
@@ -2184,8 +2123,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       lastRunExceptionEntry = null;
       hideExceptionHelpButton();
       closeExceptionHelpModal();
-      if (csvEditorActive) {
-        appendOut('[Run skipped: CSV files use spreadsheet editing only.]\n');
+      if (csvEditorActive || currentOpenFile?.name?.toLowerCase().endsWith('.json')) {
+        appendOut('[Run skipped: data files are edited in the viewer.]\n');
         return;
       }
       if (fileArtifactPreviewActive || (currentOpenFile?.kind && currentOpenFile.kind !== 'text')) {
@@ -2249,8 +2188,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         socket.emit('run_code', {
           code: editor.getValue(),
           language: getActiveLanguageInfo().mode,
-          user_token: USER_TOKEN || '',
-          teacher_token: TEACHER_TOKEN || '',
+          user_token: isCoTeacher() ? TEACHER_TOKEN : (USER_TOKEN || ''),
+          teacher_token: isCoTeacher() ? '' : (TEACHER_TOKEN || ''),
           admin_token: ADMIN_TOKEN || '',
           class_id: getCurrentClassContext()?.id || '',
           file_path: currentOpenFile ? currentOpenFile.path : ''
@@ -2319,8 +2258,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       socket.emit('run_code', {
         code,
         language: language === 'javascript' ? 'javascript' : 'python',
-        user_token: USER_TOKEN || '',
-        teacher_token: TEACHER_TOKEN || '',
+        user_token: isCoTeacher() ? TEACHER_TOKEN : (USER_TOKEN || ''),
+        teacher_token: isCoTeacher() ? '' : (TEACHER_TOKEN || ''),
         admin_token: ADMIN_TOKEN || '',
         class_id: getCurrentClassContext()?.id || '',
         file_path: filePath,
@@ -2837,6 +2776,51 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       document.getElementById('loginModal').style.display = 'none';
     }
 
+    function isCoTeacher() { return !!currentTeacher?.is_coteacher; }
+
+    function openProfileEditor(user, endpoint, headers, afterSave) {
+      const modal = document.createElement('div'); modal.className = 'modal'; modal.style.display = 'flex';
+      modal.innerHTML = `<form class="modal-content profile-editor" role="dialog" aria-modal="true" aria-label="Edit profile">
+        <h3>Edit profile</h3><label>First name<input name="first_name" value="${escapeHtml(user.first_name ?? user.name ?? '')}" maxlength="120" required autocomplete="given-name"></label>
+        <label>Last name<input name="last_name" value="${escapeHtml(user.last_name || '')}" maxlength="120" autocomplete="family-name"></label>
+        <label>Student ID number<input name="student_id" value="${escapeHtml(user.student_id || '')}" maxlength="64"></label>
+        <p role="status"></p><div class="modal-actions"><button class="btn secondary" type="button" data-cancel>Cancel</button><button class="btn run" type="submit">Save profile</button></div></form>`;
+      document.body.append(modal);
+      const form=modal.querySelector('form'), status=modal.querySelector('[role="status"]');
+      modal.querySelector('[data-cancel]').onclick=()=>modal.remove();
+      modal.onkeydown=event=>{if(event.key==='Escape') modal.remove();};
+      form.onsubmit=async event=>{
+        event.preventDefault(); const button=form.querySelector('[type="submit"]'); button.disabled=true;
+        try {
+          const data=Object.fromEntries(new FormData(form)); if(user.email) data.email=user.email;
+          const response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(data)});
+          const result=await response.json(); if(!response.ok||!result.ok) throw new Error(result.error||'Could not save profile');
+          await afterSave?.(result); modal.remove();
+        } catch(error) { status.textContent=error.message; } finally {button.disabled=false;}
+      };
+      form.querySelector('input').focus();
+    }
+    document.querySelectorAll('.profile-edit-btn').forEach(button=>button.onclick=()=>{
+      const user=currentUser||currentTeacher;
+      if(!user) return;
+      openProfileEditor(user,'/api/auth/profile',USER_TOKEN?{'X-User-Token':USER_TOKEN}:{'X-Teacher-Token':TEACHER_TOKEN}, result=>{
+        if(currentUser) currentUser=result.user;
+        if(currentTeacher) currentTeacher={...result.user,role:'teacher',is_coteacher:isCoTeacher()};
+        saveAuthSession();updateAuthUI();window.EagleIDE?.emitContextChanged?.();
+      });
+    });
+    document.getElementById('coteacherModeBtn').onclick=async()=>{
+      if(!await saveCurrentFile()) return alert('Save your current file before switching dashboards.');
+      const co=isCoTeacher(), token=co?TEACHER_TOKEN:USER_TOKEN;
+      try {
+        const res=await fetch('/api/auth/me',{headers:{[co?'X-User-Token':'X-Teacher-Token']:token}});
+        const data=await res.json(); if(!res.ok||!data.ok) throw new Error(data.error||'CoTeacher access is unavailable');
+        await applyAuthLoginPayload({role:co?'student':'teacher',token,user:data.user});
+        if(!co) openTeacherDashboard('dash-reports');
+        else document.getElementById('teacherDashboardModal').style.display='none';
+      } catch(error) {alert(error.message);}
+    };
+
     function updateAuthUI() {
       const guestBadge = document.getElementById('guestBadge');
       const rightEdgeToggleBtn = document.getElementById('rightEdgeToggleBtn');
@@ -2887,7 +2871,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (serverHealthBtn) serverHealthBtn.style.display = ADMIN_TOKEN ? '' : 'none';
       const roleMenuBtn = document.getElementById('roleMenuBtn');
       if (roleMenuBtn) roleMenuBtn.style.display = isLoggedIn ? '' : 'none';
-      streamingToggleBtn.style.display = TEACHER_TOKEN ? '' : 'none';
+      streamingToggleBtn.style.display = TEACHER_TOKEN && !isCoTeacher() ? '' : 'none';
+      const coButton=document.getElementById('coteacherModeBtn');
+      coButton.hidden=!isCoTeacher() && !(currentUser?.coteacher_class_ids?.length);
+      coButton.textContent=isCoTeacher()?'Return to student dashboard':'CoTeacher dashboard';
       if (!TEACHER_TOKEN) {
         setTeacherStreamingEnabled(false);
       } else {
@@ -2909,7 +2896,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let _teacherClassroomPoll = null;
     function startTeacherClassroomPolling() {
       stopTeacherClassroomPolling();
-      if (!TEACHER_TOKEN) return;
+      if (!TEACHER_TOKEN || isCoTeacher()) return;
       _teacherClassroomPoll = setInterval(() => {
         if (!TEACHER_TOKEN || document.hidden) return;
         window.ClassroomSignals?.loadTeacherSignals?.();
@@ -3075,7 +3062,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const editorPanel = document.getElementById('editorPanel');
       const isLoggedIn = isAuthenticated();
       editorPanel.classList.toggle('audit-preview-active', !!(auditPreviewActive || currentOpenFile?.audit));
-      if (auditPreviewActive || currentOpenFile?.audit) {
+      if (auditPreviewActive || currentOpenFile?.audit || (currentOpenFile?.submission && isCoTeacher())) {
         editorPanel.classList.remove('editor-disabled');
         setMainEditorReadOnly(true);
         return;
@@ -3328,7 +3315,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const email = document.getElementById('authEmailInput').value.trim();
       const password = document.getElementById('authPasswordInput').value;
       if (!email || !password) { errEl.textContent = 'Email and password required.'; return; }
-      const name = registerMode ? document.getElementById('regName').value.trim() : '';
+      const first_name = registerMode ? document.getElementById('regFirstName').value.trim() : '';
+      const last_name = registerMode ? document.getElementById('regLastName').value.trim() : '';
+      const student_id = registerMode ? document.getElementById('regStudentId').value.trim() : '';
+      const name = first_name;
+      if (registerMode && (!last_name || !student_id)) { errEl.textContent = 'Last name and student ID are required.'; return; }
       if (registerMode && !name) { errEl.textContent = 'Name is required.'; return; }
       const submitBtn = document.getElementById('loginSubmitBtn');
       const toggleBtn = document.getElementById('toggleRegisterBtn');
@@ -3341,7 +3332,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           const res = await fetchAuthRequest('/api/auth/register', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password, name })
+            body: JSON.stringify({ email, password, first_name, last_name, student_id })
           });
           const j = await res.json().catch(() => ({}));
           if (!res.ok || !j?.ok || !j.token || !j.user) { errEl.textContent = j.error || 'Registration failed'; return; }
@@ -3532,7 +3523,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (memoryHint) memoryHint.textContent = `Allowed range 128–${hard.max_memory_mb || 2048} MB.`;
       if (concurrencyHint) concurrencyHint.textContent = `Default 8 · operator ceiling ${hard.max_concurrent_runs || 128} · CPU-safe capacity ${hard.cpu_aware_concurrent_runs || '—'}; memory reservations may reduce live capacity.`;
       if (stats) {
-        stats.textContent = `${Number(data.active_runs || 0)} active · ${Number(data.queued_runs || 0)} queued · ${Number(data.reserved_memory_mb || 0).toFixed(1)} MB reserved · CPU ${hard.cpu_seconds || 8}s · wall ${hard.wall_seconds || 30}s · write budget ${hard.write_mb || 10} MB`;
+        stats.textContent = `${Number(data.active_runs || 0)} active · ${Number(data.queued_runs || 0)} queued · ${Number(data.reserved_memory_mb || 0).toFixed(1)} MB reserved · Python execution ${settings.python_execution_timeout_seconds || 30}s (maximum ${hard.wall_seconds || 300}s) · write budget ${hard.write_mb || 10} MB`;
       }
 
       const containment = data.containment || {};
@@ -3660,6 +3651,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       document.getElementById('guestIdeAccessEnabledModal').checked = currentConfig?.guest_ide_access_enabled !== false;
       document.getElementById('networkSimEnabledModal').checked = !!currentConfig?.network_sim_enabled;
       document.getElementById('pythonMemoryLimitModal').value = Number(currentConfig?.python_memory_limit_mb || 750);
+      document.getElementById('pythonExecutionTimeoutModal').value = Number(currentConfig?.python_execution_timeout_seconds || 30);
       document.getElementById('pythonConcurrencyLimitModal').value = Number(currentConfig?.python_max_concurrent_runs || 8);
       loadPythonRuntimeAdmin();
 
@@ -3799,7 +3791,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (!modal || modal.style.display === 'none' || !TEACHER_TOKEN || !currentTeacherClassId || document.hidden) return false;
       const reportsActive = modal.querySelector('.teacher-dash-view.active')?.id === 'dash-reports';
       const rosterActive = modal.querySelector('#dash-reports .mastery-pane.active')?.id === 'class-roster-pane';
-      return reportsActive && rosterActive;
+      return (reportsActive && rosterActive) || modal.querySelector('.teacher-dash-view.active')?.id === 'dash-classes';
     }
 
     function startTeacherDashboardRosterPolling() {
@@ -3861,7 +3853,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
               await loadTeacherSkills();
               renderTeacherSkillsPage();
             } else if (btn.dataset.view === 'dash-classes') {
-              stopTeacherDashboardRosterPolling();
+              startTeacherDashboardRosterPolling();
               renderTeacherClassManagement();
               window.ClassroomSignals?.loadTeacherSignals?.();
             } else if (btn.dataset.view === 'dash-notebook') {
@@ -3939,7 +3931,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
 
       // Switch to requested view
-      const targetView = view || 'dash-reports';
+      const co=isCoTeacher();
+      modal.querySelectorAll('.teacher-dash-navbtn').forEach(button=>{button.hidden=co && !['dash-reports','dash-classes','dash-assignments','dash-notebook','dash-lesson-plans','dash-account'].includes(button.dataset.view);});
+      const classCreation = document.getElementById('createClassBtn')?.closest('.teacher-dash-view-actions');
+      if (classCreation) classCreation.hidden = co;
+      document.getElementById('createClassBtn') && (document.getElementById('createClassBtn').hidden=co);
+      document.getElementById('teacherPasswordSection').hidden=co;
+      const targetView = co && ['dash-skills','dash-network'].includes(view) ? 'dash-reports' : (view || 'dash-reports');
       if (targetView) {
         const viewEl = document.getElementById(targetView);
         const navBtn = modal.querySelector(`.teacher-dash-navbtn[data-view="${targetView}"]`);
@@ -3954,7 +3952,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         renderTeacherClassManagement();
         window.ClassroomSignals?.loadTeacherSignals?.();
         await loadTeacherSkills();
-        renderTeacherSkillsPage();
+        if (!isCoTeacher()) renderTeacherSkillsPage();
         populateTeacherReportsClassSelect();
         populateTeacherAssignmentsClassSelect();
         syncTeacherDashboardClassSelectors();
@@ -4019,6 +4017,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     let activeStudentsRefreshPromise = null;
     let activeStudentsRefreshClassId = null;
+    const openFilesByClass = {};
 
     async function refreshActiveStudentsForClass(classId) {
       const classKey = classId || currentTeacherClassId;
@@ -4036,6 +4035,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         activeStudentsByClass[classKey] = new Set((data.activeStudents || []).map(e => String(e || '').toLowerCase()));
         inQuizStudentsByClass[classKey] = new Set((data.inQuizStudents || []).map(e => String(e || '').toLowerCase()));
         lastSignInByClass[classKey] = data.lastSignInByEmail || {};
+        openFilesByClass[classKey] = data.openFilesByEmail || {};
         updateRosterCells(classKey);
       })().catch(() => {});
       try {
@@ -4050,7 +4050,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     function updateRosterCells(classId) {
       const classKey = classId || currentTeacherClassId;
-      if (!classKey || !currentMasteryData) return;
+      if (!classKey) return;
+      if (classKey === currentTeacherClassId) document.querySelectorAll('[data-class-student]').forEach(row => {
+        const email = row.dataset.classStudent.toLowerCase();
+        const online = activeStudentsByClass[classKey]?.has(email);
+        row.querySelector('[data-presence]').textContent = online ? 'Signed in' : 'Offline';
+        row.querySelector('[data-open-file]').textContent = online ? (openFilesByClass[classKey]?.[email] || '—') : '—';
+        row.classList.toggle('student-is-online', !!online);
+      });
+      if (!currentMasteryData) return;
       const rosterPane = document.getElementById('class-roster-pane');
       if (!rosterPane) return;
       const students = currentMasteryData.students || [];
@@ -4133,6 +4141,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const html_runtime_max_popups = parseInt(document.getElementById('htmlMaxPopupSpawnModal').value, 10) || 2;
       const python_memory_limit_mb = parseInt(document.getElementById('pythonMemoryLimitModal').value, 10) || 750;
       const python_max_concurrent_runs = parseInt(document.getElementById('pythonConcurrencyLimitModal').value, 10) || 8;
+      const python_execution_timeout_seconds = Number(document.getElementById('pythonExecutionTimeoutModal').value);
       const python_module_access = collectPythonModuleAccess();
       
       const registration_enabled = document.getElementById('registrationEnabledModal').checked;
@@ -4163,6 +4172,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         python_memory_limit_mb,
         python_max_concurrent_runs,
         python_module_access,
+        python_execution_timeout_seconds,
         network_sim_enabled,
         guest_ide_access_enabled
       });
@@ -4631,7 +4641,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     function teacherStudentActionsHtml(classId, student) {
       return `
         <div class="teacher-dash-student-actions">
-          <button type="button" class="btn secondary cls-edit-name-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}" data-name="${escapeHtml(student.name || '')}">Edit name</button>
+          <button type="button" class="btn secondary cls-edit-name-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}" data-name="${escapeHtml(student.name || '')}">Edit profile</button>
           <button type="button" class="btn secondary cls-audit-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}" data-name="${escapeHtml(student.name || student.email)}">Browse files</button>
           <button type="button" class="btn secondary cls-reset-examples-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}" data-name="${escapeHtml(student.name || student.email)}">Reset examples</button>
           <button type="button" class="btn secondary cls-reset-btn" data-class="${escapeHtml(classId)}" data-email="${escapeHtml(student.email)}">Reset PW</button>
@@ -4640,6 +4650,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         </div>`;
     }
 
+    function studentNameCells(student) {
+      return `<td>${escapeHtml(student.first_name ?? student.name ?? '')}</td><td>${escapeHtml(student.last_name || '')}</td>`;
+    }
+    function studentNameSort(a, b) {
+      return String(a.last_name || '').localeCompare(String(b.last_name || ''), undefined, {sensitivity:'base'})
+        || String(a.first_name ?? a.name ?? a.email ?? '').localeCompare(String(b.first_name ?? b.name ?? b.email ?? ''), undefined, {sensitivity:'base'});
+    }
     function renderTeacherClassManagement() {
       const wrap = document.getElementById('teacherClassList');
       const activeSelect = document.getElementById('teacherClassesActiveSelect');
@@ -4704,17 +4721,27 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             </div>
           </section>
           <div style="font-size:13px; font-weight:600; color:var(--columbia-blue); margin-bottom:6px;">Students</div>
-          ${(activeClass.students || []).map(student => `
-            <div class="teacher-dash-student-row">
-              <div class="teacher-dash-student-meta">
-                <div class="teacher-dash-student-name">${escapeHtml(student.name || student.email)}</div>
-                <div class="teacher-dash-student-email">${escapeHtml(student.email)}</div>
-              </div>
-              ${teacherStudentActionsHtml(activeClass.id, student)}
-            </div>
-          `).join('') || '<div style="color:#888; font-size:12px;">No students enrolled.</div>'}
+          <div class="class-students-scroll"><table class="scores-table class-students-table"><thead><tr><th>First name</th><th>Last name</th><th>Student ID</th><th>Presence</th><th>Open file</th><th>Actions</th></tr></thead><tbody>
+          ${[...(activeClass.students || [])].sort(studentNameSort).map(student => `
+            <tr data-class-student="${escapeHtml(student.email)}">
+              ${studentNameCells(student)}<td>${escapeHtml(student.student_id || '')}${student.is_coteacher ? '<span class="skill-chip">CoTeacher</span>' : ''}</td>
+              <td data-presence>Offline</td><td data-open-file>—</td>
+              <td>${activeClass.canManageClass !== false ? teacherStudentActionsHtml(activeClass.id, student) + `<button type="button" class="btn secondary cls-coteacher-btn" data-email="${escapeHtml(student.email)}" data-enabled="${student.is_coteacher ? 'true' : 'false'}">${student.is_coteacher ? 'Remove CoTeacher' : 'Make CoTeacher'}</button>` : ''}</td>
+            </tr>`).join('') || '<tr><td colspan="6">No students enrolled.</td></tr>'}
+          </tbody></table></div>
         </div>
       ` : '';
+      if (activeClass?.canManageClass === false) {
+        wrap.querySelectorAll('.teacher-dash-classroom-settings, .teacher-class-wiki-card, .delete-class-btn, .cls-rigor').forEach(node => node.hidden = true);
+        wrap.querySelectorAll('.cls-rigor-label').forEach(node => node.parentElement.hidden = true);
+      }
+      refreshActiveStudentsForClass(activeClass?.id);
+      wrap.querySelectorAll('.cls-coteacher-btn').forEach(btn => btn.onclick = async () => {
+        const res = await fetch('/api/teacher/classes/coteacher', {method:'POST', headers:{'Content-Type':'application/json', 'X-Teacher-Token':TEACHER_TOKEN}, body:JSON.stringify({classId:activeClass.id, email:btn.dataset.email, enabled:btn.dataset.enabled !== 'true'})});
+        const data = await res.json();
+        if (!data.ok) return alert(data.error);
+        await loadTeacherClasses(); renderTeacherClassManagement();
+      });
       wrap.querySelectorAll('.copy-class-code-btn').forEach(btn => btn.addEventListener('click', async () => {
         try {
           await navigator.clipboard.writeText(btn.dataset.code || '');
@@ -4855,22 +4882,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         syncTeacherDashboardClassSelectors();
         renderTeacherClassManagement();
       }));
-      wrap.querySelectorAll('.cls-edit-name-btn').forEach(btn => btn.addEventListener('click', async () => {
-        const nextName = prompt('Student display name:', btn.dataset.name || btn.dataset.email || '');
-        if (nextName === null) return;
-        const trimmed = nextName.trim();
-        if (!trimmed) return alert('Name cannot be empty');
-        const res = await fetch('/api/teacher/students/update', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Teacher-Token': TEACHER_TOKEN },
-          body: JSON.stringify({ email: btn.dataset.email, name: trimmed }),
-        });
-        const j = await res.json().catch(() => ({}));
-        if (!j?.ok) return alert(j?.error || 'Failed to update student');
-        await loadTeacherClasses();
-        syncTeacherDashboardClassSelectors();
-        renderTeacherClassManagement();
-      }));
+      wrap.querySelectorAll('.cls-edit-name-btn').forEach(btn => btn.onclick = () => {
+        const student = activeClass.students.find(s => s.email === btn.dataset.email);
+        openProfileEditor(student, '/api/teacher/students/update', {'X-Teacher-Token':TEACHER_TOKEN}, async () => { await loadTeacherClasses(); renderTeacherClassManagement(); });
+      });
       wrap.querySelectorAll('.cls-audit-btn').forEach(btn => btn.addEventListener('click', () => {
         if (window.ClassroomFiles?.openAuditModal) {
           window.ClassroomFiles.openAuditModal(btn.dataset.class, btn.dataset.email, btn.dataset.name);
@@ -5225,7 +5240,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
                   : 'Never';
                 return `
                 <div class="${rowClass}" data-roster-email="${escapeHtml(email)}" style="border:1px solid; border-radius:8px; padding:8px;">
-                  <div style="font-weight:700;">${escapeHtml(s.name || s.email)}</div>
+                  <div class="notebook-name-columns"><span>First name: <strong>${escapeHtml(s.first_name ?? s.name ?? '')}</strong></span><span>Last name: <strong>${escapeHtml(s.last_name || '')}</strong></span></div>
                   <div style="font-size:12px; color:var(--theme-text-dim);">${escapeHtml(s.email || '')}</div>
                   <div style="font-size:11px; color:var(--theme-text-dim); margin-top:4px;">Last Sign In: <span data-last-sign-in>${escapeHtml(lastSignInLabel)}</span></div>
                 </div>`;
@@ -5245,11 +5260,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         </div>
         <div class="mastery-grid">
           <table>
-            <thead><tr><th>Student</th>${assignments.map(a => `<th>${escapeHtml(a.name)}</th>`).join('')}</tr></thead>
+            <thead><tr><th>First name</th><th>Last name</th>${assignments.map(a => `<th>${escapeHtml(a.name)}</th>`).join('')}</tr></thead>
             <tbody>
               ${students.map(s => `
                 <tr>
-                  <td>${escapeHtml(s.name || s.email)}</td>
+                  ${studentNameCells(s)}
                   ${assignments.map(a => {
                     const score = s.assignmentScores?.[a.name]?.percent;
                     return `<td class="${masteryBandClass(score)}">${score === null || score === undefined ? 'Untested' : `${Math.round(score)}%`}</td>`;
@@ -5301,11 +5316,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             </div>
             <div class="mastery-grid">
               <table>
-                <thead><tr><th>Student</th>${tags.map(t => `<th>${escapeHtml(t)}</th>`).join('')}</tr></thead>
+                <thead><tr><th>First name</th><th>Last name</th>${tags.map(t => `<th>${escapeHtml(t)}</th>`).join('')}</tr></thead>
                 <tbody>
                   ${students.map(s => `
                     <tr>
-                      <td>${escapeHtml(s.name || s.email)}</td>
+                      ${studentNameCells(s)}
                       ${tags.map(t => {
                         const score = s.skillScores?.[t];
                         return `<td class="${masteryBandClass(score)}">${score === null || score === undefined ? 'Untested' : `${Math.round(score)}%`}</td>`;
@@ -5796,6 +5811,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         if (next != null) {
           const path = remap(_normalizeTreePath(currentOpenFile.path));
           currentOpenFile = { ...currentOpenFile, path, name: path.split('/').pop() };
+          if (csvEditorActive) window.WorkspaceData?.updateFile(currentOpenFile);
         } else {
           clearTimeout(_autosaveTimer);
           clearTimeout(csvAutosaveTimer);
@@ -6023,6 +6039,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     initShellCommands();
+    window.ServerPerformance.configure(() => ADMIN_TOKEN);
+    window.WorkspaceData.configure({
+      request: fetchWithDeadline, headers: fileAuthHeaders, save: saveCurrentFile,
+      editor: () => { syncEditorBridge(); return editor; },
+      dirty: () => { currentBufferDirty = true; },
+    });
+    window.eagleEditor?.on?.('change', () => window.WorkspaceData.changed());
+    document.getElementById('editor')?.addEventListener('input', () => window.WorkspaceData.changed());
 
     const FILE_TREE_VIRTUAL_LIMIT = 100;
 
@@ -6153,6 +6177,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         row.appendChild(checkbox);
         row.appendChild(icon);
         row.appendChild(fname);
+        if (item.type === 'file') {
+          const size=document.createElement('span');size.className='file-size-label';size.textContent=_formatBytes(item.size || 0);row.appendChild(size);
+        }
         const actions = document.createElement('button');
         actions.type = 'button';
         actions.className = 'file-item-actions';
@@ -6451,14 +6478,21 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     async function writeCurrentFile() {
       if (auditPreviewActive || currentOpenFile?.audit) return true;
+      if (currentOpenFile?.submission && isCoTeacher()) return true;
       if (currentOpenFile?.notebook) return true;
       if (currentOpenFile?.draft) return true;
+      if (csvEditorActive) {
+        if (window.EagleIDE?.connection?.isLost()) return false;
+        const saved = await window.WorkspaceData.saveCsv();
+        currentBufferDirty = window.WorkspaceData.csvDirty();
+        return saved;
+      }
       if (fileArtifactPreviewActive || (currentOpenFile?.kind && currentOpenFile.kind !== 'text')) return true;
       if (!currentOpenFile || (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN)) return true;
       if (!currentBufferDirty) return true;
       if (window.EagleIDE?.connection?.isLost()) return false;
       syncEditorBridge();
-      const content = csvEditorActive ? stringifyCsvRows(csvEditorRows) : editor.getValue();
+      const content = csvEditorActive ? csvBufferContent() : editor.getValue();
       const savedFile = currentOpenFile;
       const savedContext = JSON.stringify(fileAuthHeaders());
       try {
@@ -6493,7 +6527,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         if (!res.ok) return false;
         const j = await res.json().catch(() => ({}));
         if (j.ok && currentOpenFile === savedFile && savedContext === JSON.stringify(fileAuthHeaders())
-            && content === (csvEditorActive ? stringifyCsvRows(csvEditorRows) : editor.getValue())) currentBufferDirty = false;
+            && content === (csvEditorActive ? csvBufferContent() : editor.getValue())) currentBufferDirty = false;
         return !!j.ok;
       } catch (e) {
         return false;
@@ -6504,6 +6538,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     function updateActiveFileName() {
       const el = document.getElementById('activeFileName');
       if (el) el.textContent = currentOpenFile ? currentOpenFile.name : '';
+      if (typeof socket !== 'undefined' && socket.connected) socket.emit('workspace_file_opened', {name: currentOpenFile && !currentOpenFile.audit && !currentOpenFile.submission ? currentOpenFile.name : ''});
+      if (!currentOpenFile || !currentOpenFile.name?.toLowerCase().endsWith('.json')) window.WorkspaceData?.jsonMode(false);
       const saveDraftBtn = document.getElementById('saveDraftBtn');
       if (saveDraftBtn) saveDraftBtn.style.display = currentOpenFile?.draft && isAuthenticated() ? '' : 'none';
       if (!csvEditorActive && !fileArtifactPreviewActive) syncEditorLanguage();
@@ -6657,12 +6693,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (!TEACHER_TOKEN) return;
       syncEditorBridge();
       if (!auditPreviewActive) {
-        await saveCurrentFile();
+        if (!await saveCurrentFile()) return;
         auditEditorBackup = {
           currentOpenFile: currentOpenFile ? { ...currentOpenFile } : null,
           editorContent: editor.getValue(),
           csvActive: csvEditorActive,
-          csvContent: csvEditorActive ? stringifyCsvRows(csvEditorRows) : null,
+          csvContent: csvEditorActive ? window.WorkspaceData.snapshot() : null,
         };
       }
       auditPreviewActive = true;
@@ -6709,6 +6745,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     function updateSendFileButtonVisibility() {
       const btn = document.getElementById('sendFileBtn');
       if (!btn) return;
+      if (isCoTeacher()) { btn.style.display = 'none'; return; }
       const isStudent = USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN;
       if (isStudent) {
         const canUseSend = window.ClassroomFiles?.studentCanUseSendFeature?.() ?? canSendOpenFile({ type: 'file' });
@@ -6753,7 +6790,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
       if (requestId !== fileOpenRequestId || requestContext !== JSON.stringify(fileAuthHeaders())) return;
       const previousFile = currentOpenFile;
-      const previousContent = csvEditorActive ? stringifyCsvRows(csvEditorRows) : editor.getValue();
+      const previousContent = csvEditorActive ? csvBufferContent() : editor.getValue();
       let res;
       try {
         res = await fetchWithDeadline('/api/files/read?path=' + encodeURIComponent(item.path), { headers: fileAuthHeaders() });
@@ -6761,14 +6798,22 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         alert(error?.message || 'Could not reach the server to open this file.');
         return;
       }
-      const j = await res.json().catch(() => ({}));
+      let j = await res.json().catch(() => ({}));
+      if (res.ok && j.kind === 'csv') {
+        try {
+          res = await fetchWithDeadline('/api/files/csv-page?path=' + encodeURIComponent(item.path), {headers:fileAuthHeaders()});
+          j = await res.json();
+        } catch (error) { alert(error.message || 'Could not read CSV'); return; }
+      }
       if (requestId !== fileOpenRequestId || requestContext !== JSON.stringify(fileAuthHeaders()) || currentOpenFile !== previousFile
-          || previousContent !== (csvEditorActive ? stringifyCsvRows(csvEditorRows) : editor.getValue()) || window.EagleIDE?.connection?.isLost()) return;
+          || previousContent !== (csvEditorActive ? csvBufferContent() : editor.getValue()) || window.EagleIDE?.connection?.isLost()) return;
       if (!res.ok || !j.ok) { alert(j.error || 'Cannot open file'); return; }
       const kind = j.kind || item.kind || 'text';
       currentOpenFile = { path: item.path, name: item.name, kind };
       clearFileArtifactPreview();
       if (kind === 'image' || kind === 'database') {
+        setCsvMode(false);
+        window.WorkspaceData.jsonMode(false);
         editor.setValue('');
         currentBufferDirty = false;
         await showFileArtifactPreview(kind, item, j);
@@ -6781,13 +6826,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
       const isCsv = String(item.name || '').toLowerCase().endsWith('.csv');
       if (isCsv) {
-        setCsvMode(true, j.content || '');
+        setCsvMode(true, j);
         editor.setValue('');
       } else {
         setCsvMode(false);
         editor.setValue(j.content || '');
       }
       currentBufferDirty = false;
+      window.WorkspaceData.jsonMode(String(item.name || '').toLowerCase().endsWith('.json'));
       updateActiveFileName();
       updateEditorOverlay();
       setWorkspaceTab('editor');
@@ -7010,7 +7056,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           const j = await res.json().catch(() => ({}));
           if (!res.ok || !j.ok) throw new Error(j.error || 'Rename failed');
           applyFilePathChange(item.path, j.new_path);
-          if (!String(newName).toLowerCase().endsWith('.csv') && item.type === 'file' && csvEditorActive) setCsvMode(false);
+          if (item.type === 'file' && currentOpenFile?.path === j.new_path) {
+            const file = {...currentOpenFile};
+            if (csvEditorActive && !String(newName).toLowerCase().endsWith('.csv')) {
+              setCsvMode(false); currentOpenFile = null; editor.setValue('');
+            }
+            await openFile(file);
+          }
           await loadFileTree();
         }
       });
@@ -7042,7 +7094,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       showFileNameDialog({
         title: type === 'folder' ? 'New Folder' : 'New File',
         submitLabel: 'Create',
-        hint: `Location: ${parent || 'Home'}. ` + (type === 'file' ? 'Examples: main.py, script.js, index.html, styles.css. No extension adds .py.' : ''),
+        hint: `Location: ${parent || 'Home'}. ` + (type === 'file' ? 'Examples: main.py, script.js, index.html, styles.css, data.csv, data.json. No extension adds .py.' : ''),
         onSubmit: async name => {
           if (type === 'file' && !name.includes('.')) name += '.py';
           const res = await fetchWithDeadline('/api/files/create', {
@@ -7053,6 +7105,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           if (!res.ok || !j.ok) throw new Error(j.error || 'Could not create item');
           _currentFolderPath = parent;
           await loadFileTree();
+          if (type === 'file') await openFile({path:j.path, name:j.name || name, type:'file'});
         }
       });
     }
@@ -7988,7 +8041,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           roster.push({ email: sub.email, name: sub.name || sub.email });
         }
       });
-      roster.sort((a, b) => String(a.name || a.email || '').localeCompare(String(b.name || b.email || ''), undefined, { sensitivity: 'base' }));
+      roster.sort(studentNameSort);
       const pendingCount = submissions.filter(sub => ['queued', 'running'].includes(sub.aiGradingStatus)).length;
       const gradingMode = ['legacy', 'rubric_beta', 'external'].includes(assignment.aiGradingMode) ? assignment.aiGradingMode : 'legacy';
       const selectedGradingCriteria = Array.isArray(assignment.aiGradingCriteria) ? assignment.aiGradingCriteria : [];
@@ -8080,21 +8133,21 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         </div>
         <table class="scores-table">
           <thead>
-            <tr><th>Student</th><th>Status</th><th>File</th><th>Score</th><th>Total</th><th>Actions</th></tr>
+            <tr><th>First name</th><th>Last name</th><th>Status</th><th>File</th><th>Score</th><th>Total</th><th>Actions</th></tr>
           </thead>
           <tbody>
             ${roster.length ? roster.map(student => {
               const sub = submissionsByEmail.get(String(student.email || '').toLowerCase());
               if (!sub) return `
               <tr>
-                <td>${escapeHtml(student.name || student.email || 'Unknown')}<div class="meta">${escapeHtml(student.email || '')}</div></td>
+                ${studentNameCells(student)}
                 <td><span class="assignment-not-turned-in">Not turned in</span></td>
                 <td>—</td><td>—</td><td>—</td><td>—</td>
               </tr>`;
               const aiStatus = sub.aiGradingStatus || '';
               return `
               <tr>
-                <td>${escapeHtml(sub.name || sub.email || 'Unknown')}<div class="meta">${escapeHtml(sub.email || '')}</div></td>
+                ${studentNameCells(student)}
                 <td>Turned in${aiStatus ? `<div><span class="assignment-ai-status ${escapeHtml(aiStatus)}">${escapeHtml(aiStatus)}</span></div>` : ''}${sub.aiGradingError ? `<div class="assignment-not-turned-in">${escapeHtml(sub.aiGradingError)}</div>` : ''}</td>
                 <td>${escapeHtml(sub.submittedFileName || '—')}</td>
                 <td>${assignment.allowFileSubmission === false ? '—' : `<input class="assignment-grade-input" type="number" min="0" max="${assignment.maxScore || 0}" step="1" value="${sub.codeScore ?? sub.score ?? ''}" data-email="${escapeHtml(sub.email)}" aria-label="Score for ${escapeHtml(sub.name || sub.email)}"><div class="meta">${sub.manualScoreOverride ? 'Manual override' : (sub.aiSuggestedScore !== null && sub.aiSuggestedScore !== undefined ? `${sub.gradingSource === 'external' ? 'External' : 'AI'} ${sub.aiSuggestedScore}` : '')}</div>`}</td>
@@ -8106,8 +8159,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
                 </div><div class="meta">${escapeHtml(sub.submittedAt || '—')}</div>
                 </td>
               </tr>
-              ${sub.aiFeedback ? `<tr class="assignment-feedback-row"><td colspan="6"><details class="assignment-feedback-details"><summary>View feedback for ${escapeHtml(sub.email)}</summary>${renderAssignmentAiFeedback(sub.aiFeedback)}</details></td></tr>` : ''}
-            `;}).join('') : '<tr><td colspan="6" style="color:#888;">No students are enrolled in this class.</td></tr>'}
+              ${sub.aiFeedback ? `<tr class="assignment-feedback-row"><td colspan="7"><details class="assignment-feedback-details"><summary>View feedback for ${escapeHtml(sub.email)}</summary>${renderAssignmentAiFeedback(sub.aiFeedback)}</details></td></tr>` : ''}
+            `;}).join('') : '<tr><td colspan="7" style="color:#888;">No students are enrolled in this class.</td></tr>'}
           </tbody>
         </table>
       `;
@@ -8180,6 +8233,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       detail.querySelector('#downloadExternalGradingBtn')?.addEventListener('click', () => downloadExternalGradingPackage(assignment.id || assignment.name, assignment.name));
       detail.querySelector('#uploadExternalGradesBtn')?.addEventListener('click', () => detail.querySelector('#externalGradesFile')?.click());
       detail.querySelector('#externalGradesFile')?.addEventListener('change', event => uploadExternalGrades(assignment.id || assignment.name, event.target.files?.[0]));
+      if (isCoTeacher()) {
+        detail.querySelectorAll('.assignment-manage-actions, .reset-quiz-counter-btn, #saveAssignmentAiSettingsBtn, #generateAssignmentRubricBtn, #acceptAssignmentRubricBtn, #downloadExternalGradingBtn, #uploadExternalGradesBtn').forEach(node=>node.hidden=true);
+        detail.querySelectorAll('.assignment-ai-controls input, .assignment-ai-controls select, .assignment-ai-controls textarea').forEach(node=>node.disabled=true);
+      }
       detail.querySelector('#downloadScoresBtn')?.addEventListener('click', () => downloadCSV(assignment.id || assignment.name, assignment.name, detail.querySelector('#gradeExportFormat')?.value || 'points'));
       detail.querySelectorAll('.open-submission-btn').forEach(btn => btn.addEventListener('click', () => openAssignmentSubmission(assignment.id || assignment.name, btn.dataset.email)));
       detail.querySelectorAll('.ai-grade-submission-btn').forEach(btn => btn.addEventListener('click', () => queueAssignmentAiGrade(assignment.id || assignment.name, btn.dataset.email)));

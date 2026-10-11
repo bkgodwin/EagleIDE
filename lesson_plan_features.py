@@ -151,7 +151,8 @@ def register(
             return None, error("Teacher token required", 401)
         cls = find_class(class_id)
         teacher_email = str(teacher.get("email") or "").strip().lower()
-        if not cls or str(cls.get("teacher_email") or "").strip().lower() != teacher_email:
+        if not cls or (str(cls.get("teacher_email") or "").strip().lower() != teacher_email
+                       and not (teacher_email in cls.get("coteachers", []) and teacher_email in cls.get("students", []))):
             return None, error("Class not found", 404)
         return cls, None
 
@@ -343,6 +344,8 @@ def register(
                 raise LessonPlanDataError("expected_version must be an integer")
             teacher = require_teacher(request) or {}
             source_class = plan_source_class(cls)
+            if teacher.get("is_coteacher") and source_class.get("id") != class_id and teacher.get("email") not in source_class.get("coteachers", []):
+                return error("The owner must edit this linked source plan", 403)
             saved = store.save_plan(
                 str(source_class.get("id") or class_id),
                 week,
@@ -364,6 +367,8 @@ def register(
 
     @app.put("/api/teacher/classes/<class_id>/lesson-plans/source")
     def teacher_put_lesson_plan_source(class_id: str):
+        if (require_teacher(request) or {}).get("is_coteacher"):
+            return error("Class owner required", 403)
         cls, failure = teacher_class(class_id)
         if failure:
             return failure
@@ -404,6 +409,8 @@ def register(
 
     @app.post("/api/teacher/classes/<class_id>/lesson-plans/sharing")
     def teacher_lesson_plan_sharing(class_id: str):
+        if (require_teacher(request) or {}).get("is_coteacher"):
+            return error("Class owner required", 403)
         cls, failure = teacher_class(class_id)
         if failure:
             return failure
@@ -411,6 +418,8 @@ def register(
 
     @app.post("/api/teacher/classes/<class_id>/lesson-plans/sharing/reset")
     def teacher_reset_lesson_plan_sharing(class_id: str):
+        if (require_teacher(request) or {}).get("is_coteacher"):
+            return error("Class owner required", 403)
         cls, failure = teacher_class(class_id)
         if failure:
             return failure
