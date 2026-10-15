@@ -8,6 +8,45 @@
   const size = bytes => Number(bytes) >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.ceil(Number(bytes || 0) / 1024)} KB`;
   const localZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   const submitted = a => !!a.studentSubmissionSummary?.submittedAt && !a.studentSubmissionSummary.withdrawn;
+  let highlights = true;
+  const editorMarks = [];
+  function setHighlights(value) {
+    highlights = value;
+    document.body?.classList?.toggle('assignment-hide-paste', !value);
+    try {localStorage.setItem('eagleide-paste-highlights',value ? '1' : '0');} catch {}
+  }
+  function highlightSource(content, ranges) {
+    let cursor = 0, html = '';
+    for (const [start,end] of ranges || []) {
+      if (start < cursor || end > content.length) continue;
+      html += esc(content.slice(cursor,start)) + `<mark class="assignment-pasted-text">${esc(content.slice(start,end))}</mark>`;
+      cursor = end;
+    }
+    return html + esc(content.slice(cursor));
+  }
+  function clearEditorHighlights() {editorMarks.splice(0).forEach(mark => mark.clear());}
+  function highlightEditor(ranges) {
+    clearEditorHighlights();
+    const cm = window.eagleEditor;
+    cm?.operation(() => (ranges || []).forEach(([start,end]) => editorMarks.push(cm.markText(cm.posFromIndex(start),cm.posFromIndex(end),{className:'assignment-pasted-text'}))));
+  }
+  function teacherToolbar(a, owner) {
+    return `<div class="assignment-review-tools">${owner ? '<button type="button" class="btn secondary assignment-extend">Extend for a student…</button>' : ''}${a.quiz?.questions?.some(q => ['written','written_code'].includes(q.type)) ? '<button type="button" class="btn secondary assignment-grade-question">Grade written responses by question</button>' : ''}<label><input type="checkbox" class="assignment-paste-toggle" ${highlights ? 'checked' : ''}> Highlight pasted text</label><span class="meta">A paste event does not identify its source.</span></div>`;
+  }
+  function extendStudent(a, email = '') {
+    const roster = bridge.roster(a.targetClassId);
+    const m = modal('Make-up / retest extension', `<p>Reopen this assignment for one student for the selected number of calendar days, starting now. Includes one additional file and question attempt if needed, at any time of day. Previous submissions and grades are kept.</p><label>Student<select class="extension-student">${roster.map(s => `<option value="${esc(s.email)}" ${email === s.email ? 'selected' : ''}>${esc([s.first_name ?? s.name,s.last_name].filter(Boolean).join(' ') || s.email)}</option>`).join('')}</select></label><label>Days from now<input class="extension-days" type="number" min="1" max="365" step="1" value="3"></label><p class="extension-current"></p><p role="status"></p><div class="modal-actions"><button type="button" class="btn secondary extension-remove">Remove extension</button><button type="button" class="btn run extension-save">Reopen for student</button></div>`);
+    const student = m.root.querySelector('.extension-student');
+    const update = () => {const until=a.studentExtensions?.[student.value]?.until; m.root.querySelector('.extension-current').textContent = until ? `Current make-up deadline: ${date(until)}` : 'No individual make-up deadline.';};
+    student.onchange = update; update();
+    const save = async days => {
+      const buttons = m.root.querySelectorAll('.modal-actions button'); buttons.forEach(b => b.disabled=true);
+      try {await mutate('/api/assignments/extend-student',{assignmentId:a.id,studentEmail:student.value,days}); m.close(); await bridge.reloadAssignments();}
+      catch(error) {m.root.querySelector('[role="status"]').textContent=error.message; buttons.forEach(b => b.disabled=false);}
+    };
+    m.root.querySelector('.extension-save').onclick = () => {const input=m.root.querySelector('.extension-days'); if(input.reportValidity()) save(Number(input.value));};
+    m.root.querySelector('.extension-remove').onclick = () => save(0);
+  }
 
   async function json(url, options = {}) {
     const response = await bridge.request(url, options);
@@ -22,8 +61,8 @@
     const root = document.createElement('div'); root.className = `modal glass-modal assignment-workflow-modal ${className}`;
     root.innerHTML = `<div class="modal-content" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header class="assignment-modal-header"><h3>${esc(title)}</h3><button type="button" class="btn secondary assignment-modal-close">Close</button></header>${body}</div>`;
     document.body.append(root);
-    const cleanups = [];
-    const close = () => {cleanups.forEach(fn => fn()); root.remove(); if (previous?.isConnected) previous.focus();};
+    const cleanups = [], lifecycle = {};
+    const close = () => {if(lifecycle.beforeClose && !lifecycle.beforeClose()) return; cleanups.forEach(fn => fn()); root.remove(); if (previous?.isConnected) previous.focus();};
     root.querySelector('.assignment-modal-close').onclick = close;
     root.onclick = event => {if (event.target === root) close();};
     root.addEventListener('keydown', event => {
@@ -35,7 +74,7 @@
       if (!event.shiftKey && document.activeElement === last) {event.preventDefault(); first?.focus();}
     });
     root.querySelector('.assignment-modal-close').focus();
-    return {root, close, cleanups};
+    return Object.assign(lifecycle,{root, close, cleanups});
   }
 
   function card(a, canSubmit) {
@@ -147,8 +186,8 @@
         preview.querySelector('.attachment-download').onclick = () => download(f).catch(error => alert(error.message));
         if (result.kind === 'text') {
           let content = result.content || '';
-          if (f.name.toLowerCase().endsWith('.json')) {try {content = JSON.stringify(JSON.parse(content), null, 2);} catch {}}
-          const pre = document.createElement('pre'); pre.className = 'assignment-file-source'; pre.textContent = content; preview.append(pre);
+          if (!result.pasteRanges?.length && f.name.toLowerCase().endsWith('.json')) {try {content = JSON.stringify(JSON.parse(content), null, 2);} catch {}}
+          const pre = document.createElement('pre'); pre.className = 'assignment-file-source'; pre.innerHTML = highlightSource(content,teacher ? result.pasteRanges : []); preview.append(pre);
         } else if (result.kind === 'csv') {
           const wrap = document.createElement('div'); wrap.className = 'assignment-csv-preview';
           wrap.innerHTML = `<table><thead><tr>${result.header.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${result.rows.map(row => `<tr>${row.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
@@ -166,10 +205,10 @@
       } catch (error) {if (request === sequence && valid()) preview.textContent = error.message;}
     }
     async function load(version = '') {
-      revision = version; sequence++; preview.textContent = 'Loading submission…';
+      revision = version; const request = ++sequence; preview.textContent = 'Loading submission…';
       try {
         const data = await json(`/api/assignments/submission-files?${params({})}`, {headers});
-        if (!valid() || version !== revision) return;
+        if (!valid() || request !== sequence || version !== revision) return;
         revision = data.revisionId || '';
         const control = m.root.querySelector('.assignment-version-control');
         control.innerHTML = teacher ? `<label>Submission version<select aria-label="Submission version"><option value="${esc(data.latestRevisionId || '')}">Latest submission</option>${data.history.map((h,i) => `<option value="${esc(h.revisionId)}">Previous ${i+1} · ${esc(h.submittedAt || 'Unknown time')}</option>`).join('')}</select></label>` : `<p>Submitted ${esc(data.submittedAt || '—')} · Read-only copy</p>`;
@@ -181,9 +220,79 @@
         answers.innerHTML = data.quizResponses.length ? `<h4>Submitted question answers</h4>${data.quizResponses.map(r => {const q=a.quiz?.questions?.find(q => q.id === r.questionId); const answer = q?.options && typeof r.answer === 'number' ? q.options[r.answer] : r.answer; return `<details><summary>${esc(q?.question || r.questionId)}</summary><pre>${esc(answer ?? '')}</pre></details>`;}).join('')}` : '';
         if (data.files.length) await show(data.files.find(f => f.id === fileId) || data.files[0]);
         else preview.textContent = 'No files submitted. Question answers are shown below.';
-      } catch (error) {if (valid()) preview.textContent = error.message;}
+      } catch (error) {if (valid() && request === sequence) preview.textContent = error.message;}
     }
     await load();
+  }
+
+  function gradeByQuestion(a) {
+    const questions = (a.quiz?.questions || []).filter(q => ['written','written_code'].includes(q.type));
+    if (!questions.length) return;
+    const headers = JSON.stringify(bridge.managerHeaders());
+    const roster = [...bridge.roster(a.targetClassId)].sort((x,y) => String(x.last_name || '').localeCompare(String(y.last_name || '')) || String(x.first_name ?? x.name ?? '').localeCompare(String(y.first_name ?? y.name ?? '')));
+    const m = modal(`${a.name} · Written responses`, '<div class="question-grading-nav"><button type="button" class="btn secondary question-previous">← Previous</button><label>Question<select class="question-select"></select></label><button type="button" class="btn secondary question-next">Next →</button></div><div class="question-grading-prompt"></div><div class="question-grading-responses"></div>', 'question-grading-dialog');
+    const select = m.root.querySelector('.question-select');
+    select.innerHTML = questions.map((q,i) => `<option value="${i}">Question ${i+1} · ${esc(q.question.slice(0,70))}</option>`).join('');
+    const pending = new Set();
+    const submissions = new Map((a.submissions || []).map(s => [s.email?.toLowerCase(),s]));
+    let changed = false;
+    m.beforeClose = () => !m.root.querySelector('[data-score-dirty="true"]') || confirm('Discard unsaved scores?');
+    m.cleanups.push(() => {Promise.allSettled([...pending]).then(() => {if(changed && headers === JSON.stringify(bridge.managerHeaders())) bridge.reloadAssignments();});});
+    const render = () => {
+      const index = Number(select.value), q = questions[index];
+      m.root.querySelector('.question-previous').disabled = index === 0;
+      m.root.querySelector('.question-next').disabled = index === questions.length - 1;
+      m.root.querySelector('.question-grading-prompt').innerHTML = `<h4>${esc(q.question)}</h4><span>${q.points} points · ${index+1} of ${questions.length}</span>${q.codeSnippet ? `<pre>${esc(q.codeSnippet)}</pre>` : ''}`;
+      const host = m.root.querySelector('.question-grading-responses');
+      host.textContent = '';
+      for (const student of roster) {
+        const candidate = submissions.get(student.email?.toLowerCase());
+        const sub = candidate?.withdrawn ? null : candidate;
+        const response = sub?.quizResponses?.find(r => r.questionId === q.id);
+        const row = document.createElement('section'); row.className = 'question-grading-row';
+        row.innerHTML = `<h5>${esc([student.first_name ?? student.name,student.last_name].filter(Boolean).join(' ') || student.email)}</h5><pre class="question-grading-answer">${esc(response ? response.answer ?? '' : 'Not submitted')}</pre>${response ? `<div class="question-score-options"><button type="button" class="btn secondary" data-score="0">0</button><button type="button" class="btn secondary" data-score="${q.points/2}">Half · ${q.points/2}</button><button type="button" class="btn secondary" data-score="${q.points}">Full · ${q.points}</button><label>Score<input type="number" min="0" max="${q.points}" step="any" value="${response.manualScore ?? response.pointsEarned ?? ''}" aria-label="Score for ${esc(student.name || student.email)}"></label><button type="button" class="btn secondary question-score-save">Save</button><span role="status"></span></div>` : ''}`;
+        host.append(row);
+        if (!response) continue;
+        const input = row.querySelector('input'), status = row.querySelector('[role="status"]');
+        const graded = () => response.manualScore != null || response.aiScore != null;
+        const selection = () => row.querySelectorAll('[data-score]').forEach(button => button.setAttribute('aria-pressed', String(graded() && input.value !== '' && Number(button.dataset.score) === Number(input.value))));
+        status.textContent = graded() ? 'Saved' : 'Not graded';
+        selection();
+        const save = async score => {
+          if (headers !== JSON.stringify(bridge.managerHeaders())) {status.textContent='Account changed. Reopen grading.'; return;}
+          if (score === null || !Number.isFinite(score) || score < 0 || score > q.points) {status.textContent=`Enter 0 to ${q.points}.`; return;}
+          const controls = row.querySelectorAll('button,input'); controls.forEach(el => el.disabled=true); status.textContent='Saving…';
+          select.disabled=true;
+          m.root.querySelector('.question-previous').disabled=true;
+          m.root.querySelector('.question-next').disabled=true;
+          const job = mutate('/api/quiz/score-question',{assignmentId:a.id,studentEmail:student.email,questionId:q.id,manualScore:score,revisionId:sub.revisionId});
+          pending.add(job);
+          try {
+            const result = await job; changed=true;
+            response.manualScore=score; response.pointsEarned=result.pointsEarned; sub.quizScore=result.quizScore; sub.totalScore=result.totalScore;
+            input.value=String(score); row.dataset.scoreDirty='false'; selection(); status.textContent='Saved';
+          } catch(error) {status.textContent=error.message;}
+          finally {
+            pending.delete(job); controls.forEach(el => el.disabled=false);
+            if (!pending.size) {
+              select.disabled=false;
+              m.root.querySelector('.question-previous').disabled=Number(select.value) === 0;
+              m.root.querySelector('.question-next').disabled=Number(select.value) === questions.length - 1;
+            }
+          }
+        };
+        row.querySelectorAll('[data-score]').forEach(button => button.onclick = () => save(Number(button.dataset.score)));
+        row.querySelector('.question-score-save').onclick = () => {if(input.reportValidity()) save(input.value === '' ? null : Number(input.value));};
+        input.onkeydown = event => {if(event.key === 'Enter') {event.preventDefault(); row.querySelector('.question-score-save').click();}};
+        input.oninput = () => {row.dataset.scoreDirty='true'; status.textContent='Unsaved score — choose Save';};
+      }
+    };
+    const confirmDrafts = () => !m.root.querySelector('[data-score-dirty="true"]') || confirm('Discard unsaved scores for this question?');
+    let selected = 0;
+    select.onchange = () => {if(!confirmDrafts()) {select.value=String(selected); return;} selected=Number(select.value); render();};
+    m.root.querySelector('.question-previous').onclick = () => {if(confirmDrafts()) {select.value=String(--selected); render();}};
+    m.root.querySelector('.question-next').onclick = () => {if(confirmDrafts()) {select.value=String(++selected); render();}};
+    render();
   }
 
   function teacherFiles(a, sub) {
@@ -191,6 +300,10 @@
     return `<div class="assignment-teacher-file-list">${files.map(f => `<button type="button" class="btn secondary assignment-view-file" data-email="${esc(sub.email)}" data-file="${esc(f.id)}">${esc(f.name)}</button>`).join('') || '—'}</div>${sub.history?.length ? `<button type="button" class="btn secondary assignment-view-history" data-email="${esc(sub.email)}">History (${sub.history.length} previous)</button>` : ''}`;
   }
   function bindTeacher(root, a, owner) {
+    root.querySelector('.assignment-extend')?.addEventListener('click', () => extendStudent(a));
+    root.querySelectorAll('.assignment-extend-student').forEach(button => button.onclick = () => extendStudent(a,button.dataset.email));
+    root.querySelector('.assignment-grade-question')?.addEventListener('click', () => gradeByQuestion(a));
+    root.querySelector('.assignment-paste-toggle')?.addEventListener('change', event => setHighlights(event.target.checked));
     root.querySelectorAll('.assignment-view-file').forEach(button => button.onclick = () => openFiles(a.id,button.dataset.email,button.dataset.file));
     root.querySelectorAll('.assignment-view-history').forEach(button => button.onclick = () => openFiles(a.id,button.dataset.email));
     root.querySelectorAll('.assignment-edit-feedback').forEach(button => button.onclick = () => editFeedback(a,button.dataset.email));
@@ -242,6 +355,6 @@
       };
     });
   }
-  window.AssignmentWorkflow = {configure(value) {bridge = value;}, card, bindStudent, submitDialog, openFiles, teacherFiles, bindTeacher, present, windowForm, bindClass, accommodationLabel,
+  window.AssignmentWorkflow = {configure(value) {bridge = value; try {highlights=localStorage.getItem('eagleide-paste-highlights') !== '0';} catch {} if(document.body) setHighlights(highlights); window.eagleEditor?.on?.('beforeChange', (_cm,change) => {if(change.origin === 'setValue') clearEditorHighlights();});}, teacherToolbar, highlightSource, highlightEditor, card, bindStudent, submitDialog, openFiles, teacherFiles, bindTeacher, present, windowForm, bindClass, accommodationLabel,
     studentTab(email) {if (email !== account) {account=email; tab='current'; expanded.clear();} return tab;}};
 })();

@@ -44,7 +44,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261011-notebook-topics-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261015-teacher-review-2">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -640,10 +640,14 @@
             <div class="tab-pane" id="lessonTab">
               <div class="wiki-embedded-reader" id="wikiEmbeddedReader">
                 <div class="wiki-embedded-toolbar">
-                  <button class="btn secondary" id="wikiEmbeddedHomeBtn" type="button">Wiki Home</button>
+                  <button class="btn secondary" id="wikiEmbeddedHomeBtn" type="button">☰ Wiki contents</button>
                   <button class="btn secondary" id="wikiEmbeddedBackBtn" type="button">Back</button>
                   <button class="btn secondary" id="wikiEmbeddedFullBtn" type="button">Open Full Wiki</button>
                 </div>
+                <details class="wiki-reference-agenda" id="wikiReferenceAgenda" open hidden>
+                  <summary>Today’s agenda <span id="wikiReferenceAgendaDate"></span></summary>
+                  <div id="wikiReferenceAgendaBody" class="wiki-markdown" aria-live="polite"></div>
+                </details>
                 <div class="wiki-embedded-content" id="wikiEmbeddedContent"></div>
               </div>
               <div id="lessonLocal" contenteditable="false" style="display:none;"></div>
@@ -1801,18 +1805,19 @@
   <script src="/static/js/autocomplete.js?v=20261011-files-5"></script>
   <script src="/static/js/editor-behavior.js?v=20261009-assignment-step-2"></script>
   <script src="/static/js/editor-feedback.js?v=20261011-files-5"></script>
-  <script src="/static/js/editor-init.js?v=20261011-files-5"></script>
+  <script src="/static/js/editor-init.js?v=20261015-teacher-review-2"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js?v=20261011-files-5"></script>
   <script src="/static/js/server-performance.js?v=20261011-files-5"></script>
   <script src="/static/js/workspace-data.js?v=20261011-files-5"></script>
-  <script src="/static/js/assignment-workflow.js?v=20261011-notebook-topics-1"></script>
-  <script src="/static/js/app-core.js?v=20261011-notebook-topics-1"></script>
+  <script src="/static/js/file-provenance.js?v=20261015-teacher-review-2"></script>
+  <script src="/static/js/assignment-workflow.js?v=20261015-teacher-review-2"></script>
+  <script src="/static/js/app-core.js?v=20261015-teacher-review-2"></script>
   <script src="/static/js/step-mode.js?v=20261011-files-5"></script>
-  <script src="/static/js/wiki-reader.js?v=20261011-notebook-topics-1"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
+  <script src="/static/js/wiki-reader.js?v=20261015-teacher-review-2"></script>
   <script src="/static/js/lesson-plans.js?v=20261011-files-5"></script>
-  <script src="/static/js/wiki-admin.js?v=20261011-notebook-topics-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20261015-teacher-review-2"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20261011-files-5"></script>
   <script src="/static/js/notebook-sync.js?v=20261011-notebook-topics-1"></script>

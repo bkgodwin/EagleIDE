@@ -1220,6 +1220,30 @@ capabilities, lab descriptions, command reference, and operations notes.
 
 ================================================================================
 
+Teacher make-ups and review
+--------------------------
+Open an assignment in Teacher Dashboard > Assignments and choose "Extend for a
+student…" (or Extend beside a roster entry). Choose 1–365 calendar days from now.
+The selected student can submit files and questions during that time even when
+the assignment is past/locked or school-hour submissions are closed. Exhausted
+attempt limits receive one more attempt; previous evidence and grades stay intact.
+Only the class owner can grant/remove this exception.
+
+"Grade written responses by question" shows the class answers together. Use 0,
+Half, Full, or enter a score and choose Save. Half credit can include fractions.
+
+The assignment-menu "Highlight pasted text" toggle controls yellow highlights in
+teacher submission views and small roster flags. It is saved on this browser and
+can be turned off for presenting. Students see no added editor indicators. This
+records paste events after this feature is installed; it cannot identify the
+source, detect AI, prove misconduct, or cover direct uploads/outside-IDE changes.
+Client-side tracking is inspectable and can be bypassed. Treat flags as a prompt
+for review, alongside the student's work and classroom context.
+
+The IDE reference pane shows today's agenda for the active class. Wiki links open
+in that pane, and Wiki contents stays at the top. Collapse the agenda for more
+reading space. The student's teacher-stream pane uses a lighter background.
+
 For support or issues: https://github.com/bkgodwin/EagleIDE
 
-Last Updated: 2026-07-30
+Last Updated: 2026-10-15

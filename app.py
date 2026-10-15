@@ -43,6 +43,7 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from classroom_features import merge_class_settings, register as register_classroom_features
 import assignment_workflow
+import file_provenance
 from lesson_plan_features import register as register_lesson_plan_features
 from network_features import register as register_network_features
 from sandbox_containment import landlock_status
@@ -2169,6 +2170,7 @@ def _purge_expired_trash(user_dir: Path, *, now: Optional[float] = None) -> int:
                 continue
             try:
                 _remove_workspace_item(trash_path)
+                file_provenance.remove(sys.modules[__name__], user_dir, trash_path)
                 removed += 1
                 items.pop(key, None)
                 changed = True
@@ -2198,6 +2200,7 @@ def _move_workspace_item_to_trash(user_dir: Path, target: Path) -> tuple[Path, i
         except Exception:
             destination.rename(target)
             raise
+        file_provenance.move(sys.modules[__name__], user_dir, target, destination)
         return destination, deleted_at
 
 
@@ -2225,6 +2228,7 @@ def _restore_workspace_item(user_dir: Path, target: Path) -> Path:
         except Exception:
             destination.rename(target)
             raise
+        file_provenance.move(sys.modules[__name__], user_dir, target, destination)
         return destination
 
 
@@ -2234,6 +2238,7 @@ def _permanently_delete_trash_item(user_dir: Path, target: Path) -> None:
         if len(parts) < 2 or parts[0].casefold() != TRASH_DIR_NAME.casefold():
             raise ValueError("Only items inside Trash can be permanently deleted")
         _remove_workspace_item(target)
+        file_provenance.remove(sys.modules[__name__], user_dir, target)
         if len(parts) == 2:
             items = _load_trash_metadata(user_dir)
             items.pop(Path(*parts).as_posix(), None)
@@ -3362,7 +3367,7 @@ def files_read():
         return jsonify(ok=False, error="File cannot be opened in the text editor"), 415
     try:
         content = target.read_text(encoding="utf-8")
-        return jsonify(ok=True, kind="text", content=content, path=path_str)
+        return jsonify(ok=True, kind="text", content=content, path=path_str, pasteRanges=file_provenance.read(sys.modules[__name__], user_dir, target, content))
     except Exception:
         return jsonify(ok=False, error="Could not read file"), 500
 
@@ -3371,7 +3376,11 @@ def files_write():
     user = _require_user_for_files(request)
     if not user:
         return jsonify(ok=False, error="Authentication required"), 401
-    
+    with file_provenance.lock(_get_user_dir(user["email"])):
+        return _files_write_locked(user)
+
+
+def _files_write_locked(user):
     data = request.get_json(silent=True) or {}
     if not isinstance(data, dict) or not isinstance(data.get("path"), str):
         return jsonify(ok=False, error="A file path is required"), 400
@@ -3408,6 +3417,14 @@ def files_write():
         return jsonify(ok=False, error=f"Storage limit of {USER_STORAGE_LIMIT_MB}MB exceeded"), 413
     
     try:
+        if "pasteRanges" in data:
+            ranges = file_provenance.normalize(data["pasteRanges"], content)
+        else:
+            old = target.read_text(encoding="utf-8") if target.is_file() else ""
+            ranges = file_provenance.remap(file_provenance.read(sys.modules[__name__], user_dir, target, old), old, content)
+    except (ValueError, UnicodeError):
+        return jsonify(ok=False, error="Invalid editor ranges"), 400
+    try:
         if data.get("require_existing"):
             # Opening without O_CREAT also closes the delete/autosave race:
             # a deleted file or parent must never be recreated by autosave.
@@ -3416,7 +3433,9 @@ def files_write():
                 handle.truncate()
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            with target.open("w", encoding="utf-8", newline="") as handle:
+                handle.write(content)
+        file_provenance.write(sys.modules[__name__], user_dir, target, content, ranges)
         _invalidate_workspace_tree_cache(user_dir)
         return jsonify(ok=True)
     except FileNotFoundError:
@@ -3679,6 +3698,7 @@ def files_rename():
     
     try:
         old.rename(new_validated)
+        file_provenance.move(sys.modules[__name__], user_dir, old, new_validated)
         _invalidate_workspace_tree_cache(user_dir)
         return jsonify(ok=True, new_path=new_validated.relative_to(user_dir).as_posix())
     except Exception:
@@ -3987,6 +4007,7 @@ def files_move():
 
     try:
         src.rename(new_validated)
+        file_provenance.move(sys.modules[__name__], user_dir, src, new_validated)
         _invalidate_workspace_tree_cache(user_dir)
         return jsonify(ok=True, new_path=new_validated.relative_to(user_dir.resolve()).as_posix())
     except Exception:
@@ -4054,6 +4075,7 @@ def files_duplicate():
             shutil.copytree(src, duplicate_validated)
         else:
             shutil.copy2(src, duplicate_validated)
+        file_provenance.move(sys.modules[__name__], user_dir, src, duplicate_validated, keep_source=True)
         _invalidate_workspace_tree_cache(user_dir)
         return jsonify(ok=True, new_path=duplicate_validated.relative_to(user_dir.resolve()).as_posix())
     except Exception:
@@ -4290,6 +4312,7 @@ def admin_clear_user_files():
     if user_dir.exists():
         try:
             shutil.rmtree(user_dir)
+            file_provenance.clear(sys.modules[__name__], user_dir)
             _seed_example_files(email)
         except Exception as exc:
             return jsonify(ok=False, error=f"Failed to clear files: {type(exc).__name__}"), 500
@@ -4347,6 +4370,7 @@ def _delete_user_by_email(email: str) -> bool:
     if user_dir.exists():
         try:
             shutil.rmtree(user_dir)
+            file_provenance.clear(sys.modules[__name__], user_dir)
         except Exception as exc:
             print(f"Warning: failed to delete user directory for {email}: {type(exc).__name__}")
     _invalidate_workspace_tree_cache(user_dir)
@@ -4431,6 +4455,7 @@ def admin_bulk_clear_files():
         if user_dir.exists():
             try:
                 shutil.rmtree(user_dir)
+                file_provenance.clear(sys.modules[__name__], user_dir)
                 _seed_example_files(email)
                 cleared.append(email)
             except Exception:
@@ -9148,6 +9173,7 @@ def _assignment_external_grading_error(assignment: dict) -> str:
 
 def _normalize_assignment_schema(assignment: dict) -> dict:
     normalized = dict(assignment or {})
+    normalized["studentExtensions"] = assignment_workflow.normalize_extensions(sys.modules[__name__], normalized.get("studentExtensions"))
     normalized["id"] = str(normalized.get("id") or "").strip().lower()
     normalized["allowFileSubmission"] = bool(normalized.get("allowFileSubmission", True))
     normalized["allowMultiFileSubmission"] = bool(normalized.get("allowMultiFileSubmission", False))
@@ -9573,6 +9599,7 @@ def _student_assignment_payload(assignment: dict, student_email: str, *, include
     payload.update(assignment_workflow.student_state(sys.modules[__name__], assignment, student_email))
     payload.pop("submissions", None)
     for teacher_only_field in (
+        "studentExtensions",
         "aiGradingInstructions",
         "aiGradingRigor",
         "aiGradingMode",
@@ -9625,7 +9652,8 @@ def _student_assignment_payload(assignment: dict, student_email: str, *, include
         }
     else:
         payload["studentSubmission"] = None
-    maximum = payload.get("maxFileSubmissions", 0)
+    maximum = assignment_workflow.attempt_limit(sys.modules[__name__], assignment, student_email, "file")
+    payload["maxFileSubmissions"] = maximum
     payload["canSubmitFiles"] = bool(payload["canSubmit"] and (not maximum or (submission or {}).get("fileSubmissionCount", 0) < maximum))
     return payload
 
@@ -11669,7 +11697,7 @@ def get_assignment_submission_file():
             content = stored_path.read_text(encoding="utf-8")
         except Exception:
             pass
-    return jsonify(ok=True, content=content, fileName=submission.get("submittedFileName") or "submission.py")
+    return jsonify(ok=True, content=content, fileName=submission.get("submittedFileName") or "submission.py", pasteRanges=(assignment_workflow.files_for(submission) or [{}])[0].get("pasteRanges", []), revisionId=submission.get("revisionId"))
 
 
 @app.post("/api/assignments/submission")
@@ -11701,6 +11729,8 @@ def update_assignment_submission_file():
         )
         if not submission:
             return jsonify(ok=False, error="Submission not found"), 404
+        if data.get("revisionId") and data["revisionId"] != submission.get("revisionId"):
+            return jsonify(ok=False, error="A newer submission arrived. Reopen the file before saving."), 409
         if not assignment.get("allowFileSubmission", True):
             return jsonify(ok=False, error="This assignment does not accept file submissions"), 400
         if len(assignment_workflow.files_for(submission)) > 1 or not assignment_workflow.has_gradable_files(submission):
@@ -11730,9 +11760,12 @@ def update_assignment_submission_file():
             print(f"Error saving teacher-edited submission for {assignment.get('name')}: {exc}")
             return jsonify(ok=False, error="Could not save submission"), 500
 
+        old_content = str(submission.get("code") or "")
         submission["code"] = content
         if submission.get("files"):
-            submission["files"][0]["size"] = len(content.encode("utf-8"))
+            record = submission["files"][0]
+            record["pasteRanges"] = file_provenance.remap(record.get("pasteRanges", []), old_content, content)
+            record["size"] = len(content.encode("utf-8"))
         submission["teacherEditedAt"] = _current_timestamp()
         submission["aiGradingStatus"] = ""
         submission["aiGradingError"] = ""
@@ -12096,7 +12129,7 @@ def get_quiz(assignment_reference: str):
     for question in quiz_copy.get("questions", []):
         if question.get("type") in {"multiple_choice", "multiple_choice_code"}:
             question.pop("correctAnswer", None)
-    max_submissions = int(((assignment.get("quizSettings") or {}).get("maxSubmissions")) or 0)
+    max_submissions = assignment_workflow.attempt_limit(sys.modules[__name__], assignment, user.get("email", ""), "quiz")
     remaining = None if max_submissions <= 0 else max(0, max_submissions - submission_count)
     return jsonify(
         ok=True,
@@ -12144,6 +12177,26 @@ def _submit_quiz_locked():
         return jsonify(ok=False, error="No quiz for this assignment"), 404
 
     quiz_score = 0
+    questions = {q.get("id"): q for q in quiz.get("questions", [])}
+    if not isinstance(quiz_responses, list) or len(quiz_responses) > len(questions):
+        return jsonify(ok=False, error="Invalid question responses"), 400
+    clean_responses, seen = [], set()
+    for response in quiz_responses:
+        if not isinstance(response, dict) or not isinstance(response.get("questionId"), str):
+            return jsonify(ok=False, error="Invalid question response"), 400
+        identity = response["questionId"]
+        if identity in seen or identity not in questions:
+            return jsonify(ok=False, error="Question responses must be unique and belong to this assignment"), 400
+        seen.add(identity)
+        question = questions[identity]
+        answer = response.get("answer", "")
+        if question.get("type") in {"multiple_choice", "multiple_choice_code"}:
+            if answer is not None and (type(answer) is not int or not 0 <= answer < len(question.get("options", []))):
+                return jsonify(ok=False, error="Invalid answer option"), 400
+        elif not isinstance(answer, str) or len(answer) > 20000:
+            return jsonify(ok=False, error="Written answers must be text of at most 20,000 characters"), 400
+        clean_responses.append({"questionId": identity, "answer": answer, "questionType": question.get("type")})
+    quiz_responses = clean_responses
     for response in quiz_responses:
         question_id = response.get("questionId")
         question = next((q for q in quiz.get("questions", []) if q.get("id") == question_id), None)
@@ -12168,7 +12221,7 @@ def _submit_quiz_locked():
         if sub.get("email", "").lower() == student_email:
             existing_idx = i
             break
-    max_submissions = int(((assignment.get("quizSettings") or {}).get("maxSubmissions")) or 0)
+    max_submissions = assignment_workflow.attempt_limit(sys.modules[__name__], assignment, student_email, "quiz")
     current_count = 0
     if existing_idx is not None:
         try:
@@ -12293,6 +12346,9 @@ def grade_written_response():
     if not actor:
         return jsonify(ok=False, error="Teacher token required"), 401
     
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(ok=False, error="Invalid grading request"), 400
     cfg = _load_config()
     allowed, error = _effective_ai_enabled(request, request.get_json(silent=True) or {})
     if not allowed:
@@ -12315,8 +12371,15 @@ def grade_written_response():
     if not _assignment_access(actor, assignment):
         return jsonify(ok=False, error="You can only grade your own assignments"), 403
     question = next((q for q in ((assignment.get("quiz") or {}).get("questions") or []) if q.get("id") == question_id), {}) or {}
-    if not question_text:
-        question_text = str(question.get("question") or "")
+    submission = next((sub for sub in assignment.get("submissions", []) if sub.get("email", "").lower() == student_email.lower()), None)
+    response = next((r for r in (submission or {}).get("quizResponses", []) if r.get("questionId") == question_id), None)
+    if not question or question.get("type") not in {"written", "written_code"} or not submission or response is None or submission.get("withdrawn"):
+        return jsonify(ok=False, error="Current written response not found"), 404
+    graded_revision = submission.get("revisionId")
+    question_snapshot = copy.deepcopy(question)
+    answer = response.get("answer", "")
+    max_points = question.get("points", 0)
+    question_text = str(question.get("question") or "")
     code_snippet = str(question.get("codeSnippet") or "")
     code_language = str(question.get("codeLanguage") or "python")
     class_id = assignment.get("targetClassId")
@@ -12386,88 +12449,31 @@ def grade_written_response():
     score = max(0, min(max_points, score))
     score = _score_with_rigor(score, int(max_points), rigor)
     
-    # Update the submission
-    submissions = assignment.get("submissions", [])
-    found = False
-    for sub in submissions:
-        if sub.get("email", "").lower() == student_email.lower():
-            quiz_responses = sub.get("quizResponses", [])
-            for response in quiz_responses:
-                if response.get("questionId") == question_id:
-                    response["aiScore"] = score
-                    # If no manual override, use AI score
-                    if response.get("manualScore") is None:
-                        response["pointsEarned"] = score
-                    found = True
-                    break
-            if found:
-                # Recalculate quiz score
-                quiz_score = sum(r.get("pointsEarned", 0) for r in quiz_responses)
-                sub["quizScore"] = quiz_score
-                # Recalculate total score
-                code_score = sub.get("codeScore") or 0
-                sub["totalScore"] = code_score + quiz_score if sub.get("codeScore") is not None else quiz_score
-                break
-    
-    if not found:
-        return jsonify(ok=False, error="Submission or question not found"), 404
-    
-    if _save_assignment(assignment):
-        return jsonify(ok=True, aiScore=score)
+    # Model calls may take minutes. Reload under the same lock as manual
+    # grading, keeping other scores and newer submissions intact.
+    with _assignment_lock:
+        latest = _load_assignment(assignment.get("id"))
+        if not latest or not _assignment_access(actor, latest):
+            return jsonify(ok=False, error="Assignment access denied"), 403
+        latest_question = next((q for q in (latest.get("quiz") or {}).get("questions", []) if q.get("id") == question_id), None)
+        current = next((sub for sub in latest.get("submissions", []) if sub.get("email", "").lower() == student_email.lower()), None)
+        if not current or current.get("withdrawn") or current.get("revisionId") != graded_revision or latest_question != question_snapshot:
+            return jsonify(ok=False, error="The response or question changed. Reopen grading before trying again."), 409
+        target = next((r for r in current.get("quizResponses", []) if r.get("questionId") == question_id), None)
+        if target is None:
+            return jsonify(ok=False, error="Response not found"), 404
+        target["aiScore"] = score
+        if target.get("manualScore") is None:
+            target["pointsEarned"] = score
+        current["quizScore"] = sum(r.get("pointsEarned", 0) or 0 for r in current.get("quizResponses", []))
+        current["totalScore"] = (current.get("codeScore") or 0) + current["quizScore"]
+        if _save_assignment(latest):
+            return jsonify(ok=True, aiScore=score)
     return jsonify(ok=False, error="Failed to save score"), 500
 
 @app.post("/api/quiz/override-score")
 def override_quiz_score():
-    """Override quiz question score manually (assignment owner teacher only)."""
-    actor = _assignment_actor(request)
-    if not actor:
-        return jsonify(ok=False, error="Teacher token required"), 401
-    
-    data = request.get_json(silent=True) or {}
-    assignment_name, class_hint = _assignment_request_reference(data)
-    student_email = (data.get("studentEmail") or "").strip()
-    question_id = (data.get("questionId") or "").strip()
-    manual_score = data.get("manualScore")
-    
-    if not assignment_name or not student_email or not question_id:
-        return jsonify(ok=False, error="Missing required fields"), 400
-    
-    assignment = _load_assignment(assignment_name, class_hint)
-    if not assignment:
-        return jsonify(ok=False, error="Assignment not found"), 404
-    if not _assignment_access(actor, assignment):
-        return jsonify(ok=False, error="You can only edit scores for your own assignments"), 403
-    
-    submissions = assignment.get("submissions", [])
-    found = False
-    for sub in submissions:
-        if sub.get("email", "").lower() == student_email.lower():
-            quiz_responses = sub.get("quizResponses", [])
-            for response in quiz_responses:
-                if response.get("questionId") == question_id:
-                    response["manualScore"] = manual_score
-                    # Manual score takes precedence
-                    if manual_score is not None:
-                        response["pointsEarned"] = manual_score
-                    elif response.get("aiScore") is not None:
-                        response["pointsEarned"] = response["aiScore"]
-                    found = True
-                    break
-            if found:
-                # Recalculate quiz score
-                quiz_score = sum(r.get("pointsEarned", 0) for r in quiz_responses)
-                sub["quizScore"] = quiz_score
-                # Recalculate total score
-                code_score = sub.get("codeScore") or 0
-                sub["totalScore"] = code_score + quiz_score if sub.get("codeScore") is not None else quiz_score
-                break
-    
-    if not found:
-        return jsonify(ok=False, error="Submission or question not found"), 404
-    
-    if _save_assignment(assignment):
-        return jsonify(ok=True)
-    return jsonify(ok=False, error="Failed to save score"), 500
+    return assignment_workflow.override_score(sys.modules[__name__])
 
 
 @app.post("/api/quiz/reset-counter")

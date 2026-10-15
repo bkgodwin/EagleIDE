@@ -12,6 +12,12 @@
     expanded: new Set(),
     embeddedHistory: [],
     embeddedNode: null,
+    embeddedLoading: false,
+    embeddedRequest: 0,
+    homeRequest: 0,
+    ideClassId: '',
+    agendaKey: '',
+    agendaRequest: 0,
     contextSignature: '',
     searchTimer: null,
     searchQuery: '',
@@ -783,7 +789,7 @@
     const featuredSection = $('wikiFeaturedSection');
     if (featuredSection) featuredSection.hidden = !(data.featured || []).length;
     renderCards($('wikiFeaturedList'), data.featured || []);
-    renderEmbeddedHome();
+    if (!state.embeddedNode && !state.embeddedLoading) renderEmbeddedHome();
     window.dispatchEvent(new CustomEvent('wiki-home-rendered', {
       detail: { classId: state.selectedClassId },
     }));
@@ -813,16 +819,21 @@
 
   async function loadHome({ quiet = false } = {}) {
     syncClassSelector();
+    const request = ++state.homeRequest, selected = state.selectedClassId;
+    const auth = JSON.stringify(authHeaders());
     if (!quiet) showStatus('Loading wiki…', false, 0);
     try {
       const suffix = state.selectedClassId ? `?class_id=${encodeURIComponent(state.selectedClassId)}` : '';
-      state.home = await fetchJson(`/api/wiki/home${suffix}`, { headers: authHeaders() });
+      const home = await fetchJson(`/api/wiki/home${suffix}`, { headers: authHeaders() });
+      if (request !== state.homeRequest || selected !== state.selectedClassId || auth !== JSON.stringify(authHeaders())) return;
+      state.home = home;
       state.tree = state.home.tree || [];
       renderHomeData();
       if ($('wikiHomePanel')?.hidden === false) syncHomeBackground(true);
       if (!quiet) showStatus('');
       return state.home;
     } catch (error) {
+      if (request !== state.homeRequest || auth !== JSON.stringify(authHeaders())) return;
       showStatus(error.message || 'Could not load the wiki', true);
       throw error;
     }
@@ -1383,7 +1394,7 @@
       });
       let tocSections = node.sections || [];
       const firstHeading = headings[0];
-      if (!embedded && firstHeading?.tagName === 'H1' && firstHeading.textContent.trim().toLocaleLowerCase() === String(node.title || '').trim().toLocaleLowerCase()) {
+      if (firstHeading?.tagName === 'H1' && firstHeading.textContent.trim().toLocaleLowerCase() === String(node.title || '').trim().toLocaleLowerCase()) {
         firstHeading.classList.add('wiki-redundant-page-title');
         tocSections = tocSections.slice(1);
       }
@@ -1659,9 +1670,12 @@
   function renderEmbeddedHome() {
     const target = $('wikiEmbeddedContent');
     if (!target) return;
+    state.embeddedRequest++;
+    state.embeddedLoading = false;
+    state.embeddedHistory = [];
     disposeWikiContent(target);
     const heading = document.createElement('div');
-    heading.innerHTML = '<span class="wiki-eyebrow">EagleIDE Coding Wiki</span><h2>Wiki Home</h2><p>Browse featured class material and all coding topics.</p>';
+    heading.innerHTML = '<span class="wiki-eyebrow">Your classroom reference</span><h2>Wiki contents</h2><p>Keep a lesson beside your code. Choose a topic below or use today’s agenda above.</p>';
     target.appendChild(heading);
     if (state.home?.featured?.length) {
       const title = document.createElement('h3');
@@ -1694,13 +1708,16 @@
     }
   }
 
-  async function openEmbeddedNode(identifier, { fromHistory = false } = {}) {
+  async function openEmbeddedNode(identifier, { fromHistory = false, anchor = '' } = {}) {
     const target = $('wikiEmbeddedContent');
     if (!target) return;
+    const request = ++state.embeddedRequest;
+    state.embeddedLoading = true;
     disposeWikiContent(target);
     target.innerHTML = '<div class="skeleton" style="height:90px"></div>';
     try {
       const data = await fetchJson(`/api/wiki/nodes/${encodeURIComponent(identifier)}`);
+      if (request !== state.embeddedRequest) return;
       if (data.node.kind === 'folder') {
         for (const id of pathToNode(data.node.id)) state.expanded.add(id);
         renderEmbeddedHome();
@@ -1710,8 +1727,12 @@
       state.embeddedNode = data.node;
       renderNode(data.node, target, { embedded: true });
       target.scrollTop = 0;
+      if (anchor) document.getElementById(`embedded-${anchor}`)?.scrollIntoView({block:'start'});
     } catch (error) {
+      if (request !== state.embeddedRequest) return;
       target.textContent = error.message || 'Could not load this topic.';
+    } finally {
+      if (request === state.embeddedRequest) state.embeddedLoading = false;
     }
   }
 
@@ -2027,7 +2048,7 @@
     if (anchor && (anchor.closest('#wikiView') || anchor.closest('#wikiEmbeddedReader'))) {
       const target = internalWikiTarget(anchor);
       if (!target) return;
-      if (state.lastPointerType === 'touch' && state.touchArmedHref !== target.href) {
+      if (!anchor.closest('#wikiEmbeddedReader') && state.lastPointerType === 'touch' && state.touchArmedHref !== target.href) {
         event.preventDefault();
         state.touchArmedHref = target.href;
         showLinkPreview(anchor);
@@ -2036,7 +2057,7 @@
       event.preventDefault();
       state.touchArmedHref = '';
       $('wikiLinkPreview').hidden = true;
-      if (anchor.closest('#wikiEmbeddedReader')) openEmbeddedNode(target.slug);
+      if (anchor.closest('#wikiEmbeddedReader')) openEmbeddedNode(target.slug, {anchor:target.anchor});
       else openNode(target.slug, { anchor: target.anchor });
       return;
     }
@@ -2044,6 +2065,44 @@
       $('wikiLinkPreview').hidden = true;
       state.touchArmedHref = '';
     }
+  }
+
+  async function loadReferenceAgenda({force = false} = {}) {
+    const panel = $('wikiReferenceAgenda'), body = $('wikiReferenceAgendaBody');
+    if (!panel || !body) return;
+    const classId = defaultClassId(), cls = availableClasses().find(c => c.id === classId);
+    if (!classId || !isSignedIn() || isAdmin()) {state.agendaRequest++; state.agendaKey=''; panel.hidden=true; body.textContent=''; return;}
+    const zone = cls?.settings?.assignment_submission_window?.timeZone;
+    const format = {year:'numeric',month:'2-digit',day:'2-digit'};
+    let parts;
+    try {parts = new Intl.DateTimeFormat('en-US',{...format,...(zone ? {timeZone:zone} : {})}).formatToParts(new Date());}
+    catch {parts = new Intl.DateTimeFormat('en-US',format).formatToParts(new Date());}
+    const value = type => parts.find(p => p.type === type)?.value;
+    const today = `${value('year')}-${value('month')}-${value('day')}`;
+    const key = `${JSON.stringify(authHeaders())}:${classId}:${today}`;
+    if (!force && state.agendaKey === key) return;
+    state.agendaKey=key;
+    const request = ++state.agendaRequest;
+    panel.hidden=false;
+    $('wikiReferenceAgendaDate').textContent=`${cls?.name || 'Class'} · ${new Date(`${today}T12:00:00`).toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'})}`;
+    body.textContent='Loading today’s agenda…';
+    try {
+      const dayDate = new Date(`${today}T12:00:00`), monday = new Date(dayDate);
+      monday.setDate(monday.getDate() - (monday.getDay()+6)%7);
+      const week = `${monday.getFullYear()}-${String(monday.getMonth()+1).padStart(2,'0')}-${String(monday.getDate()).padStart(2,'0')}`;
+      const endpoint = isTeacher() ? `/api/teacher/classes/${encodeURIComponent(classId)}/lesson-plans` : `/api/classes/${encodeURIComponent(classId)}/lesson-plans`;
+      const data = await fetchJson(`${endpoint}?week=${week}`,{headers:authHeaders()});
+      if(request !== state.agendaRequest || key !== state.agendaKey || classId !== defaultClassId()) return;
+      const item = Object.values(data.plan?.days || {}).find(day => day.date === today);
+      body.innerHTML=item?.markdown ? (window.LessonPlanRenderer?.safeMarkdown?.(item.markdown) || '') : '<p class="wiki-reference-empty">No activities posted for today.</p>';
+      for (const page of item?.wiki_pages || []) {
+        const link=document.createElement('a'); link.className='wiki-reference-resource'; link.href=`/wiki/${encodeURIComponent(page.slug || page.id)}`; link.textContent=page.title || 'Wiki page'; body.append(link);
+      }
+      for (const resource of item?.external_links || []) {
+        if(!/^https?:\/\//i.test(resource.url || '')) continue;
+        const link=document.createElement('a'); link.className='wiki-reference-resource'; link.href=resource.url; link.textContent=resource.title || resource.url; link.target='_blank'; link.rel='noopener noreferrer'; body.append(link);
+      }
+    } catch(error) {if(request === state.agendaRequest) {state.agendaKey=''; body.textContent=error.message || 'Could not load today’s agenda.';}}
   }
 
   function refreshContext() {
@@ -2066,10 +2125,20 @@
     $('adminWikiBtn').style.display = isAdmin() ? '' : 'none';
     $('wikiArticleFeatureBtn').hidden = !isTeacher();
     if (signature === state.contextSignature) return;
+    const hadHome = !!state.home;
+    const previous = state.contextSignature ? JSON.parse(state.contextSignature) : {};
     state.contextSignature = signature;
+    const active = defaultClassId();
+    if (active !== state.ideClassId || previous.user !== (ctx.currentUser?.email || '') || previous.teacher !== (ctx.currentTeacher?.email || '')) {
+      state.ideClassId=active; state.selectedClassId=active;
+      state.home=null; state.tree=[];
+      state.embeddedNode=null; state.embeddedRequest++; state.embeddedHistory=[];
+      renderEmbeddedHome();
+    }
+    loadReferenceAgenda();
     if (!availableClasses().some(cls => cls.id === state.selectedClassId)) state.selectedClassId = defaultClassId();
     syncClassSelector();
-    if (state.home) loadHome({ quiet: true }).then(updateArticleActions).catch(() => {});
+    if (hadHome) loadHome({ quiet: true }).then(updateArticleActions).catch(() => {});
   }
 
   function attachEvents() {
@@ -2156,7 +2225,8 @@
       else renderEmbeddedHome();
     });
     $('wikiEmbeddedFullBtn')?.addEventListener('click', () => state.embeddedNode ? openNode(state.embeddedNode.slug || state.embeddedNode.id) : showHome());
-    $('lessonTabBtn')?.addEventListener('click', () => { if (!state.embeddedNode && !state.home) loadHome({ quiet: true }); });
+    $('lessonTabBtn')?.addEventListener('click', () => { loadReferenceAgenda({force:true}); if (!state.embeddedNode && !state.home) loadHome({ quiet: true }); });
+    document.addEventListener('visibilitychange', () => {if(!document.hidden) loadReferenceAgenda();});
     document.addEventListener('pointerdown', event => { state.lastPointerType = event.pointerType || 'mouse'; }, true);
     document.addEventListener('click', handleDocumentClick, true);
     document.addEventListener('click', event => {
@@ -2248,6 +2318,8 @@
     loadHome,
     openClassAction,
     openNode,
+    openEmbeddedNode,
+    loadReferenceAgenda,
     renderMarkdown,
     renderTree,
     selectClass,

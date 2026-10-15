@@ -24,6 +24,7 @@ Required runtime components:
 .
 |-- app.py                       Main Flask/Socket.IO app, APIs, auth, persistence, and runners
 |-- assignment_workflow.py       Private deadlines/windows, submission bundles/history, and previews
+|-- file_provenance.py           Bounded paste ranges outside workspaces; submission snapshots use UTF-16 offsets
 |-- notebook_practice.py         Bounded practice feedback, revision guards, and protected notebook checks
 |-- notebook_media.py            Quota-counted photo uploads, protected previews, and shared-tab copies
 |-- workspace_data.py            Bounded CSV pages and version-checked streaming workspace edits
@@ -60,6 +61,7 @@ Required runtime components:
 |       |-- feature-loader.js    On-demand loading for large optional browser features
 |       |-- app-core.js          Active main UI state, APIs, sockets, auth, files, quizzes, admin
 |       |-- assignment-workflow.js Collapsed assignment cards, attachments, feedback, and presentation
+|       |-- file-provenance.js     Silent editor paste ranges, edit remapping, and bounded undo/redo recovery
 |       |-- workspace-data.js    Paged editable CSV grid and lazy JSON tree/source controls
 |       |-- server-performance.js On-demand admin CPU graphs; browser history only
 |       |-- editor-init.js       CodeMirror setup and textarea fallback
@@ -111,6 +113,10 @@ Required runtime components:
 |   |-- test_assignments.py      Assignment ownership, submissions, legacy/beta grading, and rubric validation
 |   |-- test_assignment_workflow.py Deadlines/windows, multi-file storage/history, and submission access
 |   |-- assignment_workflow_ui.test.js Current/past cards, submission state, and attachment rendering
+|   |-- test_teacher_review.py    Individual make-up access, score races/validation, and paste snapshots
+|   |-- file_provenance_ui.test.js Paste range edits, undo/redo, and escaped teacher highlights
+|   |-- wiki_reference_ui.test.js Class-local agenda dates and stale reference response guards
+|   |-- ide_review_ui.test.js     Late submission opens, draft saves during edits, and per-document undo
 |   |-- assignment_grading_ui.test.js Assignment views and unsaved grading-draft regression checks
 |   |-- test_server_lifecycle.py Graceful shutdown state and false crash-alert regression coverage
 |   |-- test_static_html.py      Static HTML structure, IDs, and local asset wiring
@@ -233,6 +239,41 @@ The default legacy grader categorizes deductions as core, objective, execution, 
 Each assignment has a stable `createdAt` value for chronological teacher views; legacy records receive a timestamp from their metadata file on first load. The Teacher Dashboard assignment list expands one title into its details and grading table, while the right-side teacher Assignment tab presents only unlocked assignments from the selected class.
 
 `assignment_workflow.py` is registered against the loaded app module and owns assignment file submissions, protected read-only attachment previews, teacher feedback editing, un-submit, and roster accommodation/window routes. Student Resources has collapsed Current/Past cards with personalized deadlines. Private per-class `accommodations[email]` never appear in student class summaries; only that student's effective deadline/note are returned. Extended deadlines skip Saturday/Sunday in the class IANA time zone; `tzdata` supplies zones on hosts without an OS catalog. No-deadline work moves to Past on the ordinary deadline but remains submittable while explicitly unlocked. Weekday submission windows gate files and quizzes equally; an assignment may bypass its class window. Only the class owner manages accommodations/windows/un-submit; class co-teachers may view attachments/history and edit feedback under existing assignment-access checks.
+
+Owner-only `/api/assignments/extend-student` grants/removes an individual make-up
+window for a previously released assignment, including locked/past work. Days
+mean calendar days from the grant (1–365; 0 removes). During that window only the
+selected currently enrolled student bypasses ordinary locks, deadlines, and school
+hours, with at least one additional file/quiz attempt if limits were exhausted.
+Keep counts, scores, and submission evidence; never globally unlock the assignment
+or expose its private `studentExtensions` map to students.
+
+`file-provenance.js` tracks paste events in the student's text editor without
+student-facing indicators. `file_provenance.py` stores bounded UTF-16 ranges and
+content hashes in private `file_provenance/<workspace>/` sidecars outside student
+workspace roots. File saves, moves/Trash/restore, and immutable submitted files
+preserve provenance. Teacher previews and the submission editor highlight these
+ranges; a locally saved assignment-menu toggle hides highlights and roster flags
+for presentations. Public/student submission payloads omit this metadata. This
+is an observed paste signal, not proof of outside authorship, AI use, or misconduct;
+browser telemetry can be inspected/evaded and does not cover direct attachments,
+changes outside the IDE, or historical files. Do not inspect unrelated clipboard
+content. Never send pasted content separately or put it into source-file markup.
+
+Written responses can be graded by question across the class using 0/half/full
+credit or fractional manual scores. Both manual grading endpoints share locked,
+range-checked server updates; browser requests carry the submission revision to
+reject stale scores. AI question results reload under that lock and check the
+question and submission revision before applying; manual overrides take priority.
+Student answers are canonicalized and duplicate/unknown
+question IDs and client-supplied scoring fields cannot influence quiz scores.
+The reference pane keeps its contents toolbar and a bounded, collapsible current
+class agenda above the article. Load the shared lesson-plan renderer before the
+wiki reader, guard late class/article responses, and preserve an open reference
+article during background home refreshes.
+Programmatic main-editor source loads clear CodeMirror history so Undo cannot
+restore another file/account's source. Draft saves preserve edits made while the
+request is pending, and late teacher submission opens obey the editor/auth guards.
 
 Teacher assignment list responses omit submission source and carry `hasGradableFiles`; opening a file fetches its content separately. Student dashboard source excerpts are capped at 4,000 characters, while protected file previews retain their individual size limits. Keep list rendering and queue/navigation eligibility compatible with these metadata responses.
 
