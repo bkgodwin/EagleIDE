@@ -304,9 +304,9 @@
   function bindTeacher(root, a, owner) {
     root.querySelectorAll('.assignment-development-open').forEach(button => button.onclick = () => openDevelopment(a, button.dataset.email || ''));
     root.querySelector('.assignment-grading-complete')?.addEventListener('click', async event => {
-      if (!owner || !confirm('Mark grading complete? This closes submissions, permanently deletes all development timelines for this assignment, and stops recording. Scores, submissions, and student files are kept. Copy the assignment if you later need a new recorded attempt.')) return;
+      if (!owner || !confirm('Finalize grading? This closes submissions and permanently deletes development timelines and obsolete recording bindings. All submitted files, retained submission versions, quiz answers, scores, feedback, and student workspace files are kept. Copy the assignment if you need to reopen submissions.')) return;
       event.target.disabled = true;
-      try {await mutate('/api/assignments/grading-complete', {assignmentId:a.id}); await bridge.reloadAssignments();}
+      try {await mutate('/api/assignments/grading-complete', {assignmentId:a.id}); root.dataset.forceRefresh='true'; await bridge.reloadAssignments();}
       catch(error) {alert(error.message); event.target.disabled=false;}
     });
     root.querySelector('.assignment-extend')?.addEventListener('click', () => extendStudent(a));

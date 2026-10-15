@@ -117,7 +117,7 @@ def student_state(eagle, assignment, email, *, now=None):
     if reopened:
         due, expired, past, deadline_allowed = until, False, False, True
         note = "Make-up / retest deadline"
-    if assignment.get("fileControl") and assignment.get("gradingCompletedAt"):
+    if assignment.get("gradingCompletedAt"):
         past, deadline_allowed = True, False
     window_allowed, next_change = True, ""
     message = ""
@@ -519,8 +519,8 @@ def register(app, eagle):
             assignment = eagle._load_assignment(data.get("assignmentId") or "")
             if not assignment or not eagle._assignment_access(actor, assignment, owner_only=True):
                 return jsonify(ok=False, error="Only the class owner may extend assignments"), 403
-            if assignment.get("fileControl") and assignment.get("gradingCompletedAt"):
-                return jsonify(ok=False, error="Grading is complete. Copy this assignment to start a new recorded attempt."), 409
+            if assignment.get("gradingCompletedAt"):
+                return jsonify(ok=False, error="Grading is finalized. Copy this assignment to start a new assignment."), 409
             cls = eagle._find_class_by_id(assignment.get("targetClassId")) or {}
             if email not in cls.get("students", []):
                 return jsonify(ok=False, error="Student is not in this class"), 404
