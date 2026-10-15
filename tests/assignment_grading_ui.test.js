@@ -172,6 +172,14 @@ test('teacher assignment titles sort chronologically and expand into grading', (
   assert.doesNotMatch(detail.innerHTML, /class="assignment-criterion-check"[^>]*checked/);
 });
 
+test('assignment search metadata safely contains quoted assignment names', () => {
+  const assignments = [{ id: 'quoted', name: 'Functions " onmouseover="alert(1)', targetClassId: 'class-a', submissions: [] }];
+  const { context, list } = assignmentViewHarness(assignments);
+  context.views.renderAdminAssignments();
+  assert.match(list.innerHTML, /data-name="Functions &quot; onmouseover=&quot;alert\(1\)"/);
+  assert.doesNotMatch(list.innerHTML, /data-name="Functions " onmouseover=/);
+});
+
 test('student questions can close without submission and reopen with draft answers', () => {
   assert.match(source, /Close for Now/);
   assert.match(source, /quizDrafts\.set/);

@@ -2825,6 +2825,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     };
 
     function updateAuthUI() {
+      window.TeacherAssignments?.setScope(JSON.stringify(assignmentManagerHeaders()));
       const guestBadge = document.getElementById('guestBadge');
       const rightEdgeToggleBtn = document.getElementById('rightEdgeToggleBtn');
       const loginBtn = document.getElementById('loginBtn');
@@ -8060,20 +8061,27 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (!list) return;
       const activeClassId = activeAssignmentsClassId || currentTeacherClassId;
       const classAssignments = sortAssignmentsChronologically((currentAssignments || []).filter(a => !activeClassId || a.targetClassId === activeClassId));
+      window.TeacherAssignments?.prepare(JSON.stringify(assignmentManagerHeaders()), activeClassId);
       if (!classAssignments.length) {
         list.innerHTML = '<p style="color:#888;">No assignments yet. Create one to get started.</p>';
         currentAdminAssignmentName = null;
+        window.TeacherAssignments?.clear();
         return;
       }
 
       if (currentAdminAssignmentName && !classAssignments.some(a => (a.id || a.name) === currentAdminAssignmentName)) {
         currentAdminAssignmentName = null;
       }
-      const openDetail = list.querySelector('#assignmentDetailPanel');
+      const openDetail = document.getElementById('assignmentDetailPanel') || list.querySelector('#assignmentDetailPanel');
       if (openDetail?.dataset?.assignmentId === currentAdminAssignmentName && openDetail.dataset.aiSettingsDirty === 'true') return;
       list.innerHTML = classAssignments.map(a => `
-        <section class="assignment-list-item">
-          <button type="button" class="assignment-title-row" data-id="${escapeHtml(a.id || a.name)}" aria-expanded="${currentAdminAssignmentName === (a.id || a.name)}">${escapeHtml(a.name)}</button>
+        <section class="assignment-list-item" data-name="${escapeHtml(a.name).replace(/"/g, '&quot;')}" data-status="${a.gradingCompletedAt ? 'complete' : a.active ? 'open' : 'locked'}">
+          <button type="button" class="assignment-title-row" data-id="${escapeHtml(a.id || a.name)}" aria-expanded="${currentAdminAssignmentName === (a.id || a.name)}" aria-controls="assignmentWorkspace">
+            <span class="assignment-library-card-top"><span class="assignment-state is-${a.gradingCompletedAt ? 'complete' : a.active ? 'open' : 'locked'}">${a.gradingCompletedAt ? 'Complete' : a.active ? 'Open' : 'Locked'}</span><span class="assignment-library-kind">${a.allowFileSubmission === false ? 'Quiz' : a.fileControl ? 'Controlled file' : 'Files'}${a.allowFileSubmission !== false && a.quiz?.questions?.length ? ' + quiz' : ''}</span></span>
+            <strong>${escapeHtml(a.name)}</strong>
+            <span class="assignment-library-card-meta">${a.dueAt ? `Due ${escapeHtml(assignmentDueLabel(a.dueAt))}` : 'No due date'}</span>
+            <span class="assignment-library-card-meta">${(a.submissions || []).filter(sub => !sub.withdrawn).length} turned in <span aria-hidden="true">·</span> ${(a.allowFileSubmission === false ? 0 : (a.maxScore || 0)) + (a.quiz?.totalPoints || 0)} points</span>
+          </button>
           ${currentAdminAssignmentName === (a.id || a.name) ? '<div id="assignmentDetailPanel" class="assignment-detail-panel"></div>' : ''}
         </section>
       `).join('');
@@ -8081,9 +8089,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       list.querySelectorAll('.assignment-title-row').forEach(btn => btn.addEventListener('click', () => {
         currentAdminAssignmentName = currentAdminAssignmentName === btn.dataset.id ? null : btn.dataset.id;
         renderAdminAssignments();
+        [...list.querySelectorAll('.assignment-title-row')].find(button => button.dataset.id === btn.dataset.id)?.focus?.({ preventScroll: true });
       }));
       const detail = list.querySelector('#assignmentDetailPanel');
-      if (!detail) return;
+      if (!detail) { window.TeacherAssignments?.clear(); return; }
       const assignment = getAssignmentByName(currentAdminAssignmentName);
       if (!assignment) return;
       detail.dataset.assignmentId = assignment.id || assignment.name;
@@ -8312,6 +8321,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           timer = setTimeout(() => saveSubmissionScore(assignment.id || assignment.name, input.dataset.email, input.value), 500);
         });
       });
+      window.TeacherAssignments?.decorate({ list, detail, assignment, roster, owner: !isCoTeacher(), scoreOf: assignmentScoreValue });
     }
 
     function renderStudentAssignments() {
@@ -8449,7 +8459,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const selectedTags = existingAssignment?.skillTags || [];
       const maxQuizSubmissions = existingAssignment?.quizSettings?.maxSubmissions ?? 0;
       const modal = document.createElement('div');
-      modal.className = 'modal workspace-modal glass-modal';
+      modal.className = 'modal workspace-modal glass-modal assignment-composer';
       modal.innerHTML = `
         <div class="modal-content glass-surface">
           <div class="workspace-modal-header">
@@ -8569,6 +8579,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         showTeacherQuizPreviewModal(assignmentName, quizQuestions);
       });
       renderQuizQuestions();
+      window.TeacherAssignments?.enhanceComposer(modal);
       modal.querySelector('.modal-exit-btn')?.addEventListener('click', () => modal.remove());
       modal.querySelector('.modal-save-btn').addEventListener('click', async () => {
         const name = existingAssignment
@@ -8583,7 +8594,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const selectedSkillTags = [...modal.querySelectorAll('.modal-skill-check:checked')].map(cb => cb.value).filter(Boolean);
         const mergedSkillTags = [...new Set(selectedSkillTags)];
         const maxQuizSubmissions = Math.max(0, Math.min(100, parseInt(document.getElementById('modalAssignmentMaxQuizSubmissions')?.value, 10) || 0));
-        if (!name) { alert('Please enter an assignment name.'); return; }
+        if (!name) {
+          modal.querySelector('#composer-tab-details')?.click();
+          modal.querySelector('#modalAssignmentName')?.focus();
+          alert('Please enter an assignment name.');
+          return;
+        }
         const payload = {
           assignmentId: existingAssignment?.id || undefined,
           name,
@@ -8829,8 +8845,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     async function copyAssignmentToClass(reference) {
-      const list = document.getElementById('assignmentList');
-      const classId = list?.querySelector(`.copy-assignment-class-select[data-id="${CSS.escape(reference)}"]`)?.value || '';
+      const classId = document.getElementById('assignmentDetailPanel')?.querySelector(`.copy-assignment-class-select[data-id="${CSS.escape(reference)}"]`)?.value || '';
       if (!classId) {
         alert('Select a destination class first.');
         return;
