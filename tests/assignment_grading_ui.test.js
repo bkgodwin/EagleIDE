@@ -57,6 +57,49 @@ test('submission editor navigation and minimized dashboard use stable assignment
   assert.match(source, /\/api\/assignments\/submission/);
 });
 
+test('submission return controls occupy their own row outside the dashboard modal', () => {
+  const bar = html.indexOf('id="teacherDashMinimizedBar"');
+  assert.ok(bar > html.indexOf('</header>') && bar < html.indexOf('<main'));
+  assert.ok(bar < html.indexOf('id="teacherDashboardModal"'));
+  assert.match(html, /<button id="teacherDashRestoreBtn"[^>]*type="button"/);
+});
+
+test('submission review updates the context and clears on leaving the submission', () => {
+  const nodes = {
+    teacherDashboardModal: { style: {}, classList: { add(value) { this.value = value; } } },
+    teacherDashMinimizedBar: { hidden: true },
+    teacherDashMinimizedLabel: {}, activeFileName: {}, saveDraftBtn: { style: {} },
+    submissionScoringPanel: { style: {} }, submissionScoreInput: {}, submissionScoreSaveStatus: {},
+  };
+  let pollingStopped = false;
+  const context = {
+    document: { getElementById: id => nodes[id] },
+    window: {}, currentOpenFile: { name: 'submission.py', submission: true },
+    csvEditorActive: false, fileArtifactPreviewActive: false, activeSubmissionContext: {}, submissionSaveTimer: null,
+    stopTeacherDashboardRosterPolling() { pollingStopped = true; }, syncEditorLanguage() {},
+  };
+  function extract(name) {
+    const start = source.indexOf(`    function ${name}(`);
+    return source.slice(start, source.indexOf('\n    }', start) + 6);
+  }
+  vm.runInNewContext([
+    extract('minimizeTeacherDashboardForSubmission'), extract('updateActiveFileName'), extract('hideSubmissionScoringPanel'),
+    'minimizeTeacherDashboardForSubmission({name:"Functions"}, {name:"Student One"});',
+  ].join('\n'), context);
+  assert.equal(nodes.teacherDashMinimizedBar.hidden, false);
+  assert.equal(nodes.teacherDashboardModal.classList.value, 'is-minimized');
+  assert.equal(nodes.teacherDashMinimizedLabel.textContent, 'Functions · Student One');
+  assert.equal(pollingStopped, true);
+  vm.runInNewContext('updateActiveFileName()', context);
+  assert.equal(nodes.teacherDashMinimizedBar.hidden, false);
+  context.currentOpenFile = { name: 'workspace.py' };
+  vm.runInNewContext('updateActiveFileName()', context);
+  assert.equal(nodes.teacherDashMinimizedBar.hidden, true);
+  vm.runInNewContext('minimizeTeacherDashboardForSubmission({name:"Loops"}, {email:"student@example.com"}); hideSubmissionScoringPanel();', context);
+  assert.equal(nodes.teacherDashMinimizedBar.hidden, true);
+  assert.equal(context.activeSubmissionContext, null);
+});
+
 test('student assignment actions target IDs instead of ambiguous duplicate names', () => {
   assert.match(source, /data-id="\$\{escapeHtml\(a\.id \|\| a\.name\)\}"/);
   assert.match(source, /assignmentRequestPayload\(assignment/);

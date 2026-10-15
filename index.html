@@ -44,7 +44,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261015-development-3">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261015-submission-review-1">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -132,6 +132,14 @@
       </div>
     </div>
   </header>
+  <nav id="teacherDashMinimizedBar" class="teacher-dash-minimized-bar ide-only" aria-label="Submission review" hidden>
+    <button id="teacherDashRestoreBtn" class="btn secondary" type="button">← Submissions</button>
+    <strong id="teacherDashMinimizedLabel" class="teacher-dash-minimized-copy">Submission review</strong>
+    <div class="teacher-dash-minimized-actions" aria-label="Submission navigation">
+      <button id="teacherDashPreviousSubmissionBtn" class="btn secondary" type="button" title="Previous submitted student" aria-label="Previous submitted student">← Previous</button>
+      <button id="teacherDashNextSubmissionBtn" class="btn secondary" type="button" title="Next submitted student" aria-label="Next submitted student">Next →</button>
+    </div>
+  </nav>
   <main class="wiki-view" id="wikiView" aria-label="EagleIDE coding wiki">
     <button class="wiki-drawer-scrim" id="wikiDrawerScrim" type="button" aria-label="Close topic navigation"></button>
     <aside class="wiki-nav-drawer glass-surface" id="wikiNavDrawer" aria-label="Wiki topic navigation">
@@ -745,13 +753,6 @@
 
   <!-- Teacher Dashboard Modal -->
   <div id="teacherDashboardModal" class="modal teacher-dash-modal glass-modal teacher-dash-fullscreen" style="display:none;">
-    <div id="teacherDashMinimizedBar" class="teacher-dash-minimized-bar" role="button" tabindex="0" hidden>
-      <span class="teacher-dash-minimized-copy">📝 <strong id="teacherDashMinimizedLabel">Return to submissions</strong></span>
-      <span class="teacher-dash-minimized-actions" aria-label="Submission navigation">
-        <button id="teacherDashPreviousSubmissionBtn" type="button" title="Previous submitted student" aria-label="Previous submitted student">←</button>
-        <button id="teacherDashNextSubmissionBtn" type="button" title="Next submitted student" aria-label="Next submitted student">→</button>
-      </span>
-    </div>
     <div class="modal-content">
       <button class="teacher-dash-mobile-close" id="teacherDashMobileCloseBtn" type="button" aria-label="Close teacher dashboard">✕</button>
       <!-- Left Sidebar Navigation -->
@@ -1808,20 +1809,20 @@
   <script src="/static/js/autocomplete.js?v=20261011-files-5"></script>
   <script src="/static/js/editor-behavior.js?v=20261009-assignment-step-2"></script>
   <script src="/static/js/editor-feedback.js?v=20261011-files-5"></script>
-  <script src="/static/js/editor-init.js?v=20261015-development-3"></script>
+  <script src="/static/js/editor-init.js?v=20261015-submission-review-1"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js?v=20261011-files-5"></script>
   <script src="/static/js/server-performance.js?v=20261011-files-5"></script>
   <script src="/static/js/workspace-data.js?v=20261011-files-5"></script>
-  <script src="/static/js/file-provenance.js?v=20261015-development-3"></script>
-  <script src="/static/js/assignment-workflow.js?v=20261015-development-3"></script>
-  <script src="/static/js/assignment-development.js?v=20261015-development-3"></script>
-  <script src="/static/js/app-core.js?v=20261015-development-3"></script>
+  <script src="/static/js/file-provenance.js?v=20261015-submission-review-1"></script>
+  <script src="/static/js/assignment-workflow.js?v=20261015-submission-review-1"></script>
+  <script src="/static/js/assignment-development.js?v=20261015-submission-review-1"></script>
+  <script src="/static/js/app-core.js?v=20261015-submission-review-1"></script>
   <script src="/static/js/step-mode.js?v=20261011-files-5"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
-  <script src="/static/js/wiki-reader.js?v=20261015-development-3"></script>
+  <script src="/static/js/wiki-reader.js?v=20261015-submission-review-1"></script>
   <script src="/static/js/lesson-plans.js?v=20261011-files-5"></script>
-  <script src="/static/js/wiki-admin.js?v=20261015-development-3"></script>
+  <script src="/static/js/wiki-admin.js?v=20261015-submission-review-1"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20261011-files-5"></script>
   <script src="/static/js/notebook-sync.js?v=20261011-notebook-topics-1"></script>
