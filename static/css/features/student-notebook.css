@@ -1457,6 +1457,49 @@ body.notebook-drawer-open #notebookOpenBtn {
   color: var(--theme-text-dim);
 }
 
+.teacher-notebook-completion-export {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--theme-border-mid);
+  border-radius: 8px;
+  background: var(--theme-input-bg);
+  color: var(--theme-text);
+}
+
+.teacher-notebook-completion-export p,
+#teacherNotebookExportStatus {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--theme-text-dim);
+}
+
+.teacher-notebook-export-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex-basis: 100%;
+}
+
+#dash-notebook .teacher-notebook-export-controls label { margin: 0; }
+
+.teacher-notebook-export-controls select {
+  width: auto;
+  flex: 1 1 150px;
+  max-width: 100%;
+  padding: 8px;
+  border: 1px solid var(--theme-border-mid);
+  border-radius: 8px;
+  background: var(--theme-panel-bg);
+  color: var(--theme-text);
+}
+
+#teacherNotebookExportStatus { flex-basis: 100%; }
+
 @media (max-width: 780px) {
   .student-notebook-drawer {
     width: calc(var(--notebook-viewport-width, 100dvw) - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));

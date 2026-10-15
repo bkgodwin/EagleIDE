@@ -112,6 +112,8 @@ Required runtime components:
 |   |-- test_startup.py          Launcher safety, dependency pinning, and environment checks
 |   |-- test_html_runtime.py     HTML runtime security, assets, bridge, and cleanup
 |   |-- test_notebook.py         Notebook persistence, practice queue, cooldowns, legacy data, and access
+|   |-- test_grade_exports.py    Account student numbers and notebook completion CSV exports
+|   |-- notebook_export_ui.test.js Notebook export downloads, errors, and account switches
 |   |-- notebook_practice_ui.test.js Draft merging, output framing, tab locks, and shared runner checks
 |   |-- notebook_photos_ui.test.js Photo scaling, lazy loading, read-only checks, and stale uploads
 |   |-- test_assignments.py      Assignment ownership, submissions, legacy/beta grading, and rubric validation
@@ -188,8 +190,13 @@ The minimized teacher submission dashboard uses a normal-flow review row below t
 
 ### Execution Flows
 
-Notebook prompts are formative practice, without numeric scores or mastery
-contributions. Preserve legacy score/feedback fields on disk. `notebook_practice.py`
+Notebook AI feedback is formative practice without mastery contributions. The teacher
+Notebook Responses dashboard exports completion grades through
+`/api/teacher/notebook-prompts/csv`: a saved nonempty response earns 100%, a blank
+or missing response earns 0%, independently of AI feedback. Exports include the
+current class roster and use account `student_id` values (blank if missing), with
+percent or numeric 0–100 output. Completion grades are derived at export time;
+preserve legacy score/feedback fields on disk. `notebook_practice.py`
 registers student submission and teacher read-only notebook-check routes against
 the loaded app module. Its durable per-block snapshot/status is protected from
 student saves; a bounded 256-job worker uses only the shared AI dispatcher, with
