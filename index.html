@@ -44,7 +44,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261015-submission-review-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261015-assignment-dashboard-1">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -818,18 +818,27 @@
 
         <!-- Assignments View -->
         <div class="teacher-dash-view" id="dash-assignments">
-          <div class="teacher-dash-view-hdr">
-            <h2 class="teacher-dash-view-title">Assignments</h2>
+          <div class="teacher-dash-view-hdr assignment-page-header">
+            <div><span class="assignment-eyebrow">Classroom workspace</span><h2 class="teacher-dash-view-title">Assignments</h2><p>Create, review, and keep your class moving.</p></div>
             <div class="teacher-dash-view-actions">
-              <label for="teacherAssignmentsClassSelect" style="font-size:12px; color:var(--theme-text-dim);">Class</label>
-              <select id="teacherAssignmentsClassSelect" style="min-width:220px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;"></select>
-              <button class="btn run" id="newAssignmentBtn">+ New Assignment</button>
-              <span id="assignmentStatus" style="opacity:.8; font-size:13px;"></span>
+              <label class="assignment-class-picker" for="teacherAssignmentsClassSelect">Class<select id="teacherAssignmentsClassSelect"></select></label>
+              <button class="btn run" id="newAssignmentBtn" type="button">+ New assignment</button>
             </div>
+            <span id="assignmentStatus" role="status" aria-live="polite"></span>
           </div>
-          <div class="teacher-dash-scroll">
+          <div class="teacher-dash-scroll assignment-dashboard-scroll">
             <div class="assignment-admin-layout">
-              <div id="assignmentList"></div>
+              <aside class="assignment-library" aria-label="Assignment library">
+                <div class="assignment-library-heading"><strong>Your assignments</strong><span id="assignmentLibraryCount"></span></div>
+                <label class="assignment-search"><span class="sr-only">Search assignments</span><input id="assignmentLibrarySearch" type="search" placeholder="Search assignments…" autocomplete="off"></label>
+                <div class="assignment-library-filters">
+                  <label><span class="sr-only">Assignment status</span><select id="assignmentLibraryFilter"><option value="all">All statuses</option><option value="open">Open</option><option value="locked">Locked</option><option value="complete">Grading complete</option></select></label>
+                  <label><span class="sr-only">Sort assignments</span><select id="assignmentLibrarySort"><option value="oldest">Oldest first</option><option value="newest">Newest first</option><option value="name">A–Z</option></select></label>
+                </div>
+                <div id="assignmentList"></div>
+                <p id="assignmentLibraryEmpty" class="assignment-library-empty" hidden>No matching assignments. Try another search or status.</p>
+              </aside>
+              <div id="assignmentWorkspace" class="assignment-workspace"><div class="assignment-workspace-empty"><span aria-hidden="true">▤</span><h3>A clear view of every assignment</h3><p>Select an assignment to review submissions, plan grading, or update its details.</p></div></div>
             </div>
           </div>
         </div>
@@ -1809,20 +1818,21 @@
   <script src="/static/js/autocomplete.js?v=20261011-files-5"></script>
   <script src="/static/js/editor-behavior.js?v=20261009-assignment-step-2"></script>
   <script src="/static/js/editor-feedback.js?v=20261011-files-5"></script>
-  <script src="/static/js/editor-init.js?v=20261015-submission-review-1"></script>
+  <script src="/static/js/editor-init.js?v=20261015-assignment-dashboard-1"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js?v=20261011-files-5"></script>
   <script src="/static/js/server-performance.js?v=20261011-files-5"></script>
   <script src="/static/js/workspace-data.js?v=20261011-files-5"></script>
-  <script src="/static/js/file-provenance.js?v=20261015-submission-review-1"></script>
-  <script src="/static/js/assignment-workflow.js?v=20261015-submission-review-1"></script>
-  <script src="/static/js/assignment-development.js?v=20261015-submission-review-1"></script>
-  <script src="/static/js/app-core.js?v=20261015-submission-review-1"></script>
+  <script src="/static/js/file-provenance.js?v=20261015-assignment-dashboard-1"></script>
+  <script src="/static/js/assignment-workflow.js?v=20261015-assignment-dashboard-1"></script>
+  <script src="/static/js/assignment-development.js?v=20261015-assignment-dashboard-1"></script>
+  <script src="/static/js/teacher-assignments.js?v=20261015-assignment-dashboard-1"></script>
+  <script src="/static/js/app-core.js?v=20261015-assignment-dashboard-1"></script>
   <script src="/static/js/step-mode.js?v=20261011-files-5"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
-  <script src="/static/js/wiki-reader.js?v=20261015-submission-review-1"></script>
+  <script src="/static/js/wiki-reader.js?v=20261015-assignment-dashboard-1"></script>
   <script src="/static/js/lesson-plans.js?v=20261011-files-5"></script>
-  <script src="/static/js/wiki-admin.js?v=20261015-submission-review-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20261015-assignment-dashboard-1"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20261011-files-5"></script>
   <script src="/static/js/notebook-sync.js?v=20261011-notebook-topics-1"></script>
