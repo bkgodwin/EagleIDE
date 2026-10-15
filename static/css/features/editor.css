@@ -402,6 +402,9 @@
       border-top:1px solid var(--theme-border-mid);
     }
     .teacher-stream-pane .CodeMirror{ height:100%; }
+    #teacherStreamPane { --stream-bg:color-mix(in srgb,var(--theme-bg) 88%,white); background:var(--stream-bg); }
+    .light-mode #teacherStreamPane { --stream-bg:#fff; }
+    #teacherStreamPane .CodeMirror, #teacherStreamPane .CodeMirror-gutters, #teacherStreamEditor { background:var(--stream-bg) !important; }
     .teacher-stream-pane .CodeMirror-scroll{ overflow:auto !important; }
     .teacher-pane-toggle{
       position:fixed;
