@@ -124,12 +124,34 @@ class PythonSandboxPolicyTests(unittest.TestCase):
             )
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
         self.assertIn("execution continued", result.stdout)
         self.assertIn("argument 'value' expected int, received str", result.stderr)
         self.assertIn("return expected float, received str", result.stderr)
         self.assertIn("access to protected member '_protected'", result.stderr)
         self.assertIn("access to private member '_Box__private'", result.stderr)
         self.assertIn("access to protected member '_helper'", result.stderr)
+
+    def test_assignment_file_cannot_be_replaced_or_deleted_by_student_python(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            protected = workspace / "Project.py"
+            protected.write_text("original", encoding="utf-8")
+            with mock.patch.dict(os.environ, {"EAGLE_CONTROLLED_FILES": json.dumps([str(protected.resolve())])}):
+                result = self._run_worker(workspace,
+                    "from pathlib import Path\n"
+                    "for operation in ('write', 'delete', 'rename'):\n"
+                    "    try:\n"
+                    "        if operation == 'write':\n"
+                    "            with open('Project.py', 'w') as f: f.write('replacement')\n"
+                    "        elif operation == 'delete': Path('Project.py').unlink()\n"
+                    "        else: Path('Project.py').rename('moved.py')\n"
+                    "        print('bypassed', operation)\n"
+                    "    except PermissionError: print('protected', operation)\n")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotIn("bypassed", result.stdout)
+            self.assertEqual(result.stdout.count("protected"), 3)
+            self.assertEqual(protected.read_text(), "original")
 
     def test_worker_contract_checks_accept_valid_values_and_ignore_raised_returns(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -86,6 +86,7 @@
       <summary><span class="assignment-title-copy"><strong>${submitted(a) ? '<span class="assignment-submitted-check" aria-label="Submitted">✓</span> ' : ''}${esc(a.name)}</strong><span class="assignment-title-due">${a.dueAt ? `Due ${esc(date(a.dueAt))}` : 'No due date'}</span></span>${s ? `<span class="assignment-card-state">${s.withdrawn ? 'Un-submitted by teacher' : total != null ? `${esc(total)} / ${bridge.maxScore(a)}` : 'Submitted'}</span>` : ''}</summary>
       <div class="assignment-card-body">
         ${a.accommodationNote ? `<p class="assignment-accommodation-note">${esc(a.accommodationNote)}</p>` : ''}
+        ${a.fileControl ? `<p class="assignment-window-note">${a.controlledFilePath ? `Work in <strong>${esc(a.controlledFilePath)}</strong>. Only this file can be submitted. ${a.gradingCompletedAt ? 'Development recording is complete.' : 'Changed code is recorded for teacher review.'}` : esc(a.fileControlError || 'The assignment file will appear when this assignment is open.')}</p>${a.controlledFilePath ? `<button type="button" class="btn secondary assignment-open-controlled" data-path="${esc(a.controlledFilePath)}">Open assignment file</button>` : ''}` : ''}
         <div class="task assignment-markdown" data-assignment-markdown="${esc(id)}">${esc(a.task || '(No task description)')}</div>
         <div class="meta">Maximum score: ${bridge.maxScore(a)}${a.maxFileSubmissions ? ` · File attempts: ${s?.fileSubmissionCount || 0} / ${a.maxFileSubmissions}` : ''}</div>
         ${a.quiz?.questions?.length ? `<div class="meta">Questions: ${s?.quizAnsweredCount || 0} / ${a.quiz.questions.length} answered${a.quizSettings?.maxSubmissions ? ` · ${a.quizSettings.maxSubmissions} quiz attempt(s)` : ''}</div>` : ''}
@@ -101,6 +102,7 @@
   }
 
   function bindStudent(root) {
+    root.querySelectorAll('.assignment-open-controlled').forEach(button => button.onclick = () => bridge.openPath(button.dataset.path));
     root.querySelectorAll('.student-assignment-card').forEach(detail => detail.addEventListener('toggle', () => {if (detail.open) expanded.add(detail.dataset.assignmentId); else expanded.delete(detail.dataset.assignmentId);}));
     root.querySelectorAll('.submit-assignment-btn').forEach(button => button.onclick = () => submitDialog(button.dataset.id));
     root.querySelectorAll('.view-student-submission-btn').forEach(button => button.onclick = () => openFiles(button.dataset.id));
@@ -125,10 +127,10 @@
     const a = bridge.assignment(reference);
     if (!a || !bridge.studentHeaders()['X-User-Token']) return;
     if (a.allowFileSubmission === false || a.canSubmitFiles === false) return alert(a.submissionWindowMessage || 'Submissions are currently unavailable.');
-    const files = bridge.files().filter(f => !f.in_trash && !String(f.path).startsWith('Trash/'));
+    const files = a.fileControl ? (a.controlledFilePath ? [{path:a.controlledFilePath,size:0}] : []) : bridge.files().filter(f => !f.in_trash && !String(f.path).startsWith('Trash/'));
     const open = bridge.openFile();
     const selected = files.some(f => f.path === open?.path) ? open.path : files[0]?.path;
-    const multi = !!a.allowMultiFileSubmission;
+    const multi = !!a.allowMultiFileSubmission && !a.fileControl;
     const m = modal(`Submit: ${a.name}`, `<p>Choose ${multi ? 'the files' : 'one file'} to submit. Your currently open file is selected by default.</p>
       ${multi ? `<div class="assignment-file-choices">${files.map(f => `<label><input type="checkbox" name="workspaceFile" value="${esc(f.path)}" ${f.path === selected ? 'checked' : ''}><span>${esc(f.path)}</span><small>${size(f.size)}</small></label>`).join('') || '<p>No workspace files yet. You can upload attachments below.</p>'}</div><label class="assignment-upload-label">Add attachments of any type<input type="file" id="assignmentUploadFiles" multiple></label><small>Up to 20 files and 25 MB total. Uploaded attachments may total up to 15 MB.</small>` : `<label for="assignmentFileSelect">File to submit</label><select id="assignmentFileSelect">${files.map(f => `<option value="${esc(f.path)}" ${f.path === selected ? 'selected' : ''}>${esc(f.path)}</option>`).join('')}</select>`}
       <p class="assignment-dialog-status" role="status"></p><div class="modal-actions"><button type="button" class="btn run assignment-submit-selected">Submit ${multi ? 'files' : 'file'}</button></div>`, 'assignment-submit-dialog');
@@ -300,6 +302,13 @@
     return `<div class="assignment-teacher-file-list">${files.map(f => `<button type="button" class="btn secondary assignment-view-file" data-email="${esc(sub.email)}" data-file="${esc(f.id)}">${esc(f.name)}</button>`).join('') || '—'}</div>${sub.history?.length ? `<button type="button" class="btn secondary assignment-view-history" data-email="${esc(sub.email)}">History (${sub.history.length} previous)</button>` : ''}`;
   }
   function bindTeacher(root, a, owner) {
+    root.querySelectorAll('.assignment-development-open').forEach(button => button.onclick = () => openDevelopment(a, button.dataset.email || ''));
+    root.querySelector('.assignment-grading-complete')?.addEventListener('click', async event => {
+      if (!owner || !confirm('Mark grading complete? This closes submissions, permanently deletes all development timelines for this assignment, and stops recording. Scores, submissions, and student files are kept. Copy the assignment if you later need a new recorded attempt.')) return;
+      event.target.disabled = true;
+      try {await mutate('/api/assignments/grading-complete', {assignmentId:a.id}); await bridge.reloadAssignments();}
+      catch(error) {alert(error.message); event.target.disabled=false;}
+    });
     root.querySelector('.assignment-extend')?.addEventListener('click', () => extendStudent(a));
     root.querySelectorAll('.assignment-extend-student').forEach(button => button.onclick = () => extendStudent(a,button.dataset.email));
     root.querySelector('.assignment-grade-question')?.addEventListener('click', () => gradeByQuestion(a));
@@ -314,6 +323,84 @@
       try {await mutate('/api/assignments/unsubmit',{assignmentId:a.id,studentEmail:button.dataset.email,revisionId:sub?.revisionId}); await bridge.reloadAssignments();}
       catch(error) {alert(error.message); button.disabled = false;}
     });
+  }
+  async function openDevelopment(a, email = '') {
+    const roster = [...bridge.roster(a.targetClassId)];
+    for (const s of a.submissions || []) if (!roster.some(r => r.email === s.email)) roster.push(s);
+    roster.sort((x,y) => String(x.last_name || '').localeCompare(String(y.last_name || '')) || String(x.first_name || x.name || x.email).localeCompare(String(y.first_name || y.name || y.email)));
+    const m = modal(`${a.name} · Development history`, `<div class="development-toolbar"><label>Student<select class="development-student">${roster.map(s => `<option value="${esc(s.email)}">${esc(s.name || s.email)}</option>`).join('')}</select></label><button type="button" class="btn secondary development-refresh">Refresh history</button></div>
+      <p class="development-summary" role="status">Loading history…</p>
+      <div class="development-controls"><button type="button" class="btn run development-play" disabled>Play</button><button type="button" class="btn secondary development-previous" aria-label="Previous change">←</button><button type="button" class="btn secondary development-next" aria-label="Next change">→</button><label>Speed<select class="development-speed"><option value="1">1×</option><option value="5">5×</option><option value="20">20×</option></select></label><label><input type="checkbox" class="development-skip" checked> Skip idle gaps over 5 seconds</label></div>
+      <label class="development-seek-label">Development timeline<input type="range" class="development-seek" min="1" max="1" value="1" step="1" disabled></label>
+      <div class="development-position" aria-live="polite"></div><pre class="assignment-file-source development-source" tabindex="0" aria-label="Recorded code"></pre>
+      <small>Only changed code is sampled, at one-second resolution. Idle time is preserved by timestamps. Sample times come from the student's device; server receipt times are also retained. Resynchronizations and file saves are labelled. This history supports review and is not proof of authorship.</small>`, 'development-dialog');
+    const select=m.root.querySelector('.development-student'), seek=m.root.querySelector('.development-seek'), play=m.root.querySelector('.development-play');
+    const summary=m.root.querySelector('.development-summary'), position=m.root.querySelector('.development-position'), source=m.root.querySelector('.development-source');
+    if(email) select.value=email;
+    const headers=bridge.managerHeaders(), auth=JSON.stringify(headers), cache=new Map(), abort=new AbortController();
+    let total=0, current=1, sequence=0, playing=false, timeout=null, selected='';
+    const valid=()=>m.root.isConnected && auth===JSON.stringify(bridge.managerHeaders());
+    const params=extra=>new URLSearchParams({assignmentId:a.id,studentEmail:selected,...extra});
+    const stop=()=>{playing=false; clearTimeout(timeout); play.textContent='Play';};
+    m.cleanups.push(()=>{stop(); sequence++; cache.clear(); abort.abort();});
+    async function page(seq) {
+      const pageStudent=selected;
+      for(const entry of cache.values()) if(entry.frames.some(f=>f.seq===seq)) return entry;
+      const start=Math.floor((seq-1)/120)*120+1;
+      let data=await json(`/api/assignments/development?${params({cursor:String(start)})}`, {headers,signal:abort.signal});
+      // Large replacements can shorten a page; fetch the requested position directly.
+      if(!data.frames.some(f=>f.seq===seq)) data=await json(`/api/assignments/development?${params({cursor:String(seq)})}`, {headers,signal:abort.signal});
+      if(!valid() || pageStudent!==selected) throw new Error('Review student changed');
+      cache.set(data.frames[0]?.seq || seq,data);
+      while(cache.size>3) cache.delete(cache.keys().next().value);
+      return data;
+    }
+    async function show(seq, schedule=false) {
+      const request=++sequence;
+      try {
+        const data=await page(seq);
+        if(!valid() || request!==sequence) return;
+        let content=data.base, frame;
+        for(const f of data.frames) {content=window.AssignmentDevelopment.apply(content,f); if(f.seq===seq) {frame=f;break;}}
+        if(!frame) return stop();
+        current=seq; seek.value=String(seq); source.textContent=content;
+        seek.setAttribute('aria-valuetext',`Change ${seq} of ${total}, ${date(frame.at)}`);
+        position.textContent=`Change ${seq} / ${total} · ${date(frame.at)} · ${frame.kind==='editor' ? 'Editor sample' : frame.kind==='resync' ? 'Resynchronized — earlier changes may be missing' : 'File save'} · Received ${date(frame.receivedAt)}`;
+        if(schedule && playing) {
+          if(seq>=total) return stop();
+          const nextData=await page(seq+1);
+          if(!valid() || request!==sequence || !playing) return;
+          const next=nextData.frames.find(f=>f.seq===seq+1);
+          let gap=Math.max(0,Date.parse(next.at)-Date.parse(frame.at));
+          if(m.root.querySelector('.development-skip').checked && gap>5000) gap=1000;
+          const speed=Number(m.root.querySelector('.development-speed').value);
+          timeout=setTimeout(()=>show(seq+1,true),Math.max(50,gap/speed));
+        }
+      } catch(error) {if(valid() && request===sequence) {stop(); position.textContent=error.message;}}
+    }
+    async function load() {
+      stop(); const request=++sequence; selected=select.value; cache.clear(); source.textContent=''; position.textContent=''; seek.disabled=true; play.disabled=true;
+      if(!selected) {summary.textContent='No students enrolled.'; return;}
+      summary.textContent='Loading history…';
+      try {
+        const result=await json(`/api/assignments/development?${params({index:'1'})}`,{headers,signal:abort.signal});
+        if(!valid() || request!==sequence) return;
+        total=result.total;
+        if(!total) {summary.textContent=result.gradingCompletedAt ? 'Grading complete · development timelines deleted.' : 'No code changes recorded yet. History appears after the student opens and edits the assignment file.'; return;}
+        const span=Math.max(0,Math.round((Date.parse(result.lastAt)-Date.parse(result.firstAt))/1000));
+        summary.textContent=`${result.path} · ${total.toLocaleString()} changes · First edit ${date(result.firstAt)} · Last edit ${date(result.lastAt)} · Elapsed ${Math.floor(span/3600)}h ${Math.floor(span%3600/60)}m ${span%60}s (includes idle time)`;
+        seek.max=String(total); seek.disabled=false; play.disabled=false; await show(1);
+      } catch(error) {if(valid() && request===sequence) summary.textContent=error.message;}
+    }
+    select.onchange=load; m.root.querySelector('.development-refresh').onclick=load;
+    play.onclick=()=>{if(playing) stop(); else {playing=true; play.textContent='Pause'; show(current>=total?1:current,true);}};
+    let seekTimer;
+    seek.oninput=()=>{stop(); clearTimeout(seekTimer); seekTimer=setTimeout(()=>show(Number(seek.value)),70);};
+    m.cleanups.push(()=>clearTimeout(seekTimer));
+    m.root.querySelector('.development-previous').onclick=()=>{stop(); if(total) show(Math.max(1,current-1));};
+    m.root.querySelector('.development-next').onclick=()=>{stop(); if(total) show(Math.min(total,current+1));};
+    m.root.querySelector('.development-speed').onchange=()=>{if(playing) {clearTimeout(timeout); show(current,true);}};
+    await load();
   }
   function editFeedback(a, email) {
     const sub = a.submissions.find(s => s.email === email);
