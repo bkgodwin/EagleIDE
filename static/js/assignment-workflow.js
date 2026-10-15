@@ -86,6 +86,7 @@
       <summary><span class="assignment-title-copy"><strong>${submitted(a) ? '<span class="assignment-submitted-check" aria-label="Submitted">✓</span> ' : ''}${esc(a.name)}</strong><span class="assignment-title-due">${a.dueAt ? `Due ${esc(date(a.dueAt))}` : 'No due date'}</span></span>${s ? `<span class="assignment-card-state">${s.withdrawn ? 'Un-submitted by teacher' : total != null ? `${esc(total)} / ${bridge.maxScore(a)}` : 'Submitted'}</span>` : ''}</summary>
       <div class="assignment-card-body">
         ${a.accommodationNote ? `<p class="assignment-accommodation-note">${esc(a.accommodationNote)}</p>` : ''}
+        ${a.fileControl ? `<p class="assignment-window-note">${a.controlledFilePath ? `Work in <strong>${esc(a.controlledFilePath)}</strong>. Only this file can be submitted. ${a.gradingCompletedAt ? 'Development recording is complete.' : 'Changed code is recorded for teacher review.'}` : esc(a.fileControlError || 'The assignment file will appear when this assignment is open.')}</p>${a.controlledFilePath ? `<button type="button" class="btn secondary assignment-open-controlled" data-path="${esc(a.controlledFilePath)}">Open assignment file</button>` : ''}` : ''}
         <div class="task assignment-markdown" data-assignment-markdown="${esc(id)}">${esc(a.task || '(No task description)')}</div>
         <div class="meta">Maximum score: ${bridge.maxScore(a)}${a.maxFileSubmissions ? ` · File attempts: ${s?.fileSubmissionCount || 0} / ${a.maxFileSubmissions}` : ''}</div>
         ${a.quiz?.questions?.length ? `<div class="meta">Questions: ${s?.quizAnsweredCount || 0} / ${a.quiz.questions.length} answered${a.quizSettings?.maxSubmissions ? ` · ${a.quizSettings.maxSubmissions} quiz attempt(s)` : ''}</div>` : ''}
@@ -101,6 +102,7 @@
   }
 
   function bindStudent(root) {
+    root.querySelectorAll('.assignment-open-controlled').forEach(button => button.onclick = () => bridge.openPath(button.dataset.path));
     root.querySelectorAll('.student-assignment-card').forEach(detail => detail.addEventListener('toggle', () => {if (detail.open) expanded.add(detail.dataset.assignmentId); else expanded.delete(detail.dataset.assignmentId);}));
     root.querySelectorAll('.submit-assignment-btn').forEach(button => button.onclick = () => submitDialog(button.dataset.id));
     root.querySelectorAll('.view-student-submission-btn').forEach(button => button.onclick = () => openFiles(button.dataset.id));
@@ -125,10 +127,10 @@
     const a = bridge.assignment(reference);
     if (!a || !bridge.studentHeaders()['X-User-Token']) return;
     if (a.allowFileSubmission === false || a.canSubmitFiles === false) return alert(a.submissionWindowMessage || 'Submissions are currently unavailable.');
-    const files = bridge.files().filter(f => !f.in_trash && !String(f.path).startsWith('Trash/'));
+    const files = a.fileControl ? (a.controlledFilePath ? [{path:a.controlledFilePath,size:0}] : []) : bridge.files().filter(f => !f.in_trash && !String(f.path).startsWith('Trash/'));
     const open = bridge.openFile();
     const selected = files.some(f => f.path === open?.path) ? open.path : files[0]?.path;
-    const multi = !!a.allowMultiFileSubmission;
+    const multi = !!a.allowMultiFileSubmission && !a.fileControl;
     const m = modal(`Submit: ${a.name}`, `<p>Choose ${multi ? 'the files' : 'one file'} to submit. Your currently open file is selected by default.</p>
       ${multi ? `<div class="assignment-file-choices">${files.map(f => `<label><input type="checkbox" name="workspaceFile" value="${esc(f.path)}" ${f.path === selected ? 'checked' : ''}><span>${esc(f.path)}</span><small>${size(f.size)}</small></label>`).join('') || '<p>No workspace files yet. You can upload attachments below.</p>'}</div><label class="assignment-upload-label">Add attachments of any type<input type="file" id="assignmentUploadFiles" multiple></label><small>Up to 20 files and 25 MB total. Uploaded attachments may total up to 15 MB.</small>` : `<label for="assignmentFileSelect">File to submit</label><select id="assignmentFileSelect">${files.map(f => `<option value="${esc(f.path)}" ${f.path === selected ? 'selected' : ''}>${esc(f.path)}</option>`).join('')}</select>`}
       <p class="assignment-dialog-status" role="status"></p><div class="modal-actions"><button type="button" class="btn run assignment-submit-selected">Submit ${multi ? 'files' : 'file'}</button></div>`, 'assignment-submit-dialog');
@@ -300,6 +302,13 @@
     return `<div class="assignment-teacher-file-list">${files.map(f => `<button type="button" class="btn secondary assignment-view-file" data-email="${esc(sub.email)}" data-file="${esc(f.id)}">${esc(f.name)}</button>`).join('') || '—'}</div>${sub.history?.length ? `<button type="button" class="btn secondary assignment-view-history" data-email="${esc(sub.email)}">History (${sub.history.length} previous)</button>` : ''}`;
   }
   function bindTeacher(root, a, owner) {
+    root.querySelectorAll('.assignment-development-open').forEach(button => button.onclick = () => openDevelopment(a, button.dataset.email || ''));
+    root.querySelector('.assignment-grading-complete')?.addEventListener('click', async event => {
+      if (!owner || !confirm('Mark grading complete? This closes submissions, permanently deletes all development timelines for this assignment, and stops recording. Scores, submissions, and student files are kept. Copy the assignment if you later need a new recorded attempt.')) return;
+      event.target.disabled = true;
+      try {await mutate('/api/assignments/grading-complete', {assignmentId:a.id}); await bridge.reloadAssignments();}
+      catch(error) {alert(error.message); event.target.disabled=false;}
+    });
     root.querySelector('.assignment-extend')?.addEventListener('click', () => extendStudent(a));
     root.querySelectorAll('.assignment-extend-student').forEach(button => button.onclick = () => extendStudent(a,button.dataset.email));
     root.querySelector('.assignment-grade-question')?.addEventListener('click', () => gradeByQuestion(a));
@@ -314,6 +323,177 @@
       try {await mutate('/api/assignments/unsubmit',{assignmentId:a.id,studentEmail:button.dataset.email,revisionId:sub?.revisionId}); await bridge.reloadAssignments();}
       catch(error) {alert(error.message); button.disabled = false;}
     });
+  }
+  function developmentControls() {
+    return `<p class="development-summary" role="status">Loading history…</p>
+      <div class="development-controls"><button type="button" class="btn run development-play" disabled>Play</button><button type="button" class="btn secondary development-previous" aria-label="Previous change" disabled>←</button><button type="button" class="btn secondary development-next" aria-label="Next change" disabled>→</button><label>Speed<select class="development-speed"><option value="1">1×</option><option value="5">5×</option><option value="20">20×</option></select></label><label><input type="checkbox" class="development-skip" checked> Skip idle gaps over 5 seconds</label><label><input type="checkbox" class="development-follow" checked> Follow edits</label></div>
+      <label class="development-seek-label">Development timeline<input type="range" class="development-seek" min="1" max="1" value="1" step="1" disabled></label>
+      <div class="development-position" aria-live="polite"></div>
+      <small class="development-note">Changed code is sampled at one-second resolution. Completion time is a hint from the first to last recorded edit, including idle time, not active typing time. Device sample and server receipt times are shown; history supports review and is not proof of authorship.</small>`;
+  }
+  function completionHint(first, last) {
+    const minutes = Math.max(0, (Date.parse(last) - Date.parse(first)) / 60000);
+    return Number.isFinite(minutes) ? `Completion time hint: ${minutes.toFixed(minutes < 1 ? 2 : 1)} min` : 'Completion time unavailable';
+  }
+  // Scroll only when the changed position leaves the visible source area. Used by
+  // the modal and textarea fallback; CodeMirror handles its own rendered metrics.
+  function followSource(source, content, offset) {
+    const style = getComputedStyle(source), before = content.slice(0, offset).split('\n');
+    const lineHeight = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) || 14) * 1.4;
+    const padding = parseFloat(style.paddingTop) || 0;
+    const top = padding + (before.length - 1) * lineHeight;
+    if (top < source.scrollTop + lineHeight) source.scrollTop = Math.max(0, top - lineHeight);
+    else if (top + lineHeight > source.scrollTop + source.clientHeight - lineHeight) source.scrollTop = Math.max(0, top + 2 * lineHeight - source.clientHeight);
+    // A canvas gives the monospace editor's real glyph width, including tabs.
+    const line = before[before.length - 1].replace(/\t/g, ' '.repeat(parseInt(style.tabSize, 10) || 4));
+    const context = document.createElement('canvas').getContext('2d');
+    if (context) {
+      context.font = style.font;
+      const left = (parseFloat(style.paddingLeft) || 0) + context.measureText(line).width;
+      if (left < source.scrollLeft + 16) source.scrollLeft = Math.max(0, left - 16);
+      else if (left > source.scrollLeft + source.clientWidth - 32) source.scrollLeft = Math.max(0, left + 32 - source.clientWidth);
+    }
+  }
+  function renderEditorFrame(content, frame, follow) {
+    clearEditorHighlights();
+    const offset = Math.min(content.length, frame.from + frame.insert.length), cm = window.eagleEditor;
+    if (cm) {
+      const scroll = cm.getScrollInfo();
+      const patch = window.AssignmentDevelopment.splice(cm.getValue(), content);
+      cm.operation(() => {
+        if (patch.delete || patch.insert) cm.replaceRange(patch.insert, cm.posFromIndex(patch.from), cm.posFromIndex(patch.from + patch.delete), 'developmentPlayback');
+        cm.clearHistory();
+      });
+      cm.scrollTo(scroll.left, scroll.top);
+      if (follow) cm.scrollIntoView(cm.posFromIndex(offset), 24);
+    } else {
+      const source = document.getElementById('editor'), top = source.scrollTop, left = source.scrollLeft;
+      source.value = content; source.scrollTop = top; source.scrollLeft = left;
+      if (follow) followSource(source, content, offset);
+    }
+  }
+  function mountDevelopmentPlayer(root, a, options) {
+    const select=root.querySelector('.development-student'), seek=root.querySelector('.development-seek'), play=root.querySelector('.development-play');
+    const summary=root.querySelector('.development-summary'), position=root.querySelector('.development-position');
+    const previous=root.querySelector('.development-previous'), nextButton=root.querySelector('.development-next');
+    const headers=bridge.managerHeaders(), auth=JSON.stringify(headers), cache=new Map(), abort=new AbortController();
+    let total=0, current=1, sequence=0, playing=false, timeout=null, selected='', disposed=false, seekTimer;
+    const valid=()=>!disposed && root.isConnected && auth===JSON.stringify(bridge.managerHeaders()) && (!options.valid || options.valid());
+    const params=extra=>new URLSearchParams({assignmentId:a.id,studentEmail:selected,...extra});
+    const stop=()=>{playing=false; clearTimeout(timeout); play.textContent='Play';};
+    const pause=()=>{stop(); sequence++; clearTimeout(seekTimer);};
+    async function page(seq) {
+      if(!valid()) throw new Error('Review context changed');
+      const pageStudent=selected;
+      for(const entry of cache.values()) if(entry.frames.some(f=>f.seq===seq)) return entry;
+      const start=Math.floor((seq-1)/120)*120+1;
+      let data=await json(`/api/assignments/development?${params({cursor:String(start)})}`, {headers,signal:abort.signal});
+      if(!valid() || pageStudent!==selected) throw new Error('Review student changed');
+      // Large replacements can shorten a page; fetch the requested position directly.
+      if(!data.frames.some(f=>f.seq===seq)) data=await json(`/api/assignments/development?${params({cursor:String(seq)})}`, {headers,signal:abort.signal});
+      if(!valid() || pageStudent!==selected) throw new Error('Review student changed');
+      cache.set(data.frames[0]?.seq || seq,data);
+      while(cache.size>3) cache.delete(cache.keys().next().value);
+      return data;
+    }
+    async function show(seq, schedule=false) {
+      if(!valid()) return stop();
+      const request=++sequence;
+      try {
+        const data=await page(seq);
+        if(!valid() || request!==sequence) return;
+        let content=data.base, frame;
+        for(const f of data.frames) {content=window.AssignmentDevelopment.apply(content,f); if(f.seq===seq) {frame=f;break;}}
+        if(!frame) return stop();
+        if(options.prepare) await options.prepare();
+        if(!valid() || request!==sequence) return;
+        options.render(content,frame,root.querySelector('.development-follow').checked);
+        current=seq; seek.value=String(seq);
+        seek.setAttribute('aria-valuetext',`Change ${seq} of ${total}, ${date(frame.at)}`);
+        position.textContent=`Change ${seq} / ${total} · ${date(frame.at)} · ${frame.kind==='editor' ? 'Editor sample' : frame.kind==='resync' ? 'Resynchronized — earlier changes may be missing' : 'File save'} · Received ${date(frame.receivedAt)}${options.restore ? ' · Read-only history' : ''}`;
+        if(schedule && playing) {
+          if(seq>=total) return stop();
+          const nextData=await page(seq+1);
+          if(!valid() || request!==sequence || !playing) return;
+          const next=nextData.frames.find(f=>f.seq===seq+1);
+          let gap=Math.max(0,Date.parse(next.at)-Date.parse(frame.at));
+          if(root.querySelector('.development-skip').checked && gap>5000) gap=1000;
+          const speed=Number(root.querySelector('.development-speed').value);
+          timeout=setTimeout(()=>show(seq+1,true),Math.max(50,gap/speed));
+        }
+      } catch(error) {if(valid() && request===sequence) {stop(); position.textContent=error.message;}}
+    }
+    function restore() {
+      pause();
+      if(valid()) options.restore?.();
+      current=total || 1; seek.value=String(current);
+      position.textContent='Showing submitted code. Play or seek to inspect read-only history.';
+    }
+    async function load() {
+      if(!valid()) return;
+      pause(); if(valid()) options.restore?.();
+      const request=++sequence; selected=select ? select.value : options.email; cache.clear(); position.textContent='';
+      seek.disabled=true; play.disabled=true; previous.disabled=true; nextButton.disabled=true; total=0;
+      if(!selected) {summary.textContent='No students enrolled.'; return;}
+      summary.textContent='Loading history…'; options.clear?.();
+      try {
+        const result=await json(`/api/assignments/development?${params({index:'1'})}`,{headers,signal:abort.signal});
+        if(!valid() || request!==sequence) return;
+        total=result.total;
+        if(!total) {summary.textContent=result.gradingCompletedAt ? 'Grading complete · development timelines deleted.' : 'No code changes recorded yet. History appears after the student opens and edits the assignment file.'; return;}
+        summary.textContent=`${result.path} · ${total.toLocaleString()} changes · ${completionHint(result.firstAt,result.lastAt)} · First edit ${date(result.firstAt)} · Last edit ${date(result.lastAt)}`;
+        seek.max=String(total); seek.disabled=false; play.disabled=false; previous.disabled=false; nextButton.disabled=false;
+        if(options.restore) restore(); else await show(1);
+      } catch(error) {if(valid() && request===sequence) summary.textContent=error.message;}
+    }
+    if(select) select.onchange=load;
+    root.querySelector('.development-refresh').onclick=load;
+    play.onclick=()=>{if(playing) pause(); else if(total) {playing=true; play.textContent='Pause'; show(current>=total?1:current,true);}};
+    seek.oninput=()=>{pause(); seekTimer=setTimeout(()=>show(Number(seek.value)),70);};
+    previous.onclick=()=>{pause(); if(total) return show(Math.max(1,current-1));};
+    nextButton.onclick=()=>{pause(); if(total) return show(Math.min(total,current+1));};
+    root.querySelector('.development-speed').onchange=()=>{if(playing) {clearTimeout(timeout); show(current,true);}};
+    root.querySelector('.development-submitted')?.addEventListener('click',restore);
+    return {ready:load(), pause, dispose(){pause(); disposed=true; cache.clear(); abort.abort();}};
+  }
+  let editorPlayer=null;
+  function disposeEditorDevelopment() {
+    if(!editorPlayer) return;
+    if(editorPlayer.valid()) editorPlayer.restore();
+    editorPlayer.player.dispose(); editorPlayer=null;
+    const root=document.getElementById('submissionDevelopmentPanel'); root.hidden=true; root.replaceChildren();
+    document.getElementById('editorContentStack').classList.remove('has-development-player');
+    window.eagleEditor?.refresh();
+  }
+  function syncEditorDevelopment(file) {
+    if(editorPlayer && !editorPlayer.valid(file)) disposeEditorDevelopment();
+  }
+  function pauseEditorDevelopment() {editorPlayer?.player.pause();}
+  function attachEditorDevelopment(a, email, adapter) {
+    disposeEditorDevelopment();
+    if(!a.fileControl) return;
+    const root=document.getElementById('submissionDevelopmentPanel');
+    root.innerHTML=`<div class="development-toolbar"><strong>Development history</strong><button type="button" class="btn secondary development-refresh">Refresh history</button><button type="button" class="btn secondary development-submitted">Show submitted code</button></div>${developmentControls()}`;
+    root.hidden=false;
+    document.getElementById('editorContentStack').classList.add('has-development-player');
+    const player=mountDevelopmentPlayer(root,a,{...adapter,email});
+    editorPlayer={player,valid:adapter.valid,restore:adapter.restore}; window.eagleEditor?.refresh();
+    return player.ready;
+  }
+  async function openDevelopment(a, email = '') {
+    const roster = [...bridge.roster(a.targetClassId)];
+    for (const s of a.submissions || []) if (!roster.some(r => r.email === s.email)) roster.push(s);
+    roster.sort((x,y) => String(x.last_name || '').localeCompare(String(y.last_name || '')) || String(x.first_name || x.name || x.email).localeCompare(String(y.first_name || y.name || y.email)));
+    const m = modal(`${a.name} · Development history`, `<div class="development-toolbar"><label>Student<select class="development-student">${roster.map(s => `<option value="${esc(s.email)}">${esc(s.name || s.email)}</option>`).join('')}</select></label><button type="button" class="btn secondary development-refresh">Refresh history</button></div>
+      ${developmentControls()}<pre class="assignment-file-source development-source" tabindex="0" aria-label="Recorded code"></pre>`, 'development-dialog');
+    const select=m.root.querySelector('.development-student'), source=m.root.querySelector('.development-source');
+    if(email) select.value=email;
+    const player=mountDevelopmentPlayer(m.root,a,{clear(){source.textContent='';},render(content,frame,follow){
+      const top=source.scrollTop, left=source.scrollLeft;
+      source.textContent=content; source.scrollTop=top; source.scrollLeft=left;
+      if(follow) followSource(source,content,Math.min(content.length,frame.from+frame.insert.length));
+    }});
+    m.cleanups.push(player.dispose); await player.ready;
   }
   function editFeedback(a, email) {
     const sub = a.submissions.find(s => s.email === email);
@@ -356,5 +536,6 @@
     });
   }
   window.AssignmentWorkflow = {configure(value) {bridge = value; try {highlights=localStorage.getItem('eagleide-paste-highlights') !== '0';} catch {} if(document.body) setHighlights(highlights); window.eagleEditor?.on?.('beforeChange', (_cm,change) => {if(change.origin === 'setValue') clearEditorHighlights();});}, teacherToolbar, highlightSource, highlightEditor, card, bindStudent, submitDialog, openFiles, teacherFiles, bindTeacher, present, windowForm, bindClass, accommodationLabel,
+    attachEditorDevelopment, syncEditorDevelopment, disposeEditorDevelopment, pauseEditorDevelopment, renderEditorFrame,
     studentTab(email) {if (email !== account) {account=email; tab='current'; expanded.clear();} return tab;}};
 })();

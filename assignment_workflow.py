@@ -117,6 +117,8 @@ def student_state(eagle, assignment, email, *, now=None):
     if reopened:
         due, expired, past, deadline_allowed = until, False, False, True
         note = "Make-up / retest deadline"
+    if assignment.get("fileControl") and assignment.get("gradingCompletedAt"):
+        past, deadline_allowed = True, False
     window_allowed, next_change = True, ""
     message = ""
     if window["enabled"] and not assignment.get("allowSubmissionAnyTime", False) and not reopened:
@@ -261,6 +263,13 @@ def _store_bundle(eagle, assignment, user, data, uploads=()):
     if not isinstance(paths, list) or any(not isinstance(p, str) for p in paths) or len(set(paths)) != len(paths):
         raise ValueError("Select distinct workspace files")
     uploads = list(uploads)
+    if assignment.get("fileControl"):
+        import assignment_development as development
+        controlled = development.binding(eagle, assignment["id"], user["email"])
+        expected = eagle._validate_workspace_path(eagle._get_user_dir(user["email"]), controlled["path"]) if controlled else None
+        selected = eagle._validate_workspace_path(eagle._get_user_dir(user["email"]), paths[0]) if len(paths) == 1 else None
+        if uploads or not expected or selected != expected:
+            raise ValueError("Submit only the dedicated assignment file from Home. Attachments and other files are not accepted.")
     count = len(paths) + len(uploads)
     if not 1 <= count <= MAX_FILES:
         raise ValueError(f"Select from 1 to {MAX_FILES} files")
@@ -510,6 +519,8 @@ def register(app, eagle):
             assignment = eagle._load_assignment(data.get("assignmentId") or "")
             if not assignment or not eagle._assignment_access(actor, assignment, owner_only=True):
                 return jsonify(ok=False, error="Only the class owner may extend assignments"), 403
+            if assignment.get("fileControl") and assignment.get("gradingCompletedAt"):
+                return jsonify(ok=False, error="Grading is complete. Copy this assignment to start a new recorded attempt."), 409
             cls = eagle._find_class_by_id(assignment.get("targetClassId")) or {}
             if email not in cls.get("students", []):
                 return jsonify(ok=False, error="Student is not in this class"), 404

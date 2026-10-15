@@ -918,6 +918,8 @@ def _install_audit_hook(
     abspath = os.path.abspath
     commonpath = os.path.commonpath
     exists = os.path.exists
+    normcase = os.path.normcase
+    protected_files = frozenset(normcase(realpath(abspath(path))) for path in json.loads(os.environ.get("EAGLE_CONTROLLED_FILES", "[]")))
     module_root_allowed = is_student_module_root
     trusted_read_roots = {
         realpath(abspath(sys.base_prefix)),
@@ -943,6 +945,8 @@ def _install_audit_hook(
     def _assert_workspace_path(raw: Any) -> None:
         normalized = _normalized(raw)
         policy.assert_allowed(normalized, raw)
+        if normcase(normalized) in protected_files:
+            raise PermissionError("Edit this protected assignment file in the IDE; programs cannot replace or delete it")
 
     def _assert_read_path(raw: Any) -> None:
         normalized = _normalized(raw)
