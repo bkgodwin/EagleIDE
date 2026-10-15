@@ -190,46 +190,28 @@
       border-radius: 16px;
     }
     .teacher-dash-minimized-bar {
-      position: fixed;
-      z-index: 1200;
-      top: 8px;
-      right: 12px;
-      width: min(560px, calc(100vw - 390px));
+      flex: 0 0 auto;
+      min-width: 0;
       min-height: 46px;
       display: flex;
       align-items: center;
-      justify-content: space-between;
       gap: 12px;
-      padding: 9px 16px;
-      border: 1px solid var(--columbia-blue);
-      border-radius: 12px;
+      padding: 6px 12px;
+      border-bottom: 1px solid var(--theme-border-mid);
       background: var(--theme-panel-hdr);
       color: var(--theme-text);
-      box-shadow: 0 10px 30px rgba(0,0,0,.35);
-      cursor: pointer;
+      font-size: 13px;
     }
     .teacher-dash-minimized-bar[hidden] { display:none !important; }
-    .teacher-dash-minimized-copy { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .teacher-dash-minimized-bar strong { color:var(--columbia-blue); }
+    .teacher-dash-minimized-copy { flex:1; min-width:0; overflow-wrap:anywhere; color:var(--theme-text); }
+    .teacher-dash-minimized-bar .btn { flex-shrink:0; min-height:34px; padding:6px 10px; font-size:12px; }
     .teacher-dash-minimized-actions { display:flex; flex:0 0 auto; gap:6px; }
-    .teacher-dash-minimized-actions button {
-      width:34px;
-      min-height:32px;
-      border:1px solid var(--theme-border-mid);
-      border-radius:8px;
-      background:var(--theme-btn);
-      color:var(--theme-text);
-      cursor:pointer;
-      font:inherit;
-      font-weight:800;
-    }
-    .teacher-dash-minimized-actions button:hover:not(:disabled) { background:var(--theme-btn-hover); }
     .teacher-dash-minimized-actions button:disabled { opacity:.42; cursor:not-allowed; }
-    .teacher-dash-modal.is-minimized { pointer-events:none; background:transparent; backdrop-filter:none; }
-    .teacher-dash-modal.is-minimized .modal-content { display:none; }
-    .teacher-dash-modal.is-minimized .teacher-dash-minimized-bar { pointer-events:auto; }
-    @media (max-width: 760px) {
-      .teacher-dash-minimized-bar { left:12px; right:12px; width:auto; }
+    .teacher-dash-modal.is-minimized { display:none !important; }
+    @media (max-width: 600px) {
+      .teacher-dash-minimized-bar { flex-wrap:wrap; gap:6px 10px; padding:6px 8px; }
+      .teacher-dash-minimized-copy { order:-1; flex-basis:100%; }
+      .teacher-dash-minimized-actions { margin-left:auto; }
     }
     .teacher-dash-mobile-close { display: none; }
     .teacher-dash-sidebar {
