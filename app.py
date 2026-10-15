@@ -4761,6 +4761,49 @@ def teacher_notebook_prompt_responses():
     return jsonify(ok=True, prompt=prompt, responses=sorted(responses, key=_student_sort_key), missing=sorted(missing, key=_student_sort_key), canManage=not teacher.get("is_coteacher"))
 
 
+@app.get("/api/teacher/notebook-prompts/csv")
+def download_notebook_completion_csv():
+    """Export a class roster's saved prompt responses as completion grades."""
+    teacher = _require_teacher(request, allow_coteacher=True)
+    if not teacher:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    class_id = (request.args.get("classId") or "").strip()
+    prompt_id = (request.args.get("promptId") or "").strip()
+    if not class_id or not prompt_id:
+        return jsonify(ok=False, error="classId and promptId are required"), 400
+    cls = _class_dashboard_access(teacher["email"], class_id)
+    if not cls:
+        return jsonify(ok=False, error="Class not found"), 404
+    score_format = str(request.args.get("format") or "percent").strip().lower()
+    if score_format not in {"points", "percent"}:
+        return jsonify(ok=False, error="format must be points or percent"), 400
+
+    import io
+    from flask import Response
+
+    users = {str(u.get("email") or "").strip().lower(): u for u in _load_users().get("users", [])}
+    roster = {str(email or "").strip().lower() for email in cls.get("students", [])}
+    roster.discard("")
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Student Number", "Score"])
+    with _notebooks_lock:
+        prompt = next((p for p in _load_notebook_prompts(class_id) if p.get("id") == prompt_id), None)
+        if not prompt:
+            return jsonify(ok=False, error="Prompt not found"), 404
+        for email in sorted(roster, key=lambda e: _student_sort_key(users.get(e, {"email": e}))):
+            # Read without creating notebooks, changing legacy scores, or starting AI jobs.
+            notebook = _read_json_file(_notebook_path(email, class_id), {})
+            block = _notebook_prompt_response(notebook, prompt_id)
+            score = 100 if _notebook_response_is_present(block) else 0
+            writer.writerow([(users.get(email) or {}).get("student_id", ""),
+                             f"{score}%" if score_format == "percent" else score])
+    filename = _sanitize_storage_component(prompt.get("title"), fallback="notebook")
+    return Response(output.getvalue(), mimetype="text/csv", headers={
+        "Content-Disposition": f"attachment;filename={filename}_completion_scores.csv",
+    })
+
+
 @app.post("/api/teacher/notebook-prompts/lock")
 def teacher_lock_notebook_prompt():
     teacher = _require_teacher(request)

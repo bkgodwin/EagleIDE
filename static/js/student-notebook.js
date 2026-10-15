@@ -27,6 +27,8 @@
   let runningCodeBlock = null;
   let waitingForNotebookInput = false;
   let selectedTeacherPromptId = null;
+  let teacherPromptListSequence = 0;
+  let teacherResponseSequence = 0;
   const boundCodeBlocks = new WeakSet();
   let colorPaletteOpen = false;
   let teacherNotebookSkills = [];
@@ -1815,28 +1817,35 @@
     if (!sel) return null;
     const c = ctx();
     const classes = c.teacherClasses || [];
-    const current = c.currentTeacherClassId || classes[0]?.id || '';
+    const current = classes.some(cls => cls.id === sel.value) ? sel.value : c.currentTeacherClassId || classes[0]?.id || '';
     sel.innerHTML = classes.map(cls => `<option value="${escapeHtml(cls.id)}" ${cls.id === current ? 'selected' : ''}>${escapeHtml(cls.name)} (${escapeHtml(cls.join_code || '')})</option>`).join('');
     return sel.value || current;
   }
 
   async function loadTeacherNotebookPrompts() {
     if (!isTeacher()) return;
+    const sequence = ++teacherPromptListSequence;
+    ++teacherResponseSequence;
+    const token = ctx().TEACHER_TOKEN;
     const classId = populateTeacherNotebookClassSelect();
     const list = document.getElementById('teacherNotebookPromptList');
     const detail = document.getElementById('teacherNotebookResponseList');
-    if (!classId || !list) return;
-    list.innerHTML = '<div style="color:#888;">Loading prompts...</div>';
+    if (!list) return;
+    list.innerHTML = classId ? '<div style="color:#888;">Loading prompts...</div>' : '<div style="color:#888;">Select a class to view notebook assignments.</div>';
     if (detail) detail.innerHTML = '<p style="color:#888;margin:0;">Choose a notebook prompt to review student responses.</p>';
+    const title = document.getElementById('teacherNotebookResponseTitle');
+    if (title) title.textContent = 'Select a prompt';
+    if (!classId) return;
     try {
       const res = await fetch(`/api/teacher/notebook-prompts?classId=${encodeURIComponent(classId)}`, { headers: teacherHeaders() });
       const data = await res.json().catch(() => ({}));
+      if (sequence !== teacherPromptListSequence || token !== ctx().TEACHER_TOKEN) return;
       if (!data?.ok) throw new Error(data?.error || 'Load failed');
       const prompts = data.prompts || [];
       list.innerHTML = prompts.length ? prompts.map(prompt => `
         <button class="teacher-notebook-prompt-row${prompt.id === selectedTeacherPromptId ? ' active' : ''}" data-prompt-id="${escapeHtml(prompt.id)}">
           <span class="teacher-notebook-prompt-title"><strong>${escapeHtml(prompt.title || prompt.prompt || 'Notebook Assignment')}</strong>${skillTagsHtml(prompt.skillTags)}</span>
-          <div class="meta">${escapeHtml(formatLocalDateTime(prompt.createdAt) || prompt.createdAt || '')} · ${prompt.responseType === 'code' ? 'Code' : 'Written'} · Practice · no scores · ${prompt.responseCount || 0}/${prompt.studentCount || 0} responded${prompt.locked ? ' · Locked' : ''}</div>
+          <div class="meta">${escapeHtml(formatLocalDateTime(prompt.createdAt) || prompt.createdAt || '')} · ${prompt.responseType === 'code' ? 'Code' : 'Written'} · ${prompt.responseCount || 0}/${prompt.studentCount || 0} completed${prompt.locked ? ' · Locked' : ''}</div>
         </button>
       `).join('') : '<div style="color:#888;">No notebook prompts have been sent yet.</div>';
       list.querySelectorAll('[data-prompt-id]').forEach(btn => {
@@ -1846,7 +1855,37 @@
         await loadTeacherPromptResponses(classId, selectedTeacherPromptId);
       }
     } catch (err) {
+      if (sequence !== teacherPromptListSequence || token !== ctx().TEACHER_TOKEN) return;
       list.innerHTML = `<div style="color:#ef5350;">${escapeHtml(err.message || 'Could not load prompts.')}</div>`;
+    }
+  }
+
+  async function exportTeacherNotebookScores(classId, promptId, title, format, button, status) {
+    const token = ctx().TEACHER_TOKEN;
+    button.disabled = true;
+    status.textContent = 'Preparing CSV…';
+    try {
+      const query = new URLSearchParams({ classId, promptId, format });
+      const response = await fetch(`/api/teacher/notebook-prompts/csv?${query}`, { headers: teacherHeaders() });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Could not export completion scores.');
+      }
+      const blob = await response.blob();
+      if (token !== ctx().TEACHER_TOKEN || !button.isConnected) return;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${String(title || 'notebook').replace(/[^a-zA-Z0-9 _-]/g, '_')}_completion_scores.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      status.textContent = 'CSV downloaded.';
+    } catch (err) {
+      if (token === ctx().TEACHER_TOKEN && button.isConnected) status.textContent = err.message || 'Export failed. Try again.';
+    } finally {
+      button.disabled = false;
     }
   }
 
@@ -1891,6 +1930,8 @@
   }
 
   async function loadTeacherPromptResponses(classId, promptId) {
+    const sequence = ++teacherResponseSequence;
+    const token = ctx().TEACHER_TOKEN;
     selectedTeacherPromptId = promptId;
     document.querySelectorAll('.teacher-notebook-prompt-row').forEach(row => row.classList.toggle('active', row.dataset.promptId === promptId));
     const title = document.getElementById('teacherNotebookResponseTitle');
@@ -1900,6 +1941,7 @@
     try {
       const res = await fetch(`/api/teacher/notebook-prompts/responses?classId=${encodeURIComponent(classId)}&promptId=${encodeURIComponent(promptId)}`, { headers: teacherHeaders() });
       const data = await res.json().catch(() => ({}));
+      if (sequence !== teacherResponseSequence || token !== ctx().TEACHER_TOKEN) return;
       if (!data?.ok) throw new Error(data?.error || 'Load failed');
       const prompt = data.prompt || {};
       const promptIsGraded = true; // Teacher comments are available for all practice.
@@ -1914,6 +1956,7 @@
               <div class="meta">${escapeHtml(row.studentEmail || '')}${row.updatedAt ? ` · Submitted ${escapeHtml(formatLocalDateTime(row.updatedAt))}` : ''}</div>
             </div>
             <div class="teacher-notebook-score-actions">
+              <span class="teacher-notebook-scored-badge">Completed · 100%</span>
               <span class="teacher-notebook-scored-badge" ${scored ? '' : 'hidden'}>Feedback</span>
               ${promptIsGraded ? `<button type="button" class="btn secondary" data-grade-toggle>${scored ? 'Edit feedback' : 'Add feedback'}</button>` : '<span class="teacher-notebook-practice-badge">Practice</span>'}
             </div>
@@ -1939,18 +1982,36 @@
         <div class="teacher-notebook-assignment-actions">
           <div>
             <span class="teacher-notebook-prompt-title"><strong>${escapeHtml(prompt.title || 'Notebook Assignment')}</strong>${skillTagsHtml(prompt.skillTags)}</span>
-            <div class="meta">${escapeHtml(formatLocalDateTime(prompt.createdAt) || prompt.createdAt || '')} · ${prompt.responseType === 'code' ? 'Code response' : 'Written response'} · Practice · no scores</div>
+            <div class="meta">${escapeHtml(formatLocalDateTime(prompt.createdAt) || prompt.createdAt || '')} · ${prompt.responseType === 'code' ? 'Code response' : 'Written response'}</div>
           </div>
           <button type="button" class="btn secondary" id="teacherNotebookLockPromptBtn">${prompt.locked ? 'Unlock Submissions' : 'Lock Submissions'}</button>
           <button type="button" class="btn danger" id="teacherNotebookDeletePromptBtn">Delete Assignment</button>
         </div>
+        <div class="teacher-notebook-completion-export">
+          <div>
+            <strong>Completion grades</strong>
+            <p>Saved response: 100%. No response: 0%. AI feedback does not affect completion.</p>
+            <p>CSV uses account student numbers; missing numbers stay blank.</p>
+          </div>
+          <div class="teacher-notebook-export-controls">
+            <label for="teacherNotebookExportFormat">Grade export</label>
+            <select id="teacherNotebookExportFormat"><option value="percent">Percent</option><option value="points">Score number (0–100)</option></select>
+            <button type="button" class="btn secondary" id="teacherNotebookExportScoresBtn">Download CSV</button>
+          </div>
+          <span id="teacherNotebookExportStatus" role="status" aria-live="polite"></span>
+        </div>
         ${responsesHtml || '<div style="color:#888;">No responses yet.</div>'}
         <div class="teacher-notebook-missing">
-          <strong>Not responded (${missing.length})</strong>
+          <strong>Incomplete · 0% (${missing.length})</strong>
           <div>${missing.map(s => escapeHtml(s.studentName || s.studentEmail)).join(', ') || 'Everyone has responded.'}</div>
         </div>
       `;
       if (data.canManage === false) list.querySelectorAll('#teacherNotebookLockPromptBtn, #teacherNotebookDeletePromptBtn').forEach(node=>node.hidden=true);
+      list.querySelector('#teacherNotebookExportScoresBtn')?.addEventListener('click', event => {
+        exportTeacherNotebookScores(classId, promptId, prompt.title,
+          list.querySelector('#teacherNotebookExportFormat').value, event.currentTarget,
+          list.querySelector('#teacherNotebookExportStatus'));
+      });
       highlightCodeBlocks(list);
       document.getElementById('teacherNotebookLockPromptBtn')?.addEventListener('click', () => {
         setTeacherPromptLocked(classId, promptId, !prompt.locked).catch(err => alert(err.message || 'Could not update lock.'));
@@ -1978,6 +2039,7 @@
         });
       });
     } catch (err) {
+      if (sequence !== teacherResponseSequence || token !== ctx().TEACHER_TOKEN) return;
       list.innerHTML = `<div style="color:#ef5350;">${escapeHtml(err.message || 'Could not load responses.')}</div>`;
     }
   }
