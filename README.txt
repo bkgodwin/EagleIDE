@@ -1244,6 +1244,56 @@ The IDE reference pane shows today's agenda for the active class. Wiki links ope
 in that pane, and Wiki contents stays at the top. Collapse the agenda for more
 reading space. The student's teacher-stream pane uses a lighter background.
 
+Clipboard controls and recorded assignment files
+-----------------------------------------------
+Teacher Dashboard > Classes has an "Editor copy and paste" setting: Allow,
+Always block, or Block while an outstanding assignment accepts submissions.
+Outstanding is personal to each student: required files or questions are still
+missing, and their submission window is open. Restrictions apply across enrolled
+class switches and cover copy, cut, paste, and text dropping in code editors.
+Teachers and administrators are exempt. These browser controls discourage casual
+copying; they cannot establish independent authorship.
+
+Enable "File control" when creating a single-file assignment and choose Python,
+JavaScript, HTML, or CSS. When the released assignment next loads for a student,
+EagleIDE creates its title-based file in Home. Existing work is never overwritten;
+collisions receive a numbered suffix. The option/language cannot change later.
+The student assignment card opens this file, and it is the only accepted file for
+submission. Direct submission attachments and uploads over a protected file are
+rejected. Programs cannot replace/delete protected files through Python's reviewed
+filesystem APIs. Students can still edit normally in the IDE.
+
+The file cannot be moved, renamed, or deleted until that student's effective
+deadline, including accommodations and make-up time. Reopened work remains
+protected while its deadline is open. Without a deadline, protection ends when
+grading is marked complete. Students can freely manage the file after release
+from protection; move it back to its assigned Home path before any later retest.
+
+Changed code is sampled at one-second resolution, uploaded in ten-second batches,
+and flushed during saves and page suspension. Idle time creates no snapshots.
+Compressed edits and occasional checkpoints keep recordings small. A bounded
+device journal retries failed uploads; keep the page open if its backup warning
+appears. Each file is limited to 2 MB, and each student/assignment recording to
+100,000 changes or 16 MB. A 512 MB server recording budget prevents unbounded
+growth. Recording failures show a warning but never block ordinary code saves.
+Very large edits are captured by the next ordinary file save rather than sent
+repeatedly as oversized recording batches.
+
+Teacher Dashboard > Assignments > Watch development history provides a student
+selector, Play/Pause, previous/next change, a seek slider, 1x/5x/20x speed, and an
+option to skip idle gaps longer than five seconds. First/last edit times and
+elapsed time include idle periods; they are not a claim of active working time.
+Both device sample and server receipt timestamps are retained. Resynchronization
+and direct file saves are labelled because browser observations can have gaps.
+CoTeachers may review history. Students cannot access the recording database.
+
+The class owner can choose "Mark grading complete & delete timelines". This
+closes submissions, stops recording, releases the files, and permanently removes
+all development timelines for that assignment. Scores, feedback, immutable
+submission versions, and student files are kept. This cannot restart an old
+recording; copy the assignment to create a fresh recorded attempt. If cleanup
+fails, the same action can safely be retried.
+
 For support or issues: https://github.com/bkgodwin/EagleIDE
 
 Last Updated: 2026-10-15

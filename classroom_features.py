@@ -46,6 +46,8 @@ def merge_class_settings(settings: Optional[dict]) -> dict[str, Any]:
         else:
             out[key] = bool(out[key])
     out["home_background_asset"] = str(out.get("home_background_asset") or "")
+    if not isinstance(out.get("editor_clipboard"), str) or out.get("editor_clipboard") not in {"allow", "block", "outstanding"}:
+        out["editor_clipboard"] = "allow"
     return out
 
 
