@@ -180,6 +180,8 @@ All Ollama generation goes through the shared in-memory AI dispatcher in `app.py
 
 `static/css/main.css` is the only local stylesheet entry point. It imports tokens, foundations, feature styles, and finally `legacy.css`. Prefer the closest feature file for new rules and preserve the import order. Check desktop, tablet, mobile, light, and dark appearances after layout or token changes.
 
+The minimized teacher submission dashboard uses a normal-flow review row below the topbar, outside the dashboard modal. Keep its return button and previous/next controls clear of the toolbar, and hide the row when leaving submission review.
+
 ### Execution Flows
 
 Notebook prompts are formative practice, without numeric scores or mastery
