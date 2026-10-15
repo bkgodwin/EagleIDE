@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../static/js/teacher-assignments.js'), 'utf8');
 
-function harness() {
+function harness(fetch) {
   const ready = [];
   const input = value => ({ value, listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; } });
   const cards = [
@@ -15,13 +15,14 @@ function harness() {
   ];
   const list = { querySelectorAll: () => cards, append(card) { const index = cards.indexOf(card); cards.splice(index,1); cards.push(card); } };
   const nodes = {
-    assignmentList: list, assignmentLibrarySearch: input(''), assignmentLibraryFilter: input('all'), assignmentLibrarySort: input('oldest'),
+    assignmentList: list, assignmentLibrarySearch: input(''), assignmentLibraryFilter: input('all'), assignmentLibrarySort: input('newest'),
     assignmentLibraryCount: {}, assignmentLibraryEmpty: {}, assignmentWorkspace: { innerHTML: '' },
+    assignmentFolderStatus: {}, assignmentNewFolderBtn: {hidden:true,addEventListener() {}},
   };
   const window = {};
   // Expose the private draft helpers only inside this VM, using the same DOM-facing code.
-  const instrumented = source.replace('window.TeacherAssignments = { prepare,', 'window.TeacherAssignments = { restoreDraft, fingerprint, prepare,');
-  vm.runInNewContext(instrumented, { window, Event: class { constructor(type) { this.type=type; } }, document: {
+  const instrumented = source.replace('window.TeacherAssignments = { prepare,', 'window.TeacherAssignments = { restoreDraft, fingerprint, mutateFolder, prepare,');
+  vm.runInNewContext(instrumented, { window, fetch, Event: class { constructor(type) { this.type=type; } }, document: {
     getElementById: id => nodes[id], addEventListener(_type, fn) { ready.push(fn); }, createElement: () => ({}),
   } });
   ready.forEach(fn=>fn());
@@ -53,6 +54,34 @@ test('library sorting is reversible and retains the original chronological order
   assert.deepEqual(cards.map(c=>c.dataset.name),['Functions & return values','Loops','Arrays']);
   nodes.assignmentLibrarySort.value='newest'; refresh();
   assert.deepEqual(cards.map(c=>c.dataset.name),['Arrays','Loops','Functions & return values']);
+});
+
+test('the library defaults to newest first and a class change restores that default', () => {
+  const {api,nodes,cards,refresh}=harness(); refresh();
+  assert.deepEqual(cards.map(c=>c.dataset.name),['Arrays','Loops','Functions & return values']);
+  api.prepare('teacher','class-one'); nodes.assignmentLibrarySort.value='oldest';
+  api.prepare('teacher','class-two'); assert.equal(nodes.assignmentLibrarySort.value,'newest');
+});
+
+test('late folder responses cannot replace another class and mutations remain in the current class', async () => {
+  const requests=[];
+  const {api,nodes}=harness((url,options)=>new Promise(resolve=>requests.push({url,options,resolve})));
+  const headers=JSON.stringify({'X-Teacher-Token':'test-teacher'});
+  api.prepare(headers,'class-one'); api.prepare(headers,'class-two');
+  requests[1].resolve({ok:true,json:async()=>({ok:true,folders:[],assignments:{},canOrganize:true})});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(nodes.assignmentNewFolderBtn.hidden,false);
+  requests[0].resolve({ok:true,json:async()=>({ok:true,folders:[],assignments:{},canOrganize:false})});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(nodes.assignmentNewFolderBtn.hidden,false);
+  const mutation=api.mutateFolder({action:'create',name:'Unit 2'});
+  assert.equal(JSON.parse(requests[2].options.body).classId,'class-two');
+  assert.equal(nodes.assignmentNewFolderBtn.disabled,true);
+  requests[2].resolve({ok:false,status:503,json:async()=>({ok:false,error:'Could not save folders'})});
+  await mutation;
+  assert.equal(nodes.assignmentNewFolderBtn.disabled,false);
+  assert.equal(nodes.assignmentFolderStatus.textContent,'Could not save folders');
+  api.setScope('another-teacher'); assert.equal(nodes.assignmentNewFolderBtn.hidden,true);
 });
 
 test('changing classes resets library filters; changing accounts clears the private workspace', () => {

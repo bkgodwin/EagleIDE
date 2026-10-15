@@ -45,6 +45,7 @@ from classroom_features import merge_class_settings, register as register_classr
 import assignment_workflow
 import file_provenance
 import assignment_development
+import assignment_organization
 from lesson_plan_features import register as register_lesson_plan_features
 from network_features import register as register_network_features
 from sandbox_containment import landlock_status
@@ -5085,6 +5086,11 @@ def teacher_remove_student():
 
 @app.post("/api/teacher/classes/delete")
 def teacher_delete_class():
+    with _assignment_lock:
+        return _teacher_delete_class_locked()
+
+
+def _teacher_delete_class_locked():
     teacher = _require_teacher(request)
     if not teacher:
         return jsonify(ok=False, error="Teacher token required"), 401
@@ -5103,6 +5109,16 @@ def teacher_delete_class():
         remaining_classes.append(cls)
     if not target_class:
         return jsonify(ok=False, error="Class not found"), 404
+    # Class deletion is the final retention boundary for its assignment copies.
+    # Keep metadata until each assignment's recordings and submitted files are removed.
+    with _assignment_lock:
+        try:
+            for assignment in _list_assignments():
+                if assignment.get("targetClassId") == class_id:
+                    _delete_assignment_storage_locked(assignment, forget_folder=False)
+            assignment_organization.delete_class(sys.modules[__name__], class_id)
+        except (OSError, ValueError, sqlite3.Error):
+            return jsonify(ok=False, error="Assignment cleanup failed. The class was not deleted; retry deletion."), 503
     class_background_asset = str((target_class.get("settings") or {}).get("home_background_asset") or "")
     student_emails = [str(email).strip().lower() for email in target_class.get("students", []) if str(email).strip()]
     users_data = _load_users()
@@ -9755,6 +9771,11 @@ def get_past_assignments():
 
 @app.post("/api/assignments/create")
 def create_assignment():
+    with _assignment_lock:
+        return _create_assignment_locked()
+
+
+def _create_assignment_locked():
     """Create a new assignment (teacher only)."""
     actor = _assignment_actor(request)
     if not actor:
@@ -9889,8 +9910,8 @@ def _update_assignment_locked():
         return jsonify(ok=False, error=str(exc)), 400
     if assignment.get("fileControl") and "classId" in data and data["classId"] != assignment.get("targetClassId"):
         return jsonify(ok=False, error="Copy controlled assignments to another class instead of moving them"), 409
-    if assignment.get("fileControl") and assignment.get("gradingCompletedAt") and data.get("active"):
-        return jsonify(ok=False, error="Grading is complete. Copy this assignment to start a new recorded attempt."), 409
+    if assignment.get("gradingCompletedAt") and data.get("active"):
+        return jsonify(ok=False, error="Grading is finalized. Copy this assignment to start a new assignment."), 409
     
     previous_rubric_context = _assignment_rubric_context(
         assignment.get("task"), assignment.get("maxScore"), assignment.get("aiGradingCriteria")
@@ -10006,6 +10027,11 @@ def _update_assignment_locked():
 
 @app.post("/api/assignments/copy-to-class")
 def copy_assignment_to_class():
+    with _assignment_lock:
+        return _copy_assignment_to_class_locked()
+
+
+def _copy_assignment_to_class_locked():
     actor = _assignment_actor(request)
     if actor and actor.get("is_coteacher"):
         return jsonify(ok=False, error="Class owner required for this action"), 403
@@ -10074,8 +10100,24 @@ def copy_assignment_to_class():
         return jsonify(ok=True, assignment=_assignment_effective_payload(new_assignment))
     return jsonify(ok=False, error="Failed to copy assignment"), 500
 
+def _delete_assignment_storage_locked(assignment, *, forget_folder=True):
+    """Delete only this assignment's private storage; never student workspace files."""
+    if forget_folder:
+        assignment_organization.forget_assignment(sys.modules[__name__], assignment)
+    assignment_development.purge(sys.modules[__name__], assignment["id"], remove_binding=True)
+    submission_dir = _assignment_submission_directory(assignment)
+    if submission_dir.exists():
+        shutil.rmtree(submission_dir)
+    _get_assignment_path(assignment["id"]).unlink(missing_ok=True)
+
+
 @app.post("/api/assignments/delete")
 def delete_assignment():
+    with _assignment_lock:
+        return _delete_assignment_locked()
+
+
+def _delete_assignment_locked():
     """Delete an assignment (teacher owner)."""
     actor = _assignment_actor(request)
     if actor and actor.get("is_coteacher"):
@@ -10101,14 +10143,7 @@ def delete_assignment():
         if not path.exists():
             return jsonify(ok=False, error="Assignment not found"), 404
         try:
-            path.unlink()
-            assignment_development.purge(sys.modules[__name__], assignment_data["id"], remove_binding=True)
-            submission_dir = _assignment_submission_directory(assignment_data)
-            if submission_dir.exists():
-                try:
-                    shutil.rmtree(submission_dir)
-                except Exception as cleanup_error:
-                    print(f"Warning: failed to remove assignment submissions for {assignment_data.get('name')}: {cleanup_error}")
+            _delete_assignment_storage_locked(assignment_data)
             return jsonify(ok=True)
         except Exception as e:
             print(f"Error deleting assignment {assignment_data.get('name')}: {e}")
@@ -13112,6 +13147,7 @@ from workspace_data import register as register_workspace_data
 register_workspace_data(app, sys.modules[__name__])
 assignment_workflow.register(app, sys.modules[__name__])
 assignment_development.register(app, sys.modules[__name__])
+assignment_organization.register(app, sys.modules[__name__])
 from notebook_practice import register_notebook_practice
 register_notebook_practice(sys.modules[__name__])
 from notebook_media import register_notebook_media

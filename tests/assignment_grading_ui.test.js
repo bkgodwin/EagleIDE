@@ -287,6 +287,10 @@ test('assignment refresh preserves an unsaved grader draft until it is saved', (
   detail.innerHTML = 'Unsaved rubric draft';
   context.views.renderAdminAssignments();
   assert.equal(detail.innerHTML, 'Unsaved rubric draft');
+  detail.dataset.forceRefresh = 'true';
+  context.views.renderAdminAssignments();
+  assert.match(detail.innerHTML, /Finalize grading/);
+  delete detail.dataset.forceRefresh;
   detail.dataset.aiSettingsDirty = 'false';
   context.views.renderAdminAssignments();
   assert.match(detail.innerHTML, /Teacher-approved rubric/);
