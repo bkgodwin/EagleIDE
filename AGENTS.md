@@ -24,6 +24,7 @@ Required runtime components:
 .
 |-- app.py                       Main Flask/Socket.IO app, APIs, auth, persistence, and runners
 |-- assignment_workflow.py       Private deadlines/windows, submission bundles/history, and previews
+|-- assignment_development.py    Controlled assignment files, clipboard policy, and private delta timelines
 |-- file_provenance.py           Bounded paste ranges outside workspaces; submission snapshots use UTF-16 offsets
 |-- notebook_practice.py         Bounded practice feedback, revision guards, and protected notebook checks
 |-- notebook_media.py            Quota-counted photo uploads, protected previews, and shared-tab copies
@@ -61,6 +62,7 @@ Required runtime components:
 |       |-- feature-loader.js    On-demand loading for large optional browser features
 |       |-- app-core.js          Active main UI state, APIs, sockets, auth, files, quizzes, admin
 |       |-- assignment-workflow.js Collapsed assignment cards, attachments, feedback, and presentation
+|       |-- assignment-development.js Clipboard guards, one-second changed-code sampling, and bounded retry journal
 |       |-- file-provenance.js     Silent editor paste ranges, edit remapping, and bounded undo/redo recovery
 |       |-- workspace-data.js    Paged editable CSV grid and lazy JSON tree/source controls
 |       |-- server-performance.js On-demand admin CPU graphs; browser history only
@@ -113,6 +115,8 @@ Required runtime components:
 |   |-- test_assignments.py      Assignment ownership, submissions, legacy/beta grading, and rubric validation
 |   |-- test_assignment_workflow.py Deadlines/windows, multi-file storage/history, and submission access
 |   |-- assignment_workflow_ui.test.js Current/past cards, submission state, and attachment rendering
+|   |-- test_assignment_development.py Controlled file identity, timeline persistence, playback auth, and cleanup
+|   |-- assignment_development_ui.test.js Changed-only sampling, Unicode deltas, retries, and clipboard guards
 |   |-- test_teacher_review.py    Individual make-up access, score races/validation, and paste snapshots
 |   |-- file_provenance_ui.test.js Paste range edits, undo/redo, and escaped teacher highlights
 |   |-- wiki_reference_ui.test.js Class-local agenda dates and stale reference response guards
@@ -239,6 +243,51 @@ The default legacy grader categorizes deductions as core, objective, execution, 
 Each assignment has a stable `createdAt` value for chronological teacher views; legacy records receive a timestamp from their metadata file on first load. The Teacher Dashboard assignment list expands one title into its details and grading table, while the right-side teacher Assignment tab presents only unlocked assignments from the selected class.
 
 `assignment_workflow.py` is registered against the loaded app module and owns assignment file submissions, protected read-only attachment previews, teacher feedback editing, un-submit, and roster accommodation/window routes. Student Resources has collapsed Current/Past cards with personalized deadlines. Private per-class `accommodations[email]` never appear in student class summaries; only that student's effective deadline/note are returned. Extended deadlines skip Saturday/Sunday in the class IANA time zone; `tzdata` supplies zones on hosts without an OS catalog. No-deadline work moves to Past on the ordinary deadline but remains submittable while explicitly unlocked. Weekday submission windows gate files and quizzes equally; an assignment may bypass its class window. Only the class owner manages accommodations/windows/un-submit; class co-teachers may view attachments/history and edit feedback under existing assignment-access checks.
+
+`assignment_development.py` registers clipboard policy and development-history
+routes. Class `editor_clipboard` is `allow` (default), `block`, or `outstanding`.
+The strictest enrolled-class rule applies across class switches; outstanding means
+released work accepting that student's submissions with required files/questions
+still missing and attempts remaining. Policy probes share a source-free summary
+cache, invalidated by assignment saves. The browser guards code editors, textarea fallback, notebook code,
+cut, paste, copy, and dropping text; teacher/admin views remain exempt. This is a
+browser deterrent, never an authorship guarantee.
+
+Assignment `fileControl` and `fileControlExtension` are fixed at creation and
+require single-file submissions. Provision the collision-safe title-based Home
+file once when a released assignment is loaded by its student; never overwrite
+or recreate a binding. Submission validation uses that exact workspace identity.
+Move/rename/delete/upload guards and Python worker write guards protect the file
+through the student's effective deadline (including accommodations/make-ups and
+manual reopen), or indefinitely without a deadline until grading completion.
+Recording stops at that effective deadline; ordinary editing/saving may continue.
+Protected bindings live in `assignments/.development/index.sqlite3`, outside
+workspaces. Each assignment's separate SQLite database stores compressed UTF-16
+splices, server receipt/device sample times, and checkpoints every 120 changes.
+Unchanged code creates no frames. The browser samples changes once per second,
+batches every ten seconds, flushes on save/suspension, and keeps a bounded 2 MB
+device retry journal. Batches are idempotent and version checked; resynchronization
+and direct file saves are labelled. Large changes use the normal save snapshot.
+Playback is teacher/co-teacher only, paged to 120 changes with bounded browser
+cache and seek reconstruction from checkpoints. `assignment-workflow.js` shares
+one playback controller between the history modal and the submission editor's
+review bar. Historical editor frames are read-only and bypass autosave; returning
+to submitted code restores its source and paste marks. Pause/dispose on file,
+student, or account changes and reject late responses. Follow edits scrolls only
+when the changed position leaves the viewport, and can be disabled for reading.
+Completion minutes measure first-to-last recorded edits, including idle time,
+never active typing time. `tests/assignment_playback_ui.test.js` covers playback,
+checkpoint seeks, scrolling, lifecycle races, and save/restore safety.
+Limits: 2 MB source, 30 frames /
+512 KB request, 100,000 frames / 16 MB compressed history per student-assignment,
+and a 512 MB server recording budget checked at most every 30 seconds. Limit or
+network failures must remain visible and never prevent saving source. Device
+times are untrusted; accept bounded delayed uploads up to seven days old.
+Owner-only grading completion closes submissions permanently, stops recording,
+releases file protection, and deletes the recording database while retaining
+bindings, immutable submissions, feedback, and scores. Copy the assignment for a
+new recorded attempt. Serialize history access/purge with `_assignment_lock` and
+take it before the workspace provenance lock; never recreate a purged recording.
 
 Owner-only `/api/assignments/extend-student` grants/removes an individual make-up
 window for a previously released assignment, including locked/past work. Days

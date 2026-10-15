@@ -44,6 +44,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from classroom_features import merge_class_settings, register as register_classroom_features
 import assignment_workflow
 import file_provenance
+import assignment_development
 from lesson_plan_features import register as register_lesson_plan_features
 from network_features import register as register_network_features
 from sandbox_containment import landlock_status
@@ -3367,7 +3368,12 @@ def files_read():
         return jsonify(ok=False, error="File cannot be opened in the text editor"), 415
     try:
         content = target.read_text(encoding="utf-8")
-        return jsonify(ok=True, kind="text", content=content, path=path_str, pasteRanges=file_provenance.read(sys.modules[__name__], user_dir, target, content))
+        try:
+            development = assignment_development.read_info(sys.modules[__name__], user, target)
+        except (OSError, sqlite3.Error):
+            development = {"recording": False, "error": "Development history is unavailable. You can edit and save; tell your teacher."}
+        return jsonify(ok=True, kind="text", content=content, path=path_str, development=development,
+                       pasteRanges=file_provenance.read(sys.modules[__name__], user_dir, target, content))
     except Exception:
         return jsonify(ok=False, error="Could not read file"), 500
 
@@ -3376,7 +3382,7 @@ def files_write():
     user = _require_user_for_files(request)
     if not user:
         return jsonify(ok=False, error="Authentication required"), 401
-    with file_provenance.lock(_get_user_dir(user["email"])):
+    with _assignment_lock, file_provenance.lock(_get_user_dir(user["email"])):
         return _files_write_locked(user)
 
 
@@ -3436,8 +3442,16 @@ def _files_write_locked(user):
             with target.open("w", encoding="utf-8", newline="") as handle:
                 handle.write(content)
         file_provenance.write(sys.modules[__name__], user_dir, target, content, ranges)
+        recording_warning = ""
+        development_version = None
+        try:
+            development_version = assignment_development.capture_save(sys.modules[__name__], user, target, content)
+        except (ValueError, OSError, sqlite3.Error):
+            # A full recording must never prevent saving the student's work.
+            recording_warning = "Development history could not be updated. Tell your teacher."
         _invalidate_workspace_tree_cache(user_dir)
-        return jsonify(ok=True)
+        return jsonify(ok=True, **({"recordingWarning": recording_warning} if recording_warning else {}),
+                       **({"developmentVersion": development_version} if development_version is not None else {}))
     except FileNotFoundError:
         return jsonify(ok=False, error="This file was moved or deleted. Refresh the file browser before saving."), 404
     except Exception:
@@ -3822,6 +3836,10 @@ def files_upload():
         return jsonify(ok=False, error="Invalid path"), 400
     if target_validated.exists() and not target_validated.is_file():
         return jsonify(ok=False, error="A folder with that name already exists"), 409
+    if user.get("role") == "student":
+        protected_error = assignment_development.mutation_error(sys.modules[__name__], user, target_validated)
+        if protected_error:
+            return jsonify(ok=False, error=protected_error), 403
     
     if request.content_length and request.content_length > MAX_HTTP_BODY_BYTES:
         return jsonify(ok=False, error="Upload request is too large"), 413
@@ -4905,6 +4923,8 @@ def teacher_update_class_settings():
     data = request.get_json(silent=True) or {}
     class_id = (data.get("classId") or "").strip()
     settings = data.get("settings") or {}
+    if not isinstance(settings, dict) or ("editor_clipboard" in settings and (not isinstance(settings["editor_clipboard"], str) or settings["editor_clipboard"] not in {"allow", "block", "outstanding"})):
+        return jsonify(ok=False, error="Choose a valid editor clipboard setting"), 400
     cfg = _load_config()
     ai_master_enabled = bool(cfg.get("ai_explainer_enabled", False))
     classes_data = _load_classes()
@@ -4913,6 +4933,8 @@ def teacher_update_class_settings():
     for c in classes_data.get("classes", []):
         if c.get("id") == class_id and (c.get("teacher_email") or "").lower() == teacher_email:
             current = c.setdefault("settings", {})
+            if "editor_clipboard" in settings:
+                current["editor_clipboard"] = settings["editor_clipboard"]
             if ai_master_enabled and "ai_enabled" in settings:
                 current["ai_enabled"] = bool(settings.get("ai_enabled"))
             if "wiki_enabled" in settings:
@@ -7705,6 +7727,7 @@ class Runner(_ProcessRunnerBase):
             "EAGLE_RUN_WRITE_BUDGET_BYTES": str(write_budget),
             "EAGLE_DISABLED_MODULES": json.dumps(sorted(disabled_modules)),
             "EAGLE_RUN_SOURCE_NAME": Path(source_name or "python-chart.py").name,
+            "EAGLE_CONTROLLED_FILES": json.dumps(assignment_development.protected_paths(sys.modules[__name__], allowed_root_path)),
             "MPLBACKEND": "Agg",
             "OMP_NUM_THREADS": "1",
             "OPENBLAS_NUM_THREADS": "1",
@@ -9176,6 +9199,9 @@ def _normalize_assignment_schema(assignment: dict) -> dict:
     normalized["studentExtensions"] = assignment_workflow.normalize_extensions(sys.modules[__name__], normalized.get("studentExtensions"))
     normalized["id"] = str(normalized.get("id") or "").strip().lower()
     normalized["allowFileSubmission"] = bool(normalized.get("allowFileSubmission", True))
+    normalized["fileControl"] = bool(normalized.get("fileControl", False))
+    normalized["fileControlExtension"] = normalized.get("fileControlExtension") if normalized.get("fileControlExtension") in assignment_development.EXTENSIONS else ".py"
+    normalized["gradingCompletedAt"] = str(normalized.get("gradingCompletedAt") or "")
     normalized["allowMultiFileSubmission"] = bool(normalized.get("allowMultiFileSubmission", False))
     normalized["allowSubmissionAnyTime"] = bool(normalized.get("allowSubmissionAnyTime", False))
     try:
@@ -9568,6 +9594,7 @@ def _save_assignment(assignment: Dict[str, Any]) -> bool:
             assignment = _normalize_assignment_schema(assignment)
             assignment["storageVersion"] = 2
             _write_json_file_atomic(path, assignment)
+            assignment_development.invalidate_policy()
             return True
         except Exception as e:
             print(f"Error saving assignment {name}: {e}")
@@ -9597,6 +9624,14 @@ def _assignment_request_reference(data: dict) -> tuple[str, Optional[str]]:
 def _student_assignment_payload(assignment: dict, student_email: str, *, include_submission: bool = False) -> dict:
     payload = _assignment_effective_payload(assignment)
     payload.update(assignment_workflow.student_state(sys.modules[__name__], assignment, student_email))
+    if assignment.get("fileControl"):
+        payload["fileControlRecording"] = assignment_development.recording_open(sys.modules[__name__], assignment, student_email)
+        try:
+            controlled = assignment_development.ensure_file(sys.modules[__name__], assignment, student_email)
+            payload["controlledFilePath"] = controlled["path"] if controlled else ""
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            payload["controlledFilePath"] = ""
+            payload["fileControlError"] = str(exc) if isinstance(exc, ValueError) else "Could not create your assignment file. Refresh or tell your teacher."
     payload.pop("submissions", None)
     for teacher_only_field in (
         "studentExtensions",
@@ -9776,6 +9811,7 @@ def create_assignment():
     rubric_context = _assignment_rubric_context(task, max_score, ai_grading_criteria) if ai_grading_rubric else ""
     try:
         due_at = _normalize_assignment_due_at(data.get("dueAt"))
+        file_control = assignment_development.validate_options(data)
         for key in ("allowMultiFileSubmission", "allowSubmissionAnyTime"):
             if key in data and not isinstance(data[key], bool):
                 raise ValueError("Submission options must be enabled or disabled")
@@ -9796,6 +9832,7 @@ def create_assignment():
         "allowMultiFileSubmission": bool(data.get("allowMultiFileSubmission", False)),
         "allowSubmissionAnyTime": bool(data.get("allowSubmissionAnyTime", False)),
         "maxFileSubmissions": int(attempts),
+        **file_control,
         "active": False,
         "dueAt": due_at,
         "dueLockOverride": False,
@@ -9846,6 +9883,14 @@ def _update_assignment_locked():
         return jsonify(ok=False, error="Assignment not found"), 404
     if not _assignment_access(actor, assignment):
         return jsonify(ok=False, error="You can only edit your own assignments"), 403
+    try:
+        assignment_development.validate_options(data, assignment)
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    if assignment.get("fileControl") and "classId" in data and data["classId"] != assignment.get("targetClassId"):
+        return jsonify(ok=False, error="Copy controlled assignments to another class instead of moving them"), 409
+    if assignment.get("fileControl") and assignment.get("gradingCompletedAt") and data.get("active"):
+        return jsonify(ok=False, error="Grading is complete. Copy this assignment to start a new recorded attempt."), 409
     
     previous_rubric_context = _assignment_rubric_context(
         assignment.get("task"), assignment.get("maxScore"), assignment.get("aiGradingCriteria")
@@ -10002,6 +10047,8 @@ def copy_assignment_to_class():
         "allowMultiFileSubmission": bool(source.get("allowMultiFileSubmission", False)),
         "allowSubmissionAnyTime": bool(source.get("allowSubmissionAnyTime", False)),
         "maxFileSubmissions": source.get("maxFileSubmissions", 0),
+        "fileControl": source.get("fileControl", False),
+        "fileControlExtension": source.get("fileControlExtension", ".py"),
         "active": False,
         "dueAt": source.get("dueAt") or "",
         "dueLockOverride": False,
@@ -10055,6 +10102,7 @@ def delete_assignment():
             return jsonify(ok=False, error="Assignment not found"), 404
         try:
             path.unlink()
+            assignment_development.purge(sys.modules[__name__], assignment_data["id"], remove_binding=True)
             submission_dir = _assignment_submission_directory(assignment_data)
             if submission_dir.exists():
                 try:
@@ -13063,6 +13111,7 @@ register_classroom_features(app, socketio)
 from workspace_data import register as register_workspace_data
 register_workspace_data(app, sys.modules[__name__])
 assignment_workflow.register(app, sys.modules[__name__])
+assignment_development.register(app, sys.modules[__name__])
 from notebook_practice import register_notebook_practice
 register_notebook_practice(sys.modules[__name__])
 from notebook_media import register_notebook_media

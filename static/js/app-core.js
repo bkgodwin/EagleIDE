@@ -1791,8 +1791,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         });
         socket.on('classroom_settings_updated', (msg) => {
           if (!msg?.class_id || !msg?.settings) return;
-          const activeClassId = getCurrentClassContext()?.id;
-          if (msg.class_id !== activeClassId) return;
           applyClassSettingsPatch(msg.class_id, msg.settings);
         });
       } catch (e) {
@@ -3067,7 +3065,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const editorPanel = document.getElementById('editorPanel');
       const isLoggedIn = isAuthenticated();
       editorPanel.classList.toggle('audit-preview-active', !!(auditPreviewActive || currentOpenFile?.audit));
-      if (auditPreviewActive || currentOpenFile?.audit || (currentOpenFile?.submission && isCoTeacher())) {
+      if (auditPreviewActive || currentOpenFile?.audit || currentOpenFile?.historyPlayback || currentOpenFile?.readOnly || (currentOpenFile?.submission && isCoTeacher())) {
         editorPanel.classList.remove('editor-disabled');
         setMainEditorReadOnly(true);
         return;
@@ -4708,6 +4706,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
               <label class="choice-item"><input type="checkbox" class="cls-student-send" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.student_send_to_teacher_enabled !== false ? 'checked' : ''}><span class="choice-text">Students send to teacher</span></label>
               <label class="choice-item"><input type="checkbox" class="cls-peer-share" data-class="${escapeHtml(activeClass.id)}" ${activeClass.settings?.student_peer_sharing_enabled ? 'checked' : ''}><span class="choice-text">Student peer sharing</span></label>
             </div>
+            <label>Editor copy and paste
+              <select class="cls-editor-clipboard">
+                <option value="allow" ${(activeClass.settings?.editor_clipboard || 'allow') === 'allow' ? 'selected' : ''}>Allow copy and paste</option>
+                <option value="block" ${activeClass.settings?.editor_clipboard === 'block' ? 'selected' : ''}>Always block copy and paste</option>
+                <option value="outstanding" ${activeClass.settings?.editor_clipboard === 'outstanding' ? 'selected' : ''}>Block while an outstanding assignment accepts submissions</option>
+              </select>
+            </label><p class="option-help">Applies to student code editors, including cut and text dropping. An outstanding assignment has files or questions still to submit. Restrictions follow enrolled students across class switches; teacher views are exempt.</p>
             <button class="btn secondary save-class-settings-btn" data-class="${escapeHtml(activeClass.id)}" style="font-size:12px; margin-bottom:10px;">Save classroom settings</button>
           </div>
           <div style="margin-bottom:10px;">
@@ -4834,6 +4839,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const ai = canShowAiToggle ? wrap.querySelector(`.cls-ai[data-class="${CSS.escape(classId)}"]`)?.checked : undefined;
         const rigor = parseInt(wrap.querySelector(`.cls-rigor[data-class="${CSS.escape(classId)}"]`)?.value || '5', 10) || 5;
         const settingsPayload = {
+          editor_clipboard: wrap.querySelector('.cls-editor-clipboard')?.value || 'allow',
           ai_grading_rigor: rigor,
           student_ide_access_enabled: !!wrap.querySelector(`.cls-student-ide[data-class="${CSS.escape(classId)}"]`)?.checked,
           challenges_enabled: !!wrap.querySelector(`.cls-challenges[data-class="${CSS.escape(classId)}"]`)?.checked,
@@ -5765,6 +5771,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         if (switchLabel) switchLabel.textContent = filesActive ? 'Editor' : 'Files';
       }
       if (_workspaceTab === WORKSPACE_TAB_FILES) {
+        window.AssignmentWorkflow?.pauseEditorDevelopment?.();
         if (auditPreviewActive) closeAuditPreview();
         loadFileTree();
       } else {
@@ -6063,6 +6070,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       enabled: () => !!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && !!currentOpenFile
         && !currentOpenFile.audit && !currentOpenFile.submission && !currentOpenFile.notebook && !csvEditorActive,
     });
+    window.AssignmentDevelopment.configure({
+      request: fetchWithDeadline, headers: fileAuthHeaders,
+      student: () => USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN ? currentUser : null,
+      classes: () => studentClasses || [], file: () => currentOpenFile,
+      content: () => {syncEditorBridge(); return editor.getValue();},
+    });
     window.AssignmentWorkflow.configure({
       request: fetchWithDeadline, assignment: getAssignmentByName,
       studentHeaders: () => ({'X-User-Token': USER_TOKEN}), managerHeaders: assignmentManagerHeaders,
@@ -6072,6 +6085,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       roster: classId => teacherClasses.find(c => c.id === classId)?.students || [],
       maxScore: assignmentTotalMaxScore, feedback: renderAssignmentAiFeedback, markdown: renderMarkdownTo,
       reloadClasses: async () => {await loadTeacherClasses(); renderTeacherClassManagement();},
+      openPath: async path => {await loadFileTree(); await openFile({path, name:path.split('/').pop(), type:'file'});},
     });
     document.getElementById('editor')?.addEventListener('input', () => window.WorkspaceData.changed());
 
@@ -6493,6 +6507,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     // Save the currently open file (if any).
     // Returns true on success (or if nothing to save), false on error.
     async function saveCurrentFile() {
+      if (currentOpenFile?.development?.recording) await window.AssignmentDevelopment?.flush();
       // Serialize writes so an older slow request cannot overwrite a newer save.
       while (fileSavePromise) {
         if (!await fileSavePromise) return false;
@@ -6505,6 +6520,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     async function writeCurrentFile() {
       if (auditPreviewActive || currentOpenFile?.audit) return true;
+      if (currentOpenFile?.historyPlayback || currentOpenFile?.readOnly) return true;
       if (currentOpenFile?.submission && isCoTeacher()) return true;
       if (currentOpenFile?.notebook) return true;
       if (currentOpenFile?.draft) return true;
@@ -6554,6 +6570,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         }, 10000);
         if (!res.ok) return false;
         const j = await res.json().catch(() => ({}));
+        if (j.recordingWarning && document.getElementById('developmentRecordingStatus')) document.getElementById('developmentRecordingStatus').textContent = j.recordingWarning;
+        if (j.ok && Number.isInteger(j.developmentVersion)) window.AssignmentDevelopment?.saved(savedFile,content,j.developmentVersion);
         if (j.ok && currentOpenFile === savedFile && savedContext === JSON.stringify(fileAuthHeaders())
             && content === (csvEditorActive ? csvBufferContent() : editor.getValue())) currentBufferDirty = false;
         return !!j.ok;
@@ -6564,6 +6582,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     // Update the editor header to show the active filename
     function updateActiveFileName() {
+      window.AssignmentWorkflow?.syncEditorDevelopment?.(currentOpenFile);
       const el = document.getElementById('activeFileName');
       if (el) el.textContent = currentOpenFile ? currentOpenFile.name : '';
       if (typeof socket !== 'undefined' && socket.connected) socket.emit('workspace_file_opened', {name: currentOpenFile && !currentOpenFile.audit && !currentOpenFile.submission ? currentOpenFile.name : ''});
@@ -6843,7 +6862,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           || previousContent !== (csvEditorActive ? csvBufferContent() : editor.getValue()) || window.EagleIDE?.connection?.isLost()) return;
       if (!res.ok || !j.ok) { alert(j.error || 'Cannot open file'); return; }
       const kind = j.kind || item.kind || 'text';
-      currentOpenFile = { path: item.path, name: item.name, kind, pasteRanges:j.pasteRanges || [] };
+      currentOpenFile = { path: item.path, name: item.name, kind, development:j.development, pasteRanges:j.pasteRanges || [] };
       setMainEditorReadOnly(false);
       clearFileArtifactPreview();
       if (kind === 'image' || kind === 'database') {
@@ -6868,6 +6887,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
       currentBufferDirty = false;
       window.WorkspaceData.jsonMode(String(item.name || '').toLowerCase().endsWith('.json'));
+      window.AssignmentDevelopment?.opened();
       updateActiveFileName();
       updateEditorOverlay();
       setWorkspaceTab('editor');
@@ -7757,6 +7777,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     function hideSubmissionScoringPanel() {
+      window.AssignmentWorkflow?.disposeEditorDevelopment?.();
       activeSubmissionContext = null;
       if (submissionSaveTimer) {
         clearTimeout(submissionSaveTimer);
@@ -7849,6 +7870,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           return;
         }
         currentAssignments = data.assignments || [];
+        window.AssignmentDevelopment?.assignmentsChanged(currentAssignments);
+        window.dispatchEvent(new CustomEvent('eagle-assignments-updated'));
+        if (USER_TOKEN && currentAssignments.some(a => a.fileControl && a.controlledFilePath)) loadFileTree().catch(() => {});
         scheduleAssignmentDeadlineRefresh(currentAssignments);
         assignmentGradingCriteria = Array.isArray(data.gradingCriteria) ? data.gradingCriteria : [];
         isAdmin = data.canManage || data.isAdmin || false;
@@ -8088,13 +8112,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       detail.innerHTML = `
         <h4>${escapeHtml(assignment.name)}</h4>
         ${window.AssignmentWorkflow.teacherToolbar(assignment, !isCoTeacher())}
+        ${assignment.fileControl ? `<section class="assignment-development-actions"><strong>File control · ${escapeHtml(assignment.fileControlExtension)} · ${assignment.gradingCompletedAt ? 'Grading complete, recordings deleted' : 'Development history enabled'}</strong><div><button type="button" class="btn secondary assignment-development-open">Watch development history</button>${!isCoTeacher() ? `<button type="button" class="btn secondary assignment-grading-complete">${assignment.gradingCompletedAt ? 'Retry timeline cleanup' : 'Mark grading complete & delete timelines'}</button>` : ''}</div></section>` : ''}
         <div class="meta assignment-markdown" data-assignment-markdown="${escapeHtml(assignment.id || assignment.name)}" style="margin-bottom:12px;">${escapeHtml(assignment.task || '(No task description)')}</div>
         <div class="meta" style="margin-bottom:12px;">Max score ${(assignment.allowFileSubmission === false ? 0 : (assignment.maxScore || 0)) + (assignment.quiz?.totalPoints || 0)}${assignment.allowFileSubmission === false ? ' (Quiz only)' : ''}${assignment.quiz?.totalPoints ? ` · Quiz ${assignment.quiz.totalPoints} pts` : ''} · Class ${escapeHtml(assignment.targetClassName || 'All')} · Quiz max submissions ${assignment.quizSettings?.maxSubmissions > 0 ? assignment.quizSettings.maxSubmissions : 'Unlimited'}${assignment.dueAt ? ` · Due ${escapeHtml(assignmentDueLabel(assignment.dueAt))}` : ' · No due date'}${assignment.dueExpired ? ' · Deadline passed' : ''}</div>
         ${(assignment.skillTags || []).length ? `<div class="skill-tags" style="margin-bottom:12px;">${(assignment.skillTags || []).map(tag => `<span class="skill-chip">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
         ${assignment.quiz?.questions?.length ? `<section class="assignment-quiz-preview"><h5>Quiz questions</h5><ol>${assignment.quiz.questions.map(question => `<li>${escapeHtml(question.question || '(Untitled question)')} <span class="meta">(${Number(question.points) || 0} pts)</span>${question.codeSnippet ? `<pre>${escapeHtml(question.codeSnippet)}</pre>` : ''}</li>`).join('')}</ol></section>` : ''}
         <div class="assignment-manage-actions">
           <button class="btn secondary edit-assignment-btn" data-id="${escapeHtml(assignment.id || assignment.name)}">Edit</button>
-          <button class="btn secondary lock-assignment-btn" data-id="${escapeHtml(assignment.id || assignment.name)}" data-active="${assignment.active}">${assignment.active ? 'Lock' : 'Unlock'}</button>
+          <button class="btn secondary lock-assignment-btn" data-id="${escapeHtml(assignment.id || assignment.name)}" data-active="${assignment.active}" ${assignment.gradingCompletedAt ? 'disabled' : ''}>${assignment.gradingCompletedAt ? 'Grading complete' : assignment.active ? 'Lock' : 'Unlock'}</button>
           <select class="copy-assignment-class-select" data-id="${escapeHtml(assignment.id || assignment.name)}" aria-label="Copy to class">
             <option value="">Copy to class…</option>
             ${teacherClasses.filter(c => c.id !== assignment.targetClassId).map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('')}
@@ -8447,6 +8472,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           <label>Max Score (Code)</label>
           <input type="number" id="modalAssignmentMaxScore" value="${existingAssignment?.maxScore || 100}" min="1" />
           <label style="margin-bottom:2px;">Assignment Options</label>
+          <label class="choice-item"><input type="checkbox" id="modalAssignmentFileControl" ${existingAssignment?.fileControl ? 'checked' : ''} ${existingAssignment ? 'disabled' : ''}> File control — dedicated file with development history</label>
+          <label>Assignment file language<select id="modalAssignmentFileControlExtension" ${existingAssignment ? 'disabled' : ''}>${[['.py','Python'],['.js','JavaScript'],['.html','HTML'],['.css','CSS']].map(([value,label]) => `<option value="${value}" ${(existingAssignment?.fileControlExtension || '.py') === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+          <p class="option-help">File control creates a new file named after this assignment in each student's Home when the assignment is released. Only that file can be submitted. Changes are recorded at one-second resolution while the file is protected, with no idle snapshots. Students may move/delete it after their effective deadline or grading completion. Without a deadline it stays protected until grading is complete. File control and language are fixed after creation.</p>
           <label class="choice-item"><input type="checkbox" id="modalAssignmentMultiFile" ${existingAssignment?.allowMultiFileSubmission ? 'checked' : ''}> Allow multiple files and attachments</label>
           <label class="choice-item"><input type="checkbox" id="modalAssignmentAnyTime" ${existingAssignment?.allowSubmissionAnyTime ? 'checked' : ''}> Allow submission at any time (ignore the class submission window)</label>
           <label>Maximum file submission attempts (0 = unlimited)<input type="number" id="modalAssignmentFileAttempts" min="0" max="100" step="1" value="${existingAssignment?.maxFileSubmissions || 0}"></label>
@@ -8459,7 +8487,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           </div>
           ${TEACHER_TOKEN ? `
           <label>Class</label>
-          <select id="modalAssignmentClassId" style="width:100%; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;">
+          <select id="modalAssignmentClassId" ${existingAssignment?.fileControl ? 'disabled' : ''} style="width:100%; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;">
             ${teacherClasses.map(c => `<option value="${escapeHtml(c.id)}" ${effectiveClassId === c.id ? 'selected' : ''}>${escapeHtml(c.name)} (${escapeHtml(c.join_code)})</option>`).join('')}
           </select>` : ''}
           <label>Skill Tags (covered by this assignment)</label>
@@ -8493,6 +8521,16 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         </div>
       `;
       document.body.appendChild(modal);
+
+      const syncFileControl = () => {
+        const controlled = !!modal.querySelector('#modalAssignmentFileControl')?.checked;
+        const multiple = modal.querySelector('#modalAssignmentMultiFile'), allow = modal.querySelector('#modalAssignmentAllowFileSubmission');
+        if (controlled) {multiple.checked=false; allow.checked=true;}
+        multiple.disabled=controlled; allow.disabled=controlled;
+        modal.querySelector('#modalAssignmentFileControlExtension').disabled=!!existingAssignment || !controlled;
+      };
+      modal.querySelector('#modalAssignmentFileControl').onchange=syncFileControl;
+      syncFileControl();
 
       let quizQuestions = JSON.parse(JSON.stringify(existingAssignment?.quiz?.questions || []));
       let questionIdCounter = { value: quizQuestions.length };
@@ -8557,6 +8595,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           dueAt,
           maxScore,
           allowFileSubmission,
+          fileControl: !!document.getElementById('modalAssignmentFileControl')?.checked,
+          fileControlExtension: document.getElementById('modalAssignmentFileControlExtension')?.value || '.py',
           allowMultiFileSubmission: !!document.getElementById('modalAssignmentMultiFile')?.checked,
           allowSubmissionAnyTime: !!document.getElementById('modalAssignmentAnyTime')?.checked,
           maxFileSubmissions: Number(document.getElementById('modalAssignmentFileAttempts')?.value || 0),
@@ -9093,10 +9133,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const { assignment, submission } = getSubmissionForAssignment(assignmentReference, email);
       if (!assignment || !submission) return;
       currentAdminAssignmentName = assignment.id || assignment.name;
-      if (!window.eagleEditor || (submission.files || []).length > 1 || !/\.(py|js)$/i.test(submission.submittedFileName || 'submission.py')) {
+      if ((submission.files || []).length > 1 || !(assignment.fileControl ? /\.(py|js|html|css)$/i : /\.(py|js)$/i).test(submission.submittedFileName || 'submission.py')) {
         await window.AssignmentWorkflow.openFiles(assignment.id, submission.email || email);
         return;
       }
+      window.AssignmentWorkflow?.pauseEditorDevelopment?.();
       if (!await saveCurrentFile()) {
         alert('Your current file could not be saved before opening the submission.');
         return;
@@ -9120,6 +9161,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           assignmentId: assignment.id || assignment.name,
           studentEmail: submission.email || email,
           revisionId: result.revisionId,
+          readOnly: !/\.(py|js)$/i.test(result.fileName || submission.submittedFileName || 'submission.py'),
+          pasteRanges: result.pasteRanges || [],
           kind: 'text',
         };
         clearFileArtifactPreview();
@@ -9128,17 +9171,53 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         window.AssignmentWorkflow.highlightEditor(result.pasteRanges || []);
         currentBufferDirty = false;
         syncEditorLanguage(result.fileName || submission.submittedFileName || 'submission.py');
-        setMainEditorReadOnly(isCoTeacher());
+        setMainEditorReadOnly(currentOpenFile.readOnly || isCoTeacher());
         updateActiveFileName();
         updateEditorOverlay();
         setWorkspaceTab('editor');
+        window.WikiReader?.showIDE?.();
       } catch {
         alert('Network error while opening submission.');
         return;
       }
       populateSubmissionScoringPanel(assignment, submission);
+      attachSubmissionDevelopment(assignment, submission);
       renderAdminAssignments();
       minimizeTeacherDashboardForSubmission(assignment, submission);
+    }
+
+    function attachSubmissionDevelopment(assignment, submission) {
+      const reviewedFile = currentOpenFile, auth = JSON.stringify(assignmentManagerHeaders());
+      let submittedContent = editor.getValue(), preparing = null;
+      const valid = file => currentOpenFile === reviewedFile && (!file || file === reviewedFile) && auth === JSON.stringify(assignmentManagerHeaders());
+      window.AssignmentWorkflow.attachEditorDevelopment(assignment, submission.email, {
+        valid,
+        async prepare() {
+          if (reviewedFile.historyPlayback) return;
+          if (!preparing) preparing = (async () => {
+            if (!await saveCurrentFile() || currentBufferDirty) throw new Error('Could not finish saving your code edits before playback. Try again or reopen the submission.');
+            if (valid()) submittedContent = editor.getValue();
+          })();
+          try { await preparing; } finally { preparing = null; }
+        },
+        render(content, frame, follow) {
+          if (!valid()) return;
+          reviewedFile.historyPlayback = true;
+          setMainEditorReadOnly(true);
+          window.AssignmentWorkflow.renderEditorFrame(content, frame, follow);
+          clearTimeout(_autosaveTimer);
+          currentBufferDirty = false;
+        },
+        restore() {
+          if (!valid() || !reviewedFile.historyPlayback) return;
+          reviewedFile.historyPlayback = false;
+          editor.setValue(submittedContent);
+          window.AssignmentWorkflow.highlightEditor(reviewedFile.pasteRanges || []);
+          clearTimeout(_autosaveTimer);
+          currentBufferDirty = false;
+          updateEditorOverlay();
+        },
+      });
     }
 
     async function resetQuizCounter(assignmentReference, email) {
@@ -9304,7 +9383,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         feedback.style.display = submission.aiFeedback ? '' : 'none';
         feedback.innerHTML = submission.aiFeedback ? renderAssignmentAiFeedback(submission.aiFeedback) : '';
       }
-      const submitted = (assignment.submissions || []).filter(row => !row.withdrawn && (row.hasGradableFiles ?? row.code)).sort((a, b) => String(a.name || a.email || '').localeCompare(String(b.name || b.email || ''), undefined, { sensitivity: 'base' }));
+      const submitted = (assignment.submissions || []).filter(row => !row.withdrawn && ((assignment.fileControl && row.submittedFileName) || (row.hasGradableFiles ?? row.code))).sort((a, b) => String(a.name || a.email || '').localeCompare(String(b.name || b.email || ''), undefined, { sensitivity: 'base' }));
       const index = submitted.findIndex(row => String(row.email || '').toLowerCase() === String(submission.email || '').toLowerCase());
       const previousDisabled = index <= 0;
       const nextDisabled = index < 0 || index >= submitted.length - 1;
@@ -9626,7 +9705,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (!activeSubmissionContext) return;
       const assignment = getAssignmentByName(activeSubmissionContext.assignmentId);
       if (!assignment) return;
-      const submitted = (assignment.submissions || []).filter(row => !row.withdrawn && (row.hasGradableFiles ?? row.code)).sort((a, b) => String(a.name || a.email || '').localeCompare(String(b.name || b.email || ''), undefined, { sensitivity: 'base' }));
+      const submitted = (assignment.submissions || []).filter(row => !row.withdrawn && ((assignment.fileControl && row.submittedFileName) || (row.hasGradableFiles ?? row.code))).sort((a, b) => String(a.name || a.email || '').localeCompare(String(b.name || b.email || ''), undefined, { sensitivity: 'base' }));
       const index = submitted.findIndex(row => String(row.email || '').toLowerCase() === String(activeSubmissionContext.studentEmail || '').toLowerCase());
       const target = submitted[index + direction];
       if (target) await openAssignmentSubmission(assignment.id || assignment.name, target.email);
