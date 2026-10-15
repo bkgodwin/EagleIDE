@@ -4105,16 +4105,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     document.getElementById('teacherDashboardBtn')?.addEventListener('click', () => {
       openTeacherDashboard('dash-reports');
     });
-    const teacherDashMinimizedBar = document.getElementById('teacherDashMinimizedBar');
-    teacherDashMinimizedBar?.addEventListener('click', (event) => {
-      if (event.target.closest('.teacher-dash-minimized-actions')) return;
+    document.getElementById('teacherDashRestoreBtn')?.addEventListener('click', () => {
       openTeacherDashboard('dash-assignments');
-    });
-    teacherDashMinimizedBar?.addEventListener('keydown', (event) => {
-      if ((event.key === 'Enter' || event.key === ' ') && !event.target.closest('.teacher-dash-minimized-actions')) {
-        event.preventDefault();
-        openTeacherDashboard('dash-assignments');
-      }
     });
 
 
@@ -6585,6 +6577,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       window.AssignmentWorkflow?.syncEditorDevelopment?.(currentOpenFile);
       const el = document.getElementById('activeFileName');
       if (el) el.textContent = currentOpenFile ? currentOpenFile.name : '';
+      const minimizedBar = document.getElementById('teacherDashMinimizedBar');
+      if (minimizedBar && !currentOpenFile?.submission) minimizedBar.hidden = true;
       if (typeof socket !== 'undefined' && socket.connected) socket.emit('workspace_file_opened', {name: currentOpenFile && !currentOpenFile.audit && !currentOpenFile.submission ? currentOpenFile.name : ''});
       if (!currentOpenFile || !currentOpenFile.name?.toLowerCase().endsWith('.json')) window.WorkspaceData?.jsonMode(false);
       const saveDraftBtn = document.getElementById('saveDraftBtn');
@@ -7778,6 +7772,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     function hideSubmissionScoringPanel() {
       window.AssignmentWorkflow?.disposeEditorDevelopment?.();
+      const minimizedBar = document.getElementById('teacherDashMinimizedBar');
+      if (minimizedBar) minimizedBar.hidden = true;
       activeSubmissionContext = null;
       if (submissionSaveTimer) {
         clearTimeout(submissionSaveTimer);
@@ -9125,8 +9121,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (!modal || !bar) return;
       modal.style.display = 'flex';
       modal.classList.add('is-minimized');
+      stopTeacherDashboardRosterPolling();
       bar.hidden = false;
-      if (label) label.textContent = `${assignment.name} · ${submission.name || submission.email}`;
+      if (label) {
+        label.textContent = `${assignment.name} · ${submission.name || submission.email}`;
+        label.title = label.textContent;
+      }
     }
 
     async function openAssignmentSubmission(assignmentReference, email) {
