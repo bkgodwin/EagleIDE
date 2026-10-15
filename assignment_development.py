@@ -538,16 +538,16 @@ def register(app, eagle):
             assignment, error = _teacher_assignment(eagle, data, owner=True)
             if error:
                 return error
-            if not assignment.get("fileControl"):
-                return jsonify(ok=False, error="File control is not enabled"), 400
             if not assignment.get("gradingCompletedAt"):
+                if any(sub.get("aiGradingStatus") in {"queued", "running"} for sub in assignment.get("submissions", [])):
+                    return jsonify(ok=False, error="Wait for AI grading to finish or cancel its queued jobs before finalizing."), 409
                 assignment["gradingCompletedAt"] = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
                 assignment["active"] = False
                 assignment["dueLockOverride"] = False
                 if not eagle._save_assignment(assignment):
                     return jsonify(ok=False, error="Could not mark grading complete"), 500
             try:
-                purge(eagle, assignment["id"])
+                purge(eagle, assignment["id"], remove_binding=True)
             except (OSError, sqlite3.Error):
                 return jsonify(ok=False, error="Grading is complete, but recording cleanup failed. Retry this action."), 503
         eagle.socketio.emit("assignment_workflow_updated", {"classId": assignment.get("targetClassId")}, to=f"class_{assignment.get('targetClassId')}")

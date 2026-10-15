@@ -44,7 +44,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261015-assignment-dashboard-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261015-assignment-folders-1">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -829,16 +829,25 @@
           <div class="teacher-dash-scroll assignment-dashboard-scroll">
             <div class="assignment-admin-layout">
               <aside class="assignment-library" aria-label="Assignment library">
-                <div class="assignment-library-heading"><strong>Your assignments</strong><span id="assignmentLibraryCount"></span></div>
+                <div class="assignment-library-heading"><strong>My assignments</strong><span id="assignmentLibraryCount"></span></div>
                 <label class="assignment-search"><span class="sr-only">Search assignments</span><input id="assignmentLibrarySearch" type="search" placeholder="Search assignments…" autocomplete="off"></label>
                 <div class="assignment-library-filters">
                   <label><span class="sr-only">Assignment status</span><select id="assignmentLibraryFilter"><option value="all">All statuses</option><option value="open">Open</option><option value="locked">Locked</option><option value="complete">Grading complete</option></select></label>
-                  <label><span class="sr-only">Sort assignments</span><select id="assignmentLibrarySort"><option value="oldest">Oldest first</option><option value="newest">Newest first</option><option value="name">A–Z</option></select></label>
+                  <label><span class="sr-only">Sort assignments</span><select id="assignmentLibrarySort"><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">A–Z</option></select></label>
                 </div>
-                <div id="assignmentList"></div>
-                <p id="assignmentLibraryEmpty" class="assignment-library-empty" hidden>No matching assignments. Try another search or status.</p>
+                <div class="assignment-folder-toolbar"><button id="assignmentNewFolderBtn" class="btn secondary" type="button" hidden>+ Folder</button><span id="assignmentFolderHelp">Assignment folders</span></div>
+                <form id="assignmentFolderForm" class="assignment-folder-form" hidden>
+                  <label for="assignmentFolderName" id="assignmentFolderNameLabel">New folder</label>
+                  <input id="assignmentFolderName" maxlength="80" required autocomplete="off" placeholder="e.g., Unit 1 or Quarter 2">
+                  <div><button type="submit" class="btn secondary">Save folder</button><button id="assignmentFolderCancelBtn" type="button" class="btn secondary">Cancel</button></div>
+                </form>
+                <p id="assignmentFolderStatus" class="assignment-folder-status" role="status" aria-live="polite"></p>
+                <div id="assignmentLibraryItems" class="assignment-library-scroll" tabindex="0" role="region" aria-label="My assignments and folders">
+                  <div id="assignmentList"></div>
+                  <p id="assignmentLibraryEmpty" class="assignment-library-empty" hidden>No matching assignments. Try another search or status.</p>
+                </div>
               </aside>
-              <div id="assignmentWorkspace" class="assignment-workspace"><div class="assignment-workspace-empty"><span aria-hidden="true">▤</span><h3>A clear view of every assignment</h3><p>Select an assignment to review submissions, plan grading, or update its details.</p></div></div>
+              <div id="assignmentWorkspace" class="assignment-workspace" tabindex="0" role="region" aria-label="Assignment workspace"><div class="assignment-workspace-empty"><span aria-hidden="true">▤</span><h3>A clear view of every assignment</h3><p>Select an assignment to review submissions, plan grading, or update its details.</p></div></div>
             </div>
           </div>
         </div>
@@ -1818,21 +1827,21 @@
   <script src="/static/js/autocomplete.js?v=20261011-files-5"></script>
   <script src="/static/js/editor-behavior.js?v=20261009-assignment-step-2"></script>
   <script src="/static/js/editor-feedback.js?v=20261011-files-5"></script>
-  <script src="/static/js/editor-init.js?v=20261015-assignment-dashboard-1"></script>
+  <script src="/static/js/editor-init.js?v=20261015-assignment-folders-1"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js?v=20261011-files-5"></script>
   <script src="/static/js/server-performance.js?v=20261011-files-5"></script>
   <script src="/static/js/workspace-data.js?v=20261011-files-5"></script>
-  <script src="/static/js/file-provenance.js?v=20261015-assignment-dashboard-1"></script>
-  <script src="/static/js/assignment-workflow.js?v=20261015-assignment-dashboard-1"></script>
-  <script src="/static/js/assignment-development.js?v=20261015-assignment-dashboard-1"></script>
-  <script src="/static/js/teacher-assignments.js?v=20261015-assignment-dashboard-1"></script>
-  <script src="/static/js/app-core.js?v=20261015-assignment-dashboard-1"></script>
+  <script src="/static/js/file-provenance.js?v=20261015-assignment-folders-1"></script>
+  <script src="/static/js/assignment-workflow.js?v=20261015-assignment-folders-1"></script>
+  <script src="/static/js/assignment-development.js?v=20261015-assignment-folders-1"></script>
+  <script src="/static/js/teacher-assignments.js?v=20261015-assignment-folders-1"></script>
+  <script src="/static/js/app-core.js?v=20261015-assignment-folders-1"></script>
   <script src="/static/js/step-mode.js?v=20261011-files-5"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
-  <script src="/static/js/wiki-reader.js?v=20261015-assignment-dashboard-1"></script>
+  <script src="/static/js/wiki-reader.js?v=20261015-assignment-folders-1"></script>
   <script src="/static/js/lesson-plans.js?v=20261011-files-5"></script>
-  <script src="/static/js/wiki-admin.js?v=20261015-assignment-dashboard-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20261015-assignment-folders-1"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20261011-files-5"></script>
   <script src="/static/js/notebook-sync.js?v=20261011-notebook-topics-1"></script>
