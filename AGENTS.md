@@ -269,7 +269,16 @@ batches every ten seconds, flushes on save/suspension, and keeps a bounded 2 MB
 device retry journal. Batches are idempotent and version checked; resynchronization
 and direct file saves are labelled. Large changes use the normal save snapshot.
 Playback is teacher/co-teacher only, paged to 120 changes with bounded browser
-cache and seek reconstruction from checkpoints. Limits: 2 MB source, 30 frames /
+cache and seek reconstruction from checkpoints. `assignment-workflow.js` shares
+one playback controller between the history modal and the submission editor's
+review bar. Historical editor frames are read-only and bypass autosave; returning
+to submitted code restores its source and paste marks. Pause/dispose on file,
+student, or account changes and reject late responses. Follow edits scrolls only
+when the changed position leaves the viewport, and can be disabled for reading.
+Completion minutes measure first-to-last recorded edits, including idle time,
+never active typing time. `tests/assignment_playback_ui.test.js` covers playback,
+checkpoint seeks, scrolling, lifecycle races, and save/restore safety.
+Limits: 2 MB source, 30 frames /
 512 KB request, 100,000 frames / 16 MB compressed history per student-assignment,
 and a 512 MB server recording budget checked at most every 30 seconds. Limit or
 network failures must remain visible and never prevent saving source. Device

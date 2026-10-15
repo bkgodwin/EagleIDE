@@ -1281,8 +1281,14 @@ repeatedly as oversized recording batches.
 
 Teacher Dashboard > Assignments > Watch development history provides a student
 selector, Play/Pause, previous/next change, a seek slider, 1x/5x/20x speed, and an
-option to skip idle gaps longer than five seconds. First/last edit times and
-elapsed time include idle periods; they are not a claim of active working time.
+option to skip idle gaps longer than five seconds. Opening a controlled-file
+submission in the main editor also shows these controls beside the grading
+information. Submitted code appears first; Play or seek switches to read-only
+recorded code, and "Show submitted code" restores the submitted version. Playback
+cannot save over a submission. "Follow edits" scrolls to changes as they leave
+the visible code area; turn it off to read elsewhere. A completion-time hint in
+minutes measures the first-to-last recorded edit, including idle periods; it is
+not a claim of active working time.
 Both device sample and server receipt timestamps are retained. Resynchronization
 and direct file saves are labelled because browser observations can have gaps.
 CoTeachers may review history. Students cannot access the recording database.

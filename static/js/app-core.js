@@ -3065,7 +3065,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const editorPanel = document.getElementById('editorPanel');
       const isLoggedIn = isAuthenticated();
       editorPanel.classList.toggle('audit-preview-active', !!(auditPreviewActive || currentOpenFile?.audit));
-      if (auditPreviewActive || currentOpenFile?.audit || (currentOpenFile?.submission && isCoTeacher())) {
+      if (auditPreviewActive || currentOpenFile?.audit || currentOpenFile?.historyPlayback || currentOpenFile?.readOnly || (currentOpenFile?.submission && isCoTeacher())) {
         editorPanel.classList.remove('editor-disabled');
         setMainEditorReadOnly(true);
         return;
@@ -5771,6 +5771,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         if (switchLabel) switchLabel.textContent = filesActive ? 'Editor' : 'Files';
       }
       if (_workspaceTab === WORKSPACE_TAB_FILES) {
+        window.AssignmentWorkflow?.pauseEditorDevelopment?.();
         if (auditPreviewActive) closeAuditPreview();
         loadFileTree();
       } else {
@@ -6519,6 +6520,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     async function writeCurrentFile() {
       if (auditPreviewActive || currentOpenFile?.audit) return true;
+      if (currentOpenFile?.historyPlayback || currentOpenFile?.readOnly) return true;
       if (currentOpenFile?.submission && isCoTeacher()) return true;
       if (currentOpenFile?.notebook) return true;
       if (currentOpenFile?.draft) return true;
@@ -6580,6 +6582,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     // Update the editor header to show the active filename
     function updateActiveFileName() {
+      window.AssignmentWorkflow?.syncEditorDevelopment?.(currentOpenFile);
       const el = document.getElementById('activeFileName');
       if (el) el.textContent = currentOpenFile ? currentOpenFile.name : '';
       if (typeof socket !== 'undefined' && socket.connected) socket.emit('workspace_file_opened', {name: currentOpenFile && !currentOpenFile.audit && !currentOpenFile.submission ? currentOpenFile.name : ''});
@@ -7774,6 +7777,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     function hideSubmissionScoringPanel() {
+      window.AssignmentWorkflow?.disposeEditorDevelopment?.();
       activeSubmissionContext = null;
       if (submissionSaveTimer) {
         clearTimeout(submissionSaveTimer);
@@ -9129,10 +9133,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const { assignment, submission } = getSubmissionForAssignment(assignmentReference, email);
       if (!assignment || !submission) return;
       currentAdminAssignmentName = assignment.id || assignment.name;
-      if (!window.eagleEditor || (submission.files || []).length > 1 || !/\.(py|js)$/i.test(submission.submittedFileName || 'submission.py')) {
+      if ((submission.files || []).length > 1 || !(assignment.fileControl ? /\.(py|js|html|css)$/i : /\.(py|js)$/i).test(submission.submittedFileName || 'submission.py')) {
         await window.AssignmentWorkflow.openFiles(assignment.id, submission.email || email);
         return;
       }
+      window.AssignmentWorkflow?.pauseEditorDevelopment?.();
       if (!await saveCurrentFile()) {
         alert('Your current file could not be saved before opening the submission.');
         return;
@@ -9156,6 +9161,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           assignmentId: assignment.id || assignment.name,
           studentEmail: submission.email || email,
           revisionId: result.revisionId,
+          readOnly: !/\.(py|js)$/i.test(result.fileName || submission.submittedFileName || 'submission.py'),
+          pasteRanges: result.pasteRanges || [],
           kind: 'text',
         };
         clearFileArtifactPreview();
@@ -9164,17 +9171,53 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         window.AssignmentWorkflow.highlightEditor(result.pasteRanges || []);
         currentBufferDirty = false;
         syncEditorLanguage(result.fileName || submission.submittedFileName || 'submission.py');
-        setMainEditorReadOnly(isCoTeacher());
+        setMainEditorReadOnly(currentOpenFile.readOnly || isCoTeacher());
         updateActiveFileName();
         updateEditorOverlay();
         setWorkspaceTab('editor');
+        window.WikiReader?.showIDE?.();
       } catch {
         alert('Network error while opening submission.');
         return;
       }
       populateSubmissionScoringPanel(assignment, submission);
+      attachSubmissionDevelopment(assignment, submission);
       renderAdminAssignments();
       minimizeTeacherDashboardForSubmission(assignment, submission);
+    }
+
+    function attachSubmissionDevelopment(assignment, submission) {
+      const reviewedFile = currentOpenFile, auth = JSON.stringify(assignmentManagerHeaders());
+      let submittedContent = editor.getValue(), preparing = null;
+      const valid = file => currentOpenFile === reviewedFile && (!file || file === reviewedFile) && auth === JSON.stringify(assignmentManagerHeaders());
+      window.AssignmentWorkflow.attachEditorDevelopment(assignment, submission.email, {
+        valid,
+        async prepare() {
+          if (reviewedFile.historyPlayback) return;
+          if (!preparing) preparing = (async () => {
+            if (!await saveCurrentFile() || currentBufferDirty) throw new Error('Could not finish saving your code edits before playback. Try again or reopen the submission.');
+            if (valid()) submittedContent = editor.getValue();
+          })();
+          try { await preparing; } finally { preparing = null; }
+        },
+        render(content, frame, follow) {
+          if (!valid()) return;
+          reviewedFile.historyPlayback = true;
+          setMainEditorReadOnly(true);
+          window.AssignmentWorkflow.renderEditorFrame(content, frame, follow);
+          clearTimeout(_autosaveTimer);
+          currentBufferDirty = false;
+        },
+        restore() {
+          if (!valid() || !reviewedFile.historyPlayback) return;
+          reviewedFile.historyPlayback = false;
+          editor.setValue(submittedContent);
+          window.AssignmentWorkflow.highlightEditor(reviewedFile.pasteRanges || []);
+          clearTimeout(_autosaveTimer);
+          currentBufferDirty = false;
+          updateEditorOverlay();
+        },
+      });
     }
 
     async function resetQuizCounter(assignmentReference, email) {
@@ -9340,7 +9383,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         feedback.style.display = submission.aiFeedback ? '' : 'none';
         feedback.innerHTML = submission.aiFeedback ? renderAssignmentAiFeedback(submission.aiFeedback) : '';
       }
-      const submitted = (assignment.submissions || []).filter(row => !row.withdrawn && (row.hasGradableFiles ?? row.code)).sort((a, b) => String(a.name || a.email || '').localeCompare(String(b.name || b.email || ''), undefined, { sensitivity: 'base' }));
+      const submitted = (assignment.submissions || []).filter(row => !row.withdrawn && ((assignment.fileControl && row.submittedFileName) || (row.hasGradableFiles ?? row.code))).sort((a, b) => String(a.name || a.email || '').localeCompare(String(b.name || b.email || ''), undefined, { sensitivity: 'base' }));
       const index = submitted.findIndex(row => String(row.email || '').toLowerCase() === String(submission.email || '').toLowerCase());
       const previousDisabled = index <= 0;
       const nextDisabled = index < 0 || index >= submitted.length - 1;
@@ -9662,7 +9705,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (!activeSubmissionContext) return;
       const assignment = getAssignmentByName(activeSubmissionContext.assignmentId);
       if (!assignment) return;
-      const submitted = (assignment.submissions || []).filter(row => !row.withdrawn && (row.hasGradableFiles ?? row.code)).sort((a, b) => String(a.name || a.email || '').localeCompare(String(b.name || b.email || ''), undefined, { sensitivity: 'base' }));
+      const submitted = (assignment.submissions || []).filter(row => !row.withdrawn && ((assignment.fileControl && row.submittedFileName) || (row.hasGradableFiles ?? row.code))).sort((a, b) => String(a.name || a.email || '').localeCompare(String(b.name || b.email || ''), undefined, { sensitivity: 'base' }));
       const index = submitted.findIndex(row => String(row.email || '').toLowerCase() === String(activeSubmissionContext.studentEmail || '').toLowerCase());
       const target = submitted[index + direction];
       if (target) await openAssignmentSubmission(assignment.id || assignment.name, target.email);
