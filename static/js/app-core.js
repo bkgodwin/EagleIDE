@@ -4658,8 +4658,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         </div>`;
     }
 
-    function studentNameCells(student) {
-      return `<td>${escapeHtml(student.first_name ?? student.name ?? '')}</td><td>${escapeHtml(student.last_name || '')}</td>`;
+    function studentNameCells(student, pasted = false) {
+      return `<td>${escapeHtml(student.first_name ?? student.name ?? '')}${pasted ? ' <span class="assignment-paste-flag" title="Pasted text in this submission" aria-label="Pasted text">⚑</span>' : ''}</td><td>${escapeHtml(student.last_name || '')}</td>`;
     }
     function studentNameSort(a, b) {
       return String(a.last_name || '').localeCompare(String(b.last_name || ''), undefined, {sensitivity:'base'})
@@ -6058,12 +6058,18 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       dirty: () => { currentBufferDirty = true; },
     });
     window.eagleEditor?.on?.('change', () => window.WorkspaceData.changed());
+    window.FileProvenance.configure({
+      file: () => currentOpenFile,
+      enabled: () => !!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && !!currentOpenFile
+        && !currentOpenFile.audit && !currentOpenFile.submission && !currentOpenFile.notebook && !csvEditorActive,
+    });
     window.AssignmentWorkflow.configure({
       request: fetchWithDeadline, assignment: getAssignmentByName,
       studentHeaders: () => ({'X-User-Token': USER_TOKEN}), managerHeaders: assignmentManagerHeaders,
       files: () => flattenFiles(_allFileTree || []), openFile: () => currentOpenFile, save: saveCurrentFile,
       reloadAssignments: loadAssignments, renderStudent: renderStudentAssignments,
       questions: openQuestions, scoreReport: openStudentScoreReport,
+      roster: classId => teacherClasses.find(c => c.id === classId)?.students || [],
       maxScore: assignmentTotalMaxScore, feedback: renderAssignmentAiFeedback, markdown: renderMarkdownTo,
       reloadClasses: async () => {await loadTeacherClasses(); renderTeacherClassManagement();},
     });
@@ -6524,6 +6530,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             body: JSON.stringify({
               assignmentId: savedFile.assignmentId,
               studentEmail: savedFile.studentEmail,
+              revisionId: savedFile.revisionId,
               content,
             }),
           }, 10000);
@@ -6543,7 +6550,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const res = await fetchWithDeadline('/api/files/write', {
           method: 'POST',
           headers: fileJsonHeaders(),
-          body: JSON.stringify({ path: savedFile.path, content, require_existing: true })
+          body: JSON.stringify({ path: savedFile.path, content, require_existing: true, ...(USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN ? {pasteRanges:savedFile.pasteRanges || []} : {}) })
         }, 10000);
         if (!res.ok) return false;
         const j = await res.json().catch(() => ({}));
@@ -6577,8 +6584,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (requested === null) return false;
       const fileName = String(requested || '').trim().split(/[\\/]/).pop();
       if (!fileName) { window.alert('A file name is required.'); return false; }
+      const draft = currentOpenFile;
+      const savedAuth = JSON.stringify(fileAuthHeaders());
+      const validDraft = () => savedAuth === JSON.stringify(fileAuthHeaders()) && currentOpenFile === draft;
       try {
         const existing = await fetchWithDeadline('/api/files/read?path=' + encodeURIComponent(fileName), { headers: fileAuthHeaders() });
+        if (!validDraft()) return false;
         if (existing.ok) {
           window.alert('A file with that name already exists. Choose a different name.');
           return false;
@@ -6589,17 +6600,22 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           body: JSON.stringify({ name: fileName, type: 'file', parent: '' }),
         });
         const createdJson = await created.json().catch(() => ({}));
+        if (!validDraft()) return false;
         if (!created.ok || !createdJson.ok) throw new Error(createdJson.error || 'Could not create file');
         syncEditorBridge();
+        const content = editor.getValue();
+        const savedRanges = draft?.pasteRanges || [];
         const written = await fetchWithDeadline('/api/files/write', {
           method: 'POST',
           headers: fileJsonHeaders(),
-          body: JSON.stringify({ path: createdJson.path || fileName, content: editor.getValue() }),
+          body: JSON.stringify({ path: createdJson.path || fileName, content, ...(USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN ? {pasteRanges:savedRanges} : {}) }),
         });
         const writtenJson = await written.json().catch(() => ({}));
         if (!written.ok || !writtenJson.ok) throw new Error(writtenJson.error || 'Could not save file');
-        currentOpenFile = { path: createdJson.path || fileName, name: fileName };
-        currentBufferDirty = false;
+        if (savedAuth !== JSON.stringify(fileAuthHeaders()) || currentOpenFile !== draft) return false;
+        currentOpenFile = { path: createdJson.path || fileName, name: fileName, pasteRanges:draft?.pasteRanges || [] };
+        currentBufferDirty = content !== editor.getValue();
+        if (currentBufferDirty) scheduleAutosave();
         updateActiveFileName();
         await loadFileTree();
         return true;
@@ -6803,7 +6819,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const requestContext = JSON.stringify(fileAuthHeaders());
       if (auditPreviewActive) closeAuditPreview();
       syncEditorBridge();
-      setMainEditorReadOnly(false);
       // Save the currently open file before switching
       if (!await saveCurrentFile() || (currentBufferDirty && currentOpenFile && !currentOpenFile.draft && !currentOpenFile.notebook && !currentOpenFile.audit)) {
         alert('Your current file could not be saved. Check your connection before opening another file.');
@@ -6828,7 +6843,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           || previousContent !== (csvEditorActive ? csvBufferContent() : editor.getValue()) || window.EagleIDE?.connection?.isLost()) return;
       if (!res.ok || !j.ok) { alert(j.error || 'Cannot open file'); return; }
       const kind = j.kind || item.kind || 'text';
-      currentOpenFile = { path: item.path, name: item.name, kind };
+      currentOpenFile = { path: item.path, name: item.name, kind, pasteRanges:j.pasteRanges || [] };
+      setMainEditorReadOnly(false);
       clearFileArtifactPreview();
       if (kind === 'image' || kind === 'database') {
         setCsvMode(false);
@@ -8071,6 +8087,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const usesRubric = gradingMode === 'rubric_beta' || gradingMode === 'external';
       detail.innerHTML = `
         <h4>${escapeHtml(assignment.name)}</h4>
+        ${window.AssignmentWorkflow.teacherToolbar(assignment, !isCoTeacher())}
         <div class="meta assignment-markdown" data-assignment-markdown="${escapeHtml(assignment.id || assignment.name)}" style="margin-bottom:12px;">${escapeHtml(assignment.task || '(No task description)')}</div>
         <div class="meta" style="margin-bottom:12px;">Max score ${(assignment.allowFileSubmission === false ? 0 : (assignment.maxScore || 0)) + (assignment.quiz?.totalPoints || 0)}${assignment.allowFileSubmission === false ? ' (Quiz only)' : ''}${assignment.quiz?.totalPoints ? ` · Quiz ${assignment.quiz.totalPoints} pts` : ''} · Class ${escapeHtml(assignment.targetClassName || 'All')} · Quiz max submissions ${assignment.quizSettings?.maxSubmissions > 0 ? assignment.quizSettings.maxSubmissions : 'Unlimited'}${assignment.dueAt ? ` · Due ${escapeHtml(assignmentDueLabel(assignment.dueAt))}` : ' · No due date'}${assignment.dueExpired ? ' · Deadline passed' : ''}</div>
         ${(assignment.skillTags || []).length ? `<div class="skill-tags" style="margin-bottom:12px;">${(assignment.skillTags || []).map(tag => `<span class="skill-chip">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
@@ -8163,17 +8180,18 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
               <tr>
                 ${studentNameCells(student)}
                 <td><span class="assignment-not-turned-in">Not turned in</span></td>
-                <td>—</td><td>—</td><td>—</td><td>—</td>
+                <td>—</td><td>—</td><td>—</td><td>${!isCoTeacher() ? `<button type="button" class="btn secondary assignment-extend-student" data-email="${escapeHtml(student.email)}">Extend…</button>` : '—'}</td>
               </tr>`;
               const aiStatus = sub.aiGradingStatus || '';
               return `
               <tr>
-                ${studentNameCells(student)}
+                ${studentNameCells(student, sub.hasPastedText)}
                 <td>${sub.withdrawn ? 'Un-submitted' : '<span class="assignment-submitted-check" aria-label="Submitted">✓</span> Turned in'}${aiStatus ? `<div><span class="assignment-ai-status ${escapeHtml(aiStatus)}">${escapeHtml(aiStatus)}</span></div>` : ''}${sub.aiGradingError ? `<div class="assignment-not-turned-in">${escapeHtml(sub.aiGradingError)}</div>` : ''}</td>
                 <td>${window.AssignmentWorkflow.teacherFiles(assignment, sub)}</td>
                 <td>${assignment.allowFileSubmission === false ? '—' : `<input class="assignment-grade-input" type="number" min="0" max="${assignment.maxScore || 0}" step="1" value="${sub.codeScore ?? sub.score ?? ''}" data-email="${escapeHtml(sub.email)}" aria-label="Score for ${escapeHtml(sub.name || sub.email)}"><div class="meta">${sub.manualScoreOverride ? 'Manual override' : (sub.aiSuggestedScore !== null && sub.aiSuggestedScore !== undefined ? `${sub.gradingSource === 'external' ? 'External' : 'AI'} ${sub.aiSuggestedScore}` : '')}</div>`}</td>
                 <td>${assignmentScoreValue(sub) ?? '—'} / ${assignmentTotalMaxScore(assignment)}<div class="meta">${assignmentPercentValue(sub, assignment) ?? '—'}</div></td>
                 <td><div style="display:flex; gap:6px; flex-wrap:wrap;">
+                  ${!isCoTeacher() ? `<button type="button" class="btn secondary assignment-extend-student" data-email="${escapeHtml(sub.email)}">Extend…</button>` : ''}
                   ${assignment.allowFileSubmission === false ? '' : `<button class="btn secondary open-submission-btn" data-email="${escapeHtml(sub.email)}">Open</button>${gradingMode === 'external' ? '' : `<button class="btn secondary ai-grade-submission-btn" data-email="${escapeHtml(sub.email)}" ${['queued', 'running'].includes(aiStatus) || aiGradingDisabled || sub.withdrawn || !(sub.hasGradableFiles ?? sub.code) ? 'disabled' : ''} ${aiGradingDisabled ? 'title="Accept a current beta rubric before grading"' : ''}>AI Grade</button>`}`}
                   ${assignment.quiz?.questions?.length ? `<button class="btn secondary grade-quiz-btn" data-email="${escapeHtml(sub.email)}">Grade Quiz</button>` : ''}
                   ${assignment.quiz?.questions?.length ? `<button class="btn secondary reset-quiz-counter-btn" data-email="${escapeHtml(sub.email)}">Reset Attempts</button>` : ''}
@@ -9075,7 +9093,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const { assignment, submission } = getSubmissionForAssignment(assignmentReference, email);
       if (!assignment || !submission) return;
       currentAdminAssignmentName = assignment.id || assignment.name;
-      if ((submission.files || []).length > 1 || !/\.(py|js)$/i.test(submission.submittedFileName || 'submission.py')) {
+      if (!window.eagleEditor || (submission.files || []).length > 1 || !/\.(py|js)$/i.test(submission.submittedFileName || 'submission.py')) {
         await window.AssignmentWorkflow.openFiles(assignment.id, submission.email || email);
         return;
       }
@@ -9083,10 +9101,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         alert('Your current file could not be saved before opening the submission.');
         return;
       }
+      const requestId = ++fileOpenRequestId;
+      const requestContext = JSON.stringify(assignmentManagerHeaders());
+      const previousFile = currentOpenFile, previousContent = editor.getValue();
       try {
         const query = new URLSearchParams({ assignmentId: assignment.id || assignment.name, studentEmail: submission.email || email });
         const response = await fetch(`/api/assignments/submission?${query.toString()}`, { headers: assignmentManagerHeaders() });
         const result = await response.json().catch(() => ({}));
+        if (requestId !== fileOpenRequestId || requestContext !== JSON.stringify(assignmentManagerHeaders())
+            || currentOpenFile !== previousFile || editor.getValue() !== previousContent) return;
         if (!result.ok) {
           alert(result.error || 'Could not open submission.');
           return;
@@ -9096,11 +9119,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           submission: true,
           assignmentId: assignment.id || assignment.name,
           studentEmail: submission.email || email,
+          revisionId: result.revisionId,
           kind: 'text',
         };
         clearFileArtifactPreview();
         setCsvMode(false);
         editor.setValue(result.content || submission.code || '');
+        window.AssignmentWorkflow.highlightEditor(result.pasteRanges || []);
         currentBufferDirty = false;
         syncEditorLanguage(result.fileName || submission.submittedFileName || 'submission.py');
         setMainEditorReadOnly(isCoTeacher());
@@ -9177,8 +9202,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       document.body.appendChild(modal);
       const saveManual = async (questionId, value, statusEl) => {
         const max = parseInt(modal.querySelector(`.quiz-manual-score[data-question-id="${CSS.escape(questionId)}"]`)?.dataset.max || '0', 10);
-        const parsed = value === '' ? null : Math.max(0, Math.min(max, parseInt(value, 10)));
-        if (value !== '' && Number.isNaN(parsed)) {
+        const parsed = value === '' ? null : Number(value);
+        if (value !== '' && (!Number.isFinite(parsed) || parsed < 0 || parsed > max)) {
           statusEl.textContent = 'Invalid score';
           return;
         }
@@ -9186,7 +9211,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const resp = await fetch('/api/quiz/override-score', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...assignmentManagerHeaders() },
-          body: JSON.stringify(assignmentRequestPayload(assignment, { studentEmail, questionId, manualScore: parsed }))
+          body: JSON.stringify(assignmentRequestPayload(assignment, { studentEmail, questionId, manualScore: parsed, revisionId: submission.revisionId }))
         });
         const data = await resp.json().catch(() => ({}));
         if (!data.ok) {

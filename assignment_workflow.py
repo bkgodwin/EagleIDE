@@ -6,6 +6,7 @@ import ast
 import csv
 import hashlib
 import json
+import math
 import re
 import shutil
 import uuid
@@ -14,6 +15,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from flask import jsonify, request, send_file
+import file_provenance
 
 MAX_FILES = 20
 MAX_BUNDLE_BYTES = 25 * 1024 * 1024
@@ -67,6 +69,22 @@ def iso(value):
     return value.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+def normalize_extensions(eagle, value):
+    result = {}
+    for email, record in (value.items() if isinstance(value, dict) else []):
+        if not isinstance(email, str) or not isinstance(record, dict):
+            continue
+        try:
+            until = eagle._normalize_assignment_due_at(record.get("until"))
+        except ValueError:
+            continue
+        if not until:
+            continue
+        result[email.strip().lower()] = {"until": until, "grantedAt": str(record.get("grantedAt") or "")[:80],
+            **{key: max(0, record[key]) for key in ("fileAttemptLimit", "quizAttemptLimit") if type(record.get(key)) is int}}
+    return result
+
+
 def student_state(eagle, assignment, email, *, now=None):
     cls = eagle._find_class_by_id(assignment.get("targetClassId")) or {}
     support = accommodation((cls.get("accommodations") or {}).get(str(email).lower()))
@@ -93,9 +111,15 @@ def student_state(eagle, assignment, email, *, now=None):
         past = not eagle._assignment_is_active(assignment, now=current)
         due = ""
         note = "No deadline provided per accommodation"
+    extension = (assignment.get("studentExtensions") or {}).get(str(email).lower()) or {}
+    until = extension.get("until", "")
+    reopened = bool(until and not eagle._assignment_due_has_passed({"dueAt": until}, now=current))
+    if reopened:
+        due, expired, past, deadline_allowed = until, False, False, True
+        note = "Make-up / retest deadline"
     window_allowed, next_change = True, ""
     message = ""
-    if window["enabled"] and not assignment.get("allowSubmissionAnyTime", False):
+    if window["enabled"] and not assignment.get("allowSubmissionAnyTime", False) and not reopened:
         local = current.astimezone(ZoneInfo(window["timeZone"]))
         clock = local.strftime("%H:%M")
         window_allowed = local.weekday() < 5 and window["start"] <= clock < window["end"]
@@ -112,6 +136,14 @@ def student_state(eagle, assignment, email, *, now=None):
             "deadlineOpen": bool(deadline_allowed),
             "submissionWindowOpen": window_allowed, "submissionWindowMessage": message,
             "nextWindowChangeAt": next_change}
+
+
+def attempt_limit(eagle, assignment, email, kind):
+    maximum = assignment.get("maxFileSubmissions", 0) if kind == "file" else (assignment.get("quizSettings") or {}).get("maxSubmissions", 0)
+    extension = (assignment.get("studentExtensions") or {}).get(str(email).lower()) or {}
+    if maximum and extension.get("until") and not eagle._assignment_due_has_passed({"dueAt": extension["until"]}):
+        maximum = max(maximum, extension.get(f"{kind}AttemptLimit", maximum))
+    return maximum
 
 
 def submission_error(eagle, assignment, user):
@@ -141,6 +173,7 @@ def teacher_payload(eagle, assignment):
     payload = eagle._assignment_effective_payload(assignment)
     for submission in payload.get("submissions", []):
         submission["hasGradableFiles"] = bool(submission.get("code")) and not submission.get("withdrawn") and has_gradable_files(submission)
+        submission["hasPastedText"] = any(f.get("pasteRanges") for f in files_for(submission))
         submission.pop("code", None)
         for old in submission.get("history", []):
             old.pop("code", None)
@@ -219,6 +252,11 @@ def python_syntax(eagle, assignment, submission):
 
 
 def store_bundle(eagle, assignment, user, data, uploads=()):
+    with file_provenance.lock(eagle._get_user_dir(user["email"])):
+        return _store_bundle(eagle, assignment, user, data, uploads)
+
+
+def _store_bundle(eagle, assignment, user, data, uploads=()):
     paths = data.get("filePaths", [data["filePath"]] if data.get("filePath") else [])
     if not isinstance(paths, list) or any(not isinstance(p, str) for p in paths) or len(set(paths)) != len(paths):
         raise ValueError("Select distinct workspace files")
@@ -273,11 +311,25 @@ def store_bundle(eagle, assignment, user, data, uploads=()):
         records = []
         for index, (name, content, source) in enumerate(sources):
             stored_name = f"{index + 1:02d}-{name}"
+            ranges = []
+            if source and Path(name).suffix.lower() in eagle.TEXT_EXTENSIONS:
+                try:
+                    text = content.decode("utf-8")
+                    canonical = text.replace("\r\n", "\n").replace("\r", "\n")
+                    target = eagle._validate_workspace_path(root, source)
+                    ranges = file_provenance.read(eagle, root, target, canonical)
+                    if canonical != text:
+                        ranges = file_provenance.remap(ranges, canonical, text)
+                except UnicodeError:
+                    pass
             if Path(name).suffix.lower() == ".py":
-                content = eagle._prepend_submission_timestamp(content.decode("utf-8"), submitted_at, user.get("name") or "Student").encode("utf-8")
+                text = content.decode("utf-8")
+                stamped = eagle._prepend_submission_timestamp(text, submitted_at, user.get("name") or "Student")
+                ranges = file_provenance.remap(ranges, text, stamped)
+                content = stamped.encode("utf-8")
             (staging / stored_name).write_bytes(content)
             records.append({"id": uuid.uuid4().hex, "name": name, "size": len(content), "sourceFilePath": source,
-                            "path": (destination / stored_name).relative_to(eagle.ASSIGNMENT_SUBMISSIONS_DIR.resolve()).as_posix()})
+                            "path": (destination / stored_name).relative_to(eagle.ASSIGNMENT_SUBMISSIONS_DIR.resolve()).as_posix(), "pasteRanges": ranges})
         staging.replace(destination)
         result = {"revisionId": revision, "files": records, "submittedAt": submitted_at,
                   "revisionDirectory": destination.relative_to(eagle.ASSIGNMENT_SUBMISSIONS_DIR.resolve()).as_posix(),
@@ -340,7 +392,7 @@ def submit(eagle):
         email = user["email"].lower()
         previous = next((s for s in assignment.get("submissions", []) if s.get("email", "").lower() == email), {})
         count = int(previous.get("fileSubmissionCount", 0))
-        maximum = assignment.get("maxFileSubmissions", 0)
+        maximum = attempt_limit(eagle, assignment, email, "file")
         if maximum and count >= maximum:
             return jsonify(ok=False, error="Maximum file submission attempts reached. Ask your teacher to un-submit accidental work."), 403
         if not assignment.get("allowFileSubmission", True):
@@ -368,6 +420,7 @@ def submit(eagle):
         prune_history(eagle, assignment, previous)
     eagle.socketio.emit("assignment_workflow_updated", {"classId": assignment.get("targetClassId")}, to=f"class_{assignment.get('targetClassId')}")
     visible = {k: v for k, v in sub.items() if k not in {"history", "aiFeedback", "teacherFeedback", "aiGradingStatus", "aiGradingError", "aiSuggestedScore", "manualScoreOverride"}}
+    visible["files"] = public_files(sub)
     if len(sub["files"]) > 1:
         visible.pop("code", None)
     return jsonify(ok=True, message="Submission saved successfully", submission=visible)
@@ -400,7 +453,86 @@ def clone_revision(eagle, assignment, previous):
         raise
 
 
+def override_score(eagle):
+    """Serialize per-question grading and reject stale submission revisions."""
+    actor = eagle._assignment_actor(request)
+    if not actor:
+        return jsonify(ok=False, error="Teacher token required"), 401
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(ok=False, error="Invalid score request"), 400
+    reference, hint = eagle._assignment_request_reference(data)
+    email = str(data.get("studentEmail") or "").strip().lower()
+    with eagle._assignment_lock:
+        assignment = eagle._load_assignment(reference, hint)
+        if not assignment:
+            return jsonify(ok=False, error="Assignment not found"), 404
+        if not eagle._assignment_access(actor, assignment):
+            return jsonify(ok=False, error="Assignment access denied"), 403
+        question = next((q for q in (assignment.get("quiz") or {}).get("questions", []) if q.get("id") == data.get("questionId")), None)
+        sub = next((s for s in assignment.get("submissions", []) if s.get("email", "").lower() == email), None)
+        response = next((r for r in (sub or {}).get("quizResponses", []) if r.get("questionId") == data.get("questionId")), None)
+        if not question or not sub or response is None or sub.get("withdrawn"):
+            return jsonify(ok=False, error="Current submission or question not found"), 404
+        if data.get("revisionId") and data["revisionId"] != sub.get("revisionId"):
+            return jsonify(ok=False, error="A newer submission arrived. Reopen grading before saving."), 409
+        score = data.get("manualScore")
+        if score is not None and (isinstance(score, bool) or not isinstance(score, (int, float)) or not 0 <= score <= question.get("points", 0) or not math.isfinite(score)):
+            return jsonify(ok=False, error="Score must be between zero and the question maximum"), 400
+        response["manualScore"] = score
+        fallback = response.get("aiScore")
+        if fallback is None:
+            fallback = question.get("points", 0) if question.get("type") in {"multiple_choice", "multiple_choice_code"} and response.get("answer") == question.get("correctAnswer") else 0
+        if not isinstance(fallback, (int, float)) or isinstance(fallback, bool) or not 0 <= fallback <= question.get("points", 0):
+            fallback = 0
+        response["pointsEarned"] = score if score is not None else fallback
+        sub["quizScore"] = sum(r.get("pointsEarned", 0) or 0 for r in sub.get("quizResponses", []))
+        sub["totalScore"] = (sub.get("codeScore") or 0) + sub["quizScore"]
+        if not eagle._save_assignment(assignment):
+            return jsonify(ok=False, error="Failed to save score"), 500
+        return jsonify(ok=True, pointsEarned=response["pointsEarned"], quizScore=sub["quizScore"], totalScore=sub["totalScore"])
+
+
 def register(app, eagle):
+    @app.post("/api/assignments/extend-student")
+    def extend_student():
+        actor = eagle._assignment_actor(request)
+        if not actor:
+            return jsonify(ok=False, error="Teacher authentication required"), 401
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify(ok=False, error="Invalid extension request"), 400
+        days = data.get("days")
+        if isinstance(days, bool) or not isinstance(days, int) or not 0 <= days <= 365:
+            return jsonify(ok=False, error="Choose a whole number from 1 to 365 days, or 0 to remove the extension"), 400
+        email = str(data.get("studentEmail") or "").strip().lower()
+        with eagle._assignment_lock:
+            assignment = eagle._load_assignment(data.get("assignmentId") or "")
+            if not assignment or not eagle._assignment_access(actor, assignment, owner_only=True):
+                return jsonify(ok=False, error="Only the class owner may extend assignments"), 403
+            cls = eagle._find_class_by_id(assignment.get("targetClassId")) or {}
+            if email not in cls.get("students", []):
+                return jsonify(ok=False, error="Student is not in this class"), 404
+            if not assignment.get("releasedAt"):
+                return jsonify(ok=False, error="Release this assignment before granting make-up time"), 409
+            extensions = assignment.setdefault("studentExtensions", {})
+            if days:
+                now = datetime.now(timezone.utc)
+                sub = next((s for s in assignment.get("submissions", []) if s.get("email", "").lower() == email), {})
+                extensions[email] = {"until": iso(now + timedelta(days=days)), "grantedAt": iso(now),
+                                     "fileAttemptLimit": int(sub.get("fileSubmissionCount", 0)) + 1,
+                                     "quizAttemptLimit": int(sub.get("quizSubmissionCount", 0)) + 1}
+            else:
+                extensions.pop(email, None)
+            if not eagle._save_assignment(assignment):
+                return jsonify(ok=False, error="Could not save extension"), 500
+        eagle.socketio.emit("assignment_workflow_updated", {"classId": assignment.get("targetClassId")}, to=f"class_{assignment.get('targetClassId')}")
+        return jsonify(ok=True, extension=extensions.get(email))
+
+    @app.post("/api/quiz/score-question")
+    def score_question():
+        return override_score(eagle)
+
     def resolve():
         assignment = eagle._load_assignment(str(request.args.get("assignmentId") or ""))
         if not assignment:
@@ -441,7 +573,7 @@ def register(app, eagle):
 
     @app.get("/api/assignments/submission-file")
     def submission_file():
-        assignment, sub, _, error = resolve()
+        assignment, sub, actor, error = resolve()
         if error:
             return error
         record = next((f for f in files_for(sub) if f.get("id") == request.args.get("fileId")), None)
@@ -486,7 +618,7 @@ def register(app, eagle):
             if target.stat().st_size <= MAX_PREVIEW_BYTES:
                 content = target.read_text(encoding="utf-8")
                 if "\x00" not in content:
-                    return jsonify(ok=True, kind="text", content=content)
+                    return jsonify(ok=True, kind="text", content=content, **({"pasteRanges": record.get("pasteRanges", [])} if actor else {}))
         except (UnicodeError, ValueError, OSError, csv.Error):
             pass
         return jsonify(ok=True, kind="download", message="Download this attachment to open it. The browser preview supports text, CSV, and images.")

@@ -37,7 +37,9 @@ function eagleFoldRange(cm, pos) {
         window.eagleEditor = cm;
         return {
           getValue: () => cm.getValue(),
-          setValue: (v) => cm.setValue(v)
+          // Source loads cross file/account boundaries. Undo must remain local
+          // to the new document instead of restoring another file's contents.
+          setValue: (v) => {cm.setValue(v); cm.clearHistory();}
         };
       } else {
         // Fallback textarea uses the same predictable Python Enter rules.
