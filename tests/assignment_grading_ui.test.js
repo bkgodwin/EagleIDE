@@ -86,7 +86,7 @@ function assignmentViewHarness(assignments) {
     currentAssignments: assignments,
     teacherClasses: [{ id: 'class-a', name: 'Period A', students: [] }, { id: 'class-b', name: 'Period B', students: [] }],
     currentTeacherClassId: 'class-a', activeAssignmentsClassId: 'class-a', currentAdminAssignmentName: null,
-    TEACHER_TOKEN: 'teacher-token', window: { EagleIDE: {}, AssignmentWorkflow: { teacherFiles: () => '', bindTeacher() {} } }, document: { getElementById: id => nodes[id] || null },
+    TEACHER_TOKEN: 'teacher-token', window: { EagleIDE: {}, AssignmentWorkflow: { teacherToolbar: () => '', teacherFiles: () => '', bindTeacher() {} } }, document: { getElementById: id => nodes[id] || null },
     assignmentGradingCriteria: [
       { id: 'comments', rigorLevel: 6, label: 'Use of comments', description: 'Comments explain intent.' },
       { id: 'objectives', rigorLevel: 2, label: 'All outlined objectives met', description: 'All required outcomes are present.' },
