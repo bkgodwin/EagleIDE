@@ -258,15 +258,19 @@ class CapabilityLogFilter(logging.Filter):
         return True
 
 
-def stream_body(response, close, authorized):
+def stream_body(response, close, authorized, *, fail_on_error=False):
     start, size, checked = time.monotonic(), 0, float("-inf")
     try:
         while True:
             now = time.monotonic()
             if now - start > TOTAL_TIMEOUT:
+                if fail_on_error:
+                    raise ToolError("Application HTML response timed out", 502)
                 return
             if now - checked >= 1:
                 if not authorized():
+                    if fail_on_error:
+                        raise ToolError("Application access expired or was revoked", 403)
                     return
                 checked = now
             chunk = response.read1(64 * 1024)
@@ -276,7 +280,9 @@ def stream_body(response, close, authorized):
             if size > MAX_RESPONSE:
                 return
             yield chunk
-    except (OSError, http.client.HTTPException):
+    except (OSError, http.client.HTTPException) as exc:
+        if fail_on_error:
+            raise ToolError("Application HTML transfer ended early", 502) from exc
         return
     finally:
         close()
@@ -289,7 +295,7 @@ def html_body(response, close, authorized):
     Latin-1 round-tripping keeps byte offsets and the original document encoding.
     """
     chunks, size = [], 0
-    stream = stream_body(response, close, authorized)
+    stream = stream_body(response, close, authorized, fail_on_error=True)
     try:
         for chunk in stream:
             size += len(chunk)
@@ -339,4 +345,6 @@ def html_body(response, close, authorized):
         pieces.extend((text[start:position], ' crossorigin="anonymous"'))
         start = position
     pieces.append(text[start:])
+    if not authorized():
+        raise ToolError("Application access expired or was revoked", 403)
     return ''.join(pieces).encode("latin-1")
