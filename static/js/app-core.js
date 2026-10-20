@@ -3237,6 +3237,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     // Login button: open unified login modal
     document.getElementById('loginBtn').addEventListener('click', () => openLoginModal());
     document.getElementById('signOutBtn')?.addEventListener('click', async () => {
+      window.ExternalTools?.accountLeaving?.();
       if (!isAuthenticated()) return;
       if (isProgramRunning && socket) socket.emit('stop', {});
       clearExecutionQueueState();
@@ -4746,6 +4747,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       refreshActiveStudentsForClass(activeClass?.id);
       wrap.querySelectorAll('.cls-notebook-check').forEach(button => button.addEventListener('click', () => window.StudentNotebook?.openStudentNotebook(activeClass.id, button.dataset.email)));
       if (activeClass && activeClass.canManageClass !== false) window.AssignmentWorkflow.bindClass(wrap, activeClass);
+      if (activeClass && activeClass.canManageClass !== false) window.ExternalTools?.bindClass?.(wrap, activeClass);
       wrap.querySelectorAll('.cls-coteacher-btn').forEach(btn => btn.onclick = async () => {
         const res = await fetch('/api/teacher/classes/coteacher', {method:'POST', headers:{'Content-Type':'application/json', 'X-Teacher-Token':TEACHER_TOKEN}, body:JSON.stringify({classId:activeClass.id, email:btn.dataset.email, enabled:btn.dataset.enabled !== 'true'})});
         const data = await res.json();
