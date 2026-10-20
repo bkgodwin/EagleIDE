@@ -13186,6 +13186,13 @@ register_network_features(
     config_provider=_load_config,
 )
 register_classroom_features(app, socketio)
+from external_tools import register as register_external_tools
+_external_tools = register_external_tools(
+    app, base_dir=Path(os.environ.get("EAGLEIDE_TOOL_DATA_DIR", str(BASE_DIR / "tool_data"))),
+    source_dir=BASE_DIR, require_admin=_require_admin, require_teacher=_require_teacher,
+    require_user=_require_user, find_user=_find_user, get_user_class_ids=_get_user_class_ids,
+    find_class=_find_class_by_id, teacher_classes=_get_teacher_classes,
+)
 from workspace_data import register as register_workspace_data
 register_workspace_data(app, sys.modules[__name__])
 assignment_workflow.register(app, sys.modules[__name__])

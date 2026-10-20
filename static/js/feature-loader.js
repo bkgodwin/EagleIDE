@@ -3,8 +3,9 @@
   'use strict';
 
   const definitions = {
+    externalToolsAdmin: ['/static/js/external-tools-admin.js?v=20261019-1'],
     network: [
-      '/static/js/network-sim.js?v=20260714-18',
+      '/static/js/network-sim.js?v=20261019-external-tools-1',
       '/static/js/network-sim-advanced.js?v=20260714-4',
     ],
     wikiTools: [

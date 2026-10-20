@@ -39,6 +39,9 @@ Required runtime components:
 |-- network_features.py          Optional simulator auth, topology, class access, and lab HTTP routes
 |-- network_store.py             Validated simulator persistence, reachability, and lab grading
 |-- network_content.py           Source-controlled example topologies, labs, and CLI reference
+|-- external_tools.py            Generic tool registration, class grants, scoped launch sessions, and workspace routes
+|-- tool_store.py                Bounded atomic private tool catalog and network policy
+|-- tool_gateway.py              Pinned private HTTP transport, resource limits and credential-redacted access logs
 |-- sandbox_worker.py            Restricted Python execution worker launched by app.py
 |-- js_worker.js                 Student JavaScript VM realm, safe I/O, timers, and denied imports
 |-- trace_support.py             Bounded Python Step Mode snapshots and deterministic narration
@@ -68,6 +71,8 @@ Required runtime components:
 |       |-- file-provenance.js     Silent editor paste ranges, edit remapping, and bounded undo/redo recovery
 |       |-- workspace-data.js    Paged editable CSV grid and lazy JSON tree/source controls
 |       |-- server-performance.js On-demand admin CPU graphs; browser history only
+|       |-- external-tools.js     Tool workspace, class grants, navigation and account/session cleanup
+|       |-- external-tools-admin.js Lazy generic catalog, policy, test and compatibility confirmation UI
 |       |-- editor-init.js       CodeMirror setup and textarea fallback
 |       |-- editor-feedback.js   Local occurrences, delimiters, diagnostics, block guides, and caret visibility
 |       |-- editor-behavior.js   Predictable Python Enter indentation and CodeMirror block folding
@@ -131,6 +136,8 @@ Required runtime components:
 |   |-- test_server_lifecycle.py Graceful shutdown state and false crash-alert regression coverage
 |   |-- test_static_html.py      Static HTML structure, IDs, and local asset wiring
 |   |-- test_network_sim.py      Simulator validation, persistence, grading, auth, and class access
+|   |-- test_external_tools.py   Generic HTTP fixture, tool permissions, revocation, SSRF and gateway boundaries
+|   |-- external_tools_ui.test.js Tool launch, late responses, outage, navigation and lifecycle regressions
 |   `-- test_wiki.py             Wiki persistence, auth, media, class features, and backup tests
 |-- tools/
 |   |-- migrate_ux.py            Historical one-time CSS/JS extraction script
@@ -173,6 +180,37 @@ assignments/prompts, and grade submissions. Owners retain membership, profile,
 lock/unlock, delete, assignment-setting, and lesson-plan sharing/source controls.
 
 All Ollama generation goes through the shared in-memory AI dispatcher in `app.py`. It keeps the configured concurrency full while healthy, queues excess interactive and background work, applies a global cooldown when Ollama reports overload, and retries overloaded requests. Assignment grading adds a durable submission-status layer with teacher queue inspection and cancellation; do not bypass the dispatcher with direct Ollama HTTP calls.
+
+### External applications
+
+`external_tools.py` registers an empty, disabled-by-default external application
+gateway with the existing auth/class callbacks. Admins own destinations and global
+enablement; only class owners mutate grants. Students use the union of current
+class grants; guests receive none. `tool_store.py` owns private atomic
+`tool_data/catalog.json` (override `EAGLEIDE_TOOL_DATA_DIR`), including explicit
+allowed private application CIDRs and denied management/EagleIDE CIDRs. Never
+seed third-party apps or put project contents in this catalog.
+
+Tool capabilities are revocable in-memory credentials bound to the originating
+auth session, current entitlement and tool revision. Keep their URL segments
+redacted in access logs. `tool_gateway.py` validates all DNS answers and pins the
+checked numerical destination, preserving TLS hostname validation; do not add an
+arbitrary URL proxy, ambient credentials or permissive localhost flags. Restrict
+methods, uploads, responses, connections and timeouts independently of runners.
+Cookie/login, WebSocket/SSE, workers and unsupported native storage flows fail
+closed. HTML/application responses enforce CSP sandbox without allow-same-origin
+as well as the iframe sandbox; direct document navigation must not bypass it.
+Opaque Origin:null CORS applies only to authorized instance resources, never
+EagleIDE APIs. Preserve upstream CSP/frame restrictions and existing HTML runtime
+isolation. Compatibility confirmation is an admin attestation after a private
+preview, not an automated security certification. Setup and operational limits
+are in `static/docs/external-tools.html`.
+
+Tool routing extends the current wiki/IDE/network lifecycle. Do not retain hidden
+application iframes after confirmed departure or account changes. Preserve IDE
+and notebook buffers, reject stale launches, revalidate suspended/restored views,
+and distinguish transient outages from confirmed revocation. Never clear all
+origin storage. The operator manages LXC/network isolation, not EagleIDE.
 
 ### Frontend
 
