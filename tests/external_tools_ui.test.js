@@ -85,3 +85,34 @@ test('page suspension disposes the iframe and warns while a tool is active', asy
   let warned = false; h.events.beforeunload({ preventDefault() { warned = true; } }); assert.equal(warned, true);
   h.events.pagehide(); assert.equal(h.window.ExternalTools.active(), false);
 });
+
+test('access refreshes, lease renewals and visibility checks retain the mounted document', async () => {
+  const h = harness(); await flush();
+  const opened = h.window.ExternalTools.open(h.tool); h.completeLaunch(); await opened;
+  const frame = h.elements.get('externalToolFrameHost').children[0];
+  frame.unsavedWork = 'a project being edited'; frame.handlers.load();
+  for (let i = 0; i < 5; i++) {
+    h.intervals[0]();
+    h.changeAuth({ USER_TOKEN: 'account-one', currentStudentClassId: `class-${i}` });
+    h.events['document:visibilitychange']();
+    await flush();
+    assert.equal(h.window.ExternalTools.route(), true);
+    assert.equal(h.elements.get('externalToolFrameHost').children[0], frame);
+    assert.equal(frame.unsavedWork, 'a project being edited');
+  }
+  assert.equal(h.calls.filter(call => call.url.endsWith('/launch')).length, 1);
+  assert.ok(h.calls.filter(call => call.url.endsWith('/instances/instance') && call.options.method === 'POST').length >= 5);
+});
+
+test('late document load keeps outage visible; restored access retains the frame and preview status', async () => {
+  const h = harness(); await flush();
+  const opened = h.window.ExternalTools.open(h.tool); h.completeLaunch(); await opened;
+  const frame = h.elements.get('externalToolFrameHost').children[0];
+  h.setFailure(502); h.intervals[0](); await flush();
+  frame.handlers.load();
+  assert.match(h.elements.get('externalToolStatus').textContent, /Connection unavailable/);
+  assert.equal(h.elements.get('externalToolInfo').open, true);
+  h.setFailure(0); h.intervals[0](); await flush();
+  assert.match(h.elements.get('externalToolStatus').textContent, /Document loaded/);
+  assert.equal(h.elements.get('externalToolFrameHost').children[0], frame);
+});

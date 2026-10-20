@@ -18,6 +18,12 @@ Optional External Tools (empty and disabled by default):
   EagleIDE addresses, then register a full private HTTP/HTTPS backend URL and
   single-segment public path. Save, test connectivity, privately preview, then
   explicitly confirm restricted-browser compatibility before enabling.
+- The wider setup panel separates Applications, Network & access, and a
+  Compatibility guide. Permissions explain when server writes or HTML forms
+  are needed; neither enables cookies/login or persistent browser storage.
+- Tools fill the screen beneath a compact site banner. Info contains status
+  and saving help. Routine access renewals keep the current app and draft loaded;
+  leaving the tool, signing out or expired access closes it.
 - Class owners grant globally enabled tools in Dashboard > Classes > External
   Tools. Students receive the union of current class grants; guests get none.
   CoTeachers cannot change these settings. Logout/removal/disable revokes delivery.
