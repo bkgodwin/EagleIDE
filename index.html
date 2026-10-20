@@ -44,7 +44,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261019-external-tools-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261020-tool-layout-1">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -56,6 +56,19 @@
     <div class="topbar-primary-left">
       <div class="brand"><div>EagleIDE</div></div>
       <button class="btn btn--ghost wiki-nav-btn" id="wikiNavBtn" type="button" aria-expanded="true" aria-controls="wikiNavDrawer" title="Hide wiki contents"><span aria-hidden="true">☰</span><span class="wiki-nav-label">Hide Contents</span></button>
+    </div>
+    <div class="external-tool-toolbar" aria-label="Application controls">
+      <strong id="externalToolTitle">External tool</strong>
+      <details id="externalToolInfo" class="external-tool-info">
+        <summary title="Application status and saving help">Info</summary>
+        <div class="external-tool-info-panel">
+          <p id="externalToolStatus" role="status" aria-live="polite"></p>
+          <p>Use the app’s save or download controls before closing. EagleIDE does not save its projects.</p>
+          <p>Reload restarts the app. Keep this tab open while working.</p>
+        </div>
+      </details>
+      <button type="button" class="btn secondary" id="externalToolRetry" title="Restart this application">Reload</button>
+      <button type="button" class="btn secondary" id="externalToolClose" title="Close application and return home">Close</button>
     </div>
     <div class="topbar-primary-center">
       <nav class="site-primary-nav" aria-label="Primary navigation">
@@ -1613,40 +1626,72 @@
   </div>
 
   <section id="externalToolWorkspace" class="external-tool-workspace" hidden aria-label="External application">
-    <div class="external-tool-toolbar glass-surface">
-      <strong id="externalToolTitle">External tool</strong>
-      <span id="externalToolStatus" role="status" aria-live="polite"></span>
-      <button type="button" class="btn secondary" id="externalToolRetry">Retry</button>
-      <button type="button" class="btn secondary" id="externalToolClose">Close tool</button>
-    </div>
-    <p class="external-tool-save-note">Use the app’s download or save controls before closing. EagleIDE does not save its projects.</p>
     <div id="externalToolFrameHost" class="external-tool-frame-host"></div>
   </section>
 
-  <div id="externalToolsModal" class="modal" style="display:none;">
+  <div id="externalToolsModal" class="modal" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="externalToolsHeading">
     <div class="modal-content external-tools-manager">
-      <div class="external-tool-toolbar"><h3>External Tools</h3><button type="button" class="btn secondary" id="externalToolsDone">Close</button></div>
-      <p id="externalToolsAdminStatus" role="status" aria-live="polite"></p>
-      <details open><summary>Gateway network policy</summary>
-        <p>Allow only the private application network. Deny management networks and EagleIDE addresses. Firewall isolation remains your responsibility.</p>
-        <label class="choice-item"><input type="checkbox" id="externalToolsEnabled"><span>Enable External Tools</span></label>
-        <label>Allowed application CIDRs (one per line)<textarea id="externalToolsAllowed" rows="2" placeholder="Private application subnet CIDR"></textarea></label>
-        <label>Denied management CIDRs / host addresses (one per line)<textarea id="externalToolsDenied" rows="2" placeholder="Management subnet CIDR or host /32"></textarea></label>
-        <button type="button" class="btn secondary" id="externalToolsPolicySave">Save policy (requires retesting tools)</button>
-      </details>
-      <div id="externalToolsCatalog" class="external-tools-catalog"></div>
-      <form id="externalToolForm" class="external-tool-form">
-        <h4 id="externalToolFormTitle">Add Tool</h4>
-        <label>Name<input id="externalToolName" maxlength="100" required></label>
-        <label>Homepage label<input id="externalToolLabel" maxlength="100" placeholder="Open Design" required></label>
-        <label>Private backend URL<input id="externalToolBackend" type="url" placeholder="http://private-host:8080/" required></label>
-        <label>Public launch path<input id="externalToolSlug" placeholder="/design/" required></label>
-        <label class="choice-item"><input type="checkbox" id="externalToolForms"><span>Allow sandboxed forms</span></label>
-        <label class="choice-item"><input type="checkbox" id="externalToolHttp"><span>Allow bounded HTTP writes (POST, PUT, PATCH, DELETE; 1 MiB)</span></label>
-        <p>Restricted profile: no shared origin, cookies/login, browser storage, service workers, popups, WebSockets or SSE. Compatible apps must use relative URLs beneath their prefix. Saving edits disables the tool until it is tested and verified again.</p>
-        <div class="modal-actions"><button type="button" class="btn secondary" id="externalToolNew">New tool</button><button type="submit" class="btn run">Save disabled tool</button></div>
-      </form>
-      <p><a href="/static/docs/external-tools.html" target="_blank" rel="noopener noreferrer">Setup and compatibility instructions</a></p>
+      <header class="admin-management-header">
+        <div><span class="admin-management-kicker">Administration</span><h3 id="externalToolsHeading">External Tools</h3><p>Connect a private app, check its classroom workflow, then give classes access.</p></div>
+        <button type="button" class="btn secondary" id="externalToolsDone">Close</button>
+      </header>
+      <nav class="external-tools-tabs" aria-label="External tool setup sections">
+        <button type="button" class="btn secondary active" data-tool-section="apps" aria-pressed="true">Applications</button>
+        <button type="button" class="btn secondary" data-tool-section="network" aria-pressed="false">Network &amp; access</button>
+        <button type="button" class="btn secondary" data-tool-section="help" aria-pressed="false">Compatibility guide</button>
+      </nav>
+      <div class="external-tools-body">
+        <section data-tool-pane="apps" class="external-tools-apps">
+          <div class="external-tools-library">
+            <div class="external-tools-section-heading"><h4>Registered applications</h4><button type="button" class="btn secondary" id="externalToolNew">New tool</button></div>
+            <p>1. Test connection → 2. Private preview → 3. Enable. Class owners then choose which classes can open it.</p>
+            <div id="externalToolsCatalog" class="external-tools-catalog"></div>
+          </div>
+          <form id="externalToolForm" class="external-tool-form">
+            <h4 id="externalToolFormTitle">Add Tool</h4>
+            <fieldset><legend>App connection</legend>
+              <div class="external-tools-fields">
+                <label>Name<input id="externalToolName" maxlength="100" placeholder="Design Studio" required></label>
+                <label>Homepage button text<input id="externalToolLabel" maxlength="100" placeholder="Open Design" required></label>
+                <label class="full-width">Private backend URL<input id="externalToolBackend" type="url" placeholder="http://private-host:8080/" required><small>The full address EagleIDE can reach, including the app’s base folder if it has one.</small></label>
+                <label class="full-width">Launch path on this site<input id="externalToolSlug" placeholder="/design/" required><small>One unique folder, such as /design/. This is the link students open.</small></label>
+              </div>
+            </fieldset>
+            <fieldset><legend>What does this app need?</legend>
+              <p>Start with both options off for an app that works in the browser and downloads files. Scripts, styles, images, modules and WASM can load without either option.</p>
+              <label class="choice-item"><input type="checkbox" id="externalToolHttp" aria-describedby="externalToolHttpHelp"><span><strong>Send data to the app server</strong><small id="externalToolHttpHelp">For server saves, API actions or uploads using POST, PUT, PATCH or DELETE. Requests are limited to 1 MiB. This allows server changes, including deletion.</small></span></label>
+              <label class="choice-item"><input type="checkbox" id="externalToolForms" aria-describedby="externalToolFormsHelp"><span><strong>Submit HTML forms</strong><small id="externalToolFormsHelp">For traditional &lt;form&gt; submit buttons. JavaScript fetch/API calls do not need this. A POST form also needs “Send data to the app server.” This does not enable logins.</small></span></label>
+              <p id="externalToolPermissionSummary" class="external-tools-callout" aria-live="polite">Read requests only (GET and HEAD). HTML form submission is blocked.</p>
+            </fieldset>
+            <p>Saving creates a disabled tool. Editing an existing tool closes its active sessions and requires another test and preview.</p>
+            <div class="modal-actions"><button type="submit" class="btn run">Save disabled tool</button></div>
+          </form>
+        </section>
+        <section data-tool-pane="network" hidden>
+          <h4>Network &amp; access</h4>
+          <p>First allow the private addresses where your apps run. These settings apply to every external tool.</p>
+          <label class="choice-item"><input type="checkbox" id="externalToolsEnabled"><span><strong>Enable the external tools gateway</strong><small>Tools also need their own enable step and a class grant before students can open them. Admins can privately preview while the gateway is off.</small></span></label>
+          <div class="external-tools-fields">
+            <label>Allowed application networks<textarea id="externalToolsAllowed" rows="3" placeholder="192.168.50.20/32"></textarea><small>One CIDR per line. Example: 192.168.50.20/32 allows one app host; 192.168.50.0/24 allows that subnet. Use only your actual private app addresses.</small></label>
+            <label>Blocked management networks and hosts<textarea id="externalToolsDenied" rows="3" placeholder="192.168.10.0/24"></textarea><small>Deny your management network and EagleIDE hosts. Blocked addresses win over allowed ones. IPv6 hosts use /128. Your firewall still controls network isolation.</small></label>
+          </div>
+          <p class="external-tools-callout">Saving network policy disables all tools and closes active tool sessions. Each tool needs a new connection test and private preview.</p>
+          <button type="button" class="btn run" id="externalToolsPolicySave">Save network &amp; access</button>
+        </section>
+        <section data-tool-pane="help" hidden>
+          <h4>Choose permissions by testing the app’s workflow</h4>
+          <p>There is no reliable permission preset for every app. Check its documentation, then use the private preview to try opening, editing, importing, saving and downloading a real sample project.</p>
+          <div class="external-tools-guide">
+            <article><h5>Page loads, but an action fails</h5><p>If the action sends a POST, PUT, PATCH or DELETE request, enable server data. If it submits a traditional HTML form, enable forms too. Browser developer tools → Network shows the request method.</p></article>
+            <article><h5>Blank page or missing scripts and images</h5><p>The app must support embedding and relative asset/API URLs under its launch prefix. Set its documented base URL. A successful connection test only proves that the server responds; it does not prove the app rendered.</p></article>
+            <article><h5>Login, storage or live connection errors</h5><p>Cookies/login, localStorage, IndexedDB, service workers, popups, WebSockets and SSE are unavailable. Neither permission option enables them. Apps that require these features cannot use this gateway as configured.</p></article>
+            <article><h5>Check that work stays available</h5><p>Leave the preview open, resize it, try several actions, and test exporting a project. Routine access checks keep the same app loaded. Leaving the tool, signing out or losing access closes it. A suspended tab can expire.</p></article>
+          </div>
+          <p>Preview status confirms only that a document loaded. Enable a tool only after its intended classroom workflow works.</p>
+          <a href="/static/docs/external-tools.html" target="_blank" rel="noopener noreferrer">Full setup and compatibility instructions ↗</a>
+        </section>
+      </div>
+      <footer class="external-tools-footer"><span id="externalToolsAdminStatus" role="status" aria-live="polite"></span><button type="button" class="btn secondary" id="externalToolsBack">System settings</button></footer>
     </div>
   </div>
 
@@ -1863,7 +1908,7 @@
 
   <script src="/static/js/app.js"></script>
   <script src="/static/js/connection.js?v=20261011-files-5"></script>
-  <script src="/static/js/feature-loader.js?v=20261019-external-tools-1"></script>
+  <script src="/static/js/feature-loader.js?v=20261020-tool-layout-1"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20250608"></script>
   <script src="/static/js/layout.js?v=20261011-files-5"></script>
@@ -1879,18 +1924,18 @@
   <script src="/static/js/assignment-workflow.js?v=20261015-assignment-folders-1"></script>
   <script src="/static/js/assignment-development.js?v=20261015-assignment-folders-1"></script>
   <script src="/static/js/teacher-assignments.js?v=20261015-assignment-folders-1"></script>
-  <script src="/static/js/app-core.js?v=20261019-external-tools-1"></script>
+  <script src="/static/js/app-core.js?v=20261020-tool-layout-1"></script>
   <script src="/static/js/step-mode.js?v=20261011-files-5"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
-  <script src="/static/js/wiki-reader.js?v=20261019-external-tools-1"></script>
-  <script src="/static/js/external-tools.js?v=20261019-1"></script>
+  <script src="/static/js/wiki-reader.js?v=20261020-tool-layout-1"></script>
+  <script src="/static/js/external-tools.js?v=20261020-1"></script>
   <script src="/static/js/lesson-plans.js?v=20261011-files-5"></script>
-  <script src="/static/js/wiki-admin.js?v=20261019-external-tools-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20261020-tool-layout-1"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20261011-files-5"></script>
   <script src="/static/js/notebook-sync.js?v=20261011-notebook-topics-1"></script>
   <script src="/static/js/notebook-photos.js?v=20261011-notebook-topics-1"></script>
-  <script src="/static/js/student-notebook.js?v=20261019-external-tools-1"></script>
+  <script src="/static/js/student-notebook.js?v=20261020-tool-layout-1"></script>
   <script src="/static/js/student-dashboard.js?v=20261011-notebook-topics-1"></script>
 
 </body>

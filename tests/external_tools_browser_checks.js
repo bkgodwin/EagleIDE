@@ -20,21 +20,41 @@ if (!base || !/^http:\/\/127\.0\.0\.1:\d+$/.test(base)) throw new Error('Set EAG
     await page.locator('#roleMenuBtn').click();
     await page.locator('#adminSettingsBtn').click();
     await page.locator('[data-admin-settings-section="tools"]').click();
+    assert.ok((await page.locator('.admin-settings-shell').boundingBox()).width > 1250);
     await page.locator('#settingsExternalToolsBtn').click();
+    await page.locator('#externalToolsModal').waitFor({ state: 'visible' });
+    assert.ok((await page.locator('.external-tools-manager').boundingBox()).width > 1250);
     await page.locator('#externalToolsEnabled').check();
     await page.locator('#externalToolsAllowed').fill('10.231.24.0/24');
     await page.locator('#externalToolsDenied').fill('10.231.24.1/32');
     await page.locator('#externalToolsPolicySave').click();
     await page.locator('#externalToolsAdminStatus').filter({ hasText: 'Policy saved' }).waitFor();
+    await page.locator('[data-tool-section="apps"]').click();
     await page.locator('#externalToolName').fill('Generic fixture');
     await page.locator('#externalToolLabel').fill('Open fixture');
     await page.locator('#externalToolBackend').fill('http://fixture.internal:8080/prefix/');
     await page.locator('#externalToolSlug').fill('/fixture/');
     await page.locator('#externalToolHttp').check();
+    assert.match(await page.locator('#externalToolPermissionSummary').textContent(), /Read and write/);
+    await page.locator('#externalToolForms').check();
+    assert.match(await page.locator('#externalToolPermissionSummary').textContent(), /HTML forms allowed/);
+    await page.locator('#externalToolForms').uncheck();
     await page.getByRole('button', { name: 'Save disabled tool', exact: true }).click();
     await page.getByRole('button', { name: 'Test connection', exact: true }).click();
     await page.locator('#externalToolsCatalog').filter({ hasText: 'Reachable' }).waitFor();
+    await page.locator('.external-tools-body').evaluate(el => { el.scrollTop = 0; });
     await page.screenshot({ path: process.env.EAGLE_TOOL_SCREENSHOT_DIR + '/tools-admin-desktop.png' });
+    await page.locator('[data-tool-section="help"]').click();
+    await page.screenshot({ path: process.env.EAGLE_TOOL_SCREENSHOT_DIR + '/tools-admin-guide.png' });
+    for (const width of [768, 390]) {
+      await page.setViewportSize({ width, height: 844 });
+      await page.locator('[data-tool-section="apps"]').click();
+      await page.screenshot({ path: process.env.EAGLE_TOOL_SCREENSHOT_DIR + `/tools-admin-${width}.png` });
+      assert.ok(await page.locator('.external-tools-body').evaluate(el => el.scrollWidth <= el.clientWidth + 2));
+      const closeBounds = await page.locator('#externalToolsDone').boundingBox();
+      assert.ok(closeBounds.y >= 0 && closeBounds.y + closeBounds.height <= page.viewportSize().height);
+    }
+    await page.setViewportSize({ width: 1365, height: 900 });
     await page.getByRole('button', { name: 'Private preview', exact: true }).click();
     const fixture = page.frameLocator('#externalToolFrameHost iframe');
     await fixture.locator('#result').filter({ hasText: '"worker":"blocked"' }).waitFor({ timeout: 30000 });
@@ -48,14 +68,52 @@ if (!base || !/^http:\/\/127\.0\.0\.1:\d+$/.test(base)) throw new Error('Set EAG
     assert.equal(await direct.evaluate(() => { try { sessionStorage.getItem('eagle-auth-session-v1'); return 'UNSAFE'; } catch { return 'blocked'; } }), 'blocked');
     await direct.close();
     await page.screenshot({ path: process.env.EAGLE_TOOL_SCREENSHOT_DIR + '/tools-preview-desktop.png' });
-    assert.equal(await page.locator('#wikiViewBtn').isVisible(), true);
     assert.equal(await page.locator('#ideViewBtn').isVisible(), true);
+    async function fillsViewport() {
+      // layout.js updates visual-viewport height on the next animation frame.
+      await page.waitForFunction(() => {
+        const rect = document.querySelector('#externalToolFrameHost iframe')?.getBoundingClientRect();
+        return rect && Math.abs(rect.bottom - innerHeight) <= 1;
+      });
+      const bounds = await page.locator('#externalToolFrameHost iframe').boundingBox();
+      const viewport = page.viewportSize();
+      assert.equal(bounds.x, 0); assert.equal(bounds.width, viewport.width);
+      assert.ok(bounds.y <= 46, `Banner too tall: ${bounds.y}`);
+      assert.ok(Math.abs(bounds.y + bounds.height - viewport.height) <= 1, 'Application must reach the bottom');
+    }
+    await fillsViewport();
+    assert.equal(await fixture.locator('body').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(238, 238, 255)');
+    await fixture.locator('#draft').fill('Unsaved project survives layout and access checks');
+    await page.evaluate(() => { window.fixtureFrame = document.querySelector('#externalToolFrameHost iframe'); });
     await page.evaluate(() => document.getElementById('themeToggleBtn').click());
     await page.screenshot({ path: process.env.EAGLE_TOOL_SCREENSHOT_DIR + '/tools-preview-light.png' });
     await page.setViewportSize({ width: 390, height: 844 });
+    await fillsViewport();
     await page.screenshot({ path: process.env.EAGLE_TOOL_SCREENSHOT_DIR + '/tools-preview-narrow.png' });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+    await page.setViewportSize({ width: 768, height: 1024 });
+    await fillsViewport();
+    await page.screenshot({ path: process.env.EAGLE_TOOL_SCREENSHOT_DIR + '/tools-preview-tablet.png' });
     await page.setViewportSize({ width: 1365, height: 900 });
+    await page.route('**/api/tools/instances/*', route => route.request().method() === 'POST'
+      ? route.fulfill({ status: 502, contentType: 'application/json', body: '{"ok":false,"error":"Fixture outage"}' }) : route.continue());
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await page.locator('#externalToolStatus').filter({ hasText: 'Connection unavailable' }).waitFor();
+    assert.equal(await fixture.locator('#draft').inputValue(), 'Unsaved project survives layout and access checks');
+    await page.unroute('**/api/tools/instances/*');
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await page.waitForFunction(() => !document.getElementById('externalToolStatus').textContent.includes('Connection unavailable'));
+    await page.locator('#externalToolInfo summary').click();
+    console.log('Checking that the same app remains usable beyond the original 90-second lease…');
+    let renewals = 0;
+    page.on('response', response => { if (response.url().includes('/api/tools/instances/') && response.request().method() === 'POST' && response.ok()) renewals++; });
+    await page.waitForTimeout(100000);
+    assert.ok(renewals >= 3, `Expected at least 3 access renewals, saw ${renewals}`);
+    assert.equal(await page.evaluate(() => window.fixtureFrame === document.querySelector('#externalToolFrameHost iframe')), true);
+    assert.equal(await fixture.locator('#draft').inputValue(), 'Unsaved project survives layout and access checks');
+    await fixture.locator('#serverCheck').click();
+    await fixture.locator('#serverResult').filter({ hasText: 'Unsaved project survives layout and access checks' }).waitFor();
+    console.log('PASS: same document and draft retained beyond lease; fresh server action succeeds.');
     await page.locator('#externalToolClose').click();
     await page.locator('#roleMenuBtn').click();
     await page.locator('#adminSettingsBtn').click();
@@ -93,6 +151,6 @@ if (!base || !/^http:\/\/127\.0\.0\.1:\d+$/.test(base)) throw new Error('Set EAG
     const forbidden = await context.request.get(base + before);
     assert.equal(forbidden.status(), 403);
     assert.equal((await context.request.get(base + activeUrl)).status(), 403);
-    console.log('PASS: admin registration/test/preview/enable, teacher grant, student launch/logout, opaque module/WASM/font fetch, storage/parent/worker denial, direct-document sandbox, desktop/narrow/light/dark layout, Python execution and editor-buffer preservation.');
+    console.log('PASS: wide admin setup and permission guidance, compact full-viewport tools, lease stability and outage recovery, admin registration/test/preview/enable, teacher grant, student launch/logout, opaque module/WASM/font fetch, storage/parent/worker denial, direct-document sandbox, desktop/tablet/narrow/light/dark layout, Python execution and editor-buffer preservation.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

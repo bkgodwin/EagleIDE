@@ -18,7 +18,15 @@
     if (!response.ok || data.ok === false) { const error = new Error(data.error || `Request failed (${response.status})`); error.status = response.status; throw error; }
     return data;
   }
-  function status(message) { if ($('externalToolStatus')) $('externalToolStatus').textContent = message; }
+  function status(message, attention = false) {
+    if ($('externalToolStatus')) $('externalToolStatus').textContent = message;
+    const info = $('externalToolInfo'), summary = info?.querySelector('summary');
+    if (summary) { summary.textContent = attention ? 'Check' : 'Info'; summary.setAttribute('data-attention', String(attention)); }
+    if (attention && info) info.open = true;
+  }
+  const loadedStatus = current => current.preview
+    ? 'Private admin preview: document loaded. Check rendering, assets, actions and downloads before enabling.'
+    : 'Document loaded. Use the app’s controls to save or download your work.';
   function revoke(instance, auth, keepalive = false) {
     if (instance) api(`/api/tools/instances/${encodeURIComponent(instance)}`, { method: 'DELETE', keepalive }, auth).catch(() => {});
   }
@@ -26,6 +34,7 @@
     const old = state.current;
     state.generation++;
     state.current = null;
+    if ($('externalToolInfo')) $('externalToolInfo').open = false;
     $('externalToolFrameHost')?.replaceChildren();
     if ($('externalToolWorkspace')) $('externalToolWorkspace').hidden = true;
     document.body.classList.remove('external-tool-mode');
@@ -76,14 +85,15 @@
       frame.src = launch.url;
       frame.addEventListener('load', () => {
         if (generation !== state.generation) return;
-        status(launch.preview ? 'Private admin preview. Check rendering, assets, APIs and download behavior before enabling.' : 'Document loaded. Saving and downloads follow the app’s controls.');
+        state.current.loaded = true;
+        if (!state.current.offline) status(loadedStatus(state.current));
       });
-      frame.addEventListener('error', () => { if (generation === state.generation) status('Application did not load. Retry or contact your teacher.'); });
+      frame.addEventListener('error', () => { if (generation === state.generation) status('Application did not load. Reload or contact your teacher.', true); });
       $('externalToolFrameHost').append(frame);
       status(launch.preview ? 'Loading private admin preview…' : 'Loading…');
       window.dispatchEvent(new CustomEvent('external-tool-launched', { detail: { toolId: tool.id, instanceId: launch.instance_id, preview: launch.preview } }));
       return true;
-    } catch (error) { if (generation === state.generation) status(error.message); return false; }
+    } catch (error) { if (generation === state.generation) status(error.message, true); return false; }
   }
   function renderButtons() {
     const host = $('externalToolButtons');
@@ -119,7 +129,7 @@
     if (tool) open(tool, { push: false });
     else {
       shell({ name: 'External tool' });
-      status(authKey() === '{}' ? 'Sign in to open this tool.' : 'This tool is unavailable or your classes do not grant access.');
+      status(authKey() === '{}' ? 'Sign in to open this tool.' : 'This tool is unavailable or your classes do not grant access.', true);
     }
     return true;
   }
@@ -128,11 +138,11 @@
     if (!current?.instance) return;
     try {
       await api(`/api/tools/instances/${encodeURIComponent(current.instance)}`, { method: 'POST' }, current.auth);
-      if (current === state.current && current.offline) { current.offline = false; status('Connection restored.'); }
+      if (current === state.current && current.offline) { current.offline = false; status(current.loaded ? loadedStatus(current) : 'Connection restored. Application is loading.'); }
     } catch (error) {
       if (current !== state.current) return;
       if ([401, 403, 410].includes(error.status)) { dispose(); window.WikiReader?.showHome?.({ push: true }); window.alert('Tool access expired or was revoked.'); }
-      else { current.offline = true; status('Connection unavailable. Keep this page open and download work if the app permits it.'); }
+      else { current.offline = true; status('Connection unavailable. Keep this page open and download work if the app permits it.', true); }
     }
   }
   function bindClass(wrap, cls) {

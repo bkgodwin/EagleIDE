@@ -5,6 +5,21 @@
   const previews = new Map();
   const key = () => JSON.stringify(window.ExternalTools.headers());
   function status(message) { $('externalToolsAdminStatus').textContent = message; }
+  function section(name) {
+    document.querySelector('.external-tools-body').scrollTop = 0;
+    document.querySelectorAll('[data-tool-pane]').forEach(pane => { pane.hidden = pane.dataset.toolPane !== name; });
+    document.querySelectorAll('[data-tool-section]').forEach(button => {
+      const active = button.dataset.toolSection === name;
+      button.classList.toggle('active', active); button.setAttribute('aria-pressed', String(active));
+    });
+  }
+  document.querySelectorAll('[data-tool-section]').forEach(button => { button.onclick = () => section(button.dataset.toolSection); });
+  function permissionSummary() {
+    const writes = $('externalToolHttp').checked, forms = $('externalToolForms').checked;
+    $('externalToolPermissionSummary').textContent = `${writes ? 'Read and write requests allowed (GET, HEAD, POST, PUT, PATCH, DELETE; 1 MiB request limit).' : 'Read requests only (GET and HEAD).'} ${forms ? 'HTML forms allowed.' : 'HTML form submission is blocked.'}${forms && !writes ? ' POST forms still need server data permission.' : ''}`;
+  }
+  $('externalToolHttp').addEventListener('change', permissionSummary);
+  $('externalToolForms').addEventListener('change', permissionSummary);
   async function load() {
     const request = ++requestId, started = key();
     const data = await api('/api/admin/tools');
@@ -14,12 +29,16 @@
     $('externalToolsAllowed').value = catalog.allowed_networks.join('\n');
     $('externalToolsDenied').value = catalog.denied_networks.join('\n');
     const host = $('externalToolsCatalog'); host.replaceChildren();
-    if (!catalog.tools.length) host.textContent = 'No tools registered. Add a compatible private application below.';
+    if (!catalog.tools.length) host.textContent = 'No applications yet. Add your first tool using the app connection form.';
     catalog.tools.forEach(tool => {
       const card = document.createElement('section'); card.className = 'external-tool-card';
-      const title = document.createElement('strong'); title.textContent = `${tool.name} — /${tool.slug}/ — ${tool.enabled ? 'Enabled' : 'Disabled'}`;
-      const info = document.createElement('p'); info.textContent = `${tool.backend_url} · ${tool.test} · ${tool.compatibility}`;
-      const actions = document.createElement('div'); actions.className = 'modal-actions'; card.append(title, info, actions);
+      const heading = document.createElement('div'); heading.className = 'external-tool-card-heading';
+      const title = document.createElement('strong'); title.textContent = tool.name;
+      const badge = document.createElement('span'); badge.className = `external-tool-badge${tool.enabled ? ' is-enabled' : ''}`; badge.textContent = tool.enabled ? 'Enabled' : 'Disabled'; heading.append(title, badge);
+      const info = document.createElement('p'); info.textContent = `/${tool.slug}/ → ${tool.backend_url}`;
+      const test = document.createElement('p'); test.textContent = tool.test;
+      const next = document.createElement('p'); next.textContent = tool.enabled ? 'Ready for class owners to grant access.' : !tool.addresses.length ? 'Next: test the connection, then open a private preview.' : !previews.has(tool.id) ? 'Next: preview and test the app’s classroom workflow.' : 'Next: confirm compatibility after checking the preview.';
+      const actions = document.createElement('div'); actions.className = 'modal-actions'; card.append(heading, info, test, next, actions);
       function action(label, handler) { const button = document.createElement('button'); button.type = 'button'; button.className = 'btn secondary'; button.textContent = label; button.onclick = async () => { button.disabled = true; try { if (auth !== key()) throw new Error('Account changed. Reopen External Tools.'); await handler(); } catch (error) { if (auth === key()) status(error.message); } finally { button.disabled = false; } }; actions.append(button); }
       action('Edit', () => edit(tool));
       action('Test connection', async () => { const result = await api(`/api/admin/tools/${tool.id}/test`, { method: 'POST', body: JSON.stringify({ revision: catalog.revision }) }); status(result.tool.test); await load(); });
@@ -39,6 +58,9 @@
     for (const [id, field] of [['externalToolName','name'],['externalToolLabel','label'],['externalToolBackend','backend_url'],['externalToolSlug','slug']]) $(id).value = tool?.[field] || '';
     $('externalToolForms').checked = !!tool?.forms;
     $('externalToolHttp').checked = !!tool?.methods.includes('POST');
+    permissionSummary();
+    section('apps');
+    if (tool) $('externalToolForm').scrollIntoView({ block: 'start', behavior: 'smooth' });
   }
   $('externalToolForm').addEventListener('submit', async event => {
     event.preventDefault(); const started = key();
@@ -58,9 +80,10 @@
       status('Policy saved. All tools require retesting.'); await load(); window.ExternalTools.refresh();
     } catch (error) { if (started === key()) status(error.message); }
   };
-  $('externalToolNew').onclick = () => edit();
+  $('externalToolNew').onclick = () => { edit(); $('externalToolForm').scrollIntoView({ block: 'start', behavior: 'smooth' }); $('externalToolName').focus({ preventScroll: true }); };
   $('externalToolsDone').onclick = () => { $('externalToolsModal').style.display = 'none'; };
+  $('externalToolsBack').onclick = () => { $('externalToolsModal').style.display = 'none'; $('adminSettingsModal').style.display = 'flex'; };
   window.addEventListener('external-tool-launched', event => { if (event.detail.preview) previews.set(event.detail.toolId, event.detail.instanceId); });
   window.addEventListener('eagle-context-updated', () => { if (auth !== key()) { catalog = null; previews.clear(); $('externalToolsCatalog').replaceChildren(); edit(); $('externalToolsModal').style.display = 'none'; } });
-  window.ExternalToolsAdmin = { show: async () => { $('adminSettingsModal').style.display = 'none'; $('externalToolsModal').style.display = 'flex'; status('Loading…'); try { await load(); status('Connection tests do not verify browser compatibility.'); } catch (error) { status(error.message); } } };
+  window.ExternalToolsAdmin = { show: async () => { $('adminSettingsModal').style.display = 'none'; $('externalToolsModal').style.display = 'flex'; status('Loading…'); try { await load(); section(catalog.allowed_networks.length ? 'apps' : 'network'); permissionSummary(); status(catalog.enabled ? 'Gateway on. Each app also needs to be enabled and granted to a class.' : 'Gateway off. Private admin previews are available after a connection test.'); } catch (error) { status(error.message); } } };
 })();
