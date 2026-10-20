@@ -209,8 +209,20 @@ are in `static/docs/external-tools.html`.
 Tool routing extends the current wiki/IDE/network lifecycle. Do not retain hidden
 application iframes after confirmed departure or account changes. Preserve IDE
 and notebook buffers, reject stale launches, revalidate suspended/restored views,
-and distinguish transient outages from confirmed revocation. Never clear all
+and distinguish transient outages from confirmed revocation. The tool frame fills
+the available viewport beneath a single compact site banner.
+Keep status/save help in its Info disclosure and preserve the mounted frame during
+access refreshes, renewals, viewport changes and transient outages. The wider admin
+manager separates Applications, Network & access, and Compatibility guide; its
+permission descriptions must distinguish HTML forms from HTTP writes without
+implying that cookies/storage or live connections can be enabled. Never clear all
 origin storage. The operator manages LXC/network isolation, not EagleIDE.
+
+The optional `tests/external_tools_browser_checks.js` Playwright check uses only
+`tests/external_tools_browser_fixture.py`. It checks viewport bounds, rendering,
+outage recovery, and a live document/draft beyond its original 90-second lease.
+Set `EAGLE_TOOL_TEST_URL` to the fixture's loopback URL, `EAGLE_TOOL_BROWSER` to an
+installed Chromium browser, and `EAGLE_TOOL_SCREENSHOT_DIR` to a scratch folder.
 
 ### Frontend
 
