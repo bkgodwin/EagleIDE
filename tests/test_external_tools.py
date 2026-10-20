@@ -19,7 +19,10 @@ from tool_store import ToolError, ToolStore
 
 
 FIXTURE_HTML = b'''<!doctype html><meta charset="utf-8"><title>Generic tool fixture</title>
-<link rel="stylesheet" href="style.css"><p id="result">Loading fixture</p>
+<link rel="stylesheet" href="style.css"><h1>Generic application fixture</h1>
+<label>Project draft <textarea id="draft" rows="5">Initial project</textarea></label>
+<button id="serverCheck" type="button">Check server action</button><output id="serverResult"></output>
+<p id="result">Loading fixture</p>
 <script type="module" src="module.js"></script>'''
 FIXTURE_MODULE = b'''import {value} from './dependency.js';
 const checks = {module: value};
@@ -30,6 +33,10 @@ try { localStorage.setItem('fixture-secret','private'); checks.storage='UNSAFE';
 try { parent.document.body.dataset.leaked='yes'; checks.parent='UNSAFE'; } catch { checks.parent='blocked'; }
 try { await navigator.serviceWorker.register('./worker.js'); checks.worker='UNSAFE'; } catch { checks.worker='blocked'; }
 document.querySelector('#result').textContent=JSON.stringify(checks);
+document.querySelector('#serverCheck').onclick=async () => {
+  const reply=await fetch('./echo', {method:'POST',body:document.querySelector('#draft').value});
+  document.querySelector('#serverResult').textContent=reply.ok ? (await reply.json()).body : 'FAILED';
+};
 '''
 
 
