@@ -3,6 +3,7 @@ import base64
 import gzip
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.client import IncompleteRead
 import json
 import logging
 from pathlib import Path
@@ -488,6 +489,16 @@ class ExternalToolTests(unittest.TestCase):
             response.read1.side_effect = [body, b'']
             with patch('tool_gateway.MAX_HTML', 60), self.assertRaises(ToolError):
                 html_body(response, Mock(), lambda: True)
+        response = Mock()
+        response.read1.side_effect = IncompleteRead(b'partial chunked HTML')
+        with self.assertRaises(ToolError):
+            html_body(response, Mock(), lambda: True)
+        response = Mock()
+        response.read1.side_effect = [b'<html></html>', b'']
+        response.getheader.side_effect = lambda name, default=None: default
+        with self.assertRaises(ToolError) as revoked:
+            html_body(response, Mock(), Mock(side_effect=[True, False]))
+        self.assertEqual(revoked.exception.status, 403)
 
     def test_queued_asset_request_rechecks_access_after_promotion(self):
         self.registered()
