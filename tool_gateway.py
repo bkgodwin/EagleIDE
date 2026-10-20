@@ -103,15 +103,19 @@ class PinnedConnection(http.client.HTTPConnection):
     def __init__(self, target, address):
         super().__init__(target["host"], target["port"], timeout=CONNECT_TIMEOUT)
         self.target, self.address = target, address
+        self.guard_socket = None
 
     def connect(self):
         sock = socket.create_connection((self.address, self.port), CONNECT_TIMEOUT)
         try:
+            self.guard_socket = sock.dup()
             if self.target["scheme"] == "https":
                 sock = ssl.create_default_context().wrap_socket(sock, server_hostname=self.target["host"])
             sock.settimeout(READ_TIMEOUT)
             self.sock = sock
         except BaseException:
+            if self.guard_socket:
+                self.guard_socket.close()
             sock.close()
             raise
 
@@ -157,8 +161,26 @@ class Gateway:
 
     def open(self, tool, policy, path="", query="", method="GET", body=None, headers=None, owner="test", self_ips=(), permit=None):
         release = permit or self.admit(owner)
-        connection = None
+        connection, response, guard, watchdog = None, None, None, None
+        expired = threading.Event()
+        def interrupt():
+            expired.set()
+            if guard:
+                try:
+                    guard.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
         def close():
+            if watchdog:
+                watchdog.cancel()
+            if guard:
+                try:
+                    guard.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                guard.close()
+            if response:
+                response.close()
             if connection:
                 connection.close()
             release()
@@ -172,10 +194,19 @@ class Gateway:
             if tool.get("addresses") and addresses != tool["addresses"]:
                 raise ToolError("Backend addresses changed; an administrator must test and approve them again", 503)
             connection = PinnedConnection(target, addresses[0])
+            connection.connect()
+            # A duplicate of the underlying transport can interrupt blocked
+            # header/body reads, including TLS and Connection: close responses.
+            guard = getattr(connection, "guard_socket", None) or connection.sock.dup()
+            watchdog = threading.Timer(TOTAL_TIMEOUT, interrupt)
+            watchdog.daemon = True
+            watchdog.start()
             outbound = {"Accept-Encoding": "identity", "Connection": "close"}
             outbound.update(headers or {})
             connection.request(method, target["base"] + path + (("?" + query) if query else ""), body=body, headers=outbound)
             response = connection.getresponse()
+            if expired.is_set():
+                raise ToolError("Application response deadline exceeded", 502)
             if response.status == 101 or response.getheader("Content-Type", "").split(";", 1)[0].strip().lower() == "text/event-stream":
                 raise ToolError("WebSockets and server-sent events are unsupported", 502)
             length = response.getheader("Content-Length")
@@ -202,12 +233,17 @@ class CapabilityLogFilter(logging.Filter):
 
 
 def stream_body(response, close, authorized):
-    start, size = time.monotonic(), 0
+    start, size, checked = time.monotonic(), 0, float("-inf")
     try:
         while True:
-            if time.monotonic() - start > TOTAL_TIMEOUT or not authorized():
+            now = time.monotonic()
+            if now - start > TOTAL_TIMEOUT:
                 return
-            chunk = response.read(64 * 1024)
+            if now - checked >= 1:
+                if not authorized():
+                    return
+                checked = now
+            chunk = response.read1(64 * 1024)
             if not chunk:
                 return
             size += len(chunk)

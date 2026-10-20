@@ -48,6 +48,13 @@ class FixtureHandler(BaseHTTPRequestHandler):
     def do_GET(self, head=False):
         self.requests.append((self.command, self.path, dict(self.headers)))
         path = self.path.split('?', 1)[0]
+        if path.endswith('drip-headers'):
+            try:
+                for byte in b'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n':
+                    self.wfile.write(bytes([byte])); self.wfile.flush(); time.sleep(0.03)
+            except (ConnectionError, OSError):
+                pass
+            return
         content, mime, status, extra = FIXTURE_HTML, 'text/html', 200, {}
         if path.endswith('echo'):
             content, mime = json.dumps({'headers': dict(self.headers), 'body': self.rfile.read(int(self.headers.get('Content-Length', 0))).decode()}).encode(), 'application/json'
@@ -75,6 +82,8 @@ class FixtureHandler(BaseHTTPRequestHandler):
             mime = 'text/event-stream'
         elif path.endswith('restricted'):
             extra = {'Content-Security-Policy': "frame-ancestors 'none'", 'X-Frame-Options': 'DENY'}
+        elif path.endswith('drip-body'):
+            content, mime = b'x' * 128, 'text/plain'
         self.send_response(status)
         self.send_header('Content-Type', mime)
         self.send_header('Content-Length', str(100 * 1024 * 1024 if path.endswith('large') else len(content)))
@@ -83,6 +92,10 @@ class FixtureHandler(BaseHTTPRequestHandler):
         self.end_headers()
         if not head:
             try:
+                if path.endswith('drip-body'):
+                    for byte in content:
+                        self.wfile.write(bytes([byte])); self.wfile.flush(); time.sleep(0.03)
+                    return
                 self.wfile.write(content)
             except (ConnectionError, OSError):
                 pass
@@ -375,6 +388,26 @@ class ExternalToolTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=5)
+
+    def test_trickling_headers_hit_absolute_deadline_and_release_admission(self):
+        self.registered()
+        launch = self.launch()
+        started = time.monotonic()
+        with patch('tool_gateway.TOTAL_TIMEOUT', 0.12):
+            response = self.client.get(launch['url'] + 'drip-headers')
+        self.assertEqual(response.status_code, 502)
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertEqual(self.feature.gateway.active, {})
+
+    def test_trickling_body_cannot_extend_response_deadline(self):
+        self.registered()
+        launch = self.launch()
+        started = time.monotonic()
+        with patch('tool_gateway.TOTAL_TIMEOUT', 0.12):
+            response = self.client.get(launch['url'] + 'drip-body')
+            self.assertLess(len(response.get_data()), 128)
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertEqual(self.feature.gateway.active, {})
 
     def test_catalog_corruption_fails_closed_and_capability_logs_are_redacted(self):
         self.feature.store.path.write_text('{broken', encoding='utf-8')
