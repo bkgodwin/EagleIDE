@@ -270,6 +270,7 @@
     if (push && location.pathname !== '/network') history.pushState({ eagleView: 'network' }, '', '/network');
   }
   async function show({ push = true } = {}) {
+    if (window.ExternalTools?.active?.() && !window.ExternalTools.leave()) return;
     showMode({ push });
     showLibrary();
     try {

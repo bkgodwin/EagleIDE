@@ -44,7 +44,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261015-completion-export-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261019-external-tools-1">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -169,6 +169,7 @@
           <div class="wiki-hero-actions">
             <button class="btn run wiki-hero-ide-btn" id="wikiHeroIdeBtn" type="button">Open the IDE</button>
             <button class="btn run wiki-hero-network-btn" id="wikiHeroNetworkBtn" type="button" hidden>Open Network Sim</button>
+            <span id="externalToolButtons" class="external-tool-buttons"></span>
           </div>
         </div>
 
@@ -1611,6 +1612,44 @@
     </div>
   </div>
 
+  <section id="externalToolWorkspace" class="external-tool-workspace" hidden aria-label="External application">
+    <div class="external-tool-toolbar glass-surface">
+      <strong id="externalToolTitle">External tool</strong>
+      <span id="externalToolStatus" role="status" aria-live="polite"></span>
+      <button type="button" class="btn secondary" id="externalToolRetry">Retry</button>
+      <button type="button" class="btn secondary" id="externalToolClose">Close tool</button>
+    </div>
+    <p class="external-tool-save-note">Use the app’s download or save controls before closing. EagleIDE does not save its projects.</p>
+    <div id="externalToolFrameHost" class="external-tool-frame-host"></div>
+  </section>
+
+  <div id="externalToolsModal" class="modal" style="display:none;">
+    <div class="modal-content external-tools-manager">
+      <div class="external-tool-toolbar"><h3>External Tools</h3><button type="button" class="btn secondary" id="externalToolsDone">Close</button></div>
+      <p id="externalToolsAdminStatus" role="status" aria-live="polite"></p>
+      <details open><summary>Gateway network policy</summary>
+        <p>Allow only the private application network. Deny management networks and EagleIDE addresses. Firewall isolation remains your responsibility.</p>
+        <label class="choice-item"><input type="checkbox" id="externalToolsEnabled"><span>Enable External Tools</span></label>
+        <label>Allowed application CIDRs (one per line)<textarea id="externalToolsAllowed" rows="2" placeholder="Private application subnet CIDR"></textarea></label>
+        <label>Denied management CIDRs / host addresses (one per line)<textarea id="externalToolsDenied" rows="2" placeholder="Management subnet CIDR or host /32"></textarea></label>
+        <button type="button" class="btn secondary" id="externalToolsPolicySave">Save policy (requires retesting tools)</button>
+      </details>
+      <div id="externalToolsCatalog" class="external-tools-catalog"></div>
+      <form id="externalToolForm" class="external-tool-form">
+        <h4 id="externalToolFormTitle">Add Tool</h4>
+        <label>Name<input id="externalToolName" maxlength="100" required></label>
+        <label>Homepage label<input id="externalToolLabel" maxlength="100" placeholder="Open Design" required></label>
+        <label>Private backend URL<input id="externalToolBackend" type="url" placeholder="http://private-host:8080/" required></label>
+        <label>Public launch path<input id="externalToolSlug" placeholder="/design/" required></label>
+        <label class="choice-item"><input type="checkbox" id="externalToolForms"><span>Allow sandboxed forms</span></label>
+        <label class="choice-item"><input type="checkbox" id="externalToolHttp"><span>Allow bounded HTTP writes (POST, PUT, PATCH, DELETE; 1 MiB)</span></label>
+        <p>Restricted profile: no shared origin, cookies/login, browser storage, service workers, popups, WebSockets or SSE. Compatible apps must use relative URLs beneath their prefix. Saving edits disables the tool until it is tested and verified again.</p>
+        <div class="modal-actions"><button type="button" class="btn secondary" id="externalToolNew">New tool</button><button type="submit" class="btn run">Save disabled tool</button></div>
+      </form>
+      <p><a href="/static/docs/external-tools.html" target="_blank" rel="noopener noreferrer">Setup and compatibility instructions</a></p>
+    </div>
+  </div>
+
   <!-- Admin Settings Modal -->
   <div id="adminSettingsModal" class="modal admin-settings-modal" style="display:none;">
     <div class="modal-content admin-settings-shell">
@@ -1624,6 +1663,7 @@
           <button type="button" data-admin-settings-section="account">Account</button>
           <button type="button" data-admin-settings-section="wiki">Wiki</button>
           <button type="button" data-admin-settings-section="network">Network Sim</button>
+          <button type="button" data-admin-settings-section="tools">External Tools</button>
           <button type="button" data-admin-settings-section="ai">AI</button>
           <button type="button" data-admin-settings-section="python-runtime">Python Runtime</button>
           <button type="button" data-admin-settings-section="runtime">Web Runtime</button>
@@ -1664,6 +1704,9 @@
           <section class="admin-settings-pane" data-admin-settings-pane="account">
             <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Local preferences</span><h4>Account Settings</h4><p>Control administrator diagnostics for this browser.</p></div>
             <label class="admin-setting-toggle"><input type="checkbox" id="adminShellDebugMessages"><span><strong>Show IDE system messages</strong><small>Show connection and run lifecycle messages such as Sending code and Process finished in the shell.</small></span></label>
+          </section>
+          <section class="admin-settings-pane" data-admin-settings-pane="tools">
+            <div class="admin-wiki-settings-card"><div><strong>External Tools</strong><span>Register private applications and let class owners grant access.</span></div><button type="button" class="btn secondary" id="settingsExternalToolsBtn">External Tools</button></div>
           </section>
           <section class="admin-settings-pane" data-admin-settings-pane="network">
             <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Optional learning app</span><h4>Network Simulator</h4><p>Enable the separate topology, lab, packet inspection, wireless, VLAN, and cybersecurity workspace.</p></div>
@@ -1820,7 +1863,7 @@
 
   <script src="/static/js/app.js"></script>
   <script src="/static/js/connection.js?v=20261011-files-5"></script>
-  <script src="/static/js/feature-loader.js?v=20260921-1"></script>
+  <script src="/static/js/feature-loader.js?v=20261019-external-tools-1"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20250608"></script>
   <script src="/static/js/layout.js?v=20261011-files-5"></script>
@@ -1836,17 +1879,18 @@
   <script src="/static/js/assignment-workflow.js?v=20261015-assignment-folders-1"></script>
   <script src="/static/js/assignment-development.js?v=20261015-assignment-folders-1"></script>
   <script src="/static/js/teacher-assignments.js?v=20261015-assignment-folders-1"></script>
-  <script src="/static/js/app-core.js?v=20261015-completion-export-1"></script>
+  <script src="/static/js/app-core.js?v=20261019-external-tools-1"></script>
   <script src="/static/js/step-mode.js?v=20261011-files-5"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
-  <script src="/static/js/wiki-reader.js?v=20261015-completion-export-1"></script>
+  <script src="/static/js/wiki-reader.js?v=20261019-external-tools-1"></script>
+  <script src="/static/js/external-tools.js?v=20261019-1"></script>
   <script src="/static/js/lesson-plans.js?v=20261011-files-5"></script>
-  <script src="/static/js/wiki-admin.js?v=20261015-completion-export-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20261019-external-tools-1"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20261011-files-5"></script>
   <script src="/static/js/notebook-sync.js?v=20261011-notebook-topics-1"></script>
   <script src="/static/js/notebook-photos.js?v=20261011-notebook-topics-1"></script>
-  <script src="/static/js/student-notebook.js?v=20261015-completion-export-1"></script>
+  <script src="/static/js/student-notebook.js?v=20261019-external-tools-1"></script>
   <script src="/static/js/student-dashboard.js?v=20261011-notebook-topics-1"></script>
 
 </body>

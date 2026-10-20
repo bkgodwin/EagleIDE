@@ -145,6 +145,7 @@
   }
 
   function setView(mode, { push = true, path = '' } = {}) {
+    if (window.ExternalTools?.active?.() && !window.ExternalTools.leave()) return false;
     const wiki = mode === 'wiki';
     if (wiki) clearWikiReturn();
     document.body.classList.toggle('wiki-mode', wiki);
@@ -172,7 +173,7 @@
     }
     disposeWikiContent($('wikiArticleBody'));
     disposeWikiContent($('wikiEmbeddedContent'));
-    setView('ide', { push });
+    if (setView('ide', { push }) === false) return false;
     try { window.eagleEditor?.refresh?.(); } catch {}
     window.EagleIDE?.layout?.refreshEditors?.();
     return true;
@@ -850,7 +851,7 @@
   async function showHome({ push = true } = {}) {
     state.coverageAbort?.abort?.();
     disposeWikiContent($('wikiArticleBody'));
-    setView('wiki', { push, path: '/' });
+    if (setView('wiki', { push, path: '/' }) === false) return;
     state.currentNode = null;
     $('wikiHomePanel').hidden = false;
     $('wikiStandardsCoveragePanel').hidden = true;
@@ -996,7 +997,7 @@
     const path = selectedFolderId
       ? `/standards-coverage?folder_id=${encodeURIComponent(selectedFolderId)}`
       : '/standards-coverage';
-    setView('wiki', { push, path });
+    if (setView('wiki', { push, path }) === false) return;
     closeDrawer();
     state.currentNode = null;
     $('wikiHomePanel').hidden = true;
@@ -1041,7 +1042,7 @@
     syncHomeBackground(false);
     state.coverageAbort?.abort?.();
     disposeWikiContent($('wikiArticleBody'));
-    setView('wiki', { push: false });
+    if (setView('wiki', { push: false }) === false) return;
     showStatus('Loading topic…', false, 0);
     try {
       const data = await fetchJson(`/api/wiki/nodes/${encodeURIComponent(identifier)}`);
@@ -2108,7 +2109,7 @@
   function refreshContext() {
     const ctx = context();
     syncIdeAccessControls();
-    if (!canAccessIDE() && !document.body.classList.contains('wiki-mode') && !document.body.classList.contains('network-mode')) {
+    if (!canAccessIDE() && !document.body.classList.contains('wiki-mode') && !document.body.classList.contains('network-mode') && !document.body.classList.contains('external-tool-mode')) {
       showHome({ push: false }).catch(() => {});
       history.replaceState({ eagleView: 'wiki' }, '', '/');
       showStatus(ideAccessMessage(), true);
@@ -2271,6 +2272,7 @@
   }
 
   async function routeFromLocation() {
+    if (window.ExternalTools?.route?.()) return;
     const path = location.pathname;
     if (path === '/network') {
       if (window.EagleFeatures?.openNetwork) {
