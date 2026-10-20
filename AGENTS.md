@@ -185,7 +185,9 @@ All Ollama generation goes through the shared in-memory AI dispatcher in `app.py
 
 `external_tools.py` registers an empty, disabled-by-default external application
 gateway with the existing auth/class callbacks. Admins own destinations and global
-enablement; only class owners mutate grants. Students use the union of current
+enablement; teachers can open all globally enabled, verified tools without class
+grants or class ownership. CoTeachers retain student tool-access rules. Only class
+owners mutate student grants. Students use the union of current
 class grants; guests receive none. `tool_store.py` owns private atomic
 `tool_data/catalog.json` (override `EAGLEIDE_TOOL_DATA_DIR`), including explicit
 allowed private application CIDRs and denied management/EagleIDE CIDRs. Never
@@ -197,6 +199,11 @@ redacted in access logs. `tool_gateway.py` validates all DNS answers and pins th
 checked numerical destination, preserving TLS hostname validation; do not add an
 arbitrary URL proxy, ambient credentials or permissive localhost flags. Restrict
 methods, uploads, responses, connections and timeouts independently of runners.
+Keep binary resources streamed (256 MiB / 180-second cap) with bounded asset-burst
+waiting (64 global / 12 per session, 15 seconds), 16 global / four per-session
+active transfers, and fresh authorization after promotion. HTML alone is buffered
+up to 2 MiB, with bounded gzip/deflate decoding. Add anonymous crossorigin to
+SRI-bearing link/script tags lacking it; preserve hashes, scripts, URLs and CSP.
 Cookie/login, WebSocket/SSE, workers and unsupported native storage flows fail
 closed. HTML/application responses enforce CSP sandbox without allow-same-origin
 as well as the iframe sandbox; direct document navigation must not bypass it.
@@ -221,6 +228,10 @@ origin storage. The operator manages LXC/network isolation, not EagleIDE.
 The optional `tests/external_tools_browser_checks.js` Playwright check uses only
 `tests/external_tools_browser_fixture.py`. It checks viewport bounds, rendering,
 outage recovery, and a live document/draft beyond its original 90-second lease.
+For a public static app build, start the same fixture with `--app-directory` and
+run `tests/external_tools_solidcraft_browser_checks.js` to verify a real SolidCraft
+release (CAD box, undo/redo, canvas sizing and retention beyond the lease). Never
+serve a private source/data folder. The test does not download or install apps.
 Set `EAGLE_TOOL_TEST_URL` to the fixture's loopback URL, `EAGLE_TOOL_BROWSER` to an
 installed Chromium browser, and `EAGLE_TOOL_SCREENSHOT_DIR` to a scratch folder.
 
