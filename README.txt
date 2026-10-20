@@ -10,6 +10,26 @@ environments. Designed for public-facing classroom deployment.
 See docs/HARDENING_AND_PERFORMANCE.md for security controls, capacity tuning,
 isolated HTML preview deployment, monitoring, and load-test guidance.
 
+Optional External Tools (empty and disabled by default):
+- Setup and limits: static/docs/external-tools.html, also linked in Settings >
+  External Tools. Keep the existing listener and hostname; the current tunnel
+  must already forward all paths and honor protected no-store responses.
+- Admins configure narrow allowed application CIDRs and denied management/
+  EagleIDE addresses, then register a full private HTTP/HTTPS backend URL and
+  single-segment public path. Save, test connectivity, privately preview, then
+  explicitly confirm restricted-browser compatibility before enabling.
+- Class owners grant globally enabled tools in Dashboard > Classes > External
+  Tools. Students receive the union of current class grants; guests get none.
+  CoTeachers cannot change these settings. Logout/removal/disable revokes delivery.
+- Apps stay independently deployed and unchanged. Only compatible relative/
+  prefix-hosted HTTP apps work. The opaque-origin sandbox has no same-origin
+  fallback; cookies/login, persistent browser storage, offline workers,
+  WebSockets/SSE and external-host dependencies are unsupported. Native saving
+  remains native and must be tested; EagleIDE does not save app projects.
+- The operator owns Proxmox/firewall isolation and application resource quotas.
+  Pin app releases; use maintenance, retesting and data-format backups for updates.
+  Private registry/grants: tool_data/catalog.json (EAGLEIDE_TOOL_DATA_DIR override).
+
 Workspace data and classroom accounts:
 - Create .csv and .json files with New File. CSV opens in an editable grid with
   sticky headers, row/column paging, Save, Add row, and Add column. Large files

@@ -1,0 +1,25 @@
+.external-tool-buttons { display:flex; gap:8px; flex-wrap:wrap; }
+.external-tool-workspace { height:calc(100dvh - 110px); min-height:320px; padding:12px; }
+.external-tool-workspace[hidden] { display:none !important; }
+.external-tool-mode #wikiView, .external-tool-mode #networkView, .external-tool-mode .outer,
+.external-tool-mode .edge-toggle, .external-tool-mode .teacher-pane-toggle,
+.external-tool-mode .tablet-panel-nav, .external-tool-mode .classroom-fab,
+.external-tool-mode .classroom-teacher-strip { display:none !important; }
+.external-tool-mode .ide-only { display:none !important; }
+body.external-tool-mode #wikiViewBtn, body.external-tool-mode #ideViewBtn { display:inline-flex !important; }
+.external-tool-toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:8px; }
+.external-tool-toolbar [role=status] { flex:1; min-width:120px; }
+.external-tool-save-note { font-size:12px; margin:8px 0; color:var(--theme-text-dim); }
+.external-tool-frame-host { height:calc(100% - 95px); background:var(--theme-input-bg); border:1px solid var(--theme-border-mid); border-radius:8px; overflow:hidden; }
+.external-tool-frame-host iframe { display:block; width:100%; height:100%; border:0; background:white; }
+.external-tools-manager { width:min(900px,96vw); max-height:90dvh; overflow:auto; }
+.external-tools-manager label { display:flex; flex-direction:column; gap:4px; margin:10px 0; }
+.external-tools-manager .choice-item { flex-direction:row; }
+.external-tools-manager input:not([type=checkbox]), .external-tools-manager textarea { width:100%; box-sizing:border-box; padding:8px; border:1px solid var(--theme-border-mid); background:var(--theme-input-bg); color:var(--theme-text); border-radius:6px; }
+.external-tools-manager p { font-size:13px; line-height:1.5; }
+.external-tools-catalog { display:grid; gap:10px; margin:16px 0; }
+.external-tool-card { border:1px solid var(--theme-border-mid); border-radius:8px; padding:12px; overflow-wrap:anywhere; }
+.external-tool-card .modal-actions { flex-wrap:wrap; justify-content:flex-start; }
+.external-tool-form { border-top:1px solid var(--theme-border-mid); margin-top:14px; }
+.external-tool-class-settings { margin:12px 0; padding:12px; border:1px solid var(--theme-border-mid); border-radius:8px; }
+@media (max-width:650px) { .external-tool-workspace { padding:6px; height:calc(100dvh - 155px); } .external-tool-frame-host { height:calc(100% - 140px); } }
