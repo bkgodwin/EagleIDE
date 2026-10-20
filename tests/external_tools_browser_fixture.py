@@ -4,6 +4,8 @@ Run from the repository root with Python; prints the local URL and test tokens.
 The numerical application connection is replaced only in this test process.
 """
 import builtins
+import argparse
+from functools import partial
 import getpass
 import json
 import os
@@ -16,10 +18,31 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from test_external_tools import FixtureHandler
-from http.server import ThreadingHTTPServer
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--app-directory', type=Path, help='Serve an existing public static app build at /prefix/ instead of the generic fixture')
+    args = parser.parse_args()
+    handler = FixtureHandler
+    if args.app_directory:
+        directory = args.app_directory.resolve()
+        if not (directory / 'index.html').is_file():
+            parser.error('--app-directory must contain a public index.html build')
+
+        class StaticApp(SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if not self.path.startswith('/prefix/'):
+                    self.send_error(404)
+                    return
+                self.path = self.path[len('/prefix'):]
+                super().do_GET()
+
+            def log_message(self, *_args):
+                pass
+
+        handler = partial(StaticApp, directory=str(directory))
     with tempfile.TemporaryDirectory(prefix='eagle-tool-browser-') as temporary:
         root = Path(temporary)
         for key, folder in [('EAGLEIDE_TOOL_DATA_DIR', 'tools'), ('EAGLEIDE_NETWORK_DATA_DIR', 'network'), ('EAGLEIDE_WIKI_DATA_DIR', 'wiki'), ('EAGLEIDE_WIKI_BACKUP_DIR', 'backup')]:
@@ -38,7 +61,7 @@ def main():
         eagle._save_classes({'classes': [{'id': 'fixture-class', 'name': 'Fixture class', 'teacher_email': teacher['email'], 'join_code': 'FIXTURE', 'students': [student['email']], 'settings': {}}]})
         eagle._teacher_tokens['fixture-teacher'] = teacher
         eagle._student_tokens['fixture-student'] = student
-        fixture = ThreadingHTTPServer(('127.0.0.1', 0), FixtureHandler)
+        fixture = ThreadingHTTPServer(('127.0.0.1', 0), handler)
         threading.Thread(target=fixture.serve_forever, daemon=True).start()
         from tool_gateway import PinnedConnection
         original_resolve = socket.getaddrinfo

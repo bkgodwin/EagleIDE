@@ -25,7 +25,8 @@ Optional External Tools (empty and disabled by default):
   and saving help. Routine access renewals keep the current app and draft loaded;
   leaving the tool, signing out or expired access closes it.
 - Class owners grant globally enabled tools in Dashboard > Classes > External
-  Tools. Students receive the union of current class grants; guests get none.
+  Tools for students. Teachers can open all enabled tools without class grants.
+  Students receive the union of current class grants; guests get none.
   CoTeachers cannot change these settings. Logout/removal/disable revokes delivery.
 - Apps stay independently deployed and unchanged. Only compatible relative/
   prefix-hosted HTTP apps work. The opaque-origin sandbox has no same-origin

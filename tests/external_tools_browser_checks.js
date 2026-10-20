@@ -124,6 +124,10 @@ if (!base || !/^http:\/\/127\.0\.0\.1:\d+$/.test(base)) throw new Error('Set EAG
     const catalog = await page.evaluate(async () => (await (await fetch('/api/admin/tools', { headers: { 'X-Admin-Token': 'fixture-admin' } })).json()).catalog);
     const tool = catalog.tools[0];
     const teacher = await account({ teacherToken: 'fixture-teacher', currentTeacher: { email: 'teacher@example.test', role: 'teacher' } });
+    // No class has a grant yet. Teachers still see every enabled tool.
+    await teacher.page.locator('#externalToolButtons button').filter({ hasText: 'Open fixture' }).waitFor();
+    const withoutGrant = await teacher.page.evaluate(async () => (await window.ExternalTools.api('/api/tools')).tools);
+    assert.equal(withoutGrant.length, 1);
     await teacher.page.locator('#roleMenuBtn').click();
     await teacher.page.locator('#teacherDashboardBtn').click();
     await teacher.page.locator('[data-view="dash-classes"]').click();
@@ -139,6 +143,7 @@ if (!base || !/^http:\/\/127\.0\.0\.1:\d+$/.test(base)) throw new Error('Set EAG
     await student.page.locator('#wikiViewBtn').click();
     await student.page.locator('#externalToolButtons button').filter({ hasText: 'Open fixture' }).click();
     await student.page.frameLocator('#externalToolFrameHost iframe').locator('#result').filter({ hasText: '"parent":"blocked"' }).waitFor();
+    assert.equal(await student.page.frameLocator('#externalToolFrameHost iframe').locator('body').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(238, 238, 255)');
     const before = await student.page.locator('#externalToolFrameHost iframe').getAttribute('src');
     await student.page.locator('#externalToolClose').click();
     assert.equal(await student.page.evaluate(() => window.eagleEditor.getValue()), "print('gateway IDE smoke')");

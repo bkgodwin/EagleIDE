@@ -1,5 +1,7 @@
 """Generic fixture only: no third-party application downloads or installations."""
+import base64
 import gzip
+import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import logging
@@ -9,21 +11,24 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+from concurrent.futures import ThreadPoolExecutor
 
 from flask import Flask
 
 from external_tools import register
-from tool_gateway import CapabilityLogFilter, PinnedConnection, approve_addresses, redirect_path, safe_path, target_url
+from tool_gateway import CapabilityLogFilter, PinnedConnection, approve_addresses, html_body, redirect_path, safe_path, target_url
 from tool_store import ToolError, ToolStore
 
+FIXTURE_CSS = b'body { font: 16px sans-serif; color: #123; background: #eef; }'
+FIXTURE_SRI = 'sha384-' + base64.b64encode(hashlib.sha384(FIXTURE_CSS).digest()).decode()
 
 FIXTURE_HTML = b'''<!doctype html><meta charset="utf-8"><title>Generic tool fixture</title>
-<link rel="stylesheet" href="style.css"><h1>Generic application fixture</h1>
+<link rel="stylesheet" href="style.css" integrity="SRI_HASH"><h1>Generic application fixture</h1>
 <label>Project draft <textarea id="draft" rows="5">Initial project</textarea></label>
 <button id="serverCheck" type="button">Check server action</button><output id="serverResult"></output>
 <p id="result">Loading fixture</p>
-<script type="module" src="module.js"></script>'''
+<script type="module" src="module.js"></script>'''.replace(b'SRI_HASH', FIXTURE_SRI.encode())
 FIXTURE_MODULE = b'''import {value} from './dependency.js';
 const checks = {module: value};
 await WebAssembly.instantiate(await (await fetch('./empty.wasm')).arrayBuffer()); checks.wasm=true;
@@ -63,20 +68,40 @@ class FixtureHandler(BaseHTTPRequestHandler):
                 pass
             return
         content, mime, status, extra = FIXTURE_HTML, 'text/html', 200, {}
-        if path.endswith('echo'):
+        if path.endswith('burst-asset'):
+            time.sleep(0.15)
+            content, mime = b'asset loaded', 'text/plain'
+        elif path.endswith('large-data'):
+            size = 72 * 1024 * 1024
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/octet-stream')
+            self.send_header('Content-Length', str(size))
+            self.end_headers()
+            if not head:
+                try:
+                    for _ in range(size // (64 * 1024)):
+                        self.wfile.write(b'x' * (64 * 1024))
+                except (ConnectionError, OSError):
+                    pass
+            return
+        elif path.endswith('echo'):
             content, mime = json.dumps({'headers': dict(self.headers), 'body': self.rfile.read(int(self.headers.get('Content-Length', 0))).decode()}).encode(), 'application/json'
         elif path.endswith('module.js'):
             content, mime = FIXTURE_MODULE, 'application/javascript'
         elif path.endswith('dependency.js'):
             content, mime = b'export const value = "loaded";', 'application/javascript'
         elif path.endswith('style.css'):
-            content, mime = b'body { font: 16px sans-serif; color: #123; background: #eef; }', 'text/css'
+            content, mime = FIXTURE_CSS, 'text/css'
         elif path.endswith('empty.wasm'):
             content, mime = b'\0asm\x01\0\0\0', 'application/wasm'
         elif path.endswith('font.woff'):
             content, mime = b'wOFF-fixture-resource', 'font/woff'
         elif path.endswith('gzip'):
             content, mime, extra = gzip.compress(b'compressed fixture'), 'text/plain', {'Content-Encoding': 'gzip'}
+        elif path.endswith('gzip-html'):
+            content, extra = gzip.compress(FIXTURE_HTML), {'Content-Encoding': 'gzip'}
+        elif path.endswith('html-attachment'):
+            extra = {'Content-Disposition': 'attachment; filename="project.html"'}
         elif path.endswith('redirect'):
             status, content, extra = 302, b'', {'Location': '/prefix/next?ok=1'}
         elif path.endswith('escape'):
@@ -93,7 +118,7 @@ class FixtureHandler(BaseHTTPRequestHandler):
             content, mime = b'x' * 128, 'text/plain'
         self.send_response(status)
         self.send_header('Content-Type', mime)
-        self.send_header('Content-Length', str(100 * 1024 * 1024 if path.endswith('large') else len(content)))
+        self.send_header('Content-Length', str(1024 * 1024 * 1024 if path.endswith('large') else len(content)))
         for name, value in extra.items():
             self.send_header(name, value)
         self.end_headers()
@@ -226,10 +251,34 @@ class ExternalToolTests(unittest.TestCase):
         self.tokens.pop('s')
         self.assertEqual(self.client.get(launch['url']).status_code, 403)
 
-    def test_class_deletion_and_teacher_access_use_current_owned_grants(self):
+    def test_teachers_have_enabled_tools_without_classes_or_grants_but_students_do_not(self):
+        self.registered()
+        self.grant('one', False)
+        self.classes.clear()
+        self.assertEqual(len(self.call('GET', '/api/tools', headers=self.teacher)['tools']), 1)
+        self.assertEqual(self.call('GET', '/api/tools', headers=self.student)['tools'], [])
+        self.assertEqual(self.call('GET', '/api/tools', headers={'X-User-Token': 'ct'})['tools'], [])
+        launch = self.launch(self.teacher)
+        self.assertEqual(self.client.get(launch['url']).status_code, 200)
+        self.call('POST', f"/api/tools/instances/{launch['instance_id']}", headers=self.teacher)
+        self.users['t']['role'] = 'student'
+        self.assertEqual(self.client.get(launch['url']).status_code, 403)
+
+    def test_teacher_access_obeys_tool_global_account_and_session_disablement(self):
         self.registered()
         launch = self.launch(self.teacher)
-        del self.classes['one']
+        self.users['t']['enabled'] = False
+        self.assertEqual(self.client.get(launch['url']).status_code, 403)
+        self.users['t']['enabled'] = True
+        token = self.tokens.pop('t')
+        self.assertEqual(self.client.get(launch['url']).status_code, 403)
+        self.tokens['t'] = token
+        self.feature.store.mutate(self.revision(), lambda data: data.update(enabled=False))
+        self.assertEqual(self.call('GET', '/api/tools', headers=self.teacher)['tools'], [])
+        self.assertEqual(self.client.get(launch['url']).status_code, 403)
+        self.feature.store.mutate(self.revision(), lambda data: data.update(enabled=True))
+        self.call('POST', f"/api/admin/tools/{self.tool['id']}/enable", {'revision': self.revision(), 'enabled': False})
+        self.assertEqual(self.call('GET', '/api/tools', headers=self.teacher)['tools'], [])
         self.assertEqual(self.client.get(launch['url']).status_code, 403)
 
     def test_gateway_prefix_cors_sandbox_and_no_credential_forwarding(self):
@@ -369,10 +418,128 @@ class ExternalToolTests(unittest.TestCase):
         for _ in range(16):
             self.feature.gateway.slots.acquire()
         try:
-            self.assertEqual(self.client.get(launch['url']).status_code, 429)
+            with patch('tool_gateway.ADMISSION_TIMEOUT', 0.02):
+                self.assertEqual(self.client.get(launch['url']).status_code, 429)
         finally:
             for _ in range(16):
                 self.feature.gateway.slots.release()
+
+    def test_asset_bursts_wait_for_bounded_capacity_instead_of_failing_startup(self):
+        self.registered()
+        prefix = self.launch()['url']
+        barrier = threading.Barrier(10)
+        def download(_index):
+            barrier.wait(timeout=5)
+            with self.app.test_client() as client:
+                response = client.get(prefix + 'burst-asset')
+                return response.status_code, response.data
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            results = list(pool.map(download, range(10)))
+        self.assertEqual(results, [(200, b'asset loaded')] * 10)
+        self.assertEqual(self.feature.gateway.active, {})
+        self.assertEqual(self.feature.gateway.waiting, [])
+
+    def test_large_binary_stream_exceeds_old_64_mib_limit_without_buffering(self):
+        self.registered()
+        response = self.client.get(self.launch()['url'] + 'large-data', buffered=False)
+        self.assertEqual(response.status_code, 200)
+        size = sum(len(chunk) for chunk in response.response)
+        response.close()
+        self.assertEqual(size, 72 * 1024 * 1024)
+        self.assertEqual(self.feature.gateway.active, {})
+
+    def test_sri_html_keeps_integrity_adds_anonymous_cors_and_reframes_gzip(self):
+        self.registered()
+        prefix = self.launch()['url']
+        for path in ('', 'gzip-html'):
+            response = self.client.get(prefix + path)
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(f'integrity="{FIXTURE_SRI}" crossorigin="anonymous"', response.get_data(as_text=True))
+            self.assertEqual(int(response.headers['Content-Length']), len(response.data))
+            self.assertNotIn('Content-Encoding', response.headers)
+            self.assertIn('sandbox allow-scripts allow-downloads;', response.headers.getlist('Content-Security-Policy')[-1])
+        attachment = self.client.get(prefix + 'html-attachment')
+        self.assertEqual(attachment.data, FIXTURE_HTML)
+        self.assertEqual(int(attachment.headers['Content-Length']), len(FIXTURE_HTML))
+        head = self.client.head(prefix + 'gzip-html')
+        self.assertNotIn('Content-Encoding', head.headers)
+        self.assertNotIn('Content-Length', head.headers)
+
+    def test_html_adapter_preserves_scripts_attributes_encoding_and_integrity_values(self):
+        body = (b'<!-- <link integrity="comment"> -->\r\n'
+                b'<script>const text="<link integrity=script>";</script>\n'
+                b'<LINK rel="stylesheet" integrity="unchanged" href="a.css"/>\r\n'
+                b'<script integrity="unchanged-2" src="a.js"></script>\n'
+                b'<link integrity="existing" crossorigin="anonymous" href="b.css">\n'
+                b'<p>\xc3\xa9</p>')
+        response = Mock()
+        response.getheader.side_effect = lambda name, default=None: {'Content-Length': str(len(body))}.get(name, default)
+        response.read1.side_effect = [body[:50], body[50:], b'']
+        close = Mock()
+        result = html_body(response, close, lambda: True)
+        expected = body.replace(b'href="a.css"/>', b'href="a.css" crossorigin="anonymous"/>').replace(b'src="a.js">', b'src="a.js" crossorigin="anonymous">')
+        self.assertEqual(result, expected)
+        close.assert_called_once()
+
+    def test_html_adapter_rejects_oversize_expansion_and_incomplete_documents(self):
+        for body, length, encoding in [(gzip.compress(b'x' * 100), None, 'gzip'), (b'<html>', 100, 'identity')]:
+            response = Mock()
+            response.getheader.side_effect = lambda name, default=None: {'Content-Length': str(length) if length else None, 'Content-Encoding': encoding}.get(name, default)
+            response.read1.side_effect = [body, b'']
+            with patch('tool_gateway.MAX_HTML', 60), self.assertRaises(ToolError):
+                html_body(response, Mock(), lambda: True)
+
+    def test_queued_asset_request_rechecks_access_after_promotion(self):
+        self.registered()
+        prefix = self.launch()['url']
+        row = next(row for row in self.feature.sessions.values() if not row['preview'])
+        permits = [self.feature.gateway.admit(row['owner']) for _ in range(4)]
+        result = []
+        def request_asset():
+            with self.app.test_client() as client:
+                result.append(client.get(prefix + 'burst-asset').status_code)
+        thread = threading.Thread(target=request_asset)
+        thread.start()
+        try:
+            deadline = time.monotonic() + 2
+            while not self.feature.gateway.waiting and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(self.feature.gateway.waiting)
+            self.grant('one', False)
+        finally:
+            for release in permits:
+                release()
+            thread.join(timeout=3)
+        self.assertEqual(result, [403])
+        self.assertEqual(self.feature.gateway.waiting, [])
+        self.assertEqual(self.feature.gateway.active, {})
+
+    def test_per_account_queue_bound_and_timeout_release_waiters(self):
+        gateway = self.feature.gateway
+        permits = [gateway.admit('busy') for _ in range(4)]
+        result = []
+        def wait_for_slot():
+            try:
+                gateway.admit('busy', wait=True)()
+            except ToolError as error:
+                result.append(error.status)
+        try:
+            with patch('tool_gateway.MAX_OWNER_WAITING', 1), patch('tool_gateway.ADMISSION_TIMEOUT', 0.3):
+                thread = threading.Thread(target=wait_for_slot)
+                thread.start()
+                deadline = time.monotonic() + 1
+                while not gateway.waiting and time.monotonic() < deadline:
+                    time.sleep(0.005)
+                with self.assertRaises(ToolError):
+                    gateway.admit('busy', wait=True)
+                gateway.admit('other')()  # A busy account does not block another.
+                thread.join(timeout=2)
+                self.assertEqual(result, [429])
+        finally:
+            for release in permits:
+                release()
+        self.assertEqual(gateway.waiting, [])
+        self.assertEqual(gateway.active, {})
 
     def test_slow_upload_is_bounded_before_upstream_and_other_requests_stay_available(self):
         self.registered()
