@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 from flask import Response, jsonify, request, send_from_directory
 
 from tool_gateway import (CapabilityLogFilter, Gateway, MAX_UPLOAD, local_addresses,
-                          redirect_path, stream_body)
+                          html_body, redirect_path, stream_body)
 from tool_store import ToolError, ToolStore, networks
 
 LEASE_SECONDS = 90
@@ -95,14 +95,11 @@ def register(app, *, base_dir, source_dir, require_admin, require_teacher, requi
         if not data["enabled"] or not tool["enabled"] or tool["compatibility"] != "verified":
             return False
         if current["role"] == "teacher":
-            candidates = teacher_classes(current["email"])
-        else:
-            candidates = [find_class(cid) for cid in get_user_class_ids(current["record"])]
+            return True
+        candidates = [find_class(cid) for cid in get_user_class_ids(current["record"])]
         for cls in candidates:
             if not cls or tool["id"] not in data["class_tools"].get(cls["id"], []):
                 continue
-            if current["role"] == "teacher" and cls.get("teacher_email") == current["email"]:
-                return True
             if current["role"] == "student" and current["email"] in cls.get("students", []):
                 return True
         return False
@@ -285,7 +282,7 @@ def register(app, *, base_dir, source_dir, require_admin, require_teacher, requi
         current, data = actor(request), store.read()
         tool = store.tool(data, tool_id)
         if not entitled(current, tool, data):
-            raise ToolError("Your current classes do not grant this tool", 403)
+            raise ToolError("This tool is disabled or your account does not have access", 403)
         if not tool["addresses"]:
             raise ToolError("An administrator must test this destination first", 409)
         now, owner = time.monotonic(), identity(current)
@@ -373,8 +370,10 @@ def register(app, *, base_dir, source_dir, require_admin, require_teacher, requi
             query = request.query_string.decode("ascii", errors="strict")
         except UnicodeError as exc:
             raise ToolError("Invalid query encoding") from exc
-        permit = gateway.admit(row["owner"])
+        permit = gateway.admit(row["owner"], wait=True)
         try:
+            if not authorized(row):
+                raise ToolError("Application access expired or was revoked", 403)
             body = None
             if request.method not in {"GET", "HEAD"}:
                 if request.content_length is None:
@@ -401,8 +400,14 @@ def register(app, *, base_dir, source_dir, require_admin, require_teacher, requi
             close = finish
             if client_socket:
                 client_socket.settimeout(5)
-            response = Response(stream_body(upstream, close, lambda: authorized(row)), status=upstream.status)
+            html_document = (upstream.getheader("Content-Type", "").split(";", 1)[0].strip().lower() == "text/html"
+                             and not upstream.getheader("Content-Disposition", "").strip().lower().startswith("attachment"))
+            is_html = html_document and request.method != "HEAD"
+            body = html_body(upstream, close, lambda: authorized(row)) if is_html else stream_body(upstream, close, lambda: authorized(row))
+            response = Response(body, status=upstream.status)
             for name in ("Content-Type", "Content-Length", "Content-Encoding", "Content-Language", "Content-Disposition", "Content-Security-Policy", "X-Frame-Options"):
+                if html_document and name in {"Content-Length", "Content-Encoding"}:
+                    continue
                 value = upstream.getheader(name)
                 if value:
                     response.headers[name] = value
