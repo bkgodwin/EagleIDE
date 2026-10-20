@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import http.client
+from html.parser import HTMLParser
 import ipaddress
 import logging
 import re
@@ -9,15 +10,20 @@ import socket
 import ssl
 import threading
 import time
+import zlib
 from urllib.parse import quote, unquote, urljoin, urlsplit, urlunsplit
 
 from tool_store import ToolError
 
 MAX_UPLOAD = 1024 * 1024
-MAX_RESPONSE = 64 * 1024 * 1024
+MAX_RESPONSE = 256 * 1024 * 1024
+MAX_HTML = 2 * 1024 * 1024
+MAX_WAITING = 64
+MAX_OWNER_WAITING = 12
+ADMISSION_TIMEOUT = 15
 CONNECT_TIMEOUT = 3
-READ_TIMEOUT = 5
-TOTAL_TIMEOUT = 60
+READ_TIMEOUT = 15
+TOTAL_TIMEOUT = 180
 PRIVATE = tuple(ipaddress.ip_network(value) for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"))
 
 
@@ -139,24 +145,44 @@ class Gateway:
     def __init__(self):
         self.slots = threading.BoundedSemaphore(16)
         self.lock = threading.Lock()
+        self.changed = threading.Condition(self.lock)
         self.active = {}
+        self.waiting = []
 
-    def admit(self, owner):
-        with self.lock:
-            if self.active.get(owner, 0) >= 4 or not self.slots.acquire(blocking=False):
-                raise ToolError("Application gateway is busy. Try again shortly", 429)
-            self.active[owner] = self.active.get(owner, 0) + 1
+    def admit(self, owner, *, wait=False):
+        ticket = (owner, object())
+        with self.changed:
+            if len(self.waiting) >= MAX_WAITING or sum(item[0] == owner for item in self.waiting) >= MAX_OWNER_WAITING:
+                raise ToolError("Application gateway queue is full. Try again shortly", 429)
+            self.waiting.append(ticket)
+            deadline = time.monotonic() + (ADMISSION_TIMEOUT if wait else 0)
+            try:
+                while True:
+                    # Serve the first eligible request, so one busy account cannot
+                    # block another account with available per-account capacity.
+                    first = next((item for item in self.waiting if self.active.get(item[0], 0) < 4), None)
+                    if first is ticket and self.slots.acquire(blocking=False):
+                        self.active[owner] = self.active.get(owner, 0) + 1
+                        break
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise ToolError("Application gateway is busy. Try again shortly", 429)
+                    self.changed.wait(min(remaining, 0.1))
+            finally:
+                self.waiting.remove(ticket)
+                self.changed.notify_all()
         released = False
         def release():
             nonlocal released
-            with self.lock:
+            with self.changed:
                 if released:
                     return
                 released = True
                 self.active[owner] -= 1
                 if not self.active[owner]:
                     del self.active[owner]
-            self.slots.release()
+                self.slots.release()
+                self.changed.notify_all()
         return release
 
     def open(self, tool, policy, path="", query="", method="GET", body=None, headers=None, owner="test", self_ips=(), permit=None):
@@ -232,15 +258,19 @@ class CapabilityLogFilter(logging.Filter):
         return True
 
 
-def stream_body(response, close, authorized):
+def stream_body(response, close, authorized, *, fail_on_error=False):
     start, size, checked = time.monotonic(), 0, float("-inf")
     try:
         while True:
             now = time.monotonic()
             if now - start > TOTAL_TIMEOUT:
+                if fail_on_error:
+                    raise ToolError("Application HTML response timed out", 502)
                 return
             if now - checked >= 1:
                 if not authorized():
+                    if fail_on_error:
+                        raise ToolError("Application access expired or was revoked", 403)
                     return
                 checked = now
             chunk = response.read1(64 * 1024)
@@ -250,7 +280,71 @@ def stream_body(response, close, authorized):
             if size > MAX_RESPONSE:
                 return
             yield chunk
-    except (OSError, http.client.HTTPException):
+    except (OSError, http.client.HTTPException) as exc:
+        if fail_on_error:
+            raise ToolError("Application HTML transfer ended early", 502) from exc
         return
     finally:
         close()
+
+
+def html_body(response, close, authorized):
+    """Preserve SRI while making its resource requests CORS-enabled in an opaque frame.
+
+    Only start tags are extended; scripts, URLs, integrity hashes and CSP stay intact.
+    Latin-1 round-tripping keeps byte offsets and the original document encoding.
+    """
+    chunks, size = [], 0
+    stream = stream_body(response, close, authorized, fail_on_error=True)
+    try:
+        for chunk in stream:
+            size += len(chunk)
+            if size > MAX_HTML:
+                raise ToolError("Application HTML exceeds the 2 MiB document limit", 502)
+            chunks.append(chunk)
+    finally:
+        stream.close()
+    body = b"".join(chunks)
+    length = response.getheader("Content-Length")
+    if length and len(body) != int(length):
+        raise ToolError("Application HTML transfer ended early", 502)
+    encoding = response.getheader("Content-Encoding", "identity").strip().lower()
+    if encoding not in {"", "identity"}:
+        if encoding not in {"gzip", "deflate"}:
+            raise ToolError("Serve application HTML with identity, gzip or deflate encoding", 502)
+        try:
+            decoder = zlib.decompressobj(31 if encoding == "gzip" else zlib.MAX_WBITS)
+            body = decoder.decompress(body, MAX_HTML + 1)
+            if len(body) > MAX_HTML or not decoder.eof or decoder.unused_data:
+                raise ValueError()
+        except (zlib.error, ValueError) as exc:
+            raise ToolError("Application HTML encoding is invalid or exceeds 2 MiB", 502) from exc
+    text = body.decode("latin-1")
+    insertions = []
+    current_line, line_start = 1, 0
+
+    class Resources(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            nonlocal current_line, line_start
+            attributes = dict(attrs)
+            if tag not in {"link", "script"} or "integrity" not in attributes or "crossorigin" in attributes:
+                return
+            raw = self.get_starttag_text()
+            line, column = self.getpos()
+            while current_line < line:
+                line_start = text.index("\n", line_start) + 1
+                current_line += 1
+            end = len(raw) - (2 if raw.endswith("/>") else 1)
+            insertions.append(line_start + column + end)
+
+        handle_startendtag = handle_starttag
+
+    Resources(convert_charrefs=False).feed(text)
+    pieces, start = [], 0
+    for position in insertions:
+        pieces.extend((text[start:position], ' crossorigin="anonymous"'))
+        start = position
+    pieces.append(text[start:])
+    if not authorized():
+        raise ToolError("Application access expired or was revoked", 403)
+    return ''.join(pieces).encode("latin-1")

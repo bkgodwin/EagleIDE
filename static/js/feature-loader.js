@@ -3,7 +3,7 @@
   'use strict';
 
   const definitions = {
-    externalToolsAdmin: ['/static/js/external-tools-admin.js?v=20261020-1'],
+    externalToolsAdmin: ['/static/js/external-tools-admin.js?v=20261020-loading-1'],
     network: [
       '/static/js/network-sim.js?v=20261019-external-tools-1',
       '/static/js/network-sim-advanced.js?v=20260714-4',
