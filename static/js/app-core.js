@@ -3237,6 +3237,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     // Login button: open unified login modal
     document.getElementById('loginBtn').addEventListener('click', () => openLoginModal());
     document.getElementById('signOutBtn')?.addEventListener('click', async () => {
+      if (window.ExternalTools?.unsavedStorage?.() && !window.ExternalTools.leave()) return;
       window.ExternalTools?.accountLeaving?.();
       if (!isAuthenticated()) return;
       if (isProgramRunning && socket) socket.emit('stop', {});

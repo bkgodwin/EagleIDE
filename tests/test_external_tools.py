@@ -28,6 +28,8 @@ FIXTURE_HTML = b'''<!doctype html><meta charset="utf-8"><title>Generic tool fixt
 <link rel="stylesheet" href="style.css" integrity="SRI_HASH"><h1>Generic application fixture</h1>
 <label>Project draft <textarea id="draft" rows="5">Initial project</textarea></label>
 <button id="serverCheck" type="button">Check server action</button><output id="serverResult"></output>
+<p><input type="file" id="fileInput"><output id="fileBytes"></output><button id="fileDownload">Download imported file</button></p>
+<p><button id="promptTest">Prompt</button><output id="promptResult"></output><button id="popupTest">Popup</button></p>
 <p id="result">Loading fixture</p>
 <script type="module" src="module.js"></script>'''.replace(b'SRI_HASH', FIXTURE_SRI.encode())
 FIXTURE_MODULE = b'''import {value} from './dependency.js';
@@ -35,10 +37,15 @@ const checks = {module: value};
 await WebAssembly.instantiate(await (await fetch('./empty.wasm')).arrayBuffer()); checks.wasm=true;
 checks.font=(await fetch('./font.woff')).ok;
 checks.write=(await (await fetch('./echo', {method:'POST',body:'fixture write'})).json()).body;
-try { localStorage.setItem('fixture-secret','private'); checks.storage='UNSAFE'; } catch { checks.storage='blocked'; }
+try { localStorage.setItem('fixture-secret','private'); checks.storage='scoped'; } catch { checks.storage='blocked'; }
 try { parent.document.body.dataset.leaked='yes'; checks.parent='UNSAFE'; } catch { checks.parent='blocked'; }
 try { await navigator.serviceWorker.register('./worker.js'); checks.worker='UNSAFE'; } catch { checks.worker='blocked'; }
 document.querySelector('#result').textContent=JSON.stringify(checks);
+let imported;
+document.querySelector('#fileInput').onchange=async event=>{imported=await event.target.files[0].arrayBuffer();document.querySelector('#fileBytes').textContent=String(imported.byteLength);};
+document.querySelector('#fileDownload').onclick=()=>{const url=URL.createObjectURL(new Blob([imported]));const link=document.createElement('a');link.href=url;link.download='imported.bin';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+document.querySelector('#promptTest').onclick=()=>document.querySelector('#promptResult').textContent=prompt('Fixture filename','default') || 'empty';
+document.querySelector('#popupTest').onclick=()=>window.open('about:blank','tool-fixture');
 document.querySelector('#serverCheck').onclick=async () => {
   const reply=await fetch('./echo', {method:'POST',body:document.querySelector('#draft').value});
   document.querySelector('#serverResult').textContent=reply.ok ? (await reply.json()).body : 'FAILED';
@@ -168,7 +175,8 @@ class ExternalToolTests(unittest.TestCase):
                                 require_teacher=require('X-Teacher-Token', 'teacher'), require_user=require('X-User-Token', 'student'),
                                 find_user=lambda email: next((value for value in self.users.values() if value['email'] == email), None),
                                 get_user_class_ids=lambda user: user.get('class_ids', []), find_class=self.classes.get,
-                                teacher_classes=lambda email: [c for c in self.classes.values() if c['teacher_email'] == email])
+                                teacher_classes=lambda email: [c for c in self.classes.values() if c['teacher_email'] == email],
+                                account_id=lambda user: user['email'] if user else 'administrator')
         self.client = self.app.test_client()
         self.admin = {'X-Admin-Token': 'a'}
         self.teacher = {'X-Teacher-Token': 't'}
@@ -226,6 +234,79 @@ class ExternalToolTests(unittest.TestCase):
         self.assertFalse(self.feature.store.read()['enabled'])
         self.assertFalse(self.feature.store.path.exists())
         self.assertEqual(self.client.get('/api/tools').status_code, 401)
+
+    def test_scoped_storage_routes_revalidate_and_never_expose_another_account(self):
+        self.registered()
+        def update(data):
+            data['tools'][0].update(storage=True, popups=True, dialogs=True)
+        self.feature.store.mutate(self.revision(), update)
+        launch = self.launch()
+        prefix = launch['url'] + '__eagle__/'
+        document = self.client.get(launch['url'])
+        self.assertIn('__eagle__/runtime.js', document.get_data(as_text=True))
+        policy = document.headers.getlist('Content-Security-Policy')[-1]
+        self.assertIn('allow-popups allow-modals', policy)
+        self.assertNotIn('allow-same-origin', policy)
+        script = self.client.get(prefix + 'runtime.js', headers={'Origin': 'null'})
+        self.assertEqual(script.status_code, 200)
+        self.assertNotIn('X-User-Token', script.get_data(as_text=True))
+        script.close()
+        for _ in range(3):
+            with self.client.get(prefix + 'runtime.js', headers={'Origin': 'null'}) as repeated:
+                self.assertEqual(repeated.status_code, 200)
+        self.assertEqual(self.feature.gateway.active, {})
+        snapshot = self.feature.storage.snapshot(self.users['s']['email'], self.tool['id'])
+        begin = self.client.post(prefix + 'begin', json={**snapshot, 'changes': [{'key': 'project', 'size': 5}]}, headers={'Origin': 'null'}).get_json()
+        upload = begin['upload_id']
+        second = self.launch(self.teacher)['url'] + '__eagle__/'
+        self.assertEqual(self.client.post(second + 'commit', json={'upload_id': upload}).status_code, 410)
+        self.assertEqual(self.client.post(prefix + 'chunk?id=' + upload + '&offset=0', data=b'hello').status_code, 200)
+        self.assertEqual(self.client.post(prefix + 'commit', json={'upload_id': upload}).status_code, 200)
+        self.assertEqual(self.client.get('/api/tools/storage', headers=self.student).get_json()['storage']['used_bytes'], 5)
+        self.assertEqual(self.client.get('/api/tools/storage', headers=self.teacher).get_json()['storage']['used_bytes'], 0)
+        with self.client.get('/api/tools/storage/' + self.tool['id'] + '/export', headers=self.student) as exported:
+            self.assertEqual(exported.get_json()['entries'], {'project': 'hello'})
+        self.tokens.pop('s')
+        self.assertEqual(self.client.get(prefix + 'runtime.js', headers={'Origin': 'null'}).status_code, 403)
+        self.assertEqual(self.client.get('/api/tools/storage').status_code, 401)
+
+    def test_storage_admin_policy_and_user_clear_require_ownership_and_fresh_version(self):
+        self.registered()
+        self.assertEqual(self.client.put('/api/admin/tools/storage?email=student@example.test', headers=self.teacher, json={}).status_code, 403)
+        policy = self.call('GET', '/api/admin/tools/storage?email=student@example.test')['storage']
+        self.call('PUT', '/api/admin/tools/storage?email=student@example.test', {'version': policy['version'], 'enabled': True, 'quota_mib': 1})
+        self.assertEqual(self.client.put('/api/admin/tools/storage?email=student@example.test', headers=self.admin, json={'version': 0, 'enabled': False, 'quota_mib': 1}).status_code, 409)
+        self.assertEqual(self.client.delete('/api/tools/storage', headers=self.student, json={'epoch': policy['epoch']}).status_code, 409)
+        current = self.call('GET', '/api/tools/storage', headers=self.student)['storage']
+        self.call('DELETE', '/api/tools/storage', {'epoch': current['epoch']}, self.student)
+
+    def test_configured_server_uploads_remain_bounded_and_separate_from_cloud_chunks(self):
+        self.registered()
+        self.feature.store.mutate(self.revision(), lambda data: data['tools'][0].update(upload_mib=3))
+        prefix = self.launch()['url']
+        response = self.client.post(prefix + 'echo', data=b'x' * (2 * 1024 * 1024))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.get_json()['body']), 2 * 1024 * 1024)
+        self.assertEqual(self.client.post(prefix + 'echo', data=b'x' * (3 * 1024 * 1024 + 1)).status_code, 413)
+        self.assertEqual(self.client.post(prefix + '__eagle__/begin', data=b'x' * (512 * 1024 + 1)).status_code, 403)
+
+    def test_snapshot_slots_release_over_real_http_and_head_never_reserves_one(self):
+        from urllib.request import urlopen
+        from werkzeug.serving import make_server
+        self.registered()
+        prefix = self.launch()['url']
+        server = make_server('127.0.0.1', 0, self.app, threaded=True)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            for _ in range(5):
+                with urlopen(f'http://127.0.0.1:{server.server_port}' + prefix + '__eagle__/runtime.js', timeout=3) as response:
+                    self.assertIn(b'showOpenFilePicker', response.read())
+            for _ in range(3):
+                self.assertEqual(self.client.head(prefix + '__eagle__/runtime.js').status_code, 200)
+            self.assertEqual(self.feature.gateway.active, {})
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=5)
 
     def test_admin_ownership_coteacher_and_preview_gates(self):
         self.registered(False)
@@ -481,6 +562,16 @@ class ExternalToolTests(unittest.TestCase):
         expected = body.replace(b'href="a.css"/>', b'href="a.css" crossorigin="anonymous"/>').replace(b'src="a.js">', b'src="a.js" crossorigin="anonymous">')
         self.assertEqual(result, expected)
         close.assert_called_once()
+
+    def test_bootstrap_precedes_app_scripts_without_matching_comments_or_script_text(self):
+        body = b'<!doctype html><!-- <head> --><html><head><meta charset="utf-8"><script>const raw="<head>";</script></head></html>'
+        response = Mock()
+        response.read1.side_effect = [body, b'']
+        response.getheader.side_effect = lambda name, default=None: default
+        result = html_body(response, Mock(), lambda: True, 'https://eagle.test/_tools/scoped/runtime.js')
+        self.assertTrue(result.startswith(b'<!doctype html><!-- <head> --><html><head><script src='))
+        self.assertIn(b'<script>const raw="<head>";</script>', result)
+        self.assertEqual(result.count(b'/runtime.js'), 1)
 
     def test_html_adapter_rejects_oversize_expansion_and_incomplete_documents(self):
         for body, length, encoding in [(gzip.compress(b'x' * 100), None, 'gzip'), (b'<html>', 100, 'identity')]:
