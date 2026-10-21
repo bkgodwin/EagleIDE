@@ -230,6 +230,15 @@
       for (const match of masked.matchAll(/\bdef\s+\w+\s*\(([^)]*)\)/g)) {
         match[1].split(',').forEach(param => bind((param.match(/^\s*\*{0,2}([A-Za-z_]\w*)/) || [])[1] || ''));
       }
+      // Annotation-only declarations are bindings too (notably dataclass fields).
+      for (const match of masked.matchAll(/(?:^|\n)\s*([A-Za-z_]\w*)\s*:(?![=])/g)) bind(match[1]);
+      // Parse multiline/defaulted signatures with the same balanced scanner as
+      // completion. A ')' in a default or Callable return type is not the end
+      // of the parameter list.
+      for (const line of autocomplete?.pythonLogicalLines?.(masked) || []) {
+        const header = autocomplete.pythonFunctionHeader(line);
+        if (header) commaParts(header[2]).forEach(param => bind(param.match(/^\s*\*{0,2}([A-Za-z_]\w*)/)?.[1] || ''));
+      }
       for (const match of masked.matchAll(/\bfor\s+([\w\s,]+?)\s+in\b/g)) bind(match[1]);
       for (const match of masked.matchAll(/\b(?:as|global|nonlocal)\s+([\w, ]+)/g)) bind(match[1]);
       for (const match of masked.matchAll(/(?:^|[\n;])\s*\(?([A-Za-z_]\w*(?:\s*,\s*\*?[A-Za-z_]\w*)*)\)?\s*(?::[^=\n]+)?=(?!=)/g)) bind(match[1]);

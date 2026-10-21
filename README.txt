@@ -294,6 +294,12 @@ Features:
   between sessions. Drag splitters or focus them and use arrow keys to resize;
   double-click a splitter to restore that layout's default size.
 - Syntax highlighting for Python, JavaScript, HTML, and CSS
+- Dashboard > Account > Editor colors (Settings > Account for administrators)
+  offers light/dark syntax palettes, color-vision-friendly Blue & Gold palettes,
+  minimal-color high-contrast palettes, and custom editor backgrounds. Preview
+  the noneditable Python sample, then choose Save editor colors. Preferences
+  follow your account across sessions and devices; custom dark/light backgrounds
+  are separate. Text colors adjust for readable contrast on custom backgrounds.
 - Intelligent autocomplete with Python file, CSV reader/writer, collection, NumPy,
   and Matplotlib object members; every admin-togglable module and the effective
   student import catalog after `import` or `from`; user-defined
@@ -301,6 +307,9 @@ Features:
   keyboard-navigable help panel showing arguments, return types, and descriptions.
   Values returned by input(), common collection methods, and aliases inherit their
   inferred types so string and list member suggestions remain available.
+  Dataclass annotation-only fields and generated constructor arguments appear in
+  completions. Multiline function contracts, nested defaults, quoted return
+  annotations, and comma-separated/aliased imports are recognized locally.
   Enter or Tab accepts the highlighted suggestion; arrow keys change the selection.
   Clicking a suggestion also inserts it. Suggestions appear only at word endings
   or after a new member dot, never at the beginning or middle of an existing word.
