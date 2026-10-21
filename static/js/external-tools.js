@@ -32,6 +32,7 @@
   }
   function dispose() {
     const old = state.current;
+    old?.frame?.contentWindow?.postMessage({ type: 'eagle-tool-dispose', instance: old.instance }, '*');
     state.generation++;
     state.current = null;
     if ($('externalToolInfo')) $('externalToolInfo').open = false;
@@ -42,7 +43,7 @@
   }
   function leave({ force = false } = {}) {
     if (!state.current) return true;
-    if (!force && !window.confirm('Close this tool? Use its save or download controls first. EagleIDE does not save its projects.')) return false;
+    if (!force && !window.confirm(state.current.dirty || state.current.storageError ? 'Tool storage has unsaved changes or a save error. Cancel to wait for saving, retry, or download your work before closing.' : 'Close this tool? Use its save or download controls first. Cloud storage covers only data the app has written to its storage.')) return false;
     dispose();
     return true;
   }
@@ -52,6 +53,7 @@
     dispose();
     channel?.postMessage({ type: 'account-change' });
     if ($('externalToolsModal')) $('externalToolsModal').style.display = 'none';
+    if ($('externalToolStorageModal')) $('externalToolStorageModal').style.display = 'none';
   }
   if (channel) channel.onmessage = event => {
     if (event.data?.type !== 'account-change') return;
@@ -80,13 +82,15 @@
       state.current.preview = launch.preview;
       const frame = document.createElement('iframe');
       frame.title = tool.name;
-      frame.setAttribute('sandbox', `allow-scripts allow-downloads${launch.forms ? ' allow-forms' : ''}`);
+      frame.setAttribute('sandbox', `allow-scripts allow-downloads${launch.forms ? ' allow-forms' : ''}${launch.popups ? ' allow-popups' : ''}${launch.dialogs ? ' allow-modals' : ''}`);
       frame.referrerPolicy = 'no-referrer';
       frame.src = launch.url;
+      state.current.frame = frame;
+      if ($('externalToolSaveState')) $('externalToolSaveState').textContent = 'Starting';
       frame.addEventListener('load', () => {
         if (generation !== state.generation) return;
         state.current.loaded = true;
-        if (!state.current.offline) status(loadedStatus(state.current));
+        if (!state.current.offline && !state.current.storageError) status(loadedStatus(state.current));
       });
       frame.addEventListener('error', () => { if (generation === state.generation) status('Application did not load. Reload or contact your teacher.', true); });
       $('externalToolFrameHost').append(frame);
@@ -103,6 +107,7 @@
   }
   async function refresh() {
     const key = authKey(), requestId = ++state.request;
+    if ($('externalToolStorageMenu')) $('externalToolStorageMenu').hidden = key === '{}';
     if (state.auth && key !== state.auth) accountLeaving();
     state.auth = key;
     if (key === '{}') { state.tools = []; renderButtons(); return; }
@@ -138,7 +143,7 @@
     if (!current?.instance) return;
     try {
       await api(`/api/tools/instances/${encodeURIComponent(current.instance)}`, { method: 'POST' }, current.auth);
-      if (current === state.current && current.offline) { current.offline = false; status(current.loaded ? loadedStatus(current) : 'Connection restored. Application is loading.'); }
+      if (current === state.current && current.offline) { current.offline = false; if (!current.storageError) status(current.loaded ? loadedStatus(current) : 'Connection restored. Application is loading.'); }
     } catch (error) {
       if (current !== state.current) return;
       if ([401, 403, 410].includes(error.status)) { dispose(); window.WikiReader?.showHome?.({ push: true }); window.alert('Tool access expired or was revoked.'); }
@@ -170,7 +175,76 @@
       } catch (error) { if (key === authKey() && section.isConnected) body.textContent = error.message; }
     };
   }
-  window.ExternalTools = { open, route, refresh, leave, accountLeaving, bindClass, headers, api, active: () => !!state.current };
+  window.ExternalTools = { open, route, refresh, leave, accountLeaving, bindClass, headers, api, active: () => !!state.current, unsavedStorage: () => !!(state.current?.dirty || state.current?.storageError) };
+  window.addEventListener('message', event => {
+    const current = state.current, data = event.data;
+    if (!current?.frame || event.source !== current.frame.contentWindow || event.origin !== 'null' || data?.type !== 'eagle-tool-storage' || data.instance !== current.instance) return;
+    if (!['saved', 'saving', 'disabled', 'error', 'conflict'].includes(data.state)) return;
+    current.dirty = data.dirty === true;
+    const previousError = current.storageError;
+    current.storageError = ['error', 'conflict'].includes(data.state);
+    const labels = { saved: 'Storage synced', saving: 'Syncing…', disabled: 'Downloads only', error: 'Not saved', conflict: 'Save conflict' };
+    if ($('externalToolSaveState')) $('externalToolSaveState').textContent = labels[data.state];
+    if ($('externalToolCloudStatus')) $('externalToolCloudStatus').textContent = String(data.message || '').slice(0, 500);
+    if (['error', 'conflict'].includes(data.state)) status('Tool storage needs attention. Download your work or a storage backup before leaving.', true);
+    else if (previousError && !current.offline) status(loadedStatus(current));
+  });
+  for (const [id, type] of [['externalToolSaveRetry', 'eagle-tool-retry'], ['externalToolBackup', 'eagle-tool-backup']]) {
+    $(id)?.addEventListener('click', () => { const current = state.current; current?.frame?.contentWindow.postMessage({ type, instance: current.instance }, '*'); });
+  }
+  let storageSummary, storageGeneration = 0, storageAuthKey = authKey();
+  const mib = bytes => bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / 1048576).toFixed(2)} MiB`;
+  async function storageLoad() {
+    const key = authKey(), generation = ++storageGeneration;
+    $('externalToolStorageList').replaceChildren();
+    $('externalToolStorageUsage').textContent = 'Loading…'; storageSummary = null;
+    try {
+      const result = await api('/api/tools/storage');
+      if (key !== authKey() || generation !== storageGeneration) return;
+      storageSummary = result.storage;
+      $('externalToolStorageUsage').textContent = `${mib(storageSummary.used_bytes)} of ${mib(storageSummary.quota_bytes)} used. Cloud storage ${storageSummary.enabled ? 'enabled' : 'disabled'}.`;
+      for (const tool of storageSummary.tools) {
+        const row = document.createElement('div'); row.className = 'external-tool-storage-row';
+        const label = document.createElement('span'); label.textContent = `${tool.name}: ${mib(tool.used_bytes)}`;
+        const download = document.createElement('button'); download.type = 'button'; download.className = 'btn secondary'; download.textContent = 'Backup';
+        download.onclick = async () => {
+          download.disabled = true;
+          try {
+            const response = await fetch(`/api/tools/storage/${encodeURIComponent(tool.tool)}/export`, { headers: headers(), cache: 'no-store' });
+            if (!response.ok) throw new Error('Could not download storage backup');
+            const blob = await response.blob();
+            if (key !== authKey() || generation !== storageGeneration) return;
+            const url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = 'external-tool-backup.json'; document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+          } catch (error) { if (key === authKey()) $('externalToolStorageUsage').textContent = error.message; }
+          finally { download.disabled = false; }
+        };
+        const clear = document.createElement('button'); clear.type = 'button'; clear.className = 'btn secondary'; clear.textContent = 'Clear'; clear.onclick = () => storageClear(tool.tool);
+        row.append(label, download, clear); $('externalToolStorageList').append(row);
+      }
+      if (!storageSummary.tools.length) $('externalToolStorageList').textContent = 'No saved external tool data.';
+    } catch (error) { if (key === authKey() && generation === storageGeneration) $('externalToolStorageUsage').textContent = error.message; }
+  }
+  async function storageClear(tool = null) {
+    if (!storageSummary || !window.confirm('Delete saved external tool data? Download work or a backup first. This affects your other devices too. Open tools must be reopened; their old caches cannot save over the cleared data.')) return;
+    const key = authKey(), epoch = storageSummary.epoch;
+    storageSummary = null;
+    try {
+      await api('/api/tools/storage', { method: 'DELETE', body: JSON.stringify({ epoch, tool_id: tool }) });
+      if (key === authKey()) {
+        const current = state.current;
+        current?.frame?.contentWindow.postMessage({ type: 'eagle-tool-invalidated', instance: current.instance }, '*');
+        await storageLoad();
+      }
+    } catch (error) { if (key === authKey()) { $('externalToolStorageUsage').textContent = error.message; } }
+  }
+  function storageShow() { $('externalToolStorageModal').style.display = 'flex'; storageLoad(); }
+  $('externalToolStorageMenu')?.addEventListener('click', storageShow);
+  $('roleMenuBtn')?.addEventListener('click', () => { if ($('externalToolInfo')) $('externalToolInfo').open = false; });
+  document.querySelectorAll('.external-tool-storage-open').forEach(button => button.addEventListener('click', storageShow));
+  $('externalToolStorageRefresh')?.addEventListener('click', storageLoad);
+  $('externalToolStorageClear')?.addEventListener('click', () => storageClear());
+  $('externalToolStorageDone')?.addEventListener('click', () => { storageGeneration++; $('externalToolStorageModal').style.display = 'none'; });
+  window.addEventListener('eagle-context-updated', () => { const key = authKey(); if (key !== storageAuthKey) { storageAuthKey = key; storageGeneration++; storageSummary = null; $('externalToolStorageList')?.replaceChildren(); } });
   $('externalToolClose')?.addEventListener('click', () => { if (leave()) window.WikiReader?.showHome?.({ push: true }); });
   $('externalToolRetry')?.addEventListener('click', () => { const tool = state.current?.tool || state.tools.find(item => `/${item.slug}/` === location.pathname); if (tool) open(tool, { push: false }); else refresh().then(route); });
   $('settingsExternalToolsBtn')?.addEventListener('click', async () => { try { await window.EagleFeatures.load('externalToolsAdmin'); window.ExternalToolsAdmin.show(); } catch (error) { window.alert(error.message); } });

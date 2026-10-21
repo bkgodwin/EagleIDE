@@ -4393,6 +4393,11 @@ def _delete_user_by_email(email: str) -> bool:
         except Exception as exc:
             print(f"Warning: failed to delete user directory for {email}: {type(exc).__name__}")
     _invalidate_workspace_tree_cache(user_dir)
+    if deleted_user and deleted_user.get("tool_storage_id"):
+        try:
+            _external_tools.storage.delete_account(deleted_user["tool_storage_id"])
+        except (OSError, sqlite3.Error):
+            app.logger.warning("Deleted account's external tool storage could not be removed")
     return True
 
 
@@ -13187,11 +13192,26 @@ register_network_features(
 )
 register_classroom_features(app, socketio)
 from external_tools import register as register_external_tools
+from tool_store import ToolError as ExternalToolError
+def _external_tool_account_id(record):
+    if record is None:
+        return "administrator"
+    with _users_lock:
+        users = _load_users()
+        fresh = next((user for user in users.get("users", []) if user.get("email") == record["email"]), None)
+        if not fresh:
+            raise ExternalToolError("Account no longer exists", 401)
+        identity = fresh.get("tool_storage_id", "")
+        if not re.fullmatch(r"[a-f0-9]{32}", str(identity)):
+            identity = fresh["tool_storage_id"] = uuid.uuid4().hex
+            _save_users(users)
+        return identity
+
 _external_tools = register_external_tools(
     app, base_dir=Path(os.environ.get("EAGLEIDE_TOOL_DATA_DIR", str(BASE_DIR / "tool_data"))),
     source_dir=BASE_DIR, require_admin=_require_admin, require_teacher=_require_teacher,
     require_user=_require_user, find_user=_find_user, get_user_class_ids=_get_user_class_ids,
-    find_class=_find_class_by_id, teacher_classes=_get_teacher_classes,
+    find_class=_find_class_by_id, teacher_classes=_get_teacher_classes, account_id=_external_tool_account_id,
 )
 from workspace_data import register as register_workspace_data
 register_workspace_data(app, sys.modules[__name__])

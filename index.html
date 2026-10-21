@@ -44,7 +44,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261020-tool-loading-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261020-tool-storage-1">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -59,11 +59,15 @@
     </div>
     <div class="external-tool-toolbar" aria-label="Application controls">
       <strong id="externalToolTitle">External tool</strong>
+      <span id="externalToolSaveState" class="external-tool-save-state" role="status"></span>
       <details id="externalToolInfo" class="external-tool-info">
         <summary title="Application status and saving help">Info</summary>
         <div class="external-tool-info-panel">
           <p id="externalToolStatus" role="status" aria-live="polite"></p>
-          <p>Use the app’s save or download controls before closing. EagleIDE does not save its projects.</p>
+          <p id="externalToolCloudStatus">Checking cloud storage…</p>
+          <p>Use the app’s save or download controls before closing. Cloud storage covers only data the app writes to localStorage; it does not capture the whole running app.</p>
+          <button type="button" class="btn secondary" id="externalToolSaveRetry">Retry save</button>
+          <button type="button" class="btn secondary" id="externalToolBackup">Download storage backup</button>
           <p>Reload restarts the app. Keep this tab open while working.</p>
         </div>
       </details>
@@ -134,6 +138,7 @@
         <button class="btn secondary" id="coteacherModeBtn" type="button" hidden>CoTeacher dashboard</button>
         <button class="btn btn--ghost btn--icon secondary" id="roleMenuBtn" type="button" aria-haspopup="true" aria-expanded="false" title="Account menu" style="display:none;">⋯</button>
         <div class="role-menu-panel glass-surface" id="roleMenuPanel">
+          <button class="btn secondary" id="externalToolStorageMenu" type="button" hidden>External tool storage</button>
           <button class="btn btn--admin admin" id="teacherDashboardBtn" title="Teacher Dashboard" style="display:none;">📋 Dashboard</button>
           <button class="btn btn--admin admin" id="studentDashboardBtn" title="Student Dashboard" style="display:none;">📋 Dashboard</button>
           <button class="btn btn--admin admin" id="adminUsersBtn" title="User Management" style="display:none;">👥 Users</button>
@@ -995,6 +1000,7 @@
 
         <!-- Account View -->
         <div class="teacher-dash-view" id="dash-account">
+          <button class="btn secondary external-tool-storage-open" type="button">External tool storage: usage and clear</button>
           <div class="teacher-dash-view-hdr">
             <h2 class="teacher-dash-view-title">Account Settings</h2>
           </div>
@@ -1125,6 +1131,7 @@
           </div>
         </div>
         <div class="teacher-dash-view" id="student-dash-account">
+          <button class="btn secondary external-tool-storage-open" type="button">External tool storage: usage and clear</button>
           <div class="teacher-dash-view-hdr">
             <div>
               <h2 class="teacher-dash-view-title">Account Settings</h2>
@@ -1638,6 +1645,7 @@
       <nav class="external-tools-tabs" aria-label="External tool setup sections">
         <button type="button" class="btn secondary active" data-tool-section="apps" aria-pressed="true">Applications</button>
         <button type="button" class="btn secondary" data-tool-section="network" aria-pressed="false">Network &amp; access</button>
+        <button type="button" class="btn secondary" data-tool-section="storage" aria-pressed="false">User storage</button>
         <button type="button" class="btn secondary" data-tool-section="help" aria-pressed="false">Compatibility guide</button>
       </nav>
       <div class="external-tools-body">
@@ -1658,9 +1666,13 @@
               </div>
             </fieldset>
             <fieldset><legend>What does this app need?</legend>
-              <p>Start with both options off for an app that works in the browser and downloads files. Scripts, styles, images, modules and WASM can load without either option.</p>
-              <label class="choice-item"><input type="checkbox" id="externalToolHttp" aria-describedby="externalToolHttpHelp"><span><strong>Send data to the app server</strong><small id="externalToolHttpHelp">For server saves, API actions or uploads using POST, PUT, PATCH or DELETE. Requests are limited to 1 MiB. This allows server changes, including deletion.</small></span></label>
+              <p>Local file selection and downloads are always available. SolidCraft: enable account cloud storage; server data and forms can stay off for its browser-only workflow.</p>
+              <label class="choice-item"><input type="checkbox" id="externalToolHttp" aria-describedby="externalToolHttpHelp"><span><strong>Send data to the app server</strong><small id="externalToolHttpHelp">For server saves, API actions or uploads using POST, PUT, PATCH or DELETE. This allows server changes, including deletion. Local file import into SolidCraft does not need this.</small></span></label>
+              <label>Maximum server request (MiB, 1–16)<input id="externalToolUploadLimit" type="number" min="1" max="16" value="1"><small>Includes multipart overhead. Increase only when the app uploads files to its server. Local file selection and chunked account storage use separate limits.</small></label>
               <label class="choice-item"><input type="checkbox" id="externalToolForms" aria-describedby="externalToolFormsHelp"><span><strong>Submit HTML forms</strong><small id="externalToolFormsHelp">For traditional &lt;form&gt; submit buttons. JavaScript fetch/API calls do not need this. A POST form also needs “Send data to the app server.” This does not enable logins.</small></span></label>
+              <label class="choice-item"><input type="checkbox" id="externalToolCloud"><span><strong>Account cloud storage</strong><small>Provide localStorage compatibility, saved privately per EagleIDE account and tool. Works with SolidCraft autosave. Reopening on another computer loads the saved profile. IndexedDB, OPFS and unrelated app logins are not synchronized.</small></span></label>
+              <label class="choice-item"><input type="checkbox" id="externalToolPopups"><span><strong>Popup windows</strong><small>Allow user-initiated popups, which inherit the tool sandbox. Script-opened windows close when you leave the tool. This does not enable third-party login flows.</small></span></label>
+              <label class="choice-item"><input type="checkbox" id="externalToolDialogs"><span><strong>Prompts and dialogs</strong><small>Allow alert, confirm and prompt dialogs. Enable when an app asks for filenames or confirms actions.</small></span></label>
               <p id="externalToolPermissionSummary" class="external-tools-callout" aria-live="polite">Read requests only (GET and HEAD). HTML form submission is blocked.</p>
             </fieldset>
             <p>Saving creates a disabled tool. Editing an existing tool closes its active sessions and requires another test and preview.</p>
@@ -1678,13 +1690,27 @@
           <p class="external-tools-callout">Saving network policy disables all tools and closes active tool sessions. Each tool needs a new connection test and private preview.</p>
           <button type="button" class="btn run" id="externalToolsPolicySave">Save network &amp; access</button>
         </section>
+        <section data-tool-pane="storage" hidden>
+          <h4>Storage allowance per user</h4>
+          <p>New accounts have 64 MiB across all tools. Enter an account email, or leave blank for the administrator. Changing settings stops saves in open tools until they are reopened. Lowering a quota keeps existing files.</p>
+          <form id="externalToolUserStorageForm" class="external-tools-fields">
+            <label>Account email<input type="email" id="externalToolStorageEmail" placeholder="student@example.edu"></label>
+            <button class="btn secondary" type="submit">Load account</button>
+          </form>
+          <div id="externalToolUserStorageSettings" hidden>
+            <p id="externalToolUserStorageUsage"></p>
+            <label class="choice-item"><input type="checkbox" id="externalToolUserStorageEnabled"><span>Allow account cloud storage</span></label>
+            <label>Quota (MiB, 1–1024)<input type="number" id="externalToolUserStorageQuota" min="1" max="1024" value="64"></label>
+            <button type="button" class="btn run" id="externalToolUserStorageSave">Save allowance</button>
+          </div>
+        </section>
         <section data-tool-pane="help" hidden>
           <h4>Choose permissions by testing the app’s workflow</h4>
           <p>There is no reliable permission preset for every app. Check its documentation, then use the private preview to try opening, editing, importing, saving and downloading a real sample project.</p>
           <div class="external-tools-guide">
             <article><h5>Page loads, but an action fails</h5><p>If the action sends a POST, PUT, PATCH or DELETE request, enable server data. If it submits a traditional HTML form, enable forms too. Browser developer tools → Network shows the request method.</p></article>
             <article><h5>Blank page or missing scripts and images</h5><p>The app must support embedding and relative asset/API URLs under its launch prefix. Set its documented base URL. A successful connection test only proves that the server responds; it does not prove the app rendered.</p></article>
-            <article><h5>Login, storage or live connection errors</h5><p>Cookies/login, localStorage, IndexedDB, service workers, popups, WebSockets and SSE are unavailable. Neither permission option enables them. Apps that require these features cannot use this gateway as configured.</p></article>
+            <article><h5>Login, storage or live connection errors</h5><p>Enable account cloud storage for apps using localStorage. Popups and dialogs have separate options. Cookies/login, IndexedDB, OPFS, service workers, WebSockets and SSE remain unavailable. Apps requiring them need a separate integration.</p></article>
             <article><h5>Check that work stays available</h5><p>Leave the preview open, resize it, try several actions, and test exporting a project. Routine access checks keep the same app loaded. Leaving the tool, signing out or losing access closes it. A suspended tab can expire.</p></article>
           </div>
           <p>Preview status confirms only that a document loaded. Enable a tool only after its intended classroom workflow works.</p>
@@ -1692,6 +1718,16 @@
         </section>
       </div>
       <footer class="external-tools-footer"><span id="externalToolsAdminStatus" role="status" aria-live="polite"></span><button type="button" class="btn secondary" id="externalToolsBack">System settings</button></footer>
+    </div>
+  </div>
+
+  <div id="externalToolStorageModal" class="modal" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="externalToolStorageHeading">
+    <div class="modal-content external-tool-storage-manager">
+      <h3 id="externalToolStorageHeading">External tool storage</h3>
+      <p id="externalToolStorageUsage" role="status"></p>
+      <p>Cloud storage belongs to your EagleIDE account. Apps must save to localStorage to use it. Download your work before clearing. Backups contain saved tool data and may include private app settings.</p>
+      <div id="externalToolStorageList"></div>
+      <div class="modal-actions"><button type="button" class="btn secondary" id="externalToolStorageRefresh">Refresh</button><button type="button" class="btn stop" id="externalToolStorageClear">Clear external tool storage</button><button type="button" class="btn secondary" id="externalToolStorageDone">Close</button></div>
     </div>
   </div>
 
@@ -1748,6 +1784,7 @@
           </section>
           <section class="admin-settings-pane" data-admin-settings-pane="account">
             <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Local preferences</span><h4>Account Settings</h4><p>Control administrator diagnostics for this browser.</p></div>
+            <button class="btn secondary external-tool-storage-open" type="button">External tool storage: usage and clear</button>
             <label class="admin-setting-toggle"><input type="checkbox" id="adminShellDebugMessages"><span><strong>Show IDE system messages</strong><small>Show connection and run lifecycle messages such as Sending code and Process finished in the shell.</small></span></label>
           </section>
           <section class="admin-settings-pane" data-admin-settings-pane="tools">
@@ -1908,7 +1945,7 @@
 
   <script src="/static/js/app.js"></script>
   <script src="/static/js/connection.js?v=20261011-files-5"></script>
-  <script src="/static/js/feature-loader.js?v=20261020-tool-loading-1"></script>
+  <script src="/static/js/feature-loader.js?v=20261020-tool-storage-1"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20250608"></script>
   <script src="/static/js/layout.js?v=20261011-files-5"></script>
@@ -1924,18 +1961,18 @@
   <script src="/static/js/assignment-workflow.js?v=20261015-assignment-folders-1"></script>
   <script src="/static/js/assignment-development.js?v=20261015-assignment-folders-1"></script>
   <script src="/static/js/teacher-assignments.js?v=20261015-assignment-folders-1"></script>
-  <script src="/static/js/app-core.js?v=20261020-tool-loading-1"></script>
+  <script src="/static/js/app-core.js?v=20261020-tool-storage-1"></script>
   <script src="/static/js/step-mode.js?v=20261011-files-5"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20260816-1"></script>
-  <script src="/static/js/wiki-reader.js?v=20261020-tool-loading-1"></script>
-  <script src="/static/js/external-tools.js?v=20261020-1"></script>
+  <script src="/static/js/wiki-reader.js?v=20261020-tool-storage-1"></script>
+  <script src="/static/js/external-tools.js?v=20261020-2"></script>
   <script src="/static/js/lesson-plans.js?v=20261011-files-5"></script>
-  <script src="/static/js/wiki-admin.js?v=20261020-tool-loading-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20261020-tool-storage-1"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20261011-files-5"></script>
   <script src="/static/js/notebook-sync.js?v=20261011-notebook-topics-1"></script>
   <script src="/static/js/notebook-photos.js?v=20261011-notebook-topics-1"></script>
-  <script src="/static/js/student-notebook.js?v=20261020-tool-loading-1"></script>
+  <script src="/static/js/student-notebook.js?v=20261020-tool-storage-1"></script>
   <script src="/static/js/student-dashboard.js?v=20261011-notebook-topics-1"></script>
 
 </body>

@@ -60,9 +60,17 @@ class ToolStore:
                 from tool_gateway import target_url
                 ids, slugs = set(), set()
                 for tool in data["tools"]:
+                    if not isinstance(tool, dict):
+                        raise ValueError()
+                    # Existing catalogs retain the stricter pre-upgrade profile.
+                    for option in ("storage", "popups", "dialogs"):
+                        tool.setdefault(option, False)
+                    tool.setdefault("upload_mib", 1)
                     if (not isinstance(tool, dict) or not re.fullmatch(r"[a-f0-9]{32}", tool["id"])
                             or tool["id"] in ids or tool["slug"] in slugs or type(tool["revision"]) is not int
                             or type(tool["enabled"]) is not bool or type(tool["forms"]) is not bool
+                            or any(type(tool[option]) is not bool for option in ("storage", "popups", "dialogs"))
+                            or type(tool["upload_mib"]) is not int or not 1 <= tool["upload_mib"] <= 16
                             or tool["compatibility"] not in {"unverified", "verified"}
                             or not isinstance(tool["methods"], list) or not tool["methods"]
                             or any(method not in {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"} for method in tool["methods"])
@@ -122,6 +130,9 @@ class ToolStore:
         target = target_url(raw.get("backend_url"))
         slug = slug_value(raw.get("slug"), reserved)
         methods = raw.get("methods", ["GET", "HEAD"])
+        upload_mib = raw.get("upload_mib", 1)
+        if type(upload_mib) is not int or not 1 <= upload_mib <= 16:
+            raise ToolError("Choose a server upload limit from 1 to 16 MiB")
         if not isinstance(methods, list) or not methods or any(not isinstance(value, str) for value in methods) or set(methods) - {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"}:
             raise ToolError("Unsupported HTTP methods")
         def change(data):
@@ -134,6 +145,9 @@ class ToolStore:
             tool = {"id": tool_id or uuid.uuid4().hex, "name": name, "label": label, "slug": slug,
                     "backend_url": target["url"], "methods": sorted(set(methods) | {"GET", "HEAD"}),
                     "forms": raw.get("forms") is True, "revision": (old or {}).get("revision", 0) + 1,
+                    "storage": raw.get("storage") is True, "popups": raw.get("popups") is True,
+                    "dialogs": raw.get("dialogs") is True,
+                    "upload_mib": upload_mib,
                     "enabled": False, "compatibility": "unverified", "addresses": [], "test": "Not tested"}
             if old:
                 data["tools"].remove(old)
