@@ -25,7 +25,7 @@
       state.week = data.selected_week;
       document.title = `${data.class?.name || 'Class'} - Weekly Lesson Plan`;
       $('publicLessonPlanStatus').textContent = '';
-      window.LessonPlanRenderer.render($('publicLessonPlanHost'), data, { embed, publicPage: true });
+      window.LessonPlanRenderer.render($('publicLessonPlanHost'), data, { embed, publicPage: true, ...(printExport ? {printToken:token} : {share:token}) });
       $('publicLessonPlanPrevious').disabled = !data.previous_week;
       $('publicLessonPlanNext').disabled = !data.next_week;
       if (!printExport) {
@@ -37,6 +37,7 @@
       }
       if (state.printing) {
         state.printing = false;
+        await $('publicLessonPlanHost').agendaImagesReady;
         requestAnimationFrame(() => setTimeout(() => window.print(), 250));
       }
     } catch (error) {
@@ -52,7 +53,7 @@
     $('publicLessonPlanPrevious').addEventListener('click', () => state.data?.previous_week && load(state.data.previous_week));
     $('publicLessonPlanNext').addEventListener('click', () => state.data?.next_week && load(state.data.next_week));
     $('publicLessonPlanCurrent').addEventListener('click', () => load(rollingCurrent ? '' : (state.data?.current_week || '')));
-    $('publicLessonPlanPrint').addEventListener('click', () => window.print());
+    $('publicLessonPlanPrint').addEventListener('click', async () => {await $('publicLessonPlanHost').agendaImagesReady; window.print();});
     window.addEventListener('beforeprint', () => {
       document.body.classList.add('lesson-plan-printing');
       document.querySelectorAll('.lesson-plan-standards-popout').forEach((details) => {

@@ -4,10 +4,136 @@
   const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
 
   function safeMarkdown(markdown) {
-    const source = String(markdown || '').trim();
+    const source = String(markdown || '').trim().replace(/!\[([^\]\n]*)\]\(agenda-image:([a-f0-9]{32})\)/g,
+      (_match, alt, id) => `<img data-agenda-image="${id}" alt="${escapeText(alt)}" loading="lazy" decoding="async">`);
     if (!source) return '';
     const rendered = window.marked?.parse ? window.marked.parse(source) : source.replace(/\n/g, '<br>');
     return window.DOMPurify?.sanitize ? window.DOMPurify.sanitize(rendered) : '';
+  }
+
+  const escapeText = value => String(value || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const imageUrls = new Map();
+  const imageCache = new Map();
+  let imageCacheBytes=0, activeImages=0;
+  const imageWaiters=[];
+  async function imageBlob(url, headers) {
+    const key=`${JSON.stringify(headers)}:${url}`;
+    const cached=imageCache.get(key);
+    if(cached && Date.now()-cached.time<60000) return cached.promise;
+    if(cached) {imageCache.delete(key); imageCacheBytes-=cached.size || 0;}
+    const entry={time:Date.now(),size:0};
+    entry.promise=(async()=>{
+      if(activeImages>=3) await new Promise(resolve=>imageWaiters.push(resolve));
+      else activeImages++;
+      try {
+        const response=await fetch(url,{headers,signal:AbortSignal.timeout(20000)});
+        if(!response.ok) throw new Error('Image unavailable');
+        const blob=await response.blob();
+        if(blob.size>5*1024*1024) throw new Error('Image too large');
+        if(imageCache.get(key)===entry) {
+          entry.size=blob.size; imageCacheBytes+=blob.size;
+          while(imageCache.size>32 || imageCacheBytes>16*1024*1024) {
+            const oldest=imageCache.keys().next().value, previous=imageCache.get(oldest);
+            imageCacheBytes-=previous.size; imageCache.delete(oldest);
+          }
+        }
+        return blob;
+      } catch(error) {if(imageCache.get(key)===entry) {imageCache.delete(key);imageCacheBytes-=entry.size;} throw error;}
+      finally {const next=imageWaiters.shift(); if(next) next(); else activeImages--;}
+    })();
+    imageCache.set(key,entry);
+    return entry.promise;
+  }
+  window.addEventListener('eagle-context-updated',()=>{imageCache.clear();imageCacheBytes=0;});
+  if (window.MutationObserver) new MutationObserver(() => {
+    for (const [img, url] of imageUrls) if (!img.isConnected) { URL.revokeObjectURL(url); imageUrls.delete(img); }
+  }).observe(document.documentElement, {childList:true, subtree:true});
+
+  async function loadImages(host, item, options = {}) {
+    const ctx = window.EagleIDE?.getContext?.() || {};
+    const headers = ctx.TEACHER_TOKEN ? {'X-Teacher-Token':ctx.TEACHER_TOKEN} : ctx.USER_TOKEN ? {'X-User-Token':ctx.USER_TOKEN} : {};
+    const pending = [...host.querySelectorAll('img[data-agenda-image]')];
+    await Promise.all(Array.from({length:Math.min(3,pending.length)}, async () => {
+      while (pending.length) {
+        const img = pending.shift();
+        const image = (item.images || []).find(entry => entry.id === img.dataset.agendaImage);
+        if (!image || !host.isConnected) continue;
+        let url;
+        try {
+          url = new URL(image.url, location.origin);
+          if (url.origin !== location.origin || !url.pathname.startsWith('/api/lesson-plans/')) continue;
+          if (options.share) url.searchParams.set('share', options.share);
+          if (options.printToken) url.searchParams.set('print', options.printToken);
+          const blob = await imageBlob(url.href,headers);
+          if (!img.isConnected) continue;
+          const previous = imageUrls.get(img);
+          if (previous) URL.revokeObjectURL(previous);
+          const objectUrl = URL.createObjectURL(blob);
+          imageUrls.set(img, objectUrl); img.src = objectUrl;
+          await img.decode().catch(()=>{});
+        } catch { if (img.isConnected) img.alt = `${img.alt || 'Agenda image'} (could not load)`; }
+      }
+    }));
+  }
+
+  function applyDayColor(element, color) {
+    if (/^#[0-9a-f]{6}$/i.test(color || '')) element.style.setProperty('--agenda-color', color);
+  }
+
+  function renderDayContent(host, item = {}, data = {}, options = {}) {
+    host.innerHTML = safeMarkdown(item.markdown) || '<p class="lesson-plan-day-empty">No activities listed.</p>';
+    host.dataset.agendaClass = data.class?.id || '';
+    host.dataset.agendaWeek = data.selected_week || data.plan?.week_start || '';
+    applyDayColor(host, item.color);
+    const resources = document.createElement('div'); resources.className = 'lesson-plan-resources';
+    for (const page of item.wiki_pages || []) {
+      const href = page.url || `/wiki/${encodeURIComponent(page.slug || '')}${page.anchor ? `#${encodeURIComponent(page.anchor)}` : ''}`;
+      if (String(item.markdown || '').includes(`](${href})`)) continue;
+      const link = document.createElement('a'); link.href = href;
+      link.className = 'lesson-plan-resource-tile';
+      link.textContent = page.section_title ? `${page.title} › ${page.section_title}` : page.title || 'Wiki page';
+      if (options.publicPage) {link.target = '_blank'; link.rel = 'noopener';}
+      resources.appendChild(link);
+    }
+    for (const resource of item.external_links || []) {
+      if (!/^https?:\/\//i.test(resource.url || '')) continue;
+      const link = document.createElement('a'); link.href = resource.url; link.textContent = resource.title || resource.url;
+      link.target = '_blank'; link.rel = 'noopener noreferrer'; resources.appendChild(link);
+    }
+    if (!options.publicPage) {
+      for (const file of item.attachments || []) {
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'lesson-plan-resource-tile lesson-plan-file';
+        button.dataset.assetId = file.id; button.textContent = `↳ ${file.name}`; button.title = 'Copy this example to Home and open it in the IDE'; resources.appendChild(button);
+        button.disabled=!!options.preview;
+      }
+      for (const assignment of item.assignments || []) {const tile=assignmentTile(assignment); tile.disabled=!!options.preview; resources.appendChild(tile);}
+    }
+    if (resources.children.length) host.appendChild(resources);
+    if (!options.publicPage && item.due_assignments?.length) {
+      const deadlines = document.createElement('div'); deadlines.className = 'lesson-plan-deadlines';
+      for (const assignment of item.due_assignments) {
+        const badge = assignmentTile(assignment); badge.classList.add('lesson-plan-due');
+        badge.textContent = `Due: ${assignment.name} · ${new Date(assignment.dueAt).toLocaleTimeString([], {hour:'numeric',minute:'2-digit',timeZoneName:'short',...(data.time_zone?{timeZone:data.time_zone}:{})})}`;
+        if (assignment.accommodationNote) {const note = document.createElement('small'); note.textContent = `Your deadline · ${assignment.accommodationNote}`; badge.appendChild(note);}
+        deadlines.appendChild(badge);
+      }
+      host.appendChild(deadlines);
+    }
+    host.querySelectorAll('a[href^="/wiki/"]').forEach(link => link.classList.add('lesson-plan-inline-tile'));
+    host.querySelectorAll('img').forEach(img => {img.loading='lazy'; img.decoding='async';});
+    host.agendaImagesReady=new Promise(resolve=>queueMicrotask(()=>loadImages(host,item,options).then(resolve,resolve)));
+  }
+
+  function assignmentTile(assignment) {
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'lesson-plan-resource-tile lesson-plan-assignment';
+    button.dataset.assignmentId = assignment.id; button.textContent = `▣ ${assignment.name}`;
+    if (assignment.dueAt) button.title = `Your deadline: ${new Date(assignment.dueAt).toLocaleString()}${assignment.accommodationNote ? ` · ${assignment.accommodationNote}` : ''}`;
+    if(assignment.dueAt || assignment.accommodationNote) {
+      const note=document.createElement('small'); note.textContent=assignment.dueAt ? `Due ${new Date(assignment.dueAt).toLocaleString([], {month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'})}` : 'No submission deadline';
+      if(assignment.accommodationNote) note.textContent+=` · ${assignment.accommodationNote}`;
+      button.appendChild(note);
+    }
+    return button;
   }
 
   function dayLabel(day, isoDate) {
@@ -136,44 +262,29 @@
       const label = dayLabel(day, item.date);
       const column = document.createElement('section');
       column.className = 'lesson-plan-day';
+      applyDayColor(column, item.color);
       const dayHeader = document.createElement('header');
       dayHeader.innerHTML = `<strong>${label.name}</strong><time datetime="${item.date || ''}">${label.date}</time>`;
       const scroll = document.createElement('div');
       scroll.className = 'lesson-plan-day-scroll';
       const content = document.createElement('div');
       content.className = 'lesson-plan-markdown wiki-markdown';
-      content.innerHTML = safeMarkdown(item.markdown);
-      if (!String(item.markdown || '').trim()) content.innerHTML = '<p class="lesson-plan-day-empty">No activities listed.</p>';
+      renderDayContent(content, item, data, options);
       scroll.appendChild(content);
-      if (item.wiki_pages?.length || item.external_links?.length) {
-        const resources = document.createElement('div');
-        resources.className = 'lesson-plan-resources';
-        const caption = document.createElement('strong');
-        caption.textContent = item.external_links?.length ? 'Resources' : 'Wiki content';
-        resources.appendChild(caption);
-        item.wiki_pages.forEach((page) => {
-          const link = document.createElement('a');
-          link.href = page.url || `/wiki/${encodeURIComponent(page.slug || '')}`;
-          link.textContent = page.title || 'Wiki page';
-          if (options.publicPage) link.target = '_blank';
-          if (options.publicPage) link.rel = 'noopener';
-          resources.appendChild(link);
-        });
-        (item.external_links || []).forEach((resource) => {
-          const link = document.createElement('a');
-          link.href = resource.url;
-          link.textContent = resource.title || resource.url;
-          link.target = '_blank';
-          link.rel = 'noopener';
-          resources.appendChild(link);
-        });
-        scroll.appendChild(resources);
-      }
       column.append(dayHeader, scroll);
       if (item.standards?.length) column.appendChild(standardsPopover(label.name, item.standards));
       grid.appendChild(column);
     });
     frame.appendChild(grid);
+
+    if(!options.publicPage && plan.weekend_due_assignments?.length) {
+      const deadlines=document.createElement('footer'); deadlines.className='lesson-plan-notes';
+      deadlines.dataset.agendaClass=data.class?.id || ''; deadlines.dataset.agendaWeek=data.selected_week || plan.week_start;
+      const label=document.createElement('strong'); label.textContent='Weekend deadlines'; deadlines.appendChild(label);
+      const list=document.createElement('div'); list.className='lesson-plan-deadlines';
+      for(const assignment of plan.weekend_due_assignments) list.appendChild(assignmentTile(assignment));
+      deadlines.appendChild(list); frame.appendChild(deadlines);
+    }
 
     if (String(plan.notes_markdown || '').trim()) {
       const notes = document.createElement('footer');
@@ -187,9 +298,10 @@
       frame.appendChild(notes);
     }
     host.appendChild(frame);
+    host.agendaImagesReady=Promise.all([...frame.querySelectorAll('.lesson-plan-markdown')].map(content=>content.agendaImagesReady));
   }
 
-  window.LessonPlanRenderer = { DAYS, createStandardsPopover: standardsPopover, render, safeMarkdown };
+  window.LessonPlanRenderer = { DAYS, createStandardsPopover: standardsPopover, render, safeMarkdown, renderDayContent, loadImages, applyDayColor };
   window.addEventListener('resize', () => closeScreenStandards());
   window.addEventListener('scroll', (event) => {
     if (event.target?.closest?.('.lesson-plan-standards-list')) return;
