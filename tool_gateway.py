@@ -288,7 +288,7 @@ def stream_body(response, close, authorized, *, fail_on_error=False):
         close()
 
 
-def html_body(response, close, authorized):
+def html_body(response, close, authorized, bootstrap=None):
     """Preserve SRI while making its resource requests CORS-enabled in an opaque frame.
 
     Only start tags are extended; scripts, URLs, integrity hashes and CSP stay intact.
@@ -322,20 +322,35 @@ def html_body(response, close, authorized):
     text = body.decode("latin-1")
     insertions = []
     current_line, line_start = 1, 0
+    head_position, script_position, declaration_position = None, None, 0
 
     class Resources(HTMLParser):
-        def handle_starttag(self, tag, attrs):
+        def absolute_position(self):
             nonlocal current_line, line_start
-            attributes = dict(attrs)
-            if tag not in {"link", "script"} or "integrity" not in attributes or "crossorigin" in attributes:
-                return
-            raw = self.get_starttag_text()
             line, column = self.getpos()
             while current_line < line:
                 line_start = text.index("\n", line_start) + 1
                 current_line += 1
+            return line_start + column
+
+        def handle_decl(self, decl):
+            nonlocal declaration_position
+            if decl.lower().startswith('doctype'):
+                declaration_position = self.absolute_position() + len(decl) + 3
+
+        def handle_starttag(self, tag, attrs):
+            nonlocal head_position, script_position
+            position = self.absolute_position()
+            raw = self.get_starttag_text()
+            if tag == 'head' and head_position is None:
+                head_position = position + len(raw)
+            if tag == 'script' and script_position is None:
+                script_position = position
+            attributes = dict(attrs)
+            if tag not in {"link", "script"} or "integrity" not in attributes or "crossorigin" in attributes:
+                return
             end = len(raw) - (2 if raw.endswith("/>") else 1)
-            insertions.append(line_start + column + end)
+            insertions.append(position + end)
 
         handle_startendtag = handle_starttag
 
@@ -347,4 +362,12 @@ def html_body(response, close, authorized):
     pieces.append(text[start:])
     if not authorized():
         raise ToolError("Application access expired or was revoked", 403)
-    return ''.join(pieces).encode("latin-1")
+    result = ''.join(pieces)
+    if bootstrap:
+        # A blocking classic script installs storage and picker fallbacks before
+        # upstream inline/module startup. Never alter upstream JavaScript or SRI.
+        from html import escape
+        script = '<script src="' + escape(bootstrap, quote=True) + '" crossorigin="anonymous"></script>'
+        position = head_position if head_position is not None and (script_position is None or head_position <= script_position) else declaration_position
+        result = result[:position] + script + result[position:]
+    return result.encode("latin-1")

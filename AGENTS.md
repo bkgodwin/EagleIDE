@@ -41,6 +41,7 @@ Required runtime components:
 |-- network_content.py           Source-controlled example topologies, labs, and CLI reference
 |-- external_tools.py            Generic tool registration, class grants, scoped launch sessions, and workspace routes
 |-- tool_store.py                Bounded atomic private tool catalog and network policy
+|-- tool_storage.py              Account/tool SQLite profiles, quotas and atomic chunked saves
 |-- tool_gateway.py              Pinned private HTTP transport, resource limits and credential-redacted access logs
 |-- sandbox_worker.py            Restricted Python execution worker launched by app.py
 |-- js_worker.js                 Student JavaScript VM realm, safe I/O, timers, and denied imports
@@ -222,8 +223,26 @@ Keep status/save help in its Info disclosure and preserve the mounted frame duri
 access refreshes, renewals, viewport changes and transient outages. The wider admin
 manager separates Applications, Network & access, and Compatibility guide; its
 permission descriptions must distinguish HTML forms from HTTP writes without
-implying that cookies/storage or live connections can be enabled. Never clear all
+implying that cookies, native IndexedDB/OPFS or live connections can be enabled. Never clear all
 origin storage. The operator manages LXC/network isolation, not EagleIDE.
+
+`tool_storage.py` owns private account/tool localStorage profiles under
+`tool_data/storage/`. `app.py` assigns a private stable `tool_storage_id` UUID under
+its users lock, retained across sign-ins and removed with account deletion. Never
+key profiles by reusable email or expose EagleIDE tokens to the frame. Runtime
+compatibility code in `static/js/external-tool-runtime.js` loads before upstream
+scripts, disables unavailable File System Access pickers to activate normal file
+inputs, and optionally exposes synchronous localStorage with bounded chunked CAS
+commits. At most two full storage snapshots/exports are materialized; release
+admission on iterator exhaustion and close, including failed/HEAD requests. Native
+IndexedDB/OPFS/cookies are still unavailable. Preserve epoch
+invalidation after clearing/policy changes, revision conflict detection, visible
+unsynced work, and independent project downloads. The shared account storage UI
+lives in `external-tools.js`; admin per-user policy lives in `external-tools-admin.js`.
+Optional popups/dialogs must be enabled in BOTH the iframe and response CSP;
+popups inherit the sandbox, never escape it. Existing registrations retain these
+options off until reapproved. `tests/test_tool_storage.py` and
+`tests/external_tool_runtime.test.js` cover persistence/quotas/conflicts/chunks.
 
 The optional `tests/external_tools_browser_checks.js` Playwright check uses only
 `tests/external_tools_browser_fixture.py`. It checks viewport bounds, rendering,

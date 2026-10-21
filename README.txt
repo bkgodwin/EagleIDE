@@ -19,8 +19,8 @@ Optional External Tools (empty and disabled by default):
   single-segment public path. Save, test connectivity, privately preview, then
   explicitly confirm restricted-browser compatibility before enabling.
 - The wider setup panel separates Applications, Network & access, and a
-  Compatibility guide. Permissions explain when server writes or HTML forms
-  are needed; neither enables cookies/login or persistent browser storage.
+  Compatibility guide. Permissions explain server writes, forms, account cloud storage, popups and
+  prompts. Server uploads default to 1 MiB and can be raised to 16 MiB per tool.
 - Tools fill the screen beneath a compact site banner. Info contains status
   and saving help. Routine access renewals keep the current app and draft loaded;
   leaving the tool, signing out or expired access closes it.
@@ -30,12 +30,19 @@ Optional External Tools (empty and disabled by default):
   CoTeachers cannot change these settings. Logout/removal/disable revokes delivery.
 - Apps stay independently deployed and unchanged. Only compatible relative/
   prefix-hosted HTTP apps work. The opaque-origin sandbox has no same-origin
-  fallback; cookies/login, persistent browser storage, offline workers,
-  WebSockets/SSE and external-host dependencies are unsupported. Native saving
-  remains native and must be tested; EagleIDE does not save app projects.
+  fallback. Local file selection and downloads work without server-write permission;
+  the compatibility bootstrap activates SolidCraft's normal file input fallback.
+  Optional account cloud storage synchronizes localStorage across EagleIDE sign-ins,
+  with per-user quotas (64 MiB default), usage, backup and clear controls in Account.
+  Test each app's actual save/reopen workflow; in-memory edits are not captured.
+  Cookies/third-party SSO, native IndexedDB/OPFS, offline workers, WebSockets/SSE
+  and external-host dependencies remain unsupported. Popups inherit the sandbox.
 - The operator owns Proxmox/firewall isolation and application resource quotas.
   Pin app releases; use maintenance, retesting and data-format backups for updates.
   Private registry/grants: tool_data/catalog.json (EAGLEIDE_TOOL_DATA_DIR override).
+  Account profiles: tool_data/storage/catalog.sqlite3, keyed by a private UUID in
+  users.json. Back up these together with the server stopped or SQLite backup API.
+  Existing registrations keep new permissions off until edited/tested/reapproved.
 
 Workspace data and classroom accounts:
 - Create .csv and .json files with New File. CSV opens in an editable grid with
