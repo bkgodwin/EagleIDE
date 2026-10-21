@@ -4,6 +4,31 @@ const feedback = require('../static/js/editor-feedback.js');
 const autocomplete = require('../static/js/autocomplete.js');
 const analyze = (source, language = 'python') => feedback.analyze(source, language, autocomplete);
 
+test('valid dataclasses and multiline function contracts produce no undefined-name hints', () => {
+  const source = `from dataclasses import dataclass, field
+from typing import Callable, Optional
+@dataclass(frozen=True)
+class Student:
+    name: str
+    scores: list[int] = field(default_factory=list)
+    def label(
+        self,
+        prefix: str = str("Hello"),
+        transform: Optional[Callable[[str], str]] = None,
+    ) -> str:
+        return prefix + self.name
+def build(
+    name: str,
+    transform: Callable[[str], str] = str,
+) -> Student:
+    return Student(transform(name))
+student = build("Eagle")
+print(student.name)
+`;
+  assert.deepEqual(analyze(source).diagnostics, []);
+  assert.ok(analyze(source + '\nprint(misspelled)').diagnostics.some(item => item.message.includes('misspelled')));
+});
+
 test('caret occurrences use whole user names, exclude strings/comments and builtins', () => {
   const source = 'name = input("name")\nnames = [name]\n# name\ndef greet(person):\n\treturn name + person\nclass Eagle:\n\tpass\ngreet(name)\n';
   const model = analyze(source);

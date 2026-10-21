@@ -3006,6 +3006,57 @@ def update_account_profile():
     return jsonify(ok=True, user=_user_info_from_record(record))
 
 
+EDITOR_COLOR_SCHEMES = {"auto", "eagle-dark", "eagle-light", "ocean-dark", "paper-light",
+                        "accessible-dark", "accessible-light", "mono-dark", "mono-light"}
+
+
+def _validated_editor_preferences(data):
+    if not isinstance(data, dict) or set(data) != {"scheme", "backgrounds"}:
+        raise ValueError("Invalid editor preferences")
+    scheme, backgrounds = data["scheme"], data["backgrounds"]
+    if not isinstance(scheme, str) or scheme not in EDITOR_COLOR_SCHEMES:
+        raise ValueError("Unknown editor color scheme")
+    if not isinstance(backgrounds, dict) or set(backgrounds) != {"dark", "light"}:
+        raise ValueError("Invalid editor backgrounds")
+    if any(not isinstance(value, str) or (value and not re.fullmatch(r"#[0-9a-fA-F]{6}", value))
+           for value in backgrounds.values()):
+        raise ValueError("Use a six-digit hex background color")
+    return {"scheme": scheme, "backgrounds": {key: value.lower() for key, value in backgrounds.items()}}
+
+
+@app.route("/api/auth/editor-preferences", methods=["GET", "POST"])
+def editor_preferences():
+    admin = _require_admin(request)
+    actor = None if admin else (_require_user(request) or _require_teacher(request, allow_coteacher=True))
+    if not admin and not actor:
+        return jsonify(ok=False, error="Authentication required"), 401
+    preferences = None
+    if request.method == "POST":
+        try:
+            preferences = _validated_editor_preferences(request.get_json(silent=True))
+        except ValueError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+    if admin:
+        if preferences is not None:
+            _update_config({"admin_editor_preferences": preferences})
+        stored = _load_config().get("admin_editor_preferences")
+    else:
+        with _users_lock:
+            users = _load_users()
+            record = next((user for user in users["users"] if user.get("email") == actor["email"]), None)
+            if not record:
+                return jsonify(ok=False, error="Account not found"), 404
+            if preferences is not None:
+                record["editor_preferences"] = preferences
+                _save_users(users)
+            stored = record.get("editor_preferences")
+    try:
+        stored = _validated_editor_preferences(stored)
+    except ValueError:
+        stored = {"scheme": "auto", "backgrounds": {"dark": "", "light": ""}}
+    return jsonify(ok=True, preferences=stored)
+
+
 @app.post("/api/teacher/classes/coteacher")
 def teacher_set_coteacher():
     teacher = _require_teacher(request)

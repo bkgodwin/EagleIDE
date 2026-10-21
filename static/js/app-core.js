@@ -2336,10 +2336,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         }
         // Clear any inline backgroundImage so the CSS variable takes effect
         document.body.style.backgroundImage = '';
-        // Switch CodeMirror theme to match light/dark mode
+        // Follow the page only when no explicit editor palette was selected.
         const cmTheme = isLight ? 'default' : 'monokai';
         try {
-          document.querySelectorAll('.CodeMirror').forEach(w => {
+          if (window.EagleEditorAppearance) window.EagleEditorAppearance.applyAll();
+          else document.querySelectorAll('.CodeMirror').forEach(w => {
             if (w.CodeMirror) { w.CodeMirror.setOption('theme', cmTheme); w.CodeMirror.refresh(); }
           });
         } catch {}

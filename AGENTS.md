@@ -75,6 +75,7 @@ Required runtime components:
 |       |-- external-tools.js     Tool workspace, class grants, navigation and account/session cleanup
 |       |-- external-tools-admin.js Lazy generic catalog, policy, test and compatibility confirmation UI
 |       |-- editor-init.js       CodeMirror setup and textarea fallback
+|       |-- editor-appearance.js Saved account palettes, read-only previews, Python token styling, and gutter measurement lifecycle
 |       |-- editor-feedback.js   Local occurrences, delimiters, diagnostics, block guides, and caret visibility
 |       |-- editor-behavior.js   Predictable Python Enter indentation and CodeMirror block folding
 |       |-- autocomplete.js      Bounded code analysis, catalog-backed suggestions, and completion UI
@@ -112,6 +113,9 @@ Required runtime components:
 |   |-- test_classroom_signals.py Atomic simultaneous classroom signal persistence
 |   |-- *_ui.test.js            Dependency-free Node tests for classroom/file UI state races
 |   |-- editor_feedback_ui.test.js Local symbol, selection, diagnostics, bracket, and block-guide regressions
+|   |-- editor_appearance_ui.test.js Palette contrast, gutter lifecycle, and account-response isolation
+|   |-- editor_browser_checks.js Opt-in real CodeMirror gutter, scrolling, and token-style checks in a local fixture
+|   |-- test_editor_preferences.py Authenticated account color validation, persistence, and isolation
 |   |-- editor_behavior_ui.test.js Editor indentation, folding, and error-unfold regression checks
 |   |-- student_notebook_ui.test.js Notebook toggle and visible-viewport regression test
 |   |-- test_python_sandbox.py   Module ACL, native containment, SQLite, and chart security
@@ -489,6 +493,7 @@ Network simulator definitions are source data in `network_content.py`; assignmen
 - Workspace orientation and viewport sizing: `layout.js`; pointer/keyboard splitters and per-orientation sizes: `app-core.js`. Vertical (side-by-side) is the default; horizontal puts the editor above Shell/Resources and uses a right-hand file-action rail. Orientation and each layout's sizes persist in localStorage. Keep collapse/view controls and splitter ARIA axes working in both orientations.
 - Editor occurrences, local lexical diagnostics, delimiter shading, block guides, and caret-line visuals: `editor-feedback.js` and `features/editor.css`. Feedback is bounded, debounced, and browser-local; no student code is sent or executed. Undefined-name hints are advisory Python/JavaScript checks, not full scope analysis. The removed indent-guide toggle must not be restored; guides follow actual blocks. Insert overwrite is disabled in the editable editor (including its textarea fallback), while Shift+Insert keeps paste.
 - Autocomplete analysis, popup lifecycle, import/from-module suggestions, and user-symbol inference: `autocomplete.js`; editable Python member help belongs in `autocomplete_metadata.csv`, while the effective import-module list comes from `sandbox_policy.py` through the read-only catalog API in `app.py`.
+- Editor color controls live in every role's Account settings. `editor-appearance.js` owns named light/dark palettes, per-mode custom backgrounds, contrast adjustment, and noneditable CodeMirror previews. `/api/auth/editor-preferences` stores student/teacher preferences in their user record and administrator preferences in config; never accept a client-supplied account identity. Local caches are account-scoped, and late loads/saves must not repaint a different account. The CodeMirror init hook also handles notebook editors and releases measurement listeners when editors are removed. Reserve three gutter digits and remeasure on digit boundaries, resize/unhide, and font loading without refreshing on ordinary edits. Page-theme changes must preserve explicitly selected editor schemes. Python logical declarations and balanced function signatures in `autocomplete.js` are shared with advisory hints; annotation-only/dataclass fields are bindings.
 - Virtual shell parsing: `shell-commands.js`; it must call workspace APIs and must never expose an operating-system shell.
 - DOM structure or third-party CDN versions: `index.html`.
 - Theme values: `tokens.css`; reusable UI primitives: `components.css`; feature visuals: the matching `features/*.css` file.
