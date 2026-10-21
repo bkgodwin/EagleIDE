@@ -80,6 +80,19 @@ class LessonPlanStoreTests(unittest.TestCase):
         with self.assertRaises(LessonPlanDataError):
             self.store.save_plan("class-1", "2026-08-03", payload)
 
+    def test_section_links_colors_and_resource_limits_are_validated(self):
+        payload = plan_payload()
+        payload['days']['monday'].update(wiki_links=[{'node_id': 'a'*32, 'anchor': 'for-loops'}], color='#EE5555')
+        saved = self.store.save_plan('class-1', '2026-08-03', payload)
+        self.assertEqual(saved['days']['monday']['wiki_links'][0]['anchor'], 'for-loops')
+        self.assertEqual(saved['days']['monday']['color'], '#ee5555')
+        for field, value in [('color', 'red; background:url(x)'), ('wiki_links', [{'node_id': 'a'*32, 'anchor': '<script>'}]),
+                             ('attachment_ids', ['../private']), ('assignment_ids', ['id']*21)]:
+            with self.subTest(field=field), self.assertRaises(LessonPlanDataError):
+                bad = plan_payload()
+                bad['days']['monday'][field] = value
+                self.store.save_plan('class-1', '2026-08-03', bad)
+
     def test_public_tokens_can_be_reset_and_deleted(self):
         first = self.store.ensure_public_token("class-1")
         self.assertEqual(self.store.class_id_for_token(first), "class-1")

@@ -2094,7 +2094,12 @@
       const endpoint = isTeacher() ? `/api/teacher/classes/${encodeURIComponent(classId)}/lesson-plans` : `/api/classes/${encodeURIComponent(classId)}/lesson-plans`;
       const data = await fetchJson(`${endpoint}?week=${week}`,{headers:authHeaders()});
       if(request !== state.agendaRequest || key !== state.agendaKey || classId !== defaultClassId()) return;
-      const item = Object.values(data.plan?.days || {}).find(day => day.date === today);
+      const item = Object.values(data.plan?.days || {}).find(day => day.date === today) || {due_assignments:(data.plan?.weekend_due_assignments || []).filter(item=>item.due_date===today)};
+      if(window.LessonPlanRenderer?.renderDayContent) {
+        body.style.removeProperty('--agenda-color');
+        window.LessonPlanRenderer.renderDayContent(body,item || {},data);
+        return;
+      }
       body.innerHTML=item?.markdown ? (window.LessonPlanRenderer?.safeMarkdown?.(item.markdown) || '') : '<p class="wiki-reference-empty">No activities posted for today.</p>';
       for (const page of item?.wiki_pages || []) {
         const link=document.createElement('a'); link.className='wiki-reference-resource'; link.href=`/wiki/${encodeURIComponent(page.slug || page.id)}`; link.textContent=page.title || 'Wiki page'; body.append(link);

@@ -9,6 +9,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import threading
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -16,7 +17,7 @@ from typing import Any, Optional
 from urllib.parse import urlsplit
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DAYS = ("monday", "tuesday", "wednesday", "thursday", "friday")
 MAX_DAY_MARKDOWN_CHARS = 20_000
 MAX_NOTES_MARKDOWN_CHARS = 20_000
@@ -26,6 +27,40 @@ MAX_EXTERNAL_URL_CHARS = 2_048
 MAX_EXTERNAL_TITLE_CHARS = 200
 MAX_WEEKS_PER_CLASS = 520
 WIKI_NODE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def resource_ids(value: Any, field: str, limit: int = 20) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > limit:
+        raise LessonPlanDataError(f"{field} must be a list of at most {limit} items")
+    result = []
+    for item in value:
+        if not isinstance(item, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", item):
+            raise LessonPlanDataError(f"Invalid {field} ID")
+        if item not in result:
+            result.append(item)
+    return result
+
+
+def wiki_links(item: dict) -> list[dict[str, str]]:
+    raw = item.get("wiki_links")
+    if raw is None:
+        raw = [{"node_id": node_id} for node_id in _wiki_node_ids(item.get("wiki_node_ids"))]
+    if not isinstance(raw, list) or len(raw) > MAX_WIKI_PAGES_PER_DAY:
+        raise LessonPlanDataError("Select at most 30 wiki pages or sections per day")
+    result = []
+    for link in raw:
+        if not isinstance(link, dict):
+            raise LessonPlanDataError("Invalid wiki link")
+        node_id = str(link.get("node_id") or "")
+        anchor = str(link.get("anchor") or "")
+        if not WIKI_NODE_ID_RE.fullmatch(node_id) or (anchor and not re.fullmatch(r"[\w-]{1,200}", anchor)):
+            raise LessonPlanDataError("Invalid wiki page or section")
+        entry = {"node_id": node_id, "anchor": anchor}
+        if entry not in result:
+            result.append(entry)
+    return result
 
 
 class LessonPlanDataError(ValueError):
@@ -139,11 +174,19 @@ def normalize_plan_payload(raw: Any) -> dict[str, Any]:
         item = raw_days.get(day) or {}
         if not isinstance(item, dict):
             raise LessonPlanDataError(f"{day.title()} plan data must be an object")
+        links = wiki_links(item)
+        color = str(item.get("color") or "")
+        if color and not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+            raise LessonPlanDataError("Day colors must use a six-digit hex color")
         days[day] = {
             "markdown": _clean_markdown(
                 item.get("markdown"), MAX_DAY_MARKDOWN_CHARS, f"{day.title()} content"
             ),
-            "wiki_node_ids": _wiki_node_ids(item.get("wiki_node_ids")),
+            "wiki_node_ids": list(dict.fromkeys(link["node_id"] for link in links)),
+            "wiki_links": links,
+            "color": color.lower(),
+            "attachment_ids": resource_ids(item.get("attachment_ids"), "attachment"),
+            "assignment_ids": resource_ids(item.get("assignment_ids"), "assignment"),
             "external_links": _external_links(item.get("external_links")),
         }
     return {
@@ -390,3 +433,7 @@ class LessonPlanStore:
                     sources.pop(target, None)
             self._write_json(self.catalog_path, catalog)
             self._class_path(class_id).unlink(missing_ok=True)
+            assets_root = (self.base_dir / 'assets').resolve()
+            asset_folder = assets_root / self._class_key(class_id)
+            if asset_folder.exists() and not asset_folder.is_symlink() and asset_folder.resolve().parent == assets_root:
+                shutil.rmtree(asset_folder)

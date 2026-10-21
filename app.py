@@ -13221,6 +13221,7 @@ _wiki_store = register_wiki_features(
 )
 register_lesson_plan_features(
     app,
+    eagle=sys.modules[__name__],
     base_dir=LESSON_PLAN_DATA_DIR,
     public_dir=BASE_DIR,
     wiki_store=_wiki_store,
