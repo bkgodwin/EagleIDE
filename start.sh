@@ -121,10 +121,11 @@ import matplotlib
 import numpy
 import PIL
 import requests
+import reportlab
 import simple_websocket
 
 prefix = Path(sys.prefix).resolve()
-for module in (flask, matplotlib, numpy, PIL):
+for module in (flask, matplotlib, numpy, PIL, reportlab):
     module_path = Path(module.__file__).resolve()
     if prefix not in module_path.parents:
         raise RuntimeError(f"{module.__name__} loaded outside the EagleIDE virtual environment")

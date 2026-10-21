@@ -107,7 +107,6 @@
   }
   async function refresh() {
     const key = authKey(), requestId = ++state.request;
-    if ($('externalToolStorageMenu')) $('externalToolStorageMenu').hidden = key === '{}';
     if (state.auth && key !== state.auth) accountLeaving();
     state.auth = key;
     if (key === '{}') { state.tools = []; renderButtons(); return; }
@@ -238,7 +237,6 @@
     } catch (error) { if (key === authKey()) { $('externalToolStorageUsage').textContent = error.message; } }
   }
   function storageShow() { $('externalToolStorageModal').style.display = 'flex'; storageLoad(); }
-  $('externalToolStorageMenu')?.addEventListener('click', storageShow);
   $('roleMenuBtn')?.addEventListener('click', () => { if ($('externalToolInfo')) $('externalToolInfo').open = false; });
   document.querySelectorAll('.external-tool-storage-open').forEach(button => button.addEventListener('click', storageShow));
   $('externalToolStorageRefresh')?.addEventListener('click', storageLoad);

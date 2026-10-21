@@ -44,6 +44,7 @@ class StartupScriptTests(unittest.TestCase):
             "numpy": "2.5.1",
             "matplotlib": "3.11.1",
             "Pillow": "12.3.0",
+            "reportlab": "5.0.1",
         }
         for package, version in expected.items():
             pattern = rf"(?mi)^{re.escape(package)}=={re.escape(version)}(?:\s|$)"

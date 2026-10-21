@@ -56,6 +56,12 @@
   function authHeaders(role, json = false) {
     const ctx = context();
     const headers = json ? { 'Content-Type': 'application/json' } : {};
+    if(role==='account') {
+      if(ctx.USER_TOKEN) headers['X-User-Token']=ctx.USER_TOKEN;
+      else if(ctx.TEACHER_TOKEN) headers['X-Teacher-Token']=ctx.TEACHER_TOKEN;
+      else if(ctx.ADMIN_TOKEN) headers['X-Admin-Token']=ctx.ADMIN_TOKEN;
+      return headers;
+    }
     if (role === 'teacher' && ctx.TEACHER_TOKEN) headers['X-Teacher-Token'] = ctx.TEACHER_TOKEN;
     if (role === 'student' && ctx.USER_TOKEN) headers['X-User-Token'] = ctx.USER_TOKEN;
     return headers;
@@ -92,6 +98,7 @@
             <span class="lesson-plan-week-label" id="lessonPlanTeacherWeekLabel"></span>
             <button class="btn secondary" id="lessonPlanTeacherNext" type="button">Next →</button>
             <button class="btn secondary" id="lessonPlanReload" type="button" title="Discard this week’s draft and reload the published version">Reload published</button>
+            <button class="btn secondary" id="lessonPlanPrintAll" type="button" title="Open a PDF of this published week for every class you teach">Print Week (all classes)</button>
           </div>
         </div>
         <details class="agenda-settings"><summary>Sharing &amp; plan settings</summary><div class="lesson-plan-week-nav">
@@ -129,6 +136,7 @@
     $('lessonPlanCopyCurrent').addEventListener('click', () => copySharing('current_url', 'Current-week link copied.'));
     $('lessonPlanCopyEmbed').addEventListener('click', () => copySharing('embed_code', 'Embed code copied.'));
     $('lessonPlanPrint').addEventListener('click', printTeacherPlan);
+    $('lessonPlanPrintAll').addEventListener('click', printAllClasses);
     $('lessonPlanResetLink').addEventListener('click', resetSharing);
     syncTeacherClasses();
   }
@@ -654,6 +662,23 @@
     }
   }
 
+  async function printAllClasses() {
+    const scope=teacherScope(), button=$('lessonPlanPrintAll'), popup=window.open('about:blank','_blank');
+    if(popup) popup.opener=null;
+    button.disabled=true;setTeacherStatus('Preparing the published week for all your classes…');
+    try {
+      const response=await fetch(`/api/teacher/lesson-plans/${encodeURIComponent(state.teacherWeek)}/print-all`,{method:'POST',headers:authHeaders('teacher'),signal:AbortSignal.timeout(60000)});
+      if(!response.ok) {const data=await response.json().catch(()=>({}));throw new Error(data.error || 'Could not prepare the PDF.');}
+      const blob=await response.blob();if(scope!==teacherScope()) {popup?.close();return;}
+      const url=URL.createObjectURL(blob);
+      if(popup) popup.location.href=url;
+      else {const link=document.createElement('a');link.href=url;link.download=`lesson-plans-${state.teacherWeek}.pdf`;link.click();}
+      setTimeout(()=>URL.revokeObjectURL(url),300000);
+      setTeacherStatus('Opened the all-class PDF. It includes published plans for the selected week.');
+    } catch(error) {popup?.close();if(scope===teacherScope()) setTeacherStatus(error.message,true);}
+    finally {button.disabled=false;}
+  }
+
   async function resetSharing() {
     if (!state.teacherClassId || !window.confirm('Reset the public link? Existing public and embed links will stop working.')) return;
     try { await sharing(true); setTeacherStatus('Public and embed links reset. Copy the new links when ready.'); }
@@ -865,16 +890,16 @@
     if(!button || button.disabled) return;
     const host=button.closest('[data-agenda-class]'), classId=host?.dataset.agendaClass, week=host?.dataset.agendaWeek;
     if(!classId || !week) return;
-    event.preventDefault(); const ctx=context(), scope=JSON.stringify(authHeaders(ctx.TEACHER_TOKEN?'teacher':'student'));
+    event.preventDefault(); const ctx=context(), scope=JSON.stringify(authHeaders('account'));
     const selectedClass=ctx.currentStudentClassId, wikiClass=window.WikiReader?.getState?.().selectedClassId;
     button.disabled=true;
     try {
       if(button.dataset.assignmentId) {await ctx.openAgendaAssignment?.(button.dataset.assignmentId,classId); return;}
-      if(!ctx.USER_TOKEN) throw new Error('Sign in as a student in this class to copy its example files.');
+      if(!ctx.USER_TOKEN && !ctx.TEACHER_TOKEN && !ctx.ADMIN_TOKEN) throw new Error('Sign in to open this file in the IDE.');
       if(!await ctx.saveCurrentFile?.()) throw new Error('Save your current file before opening an agenda example.');
-      const data=await fetchJson(`/api/classes/${encodeURIComponent(classId)}/lesson-plans/${week}/files/${encodeURIComponent(button.dataset.assetId)}/open`,{method:'POST',headers:authHeaders('student')});
-      if(scope!==JSON.stringify(authHeaders('student')) || context().currentStudentClassId!==selectedClass || window.WikiReader?.getState?.().selectedClassId!==wikiClass) return;
-      ctx.selectAgendaClass?.(classId);
+      const data=await fetchJson(`/api/classes/${encodeURIComponent(classId)}/lesson-plans/${week}/files/${encodeURIComponent(button.dataset.assetId)}/open`,{method:'POST',headers:authHeaders('account')});
+      if(scope!==JSON.stringify(authHeaders('account')) || context().currentStudentClassId!==selectedClass || window.WikiReader?.getState?.().selectedClassId!==wikiClass) return;
+      if(ctx.USER_TOKEN) ctx.selectAgendaClass?.(classId);
       if(window.WikiReader?.showIDE(true)===false) return;
       await ctx.openWorkspacePath?.(data.path);
     } catch(error) {alert(error.message || 'Could not open the agenda resource.');}
@@ -957,6 +982,20 @@
     });
     $('teacherAttachAgendaBtn').hidden=!authScope;
     document.addEventListener('click',openAgendaResource);
+    const openPendingFile=async()=>{
+      const ctx=context();if(!ctx.USER_TOKEN && !ctx.TEACHER_TOKEN && !ctx.ADMIN_TOKEN) return;
+      let pending;
+      try {pending=JSON.parse(sessionStorage.getItem('eagle-agenda-open-file') || 'null');} catch {return;}
+      if(!pending) return;
+      const email=ctx.currentUser?.email || ctx.currentTeacher?.email || (ctx.ADMIN_TOKEN ? 'admin' : '');
+      if(!email) return;
+      sessionStorage.removeItem('eagle-agenda-open-file');
+      if(pending.email!==email || Date.now()-pending.at>60000 || typeof pending.path!=='string') return;
+      if(window.WikiReader?.showIDE(true)===false) return;
+      await ctx.openWorkspacePath?.(pending.path);
+    };
+    window.addEventListener('eagle-context-updated',()=>openPendingFile().catch(()=>{}));
+    openPendingFile().catch(()=>{});
     window.addEventListener('beforeunload',event=>{if(context().TEACHER_TOKEN && (state.dirty || state.drafts.size)) {event.preventDefault();event.returnValue='';}});
     window.addEventListener('wiki-home-rendered', (event) => loadHomePlan('', event.detail?.classId));
     loadHomePlan();

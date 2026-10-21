@@ -44,9 +44,12 @@ def main():
         eagle._save_classes({'classes': [{'id': 'agenda-class', 'name': 'Computer Science · Period 2',
             'teacher_email': teacher['email'], 'students': [student['email']], 'join_code': 'AGENDA',
             'settings': {'assignment_submission_window': {'timeZone': 'America/Chicago'}},
-            'accommodations': {student['email']: {'extendedWeekdays': 1}}}]})
+            'accommodations': {student['email']: {'extendedWeekdays': 1}}},
+            {'id':'agenda-section','name':'Computer Science · Period 3','teacher_email':teacher['email'],'students':[],'settings':{}},
+            {'id':'other-class','name':'Unrelated private class','teacher_email':'other@example.test','students':[],'settings':{}}]})
         eagle._teacher_tokens['agenda-teacher'] = teacher
         eagle._student_tokens['agenda-student'] = student
+        eagle._admin_tokens.add('agenda-admin')
         teacher_root = eagle._get_user_dir(teacher['email'])
         teacher_root.mkdir(parents=True, exist_ok=True)
         (teacher_root / 'loops.py').write_text('for number in range(5):\n    print(number)\n', encoding='utf-8')
@@ -68,6 +71,7 @@ def main():
                 for index, (day, title) in enumerate(zip(('monday','tuesday','wednesday','thursday','friday'),
                     ('Start with patterns','Build a loop','Make it your own','Practice & reflect','Checkpoint')))}
         eagle.app.extensions['eagle_lesson_plan_store'].save_plan('agenda-class', week, {'days': days})
+        eagle.app.extensions['eagle_lesson_plan_store'].set_plan_source('agenda-section','agenda-class')
         from werkzeug.serving import make_server
         server = make_server('127.0.0.1', 0, eagle.app, threaded=True)
         print(json.dumps({'url': f'http://127.0.0.1:{server.server_port}', 'teacher': teacher, 'student': student,

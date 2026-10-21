@@ -15,6 +15,13 @@
     embeddedLoading: false,
     embeddedRequest: 0,
     homeRequest: 0,
+    homeLoad: null,
+    treeLoad: null,
+    treeLoaded: false,
+    treeError: '',
+    treeVersion: null,
+    expectedTreeVersion: null,
+    treeLoadedAt: 0,
     ideClassId: '',
     agendaKey: '',
     agendaRequest: 0,
@@ -41,7 +48,7 @@
   const $ = (id) => document.getElementById(id);
   const WIKI_FONT_SIZE_KEY = 'eagleide-wiki-font-size';
   const WIKI_RETURN_KEY = 'eagleide-wiki-return-v1';
-  const WIKI_FONT_SIZES = new Set([14, 16, 18, 20]);
+  const WIKI_FONT_SIZES = new Set([14, 16, 18, 28]);
 
   function context() {
     try { return window.EagleIDE?.getContext?.() || {}; } catch { return {}; }
@@ -134,14 +141,43 @@
   }
 
   async function fetchJson(url, options = {}) {
-    const response = await fetch(url, options);
-    const payload = await response.json().catch(() => ({}));
+    const response = await fetch(url, {signal:AbortSignal.timeout(12000),...options});
+    const payload = await response.json().catch(() => {throw new Error('The wiki response could not be read. Try again.');});
     if (!response.ok || payload?.ok === false) {
       const error = new Error(payload?.error || `Request failed (${response.status})`);
       error.status = response.status;
       throw error;
     }
+    if(payload?.ok!==true) throw new Error('The wiki response was incomplete. Try again.');
     return payload;
+  }
+
+  async function fetchWiki(url, options = {}) {
+    for(let attempt=0;attempt<2;attempt++) {
+      try {return await fetchJson(url,{...options,signal:options.signal ? AbortSignal.any([options.signal,AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000)});}
+      catch(error) {
+        if(options.signal?.aborted || attempt || (error.status && error.status<500 && ![408,429].includes(error.status))) throw error;
+        await new Promise(resolve=>setTimeout(resolve,250));
+      }
+    }
+  }
+
+  function loadTree({force=false} = {}) {
+    if(state.treeLoad) return state.treeLoad.then(tree=>force && state.treeVersion!==state.expectedTreeVersion ? loadTree({force:true}) : tree);
+    if(!force && state.treeLoaded && Date.now()-state.treeLoadedAt<60000) return Promise.resolve(state.tree);
+    state.treeError='';renderAllTrees();
+    const promise=(async()=>{
+      try {
+        const data=await fetchWiki('/api/wiki/tree',{cache:force?'reload':'default'});
+        if(!Array.isArray(data.tree)) throw new Error('The wiki contents were incomplete. Try again.');
+        state.tree=data.tree;state.treeLoaded=true;state.treeVersion=data.catalog_version;state.treeLoadedAt=Date.now();
+        renderAllTrees();
+        if(!state.embeddedNode && !state.embeddedLoading) renderEmbeddedHome();
+        return state.tree;
+      } catch(error) {state.treeError=error.message || 'Could not load wiki contents.';renderAllTrees();if(!state.embeddedNode && !state.embeddedLoading) renderEmbeddedHome();throw error;}
+      finally {if(state.treeLoad===promise) state.treeLoad=null;}
+    })();
+    state.treeLoad=promise;return promise;
   }
 
   function setView(mode, { push = true, path = '' } = {}) {
@@ -268,11 +304,12 @@
   }
 
   function applyWikiFontSize(value, { persist = true } = {}) {
-    const parsed = Number(value);
+    const parsed = Number(value)===20 ? 28 : Number(value);
     const size = WIKI_FONT_SIZES.has(parsed) ? parsed : 16;
     $('wikiView')?.style.setProperty('--wiki-body-font-size', `${size}px`);
     if ($('wikiView')) $('wikiView').dataset.wikiFontSize = String(size);
     $('wikiArticleBody')?.style.setProperty('font-size', `${size}px`, 'important');
+    $('wikiEmbeddedReader')?.style.setProperty('--wiki-body-font-size', `${size}px`);
     if ($('wikiFontSizeSelect')) $('wikiFontSizeSelect').value = String(size);
     if (persist) {
       try { localStorage.setItem(WIKI_FONT_SIZE_KEY, String(size)); } catch {}
@@ -432,8 +469,9 @@
     if (!displayed.length) {
       const empty = document.createElement('p');
       empty.className = 'wiki-tree-empty';
-      empty.textContent = filter ? 'No topics match this filter.' : (admin ? 'No wiki items yet.' : 'No topics have been published yet.');
+      empty.textContent = filter ? 'No topics match this filter.' : !admin && !state.treeLoaded ? (state.treeError || 'Loading wiki contents…') : (admin ? 'No wiki items yet.' : 'No topics have been published yet.');
       target.appendChild(empty);
+      if(!admin && state.treeError) {const retry=document.createElement('button');retry.type='button';retry.className='btn secondary';retry.textContent='Retry contents';retry.onclick=()=>loadTree({force:true}).catch(()=>{});target.appendChild(retry);}
       return;
     }
     const selectedPath = new Set(selectedId ? pathToNode(selectedId, displayed) : []);
@@ -785,7 +823,6 @@
     renderFooterText(homeSettings.footer_text);
     renderHomeStandards(homeSettings.standards || []);
     renderHomeResources(homeSettings.external_resources || []);
-    state.tree = data.tree || [];
     renderAllTrees();
     const featuredSection = $('wikiFeaturedSection');
     if (featuredSection) featuredSection.hidden = !(data.featured || []).length;
@@ -820,24 +857,33 @@
 
   async function loadHome({ quiet = false } = {}) {
     syncClassSelector();
-    const request = ++state.homeRequest, selected = state.selectedClassId;
+    const selected = state.selectedClassId;
     const auth = JSON.stringify(authHeaders());
+    const key=`${auth}:${selected}`;
+    if(state.homeLoad?.key===key) return state.homeLoad.promise;
+    state.homeLoad?.controller.abort();
+    const controller=new AbortController(), request=++state.homeRequest;
     if (!quiet) showStatus('Loading wiki…', false, 0);
-    try {
-      const suffix = state.selectedClassId ? `?class_id=${encodeURIComponent(state.selectedClassId)}` : '';
-      const home = await fetchJson(`/api/wiki/home${suffix}`, { headers: authHeaders() });
+    loadTree().catch(()=>{});
+    const pending={key,controller};
+    pending.promise=(async()=>{try {
+      const query=new URLSearchParams({include_tree:'0'});if(selected) query.set('class_id',selected);
+      const home = await fetchWiki(`/api/wiki/home?${query}`, { headers: authHeaders(),signal:controller.signal });
       if (request !== state.homeRequest || selected !== state.selectedClassId || auth !== JSON.stringify(authHeaders())) return;
       state.home = home;
-      state.tree = state.home.tree || [];
+      state.expectedTreeVersion=home.catalog_version;
+      if(Array.isArray(home.tree)) {state.tree=home.tree;state.treeLoaded=true;state.treeVersion=home.catalog_version;}
+      if(state.treeVersion!==home.catalog_version) loadTree({force:true}).catch(()=>{});
       renderHomeData();
       if ($('wikiHomePanel')?.hidden === false) syncHomeBackground(true);
       if (!quiet) showStatus('');
       return state.home;
     } catch (error) {
-      if (request !== state.homeRequest || auth !== JSON.stringify(authHeaders())) return;
+      if (controller.signal.aborted || request !== state.homeRequest || auth !== JSON.stringify(authHeaders())) return;
       showStatus(error.message || 'Could not load the wiki', true);
       throw error;
-    }
+    } finally {if(state.homeLoad===pending) state.homeLoad=null;}})();
+    state.homeLoad=pending;return pending.promise;
   }
 
   async function selectClass(classId, { show = false } = {}) {
@@ -2131,20 +2177,19 @@
     $('adminWikiBtn').style.display = isAdmin() ? '' : 'none';
     $('wikiArticleFeatureBtn').hidden = !isTeacher();
     if (signature === state.contextSignature) return;
-    const hadHome = !!state.home;
     const previous = state.contextSignature ? JSON.parse(state.contextSignature) : {};
     state.contextSignature = signature;
     const active = defaultClassId();
     if (active !== state.ideClassId || previous.user !== (ctx.currentUser?.email || '') || previous.teacher !== (ctx.currentTeacher?.email || '')) {
       state.ideClassId=active; state.selectedClassId=active;
-      state.home=null; state.tree=[];
+      state.home=null;
       state.embeddedNode=null; state.embeddedRequest++; state.embeddedHistory=[];
       renderEmbeddedHome();
     }
     loadReferenceAgenda();
     if (!availableClasses().some(cls => cls.id === state.selectedClassId)) state.selectedClassId = defaultClassId();
     syncClassSelector();
-    if (hadHome) loadHome({ quiet: true }).then(updateArticleActions).catch(() => {});
+    loadHome({ quiet: true }).then(updateArticleActions).catch(() => {});
   }
 
   function attachEvents() {
@@ -2256,6 +2301,7 @@
       state.previewTimer = setTimeout(() => { if (!$('wikiLinkPreview')?.matches(':hover')) $('wikiLinkPreview').hidden = true; }, 180);
     });
     window.addEventListener('eagle-context-updated', refreshContext);
+    window.addEventListener('online',()=>{loadTree({force:true}).catch(()=>{});loadHome({quiet:true}).catch(()=>{});});
     window.addEventListener('beforeprint', prepareCoveragePrint);
     window.addEventListener('afterprint', finishCoveragePrint);
     window.addEventListener('resize', () => {
@@ -2309,7 +2355,7 @@
     syncWikiReturnButton();
     syncSidebarControls();
     refreshContext();
-    await loadHome({ quiet: true }).catch(() => {});
+    loadTree().catch(()=>{});
     routeFromLocation();
   }
 
@@ -2323,6 +2369,7 @@
     flattenTree,
     getState: () => state,
     loadHome,
+    loadTree,
     openClassAction,
     openNode,
     openEmbeddedNode,

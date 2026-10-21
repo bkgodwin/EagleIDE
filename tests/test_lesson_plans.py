@@ -157,6 +157,7 @@ class LessonPlanRouteTests(unittest.TestCase):
             find_user=lambda email: self.users.get(email),
             get_user_class_ids=lambda user: list((user or {}).get("class_ids") or []),
             find_class=lambda class_id: self.classes.get(class_id),
+            list_teacher_classes=lambda _teacher: list(self.classes.values()),
         )
         self.client = self.app.test_client()
         self.teacher_headers = {"X-Teacher-Token": "teacher-token"}
@@ -191,6 +192,33 @@ class LessonPlanRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["plan"]["week_start"], "2026-08-03")
         self.assertEqual(response.json["plan"]["version"], 0)
+
+    def test_all_class_pdf_requires_teacher_and_contains_only_accessible_classes(self):
+        endpoint=f'/api/teacher/lesson-plans/{self.current_week}/print-all'
+        self.assertEqual(self.client.post(endpoint).status_code,401)
+        self.assertEqual(self.client.post(endpoint,headers=self.student_headers).status_code,401)
+        self.publish()
+        self.store.set_plan_source('class-3','class-1')
+        with patch('lesson_plan_pdf.render_week_pdf',return_value=b'%PDF-1.4\nfixture') as render:
+            response=self.client.post(endpoint,headers=self.teacher_headers)
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.mimetype,'application/pdf')
+        self.assertIn('no-store',response.headers['Cache-Control'])
+        plans,week,images=render.call_args.args
+        self.assertEqual({plan['class']['id'] for plan in plans},{'class-1','class-3'})
+        self.assertEqual(week,self.current_week)
+        self.assertEqual(plans[0]['plan']['days']['monday']['markdown'],plans[1]['plan']['days']['monday']['markdown'])
+        self.assertEqual(images,{})
+        response.close()
+
+    def test_pdf_failure_releases_admission_for_the_next_request(self):
+        endpoint=f'/api/teacher/lesson-plans/{self.current_week}/print-all'
+        with patch('lesson_plan_pdf.render_week_pdf',side_effect=ValueError('Too much content')):
+            self.assertEqual(self.client.post(endpoint,headers=self.teacher_headers).status_code,422)
+        with patch('lesson_plan_pdf.render_week_pdf',return_value=b'%PDF-1.4\nfixture'):
+            response=self.client.post(endpoint,headers=self.teacher_headers)
+        self.assertEqual(response.status_code,200)
+        response.close()
 
     def test_publish_hydrates_pages_and_deduplicates_standards_per_day(self):
         response = self.publish()
