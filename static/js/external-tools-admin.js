@@ -16,7 +16,7 @@
   document.querySelectorAll('[data-tool-section]').forEach(button => { button.onclick = () => section(button.dataset.toolSection); });
   function permissionSummary() {
     const writes = $('externalToolHttp').checked, forms = $('externalToolForms').checked;
-    $('externalToolPermissionSummary').textContent = `${writes ? 'Read and write requests allowed (GET, HEAD, POST, PUT, PATCH, DELETE; 1 MiB request limit).' : 'Read requests only (GET and HEAD).'} ${forms ? 'HTML forms allowed.' : 'HTML form submission is blocked.'}${forms && !writes ? ' POST forms still need server data permission.' : ''}`;
+    $('externalToolPermissionSummary').textContent = `${writes ? 'Read and write requests allowed (GET, HEAD, POST, PUT, PATCH, DELETE; configured server request limit).' : 'Read requests only (GET and HEAD).'} ${forms ? 'HTML forms allowed.' : 'HTML form submission is blocked.'}${forms && !writes ? ' POST forms still need server data permission.' : ''} Local file selection and downloads do not need either permission. Cloud storage, popups and dialogs use the options above.`;
   }
   $('externalToolHttp').addEventListener('change', permissionSummary);
   $('externalToolForms').addEventListener('change', permissionSummary);
@@ -44,7 +44,7 @@
       action('Test connection', async () => { const result = await api(`/api/admin/tools/${tool.id}/test`, { method: 'POST', body: JSON.stringify({ revision: catalog.revision }) }); status(result.tool.test); await load(); });
       action('Private preview', async () => { $('externalToolsModal').style.display = 'none'; $('adminSettingsModal').style.display = 'none'; await window.ExternalTools.open(tool); });
       action(tool.enabled ? 'Disable' : 'Confirm compatibility and enable', async () => {
-        if (!tool.enabled && !window.confirm('Have you tested this tool in the private restricted preview, including assets, APIs, imports and downloads? Cookies, persistent browser storage, offline workers, external resources and same-origin privileges are unavailable. Confirm only if its intended classroom workflow works.')) return;
+        if (!tool.enabled && !window.confirm('Have you tested this tool in the private preview, including imports, downloads, cloud save/reopen and any popups or prompts it needs? Only localStorage is synchronized when enabled. Cookies/login, IndexedDB, OPFS, workers and live connections remain unavailable. Confirm only if its classroom workflow works.')) return;
         await api(`/api/admin/tools/${tool.id}/enable`, { method: 'POST', body: JSON.stringify({ revision: catalog.revision, enabled: !tool.enabled, confirmed: true, preview_id: previews.get(tool.id) }) });
         status(tool.enabled ? 'Tool disabled.' : 'Tool enabled. Class owners can now grant it.'); await load(); window.ExternalTools.refresh();
       });
@@ -58,6 +58,10 @@
     for (const [id, field] of [['externalToolName','name'],['externalToolLabel','label'],['externalToolBackend','backend_url'],['externalToolSlug','slug']]) $(id).value = tool?.[field] || '';
     $('externalToolForms').checked = !!tool?.forms;
     $('externalToolHttp').checked = !!tool?.methods.includes('POST');
+    $('externalToolCloud').checked = tool ? tool.storage : true;
+    $('externalToolPopups').checked = tool ? tool.popups : true;
+    $('externalToolDialogs').checked = tool ? tool.dialogs : true;
+    $('externalToolUploadLimit').value = tool?.upload_mib || 1;
     permissionSummary();
     section('apps');
     if (tool) $('externalToolForm').scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -66,7 +70,7 @@
     event.preventDefault(); const started = key();
     try {
       if (!catalog || auth !== started) throw new Error('Reload External Tools first.');
-      await api('/api/admin/tools', { method: 'POST', body: JSON.stringify({ id: editing, revision: catalog.revision, name: $('externalToolName').value, label: $('externalToolLabel').value, backend_url: $('externalToolBackend').value, slug: $('externalToolSlug').value, forms: $('externalToolForms').checked, methods: $('externalToolHttp').checked ? ['GET','HEAD','POST','PUT','PATCH','DELETE'] : ['GET','HEAD'] }) });
+      await api('/api/admin/tools', { method: 'POST', body: JSON.stringify({ id: editing, revision: catalog.revision, name: $('externalToolName').value, label: $('externalToolLabel').value, backend_url: $('externalToolBackend').value, slug: $('externalToolSlug').value, forms: $('externalToolForms').checked, upload_mib: Number($('externalToolUploadLimit').value), storage: $('externalToolCloud').checked, popups: $('externalToolPopups').checked, dialogs: $('externalToolDialogs').checked, methods: $('externalToolHttp').checked ? ['GET','HEAD','POST','PUT','PATCH','DELETE'] : ['GET','HEAD'] }) });
       if (started !== key()) return;
       edit(); status('Saved disabled. Test, preview, then confirm compatibility.'); await load();
     } catch (error) { if (started === key()) status(error.message); }
@@ -82,8 +86,32 @@
   };
   $('externalToolNew').onclick = () => { edit(); $('externalToolForm').scrollIntoView({ block: 'start', behavior: 'smooth' }); $('externalToolName').focus({ preventScroll: true }); };
   $('externalToolsDone').onclick = () => { $('externalToolsModal').style.display = 'none'; };
+  let storagePolicy, storageEmail, storageAuth, storageRequest = 0;
+  $('externalToolStorageEmail').addEventListener('input', () => { storageRequest++; storagePolicy = null; $('externalToolUserStorageSettings').hidden = true; });
+  $('externalToolUserStorageForm').addEventListener('submit', async event => {
+    event.preventDefault(); const started = key(), request = ++storageRequest;
+    const email = $('externalToolStorageEmail').value.trim();
+    try {
+      const result = await api('/api/admin/tools/storage?email=' + encodeURIComponent(email));
+      if (started !== key() || request !== storageRequest) return;
+      storagePolicy = result.storage; storageEmail = email; storageAuth = started;
+      $('externalToolUserStorageSettings').hidden = false;
+      $('externalToolUserStorageEnabled').checked = storagePolicy.enabled;
+      $('externalToolUserStorageQuota').value = storagePolicy.quota_bytes / 1048576;
+      $('externalToolUserStorageUsage').textContent = `${email || 'Administrator'}: ${(storagePolicy.used_bytes / 1048576).toFixed(2)} MiB used`;
+    } catch (error) { if (started === key() && request === storageRequest) status(error.message); }
+  });
+  $('externalToolUserStorageSave').onclick = async () => {
+    if (!storagePolicy || storageAuth !== key()) return;
+    const started = key(), request = ++storageRequest;
+    try {
+      const result = await api('/api/admin/tools/storage?email=' + encodeURIComponent(storageEmail), { method: 'PUT', body: JSON.stringify({ enabled: $('externalToolUserStorageEnabled').checked, quota_mib: Number($('externalToolUserStorageQuota').value), version: storagePolicy.version }) });
+      if (started !== key() || request !== storageRequest) return;
+      storagePolicy = result.storage; status('Storage allowance saved. Open tools must be reopened to use it.');
+    } catch (error) { if (started === key() && request === storageRequest) status(error.message); }
+  };
   $('externalToolsBack').onclick = () => { $('externalToolsModal').style.display = 'none'; $('adminSettingsModal').style.display = 'flex'; };
   window.addEventListener('external-tool-launched', event => { if (event.detail.preview) previews.set(event.detail.toolId, event.detail.instanceId); });
   window.addEventListener('eagle-context-updated', () => { if (auth !== key()) { catalog = null; previews.clear(); $('externalToolsCatalog').replaceChildren(); edit(); $('externalToolsModal').style.display = 'none'; } });
-  window.ExternalToolsAdmin = { show: async () => { $('adminSettingsModal').style.display = 'none'; $('externalToolsModal').style.display = 'flex'; status('Loading…'); try { await load(); section(catalog.allowed_networks.length ? 'apps' : 'network'); permissionSummary(); status(catalog.enabled ? 'Gateway on. Teachers can open enabled apps. Students also need a class grant.' : 'Gateway off. Private admin previews are available after a connection test.'); } catch (error) { status(error.message); } } };
+  window.ExternalToolsAdmin = { show: async () => { $('adminSettingsModal').style.display = 'none'; $('externalToolsModal').style.display = 'flex'; status('Loading…'); try { await load(); edit(); section(catalog.allowed_networks.length ? 'apps' : 'network'); permissionSummary(); status(catalog.enabled ? 'Gateway on. Teachers can open enabled apps. Students also need a class grant.' : 'Gateway off. Private admin previews are available after a connection test.'); } catch (error) { status(error.message); } } };
 })();

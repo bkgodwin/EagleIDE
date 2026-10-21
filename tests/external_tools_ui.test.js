@@ -18,7 +18,7 @@ function harness({ signed = true } = {}) {
   }
   const document = { hidden: false, body: { classList: { add: (...items) => items.forEach(item => classes.add(item)), remove: (...items) => items.forEach(item => classes.delete(item)) } },
     getElementById(id) { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); },
-    createElement: element, createTextNode: text => ({ textContent: text }), addEventListener: (type, fn) => { events[`document:${type}`] = fn; } };
+    createElement: element, createTextNode: text => ({ textContent: text }), querySelectorAll: () => [], addEventListener: (type, fn) => { events[`document:${type}`] = fn; } };
   const location = { pathname: '/' };
   const history = { pushState(_state, _unused, path) { location.pathname = path; } };
   class BroadcastChannel { constructor() { this.messages = []; } postMessage(message) { this.messages.push(message); } }

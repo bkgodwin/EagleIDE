@@ -11,7 +11,7 @@ if (!base || !/^http:\/\/127\.0\.0\.1:\d+$/.test(base)) throw new Error('Set EAG
       const context = await browser.newContext({ viewport: { width: 1365, height: 900 } });
       await context.addInitScript(value => { try { sessionStorage.setItem('eagle-auth-session-v1', JSON.stringify(value)); } catch {} }, payload);
       const page = await context.newPage();
-      page.on('dialog', dialog => dialog.accept());
+      page.on('dialog', dialog => dialog.accept(dialog.type() === 'prompt' ? 'fixture-name' : undefined));
       await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 90000 });
       await page.waitForFunction(() => window.ExternalTools && window.EagleIDE?.getContext?.());
       return { context, page };
@@ -59,7 +59,17 @@ if (!base || !/^http:\/\/127\.0\.0\.1:\d+$/.test(base)) throw new Error('Set EAG
     const fixture = page.frameLocator('#externalToolFrameHost iframe');
     await fixture.locator('#result').filter({ hasText: '"worker":"blocked"' }).waitFor({ timeout: 30000 });
     const checks = JSON.parse(await fixture.locator('#result').textContent());
-    assert.deepEqual(checks, { module: 'loaded', wasm: true, font: true, write: 'fixture write', storage: 'blocked', parent: 'blocked', worker: 'blocked' });
+    assert.deepEqual(checks, { module: 'loaded', wasm: true, font: true, write: 'fixture write', storage: 'scoped', parent: 'blocked', worker: 'blocked' });
+    const file = Buffer.alloc(2 * 1024 * 1024, 42);
+    const chooser = page.waitForEvent('filechooser'); await fixture.locator('#fileInput').click();
+    await (await chooser).setFiles({ name: 'large-fixture.bin', mimeType: 'application/octet-stream', buffer: file });
+    await fixture.locator('#fileBytes').filter({ hasText: String(file.length) }).waitFor();
+    const downloadEvent = page.waitForEvent('download'); await fixture.locator('#fileDownload').click();
+    const downloaded = await require('node:fs/promises').readFile(await (await downloadEvent).path());
+    assert.deepEqual(downloaded, file);
+    await fixture.locator('#promptTest').click(); await fixture.locator('#promptResult').filter({ hasText: 'fixture-name' }).waitFor();
+    const popupEvent = context.waitForEvent('page'); await fixture.locator('#popupTest').click(); const popup = await popupEvent;
+    assert.equal(await popup.evaluate(() => { try { opener.parent.document.body; return 'UNSAFE'; } catch { return 'blocked'; } }), 'blocked');
     assert.equal(await page.locator('#outer').isVisible(), false);
     assert.equal(await page.locator('#externalToolWorkspace').isVisible(), true);
     const frameUrl = await page.locator('#externalToolFrameHost iframe').getAttribute('src');
@@ -115,6 +125,8 @@ if (!base || !/^http:\/\/127\.0\.0\.1:\d+$/.test(base)) throw new Error('Set EAG
     await fixture.locator('#serverResult').filter({ hasText: 'Unsaved project survives layout and access checks' }).waitFor();
     console.log('PASS: same document and draft retained beyond lease; fresh server action succeeds.');
     await page.locator('#externalToolClose').click();
+    if (!popup.isClosed()) await popup.waitForEvent('close');
+    assert.equal(popup.isClosed(), true);
     await page.locator('#roleMenuBtn').click();
     await page.locator('#adminSettingsBtn').click();
     await page.locator('[data-admin-settings-section="tools"]').click();
@@ -123,6 +135,14 @@ if (!base || !/^http:\/\/127\.0\.0\.1:\d+$/.test(base)) throw new Error('Set EAG
     await page.locator('#externalToolsAdminStatus').filter({ hasText: 'Tool enabled' }).waitFor();
     const catalog = await page.evaluate(async () => (await (await fetch('/api/admin/tools', { headers: { 'X-Admin-Token': 'fixture-admin' } })).json()).catalog);
     const tool = catalog.tools[0];
+    await page.locator('[data-tool-section="storage"]').click();
+    await page.locator('#externalToolStorageEmail').fill('student@example.test');
+    await page.locator('#externalToolUserStorageForm button').click();
+    await page.locator('#externalToolUserStorageSettings').waitFor({ state: 'visible' });
+    await page.locator('#externalToolUserStorageQuota').fill('2');
+    await page.locator('#externalToolUserStorageSave').click();
+    await page.locator('#externalToolsAdminStatus').filter({ hasText: 'Storage allowance saved' }).waitFor();
+    await page.screenshot({ path: process.env.EAGLE_TOOL_SCREENSHOT_DIR + '/tools-admin-storage.png' });
     const teacher = await account({ teacherToken: 'fixture-teacher', currentTeacher: { email: 'teacher@example.test', role: 'teacher' } });
     // No class has a grant yet. Teachers still see every enabled tool.
     await teacher.page.locator('#externalToolButtons button').filter({ hasText: 'Open fixture' }).waitFor();
@@ -145,8 +165,20 @@ if (!base || !/^http:\/\/127\.0\.0\.1:\d+$/.test(base)) throw new Error('Set EAG
     await student.page.frameLocator('#externalToolFrameHost iframe').locator('#result').filter({ hasText: '"parent":"blocked"' }).waitFor();
     assert.equal(await student.page.frameLocator('#externalToolFrameHost iframe').locator('body').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(238, 238, 255)');
     const before = await student.page.locator('#externalToolFrameHost iframe').getAttribute('src');
+    await student.page.waitForFunction(() => document.getElementById('externalToolSaveState').textContent === 'Storage synced');
     await student.page.locator('#externalToolClose').click();
     assert.equal(await student.page.evaluate(() => window.eagleEditor.getValue()), "print('gateway IDE smoke')");
+    await student.page.locator('#roleMenuBtn').click();
+    await student.page.locator('#externalToolStorageMenu').click();
+    await student.page.locator('#externalToolStorageUsage').filter({ hasText: '2.00 MiB' }).waitFor();
+    const backupEvent = student.page.waitForEvent('download');
+    await student.page.locator('#externalToolStorageList button').filter({ hasText: 'Backup' }).click();
+    const backup = JSON.parse(await require('node:fs/promises').readFile(await (await backupEvent).path(), 'utf8'));
+    assert.equal(backup.entries['fixture-secret'], 'private');
+    await student.page.screenshot({ path: process.env.EAGLE_TOOL_SCREENSHOT_DIR + '/tools-account-storage.png' });
+    await student.page.locator('#externalToolStorageClear').click();
+    await student.page.locator('#externalToolStorageList').filter({ hasText: 'No saved external tool data' }).waitFor();
+    await student.page.locator('#externalToolStorageDone').click();
     await student.page.locator('#externalToolButtons button').filter({ hasText: 'Open fixture' }).click();
     await student.page.frameLocator('#externalToolFrameHost iframe').locator('#result').filter({ hasText: '"parent":"blocked"' }).waitFor();
     const activeUrl = await student.page.locator('#externalToolFrameHost iframe').getAttribute('src');
@@ -156,6 +188,6 @@ if (!base || !/^http:\/\/127\.0\.0\.1:\d+$/.test(base)) throw new Error('Set EAG
     const forbidden = await context.request.get(base + before);
     assert.equal(forbidden.status(), 403);
     assert.equal((await context.request.get(base + activeUrl)).status(), 403);
-    console.log('PASS: wide admin setup and permission guidance, compact full-viewport tools, lease stability and outage recovery, admin registration/test/preview/enable, teacher grant, student launch/logout, opaque module/WASM/font fetch, storage/parent/worker denial, direct-document sandbox, desktop/tablet/narrow/light/dark layout, Python execution and editor-buffer preservation.');
+    console.log('PASS: native 2 MiB file chooser/download roundtrip, sandboxed popup lifecycle and native prompt, admin/user storage allowance/usage/backup/clear, compact full-viewport tools, lease stability/outage recovery, teacher grants/student logout, scoped storage with parent/worker denial, direct-document sandbox, responsive themes, Python execution and editor-buffer preservation.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

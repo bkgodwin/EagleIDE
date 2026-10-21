@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import logging
 import secrets
 import socket
+import sqlite3
 import threading
 import time
 import uuid
@@ -17,6 +19,7 @@ from flask import Response, jsonify, request, send_from_directory
 from tool_gateway import (CapabilityLogFilter, Gateway, MAX_UPLOAD, local_addresses,
                           html_body, redirect_path, stream_body)
 from tool_store import ToolError, ToolStore, networks
+from tool_storage import ToolStorage, CHUNK
 
 LEASE_SECONDS = 90
 HARD_SECONDS = 8 * 60 * 60
@@ -62,8 +65,11 @@ def read_upload(req):
 
 
 def register(app, *, base_dir, source_dir, require_admin, require_teacher, require_user,
-             find_user, get_user_class_ids, find_class, teacher_classes):
+             find_user, get_user_class_ids, find_class, teacher_classes, account_id):
     store, gateway = ToolStore(base_dir), Gateway()
+    storage = ToolStorage(base_dir)
+    snapshot_slots = threading.BoundedSemaphore(2)
+    runtime_source = (source_dir / "static/js/external-tool-runtime.js").read_text(encoding="utf-8")
     sessions, lock = {}, threading.RLock()
     self_ips = local_addresses()
     for logger in (logging.getLogger("werkzeug"), app.logger):
@@ -138,9 +144,48 @@ def register(app, *, base_dir, source_dir, require_admin, require_teacher, requi
                 return handler(*args, **kwargs)
             except ToolError as exc:
                 return jsonify(ok=False, error=str(exc)), exc.status
-            except OSError:
+            except (OSError, sqlite3.Error):
                 return jsonify(ok=False, error="External tools storage is unavailable"), 503
+            finally:
+                release = getattr(request, "_tool_storage_release", None)
+                if release:
+                    release()
         return call
+
+    def snapshot_response(build):
+        # Large profiles stay admitted until the response closes. Limit materialized
+        # snapshots independently of the streaming gateway's connection capacity.
+        if not snapshot_slots.acquire(timeout=15):
+            raise ToolError("Tool storage is busy. Retry shortly", 429)
+        try:
+            response = build()
+            release = request._tool_storage_release
+            request._tool_storage_release = None
+            closed = False
+            def finish():
+                nonlocal closed
+                with lock:
+                    if closed:
+                        return
+                    closed = True
+                snapshot_slots.release()
+                release()
+            original = response.response
+            def stream():
+                try:
+                    for part in original:
+                        for offset in range(0, len(part), 64 * 1024):
+                            yield part[offset:offset + 64 * 1024]
+                finally:
+                    finish()
+            # Werkzeug can error while draining input before calling close().
+            # Release on normal iteration exhaustion as well as early close.
+            response.response = stream()
+            response.call_on_close(finish)
+            return response
+        except BaseException:
+            snapshot_slots.release()
+            raise
 
     @app.after_request
     def external_tool_headers(response):
@@ -149,6 +194,9 @@ def register(app, *, base_dir, source_dir, require_admin, require_teacher, requi
             response.headers["Referrer-Policy"] = "no-referrer"
             response.headers["X-Content-Type-Options"] = "nosniff"
         if request.path.startswith("/_tools/"):
+            if request.headers.get("Origin") == "null":
+                response.headers["Access-Control-Allow-Origin"] = "null"
+                response.headers["Vary"] = "Origin"
             client_socket = request.environ.get("werkzeug.socket")
             if client_socket:
                 try:
@@ -159,6 +207,10 @@ def register(app, *, base_dir, source_dir, require_admin, require_teacher, requi
                     client_socket.shutdown(socket.SHUT_RD)
                 except OSError:
                     pass
+        elif request.endpoint == "external_tool_storage_export":
+            client_socket = request.environ.get("werkzeug.socket")
+            if client_socket:
+                client_socket.settimeout(5)
         return response
 
     @app.get("/api/tools")
@@ -166,6 +218,54 @@ def register(app, *, base_dir, source_dir, require_admin, require_teacher, requi
     def external_tool_list():
         current, data = actor(request), store.read()
         return jsonify(ok=True, tools=[summary(tool) for tool in data["tools"] if entitled(current, tool, data)], revision=data["revision"])
+
+    def storage_account(current):
+        return account_id(current.get("record"))
+
+    @app.route("/api/tools/storage", methods=["GET", "DELETE"])
+    @guarded
+    def external_tool_storage():
+        account = storage_account(actor(request))
+        if request.method == "DELETE":
+            raw = payload()
+            tool = raw.get("tool_id")
+            if tool is not None and (not isinstance(tool, str) or len(tool) != 32):
+                raise ToolError("Invalid tool identifier")
+            result = storage.clear(account, raw.get("epoch"), tool)
+        else:
+            result = storage.summary(account)
+        names = {tool["id"]: tool["name"] for tool in store.read()["tools"]}
+        for item in result["tools"]:
+            item["name"] = names.get(item["tool"], "Removed tool")
+        return jsonify(ok=True, storage=result)
+
+    @app.get("/api/tools/storage/<tool_id>/export")
+    @guarded
+    def external_tool_storage_export(tool_id):
+        current = actor(request)
+        account = storage_account(current)
+        request._tool_storage_release = gateway.admit(identity(current), wait=True)
+        def build():
+            result = storage.snapshot(account, tool_id, export=True)
+            response = jsonify(format="eagleide-tool-storage-v1", tool_id=tool_id, entries=result["entries"])
+            response.headers["Content-Disposition"] = 'attachment; filename="external-tool-backup.json"'
+            return response
+        return snapshot_response(build)
+
+    @app.route("/api/admin/tools/storage", methods=["GET", "PUT"])
+    @guarded
+    def external_tool_storage_policy():
+        current = admin()
+        email = request.args.get("email", "").strip().lower()
+        if email:
+            record = find_user(email)
+            if not record:
+                raise ToolError("Account not found", 404)
+            account = account_id(record)
+        else:
+            account = storage_account(current)
+        result = storage.policy(account, payload()) if request.method == "PUT" else storage.summary(account)
+        return jsonify(ok=True, storage=result)
 
     @app.get("/api/admin/tools")
     @guarded
@@ -288,7 +388,9 @@ def register(app, *, base_dir, source_dir, require_admin, require_teacher, requi
         now, owner = time.monotonic(), identity(current)
         with lock:
             for key in list(sessions):
-                if now > sessions[key]["expires"] or (not sessions[key]["closed"] and now > sessions[key]["lease"]):
+                previous = sessions[key]
+                if (now > previous["expires"] or (not previous["closed"] and now > previous["lease"])
+                        or (previous["owner"] == owner and not previous["closed"] and not authorized(previous))):
                     del sessions[key]
             if len(sessions) >= MAX_INSTANCES or sum(not row["closed"] and row["owner"] == owner for row in sessions.values()) >= 2:
                 raise ToolError("Close another application instance before launching", 429)
@@ -297,12 +399,14 @@ def register(app, *, base_dir, source_dir, require_admin, require_teacher, requi
             scheme = "https" if request.is_secure or request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip() == "https" else request.scheme
             origin = f"{scheme}://{request.host}"
             row = {"id": instance, "tool_id": tool_id, "tool_revision": tool["revision"], "owner": owner,
+                   "account": storage_account(current),
                    "header": current["header"], "token": current["token"], "expires": now + HARD_SECONDS,
                    "lease": now + LEASE_SECONDS, "closed": False, "preview": current["role"] == "admin",
                    "delivered": False, "origin": origin, "created": now}
             sessions[digest] = row
         prefix = f"/_tools/{tool_id}/{capability}/app/"
-        return jsonify(ok=True, instance_id=instance, url=prefix, preview=row["preview"], forms=tool["forms"], lease_seconds=LEASE_SECONDS)
+        return jsonify(ok=True, instance_id=instance, url=prefix, preview=row["preview"], forms=tool["forms"],
+                       popups=tool["popups"], dialogs=tool["dialogs"], storage=tool["storage"], lease_seconds=LEASE_SECONDS)
 
     @app.route("/api/tools/instances/<instance_id>", methods=["POST", "DELETE"])
     @guarded
@@ -340,7 +444,8 @@ def register(app, *, base_dir, source_dir, require_admin, require_teacher, requi
         tool = store.tool(data, tool_id)
         if request.headers.get("Service-Worker") or request.headers.get("Upgrade"):
             raise ToolError("Service workers and upgraded connections are unsupported", 403)
-        allowed = tool["methods"]
+        internal = path.startswith("__eagle__/")
+        allowed = ["GET", "HEAD", "POST", "DELETE"] if internal else tool["methods"]
         if request.method not in allowed + ["OPTIONS"]:
             raise ToolError("This HTTP method is not enabled for the tool", 405)
         prefix = f"{row['origin']}/_tools/{tool_id}/{capability}/app/"
@@ -356,13 +461,57 @@ def register(app, *, base_dir, source_dir, require_admin, require_teacher, requi
             if cors:
                 result.headers.update({"Access-Control-Allow-Origin": "null", "Access-Control-Allow-Methods": ", ".join(allowed), "Access-Control-Allow-Headers": "Content-Type", "Vary": "Origin"})
             return result
+        if internal:
+            # Bound concurrent snapshot construction and chunk bodies as well as
+            # upstream traffic. Release after handling; socket writes stay bounded.
+            request._tool_storage_release = gateway.admit(row["owner"], wait=True)
+            if not authorized(row):
+                raise ToolError("Application access expired or was revoked", 403)
+            action = path[len("__eagle__/"):]
+            if action == "runtime.js" and request.method in {"GET", "HEAD"}:
+                if request.method == "HEAD":
+                    return Response(mimetype="application/javascript")
+                def build():
+                    if not authorized(row):
+                        raise ToolError("Application access expired or was revoked", 403)
+                    snapshot = storage.snapshot(row["account"], tool_id) if tool["storage"] else {"enabled": False, "entries": {}}
+                    config = {"snapshot": snapshot, "instance": row["id"], "prefix": prefix + "__eagle__/", "tool": tool_id, "parentOrigin": row["origin"]}
+                    encoded = json.dumps(json.dumps(config, ensure_ascii=False), ensure_ascii=False)
+                    return Response("(function(config){\n" + runtime_source + "\n})(JSON.parse(" + encoded + "));", mimetype="application/javascript")
+                return snapshot_response(build)
+            if not tool["storage"]:
+                raise ToolError("Cloud storage is not enabled for this tool", 403)
+            if request.method == "POST":
+                if request.content_length is None or request.content_length > CHUNK:
+                    raise ToolError("Storage requests require Content-Length and are limited to 512 KiB", 413)
+                body = read_upload(request)
+                if action == "chunk":
+                    offset = request.args.get("offset", "")
+                    if not offset.isdigit() or len(offset) > 12:
+                        raise ToolError("Invalid storage chunk offset")
+                    received = storage.chunk(row["account"], tool_id, row["id"], request.args.get("id"), int(offset), body)
+                    return jsonify(ok=True, received=received)
+                try:
+                    raw = json.loads(body)
+                except (ValueError, UnicodeError) as exc:
+                    raise ToolError("Invalid storage JSON") from exc
+                if not isinstance(raw, dict):
+                    raise ToolError("A JSON object is required")
+                if action == "begin":
+                    return jsonify(ok=True, **storage.begin(row["account"], tool_id, row["id"], raw))
+                if action == "commit":
+                    return jsonify(ok=True, **storage.commit(row["account"], tool_id, row["id"], raw.get("upload_id")))
+                if action == "abort":
+                    storage.abort(row["account"], tool_id, row["id"], raw.get("upload_id"))
+                    return jsonify(ok=True)
+            raise ToolError("Unknown tool storage action", 404)
         from tool_gateway import safe_path
         raw_uri = request.environ.get("RAW_URI", request.environ.get("REQUEST_URI", ""))
         if "/app/" in raw_uri:
             safe_path(raw_uri.split("/app/", 1)[1].split("?", 1)[0])
         # Cookies, Authorization, Range, conditional and forwarding headers are deliberately not forwarded.
-        if request.content_length is not None and request.content_length > MAX_UPLOAD:
-            raise ToolError("Tool uploads are limited to 1 MiB", 413)
+        if request.content_length is not None and request.content_length > tool["upload_mib"] * MAX_UPLOAD:
+            raise ToolError(f"This tool's server uploads are limited to {tool['upload_mib']} MiB", 413)
         headers = {"Accept": request.headers.get("Accept", "*/*")}
         if request.content_type:
             headers["Content-Type"] = request.content_type
@@ -403,7 +552,7 @@ def register(app, *, base_dir, source_dir, require_admin, require_teacher, requi
             html_document = (upstream.getheader("Content-Type", "").split(";", 1)[0].strip().lower() == "text/html"
                              and not upstream.getheader("Content-Disposition", "").strip().lower().startswith("attachment"))
             is_html = html_document and request.method != "HEAD"
-            body = html_body(upstream, close, lambda: authorized(row)) if is_html else stream_body(upstream, close, lambda: authorized(row))
+            body = html_body(upstream, close, lambda: authorized(row), prefix + "__eagle__/runtime.js") if is_html else stream_body(upstream, close, lambda: authorized(row))
             response = Response(body, status=upstream.status)
             for name in ("Content-Type", "Content-Length", "Content-Encoding", "Content-Language", "Content-Disposition", "Content-Security-Policy", "X-Frame-Options"):
                 if html_document and name in {"Content-Length", "Content-Encoding"}:
@@ -415,8 +564,9 @@ def register(app, *, base_dir, source_dir, require_admin, require_teacher, requi
             if location:
                 response.headers["Location"] = prefix + redirect_path(location, target, path)
             forms = " allow-forms" if tool["forms"] else ""
+            extras = (" allow-popups" if tool["popups"] else "") + (" allow-modals" if tool["dialogs"] else "")
             form_action = prefix if tool["forms"] else "'none'"
-            policy = (f"sandbox allow-scripts allow-downloads{forms}; default-src 'none'; "
+            policy = (f"sandbox allow-scripts allow-downloads{forms}{extras}; default-src 'none'; "
                       f"script-src {prefix} 'unsafe-inline' 'wasm-unsafe-eval'; style-src {prefix} 'unsafe-inline'; "
                       f"connect-src {prefix}; img-src {prefix} data: blob:; font-src {prefix} data:; media-src {prefix} blob:; "
                       f"worker-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; "
@@ -444,4 +594,4 @@ def register(app, *, base_dir, source_dir, require_admin, require_teacher, requi
             raise ToolError("Page not found", 404)
         return send_from_directory(source_dir, "index.html")
 
-    return SimpleNamespace(store=store, gateway=gateway, sessions=sessions)
+    return SimpleNamespace(store=store, storage=storage, gateway=gateway, sessions=sessions)
