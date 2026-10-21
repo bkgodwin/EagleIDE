@@ -68,6 +68,7 @@ the system interpreter and is not a supported production start command.
 | Package | Purpose |
 |---------|---------|
 | `flask` | Web framework — serves HTTP routes and static files |
+| `reportlab` | Private PDF export of a selected lesson-plan week across all teacher classes |
 | `flask-socketio` | WebSocket / Socket.IO support — streams real-time code output to the browser |
 | `simple-websocket` | WebSocket transport used by Flask-SocketIO standard threading mode |
 | `requests` | HTTP client — used to call the Ollama AI API for code explain / assistant features |

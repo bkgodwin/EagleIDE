@@ -44,7 +44,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261021-agenda-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261021-agenda-polish-1">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -125,7 +125,7 @@
           <option value="14">Small</option>
           <option value="16" selected>Default</option>
           <option value="18">Large</option>
-          <option value="20">Extra large</option>
+          <option value="28">Extra large</option>
         </select>
       </label>
       <button class="btn exception-help-btn ide-only" id="exceptionHelpBtn" title="Troubleshooting Assistant" aria-label="Open troubleshooting assistant">🛠️ Help</button>
@@ -139,7 +139,6 @@
         <button class="btn secondary" id="coteacherModeBtn" type="button" hidden>CoTeacher dashboard</button>
         <button class="btn btn--ghost btn--icon secondary" id="roleMenuBtn" type="button" aria-haspopup="true" aria-expanded="false" title="Account menu" style="display:none;">⋯</button>
         <div class="role-menu-panel glass-surface" id="roleMenuPanel">
-          <button class="btn secondary" id="externalToolStorageMenu" type="button" hidden>External tool storage</button>
           <button class="btn btn--admin admin" id="teacherDashboardBtn" title="Teacher Dashboard" style="display:none;">📋 Dashboard</button>
           <button class="btn btn--admin admin" id="studentDashboardBtn" title="Student Dashboard" style="display:none;">📋 Dashboard</button>
           <button class="btn btn--admin admin" id="adminUsersBtn" title="User Management" style="display:none;">👥 Users</button>
@@ -1001,27 +1000,28 @@
 
         <!-- Account View -->
         <div class="teacher-dash-view" id="dash-account">
-          <button class="btn secondary external-tool-storage-open" type="button">External tool storage: usage and clear</button>
           <div class="teacher-dash-view-hdr">
-            <h2 class="teacher-dash-view-title">Account Settings</h2>
+            <div><h2 class="teacher-dash-view-title">Your account</h2><p class="account-settings-subtitle">Manage your profile, security, saved tool data, and editor preferences.</p></div>
           </div>
-          <div class="teacher-dash-scroll">
-            <section class="editor-appearance-settings" data-editor-appearance aria-label="Teacher editor colors"></section>
-            <div style="max-width:480px;">
-              <button class="btn secondary profile-edit-btn" type="button">Edit name and student ID</button><div id="teacherPasswordSection">
-                <h4 style="margin:0 0 16px; color:var(--columbia-blue); font-size:15px;">Change Password</h4>
-                <label style="display:block; margin-bottom:4px; font-weight:600; font-size:13px;">Current Password</label>
-                <input type="password" id="teacherCurrentPassword" placeholder="Current password" style="width:100%; padding:10px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; margin-bottom:12px;">
-                <label style="display:block; margin-bottom:4px; font-weight:600; font-size:13px;">New Password</label>
-                <input type="password" id="teacherNewPassword" placeholder="New password (8+ chars)" style="width:100%; padding:10px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; margin-bottom:16px;">
+          <div class="teacher-dash-scroll account-settings-layout">
+            <div class="account-settings-grid">
+              <section class="account-settings-card"><span class="account-settings-kicker">PROFILE</span><h3>Personal details</h3><p>Keep your display name and account details up to date.</p><button class="btn secondary profile-edit-btn" type="button">Edit profile</button></section>
+              <section class="account-settings-card" id="teacherPasswordSection">
+                <span class="account-settings-kicker">SECURITY</span><h3>Change password</h3><p>Choose a password with at least 8 characters.</p>
+                <label for="teacherCurrentPassword">Current password</label>
+                <input type="password" id="teacherCurrentPassword" autocomplete="current-password">
+                <label for="teacherNewPassword">New password</label>
+                <input type="password" id="teacherNewPassword" autocomplete="new-password" minlength="8" maxlength="72">
                 <button class="btn run" id="teacherChangePasswordBtn">Update Password</button>
-                <div id="teacherPasswordStatus" style="font-size:12px; margin-top:10px; color:var(--theme-text-dim);"></div>
-              </div>
-              <section class="account-debug-setting" aria-labelledby="teacherShellDebugHeading">
-                <h4 id="teacherShellDebugHeading">Shell Debugging</h4>
+                <div id="teacherPasswordStatus" role="status" aria-live="polite"></div>
+              </section>
+              <section class="account-settings-card"><span class="account-settings-kicker">SAVED WORK</span><h3>External tool storage</h3><p>Review saved application data, download backups, or clear data for an external tool.</p><button class="btn secondary external-tool-storage-open" type="button">Manage storage</button></section>
+              <section class="account-settings-card account-debug-setting" aria-labelledby="teacherShellDebugHeading">
+                <span class="account-settings-kicker">PREFERENCES</span><h3 id="teacherShellDebugHeading">Shell messages</h3>
                 <label class="admin-setting-toggle compact"><input type="checkbox" id="teacherShellDebugMessages"><span><strong>Show IDE system messages</strong><small>Show connection and run lifecycle messages such as Sending code and Process finished in this browser.</small></span></label>
               </section>
             </div>
+            <section class="editor-appearance-settings account-appearance-panel" data-editor-appearance aria-label="Teacher editor colors"></section>
           </div>
         </div>
 
@@ -1134,18 +1134,17 @@
           </div>
         </div>
         <div class="teacher-dash-view" id="student-dash-account">
-          <button class="btn secondary external-tool-storage-open" type="button">External tool storage: usage and clear</button>
           <div class="teacher-dash-view-hdr">
             <div>
-              <h2 class="teacher-dash-view-title">Account Settings</h2>
-              <p class="student-classes-subtitle">Personalize your editor colors and manage your account.</p>
+              <h2 class="teacher-dash-view-title">Your account</h2>
+              <p class="account-settings-subtitle">Manage your profile, security, saved tool data, and editor preferences.</p>
             </div>
           </div>
-          <div class="teacher-dash-scroll student-account-layout">
-            <section class="editor-appearance-settings" data-editor-appearance aria-label="Student editor colors"></section>
-            <button class="btn secondary profile-edit-btn" type="button">Edit name and student ID</button>
-            <form id="studentPasswordForm" class="student-account-card">
-              <h3>Change password</h3>
+          <div class="teacher-dash-scroll account-settings-layout">
+            <div class="account-settings-grid">
+            <section class="account-settings-card"><span class="account-settings-kicker">PROFILE</span><h3>Personal details</h3><p>Update your name and student number so your teacher can identify your work.</p><button class="btn secondary profile-edit-btn" type="button">Edit profile</button></section>
+            <form id="studentPasswordForm" class="student-account-card account-settings-card">
+              <span class="account-settings-kicker">SECURITY</span><h3>Change password</h3>
               <p>Use at least 8 characters. Other signed-in devices will be signed out.</p>
               <label for="studentCurrentPassword">Current password</label>
               <input id="studentCurrentPassword" type="password" autocomplete="current-password" required>
@@ -1156,6 +1155,9 @@
               <div id="studentPasswordStatus" class="student-password-status" role="status" aria-live="polite"></div>
               <button class="btn run" id="studentChangePasswordBtn" type="submit">Change Password</button>
             </form>
+            <section class="account-settings-card"><span class="account-settings-kicker">SAVED WORK</span><h3>External tool storage</h3><p>Review saved application data, download backups, or clear data for an external tool.</p><button class="btn secondary external-tool-storage-open" type="button">Manage storage</button></section>
+            </div>
+            <section class="editor-appearance-settings account-appearance-panel" data-editor-appearance aria-label="Student editor colors"></section>
           </div>
         </div>
       </main>
@@ -1788,9 +1790,11 @@
           </section>
           <section class="admin-settings-pane" data-admin-settings-pane="account">
             <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Preferences</span><h4>Account Settings</h4><p>Personalize editor colors and control administrator diagnostics.</p></div>
-            <section class="editor-appearance-settings" data-editor-appearance aria-label="Administrator editor colors"></section>
-            <button class="btn secondary external-tool-storage-open" type="button">External tool storage: usage and clear</button>
-            <label class="admin-setting-toggle"><input type="checkbox" id="adminShellDebugMessages"><span><strong>Show IDE system messages</strong><small>Show connection and run lifecycle messages such as Sending code and Process finished in the shell.</small></span></label>
+            <div class="account-settings-grid">
+              <section class="account-settings-card"><span class="account-settings-kicker">SAVED WORK</span><h3>External tool storage</h3><p>Review saved application data, download backups, or clear data for an external tool.</p><button class="btn secondary external-tool-storage-open" type="button">Manage storage</button></section>
+              <section class="account-settings-card"><span class="account-settings-kicker">PREFERENCES</span><h3>Shell messages</h3><label class="admin-setting-toggle"><input type="checkbox" id="adminShellDebugMessages"><span><strong>Show IDE system messages</strong><small>Show connection and run lifecycle messages such as Sending code and Process finished in the shell.</small></span></label></section>
+            </div>
+            <section class="editor-appearance-settings account-appearance-panel" data-editor-appearance aria-label="Administrator editor colors"></section>
           </section>
           <section class="admin-settings-pane" data-admin-settings-pane="tools">
             <div class="admin-wiki-settings-card"><div><strong>External Tools</strong><span>Register private applications for teachers and let class owners grant student access.</span></div><button type="button" class="btn secondary" id="settingsExternalToolsBtn">External Tools</button></div>
@@ -1954,26 +1958,26 @@
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20250608"></script>
   <script src="/static/js/layout.js?v=20261011-files-5"></script>
-  <script src="/static/js/autocomplete.js?v=20261021-agenda-1"></script>
+  <script src="/static/js/autocomplete.js?v=20261021-agenda-polish-1"></script>
   <script src="/static/js/editor-behavior.js?v=20261009-assignment-step-2"></script>
-  <script src="/static/js/editor-feedback.js?v=20261021-agenda-1"></script>
-  <script src="/static/js/editor-appearance.js?v=20261021-agenda-1"></script>
+  <script src="/static/js/editor-feedback.js?v=20261021-agenda-polish-1"></script>
+  <script src="/static/js/editor-appearance.js?v=20261021-agenda-polish-1"></script>
   <script src="/static/js/editor-init.js?v=20261015-assignment-folders-1"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js?v=20261011-files-5"></script>
   <script src="/static/js/server-performance.js?v=20261011-files-5"></script>
   <script src="/static/js/workspace-data.js?v=20261011-files-5"></script>
   <script src="/static/js/file-provenance.js?v=20261015-assignment-folders-1"></script>
-  <script src="/static/js/assignment-workflow.js?v=20261021-agenda-1"></script>
+  <script src="/static/js/assignment-workflow.js?v=20261021-agenda-polish-1"></script>
   <script src="/static/js/assignment-development.js?v=20261015-assignment-folders-1"></script>
   <script src="/static/js/teacher-assignments.js?v=20261015-assignment-folders-1"></script>
-  <script src="/static/js/app-core.js?v=20261021-agenda-1"></script>
+  <script src="/static/js/app-core.js?v=20261021-agenda-polish-1"></script>
   <script src="/static/js/step-mode.js?v=20261011-files-5"></script>
-  <script src="/static/js/lesson-plan-renderer.js?v=20261021-agenda-1"></script>
-  <script src="/static/js/wiki-reader.js?v=20261021-agenda-1"></script>
-  <script src="/static/js/external-tools.js?v=20261020-2"></script>
-  <script src="/static/js/lesson-plans.js?v=20261021-agenda-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20261021-agenda-1"></script>
+  <script src="/static/js/lesson-plan-renderer.js?v=20261021-agenda-polish-1"></script>
+  <script src="/static/js/wiki-reader.js?v=20261021-agenda-polish-1"></script>
+  <script src="/static/js/external-tools.js?v=20261021-agenda-polish-1"></script>
+  <script src="/static/js/lesson-plans.js?v=20261021-agenda-polish-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20261021-agenda-polish-1"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20261011-files-5"></script>
   <script src="/static/js/notebook-sync.js?v=20261011-notebook-topics-1"></script>

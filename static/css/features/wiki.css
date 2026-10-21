@@ -552,6 +552,7 @@ body:not(.wiki-mode) .wiki-top-search input::placeholder { color: rgba(11, 37, 6
 .wiki-article-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .wiki-article-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 300px); gap: clamp(18px,1.5vw,28px); padding-top: 28px; }
 #wikiArticleBody.wiki-article-body { min-width: 0; color: #dbe6f1; font-size: var(--wiki-body-font-size,16px) !important; line-height: 1.75; }
+#wikiEmbeddedContent { font-size:var(--wiki-body-font-size,16px); }
 .wiki-article-body > :first-child { margin-top: 0; }
 .wiki-redundant-page-title { display: none; }
 .wiki-article-body h1,.wiki-article-body h2,.wiki-article-body h3,.wiki-article-body h4 { color: #f3f8fd; line-height: 1.25; scroll-margin-top: 78px; }

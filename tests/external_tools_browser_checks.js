@@ -169,7 +169,9 @@ if (!base || !/^http:\/\/127\.0\.0\.1:\d+$/.test(base)) throw new Error('Set EAG
     await student.page.locator('#externalToolClose').click();
     assert.equal(await student.page.evaluate(() => window.eagleEditor.getValue()), "print('gateway IDE smoke')");
     await student.page.locator('#roleMenuBtn').click();
-    await student.page.locator('#externalToolStorageMenu').click();
+    await student.page.locator('#studentDashboardBtn').click();
+    await student.page.locator('[data-view="student-dash-account"]').click();
+    await student.page.locator('#student-dash-account .external-tool-storage-open').click();
     await student.page.locator('#externalToolStorageUsage').filter({ hasText: '2.00 MiB' }).waitFor();
     const backupEvent = student.page.waitForEvent('download');
     await student.page.locator('#externalToolStorageList button').filter({ hasText: 'Backup' }).click();
@@ -179,6 +181,7 @@ if (!base || !/^http:\/\/127\.0\.0\.1:\d+$/.test(base)) throw new Error('Set EAG
     await student.page.locator('#externalToolStorageClear').click();
     await student.page.locator('#externalToolStorageList').filter({ hasText: 'No saved external tool data' }).waitFor();
     await student.page.locator('#externalToolStorageDone').click();
+    await student.page.locator('#studentDashCloseBtn').click();
     await student.page.locator('#externalToolButtons button').filter({ hasText: 'Open fixture' }).click();
     await student.page.frameLocator('#externalToolFrameHost iframe').locator('#result').filter({ hasText: '"parent":"blocked"' }).waitFor();
     const activeUrl = await student.page.locator('#externalToolFrameHost iframe').getAttribute('src');

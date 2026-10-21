@@ -399,7 +399,7 @@ def _add_security_headers(response):
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-            "font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; "
+            "font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; "
             "connect-src 'self'; frame-ancestors *; base-uri 'none'; form-action 'none'"
         )
         response.headers["Referrer-Policy"] = "no-referrer"

@@ -496,6 +496,17 @@ class WikiApiTests(unittest.TestCase):
             404,
         )
 
+    def test_home_can_omit_the_public_catalog_without_caching_private_metadata(self):
+        _, page = self._create_published_page()
+        original = self.client.get('/api/wiki/home?class_id=class-one', headers=self.student)
+        self.assertIn(page['id'], {node['id'] for node in _flatten(original.get_json()['tree'])})
+        response = self.client.get('/api/wiki/home?include_tree=0&class_id=class-one', headers=self.student)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('tree', response.get_json())
+        self.assertEqual(response.get_json()['catalog_version'], original.get_json()['catalog_version'])
+        self.assertEqual(response.get_json()['active_class']['id'], 'class-one')
+        self.assertEqual(response.headers['Cache-Control'], 'private, no-store')
+
     def test_admin_mutations_require_admin_token(self):
         response = self.client.post("/api/admin/wiki/folders", json={"title": "Denied"})
         self.assertEqual(response.status_code, 401)

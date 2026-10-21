@@ -76,7 +76,27 @@ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
     const publicContext=await browser.newContext(), publicPage=await publicContext.newPage();
     await publicPage.goto(base+share.public_path,{waitUntil:'networkidle'});
     await publicPage.waitForFunction(()=>[...document.querySelectorAll('#publicLessonPlanHost img')].length===2 && [...document.querySelectorAll('#publicLessonPlanHost img')].every(image=>image.naturalWidth>0));
-    assert.equal(await publicPage.locator('.lesson-plan-file,.lesson-plan-assignment,.lesson-plan-due').count(),0,'Public plans do not expose student actions or personal deadlines');
+    assert.equal(await publicPage.locator('.lesson-plan-file').count(),1);
+    assert.equal(await publicPage.locator('.lesson-plan-assignment,.lesson-plan-due').count(),0,'Public plans do not expose personal deadlines');
+    const publicUrl=publicPage.url();let guestCopies=0;publicPage.on('request',request=>{if(request.url().endsWith('/open')) guestCopies++;});
+    await publicPage.locator('.lesson-plan-file').click();
+    await publicPage.locator('#agendaActionTooltip').filter({hasText:'Sign in'}).waitFor();
+    assert.equal(publicPage.url(),publicUrl);assert.equal(guestCopies,0);
+    await publicPage.locator('#publicLessonPlanHost img').first().click();
+    await publicPage.locator('.agenda-image-popout[open]').waitFor();
+    await publicPage.getByRole('button',{name:'Close image',exact:true}).click();
+    const signedPublic=await context.newPage();await signedPublic.goto(base+share.public_path,{waitUntil:'networkidle'});
+    await signedPublic.locator('.lesson-plan-file').click();
+    await signedPublic.waitForFunction(()=>window.EagleIDE?.getContext?.().getCurrentFile?.()?.path==='loops (1).py');
+    await signedPublic.close();
+    const pdfResponse=page.waitForResponse(response=>response.url().includes('/print-all'));
+    const popupPromise=page.waitForEvent('popup');await page.locator('#lessonPlanPrintAll').click();
+    const pdf=await pdfResponse;assert.equal(pdf.status(),200);assert.match(pdf.headers()['content-type'],/application\/pdf/);
+    const popup=await popupPromise;await popup.waitForURL(/^blob:/);
+    const pdfBytes=Buffer.from(await page.evaluate(async url=>Array.from(new Uint8Array(await(await fetch(url)).arrayBuffer())),popup.url()));
+    assert.equal(pdfBytes.subarray(0,5).toString(),'%PDF-');
+    if(output) fs.writeFileSync(path.join(output,'all-classes.pdf'),pdfBytes);
+    await popup.close();
     await publicContext.close();
     results.push('teacher composition, image upload, section tiles, files, assignment links and publishing');
     for (const [width,theme] of [[1440,'dark'],[1440,'light'],[820,'dark'],[820,'light'],[390,'dark'],[390,'light']]) {
@@ -86,6 +106,7 @@ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
       if(output) await page.screenshot({path:path.join(output,`planner-${width}-${theme}.png`)});
     }
     results.push('desktop, tablet, mobile and both themes');
+    results.push('public file tiles with guest tooltips, signed-in IDE opens, image popouts and all-class PDF');
     await page.setViewportSize({width:1440,height:1000});
     // Editing during a slow publish must leave the newer draft intact.
     let release;

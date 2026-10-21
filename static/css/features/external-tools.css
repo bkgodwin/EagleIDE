@@ -21,6 +21,7 @@ body.external-tool-mode #coteacherModeBtn { display:none !important; }
 body.external-tool-mode .external-tool-toolbar { display:flex; flex:1; min-width:0; align-items:center; gap:6px; color:#edf5ff; }
 .external-tool-toolbar > strong { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
 .external-tool-save-state { font-size:11px; max-width:90px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#externalToolStorageModal { z-index:10030; }
 #externalToolStorageModal .external-tool-storage-manager { width:min(700px, 94vw); max-width:700px; max-height:85dvh; overflow:auto; }
 .external-tool-storage-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:12px 0; border-bottom:1px solid var(--theme-border-mid); }
 .external-tool-storage-row span { flex:1; min-width:160px; overflow-wrap:anywhere; }
