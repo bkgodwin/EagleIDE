@@ -4,6 +4,13 @@
     .CodeMirror pre.CodeMirror-line-like,
     .CodeMirror-linenumber{ line-height:inherit; }
     .CodeMirror-linenumber{ font-variant-numeric:tabular-nums; }
+    /* Let CodeMirror measure the same monospace metrics as the rendered rows.
+       Reserve three digits so the common 9/10 and 99/100 transitions stay still.
+       Larger gutters remain measured by CodeMirror, with no fixed pixel cap. */
+    .CodeMirror .CodeMirror-linenumbers { min-width: calc(3ch + 8px); }
+    .CodeMirror .CodeMirror-linenumber { font-family: inherit; font-size: inherit; font-weight: normal; }
+    .CodeMirror .CodeMirror-gutters, .CodeMirror .CodeMirror-gutter-wrapper,
+    .CodeMirror .CodeMirror-sizer, .CodeMirror .CodeMirror-linenumber { transition: none; }
     .CodeMirror {
       --eagle-block-guide: rgba(190, 205, 225, .26);
       --eagle-occurrence: rgba(140, 185, 220, .16);
@@ -63,6 +70,46 @@
     .CodeMirror.cm-s-default span.cm-operator { color: #35435a; }
     .CodeMirror.cm-s-default span.cm-tag { color: #a62d46; }
     .CodeMirror.cm-s-default span.cm-attribute { color: #145e90; }
+    .CodeMirror.cm-s-eagle { background:var(--editor-background); color:var(--editor-foreground); }
+    .cm-s-eagle .CodeMirror-gutters { background:var(--editor-background); border-color:var(--editor-comment); }
+    .cm-s-eagle .CodeMirror-linenumber, .cm-s-eagle .CodeMirror-guttermarker-subtle { color:var(--editor-comment); }
+    .cm-s-eagle .CodeMirror-cursor { border-color:var(--editor-foreground); }
+    .cm-s-eagle .CodeMirror-selected { background:color-mix(in srgb,var(--editor-variable) 24%,var(--editor-background)); }
+    .cm-s-eagle.CodeMirror-focused .CodeMirror-selected { background:color-mix(in srgb,var(--editor-variable) 32%,var(--editor-background)); }
+    .cm-s-eagle .cm-keyword { color:var(--editor-keyword); font-weight:bold; }
+    .cm-s-eagle .cm-def, .cm-s-eagle .cm-eagle-call { color:var(--editor-definition); }
+    .cm-s-eagle .cm-variable, .cm-s-eagle .cm-variable-2, .cm-s-eagle .cm-property,
+    .cm-s-eagle .cm-attribute { color:var(--editor-variable); }
+    .cm-s-eagle .cm-builtin, .cm-s-eagle .cm-atom, .cm-s-eagle .cm-type,
+    .cm-s-eagle .cm-variable-3, .cm-s-eagle .cm-qualifier { color:var(--editor-type); }
+    .cm-s-eagle .cm-string, .cm-s-eagle .cm-string-2 { color:var(--editor-string); }
+    .cm-s-eagle .cm-number { color:var(--editor-number); }
+    .cm-s-eagle .cm-comment { color:var(--editor-comment); font-style:italic; }
+    .cm-s-eagle .cm-operator, .cm-s-eagle .cm-bracket { color:var(--editor-foreground); }
+    .cm-s-eagle .cm-meta, .cm-s-eagle .cm-tag, .cm-s-eagle .cm-eagle-parameter { color:var(--editor-keyword); }
+    .cm-s-eagle .cm-eagle-type { color:var(--editor-type); text-decoration:underline; text-underline-offset:3px; }
+    /* Semantic call styling wins over the base variable/builtin token. */
+    .cm-s-eagle span.cm-eagle-call { color:var(--editor-definition); }
+    .cm-s-eagle .cm-error { color:var(--editor-foreground); text-decoration:underline wavy; }
+    .CodeMirror.cm-s-eagle .CodeMirror-matchingbracket { color:var(--editor-type); text-decoration:underline; font-weight:bold; }
+    .CodeMirror.cm-s-eagle .CodeMirror-nonmatchingbracket { color:var(--editor-foreground); text-decoration:underline wavy; }
+    .CodeMirror.cm-s-eagle .eagle-fold-open, .CodeMirror.cm-s-eagle .eagle-fold-closed,
+    .CodeMirror.cm-s-eagle .CodeMirror-foldmarker { color:var(--editor-foreground); background:var(--editor-background); border-color:var(--editor-comment); }
+    .CodeMirror.cm-s-eagle[data-editor-mode="light"] { --eagle-block-guide:rgba(40,55,70,.3); --eagle-occurrence:rgba(40,90,150,.15); --eagle-bracket-range:rgba(35,55,80,.10); }
+    .CodeMirror.cm-s-eagle[data-editor-mode="dark"] { --eagle-block-guide:rgba(205,220,235,.3); --eagle-occurrence:rgba(140,185,220,.16); --eagle-bracket-range:rgba(0,0,0,.24); }
+    .CodeMirror.cm-s-eagle[data-editor-mode] .eagle-active-line { background:color-mix(in srgb,var(--editor-foreground) 5%,transparent); box-shadow:inset 0 1px color-mix(in srgb,var(--editor-foreground) 25%,transparent),inset 0 -1px color-mix(in srgb,var(--editor-foreground) 25%,transparent); }
+    .editor-appearance-settings { max-width:720px; margin:0 0 24px; padding:18px; border:1px solid var(--theme-border-mid); border-radius:12px; background:var(--theme-panel); color:var(--theme-text); }
+    .editor-appearance-settings h3 { margin:0 0 8px; }
+    .editor-appearance-settings p { font-size:13px; line-height:1.5; }
+    .editor-appearance-settings > label { display:block; margin-bottom:6px; font-weight:600; }
+    .editor-appearance-settings select { width:100%; max-width:100%; padding:9px; border:1px solid var(--theme-border-mid); border-radius:6px; background:var(--theme-input-bg); color:var(--theme-text); }
+    .editor-background-control { display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin:14px 0; }
+    .editor-appearance-settings .editor-background-control label { margin:0; }
+    .modal-content .editor-appearance-settings .editor-background-control input[type=color] { flex:0 0 50px; width:50px; height:36px; padding:2px; }
+    .editor-colors-help { color:var(--theme-text-dim); }
+    .editor-color-preview { overflow:hidden; border:1px solid var(--theme-border-mid); border-radius:8px; margin:12px 0; }
+    .editor-color-preview .CodeMirror { height:270px; font-size:13px; }
+    .editor-appearance-settings [role=status] { min-height:1.5em; margin-bottom:0; }
     .eagle-occurrence { background-color: var(--eagle-occurrence); border-radius: 2px; }
     .eagle-bracket-range { background-color: var(--eagle-bracket-range); }
     .eagle-diagnostic-error { text-decoration: underline wavy #ed6666; text-underline-offset: 3px; }
@@ -404,7 +451,7 @@
     .teacher-stream-pane .CodeMirror{ height:100%; }
     #teacherStreamPane { --stream-bg:color-mix(in srgb,var(--theme-bg) 88%,white); background:var(--stream-bg); }
     .light-mode #teacherStreamPane { --stream-bg:#fff; }
-    #teacherStreamPane .CodeMirror, #teacherStreamPane .CodeMirror-gutters, #teacherStreamEditor { background:var(--stream-bg) !important; }
+    #teacherStreamPane .CodeMirror:not(.cm-s-eagle), #teacherStreamPane .CodeMirror:not(.cm-s-eagle) .CodeMirror-gutters { background:var(--stream-bg); }
     .teacher-stream-pane .CodeMirror-scroll{ overflow:auto !important; }
     .teacher-pane-toggle{
       position:fixed;
