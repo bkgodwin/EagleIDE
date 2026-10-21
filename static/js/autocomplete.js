@@ -121,7 +121,8 @@
 
   function inferPythonType(value, annotation, classNames) {
     const hinted = String(annotation || '').trim().replace(/^['\"]|['\"]$/g, '');
-    const simpleHint = hinted.replace(/typing\./g, '').split(/[\[|]/)[0].trim();
+    const unwrapped = hinted.replace(/typing\./g, '').replace(/^(?:Optional|Annotated|Union)\s*\[\s*/, '');
+    const simpleHint = unwrapped.split(/[\[|,\]]/)[0].trim().replace(/^['"]|['"]$/g, '');
     if (/^(str|String)$/i.test(simpleHint)) return 'str';
     if (/^(list|List|Sequence|MutableSequence)$/i.test(simpleHint)) return 'list';
     if (/^(dict|Dict|Mapping)$/i.test(simpleHint)) return 'dict';
@@ -175,6 +176,73 @@
     return Object.assign({ name, kind, signature: '', returns: '', description: '', owner: '' }, extra || {});
   }
 
+  // Preserve physical line indices while joining continued declarations. Strings
+  // and comments cannot introduce fake scopes or unbalance a function signature.
+  function pythonLogicalLines(source) {
+    const lines = String(source || '').replace(/\r/g, '').split('\n');
+    const joined = lines.map(() => '');
+    let depth = 0, quote = '', start = 0, buffer = '', gathering = false, literal = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!gathering) { start = i; literal = /^\s*(?:[rubf]{0,2})?["']/i.test(line); }
+      let code = '';
+      for (let ch = 0; ch < line.length; ch++) {
+        const char = line[ch];
+        if (quote) {
+          code += char;
+          if (char === '\\') { code += line[++ch] || ''; continue; }
+          if (line.slice(ch, ch + quote.length) === quote) {
+            code += quote.slice(1); ch += quote.length - 1; quote = '';
+          }
+        } else if (char === '#') break;
+        else if (char === '"' || char === "'") {
+          quote = line.slice(ch, ch + 3) === char.repeat(3) ? char.repeat(3) : char;
+          code += quote; ch += quote.length - 1;
+        } else {
+          code += char;
+          if ('([{'.includes(char)) depth++;
+          if (')]}'.includes(char)) depth = Math.max(0, depth - 1);
+        }
+      }
+      // A whole string literal (including a docstring) is never a declaration.
+      buffer += (buffer ? ' ' + code.trim() : code).replace(/\\\s*$/, '');
+      gathering = !!(depth || quote || /\\\s*$/.test(code));
+      if (!gathering) { joined[start] = literal ? '' : buffer; buffer = ''; }
+    }
+    if (buffer) joined[start] = buffer;
+    return joined;
+  }
+
+  function pythonFunctionHeader(line) {
+    const head = line.match(/^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(/);
+    if (!head) return null;
+    let depth = 1, quote = '', end = head[0].length;
+    for (; end < line.length; end++) {
+      const char = line[end];
+      if (quote) {
+        if (char === '\\') { end++; continue; }
+        if (char === quote) quote = '';
+      } else if (char === '"' || char === "'") quote = char;
+      else if (char === '(') depth++;
+      else if (char === ')' && --depth === 0) break;
+    }
+    if (depth !== 0) return null;
+    const rest = line.slice(end + 1).trim();
+    if (rest.startsWith(':')) return [line, head[1], line.slice(head[0].length, end), ''];
+    if (!rest.startsWith('->')) return null;
+    let nested = 0;
+    quote = '';
+    for (let i = 2; i < rest.length; i++) {
+      const char = rest[i];
+      if (quote) { if (char === '\\') i++; else if (char === quote) quote = ''; }
+      else if (char === '"' || char === "'") quote = char;
+      else if ('([{'.includes(char)) nested++;
+      else if (')]}'.includes(char)) nested--;
+      else if (char === ':' && nested === 0) return [line, head[1], line.slice(head[0].length, end), rest.slice(2, i).trim()];
+    }
+    return null;
+  }
+
   function analyzePython(source) {
     const text = String(source || '');
     const result = {
@@ -184,8 +252,9 @@
     };
     if (result.tooLarge) return result;
     const lines = text.replace(/\r/g, '').split('\n');
+    const logicalLines = pythonLogicalLines(text);
     const classNames = new Set();
-    for (const line of lines) {
+    for (const line of logicalLines) {
       const match = line.match(/^\s*class\s+([A-Za-z_]\w*)/);
       if (match) classNames.add(match[1]);
     }
@@ -193,9 +262,10 @@
     const variableNames = new Set();
     const functionNames = new Set();
     const classSymbols = new Map();
+    const dataclasses = new Map();
 
     for (let index = 0; index < lines.length; index += 1) {
-      const line = lines[index];
+      const line = logicalLines[index];
       const trimmed = line.trim();
       const indent = leadingIndent(line);
       if (trimmed && !trimmed.startsWith('#')) {
@@ -213,6 +283,19 @@
         });
         result.classes.push(symbol);
         classSymbols.set(symbol.name, symbol);
+        for (let before = index - 1; before >= 0; before--) {
+          const decorator = logicalLines[before].trim();
+          if (!decorator) continue;
+          if (!decorator.startsWith('@')) break;
+          const match = decorator.match(/^@([\w.]+)(?:\s*\((.*)\))?$/);
+          if (!match) continue;
+          const parts = match[1].split('.');
+          const canonical = [result.varTypes.get(parts[0]) || parts[0], ...parts.slice(1)].join('.');
+          if (canonical === 'dataclasses.dataclass' && !/\binit\s*=\s*False\b/.test(match[2] || '')) {
+            const inherited = (classMatch[2] || '').split(',').flatMap(base => dataclasses.get(base.trim())?.fields || []);
+            dataclasses.set(symbol.name, { fields: [...inherited], kwOnly: /\bkw_only\s*=\s*True\b/.test(match[2] || '') });
+          }
+        }
         if (!result.methods.has(symbol.name)) result.methods.set(symbol.name, []);
         if (!result.attributes.has(symbol.name)) result.attributes.set(symbol.name, []);
         stack.push({ type: 'class', name: symbol.name, indent });
@@ -220,7 +303,7 @@
         continue;
       }
 
-      const defMatch = line.match(/^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\((.*)\)\s*(?:->\s*([^:]+))?\s*:/);
+      const defMatch = pythonFunctionHeader(line);
       if (defMatch) {
         const ownerScope = [...stack].reverse().find(scope => scope.type === 'class');
         const params = splitPythonParams(defMatch[2]);
@@ -287,22 +370,35 @@
         }
       }
 
-      const assignment = line.match(/^\s*([A-Za-z_]\w*)\s*(?::\s*([^=]+?))?\s*=\s*(?!=)(.+)$/);
+      const assignment = line.match(/^\s*([A-Za-z_]\w*)\s*(?::\s*([^=]+?))?\s*=\s*(?!=)(.+)$/)
+        || line.match(/^\s*([A-Za-z_]\w*)\s*:\s*(.+?)\s*$/);
       if (assignment && !PYTHON_KEYWORDS.includes(assignment[1])) {
         const name = assignment[1];
-        let typeName = inferPythonType(assignment[3], assignment[2], classNames);
-        if (!typeName && result.varTypes.has(assignment[3].trim())) typeName = result.varTypes.get(assignment[3].trim());
-        if (!typeName) typeName = inferredCallType(assignment[3], result.varTypes);
+        const value = assignment[3] || '';
+        let typeName = inferPythonType(value, assignment[2], classNames);
+        if (!typeName && result.varTypes.has(value.trim())) typeName = result.varTypes.get(value.trim());
+        if (!typeName) typeName = inferredCallType(value, result.varTypes);
         if (!typeName) {
-          const calledName = assignment[3].trim().match(/^([A-Za-z_]\w*)\s*\(/)?.[1];
-          typeName = result.functions.find(item => item.name === calledName)?.returns || '';
+          const calledName = value.trim().match(/^([A-Za-z_]\w*)\s*\(/)?.[1];
+          const returns = result.functions.find(item => item.name === calledName)?.returns || '';
+          typeName = inferPythonType('', returns, classNames);
           if (typeName === 'Any') typeName = '';
         }
         if (typeName) result.varTypes.set(name, typeName);
         const currentFunction = [...stack].reverse().find(scope => scope.type === 'function');
         if (currentClass && !currentFunction) {
+          const dataclass = dataclasses.get(currentClass.name);
+          if (dataclass && assignment[2] && !/\bClassVar\s*\[/.test(assignment[2]) && !/\binit\s*=\s*False\b/.test(value)) {
+            if (/\bKW_ONLY\b/.test(assignment[2])) dataclass.kwOnly = true;
+            else {
+              const field = { name, declaration: `${name}: ${assignment[2].trim()}${value ? ' = …' : ''}`, kwOnly: dataclass.kwOnly || /\bkw_only\s*=\s*True\b/.test(value) };
+              const existing = dataclass.fields.findIndex(item => item.name === name);
+              if (existing >= 0) dataclass.fields[existing] = field;
+              else dataclass.fields.push(field);
+            }
+          }
           const classAttrs = result.attributes.get(currentClass.name);
-          if (!classAttrs.some(item => item.name === name)) {
+          if (!/\b(?:InitVar\s*\[|KW_ONLY\b)/.test(assignment[2] || '') && !classAttrs.some(item => item.name === name)) {
             classAttrs.push(createSymbol(name, 'attribute', {
               returns: typeName || 'Any', owner: currentClass.name,
               description: `Class attribute defined on ${currentClass.name}.`
@@ -375,15 +471,23 @@
           }));
         });
       } else {
-        const fromImport = line.match(/^\s*from\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s+import\s+([A-Za-z_]\w*)(?:\s+as\s+([A-Za-z_]\w*))?/);
-        const imported = fromImport && (fromImport[3] || fromImport[2]);
-        if (imported && !variableNames.has(imported)) {
-          result.varTypes.set(imported, `${fromImport[1]}.${fromImport[2]}`);
+        const fromImport = line.match(/^\s*from\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s+import\s+(.+)$/);
+        if (fromImport) splitPythonParams(fromImport[2].replace(/^\(\s*|\s*\)$/g, '')).forEach(part => {
+          const member = part.match(/^([A-Za-z_]\w*)(?:\s+as\s+([A-Za-z_]\w*))?$/);
+          const imported = member && (member[2] || member[1]);
+          if (!imported || variableNames.has(imported)) return;
+          result.varTypes.set(imported, `${fromImport[1]}.${member[1]}`);
           variableNames.add(imported);
-          result.variables.push(createSymbol(imported, 'module', { returns: 'module', owner: fromImport[1], importedName: fromImport[2], description: `Imported ${fromImport[1]}.${fromImport[2]}.` }));
-        }
+          result.variables.push(createSymbol(imported, 'module', { returns: 'module', owner: fromImport[1], importedName: member[1], description: `Imported ${fromImport[1]}.${member[1]}.` }));
+        });
       }
     }
+    dataclasses.forEach((record, name) => {
+      if ((result.methods.get(name) || []).some(item => item.name === '__init__')) return;
+      const positional = record.fields.filter(field => !field.kwOnly).map(field => field.declaration);
+      const keyword = record.fields.filter(field => field.kwOnly).map(field => field.declaration);
+      classSymbols.get(name).signature = `(${[...positional, ...(keyword.length ? ['*', ...keyword] : [])].join(', ')})`;
+    });
     return result;
   }
 
@@ -525,7 +629,11 @@
         else if (objectName === 'self' || objectName === 'cls') owner = options.currentClass || '';
         else if (objectName.includes('.')) {
           const parts = objectName.split('.');
-          owner = [analysis.varTypes.get(parts[0]) || parts[0], ...parts.slice(1)].join('.');
+          owner = /^(self|cls)$/.test(parts[0]) ? options.currentClass || '' : analysis.varTypes.get(parts[0]) || parts[0];
+          for (const part of parts.slice(1)) {
+            const attr = (analysis.attributes.get(owner) || []).find(item => item.name === part);
+            owner = attr ? inferPythonType('', attr.returns, new Set(analysis.classes.map(item => item.name))) : `${owner}.${part}`;
+          }
         } else owner = analysis.varTypes.get(objectName) || (analysis.methods.has(objectName) ? objectName : '');
         for (const entry of index.values()) {
           if (entry.language === 'python' && String(entry.owner).toLowerCase() === String(owner).toLowerCase()) add(Object.assign({}, entry));
@@ -834,7 +942,7 @@
 
   return {
     MAX_ANALYSIS_LENGTH, PYTHON_KEYWORDS, PYTHON_BUILTINS,
-    analyzePython, analyzeJavascript, contextAt, catalogIndex,
+    analyzePython, analyzeJavascript, pythonLogicalLines, pythonFunctionHeader, contextAt, catalogIndex,
     buildSuggestionSet, createEngine
   };
 });

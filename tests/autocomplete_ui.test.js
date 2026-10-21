@@ -3,6 +3,68 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const autocomplete = require('../static/js/autocomplete.js');
 
+test('dataclass fields, aliased imports, and generated constructor help retain annotations', () => {
+  const result = autocomplete.analyzePython(`from dataclasses import (dataclass as record, field, KW_ONLY, InitVar)
+from typing import ClassVar
+@record
+class Student:
+    name: str
+    scores: list[int] = field(default_factory=list)
+    school: ClassVar[str] = "Eagle"
+    _: KW_ONLY
+    active: bool = True
+    secret: InitVar[str] = ""
+    total: int = field(init=False)
+
+student = Student("Alex")
+`);
+  assert.equal(result.varTypes.get('record'), 'dataclasses.dataclass');
+  assert.equal(result.varTypes.get('field'), 'dataclasses.field');
+  assert.equal(result.varTypes.get('student'), 'Student');
+  assert.equal(result.classes[0].signature, '(name: str, scores: list[int] = …, *, active: bool = …, secret: InitVar[str] = …)');
+  assert.deepEqual(result.attributes.get('Student').map(item => item.name), ['name', 'scores', 'school', 'active', 'total']);
+  const catalog = autocomplete.catalogIndex([{language:'python', owner:'str', name:'upper', kind:'method'}]);
+  const members = object => autocomplete.buildSuggestionSet({language:'python', analysis:result, catalog, context:{mode:'member',object,partial:''}});
+  assert.ok(members('student').some(item => item.name === 'name' && item.returns === 'str'));
+  assert.ok(members('student.name').some(item => item.name === 'upper'));
+});
+
+test('multiline function contracts balance nested defaults and preserve quoted generic returns', () => {
+  const result = autocomplete.analyzePython(`from typing import Callable, Literal, Optional
+def build(
+    name: str,
+    values: list[int] = tuple(range(3)),
+) -> "list[str]":
+    return [name]
+def callback(fn: Callable[[int, int], str]) -> Callable[[int], Literal["a:b"]]:
+    return fn
+output = build("Eagle")
+pending: Optional[str]
+`);
+  assert.equal(result.functions[0].signature, '(name: str, values: list[int] = tuple(range(3)))');
+  assert.equal(result.functions[0].returns, '"list[str]"');
+  assert.equal(result.functions[1].returns, 'Callable[[int], Literal["a:b"]]');
+  assert.equal(result.varTypes.get('output'), 'list');
+  assert.equal(result.varTypes.get('pending'), 'str');
+  assert.equal(result.varTypes.get('values'), 'list');
+  assert.equal(result.varTypes.get('Literal'), 'typing.Literal');
+});
+
+test('comments and multiline strings do not introduce completion scopes', () => {
+  const result = autocomplete.analyzePython(`"""Example:
+class Fake:
+    field: str
+def fake(value):
+    pass
+"""
+# class Commented:
+real: str = "class AlsoFake:"
+`);
+  assert.equal(result.classes.length, 0);
+  assert.equal(result.functions.length, 0);
+  assert.deepEqual(result.variables.map(item => item.name), ['real']);
+});
+
 test('Python analysis collects functions, methods, attributes, types, and docstrings', () => {
   const source = [
     'def greet(name: str) -> str:',
