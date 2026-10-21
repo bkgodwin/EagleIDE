@@ -1247,6 +1247,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           getCurrentClassContext,
           canAccessIDE: canCurrentUserAccessIDE(),
           loadFileTree,
+          getCurrentFile: () => currentOpenFile,
+          saveCurrentFile,
+          openWorkspacePath: async path => {await loadFileTree(); await openFile({path, name:path.split('/').pop(), type:'file'});},
+          openAgendaAssignment,
+          selectAgendaClass,
+          openLessonPlanDashboard: () => openTeacherDashboard('dash-lesson-plans'),
           openAuditPreview,
           closeAuditPreview,
           getEditorSnapshot,
@@ -8359,6 +8365,36 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         : `<p class="assignment-empty">${joinedClass ? (selectedTab === 'past' ? 'No past assignments for this class.' : 'No current assignments for this class.') : 'Join a class to see assignments.'}</p>`;
       renderAssignmentMarkdown(activeList);
       window.AssignmentWorkflow.bindStudent(activeList);
+    }
+
+    let agendaAssignmentRequest = 0;
+    function selectAgendaClass(classId) {
+      if (!USER_TOKEN || TEACHER_TOKEN || !studentClasses.some(cls => cls.id === classId)) throw new Error('Sign in as a student in this class to open the assignment.');
+      if(currentStudentClassId===classId) return;
+      currentStudentClassId=classId;
+      syncStudentClassSelection();
+      renderClassSelector();
+      refreshEagleIDEContext();
+      window.StudentNotebook?.onAuthChanged?.();
+      updateTeacherStreamPaneVisibility();
+      applyClassTabVisibility();
+    }
+    async function openAgendaAssignment(assignmentId, classId) {
+      selectAgendaClass(classId);
+      const token=USER_TOKEN, requestId=++agendaAssignmentRequest;
+      await loadAssignments();
+      if(token!==USER_TOKEN || classId!==currentStudentClassId || requestId!==agendaAssignmentRequest) return;
+      const assignment=(currentAssignments || []).find(item=>item.id===assignmentId && item.targetClassId===classId);
+      if(!assignment) throw new Error('This assignment is unavailable. Your teacher may not have released it yet.');
+      window.AssignmentWorkflow.focusStudentAssignment(assignment, currentUser?.email || '');
+      renderStudentAssignments();
+      if(window.WikiReader?.showIDE(true)===false) return;
+      if(document.body.classList.contains('right-collapsed')) document.getElementById('rightEdgeToggleBtn')?.click();
+      setRightPaneView('both');
+      document.getElementById('assignmentTabBtn')?.click();
+      const card=[...document.querySelectorAll('#studentAssignmentList [data-assignment-id]')].find(el=>el.dataset.assignmentId===assignmentId);
+      if(card) {card.open=true;card.setAttribute('tabindex','-1');card.focus({preventScroll:true});card.scrollIntoView({block:'nearest'});}
+      if(assignment.fileControl && assignment.controlledFilePath) await openFile({path:assignment.controlledFilePath,name:assignment.controlledFilePath.split('/').pop(),type:'file'});
     }
 
     async function loadStudentScores() {

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from html import escape as html_escape, unescape as html_unescape
 from ipaddress import ip_address
 from pathlib import Path
@@ -15,6 +15,7 @@ from typing import Any, Callable, Optional
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
+from zoneinfo import ZoneInfo
 
 from flask import Flask, jsonify, request, send_from_directory
 
@@ -26,6 +27,7 @@ from lesson_plan_store import (
     normalize_external_url,
     normalize_week_start,
 )
+from lesson_plan_resources import AgendaAssets, IMAGE_REF, register as register_resources
 
 
 LINK_PREVIEW_MAX_BYTES = 131_072
@@ -110,8 +112,10 @@ def register(
     find_user: Callable[[str], Optional[dict]],
     get_user_class_ids: Callable[[Optional[dict]], list[str]],
     find_class: Callable[[str], Optional[dict]],
+    eagle: Any = None,
 ) -> LessonPlanStore:
     store = LessonPlanStore(Path(base_dir))
+    assets = AgendaAssets(store)
     app.extensions["eagle_lesson_plan_store"] = store
     print_exports: dict[str, dict[str, Any]] = {}
     print_exports_lock = Lock()
@@ -185,7 +189,7 @@ def register(
             "notes_markdown": "",
         }
 
-    def hydrate_plan(raw_plan: dict[str, Any]) -> dict[str, Any]:
+    def hydrate_plan(raw_plan: dict[str, Any], source_id: str, assignments: dict, class_id: str) -> dict[str, Any]:
         result = {
             key: value
             for key, value in raw_plan.items()
@@ -193,14 +197,25 @@ def register(
         }
         result_days: dict[str, dict[str, Any]] = {}
         monday = date.fromisoformat(result["week_start"])
+        asset_entries = assets.manifest(source_id, result['week_start'])
+        node_cache = {}
         for day_index, day in enumerate(DAYS):
             stored_day = (raw_plan.get("days") or {}).get(day) or {}
             pages: list[dict[str, Any]] = []
             standards: list[dict[str, str]] = []
             seen_standards: set[str] = set()
-            for node_id in stored_day.get("wiki_node_ids") or []:
-                node = wiki_store.get_node(node_id, include_drafts=False, include_content=False)
+            links = stored_day.get('wiki_links')
+            if links is None:
+                links = [{'node_id': node_id, 'anchor': ''} for node_id in stored_day.get('wiki_node_ids') or []]
+            for link in links:
+                node_id, anchor = link['node_id'], link.get('anchor') or ''
+                if node_id not in node_cache:
+                    node_cache[node_id] = wiki_store.get_node(node_id, include_drafts=False, include_content=False)
+                node = node_cache[node_id]
                 if not node or node.get("kind") != "page":
+                    continue
+                section = next((section for section in node.get('sections', []) if section['anchor'] == anchor), None)
+                if anchor and not section:
                     continue
                 page_standards = [
                     {
@@ -213,9 +228,11 @@ def register(
                 pages.append({
                     "id": str(node.get("id") or ""),
                     "title": str(node.get("title") or "Wiki page"),
+                    "anchor": anchor,
+                    "section_title": section['heading'] if section else '',
                     "slug": str(node.get("slug") or ""),
                     "description": str(node.get("description") or ""),
-                    "url": f"/wiki/{node.get('slug') or ''}",
+                    "url": f"/wiki/{node.get('slug') or ''}" + (f'#{anchor}' if anchor else ''),
                     "standards": page_standards,
                 })
                 for standard in page_standards:
@@ -226,6 +243,16 @@ def register(
             result_days[day] = {
                 "date": (monday + timedelta(days=day_index)).isoformat(),
                 "markdown": str(stored_day.get("markdown") or ""),
+                "color": stored_day.get('color') or '',
+                "wiki_links": [{'node_id': page['id'], 'anchor': page['anchor']} for page in pages],
+                "attachment_ids": stored_day.get('attachment_ids') or [],
+                "attachments": [entry for asset_id in stored_day.get('attachment_ids') or []
+                                if (entry := asset_entries.get(asset_id)) and entry['kind'] == 'file'],
+                "assignment_ids": [item for item in stored_day.get('assignment_ids') or [] if item in assignments],
+                "assignments": [assignments[item] for item in stored_day.get('assignment_ids') or [] if item in assignments],
+                "images": [{'id': asset_id, 'url': f"/api/lesson-plans/{class_id}/{result['week_start']}/assets/{asset_id}"}
+                           for asset_id in dict.fromkeys(IMAGE_REF.findall(stored_day.get('markdown') or ''))
+                           if asset_entries.get(asset_id, {}).get('kind') == 'image'],
                 "wiki_node_ids": [page["id"] for page in pages],
                 "wiki_pages": pages,
                 "external_links": [
@@ -241,6 +268,24 @@ def register(
         result["days"] = result_days
         return result
 
+    def agenda_assignments(cls, student=None, teacher=False):
+        if eagle is None or not (student or teacher):
+            return {}
+        result = {}
+        for assignment in eagle._list_assignments():
+            if assignment.get('targetClassId') != cls['id']:
+                continue
+            if not teacher and not (assignment.get('releasedAt') or assignment.get('active')):
+                continue
+            summary = {'id': assignment['id'], 'name': assignment.get('name') or 'Assignment',
+                       'dueAt': assignment.get('dueAt') or '', 'fileControl': bool(assignment.get('fileControl'))}
+            if student:
+                summary.update(eagle.assignment_workflow.student_state(eagle, assignment, student['email']))
+                if summary.get('accommodationNote') == 'Make-up / retest deadline':
+                    summary['accommodationNote'] = 'Deadline adjusted by your teacher'
+            result[summary['id']] = summary
+        return result
+
     def response_payload(
         cls: dict,
         week: Any,
@@ -248,6 +293,7 @@ def register(
         include_empty: bool,
         through: Any = None,
         include_source: bool = False,
+        student: Optional[dict] = None,
     ):
         selected = normalize_week_start(week)
         source_class = plan_source_class(cls)
@@ -276,10 +322,30 @@ def register(
                     else None
                 ),
             }
+        assignments = agenda_assignments(source_class if include_source else cls, student, include_source)
+        hydrated = hydrate_plan(plan, source_class_id, assignments, cls['id']) if plan else None
+        zone = (cls.get('settings') or {}).get('assignment_submission_window', {}).get('timeZone') or 'UTC'
+        try:
+            zone_info = ZoneInfo(zone)
+        except (KeyError, ValueError):
+            zone, zone_info = 'UTC', ZoneInfo('UTC')
+        if hydrated and student:
+            by_date = {}
+            for item in assignments.values():
+                if item['dueAt']:
+                    due_date = datetime.fromisoformat(item['dueAt'].replace('Z', '+00:00')).astimezone(zone_info).date().isoformat()
+                    by_date.setdefault(due_date, []).append({**item, 'due_date': due_date})
+            for day in hydrated['days'].values():
+                day['due_assignments'] = by_date.get(day['date'], [])
+            hydrated['weekend_due_assignments'] = [item for offset in (5, 6)
+                for item in by_date.get((date.fromisoformat(selected) + timedelta(days=offset)).isoformat(), [])]
         payload = {
             "ok": True,
             "class": class_summary(cls),
-            "plan": hydrate_plan(plan) if plan else None,
+            "plan": hydrated,
+            "assignment_choices": list(assignments.values()) if include_source else [],
+            "asset_class_id": str(cls['id']),
+            "time_zone": zone,
             "selected_week": selected,
             "current_week": normalize_week_start(),
             **nav,
@@ -346,13 +412,33 @@ def register(
             source_class = plan_source_class(cls)
             if teacher.get("is_coteacher") and source_class.get("id") != class_id and teacher.get("email") not in source_class.get("coteachers", []):
                 return error("The owner must edit this linked source plan", 403)
-            saved = store.save_plan(
-                str(source_class.get("id") or class_id),
-                week,
-                body,
-                expected_version=expected_version,
-                updated_by=str(teacher.get("email") or ""),
-            )
+            from lesson_plan_store import normalize_plan_payload
+            normalized = normalize_plan_payload(body)
+            available_assignments = agenda_assignments(source_class, teacher=True)
+            # Keep resource validation and publication atomic with media removal.
+            # Assignment reads precede this lock to preserve assignment -> plan lock order.
+            with store._lock:
+                asset_entries = assets.manifest(source_class['id'], week)
+                for day in normalized['days'].values():
+                    if any(item not in available_assignments for item in day['assignment_ids']):
+                        return error('Select assignments belonging to the plan source class')
+                    selections = [(asset_id, 'file') for asset_id in day['attachment_ids']]
+                    selections += [(asset_id, 'image') for asset_id in IMAGE_REF.findall(day['markdown'])]
+                    for asset_id, kind in selections:
+                        if asset_entries.get(asset_id, {}).get('kind') != kind:
+                            return error('An agenda image or file is unavailable. Insert it again.')
+                previous = store.get_plan(source_class['id'], week)
+                saved = store.save_plan(
+                    str(source_class.get("id") or class_id),
+                    week,
+                    body,
+                    expected_version=expected_version,
+                    updated_by=str(teacher.get("email") or ""),
+                )
+                try:
+                    assets.prune_removed(source_class['id'], week, previous, saved)
+                except OSError:
+                    app.logger.warning('Could not reclaim removed agenda media after publishing')
             payload = response_payload(
                 cls,
                 saved["week_start"],
@@ -455,7 +541,7 @@ def register(
             selected = normalize_week_start(request.args.get("week"))
             if selected > current:
                 return error("Future lesson plans are not available", 404)
-            return jsonify(**response_payload(cls, selected, include_empty=True, through=current))
+            return jsonify(**response_payload(cls, selected, include_empty=True, through=current, student=fresh))
         except LessonPlanDataError as exc:
             return error(str(exc))
 
@@ -510,4 +596,8 @@ def register(
             return send_from_directory(public_dir, "lesson_plan_public.html"), 404
         return send_from_directory(public_dir, "lesson_plan_public.html")
 
+    register_resources(app, store=store, assets=assets, teacher_class=teacher_class,
+        plan_source_class=plan_source_class, require_teacher=require_teacher,
+        require_user=require_user, find_user=find_user, get_user_class_ids=get_user_class_ids,
+        find_class=find_class, get_print_export=get_print_export, eagle=eagle)
     return store
