@@ -100,13 +100,13 @@
       const link = document.createElement('a'); link.href = resource.url; link.textContent = resource.title || resource.url;
       link.target = '_blank'; link.rel = 'noopener noreferrer'; resources.appendChild(link);
     }
-    if (!options.publicPage) {
+    {
       for (const file of item.attachments || []) {
         const button = document.createElement('button'); button.type = 'button'; button.className = 'lesson-plan-resource-tile lesson-plan-file';
         button.dataset.assetId = file.id; button.textContent = `↳ ${file.name}`; button.title = 'Copy this example to Home and open it in the IDE'; resources.appendChild(button);
         button.disabled=!!options.preview;
       }
-      for (const assignment of item.assignments || []) {const tile=assignmentTile(assignment); tile.disabled=!!options.preview; resources.appendChild(tile);}
+      if(!options.publicPage) for (const assignment of item.assignments || []) {const tile=assignmentTile(assignment); tile.disabled=!!options.preview; resources.appendChild(tile);}
     }
     if (resources.children.length) host.appendChild(resources);
     if (!options.publicPage && item.due_assignments?.length) {
@@ -120,7 +120,7 @@
       host.appendChild(deadlines);
     }
     host.querySelectorAll('a[href^="/wiki/"]').forEach(link => link.classList.add('lesson-plan-inline-tile'));
-    host.querySelectorAll('img').forEach(img => {img.loading='lazy'; img.decoding='async';});
+    host.querySelectorAll('img').forEach(img => {img.loading='lazy'; img.decoding='async';img.tabIndex=0;img.setAttribute('role','button');img.setAttribute('aria-label',`Enlarge ${img.alt || 'agenda image'}`);});
     host.agendaImagesReady=new Promise(resolve=>queueMicrotask(()=>loadImages(host,item,options).then(resolve,resolve)));
   }
 
@@ -301,6 +301,57 @@
     host.agendaImagesReady=Promise.all([...frame.querySelectorAll('.lesson-plan-markdown')].map(content=>content.agendaImagesReady));
   }
 
+  let tooltipTimer, lightbox;
+  function tooltip(button, message) {
+    document.getElementById('agendaActionTooltip')?.remove();clearTimeout(tooltipTimer);
+    const tip=document.createElement('span');tip.id='agendaActionTooltip';tip.className='agenda-action-tooltip';tip.role='tooltip';tip.textContent=message;
+    document.body.appendChild(tip);button.setAttribute('aria-describedby',tip.id);
+    const box=button.getBoundingClientRect();tip.style.left=`${Math.max(8,Math.min(box.left,innerWidth-tip.offsetWidth-8))}px`;tip.style.top=`${Math.max(8,Math.min(box.bottom+6,innerHeight-tip.offsetHeight-8))}px`;
+    tooltipTimer=setTimeout(()=>{tip.remove();button.removeAttribute('aria-describedby');},4000);
+  }
+  function enlargeImage(source) {
+    if(!source.currentSrc || !source.naturalWidth) return;
+    lightbox?.close();
+    const dialog=document.createElement('dialog');dialog.className='agenda-image-popout';dialog.setAttribute('aria-label','Agenda image');
+    const close=document.createElement('button');close.type='button';close.className='btn secondary';close.textContent='Close image';
+    const image=document.createElement('img');image.src=source.currentSrc;image.alt=source.alt || 'Agenda image';
+    dialog.append(close,image);document.body.appendChild(dialog);lightbox=dialog;
+    close.onclick=()=>dialog.close();dialog.onclick=event=>{if(event.target===dialog) dialog.close();};
+    dialog.addEventListener('close',()=>{dialog.remove();if(lightbox===dialog) lightbox=null;if(source.isConnected) source.focus();},{once:true});
+    dialog.showModal();close.focus();
+  }
+  function publicSession() {
+    try {
+      const saved=JSON.parse(sessionStorage.getItem('eagle-auth-session-v1') || '{}');
+      if(saved.userToken) return {headers:{'X-User-Token':saved.userToken},email:saved.currentUser?.email,role:'student'};
+      if(saved.teacherToken) return {headers:{'X-Teacher-Token':saved.teacherToken},email:saved.currentTeacher?.email,role:'teacher'};
+      if(saved.adminToken) return {headers:{'X-Admin-Token':saved.adminToken},email:'admin',role:'admin'};
+    } catch {}
+    return null;
+  }
+  async function openPublicFile(button) {
+    const session=publicSession();
+    if(!session) {tooltip(button,'Sign in to open this file in the IDE.');return;}
+    const host=button.closest('[data-agenda-class]'), share=decodeURIComponent(location.pathname.split('/').filter(Boolean).pop() || '');
+    button.disabled=true;
+    try {
+      const response=await fetch(`/api/classes/${encodeURIComponent(host.dataset.agendaClass)}/lesson-plans/${encodeURIComponent(host.dataset.agendaWeek)}/files/${encodeURIComponent(button.dataset.assetId)}/open?share=${encodeURIComponent(share)}`,{method:'POST',headers:session.headers,signal:AbortSignal.timeout(30000)});
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok || !data.ok) {tooltip(button,response.status===401 || response.status===404 ? 'Sign in to open this file in the IDE.' : data.error || 'Could not open this file.');return;}
+      if(JSON.stringify(publicSession()?.headers)!==JSON.stringify(session.headers)) return;
+      sessionStorage.setItem('eagle-agenda-open-file',JSON.stringify({path:data.path,email:session.email,role:session.role,at:Date.now()}));
+      location.assign('/ide');
+    } catch {tooltip(button,'Could not reach the server. Try again.');}
+    finally {button.disabled=false;}
+  }
+  document.addEventListener('click',event=>{
+    const img=event.target.closest?.('.lesson-plan-markdown img,#wikiReferenceAgendaBody img');
+    if(img) {event.preventDefault();enlargeImage(img);return;}
+    const button=event.target.closest?.('.lesson-plan-file');
+    if(button && document.body.classList.contains('lesson-plan-public-page')) {event.preventDefault();openPublicFile(button);}
+  });
+  document.addEventListener('keydown',event=>{if(['Enter',' '].includes(event.key) && event.target.matches?.('.lesson-plan-markdown img,#wikiReferenceAgendaBody img')) {event.preventDefault();enlargeImage(event.target);}});
+  window.addEventListener('eagle-context-updated',()=>lightbox?.close());
   window.LessonPlanRenderer = { DAYS, createStandardsPopover: standardsPopover, render, safeMarkdown, renderDayContent, loadImages, applyDayColor };
   window.addEventListener('resize', () => closeScreenStandards());
   window.addEventListener('scroll', (event) => {

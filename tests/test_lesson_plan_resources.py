@@ -146,6 +146,53 @@ class AgendaResourcesTests(unittest.TestCase):
             paths = list(pool.map(copy, range(4)))
         self.assertEqual(len(set(paths)), 4)
 
+    def test_authenticated_public_file_copy_requires_a_live_share_and_referenced_snapshot(self):
+        _,asset=self.attachment()
+        self.publish({'attachment_ids':[asset['id']]})
+        token=self.store.ensure_public_token(self.class_one)
+        users=eagle._load_users()
+        for user in users['users']:
+            if user['email']==self.student_email:
+                user.update(class_id='',class_ids=[])
+        eagle._save_users(users)
+        classes=eagle._load_classes();classes['classes'][0]['students']=[];eagle._save_classes(classes)
+        url=f'/api/classes/{self.class_one}/lesson-plans/{self.week}/files/{asset["id"]}/open'
+        self.assertEqual(self.client.post(url,headers=self.student_headers).status_code,404)
+        self.assertEqual(self.client.post(url,query_string={'share':token}).status_code,404)
+        response=self.client.post(url,query_string={'share':token},headers=self.student_headers)
+        self.assertEqual(response.status_code,200)
+        self.assertEqual((eagle._get_user_dir(self.student_email)/response.json['path']).read_text(),'print("original")\n')
+        self.store.reset_public_token(self.class_one)
+        self.assertEqual(self.client.post(url,query_string={'share':token},headers=self.student_headers).status_code,404)
+        teacher=self.client.post(url,headers=self.teacher_headers)
+        self.assertEqual(teacher.status_code,200)
+
+    def test_coteacher_file_copies_still_enforce_student_ide_access(self):
+        _, asset = self.attachment()
+        self.publish({'attachment_ids': [asset['id']]})
+        classes = eagle._load_classes()
+        classes['classes'][0]['coteachers'] = [self.student_email]
+        classes['classes'][0]['settings']['student_ide_access_enabled'] = False
+        eagle._save_classes(classes)
+        headers = {'X-Teacher-Token': self.student_headers['X-User-Token']}
+        url = f'/api/classes/{self.class_one}/lesson-plans/{self.week}/files/{asset["id"]}/open'
+        self.assertEqual(self.client.post(url, headers=headers).status_code, 403)
+        classes['classes'][0]['settings']['student_ide_access_enabled'] = True
+        eagle._save_classes(classes)
+        self.assertEqual(self.client.post(url, headers=headers).status_code, 200)
+
+    def test_all_class_pdf_embeds_only_the_saved_agenda_images(self):
+        asset=self.image()
+        self.publish({'markdown':f'![Class image](agenda-image:{asset["id"]})'})
+        with patch('lesson_plan_pdf.render_week_pdf',return_value=b'%PDF-1.4\nfixture') as render:
+            response=self.client.post(f'/api/teacher/lesson-plans/{self.week}/print-all',headers=self.teacher_headers)
+        self.assertEqual(response.status_code,200)
+        images=render.call_args.args[2]
+        self.assertEqual(len(images),1)
+        with Image.open(io.BytesIO(next(iter(images.values())))) as image:
+            self.assertLessEqual(max(image.size),1920)
+        response.close()
+
     def test_future_media_is_hidden_except_for_teacher_and_short_lived_print(self):
         future = (date.fromisoformat(self.week) + timedelta(days=7)).isoformat()
         endpoint = self.endpoint.replace(self.week, future)

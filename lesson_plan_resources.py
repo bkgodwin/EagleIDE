@@ -143,15 +143,18 @@ def register(app, *, store, assets, teacher_class, plan_source_class, require_te
         if not cls:
             return None
         teacher = require_teacher(request) if not student_only else None
+        shared = store.class_id_for_token(request.args.get('share') or '') == class_id and week <= normalize_week_start()
         if teacher:
             _, failure = teacher_class(class_id)
             if failure:
-                return None
+                if not shared:
+                    return None
+                teacher = None
         else:
             user = require_user(request)
             if user:
                 fresh = find_user(user.get('email') or '') or user
-                if class_id not in get_user_class_ids(fresh):
+                if class_id not in get_user_class_ids(fresh) and not shared:
                     return None
             else:
                 export = get_print_export(request.args.get('print') or '') if not student_only else None
@@ -189,20 +192,28 @@ def register(app, *, store, assets, teacher_class, plan_source_class, require_te
             return fail('Workspace attachments unavailable', 503)
         try:
             week = normalize_week_start(week)
-            source = accessible(class_id, week, asset_id, student_only=True)
+            source = accessible(class_id, week, asset_id)
             entry = assets.get(source['id'], week, asset_id) if source else None
-            user = require_user(request)
+            user = eagle._require_user_for_files(request)
             if not entry or entry['kind'] != 'file' or not user:
                 return fail('Agenda file not found', 404)
             fresh = find_user(user['email']) or user
-            allowed, reason = eagle._student_ide_access_allowed(fresh, class_id)
-            if not allowed:
-                return fail(reason or 'IDE access unavailable', 403)
+            if fresh.get('role') == 'student' or user.get('is_coteacher'):
+                ide_class = class_id if class_id in get_user_class_ids(fresh) else ''
+                allowed, reason = eagle._student_ide_access_allowed(fresh, ide_class)
+                if not allowed:
+                    return fail(reason or 'IDE access unavailable', 403)
             root = eagle._get_user_dir(user['email'])
             root.mkdir(parents=True, exist_ok=True)
             with eagle._assignment_lock, eagle.file_provenance.lock(root):
-                if not require_user(request) or not accessible(class_id, week, asset_id, student_only=True):
+                if not eagle._require_user_for_files(request) or not accessible(class_id, week, asset_id):
                     return fail('Agenda file not found', 404)
+                fresh = find_user(user['email']) or user
+                if fresh.get('role') == 'student' or user.get('is_coteacher'):
+                    ide_class = class_id if class_id in get_user_class_ids(fresh) else ''
+                    allowed, reason = eagle._student_ide_access_allowed(fresh, ide_class)
+                    if not allowed:
+                        return fail(reason or 'IDE access unavailable', 403)
                 if eagle._count_all_files_for_user(root) >= eagle.MAX_FILES_PER_ACCOUNT or eagle._count_files_in_folder(root) >= eagle.MAX_FILES_PER_FOLDER:
                     return fail('Home file limit reached', 409)
                 if eagle._get_user_storage_used(root) + entry['size'] > eagle.USER_STORAGE_LIMIT_MB * 1024 * 1024:

@@ -151,15 +151,17 @@ def register(
             features = store.list_class_features(class_id)
         if actor and actor.get("role") in {"student", "teacher"}:
             bookmarks = _bookmark_payload(actor, class_id if actor.get("role") == "teacher" else "")
-        return jsonify(
+        response = jsonify(
             ok=True,
-            tree=store.get_tree(),
+            **({"tree": store.get_tree()} if request.args.get('include_tree') != '0' else {}),
             featured=features,
             bookmarks=bookmarks,
             home_settings=store.home_settings(),
             active_class={"id": active_class.get("id"), "name": active_class.get("name")} if active_class else None,
             catalog_version=store.catalog_version(),
         )
+        response.headers['Cache-Control'] = 'private, no-store'
+        return response
 
     @app.get("/api/wiki/standards/coverage")
     def wiki_standards_coverage():

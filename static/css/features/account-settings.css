@@ -1,0 +1,26 @@
+.account-settings-subtitle { margin:6px 0 0; color:var(--theme-text-dim); font-size:12px; line-height:1.5; }
+.account-settings-layout { display:flex; flex-direction:column; gap:22px; }
+.account-settings-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; align-items:start; }
+.account-settings-card { min-width:0; display:flex; flex-direction:column; align-items:stretch; gap:11px; margin:0; padding:20px; border:1px solid var(--theme-border-mid); border-radius:14px; background:var(--theme-panel); box-shadow:0 3px 12px rgba(0,0,0,.04); }
+#studentPasswordForm.account-settings-card { width:100%; }
+.account-settings-layout .account-settings-grid > :nth-child(2) { grid-column:2; grid-row:span 2; }
+.account-settings-layout .account-settings-grid > :nth-child(4) { grid-column:1 / -1; }
+.modal-content .account-settings-card h3 { margin:0; font-size:17px; color:var(--theme-text); }
+.account-settings-card p { margin:0; color:var(--theme-text-dim); font-size:12px; line-height:1.6; }
+.account-settings-kicker { color:var(--columbia-blue); font-size:10px; font-weight:800; letter-spacing:.12em; }
+.light-mode .account-settings-kicker { color:#315e7c; }
+.account-settings-card > .btn { align-self:flex-start; margin-top:3px; }
+.account-settings-card label { font-size:12px; font-weight:700; margin:5px 0 0; }
+.account-settings-card input:not([type="checkbox"]) { display:block; width:100%; min-width:0; min-height:42px; padding:10px 12px; color:var(--theme-text); background:var(--theme-input-bg); border:1px solid var(--theme-border-mid); border-radius:8px; font:inherit; }
+.account-settings-card [role="status"] { min-height:16px; color:var(--theme-text-dim); font-size:12px; }
+.modal-content .account-settings-card .admin-setting-toggle { display:flex; flex-direction:row; align-items:flex-start; gap:10px; margin:0; padding:0; background:transparent; border:0; cursor:pointer; }
+.account-settings-card .admin-setting-toggle small { line-height:1.5; }
+.account-appearance-panel { width:100%; max-width:none; margin:0; }
+.modal-content .account-appearance-panel > h3 { color:var(--theme-text); }
+body.light-mode #teacherDashboardModal,body.light-mode #studentDashboardModal { --columbia-blue:#245a85; }
+body.light-mode .teacher-dash-sidebar .teacher-dash-navbtn { color:#526273; }
+body.light-mode .teacher-dash-sidebar .teacher-dash-navbtn.active { color:#245a85; }
+.modal-content .account-settings-card > .external-tool-storage-open { margin:3px 0 0; }
+#adminSettingsModal .admin-settings-shell .account-settings-card .admin-setting-toggle { margin:0; padding:0; border:0; background:transparent; }
+[data-admin-settings-pane="account"] > .account-settings-grid { margin-bottom:20px; }
+@media(max-width:760px) { .account-settings-grid { grid-template-columns:minmax(0,1fr); } .account-settings-card { padding:16px; } .account-settings-layout .account-settings-grid > :nth-child(n) { grid-column:auto; grid-row:auto; } }

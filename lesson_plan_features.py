@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 from secrets import token_urlsafe
 import socket
-from threading import Lock
+from threading import BoundedSemaphore, Lock
 from time import monotonic
 from typing import Any, Callable, Optional
 from urllib.error import HTTPError, URLError
@@ -17,7 +17,7 @@ from urllib.parse import urljoin, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from zoneinfo import ZoneInfo
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_file, send_from_directory
 
 from lesson_plan_store import (
     DAYS,
@@ -112,6 +112,7 @@ def register(
     find_user: Callable[[str], Optional[dict]],
     get_user_class_ids: Callable[[Optional[dict]], list[str]],
     find_class: Callable[[str], Optional[dict]],
+    list_teacher_classes: Optional[Callable[[dict], list[dict]]] = None,
     eagle: Any = None,
 ) -> LessonPlanStore:
     store = LessonPlanStore(Path(base_dir))
@@ -119,6 +120,8 @@ def register(
     app.extensions["eagle_lesson_plan_store"] = store
     print_exports: dict[str, dict[str, Any]] = {}
     print_exports_lock = Lock()
+    pdf_slots = BoundedSemaphore(2)
+    pdf_accounts: set[str] = set()
 
     def purge_print_exports(now: float) -> None:
         for token, export in list(print_exports.items()):
@@ -526,6 +529,72 @@ def register(
             print_path=f"/lesson-plans/print/{token}",
             expires_in_seconds=600,
         )
+
+    @app.post('/api/teacher/lesson-plans/<week>/print-all')
+    def teacher_print_all_lesson_plans(week: str):
+        teacher = require_teacher(request)
+        if not teacher:
+            return error('Teacher token required', 401)
+        email = str(teacher.get('email') or '').lower()
+        if not pdf_slots.acquire(blocking=False):
+            return error('Two PDFs are being prepared. Try again shortly.', 429)
+        admitted = False
+        try:
+            with print_exports_lock:
+                if email in pdf_accounts:
+                    return error('Your PDF is already being prepared.', 429)
+                pdf_accounts.add(email)
+                admitted = True
+            from lesson_plan_pdf import MAX_CLASSES, MAX_IMAGE_BYTES, render_week_pdf
+            import io
+            selected = normalize_week_start(week)
+            candidates = list_teacher_classes(teacher) if list_teacher_classes else (eagle._load_classes().get('classes', []) if eagle else [])
+            classes = [cls for cls in candidates if cls.get('teacher_email', '').lower() == email or
+                       (email in cls.get('coteachers', []) and email in cls.get('students', []))]
+            classes.sort(key=lambda cls: (str(cls.get('name') or '').casefold(), str(cls.get('id'))))
+            if len(classes) > MAX_CLASSES:
+                return error(f'At most {MAX_CLASSES} classes can be exported at once', 413)
+            catalog = eagle._list_assignments() if eagle else []
+            plans, images, raw_cache = [], {}, {}
+            image_bytes = 0
+            with store._lock:
+                for cls in classes:
+                    source = plan_source_class(cls)
+                    source_id = source['id']
+                    if source_id not in raw_cache:
+                        raw_cache[source_id] = store.get_plan(source_id, selected) or empty_plan(selected)
+                    assignment_choices = {item['id']: {'id': item['id'], 'name': item.get('name') or 'Assignment'}
+                        for item in catalog if item.get('targetClassId') == source_id}
+                    plan = hydrate_plan(raw_cache[source_id], source_id, assignment_choices, cls['id'])
+                    plans.append({'class': class_summary(cls), 'plan': plan, 'source_id': source_id})
+                    for day in plan['days'].values():
+                        for image in day.get('images') or []:
+                            key = (source_id, image['id'])
+                            if key in images:
+                                continue
+                            entry = assets.get(source_id, selected, image['id'])
+                            if not entry or entry['kind'] != 'image':
+                                continue
+                            image_bytes += entry['size']
+                            if image_bytes > MAX_IMAGE_BYTES:
+                                return error('This week exceeds the PDF image limit (32 MB)', 413)
+                            with (assets.directory(source_id, selected) / f'{image["id"]}.bin').open('rb') as handle:
+                                images[key] = handle.read(entry['size'] + 1)
+            document = render_week_pdf(plans, selected, images)
+            if not require_teacher(request) or any(teacher_class(cls['id'])[1] for cls in classes):
+                return error('Class access changed. Prepare the PDF again.', 403)
+            response = send_file(io.BytesIO(document), mimetype='application/pdf', as_attachment=False,
+                                 download_name=f'lesson-plans-week-{selected}.pdf')
+            response.headers['Cache-Control'] = 'private, no-store'
+            response.headers['X-Content-Type-Options'] = 'nosniff'
+            return response
+        except (ValueError, OSError) as exc:
+            return error(str(exc) if isinstance(exc, ValueError) else 'Could not read the published agenda media', 422)
+        finally:
+            if admitted:
+                with print_exports_lock:
+                    pdf_accounts.discard(email)
+            pdf_slots.release()
 
     @app.get("/api/classes/<class_id>/lesson-plans")
     def student_get_lesson_plan(class_id: str):
