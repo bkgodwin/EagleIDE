@@ -1,13 +1,15 @@
 import io
 import json
+import struct
 import unittest
+import zlib
 from email.message import Message
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from PIL import Image
 from security_controls import AttemptLimiter, client_ip, secure_request, SessionTokens, AdministratorTokens
-from media_security import clean_image
+from media_security import clean_image, ImageValidationError
 from tests import test_html_runtime as runtime_fixture
 from tests.test_html_runtime import eagle
 from tests import test_file_browser as file_fixture
@@ -129,6 +131,25 @@ class ControlTests(unittest.TestCase):
             self.assertEqual(result.n_frames, 2)
             self.assertEqual(result.info["loop"], 2)
             self.assertNotIn("comment", result.info)
+
+    def test_apng_dimensions_are_rejected_before_canvas_allocation(self):
+        def chunk(kind, data):
+            return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+        # Tiny frame data with a huge claimed canvas exercises the APNG open path.
+        # Intercept native allocation so a vulnerable Pillow fails without allocating it.
+        payload = b"\x89PNG\r\n\x1a\n" + b"".join((
+            chunk(b"IHDR", struct.pack(">IIBBBBB", 30000, 30000, 8, 6, 0, 0, 0)),
+            chunk(b"acTL", struct.pack(">II", 2, 0)),
+            chunk(b"fcTL", struct.pack(">IIIIIHHBB", 0, 1, 1, 0, 0, 1, 10, 1, 0)),
+            chunk(b"IDAT", zlib.compress(b"\x00\x00\x00\x00\x00")),
+            chunk(b"IEND", b""),
+        ))
+        with patch.object(Image.core, "fill", side_effect=AssertionError("canvas allocated before dimension check")) as allocate:
+            with self.assertRaises(ImageValidationError) as error:
+                clean_image(payload, ".png")
+            self.assertIsInstance(error.exception.__cause__, Image.DecompressionBombError)
+            allocate.assert_not_called()
 
 
 class RuntimeSecurityTests(unittest.TestCase):

@@ -59,10 +59,10 @@ class StartupScriptTests(unittest.TestCase):
             "simple-websocket": "1.1.0",
             "requests": "2.34.2",
             "bcrypt": "5.0.0",
-            "cryptography": "48.0.1",
+            "cryptography": "50.0.0",
             "numpy": "2.5.1",
             "matplotlib": "3.11.1",
-            "Pillow": "12.3.0",
+            "Pillow": "13.0.0",
             "reportlab": "5.0.1",
         }
         for package, version in expected.items():

@@ -73,7 +73,7 @@ the system interpreter and is not a supported production start command.
 | `simple-websocket` | WebSocket transport used by Flask-SocketIO standard threading mode |
 | `requests` | HTTP client — used to call the Ollama AI API for code explain / assistant features |
 | `bcrypt` | Secure password hashing for student and admin accounts |
-| `cryptography` | Encrypts stored admin credentials in `config.txt` using Fernet |
+| `cryptography` | Fernet encryption for remembered-device credentials and migration of legacy admin credentials |
 | `numpy` | Native numerical prerequisite used by Matplotlib inside contained Python workers |
 | `matplotlib` | Headless `Agg` 2D/3D rendering; `plt.show()` saves PNG artifacts beside the Python source file |
 | `Pillow` | Pinned image runtime used by Matplotlib and authenticated IDE image validation |
@@ -84,6 +84,12 @@ Pinned releases provide wheels for supported Python versions and common
 architectures, so a compiler is normally unnecessary. On an uncommon
 architecture without compatible wheels, review any requested source build and
 its toolchain before production deployment.
+
+The October 22 update pins Pillow 13.0.0 and cryptography 50.0.0 to include the
+upstream security fixes. Pillow's APNG dimension check must run before canvas
+allocation, including during image metadata removal. The runtime lock includes
+wheel hashes; regenerate it with `tools/update_dependency_locks.py` and review
+both supported Linux Python resolutions when changing package versions.
 
 ### Native student-module boundary
 
