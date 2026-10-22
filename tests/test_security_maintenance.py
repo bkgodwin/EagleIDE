@@ -116,3 +116,12 @@ class SecurityMaintenanceTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("private runtime path", result.stderr)
         self.assertNotIn("fixture-private-content", result.stdout + result.stderr)
+
+    def test_history_guard_rejects_unrelated_or_precleanup_ancestry(self):
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        (self.root / "safe.py").write_text("print('fixture')")
+        subprocess.run(["git", "-C", str(self.root), "add", "safe.py"], check=True)
+        subprocess.run(["git", "-C", str(self.root), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture"], check=True)
+        result = self.run_tool("check_private_data.py", "--history", cwd=self.root)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("root ancestry", result.stderr)

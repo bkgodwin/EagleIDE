@@ -581,7 +581,7 @@ Both generated credential files must remain uncommitted. Existing encrypted admi
 
 `security_controls.py` owns explicit proxy trust, bounded attempt windows and access-token lifetimes. `credential_security.py` owns versioned long-password-safe hashes and legacy bcrypt verification. Do not replace an existing token's issue timestamp during profile updates or renew its absolute lifetime. `media_security.py` strips metadata from JPEG/PNG/GIF/WebP while bounding decoded frames and pixels.
 
-`requirements.lock` and `requirements-bootstrap.lock` are hash-required installation inputs. Regenerate with `tools/update_dependency_locks.py` and review the Python 3.12/3.13 resolutions together. Run `python tools/check_private_data.py --staged` before committing; CI also checks the complete tracked tree. This guard does not replace a full-history or PII review.
+`requirements.lock` and `requirements-bootstrap.lock` are hash-required installation inputs. Regenerate with `tools/update_dependency_locks.py` and review the Python 3.12/3.13 resolutions together. Run `python tools/check_private_data.py --staged --history` before committing; CI also checks the complete tracked tree. This guard does not replace a full-history or PII review.
 
 Maintenance scripts default to dry runs and must be applied only against a private backup with the server stopped: `tools/migrate_legacy_passwords.py`, `tools/rotate_device_key.py`, and `tools/strip_image_metadata.py`. Wiki media changes require `--wiki-catalog` to preserve quota accounting. Never run these automatically during an ordinary update or delete retained educational data as an incidental security migration.
 

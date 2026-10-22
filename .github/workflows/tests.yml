@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -29,10 +31,12 @@ jobs:
           node-version: "24"
 
       - name: Reject private runtime data and credentials
-        run: python tools/check_private_data.py
+        run: python tools/check_private_data.py --history
 
       - name: Install dependencies
-        run: python -m pip install --require-hashes --only-binary=:all: -r requirements-bootstrap.lock && python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
+        run: |
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-bootstrap.lock
+          python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
 
       - name: Validate Python and browser scripts
         run: |

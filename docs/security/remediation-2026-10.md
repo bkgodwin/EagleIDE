@@ -18,7 +18,7 @@ The [supplied audit](audit-2026-10-21.md) is attached as a redacted reference. I
 - Public lesson plans omit saved teacher notes unless `notes_public` is explicitly enabled. Authenticated editing retains those notes. Public plan responses use no-referrer and private/no-store; access-log filters redact lesson-plan capabilities. Link previews pin a validated public numeric destination, preserve TLS hostname checking, revalidate redirects, and bound time/bytes.
 - Runner bootstrap removes private `EAGLE_*` environment variables before student Python runs, after trusted trace/chart setup. Existing native-module containment and fail-closed behavior are preserved.
 - New POSIX runtime files use a private umask. Logs rotate with bounded retention and new sign-in records redact raw IPs; other historical/feature logs are not retroactively anonymized. Generic JSON error responses avoid reflecting exception contents; the built-in entry point suppresses its server version banner.
-- The launcher and CI install hash-verified, pinned bootstrap/runtime wheels. CI actions use full commit pins, CI uses Node 24, and the launcher warns about old Node without unexpectedly refusing existing servers. A tracked/staged-data guard rejects runtime paths and recognizable credential formats, including force-staged ignored files.
+- The launcher and CI install hash-verified, pinned bootstrap/runtime wheels. CI actions use full commit pins, CI uses Node 24, and the launcher warns about old Node without unexpectedly refusing existing servers. A tracked/staged-data guard rejects runtime paths and recognizable credential formats, including force-staged ignored files. CI also fetches complete history and rejects any root ancestry other than the cleaned public root, preventing merges that restore the old history. Make the CI status required on the main branch for enforcement.
 - Failed account workspace/tool cleanup retains a disabled account and returns an error for retry. Workspace containment/collision checks precede deletion. Class owners cannot be silently removed while leaving their classes behind. Public lesson-plan cleanup failure retains the class and returns an error. These are deletion safety improvements, **not complete multi-store erasure**.
 - The Account panel explains recording/paste monitoring, the limits of authorship inference, and retained Trash/shared copies. A notice does not replace school policy or consent/acknowledgment requirements.
 
@@ -98,7 +98,7 @@ GitHub's [sensitive-data removal procedure](https://docs.github.com/en/authentic
 
 ## Verification
 
-- Windows Python suite: 504 tests passed, with one native Linux containment test skipped. Node suite: 201 passed.
+- Windows Python suite: 505 tests passed, with one native Linux containment test skipped. Node suite: 201 passed.
 - Locked Linux Python 3.12 dependency dry-run succeeded with required hashes; a deliberately incorrect wheel hash was rejected. Bash syntax check passed. Linux Python 3.13/Landlock CI is required on the PR.
 - Real Chrome isolated fixtures checked teacher/student lesson plans, copied resources, due links, clipboard images, PDF export, Python execution, responsive light/dark layouts; the runtime attack fixture checked `.htm`/SVG execution denial, opaque storage, hidden paths and anonymous AI denial.
 - External-tool browser checks retained a live document/draft past its original lease, checked storage quotas/conflicts, downloads, dialogs/popups, offline recovery, responsive layouts and IDE buffer retention. No private application directory was served.

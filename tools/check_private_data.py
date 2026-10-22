@@ -10,6 +10,10 @@ import re
 import subprocess
 import sys
 
+# The public, cleaned root. Reject merging an old clone's ancestry back into
+# the repository even if its current working tree contains no private files.
+CLEAN_HISTORY_ROOT = "0e8206f26efe1953330a6a2256bff8a3aa911c3a"
+
 PRIVATE_ROOTS = {
     "assignments", "assignment_submissions", "notebooks", "user_files", "sandboxes",
     "wiki_data", "wiki_backups", "network_data", "tool_data", "lesson_plans",
@@ -47,7 +51,17 @@ def inspect(path, data):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--staged", action="store_true")
+    parser.add_argument("--history", action="store_true", help="require complete ancestry rooted only in the cleaned public history")
     args = parser.parse_args()
+    if args.history:
+        shallow = subprocess.check_output(["git", "rev-parse", "--is-shallow-repository"], text=True).strip()
+        if shallow != "false":
+            print("History verification needs a complete fetch, not a shallow checkout.", file=sys.stderr)
+            return 1
+        roots = subprocess.check_output(["git", "rev-list", "--max-parents=0", "HEAD"], text=True).splitlines()
+        if set(roots) != {CLEAN_HISTORY_ROOT}:
+            print("Unclean or unrelated root ancestry: transplant changes onto the cleaned main history; never merge an old clone.", file=sys.stderr)
+            return 1
     command = ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"] if args.staged else ["git", "ls-files", "-z"]
     paths = subprocess.check_output(command).decode("utf-8").split("\0")
     failed = False
