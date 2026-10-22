@@ -191,6 +191,7 @@ def normalize_plan_payload(raw: Any) -> dict[str, Any]:
         }
     return {
         "days": days,
+        "notes_public": raw.get("notes_public") is True,
         "notes_markdown": _clean_markdown(
             raw.get("notes_markdown"), MAX_NOTES_MARKDOWN_CHARS, "Additional notes"
         ),

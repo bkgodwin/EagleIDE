@@ -40,6 +40,8 @@ class RolePermissionTestCase(unittest.TestCase):
         eagle._users_cache = None
         eagle._classes_cache = None
         eagle._reg_rate_limit.clear()
+        eagle._login_account_limits.clear()
+        eagle._login_source_limits.clear()
         self.generated_tokens = []
 
         self.admin_token = "role-admin-token"
@@ -85,6 +87,8 @@ class RolePermissionTestCase(unittest.TestCase):
         eagle._users_cache = None
         eagle._classes_cache = None
         eagle._reg_rate_limit.clear()
+        eagle._login_account_limits.clear()
+        eagle._login_source_limits.clear()
         self.tmp.cleanup()
 
     def _set_disabled_ai_class(self):
@@ -280,46 +284,34 @@ class RolePermissionTestCase(unittest.TestCase):
         self.assertTrue(all(status == 200 for status, _ in sign_ins), sign_ins)
         self.generated_tokens.extend(payload["token"] for _, payload in sign_ins)
 
-    def test_sign_in_has_no_shared_ip_or_account_attempt_limit(self):
+    def test_sign_in_limits_one_account_without_locking_other_nat_users(self):
         eagle._save_users({"users": [
             {"email": self.student_email, "name": "Student", "role": "student", "enabled": True},
             {"email": self.teacher_email, "name": "Teacher", "role": "teacher", "enabled": True},
         ]})
         shared_ip = {"REMOTE_ADDR": "10.20.30.40"}
         with patch("app._verify_user_password", return_value=False):
-            for _ in range(310):
-                response = self.http.post("/api/auth/login", json={
-                    "email": self.student_email, "password": "WrongPassword",
-                }, environ_base=shared_ip)
+            for _ in range(12):
+                response = self.http.post("/api/auth/login", json={"email": self.student_email, "password": "WrongPassword"}, environ_base=shared_ip)
                 self.assertEqual(response.status_code, 401)
-        with patch("app._verify_user_password", return_value=True), \
-             patch("app._seed_example_files"), patch("app._record_sign_in_event"):
-            for email in (self.student_email, self.teacher_email, self.student_email):
-                response = self.http.post("/api/auth/login", json={
-                    "email": email, "password": "CorrectPassword",
-                }, environ_base=shared_ip)
-                self.assertEqual(response.status_code, 200)
-                self.generated_tokens.append(response.get_json()["token"])
-        self.assertEqual(eagle._reg_rate_limit, {})
-        # A second sign-in does not revoke the first device's valid session.
-        for token in self.generated_tokens:
-            header = "X-Teacher-Token" if token in eagle._teacher_tokens else "X-User-Token"
-            self.assertEqual(self.http.get("/api/auth/me", headers={header: token}).status_code, 200)
+            limited = self.http.post("/api/auth/login", json={"email": self.student_email, "password": "WrongPassword"}, environ_base=shared_ip)
+            self.assertEqual(limited.status_code, 429)
+        with patch("app._verify_user_password", return_value=True), patch("app._seed_example_files"), patch("app._record_sign_in_event"):
+            response = self.http.post("/api/auth/login", json={"email": self.teacher_email, "password": "CorrectPassword"}, environ_base=shared_ip)
+            self.assertEqual(response.status_code, 200)
+            self.generated_tokens.append(response.json["token"])
 
-    def test_admin_sign_in_has_no_attempt_limit_and_supports_unicode(self):
+    def test_admin_sign_in_is_limited_and_still_supports_unicode(self):
         eagle.ADMIN_ACCOUNT_EMAIL = "admin@school.test"
         eagle.ADMIN_ACCOUNT_PASSWORD = "Secure-é-password"
         with patch("app._seed_example_files"), patch("app._record_sign_in_event"):
-            for _ in range(60):
-                response = self.http.post("/api/admin/login", json={
-                    "email": "student@school.test", "password": "wrong-é-password",
-                })
+            for _ in range(12):
+                response = self.http.post("/api/admin/login", json={"email": "student@school.test", "password": "wrong-é-password"})
                 self.assertEqual(response.status_code, 401)
-            response = self.http.post("/api/admin/login", json={
-                "email": eagle.ADMIN_ACCOUNT_EMAIL.upper(), "password": eagle.ADMIN_ACCOUNT_PASSWORD,
-            })
+            self.assertEqual(self.http.post("/api/admin/login", json={"email": "student@school.test", "password": "wrong-é-password"}).status_code, 429)
+            response = self.http.post("/api/admin/login", json={"email": eagle.ADMIN_ACCOUNT_EMAIL.upper(), "password": eagle.ADMIN_ACCOUNT_PASSWORD})
         self.assertEqual(response.status_code, 200)
-        self.generated_tokens.append(response.get_json()["token"])
+        self.generated_tokens.append(response.json["token"])
 
     def test_device_cookie_restores_session_without_using_shared_ip(self):
         password_hash = eagle.bcrypt.hashpw(b"StudentPass123", eagle.bcrypt.gensalt()).decode("utf-8")
@@ -409,7 +401,25 @@ class RolePermissionTestCase(unittest.TestCase):
         self.assertNotIn("password", saved)
         self.assertTrue(eagle._verify_user_password(saved, "ModernPassword456"))
 
-    def test_admin_reset_password_is_six_characters(self):
+    def test_reset_removes_the_legacy_alternate_password(self):
+        eagle._save_users({"users": [{"email": self.student_email, "password": "LegacyPassword123", "role": "student"}]})
+        response = self.http.post("/api/admin/users/reset-password", headers={"X-Admin-Token": self.admin_token}, json={"email": self.student_email})
+        self.assertEqual(response.status_code, 200)
+        saved = eagle._find_user(self.student_email)
+        self.assertNotIn("password", saved)
+        self.assertTrue(eagle._verify_user_password(saved, response.json["temp_password"]))
+        self.assertFalse(eagle._verify_user_password(saved, "LegacyPassword123"))
+
+    def test_migrated_teacher_can_change_password_without_losing_profile_data(self):
+        eagle._save_users({"users": [{"email": self.teacher_email, "password": "LegacyPassword123", "role": "teacher", "student_id": "00042"}]})
+        response = self.http.post("/api/teacher/change-password", headers={"X-Teacher-Token": self.teacher_token}, json={"currentPassword": "LegacyPassword123", "newPassword": "ModernPassword456"})
+        self.assertEqual(response.status_code, 200)
+        saved = eagle._find_user(self.teacher_email)
+        self.assertEqual(saved["student_id"], "00042")
+        self.assertTrue(eagle._verify_user_password(saved, "ModernPassword456"))
+        self.assertNotIn("password_hash_scheme", saved)
+
+    def test_admin_reset_password_has_strong_entropy(self):
         eagle._save_users({"users": [{
             "email": self.student_email,
             "name": "Student",
@@ -423,7 +433,7 @@ class RolePermissionTestCase(unittest.TestCase):
             json={"email": self.student_email},
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.get_json()["temp_password"]), 6)
+        self.assertGreaterEqual(len(response.get_json()["temp_password"]), 22)
 
     def test_malformed_auth_requests_return_validation_errors(self):
         with patch("app._load_config", return_value={"registration_enabled": True}):
@@ -462,7 +472,8 @@ class RolePermissionTestCase(unittest.TestCase):
         self.assertEqual(self.http.get("/api/auth/me", headers={"X-User-Token": "invalid"}).status_code, 401)
         eagle._save_users({"users": [{"email": self.student_email, "enabled": False}]})
         response = self.http.post("/api/auth/login", json={"email": self.student_email, "password": "anything"})
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json["code"], "invalid_credentials")
         response = self.http.post("/api/auth/logout", headers={"X-Admin-Token": self.admin_token})
         self.assertEqual(response.status_code, 200)
         self.assertNotIn(self.admin_token, eagle._admin_tokens)

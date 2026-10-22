@@ -25,6 +25,13 @@ WORKER = BASE_DIR / "sandbox_worker.py"
 
 
 class PythonSandboxPolicyTests(unittest.TestCase):
+    def test_student_environment_does_not_expose_worker_control_values(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result = self._run_worker(Path(temporary), "import os\nprint(sorted(key for key in os.environ if key.startswith('EAGLE_')))\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(result.stdout.strip().endswith("[]"), result.stdout)
+
+
     def _run_worker(
         self,
         workspace: Path,

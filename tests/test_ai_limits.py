@@ -238,7 +238,7 @@ class AiLimitTestCase(unittest.TestCase):
                     self.assertEqual(eagle._load_config()["ai_rubric_context_tokens"], 16384)
 
                 with mock.patch.object(eagle.requests, "post", return_value=_Response()) as post:
-                    explained = self.client.post("/api/explain", json={"code": "print('hello')"})
+                    explained = self.client.post("/api/explain", headers={"X-Admin-Token": admin_token}, json={"code": "print('hello')"})
                 self.assertEqual(explained.status_code, 200)
                 request_kwargs = post.call_args.kwargs
                 self.assertEqual(request_kwargs["json"]["model"], "deepseek-coder:6.7b")

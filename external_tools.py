@@ -5,6 +5,8 @@ import hashlib
 import io
 import json
 import logging
+import os
+from security_controls import secure_request
 import secrets
 import socket
 import sqlite3
@@ -396,7 +398,7 @@ def register(app, *, base_dir, source_dir, require_admin, require_teacher, requi
                 raise ToolError("Close another application instance before launching", 429)
             capability, instance = secrets.token_urlsafe(32), uuid.uuid4().hex
             digest = hashlib.sha256(capability.encode()).hexdigest()
-            scheme = "https" if request.is_secure or request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip() == "https" else request.scheme
+            scheme = "https" if secure_request(request, os.environ.get("EAGLEIDE_TRUSTED_PROXY_IPS", "127.0.0.1/32,::1/128")) else request.scheme
             origin = f"{scheme}://{request.host}"
             row = {"id": instance, "tool_id": tool_id, "tool_revision": tool["revision"], "owner": owner,
                    "account": storage_account(current),

@@ -112,7 +112,7 @@
         <div class="agenda-day-tabs" id="lessonPlanDayTabs" role="tablist" aria-label="Plan a day"></div>
         <div class="lesson-plan-editor-scroll"><div class="lesson-plan-editor-grid" id="lessonPlanEditorGrid"></div></div>
         <div class="agenda-workspace-footer">
-          <label class="lesson-plan-notes-editor"><strong>Additional notes</strong><textarea id="lessonPlanNotes" maxlength="20000" placeholder="Notes for the whole week (Markdown supported)"></textarea></label>
+          <label class="lesson-plan-notes-editor"><strong>Additional notes</strong><span><input type="checkbox" id="lessonPlanNotesPublic"> Include notes on public links</span><textarea id="lessonPlanNotes" maxlength="20000" placeholder="Notes for the whole week (Markdown supported)"></textarea></label>
           <aside class="agenda-featured"><div><strong>Featured class wiki</strong><button type="button" class="btn secondary" id="lessonPlanFeatureAdd">+ Change content</button></div><p>Shown on your class home page.</p><div id="lessonPlanFeaturedList"></div></aside>
         </div><span class="lesson-plan-status" id="lessonPlanTeacherStatus" role="status" aria-live="polite"></span>
       </div>`;
@@ -130,6 +130,7 @@
     $('lessonPlanTeacherNext').addEventListener('click', () => changeTeacherWeek(1));
     $('lessonPlanTeacherCurrent').addEventListener('click', () => { if(!retainDraft()) return; state.teacherWeek = mondayFor(new Date()); loadTeacherPlan(); });
     $('lessonPlanNotes').addEventListener('input', markDirty);
+    $('lessonPlanNotesPublic').addEventListener('change', markDirty);
     $('lessonPlanFeatureAdd').addEventListener('click', () => openPicker('featured'));
     $('lessonPlanPublish').addEventListener('click', saveTeacherPlan);
     $('lessonPlanCopyPublic').addEventListener('click', () => copySharing('public_url', 'Public link copied.'));
@@ -270,6 +271,7 @@
     $('lessonPlanTeacherWeekLabel').textContent = readableWeek(plan.week_start);
     syncPlanSourceControl();
     $('lessonPlanNotes').value = plan.notes_markdown || '';
+    $('lessonPlanNotesPublic').checked = plan.notes_public === true;
     grid.textContent = '';
     const tabs = $('lessonPlanDayTabs'); tabs.textContent = '';
     DAYS.forEach((day, index) => {
@@ -538,6 +540,7 @@
       if (textarea && plan.days?.[day]) plan.days[day].markdown = textarea.value || '';
     });
     if ($('lessonPlanNotes')) plan.notes_markdown = $('lessonPlanNotes').value || '';
+    if ($('lessonPlanNotesPublic')) plan.notes_public = $('lessonPlanNotesPublic').checked;
   }
 
   async function saveTeacherPlan() {
@@ -562,6 +565,7 @@
             external_links: plan.days[day].external_links || [],
           }])),
           notes_markdown: plan.notes_markdown,
+          notes_public: plan.notes_public === true,
         }),
       });
       if(scope!==teacherScope()) {

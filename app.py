@@ -19,6 +19,9 @@ import os
 import random
 import re
 import secrets
+from security_controls import AttemptLimiter, client_ip, secure_request, SessionTokens, AdministratorTokens
+from media_security import clean_image, ImageValidationError, FORMATS as IMAGE_UPLOAD_FORMATS
+from credential_security import ADMIN_HASH_SCHEME, hash_admin_password, verify_admin_password, hash_password, verify_password
 import shutil
 import signal
 import sqlite3
@@ -64,6 +67,10 @@ _native_time = time
 # -------------------------
 # Paths & constants
 # -------------------------
+# Private defaults cover temporary files, SQLite journals and all feature stores.
+# Existing files are retained; operators may repair their modes separately.
+if os.name == "posix":
+    os.umask(0o077)
 BASE_DIR = Path(__file__).resolve().parent
 PERSIST_FILE = BASE_DIR / "config.txt"        # persisted settings (JSON)
 CHALLENGE_CSV = BASE_DIR / "challenges.csv"   # optional challenge bank
@@ -261,7 +268,7 @@ USERS_FILE = BASE_DIR / "users.json"
 USER_FILES_DIR = BASE_DIR / "user_files"
 CLASSES_FILE = BASE_DIR / "classes.json"
 SKILLS_FILE = BASE_DIR / "skills.json"
-ADMIN_KEY_FILE = BASE_DIR / ".admin_key"
+ADMIN_KEY_FILE = Path(os.environ.get("EAGLEIDE_ADMIN_KEY_FILE", str(BASE_DIR / ".admin_key"))).expanduser().resolve()
 SIGN_IN_EVENTS_FILE = BASE_DIR / "sign_in_events.json"
 SERVER_EVENTS_FILE = BASE_DIR / "server_events.json"
 SERVER_STATE_FILE = BASE_DIR / "server_state.json"
@@ -391,9 +398,38 @@ app.wsgi_app = _WerkzeugWebSocketTeardownGuard(app.wsgi_app)
 def _request_too_large(_error):
     return jsonify(ok=False, error=f"Request body exceeds the {MAX_HTTP_BODY_BYTES // (1024 * 1024)}MB limit"), 413
 
+@app.errorhandler(404)
+def _missing_route(_error):
+    return jsonify(ok=False, error="Not found"), 404
+
+
+@app.errorhandler(500)
+def _failed_request(error):
+    request_id = uuid.uuid4().hex
+    original = getattr(error, "original_exception", error)
+    _append_server_log(f"Request failure id={request_id} type={type(original).__name__}", "ERROR")
+    return jsonify(ok=False, error="The request could not be completed", requestId=request_id), 500
+
+
 @app.after_request
 def _add_security_headers(response):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    if secure_request(request, globals().get("TRUSTED_PROXY_IPS", "127.0.0.1/32,::1/128")):
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+    if response.mimetype == "text/html" and not request.path.startswith("/lesson-plans/embed/"):
+        # Retain stricter policies already supplied by runtime/tool responses.
+        # Blob fetches and blob PDF documents support the existing print/export flow.
+        csp_host = request.host if re.fullmatch(r"[A-Za-z0-9.\-:\[\]]+", request.host) else ""
+        socket_origins = f"ws://{csp_host} wss://{csp_host}" if csp_host else ""
+        preview_origin = globals().get("HTML_RUNTIME_PREVIEW_ORIGIN", "")
+        response.headers.setdefault("Content-Security-Policy", (
+            "default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://cdn.socket.io; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
+            "font-src 'self' data: https://fonts.gstatic.com https://cdnjs.cloudflare.com; "
+            "img-src 'self' data: blob: https:; media-src 'self' blob: https:; "
+            f"connect-src 'self' blob: {socket_origins}; frame-src 'self' blob: https: {preview_origin}; "
+            "worker-src 'self' blob:; object-src blob:; base-uri 'self'; frame-ancestors 'self'; form-action 'self'"
+        ))
     if request.path.startswith("/lesson-plans/embed/"):
         response.headers.pop("X-Frame-Options", None)
         response.headers["Content-Security-Policy"] = (
@@ -409,6 +445,10 @@ def _add_security_headers(response):
     if request.path.startswith("/lesson-plans/public/") or request.path.startswith("/lesson-plans/embed/"):
         response.headers.setdefault("X-Robots-Tag", "noindex, nofollow")
     response.headers.setdefault("Permissions-Policy", "geolocation=(), camera=(), microphone=()")
+    if any(request.path.startswith(prefix) for prefix in (
+        "/lesson-plans/", "/api/lesson-plans/public/", "/api/lesson-plans/current/", "/api/lesson-plans/print/")):
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Cache-Control"] = "private, no-store"
     if request.path.startswith("/static/"):
         # Flask's default static response is ``no-cache``. Override it so a classroom
         # full of browsers does not revalidate every asset on every navigation.
@@ -434,7 +474,7 @@ if not DEBUG_MODE:
 _cfg_lock = threading.Lock()
 _cfg_cache: Optional[Dict[str, Any]] = None
 _cfg_cache_mtime_ns: Optional[int] = None
-_admin_tokens = set()   # ephemeral, cleared on restart
+_admin_tokens = AdministratorTokens()   # ephemeral, bounded lifetime
 
 def _load_config() -> Dict[str, Any]:
     global _cfg_cache, _cfg_cache_mtime_ns
@@ -656,11 +696,15 @@ CONFIG = _load_config()
 print(f"Configuration loaded successfully with {len(CONFIG)} settings")
 
 ADMIN_ACCOUNT_EMAIL = ADMIN_EMAIL
-ADMIN_ACCOUNT_PASSWORD = DEFAULT_ADMIN_PASSWORD
+ADMIN_ACCOUNT_PASSWORD = ""
+ADMIN_ACCOUNT_PASSWORD_HASH = ""
+ADMIN_ACCOUNT_PASSWORD_SCHEME = "bcrypt"
 
 
 def _load_or_create_admin_key() -> bytes:
     if ADMIN_KEY_FILE.exists():
+        if os.name == "posix":
+            os.chmod(ADMIN_KEY_FILE, 0o600)
         return ADMIN_KEY_FILE.read_bytes()
     key = Fernet.generate_key()
     ADMIN_KEY_FILE.write_bytes(key)
@@ -684,31 +728,49 @@ def _decrypt_admin_password(token: str) -> str:
 
 
 def _bootstrap_admin_credentials() -> None:
-    global ADMIN_ACCOUNT_EMAIL, ADMIN_ACCOUNT_PASSWORD
+    global ADMIN_ACCOUNT_EMAIL, ADMIN_ACCOUNT_PASSWORD, ADMIN_ACCOUNT_PASSWORD_HASH, ADMIN_ACCOUNT_PASSWORD_SCHEME
     cfg = _load_config()
-    stored_email = str(cfg.get("admin_email", "")).strip()
-    stored_encrypted_pw = str(cfg.get("admin_password_encrypted", "")).strip()
+    stored_email = str(cfg.get("admin_email") or "").strip()
+    stored_hash = str(cfg.get("admin_password_hash") or "").strip()
+    if stored_email and stored_hash:
+        if not re.fullmatch(r"\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}", stored_hash):
+            raise RuntimeError("Stored administrator password hash is invalid; restore the private configuration backup")
+        ADMIN_ACCOUNT_PASSWORD_SCHEME = str(cfg.get("admin_password_scheme") or "bcrypt")
+        if ADMIN_ACCOUNT_PASSWORD_SCHEME not in {"bcrypt", ADMIN_HASH_SCHEME}:
+            raise RuntimeError("Unsupported administrator password hash scheme")
+        ADMIN_ACCOUNT_EMAIL, ADMIN_ACCOUNT_PASSWORD_HASH = stored_email, stored_hash
+        ADMIN_ACCOUNT_PASSWORD = ""
+        return
+    stored_encrypted_pw = str(cfg.get("admin_password_encrypted") or "").strip()
     if stored_email and stored_encrypted_pw:
-        try:
-            ADMIN_ACCOUNT_EMAIL = stored_email
-            ADMIN_ACCOUNT_PASSWORD = _decrypt_admin_password(stored_encrypted_pw)
-            return
-        except (InvalidToken, Exception):
-            print("Warning: Stored admin credentials could not be decrypted. Re-prompting setup.")
+        # One atomic update preserves the password and every unrelated setting.
+        # The operator's pre-update backup is the rollback path for older releases.
+        password = _decrypt_admin_password(stored_encrypted_pw)
+        password_hash = hash_admin_password(password)
+        migrated = dict(cfg)
+        migrated.pop("admin_password_encrypted", None)
+        migrated["admin_password_hash"] = password_hash
+        migrated["admin_password_scheme"] = ADMIN_HASH_SCHEME
+        _save_config(migrated)
+        ADMIN_ACCOUNT_EMAIL, ADMIN_ACCOUNT_PASSWORD_HASH = stored_email, password_hash
+        ADMIN_ACCOUNT_PASSWORD_SCHEME = ADMIN_HASH_SCHEME
+        ADMIN_ACCOUNT_PASSWORD = ""
+        return
     print("\nFirst-time admin setup is required.\n")
-    max_attempts = 10
-    for _ in range(max_attempts):
+    for _ in range(10):
         entered_email = input("Enter admin email: ").strip()
-        entered_password = getpass.getpass("Enter admin password: ").strip()
+        entered_password = getpass.getpass("Enter admin password: ")
         if entered_email and entered_password:
-            ADMIN_ACCOUNT_EMAIL = entered_email
-            ADMIN_ACCOUNT_PASSWORD = entered_password
-            _update_config({
-                "admin_email": entered_email,
-                "admin_password_encrypted": _encrypt_admin_password(entered_password),
-            })
+            password_hash = hash_admin_password(entered_password)
+            updated = dict(cfg)
+            updated.pop("admin_password_encrypted", None)
+            updated.update(admin_email=entered_email, admin_password_hash=password_hash, admin_password_scheme=ADMIN_HASH_SCHEME)
+            _save_config(updated)
+            ADMIN_ACCOUNT_EMAIL, ADMIN_ACCOUNT_PASSWORD_HASH = entered_email, password_hash
+            ADMIN_ACCOUNT_PASSWORD_SCHEME = ADMIN_HASH_SCHEME
+            ADMIN_ACCOUNT_PASSWORD = ""
             return
-        print("Admin email and password are required. They cannot be blank.\n")
+        print("Admin email and a nonempty password are required.\n")
     raise RuntimeError("Admin credential setup failed after maximum attempts")
 
 
@@ -805,8 +867,8 @@ def _html_preview_request_is_isolated() -> bool:
 # User account management
 # -------------------------
 _users_lock = threading.RLock()
-_student_tokens: Dict[str, dict] = {}  # token -> user info dict
-_teacher_tokens: Dict[str, dict] = {}  # token -> teacher info dict
+_student_tokens: Dict[str, dict] = SessionTokens()  # token -> user info dict
+_teacher_tokens: Dict[str, dict] = SessionTokens()  # token -> teacher info dict
 _teacher_code_snapshots: Dict[str, str] = {}
 _teacher_code_languages: Dict[str, str] = {}
 _teacher_stream_last_emit: Dict[str, float] = {}
@@ -967,11 +1029,7 @@ def _find_user(email: str) -> Optional[dict]:
 
 def _upgrade_legacy_password_if_needed(email: str, password: str) -> None:
     """Upgrade legacy plaintext password field to bcrypt hash."""
-    # bcrypt 5 rejects passwords over 72 bytes. Preserve access to older
-    # accounts without silently truncating their password during migration.
-    if len(password.encode("utf-8")) > 72:
-        return
-    password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    password_hash = hash_password(password)
     # Hash outside the lock, then reload and recheck inside the transaction.
     # Concurrent registrations/joins must not be overwritten by a stale copy.
     with _users_lock:
@@ -982,22 +1040,21 @@ def _upgrade_legacy_password_if_needed(email: str, password: str) -> None:
             if u.get("password") != password:
                 break
             u["password_hash"] = password_hash
+            u["password_hash_scheme"] = ADMIN_HASH_SCHEME
             u.pop("password", None)
             _save_users(users_data)
             break
 
 
 def _verify_user_password(user: dict, password: str) -> bool:
-    """Verify bcrypt password_hash and support legacy plaintext password values."""
+    """Accept versioned hashes and migrate compatible legacy accounts on use."""
     password_hash = user.get("password_hash")
     if isinstance(password_hash, str) and password_hash:
-        try:
-            if bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8")):
-                return True
-        except Exception:
-            pass
+        if verify_password(password, password_hash, str(user.get("password_hash_scheme") or "bcrypt")):
+            return True
     legacy_password = user.get("password")
-    if isinstance(legacy_password, str) and legacy_password == password:
+    reject_legacy = os.environ.get("EAGLEIDE_REJECT_LEGACY_PASSWORDS", "0").lower() in {"1", "true", "yes"}
+    if not reject_legacy and isinstance(legacy_password, str) and hmac.compare_digest(legacy_password.encode("utf-8"), password.encode("utf-8")):
         _upgrade_legacy_password_if_needed(user.get("email", ""), password)
         return True
     return False
@@ -1026,23 +1083,28 @@ def _device_credential_fingerprint(role: str, email: str) -> Optional[str]:
     if normalized_role == "admin":
         if not hmac.compare_digest(normalized_email, ADMIN_ACCOUNT_EMAIL.strip().lower()):
             return None
-        credential = ADMIN_ACCOUNT_PASSWORD
+        credential = ADMIN_ACCOUNT_PASSWORD or ADMIN_ACCOUNT_PASSWORD_HASH
+        if not ADMIN_ACCOUNT_PASSWORD and ADMIN_ACCOUNT_PASSWORD_SCHEME != "bcrypt":
+            credential = ADMIN_ACCOUNT_PASSWORD_SCHEME + ":" + credential
     else:
         user = _find_user(normalized_email)
         if not user or str(user.get("role") or "student").lower() != normalized_role:
             return None
         credential = str(user.get("password_hash") or user.get("password") or "")
+        if user.get("password_hash") and user.get("password_hash_scheme", "bcrypt") != "bcrypt":
+            credential = str(user["password_hash_scheme"]) + ":" + credential
     if not credential:
         return None
     material = f"eagle-device-session-v1\0{normalized_role}\0{normalized_email}\0{credential}"
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
-def _set_device_session_cookie(response, role: str, email: str, access_token: str) -> None:
+def _set_device_session_cookie(response, role: str, email: str, access_token: str, first_issued_at=None) -> None:
     fingerprint = _device_credential_fingerprint(role, email)
     if not fingerprint:
         return
-    expires_at = int(time.time()) + AUTH_DEVICE_SESSION_SECONDS
+    first_issued_at = int(time.time()) if first_issued_at is None else int(first_issued_at)
+    expires_at = min(int(time.time()) + AUTH_DEVICE_SESSION_SECONDS, first_issued_at + 30 * 24 * 3600)
     payload = json.dumps({
         "v": 1,
         "role": str(role or "").strip().lower(),
@@ -1050,15 +1112,15 @@ def _set_device_session_cookie(response, role: str, email: str, access_token: st
         "credential": fingerprint,
         "access_token": access_token,
         "expires_at": expires_at,
+        "first_issued_at": first_issued_at,
     }, separators=(",", ":"), sort_keys=True).encode("utf-8")
     token = _admin_cipher().encrypt(payload).decode("ascii")
-    forwarded_proto = str(request.headers.get("X-Forwarded-Proto") or "").split(",", 1)[0].strip().lower()
     response.set_cookie(
         AUTH_DEVICE_COOKIE,
         token,
         max_age=AUTH_DEVICE_SESSION_SECONDS,
         httponly=True,
-        secure=bool(request.is_secure or forwarded_proto == "https"),
+        secure=secure_request(request, TRUSTED_PROXY_IPS),
         samesite="Strict",
         path="/",
     )
@@ -1068,14 +1130,31 @@ def _clear_device_session_cookie(response) -> None:
     response.delete_cookie(AUTH_DEVICE_COOKIE, path="/", samesite="Strict")
 
 
+_session_issue_lock = threading.Lock()
+
+
 def _issue_access_token(role: str, user_info: dict, token: Optional[str] = None) -> str:
     token = token or uuid.uuid4().hex
-    if role == "admin":
-        _admin_tokens.add(token)
-    elif role == "teacher":
-        _teacher_tokens[token] = user_info
-    else:
-        _student_tokens[token] = user_info
+    with _session_issue_lock:
+        if role == "admin":
+            with _admin_tokens.sessions.lock:
+                for candidate in list(_admin_tokens):
+                    if not _admin_tokens.sessions.active(candidate):
+                        _admin_tokens.discard(candidate)
+                while len(_admin_tokens) >= 5 and token not in _admin_tokens:
+                    oldest = min(_admin_tokens.sessions.times, key=lambda value: _admin_tokens.sessions.times[value][0])
+                    _admin_tokens.discard(oldest)
+                if token not in _admin_tokens:
+                    _admin_tokens.add(token)
+        else:
+            store = _teacher_tokens if role == "teacher" else _student_tokens
+            email = user_info.get("email", "").lower()
+            with store.lock:
+                same_account = [key for key, info in list(store.items()) if info.get("email", "").lower() == email and store.active(key)]
+                while len(same_account) >= 5 and token not in same_account:
+                    store.pop(same_account.pop(0), None)
+                if not store.get(token):
+                    store[token] = user_info
     return token
 
 
@@ -1177,7 +1256,7 @@ def _generate_join_code(existing_codes: set[str]) -> str:
     alphabet = string.ascii_uppercase + string.digits
     max_attempts = 5000
     for _ in range(max_attempts):
-        code = "".join(secrets.choice(alphabet) for _ in range(6))
+        code = "".join(secrets.choice(alphabet) for _ in range(8))
         if code not in existing_codes:
             return code
     raise RuntimeError("Could not generate unique class join code")
@@ -1187,6 +1266,10 @@ def _require_teacher(req, *, allow_coteacher=False) -> Optional[dict]:
     token = req.headers.get("X-Teacher-Token", "").strip()
     teacher = _teacher_tokens.get(token)
     if teacher:
+        current = _find_user(teacher.get("email", ""))
+        if current and (not current.get("enabled", True) or current.get("role", "student") != "teacher"):
+            _teacher_tokens.pop(token, None)
+            return None
         return teacher
     if allow_coteacher:
         student = _student_tokens.get(token)
@@ -1263,14 +1346,29 @@ def _write_json_list_file(path: Path, payload: list[dict]) -> None:
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(path)
 
+_server_log_lock = threading.Lock()
+
+
 def _append_server_log(message: str, level: str = "INFO") -> None:
     try:
-        ts = _current_timestamp()
-        APP_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with APP_LOG_FILE.open("a", encoding="utf-8") as handle:
-            handle.write(f"{ts} [{(level or 'INFO').upper()}] {message}\n")
-    except Exception:
-        pass
+        with _server_log_lock:
+            APP_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            if APP_LOG_FILE.exists() and APP_LOG_FILE.stat().st_size >= 10 * 1024 * 1024:
+                APP_LOG_FILE.with_name(APP_LOG_FILE.name + ".5").unlink(missing_ok=True)
+                for number in range(4, 0, -1):
+                    old = APP_LOG_FILE.with_name(APP_LOG_FILE.name + f".{number}")
+                    if old.exists():
+                        old.replace(APP_LOG_FILE.with_name(APP_LOG_FILE.name + f".{number + 1}"))
+                APP_LOG_FILE.replace(APP_LOG_FILE.with_name(APP_LOG_FILE.name + ".1"))
+            # Protect line structure and redact capability-bearing URLs in any caller.
+            text = str(message).replace("\r", " ").replace("\n", " ")
+            text = re.sub(r"(/(?:api/)?lesson-plans/(?:public|current|embed|print)/)[^/?\s]+", r"\1[redacted]", text)
+            text = re.sub(r"([?&](?:share|print)=)[^&\s]+", r"\1[redacted]", text)
+            with APP_LOG_FILE.open("a", encoding="utf-8") as handle:
+                handle.write(f"{_current_timestamp()} [{(level or 'INFO').upper()}] {text}\n")
+    except OSError:
+        app.logger.warning("Server log could not be written")
+
 
 def _append_server_event(event_type: str, message: str, level: str = "info", details: Optional[dict] = None) -> None:
     entry = {
@@ -1296,7 +1394,7 @@ def _record_sign_in_event(email: str, role: str, ip: str, source: str) -> None:
         "ts": int(time.time()),
         "email": (email or "").strip().lower(),
         "role": str(role or "student"),
-        "ip": str(ip or ""),
+        "ip": _redact_ip_for_log(str(ip or "")),
         "source": str(source or "login"),
     }
     with _server_health_lock:
@@ -1309,7 +1407,7 @@ def _record_sign_in_event(email: str, role: str, ip: str, source: str) -> None:
         except Exception:
             pass
     _append_server_log(
-        f"Sign-in: role={event['role']} email={event['email'] or 'admin'} ip={_redact_ip_for_log(event['ip'])} source={event['source']}",
+        f"Sign-in: role={event['role']} account={hashlib.sha256(event['email'].encode()).hexdigest()[:12]} ip={event['ip']} source={event['source']}",
         "INFO",
     )
 
@@ -1356,28 +1454,34 @@ def _is_public_ip(raw: str) -> bool:
     except Exception:
         return False
 
+TRUSTED_PROXY_IPS = os.environ.get("EAGLEIDE_TRUSTED_PROXY_IPS", "127.0.0.1/32,::1/128")
+_login_account_limits = AttemptLimiter(12, 300)
+_login_source_limits = AttemptLimiter(120, 60)
+_ai_request_limits = AttemptLimiter(8, 60)
+_join_attempt_limits = AttemptLimiter(10, 3600)
+_dummy_password_hash = bcrypt.hashpw(secrets.token_bytes(32), bcrypt.gensalt())
+
+
 def _get_request_ip(req) -> str:
-    remote = _parse_ip(req.remote_addr or "")
-    # Only trust forwarded/proxy headers when the direct socket appears to be local/private proxy infrastructure.
-    if not remote or _is_public_ip(remote):
-        return remote or "unknown"
-    cf_ip = _parse_ip(req.headers.get("CF-Connecting-IP", ""))
-    if cf_ip:
-        return cf_ip
-    xff_raw = req.headers.get("X-Forwarded-For", "")
-    xff_candidates = [_parse_ip(part.strip()) for part in xff_raw.split(",") if part.strip()]
-    xff_candidates = [ip for ip in xff_candidates if ip]
-    for candidate in xff_candidates:
-        if _is_public_ip(candidate):
-            return candidate
-    if xff_candidates:
-        return xff_candidates[0]
-    real_ip = _parse_ip(req.headers.get("X-Real-IP", ""))
-    if real_ip:
-        return real_ip
-    if remote:
-        return remote
-    return "unknown"
+    return client_ip(req, TRUSTED_PROXY_IPS)
+
+
+def _admit_login(email, ip):
+    key = hashlib.sha256(str(email).strip().lower().encode()).hexdigest()
+    return _login_source_limits.admit(ip) and _login_account_limits.admit(key)
+
+
+def _login_succeeded(email):
+    _login_account_limits.clear(hashlib.sha256(str(email).strip().lower().encode()).hexdigest())
+
+
+def _ai_identity(req):
+    user = _require_user(req) or _require_teacher(req, allow_coteacher=True)
+    if user:
+        return "account:" + hashlib.sha256(user["email"].lower().encode()).hexdigest()
+    if _require_admin(req):
+        return "admin"
+    return "guest:" + _get_request_ip(req)
 
 
 def _rate_limit_is_blocked(store: dict, key: str, limit: int, window_seconds: float, now: Optional[float] = None) -> bool:
@@ -2272,7 +2376,13 @@ def _seed_example_files(email: str) -> None:
 
 def _require_user(req) -> Optional[dict]:
     token = req.headers.get("X-User-Token", "").strip()
-    return _student_tokens.get(token)
+    user = _student_tokens.get(token)
+    if user:
+        current = _find_user(user.get("email", ""))
+        if current and (not current.get("enabled", True) or current.get("role", "student") != "student"):
+            _student_tokens.pop(token, None)
+            return None
+    return user
 
 def _require_user_for_files(req) -> Optional[dict]:
     """Allow a student, teacher, or the admin to access file routes."""
@@ -2613,7 +2723,9 @@ def _effective_ai_enabled(req, payload: Optional[dict] = None) -> tuple[bool, Op
         # The class switch controls student access only. Teachers retain AI
         # tools for instruction, grading, and reporting for their own classes.
         return True, None
-    return True, None
+    if _require_admin(req):
+        return True, None
+    return False, "Sign in to use AI features"
 
 
 def _effective_challenges_enabled(req, payload: Optional[dict] = None) -> tuple[bool, Optional[str]]:
@@ -2648,10 +2760,25 @@ def admin_login():
     pw = data["password"]
     if not email or not pw:
         return jsonify(ok=False, error="Email and password required"), 400
+    if not _admit_login(email, ip):
+        return jsonify(ok=False, error="Too many sign-in attempts. Try again shortly.", code="auth_rate_limited"), 429
     # Constant-time comparison to prevent timing attacks
     email_ok = hmac.compare_digest(email.lower().encode("utf-8"), ADMIN_ACCOUNT_EMAIL.lower().encode("utf-8"))
-    pw_ok = hmac.compare_digest(pw.encode("utf-8"), ADMIN_ACCOUNT_PASSWORD.encode("utf-8"))
+    if not _password_check_slots.acquire(timeout=AUTH_PASSWORD_QUEUE_TIMEOUT_SECONDS):
+        return jsonify(ok=False, error="Sign-in is busy. Try again shortly.", code="auth_busy"), 503
+    try:
+        if ADMIN_ACCOUNT_PASSWORD:
+            # Compatibility for embedders which explicitly supply an in-memory credential.
+            pw_ok = hmac.compare_digest(pw.encode("utf-8"), ADMIN_ACCOUNT_PASSWORD.encode("utf-8"))
+        else:
+            try:
+                pw_ok = verify_admin_password(pw, ADMIN_ACCOUNT_PASSWORD_HASH, ADMIN_ACCOUNT_PASSWORD_SCHEME)
+            except (ValueError, UnicodeError):
+                pw_ok = False
+    finally:
+        _password_check_slots.release()
     if email_ok and pw_ok:
+        _login_succeeded(email)
         user_info = {"email": ADMIN_ACCOUNT_EMAIL, "name": "Admin", "role": "admin"}
         token = _issue_access_token("admin", user_info)
         _seed_example_files(ADMIN_ACCOUNT_EMAIL)
@@ -2667,6 +2794,8 @@ def get_config():
     sanitized = _config_with_background_urls(cfg)
     sanitized.update(_normalized_python_runtime_settings(cfg))
     sanitized.pop("admin_password_encrypted", None)
+    sanitized.pop("admin_password_hash", None)
+    sanitized.pop("admin_password_scheme", None)
     sanitized.pop("admin_email", None)
     return jsonify(ok=True, data=sanitized)
 
@@ -2678,6 +2807,8 @@ def save_config():
     partial = data.get("data", {})
     if isinstance(partial, dict):
         partial.pop("admin_password_encrypted", None)
+        partial.pop("admin_password_hash", None)
+        partial.pop("admin_password_scheme", None)
         partial.pop("admin_email", None)
         for protected_key in _BACKGROUND_CONFIG_KEYS.values():
             partial.pop(protected_key, None)
@@ -2699,6 +2830,8 @@ def save_config():
     new_cfg.update(_normalized_python_runtime_settings(new_cfg))
     new_cfg = _config_with_background_urls(new_cfg)
     new_cfg.pop("admin_password_encrypted", None)
+    new_cfg.pop("admin_password_hash", None)
+    new_cfg.pop("admin_password_scheme", None)
     new_cfg.pop("admin_email", None)
     return jsonify(ok=True, data=new_cfg)
 
@@ -2881,25 +3014,31 @@ def auth_login():
     
     if not email or not password:
         return jsonify(ok=False, error="Email and password required"), 400
+    if not _admit_login(email, ip):
+        return jsonify(ok=False, error="Too many sign-in attempts. Try again shortly.", code="auth_rate_limited"), 429
     user = _find_user(email)
-    if not user:
-        return jsonify(ok=False, error="No account was found for that email", code="account_not_found"), 401
-    if not user.get("enabled", True):
-        return jsonify(ok=False, error="This account is disabled. Ask your teacher or administrator for help.", code="account_disabled"), 403
-
     if not _password_check_slots.acquire(timeout=AUTH_PASSWORD_QUEUE_TIMEOUT_SECONDS):
         response = jsonify(ok=False, error="The sign-in queue is busy. Please try again in a moment.", code="auth_busy")
         response.status_code = 503
         response.headers["Retry-After"] = "2"
         return response
     try:
-        pw_ok = _verify_user_password(user, password)
+        if user:
+            pw_ok = _verify_user_password(user, password)
+        else:
+            try:
+                bcrypt.checkpw(password.encode("utf-8"), _dummy_password_hash)
+            except ValueError:
+                pass
+            pw_ok = False
     finally:
         _password_check_slots.release()
-
     if not pw_ok:
-        return jsonify(ok=False, error="Incorrect password", code="incorrect_password"), 401
-    
+        return jsonify(ok=False, error="Incorrect email or password", code="invalid_credentials"), 401
+    if not user.get("enabled", True):
+        return jsonify(ok=False, error="This account is disabled. Ask your teacher or administrator for help.", code="account_disabled"), 403
+    _login_succeeded(email)
+
     # Ensure user directory exists
     user_dir = _get_user_dir(email)
     user_dir.mkdir(parents=True, exist_ok=True)
@@ -2927,6 +3066,7 @@ def auth_restore():
         role = str(payload.get("role") or "").strip().lower()
         email = str(payload.get("email") or "").strip().lower()
         expires_at = int(payload.get("expires_at") or 0)
+        first_issued_at = int(payload.get("first_issued_at") or _admin_cipher().extract_timestamp(encrypted.encode("ascii")))
         credential = str(payload.get("credential") or "")
         access_token = str(payload.get("access_token") or "")
     except (InvalidToken, ValueError, TypeError, UnicodeError, json.JSONDecodeError):
@@ -2936,7 +3076,7 @@ def auth_restore():
         return response
     current_fingerprint = _device_credential_fingerprint(role, email)
     if payload.get("v") != 1 or role not in {"student", "teacher", "admin"} or not re.fullmatch(r"[0-9a-f]{32}", access_token) \
-            or expires_at <= int(time.time()) \
+            or expires_at <= int(time.time()) or first_issued_at + 30 * 24 * 3600 <= int(time.time()) \
             or not current_fingerprint or not hmac.compare_digest(credential, current_fingerprint):
         response = jsonify(ok=False, error="Saved sign-in has expired", code="expired_saved_session")
         response.status_code = 401
@@ -2954,7 +3094,7 @@ def auth_restore():
         user_info = _user_info_from_record(user)
     token = _issue_access_token(role, user_info, access_token)
     response = jsonify(ok=True, token=token, user=user_info, role=role)
-    _set_device_session_cookie(response, role, email, token)
+    _set_device_session_cookie(response, role, email, token, first_issued_at)
     return response
 
 @app.post("/api/auth/logout")
@@ -3926,9 +4066,17 @@ def files_upload():
                 if written > max_upload_bytes:
                     raise ValueError("upload_limit")
                 handle.write(chunk)
+        if target_validated.suffix.lower() in IMAGE_UPLOAD_FORMATS:
+            cleaned = clean_image(temp_target.read_bytes(), target_validated.suffix)
+            if len(cleaned) > max_upload_bytes:
+                raise ValueError("upload_limit")
+            temp_target.write_bytes(cleaned)
         temp_target.replace(target_validated)
         _invalidate_workspace_tree_cache(user_dir)
         return jsonify(ok=True, path=str(target_validated.relative_to(user_dir)))
+    except ImageValidationError:
+        temp_target.unlink(missing_ok=True)
+        return jsonify(ok=False, error="Image could not be decoded safely"), 422
     except ValueError:
         try:
             temp_target.unlink(missing_ok=True)
@@ -4289,10 +4437,8 @@ def admin_reset_password():
     if not email:
         return jsonify(ok=False, error="Email required"), 400
     
-    # Six characters are intentionally used for the administrator-distributed
-    # temporary credential. Students are prompted to replace it after sign-in.
-    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
-    new_password = "".join(secrets.choice(alphabet) for _ in range(6))
+    # A reset credential must have the same entropy for all account roles.
+    new_password = secrets.token_urlsafe(16)
     password_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     
     users_data = _load_users()
@@ -4300,6 +4446,8 @@ def admin_reset_password():
     for u in users_data.get("users", []):
         if u.get("email", "").lower() == email:
             u["password_hash"] = password_hash
+            u.pop("password_hash_scheme", None)
+            u.pop("password", None)
             found = True
             break
     
@@ -4326,7 +4474,11 @@ def admin_delete_user():
     email = (data.get("email") or "").strip().lower()
     if not email:
         return jsonify(ok=False, error="Email required"), 400
-    if not _delete_user_by_email(email):
+    try:
+        deleted = _delete_user_by_email(email)
+    except AccountCleanupError as exc:
+        return jsonify(ok=False, error=str(exc)), exc.status
+    if not deleted:
         return jsonify(ok=False, error="User not found"), 404
     return jsonify(ok=True)
 
@@ -4393,25 +4545,61 @@ def admin_clear_user_files():
     return jsonify(ok=True)
 
 
+class AccountCleanupError(RuntimeError):
+    def __init__(self, message, status=503):
+        super().__init__(message)
+        self.status = status
+
+
 def _delete_user_by_email(email: str) -> bool:
-    """Remove a user record, invalidate tokens, clean up class memberships and files.
-    Returns True if the user was found and deleted, False otherwise."""
+    """Delete the account/workspace, retaining a disabled account on cleanup failure.
+
+    This is not a complete erasure of independently retained educational records.
+    Class owners must explicitly delete or transfer their classes first.
+    """
+    email = email.strip().lower()
     users_data = _load_users()
     deleted_user = next(
         (u for u in users_data.get("users", []) if (u.get("email") or "").lower() == email),
         None,
     )
-    before = len(users_data.get("users", []))
-    users_data["users"] = [u for u in users_data.get("users", []) if u.get("email", "").lower() != email]
-    if len(users_data["users"]) == before:
+    if deleted_user is None:
         return False
-    _save_users(users_data)
+    if any((cls.get("teacher_email") or "").lower() == email for cls in _load_classes().get("classes", [])):
+        raise AccountCleanupError("Delete or transfer this account's classes before deleting the account.", 409)
+    root = USER_FILES_DIR.resolve()
+    candidate = _get_user_dir(email)
+    user_dir = candidate.resolve()
+    if candidate.is_symlink() or user_dir.parent != root or any(
+        (user.get("email") or "").lower() != email and
+        _get_user_dir(str(user.get("email") or "").lower()).resolve() == user_dir
+        for user in users_data.get("users", [])
+    ):
+        raise AccountCleanupError("Workspace containment or ownership check failed; no account was deleted.")
+    # Keep the identity available for an administrator's retry until all of the
+    # cleanup operations below have succeeded. Never turn a partial deletion
+    # into a misleading 'not found' response.
+    with _users_lock:
+        current = _load_users()
+        for user in current.get("users", []):
+            if (user.get("email") or "").lower() == email:
+                user["enabled"] = False
+        _save_users(current)
     for token, info in list(_student_tokens.items()):
         if info.get("email", "").lower() == email:
-            del _student_tokens[token]
+            _student_tokens.pop(token, None)
     for token, info in list(_teacher_tokens.items()):
         if info.get("email", "").lower() == email:
-            del _teacher_tokens[token]
+            _teacher_tokens.pop(token, None)
+    try:
+        if user_dir.exists():
+            shutil.rmtree(user_dir)
+        file_provenance.clear(sys.modules[__name__], user_dir)
+        if deleted_user.get("tool_storage_id"):
+            _external_tools.storage.delete_account(deleted_user["tool_storage_id"])
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        raise AccountCleanupError("Account disabled, but storage cleanup failed. Retry deletion; the account record was retained.") from exc
+    _invalidate_workspace_tree_cache(user_dir)
     classes_data = _load_classes()
     changed_classes = False
     for c in classes_data.get("classes", []):
@@ -4419,42 +4607,27 @@ def _delete_user_by_email(email: str) -> bool:
         c["students"] = [s for s in c.get("students", []) if s.lower() != email]
         if len(c["students"]) != before_students:
             changed_classes = True
-    if deleted_user and deleted_user.get("role") == "teacher":
-        before_count = len(classes_data.get("classes", []))
-        classes_data["classes"] = [
-            c for c in classes_data.get("classes", [])
-            if (c.get("teacher_email") or "").lower() != email
-        ]
-        changed_classes = changed_classes or len(classes_data["classes"]) != before_count
+        old_coteachers = list(c.get("coteachers") or [])
+        c["coteachers"] = [value for value in old_coteachers if str(value).lower() != email]
+        changed_classes = changed_classes or old_coteachers != c["coteachers"]
+        accommodations = c.get("accommodations")
+        if isinstance(accommodations, dict) and email in accommodations:
+            accommodations.pop(email)
+            changed_classes = True
     if changed_classes:
         _save_classes(classes_data)
     if deleted_user and deleted_user.get("role") == "student":
         _revoke_student_class_rooms(email)
-    user_dir = _get_user_dir(email).resolve()
-    # Ensure path is strictly within USER_FILES_DIR to prevent any traversal
-    try:
-        user_dir.relative_to(USER_FILES_DIR.resolve())
-    except ValueError:
-        print(f"Warning: _delete_user_by_email path containment check failed for {email}")
-        return False
-    if user_dir.exists():
-        try:
-            shutil.rmtree(user_dir)
-            file_provenance.clear(sys.modules[__name__], user_dir)
-        except Exception as exc:
-            print(f"Warning: failed to delete user directory for {email}: {type(exc).__name__}")
-    _invalidate_workspace_tree_cache(user_dir)
-    if deleted_user and deleted_user.get("tool_storage_id"):
-        try:
-            _external_tools.storage.delete_account(deleted_user["tool_storage_id"])
-        except (OSError, sqlite3.Error):
-            app.logger.warning("Deleted account's external tool storage could not be removed")
+    with _users_lock:
+        current = _load_users()
+        current["users"] = [user for user in current.get("users", []) if (user.get("email") or "").lower() != email]
+        _save_users(current)
     return True
 
 
 @app.post("/api/admin/users/bulk-delete")
 def admin_bulk_delete_users():
-    """Delete multiple user accounts and all their data."""
+    """Delete multiple accounts/workspaces; report cleanup failures separately."""
     if not _require_admin(request):
         return jsonify(ok=False, error="Admin token required"), 401
     data = request.get_json(silent=True) or {}
@@ -4463,15 +4636,19 @@ def admin_bulk_delete_users():
         return jsonify(ok=False, error="emails list required"), 400
     deleted = []
     not_found = []
+    failed = []
     for raw in emails:
         email = (str(raw) or "").strip().lower()
         if not email:
             continue
-        if _delete_user_by_email(email):
-            deleted.append(email)
-        else:
-            not_found.append(email)
-    return jsonify(ok=True, deleted=deleted, not_found=not_found)
+        try:
+            if _delete_user_by_email(email):
+                deleted.append(email)
+            else:
+                not_found.append(email)
+        except AccountCleanupError as exc:
+            failed.append({"email": email, "error": str(exc)})
+    return jsonify(ok=not failed, deleted=deleted, not_found=not_found, failed=failed), 503 if failed else 200
 
 
 @app.post("/api/admin/users/bulk-toggle")
@@ -4573,6 +4750,8 @@ def join_class():
         return jsonify(ok=False, error="Student login required"), 401
     join_code = str((request.get_json(silent=True) or {}).get("joinCode", "")).strip().upper()
     target_email = (user.get("email") or "").strip().lower()
+    if not _join_attempt_limits.admit(target_email):
+        return jsonify(ok=False, error="Too many class join attempts. Try again later."), 429
     # Both files form one membership record. Hold their locks for the entire
     # read-modify-write operation so simultaneous class joins cannot erase one
     # another. All multi-store transactions use users -> classes lock order.
@@ -5208,6 +5387,14 @@ def _teacher_delete_class_locked():
         remaining_classes.append(cls)
     if not target_class:
         return jsonify(ok=False, error="Class not found"), 404
+    lesson_plan_store = app.extensions.get("eagle_lesson_plan_store")
+    if lesson_plan_store:
+        try:
+            # Revoke public links before removing the class identity. Failure
+            # must leave that identity available for a retry.
+            lesson_plan_store.delete_class(class_id)
+        except (OSError, ValueError):
+            return jsonify(ok=False, error="Lesson-plan cleanup failed. The class was retained; retry deletion."), 503
     # Class deletion is the final retention boundary for its assignment copies.
     # Keep metadata until each assignment's recordings and submitted files are removed.
     with _assignment_lock:
@@ -5250,12 +5437,6 @@ def _teacher_delete_class_locked():
             changed = True
     if changed:
         _save_skills(skills_data)
-    lesson_plan_store = app.extensions.get("eagle_lesson_plan_store")
-    if lesson_plan_store:
-        try:
-            lesson_plan_store.delete_class(class_id)
-        except (OSError, ValueError):
-            pass
     return jsonify(ok=True, deletedClassId=class_id, unassignedStudents=len(student_emails))
 
 
@@ -5576,6 +5757,8 @@ def teacher_reset_password():
     for u in users_data.get("users", []):
         if (u.get("email") or "").lower() == email and u.get("role") == "student":
             u["password_hash"] = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+            u.pop("password_hash_scheme", None)
+            u.pop("password", None)
             found = True
             break
     if not found:
@@ -5600,25 +5783,33 @@ def teacher_change_password():
     if len(new_password) < 8:
         return jsonify(ok=False, error="New password must be at least 8 characters"), 400
     email = (teacher.get("email") or "").strip().lower()
-    users_data = _load_users()
-    teacher_record = next(
-        (u for u in users_data.get("users", []) if (u.get("email") or "").lower() == email and u.get("role") == "teacher"),
-        None
-    )
-    if not teacher_record:
+    if len(new_password.encode("utf-8")) > 72:
+        return jsonify(ok=False, error="New password must be 72 UTF-8 bytes or fewer"), 400
+    existing = _find_user(email)
+    if not existing or existing.get("role") != "teacher":
         return jsonify(ok=False, error="Teacher account not found"), 404
-    try:
-        current_ok = bcrypt.checkpw(current_password.encode("utf-8"), teacher_record["password_hash"].encode("utf-8"))
-    except Exception:
-        current_ok = False
-    if not current_ok:
+    if not _verify_user_password(existing, current_password):
         return jsonify(ok=False, error="Current password is incorrect"), 403
-    teacher_record["password_hash"] = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-    _save_users(users_data)
+    existing = _find_user(email) or existing
+    original_credential = str(existing.get("password_hash") or "")
+    next_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    with _users_lock:
+        users_data = _load_users()
+        teacher_record = next((u for u in users_data.get("users", []) if u.get("email", "").lower() == email and u.get("role") == "teacher"), None)
+        if not teacher_record:
+            return jsonify(ok=False, error="Teacher account not found"), 404
+        if not hmac.compare_digest(original_credential, str(teacher_record.get("password_hash") or "")):
+            return jsonify(ok=False, error="Password changed in another session. Please sign in again."), 409
+        teacher_record["password_hash"] = next_hash
+        teacher_record.pop("password_hash_scheme", None)
+        teacher_record.pop("password", None)
+        _save_users(users_data)
     for token, info in list(_teacher_tokens.items()):
         if (info.get("email") or "").lower() == email and token != request.headers.get("X-Teacher-Token", "").strip():
             del _teacher_tokens[token]
-    return jsonify(ok=True)
+    response = jsonify(ok=True)
+    _set_device_session_cookie(response, "teacher", email, request.headers.get("X-Teacher-Token", "").strip())
+    return response
 
 
 @app.post("/api/student/change-password")
@@ -5658,6 +5849,7 @@ def student_change_password():
         if not hmac.compare_digest(original_credential, current_credential):
             return jsonify(ok=False, error="Password changed in another session. Please sign in again."), 409
         student_record["password_hash"] = next_hash
+        student_record.pop("password_hash_scheme", None)
         student_record.pop("password", None)
         _save_users(users_data)
     current_token = request.headers.get("X-User-Token", "").strip()
@@ -6278,6 +6470,8 @@ def api_explain():
     allowed, error = _effective_ai_enabled(request, data)
     if not allowed:
         return jsonify(ok=False, error=error or "AI unavailable"), 403
+    if not _ai_request_limits.admit(_ai_identity(request)):
+        return jsonify(ok=False, error="Too many AI requests. Try again shortly."), 429
     cfg = _load_config()
     code = data.get("code", "")
     file_name = (data.get("fileName") or data.get("file_name") or "").strip()
@@ -6440,24 +6634,25 @@ def _save_challenge_scores(data: dict) -> None:
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(CHALLENGE_SCORE_FILE)
 
-def _build_challenge_leaderboard() -> list[dict]:
+def _build_challenge_leaderboard(class_id: str = "") -> list[dict]:
     tracker = _load_challenge_scores()
     students = tracker.get("students", {})
+    cls = _find_class_by_id(class_id) if class_id else None
+    roster = {str(email).lower() for email in (cls or {}).get("students", [])}
     leaderboard = []
     for user in _load_users().get("users", []):
         email = (user.get("email") or "").strip().lower()
-        if not email or email == ADMIN_ACCOUNT_EMAIL.lower():
+        if not email or email not in roster or user.get("role", "student") != "student":
             continue
         student_entry = students.get(email, {})
         challenges = student_entry.get("challenges", {})
         total_score = sum(max(0, int(challenge.get("score", 0) or 0)) for challenge in challenges.values())
         leaderboard.append({
-            "name": student_entry.get("name") or user.get("name") or email,
-            "email": email,
+            "name": student_entry.get("name") or user.get("name") or "Student",
             "score": total_score,
             "challengeCount": len(challenges),
         })
-    leaderboard.sort(key=lambda row: (-row["score"], row["name"].lower(), row["email"]))
+    leaderboard.sort(key=lambda row: (-row["score"], row["name"].lower()))
     return leaderboard
 
 @app.post("/api/challenge/random")
@@ -6578,7 +6773,7 @@ def challenge_submit():
             "submittedAt": submitted_at,
         }
         _save_challenge_scores(tracker)
-        leaderboard = _build_challenge_leaderboard()
+        leaderboard = _build_challenge_leaderboard(str(data.get("classId") or user.get("class_id") or ""))
 
     return jsonify(ok=True, leaderboard=leaderboard, top=leaderboard, heldScore=score, submittedAt=submitted_at)
 
@@ -6588,7 +6783,7 @@ def challenge_leaderboard():
     if not allowed:
         return jsonify(ok=False, error=access_error or "Challenges unavailable"), 403
     with _lb_lock:
-        leaderboard = _build_challenge_leaderboard()
+        leaderboard = _build_challenge_leaderboard(str(request.args.get("classId") or (_require_user(request) or {}).get("class_id") or ""))
     return jsonify(ok=True, leaderboard=leaderboard, top=leaderboard)
 
 # -------------------------
@@ -6618,7 +6813,7 @@ def assistant_chat():
     if not allowed:
         return jsonify(ok=False, error=error or "AI unavailable"), 403
     cfg = _load_config()
-    sid = (request.headers.get("X-SID") or data.get("sid") or "").strip()
+    sid = _ai_identity(request)
     msgs = data.get("messages", [])  # [{role: 'user'|'assistant', content: '...'}, ...]
     file_name = (data.get("fileName") or data.get("file_name") or "").strip()
     language = _normalize_language_hint(data.get("language"), file_name)
@@ -6637,6 +6832,7 @@ def assistant_chat():
         remain = ASSISTANT_COOLDOWN - int(now - last)
         if remain > 0:
             return jsonify(ok=False, error="Cooldown", cooldown=remain), 429
+        _ASSISTANT_LAST[sid] = now
 
     # Build prompt: fixed guardrails + optional admin preprompt + condensed transcript
     preprompt = str(cfg.get("ai_assistant_preprompt") or "").strip()
@@ -7130,9 +7326,14 @@ def view_html_runtime_asset(runtime_id: str, asset_path: str):
         return jsonify(ok=False, error="Runtime session not found or expired"), 404
 
     runtime_root = Path(session.get("runtime_root") or session.get("runtime_dir", ""))
-    target = _validate_user_path(runtime_root, asset_path)
+    target = _validate_workspace_path(runtime_root, asset_path)
     if not target or not target.exists() or not target.is_file():
         return jsonify(ok=False, error="Runtime asset not found"), 404
+    relative_parts = target.relative_to(runtime_root.resolve()).parts
+    if any(part.casefold() in {".eagleide", "trash"} or part.startswith(".") for part in relative_parts):
+        return jsonify(ok=False, error="Runtime asset not found"), 404
+    if HTML_RUNTIME_PREVIEW_ORIGIN and HTML_RUNTIME_PREVIEW_ISOLATED and not _html_preview_request_is_isolated():
+        return jsonify(ok=False, error="Open this preview on its isolated preview origin"), 404
     try:
         asset_size = target.stat().st_size
     except OSError:
@@ -7141,7 +7342,7 @@ def view_html_runtime_asset(runtime_id: str, asset_path: str):
         return jsonify(ok=False, error=f"Runtime asset exceeds the {MAX_HTML_RUNTIME_ASSET_BYTES // (1024 * 1024)}MB limit"), 413
 
     ext = target.suffix.lower()
-    if ext == ".html":
+    if _is_html_file(target):
         if asset_size > MAX_HTML_RUNTIME_HTML_BYTES:
             return jsonify(ok=False, error=f"HTML document exceeds the {MAX_HTML_RUNTIME_HTML_BYTES // (1024 * 1024)}MB preview limit"), 413
         cfg = _load_config()
@@ -7175,10 +7376,32 @@ def view_html_runtime_asset(runtime_id: str, asset_path: str):
                 "frame-src 'self'; "
                 "child-src 'self'"
             )
+        # A response sandbox also applies to direct navigation and popup windows.
+        # Never grant allow-same-origin to a student document.
+        sandbox_policy = "sandbox" + (" allow-scripts allow-modals" if scripts_enabled else "")
+        if scripts_enabled and _cfg_bool(cfg, "html_runtime_allow_popups", False):
+            sandbox_policy += " allow-popups"
+        existing_policy = response.headers.get("Content-Security-Policy", "object-src 'none'")
+        response.headers["Content-Security-Policy"] = existing_policy + "; " + sandbox_policy
+        response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Cache-Control"] = "no-store"
         response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
         return response
-    response = send_file(str(target), conditional=True, max_age=0)
+    asset_types = {
+        ".css": "text/css", ".js": "text/javascript", ".mjs": "text/javascript",
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".gif": "image/gif", ".webp": "image/webp", ".ico": "image/x-icon",
+        ".svg": "image/svg+xml", ".woff": "font/woff", ".woff2": "font/woff2",
+        ".ttf": "font/ttf", ".otf": "font/otf", ".json": "application/json",
+        ".txt": "text/plain", ".csv": "text/plain", ".map": "application/json",
+        ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
+        ".mp4": "video/mp4", ".webm": "video/webm",
+    }
+    if ext not in asset_types:
+        return jsonify(ok=False, error="Runtime asset type is not supported"), 404
+    response = send_file(str(target), mimetype=asset_types[ext], conditional=True, max_age=0)
+    response.headers["Content-Security-Policy"] = "default-src 'none'; script-src 'none'; sandbox"
+    response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["Cache-Control"] = "no-store"
     response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
     return response
@@ -10960,6 +11183,18 @@ def _set_assignment_ai_failure(assignment_id: str, student_email: str, error: st
                 return
 
 
+def _anonymous_assignment_model_source(submission: dict, code: str) -> str:
+    # Preserve every source line while removing EagleIDE's generated identity
+    # comments and replacing generated file labels with ordinal labels.
+    result = re.sub(r"(?m)^# Submitted (?:by|at):[^\r\n]*", "", code)
+    for index, file in enumerate(submission.get("files") or [], 1):
+        name = str(file.get("name") or "")
+        suffix = Path(name).suffix.lower()
+        prefix = "#" if suffix == ".py" else "//"
+        result = result.replace(f"{prefix} File: {name}\n", f"{prefix} Source file {index} ({suffix})\n")
+    return result
+
+
 def _build_assignment_ai_prompt(
     *,
     task: str,
@@ -11448,6 +11683,7 @@ def _run_assignment_ai_grading(assignment_id: str, student_email: str) -> None:
     try:
         cfg = _load_config()
         code = str(submission.get("code") or "")
+        model_code = _anonymous_assignment_model_source(submission, code)
         task = str(assignment.get("task") or "")
         max_score = max(0, int(assignment.get("maxScore") or 0))
         rigor = max(1, min(10, int(assignment.get("aiGradingRigor") or 5)))
@@ -11473,6 +11709,9 @@ def _run_assignment_ai_grading(assignment_id: str, student_email: str) -> None:
                 syntax_note = f"Python syntax check: {syntax_error}." if syntax_error else "Python syntax check: no syntax errors found; files checked separately. This does not prove the code runs correctly."
         if len(submission.get("files") or []) > 1:
             syntax_note += " Source-file labels separate independent files; do not treat the combined source as one executable program."
+        for index, file in enumerate(submission.get("files") or [], 1):
+            syntax_note = syntax_note.replace(str(file.get("name") or "\0"), f"Source file {index}")
+        model_file_name = "submission.py" if language == "python" else "submission.js" if language == "javascript" else "source files"
         integrity_warning = _detect_assignment_prompt_injection(code)
         if grading_mode == "rubric_beta":
             context_limit = _bounded_int(cfg.get("ai_rubric_context_tokens"), RUBRIC_CONTEXT_TOKENS, 2048, 65536)
@@ -11513,7 +11752,7 @@ def _run_assignment_ai_grading(assignment_id: str, student_email: str) -> None:
 
             try:
                 score, feedback = _grade_assignment_rubric_adaptive(
-                    task=task, code=code, file_name=file_name, language=language, max_score=max_score,
+                    task=task, code=model_code, file_name=model_file_name, language=language, max_score=max_score,
                     criteria=criteria, rubric=rubric, syntax_note=syntax_note,
                     integrity_warning=integrity_warning, context_limit=context_limit,
                     request_ai=request_beta, is_canceled=grading_canceled,
@@ -11523,8 +11762,8 @@ def _run_assignment_ai_grading(assignment_id: str, student_email: str) -> None:
         else:
             prompt = _build_assignment_ai_prompt(
                 task=task,
-                code=code,
-                file_name=file_name,
+                code=model_code,
+                file_name=model_file_name,
                 language=language,
                 max_score=max_score,
                 rigor=rigor,
@@ -12866,7 +13105,7 @@ def student_class_mastery():
             "band": _mastery_bucket(score),
         })
     return jsonify(ok=True, report={
-        "class": report.get("class") or {},
+        "class": {"name": "Class"},
         "skills": skill_rows,
     })
 
@@ -12891,9 +13130,12 @@ def teacher_class_mastery_feedback(class_id: str):
         scope = "all"
     focus_tag = selected_tag if (scope == "tag" and selected_tag) else ""
     students = []
-    for student in report.get("students", []):
+    feedback_names = {}
+    for index, student in enumerate(report.get("students", []), 1):
+        alias = f"Learner_{index:04d}"
+        feedback_names[alias] = student.get("name") or "Student"
         students.append({
-            "name": student.get("name") or student.get("email") or "",
+            "name": alias,
             "assignmentScores": {
                 key: (value or {}).get("percent")
                 for key, value in ((student.get("assignmentScores") or {}).items())
@@ -12901,7 +13143,7 @@ def teacher_class_mastery_feedback(class_id: str):
             "skillScores": student.get("skillScores") or {},
         })
     dataset = {
-        "class": report.get("class") or {},
+        "class": {"name": "Class"},
         "assignments": report.get("assignments") or [],
         "skillTags": report.get("skillTags") or [],
         "students": students,
@@ -12909,7 +13151,7 @@ def teacher_class_mastery_feedback(class_id: str):
     cfg = _load_config()
     prompt = (
         "You are an experienced K-12 CS instructional coach.\n"
-        f"Class: {report.get('class', {}).get('name', 'Class')}\n"
+        "Class: Class\n"
         f"Rigor target: {_rigor_label(rigor)} (level {rigor}/10)\n"
         "Important: analyze score percentages only; do not use or mention any color-band labels or tier names.\n"
         "Output rules: do not add any intro sentence, conclusion paragraph, or follow-up questions.\n"
@@ -12930,7 +13172,9 @@ def teacher_class_mastery_feedback(class_id: str):
     )
     if not res.get("ok"):
         return jsonify(ok=False, error="AI service unavailable"), 502
-    return jsonify(ok=True, feedback=_sanitize_ai_feedback_text(res.get("text") or ""))
+    feedback = str(res.get("text") or "")
+    feedback = re.sub(r"\bLearner_\d{4}\b", lambda match: feedback_names.get(match.group(), match.group()), feedback)
+    return jsonify(ok=True, feedback=_sanitize_ai_feedback_text(feedback))
 
 
 @app.post("/api/teacher/classes/<class_id>/mastery-feedback/save")
@@ -13312,7 +13556,15 @@ if __name__ == "__main__":
     _cleanup_stale_runner_sandboxes()
     _cleanup_all_user_files()
     try:
-        socketio.run(app, host=host, port=port, debug=False, allow_unsafe_werkzeug=True)
+        from werkzeug.serving import WSGIRequestHandler
+
+        class PrivateRequestHandler(WSGIRequestHandler):
+            def send_header(self, keyword, value):
+                if keyword.lower() != "server":
+                    super().send_header(keyword, value)
+
+        socketio.run(app, host=host, port=port, debug=False, allow_unsafe_werkzeug=True,
+                     request_handler=PrivateRequestHandler)
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:

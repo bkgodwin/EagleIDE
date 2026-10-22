@@ -50,6 +50,14 @@ def main():
         eagle._teacher_tokens['agenda-teacher'] = teacher
         eagle._student_tokens['agenda-student'] = student
         eagle._admin_tokens.add('agenda-admin')
+        student_root = eagle._get_user_dir(student['email'])
+        student_root.mkdir(parents=True, exist_ok=True)
+        (student_root / 'preview.html').write_text('<h1>Preview fixture</h1>', encoding='utf-8')
+        (student_root / 'attack.htm').write_text('<script>document.documentElement.setAttribute("data-student-script", "executed")</script><p>Inert fixture</p>', encoding='utf-8')
+        (student_root / 'attack.svg').write_text('<svg xmlns="http://www.w3.org/2000/svg"><script>document.documentElement.setAttribute("data-student-script", "executed")</script><text y="20">Inert fixture</text></svg>', encoding='utf-8')
+        private = student_root / '.eagleide'
+        private.mkdir(exist_ok=True)
+        (private / 'private.json').write_text('{"fixture":true}', encoding='utf-8')
         teacher_root = eagle._get_user_dir(teacher['email'])
         teacher_root.mkdir(parents=True, exist_ok=True)
         (teacher_root / 'loops.py').write_text('for number in range(5):\n    print(number)\n', encoding='utf-8')

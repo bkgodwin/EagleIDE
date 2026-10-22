@@ -254,6 +254,8 @@ class CapabilityLogFilter(logging.Filter):
     def filter(self, record):
         message = record.getMessage()
         record.msg = re.sub(r"(/_tools/[a-f0-9]{32}/)[A-Za-z0-9_-]+", r"\1[redacted]", message)
+        record.msg = re.sub(r"(/(?:api/)?lesson-plans/(?:public|current|embed|print)/)[^/?\s]+", r"\1[redacted]", record.msg)
+        record.msg = re.sub(r"([?&](?:share|print)=)[^&\s]+", r"\1[redacted]", record.msg)
         record.args = ()
         return True
 

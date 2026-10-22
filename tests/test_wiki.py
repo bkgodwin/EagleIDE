@@ -9,6 +9,13 @@ from flask import Flask
 
 from wiki_features import register as register_wiki_features
 from wiki_store import WikiStore
+from PIL import Image
+
+
+def png_fixture(size=(4, 4)):
+    output = io.BytesIO()
+    Image.new("RGB", size, "blue").save(output, format="PNG")
+    return output.getvalue()
 
 
 class WikiStoreTests(unittest.TestCase):
@@ -150,10 +157,11 @@ class WikiStoreTests(unittest.TestCase):
         sibling = self.store.create_page("Earlier Page", "# Earlier Page", folder["id"], status="published")
         page = self.store.create_page("Backup Page", "# Backup Page", folder["id"], status="published")
         self.store.position_node(page["id"], sibling["id"], "before")
-        image_bytes = b"\x89PNG\r\n\x1a\nportable-image"
+        image_bytes = png_fixture()
         source = self.root / "diagram.png"
         source.write_bytes(image_bytes)
         image = self.store.create_asset_from_file(source, "diagram.png", title="diagram.png")
+        image_bytes = self.store.media_path(image["id"])[1].read_bytes()
         directive = f"{{{{image:{image['id']}|alt=diagram.png|caption=|align=center|width=original}}}}"
         published_markdown = f"# Backup Page\n\n{directive}\n\nPublished lesson."
         self.store.update_node(page["id"], content=published_markdown, status="published")
@@ -752,7 +760,7 @@ class WikiApiTests(unittest.TestCase):
             )
 
         fixtures = [
-            ("diagram.png", b"\x89PNG\r\n\x1a\nminimal", "image"),
+            ("diagram.png", png_fixture(), "image"),
             ("lesson.mp4", b"\x00\x00\x00\x18ftypmp42minimal", "video"),
             ("handout.pdf", b"%PDF-1.4\nminimal", "pdf"),
         ]
@@ -782,12 +790,7 @@ class WikiApiTests(unittest.TestCase):
         self.assertEqual(rejected.status_code, 400)
 
     def test_admin_tree_excludes_images_and_media_manager_can_delete_them(self):
-        png = (
-            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
-            + (1200).to_bytes(4, "big")
-            + (800).to_bytes(4, "big")
-            + b"\x08\x02\x00\x00\x00"
-        )
+        png = png_fixture((1200, 800))
         image = self._upload_asset("diagram.png", png)
         directive = f"{{{{image:{image['id']}|alt=Diagram|width=65|align=center}}}}"
         page = self.store.create_page(

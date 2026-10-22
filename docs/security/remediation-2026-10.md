@@ -1,0 +1,129 @@
+# October 2026 security remediation
+
+This change implements immediate security fixes and compatibility-preserving maintenance tools. It **does not close all 53 findings** or certify the production deployment. In particular, complete educational-record erasure, encryption at rest, retention automation, browser draft disposal, and OS-level runner isolation remain open engineering work. Deployment changes require the operator's access to the actual server and Cloudflare account.
+
+The [supplied audit](audit-2026-10-21.md) is attached as a redacted reference. Its instructions are recommendations from an earlier reviewer, not authorization to operate the deployment. The original report and metadata-only exposure inventories remain outside this repository. No exposed record contents, encryption keys, personal contact literals, or pre-rewrite sensitive object identifiers belong in this PR or its comments.
+
+## Implemented behavior
+
+- Proxy identity and HTTPS headers are accepted only from explicit `EAGLEIDE_TRUSTED_PROXY_IPS` networks, defaulting to loopback. LAN and internet peers cannot nominate arbitrary client addresses. The same rule controls remembered-cookie security and tool instance URL schemes.
+- Login has source and account attempt limits and generic failures. Expiring access-token stores enforce absolute/idle limits and five sessions per account/role. Remembered cookies retain their original issuance deadline instead of renewing indefinitely. Existing sessions are in memory and therefore end on deployment restart.
+- Administrators use a versioned salted password hash. Existing encrypted administrator credentials migrate atomically without changing the password or other configuration. A SHA-256 prehash supports existing long Unicode credentials without bcrypt's input truncation/length limit. Ordinary legacy bcrypt accounts still verify. Resetting a legacy account removes its alternate plaintext credential. Dormant plaintext records have an explicit offline migration tool; compatibility can be disabled with `EAGLEIDE_REJECT_LEGACY_PASSWORDS=1` after migration.
+- Administrator resets generate a long random password. New class join codes have eight characters and account-based attempt limits; existing six-character codes remain usable and the browser accepts both lengths.
+- Anonymous AI explain/chat requests are rejected before dispatcher admission. Assistant cooldowns follow account identity instead of a caller-supplied socket ID. Built-in assignment prompts omit generated identity/timestamp/filename headers, and mastery prompts use request-local learner identifiers. Student-authored source and free text can still contain personal information.
+- Leaderboards are scoped to an authorized class roster, include student-role accounts only, and omit email fields. Both leaderboard reads and challenge submission responses use the same policy.
+- HTML runtime documents, including `.htm`, receive a response CSP sandbox. SVG and other allowed assets receive an inert policy. Private/hidden workspace paths, Trash, unrecognized document types, and main-origin navigation to a configured isolated runtime are denied. External-network preview settings no longer remove the sandbox CSP.
+- The main document has an enforcing CSP and HTTPS responses have HSTS. CDN styles/scripts and dynamically loaded report libraries have integrity hashes and anonymous CORS. The font stylesheet is local and its font URLs versioned. CSP deliberately permits existing blob PDF viewing/fetches and existing HTTPS media/frame flows. `renderHomeContent` becomes text when the sanitizer is unavailable.
+- Workspace and wiki image ingestion decode/reencode JPEG/PNG/GIF/WebP without EXIF/GPS/text metadata, with frame/pixel budgets and quotas checked on stored bytes. Ordinary code files retain their contents. Existing media is changed only by the explicit maintenance tool.
+- Public lesson plans omit saved teacher notes unless `notes_public` is explicitly enabled. Authenticated editing retains those notes. Public plan responses use no-referrer and private/no-store; access-log filters redact lesson-plan capabilities. Link previews pin a validated public numeric destination, preserve TLS hostname checking, revalidate redirects, and bound time/bytes.
+- Runner bootstrap removes private `EAGLE_*` environment variables before student Python runs, after trusted trace/chart setup. Existing native-module containment and fail-closed behavior are preserved.
+- New POSIX runtime files use a private umask. Logs rotate with bounded retention and new sign-in records redact raw IPs; other historical/feature logs are not retroactively anonymized. Generic JSON error responses avoid reflecting exception contents; the built-in entry point suppresses its server version banner.
+- The launcher and CI install hash-verified, pinned bootstrap/runtime wheels. CI actions use full commit pins, CI uses Node 24, and the launcher warns about old Node without unexpectedly refusing existing servers. A tracked/staged-data guard rejects runtime paths and recognizable credential formats, including force-staged ignored files.
+- Failed account workspace/tool cleanup retains a disabled account and returns an error for retry. Workspace containment/collision checks precede deletion. Class owners cannot be silently removed while leaving their classes behind. Public lesson-plan cleanup failure retains the class and returns an error. These are deletion safety improvements, **not complete multi-store erasure**.
+- The Account panel explains recording/paste monitoring, the limits of authorship inference, and retained Trash/shared copies. A notice does not replace school policy or consent/acknowledgment requirements.
+
+## Finding-by-finding disposition
+
+“Implemented” describes the listed code boundary, not independent verification of production settings. “Partial” identifies both the delivered mitigation and the remaining work. Open engineering items are not assigned to the operator merely because they were not completed here.
+
+| Finding | Status and remaining work |
+|---|---|
+| 001 | Implemented: explicit trusted proxies and spoofing tests. Operator must list only actual trusted ingress addresses and ensure the proxy overwrites its identity headers. |
+| 002 | Partial: login controls and trusted HTTPS handling implemented. Operator must block direct port 8000 access/bind loopback where tunnel topology allows, enforce edge TLS/access policy, and test a supported production Socket.IO serving arrangement. The default LAN binding is retained to avoid silently disconnecting existing classrooms. |
+| 003 | Implemented for normal hashed accounts: generic errors, dummy bcrypt for unknown accounts, bounded source/account attempts. Run the legacy-password migration to remove the remaining legacy verifier path. |
+| 004 | Implemented: absolute and idle token expiry, per-account session cap, preserved issue times on profile changes, synchronized issuance. Admin absolute lifetime is eight hours; teacher/student lifetime is twelve hours; idle lifetime is four hours. |
+| 005 | Partial: 30-day absolute remembered-device deadline and trusted Secure-cookie decision. Cookie remains a bearer credential and has no durable individual-device revocation ledger. Use HTTPS and rotate a potentially exposed key. |
+| 006 | Partial: strong temporary passwords and removal of stale alternate credentials. Restricted-session/forced-password-change UI and API are still engineering work; the reset password currently remains usable until changed. |
+| 007 | Open policy/integration: self-registration setting retained. Operator can disable it now and use roster/admin creation. Verified enrollment or join-code-bound registration and account review need a separate implementation if self-service is retained. |
+| 008 | Partial: atomic offline dormant-password migration and optional rejection switch, with long Unicode password/profile preservation tests. Compatibility is retained until the operator migrates all live records and resolves conflicting alternate credentials. |
+| 009 | Implemented: no public default administrator password. Fresh setup requires an explicit credential. Operator must verify the deployed password and replace any example credential. |
+| 010 | Implemented: versioned admin hash and legacy ciphertext migration, private key permissions, optional external key path. Independent device-key custody/rotation is operational work. |
+| 011 | Open engineering: central new-password policy and common-password blocklist; existing password rules have not been silently tightened. |
+| 012 | Partial: eight-character new codes and per-account attempt limits; six-character existing codes preserved. Owner-controlled rotation and old-code invalidation remain engineering work. |
+| 013 | Implemented: authenticated AI admission and server-identity throttles. Existing shared dispatcher/admission limits remain in force. |
+| 014 | Partial: private new-file modes and admin credential hardening. Identity data remains plaintext at rest. Operator must correct the live wiki claim now; encryption/key custody and relocation of every mutable store require an explicit migration. |
+| 015 | Implemented: class authorization and no email fields in all leaderboard response paths. |
+| 016 | Open: accommodations remain in protected plaintext class storage. Minimization policy, separate encryption/key management, and data migration require engineering plus owner decisions. |
+| 017 | Implemented for new supported image uploads. Existing workspace media requires the offline metadata tool and review of skipped/failed files. Student programs can still create arbitrary workspace files. |
+| 018 | Implemented for new wiki image ingestion and generic public download filenames. Existing wiki images require catalog-aware offline migration. Public wiki media remains intentionally public. |
+| 019 | Open: existing backup/export formats remain unencrypted. Independent encrypted storage and transfer are immediate operator controls; encrypted export formats/key lifecycle require engineering. |
+| 020 | Implemented prevention plus rewritten writable Git history. GitHub Support must finish read-only PR refs/caches/unreachable objects. No scanner can prove the absence of every possible personal datum. |
+| 021 | Partial: bounded server logs, new sign-in IP redaction, capability redaction. Existing logs, account `last_ip`, feature-specific identity logging, and deletion/retention policy remain. |
+| 022 | Open engineering: wiki raw-query minimization and analytics/bookmark retention. No retrospective analytics deletion was run. |
+| 023 | Open engineering: safe logout/account-switch draft disposal, with an export/recovery path for unsynced work. Origin storage was not indiscriminately cleared; doing so would lose student work and tool profiles. Shared-device logout/browser-profile policy is an immediate operator measure. |
+| 024 | Partial: in-product recording/Trash disclosure added. First-login acknowledgment and institutional notice/policy remain. The owner determines whether historical development records require any school action. |
+| 025 | Partial: containment/collision preflight, explicit cleanup failures, retryable disabled accounts, membership/accommodation cleanup. Submissions, notebook responses, recordings, simulator data, analytics and other retained copies still need a coordinated erasure implementation with in-flight job/request draining and retry tests. Current deletion is not a full erasure endpoint. |
+| 026 | Partial: account deletion cannot orphan owned classes; public-plan cleanup errors no longer disappear after class metadata deletion. Full notebook/network/wiki/signal/practice/teacher-store cleanup and durable retries remain engineering work. |
+| 027 | Open policy/engineering: automatic development-recording retention, expiry clock and safe scheduled purge. No recordings were automatically deleted during this update. |
+| 028 | Partial: retained-Trash disclosure. Scheduled purge and comprehensive teacher-read restrictions/retention require policy and code. |
+| 029 | Open operational requirement: private encrypted off-host backup and tested whole-instance restore. Automated backup orchestration/restore verification are further engineering work. Git is not a runtime-data backup. |
+| 030 | Open infrastructure/engineering: process UID, network namespace/container/seccomp isolation for Python and Node. Landlock and Node VM restrictions are preserved; neither is represented as complete OS network isolation. |
+| 031 | Implemented: `.htm`/SVG direct-navigation execution and storage-theft chain blocked with response policies and browser tests. |
+| 032 | Implemented: runtime capability refuses hidden/private/Trash paths and unrecognized active document types. |
+| 033 | Implemented application CSP and secure-response HSTS. Direct HTTP remains insecure until ingress is corrected; HSTS does not protect a LAN IP. Existing blob PDF and external media behavior was browser-tested. |
+| 034 | Implemented SRI for pinned static/dynamic CDN code/styles; local font stylesheet references versioned binaries. Font binaries themselves are still fetched remotely. |
+| 035 | Implemented fail-closed Home rendering with sanitizer unavailable. |
+| 036 | Open engineering: replace the regex notebook sanitizer with a parser-based allowlist while preserving code blocks, photo markers, and existing notes. Client sanitization/CSP remain defense layers, not a substitute. |
+| 037 | Partial: generated grading metadata stripped and mastery identifiers pseudonymized. Student-authored content may contain PII. Approved-endpoint policy, HTTPS transport and firewall restrictions remain; operator must use a trusted model host now. |
+| 038 | Open engineering: versioned anonymous external-grading identifiers with private import mapping and complete-set validation. The existing email-keyed export/import schema is retained for compatibility; do not send it to an unapproved provider. |
+| 039 | Partial: public teacher notes require explicit opt-in, stored notes preserved. Public-share expiry, hashed token storage and an explicit revoke/renew lifecycle remain engineering work. |
+| 040 | Partial: cache/referrer policies and URL log redaction. Print tickets remain reusable for their existing lifetime; binding, single-use semantics and token-at-rest migration remain open. |
+| 041 | Not reproduced: the shared-photo route already invokes current notebook/class authorization. Existing ownership and read-only tests are preserved; no speculative bypass was removed. |
+| 042 | Partial: trusted scheme handling implemented. The claimed unauthenticated `preview=1` bypass was not present. Internal launch-session rows still retain a raw bearer token for current-session validation; digest/session-handle redesign remains. |
+| 043 | Implemented numeric DNS pinning, redirect revalidation, hostname-checked TLS and bounded fetches. |
+| 044 | Implemented private runner-environment removal before student execution, including Step Mode bootstrap values. |
+| 045 | Open engineering/infrastructure: pre-exec limit installation, shared-UID process limits, signal/stat surface and OS containment review. Existing execution admission/resource safeguards remain. |
+| 046 | Implemented sandbox CSP even when scripts/external internet are permitted on an attested isolated preview origin. |
+| 047 | Implemented hash-locked wheels/bootstrap pip, full-SHA CI actions and Node 24 CI. Operator must upgrade obsolete installed Node; launcher preserves existing startup with a warning. Lock updates still require review. |
+| 048 | Implemented generic JSON errors and built-in entry-point version suppression. Operator must also configure its actual reverse proxy/alternate server banners. |
+| 049 | Open migration: workspace identifiers still derive from email. Changing directory identities requires collision detection, durable mappings and migration of all path references; no live directories were renamed. |
+| 050 | Structural note, no demonstrated vulnerability: library same-origin Socket.IO behavior retained. Explicit cross-origin policy/pinned integration assertions remain a hardening task; no permissive wildcard was introduced. |
+| 051 | Structural note: header-based mutation authentication and Strict remembered cookie retained. No ambient-cookie authorization was added. A future cookie-auth design requires CSRF protection and origin enforcement. |
+| 052 | Partial: HTTP helpers recheck enabled/role for existing accounts. Cached socket/session paths and missing-account test compatibility still require a unified validator; disabling/removing accounts already revokes known token maps. Do not treat the partial check as complete current-state authorization. |
+| 053 | Mitigated by CSP, runtime isolation and fail-closed rendering. JS-readable access tokens remain in sessionStorage. An HttpOnly/BFF redesign needs CSRF/socket/session migration and is not included. |
+
+## GitHub cleanup and limits
+
+The full audit examined 523 commits across all refs, rather than the small recent-history sample in the supplied report. Historical runtime records and two encryption keys existed. Their status as development/test data is for the owner to determine. A private inventory of original commit IDs, paths, dates, blob IDs and counts was written before any rewrite.
+
+All 167 writable branches were rewritten through the root, replacing sensitive runtime paths, known key/contact literals and personal commit identity metadata. Distinct fixture contacts were retained where appropriate. The push was atomic and used an explicit old-value lease for each branch; remote refs were verified afterward. The cleaned reachable branch/tag content scan examined 1,514 blobs with no targeted runtime paths, known credentials or unclassified contact addresses remaining. This is a defined scan result, not a guarantee about unknown binary formats, personal text in arbitrary source, or independent copies.
+
+GitHub's read-only refs for 186 older PRs still point to old history. The private Support request contains their numbers and first-changed-commit metadata. The operator must request removal of eligible read-only refs/cached views/unreachable objects. Other people's clones cannot be recalled. The deployment's ignored runtime data was not part of the history rewrite and was not deleted. The old local development repository also retains old Git objects: preserve its ignored work privately, then retire/recreate its Git metadata rather than pushing an old branch.
+
+Secret scanning and push protection were already enabled; vulnerability alerts were enabled during remediation. The scan covered 188 issue/PR bodies, two issue comments, no review comments, and 153 available Actions-run logs; 75 older runs' logs were unavailable. No non-fixture email or known exposed-literal matches were found in those available surfaces. There were no releases or Actions artifacts at inspection. Three old Actions caches were removed. Code-scanning alerts were unavailable, not certified clear. Precise service scan results and limitations are retained privately.
+
+The temporary audit mirror and raw replacement-input file still require owner deletion: automatic approval review rejected both removal commands as blocked by policy, even after explicit authorization. Their exact private paths are provided to the owner in chat. Do not delete the metadata-only inventory or commit-map evidence. GitHub Support follow-up is prepared privately and has not been sent by the coding agent.
+
+GitHub's [sensitive-data removal procedure](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository) explains read-only PR refs, credential rotation and clone recontamination. A force push alone is insufficient.
+
+## Verification
+
+- Windows Python suite: 504 tests passed, with one native Linux containment test skipped. Node suite: 201 passed.
+- Locked Linux Python 3.12 dependency dry-run succeeded with required hashes; a deliberately incorrect wheel hash was rejected. Bash syntax check passed. Linux Python 3.13/Landlock CI is required on the PR.
+- Real Chrome isolated fixtures checked teacher/student lesson plans, copied resources, due links, clipboard images, PDF export, Python execution, responsive light/dark layouts; the runtime attack fixture checked `.htm`/SVG execution denial, opaque storage, hidden paths and anonymous AI denial.
+- External-tool browser checks retained a live document/draft past its original lease, checked storage quotas/conflicts, downloads, dialogs/popups, offline recovery, responsive layouts and IDE buffer retention. No private application directory was served.
+- Migration fixtures exercise long Unicode passwords, unchanged profile/class data, administrator key rotation, failure/retry, image format/dimensions/animation, synchronized wiki quota bytes and force-staged private files. These tests do not operate the production filesystem.
+
+These checks reduce regression risk. They cannot guarantee every feature or a zero-downtime production update. EagleIDE has a single server process; a planned restart is required for the new code and key rotation.
+
+## Operator rollout and remaining work
+
+1. Preserve the private inventory and send the prepared private GitHub Support request. Decide whether development records require institutional action. Rotate any historical credential still used anywhere; removal does not revoke it.
+2. Review this finding table. Prioritize follow-up engineering for 025/026 (complete erasure), 030/045 (OS isolation), 014/016/019/029 (data encryption and backups), then retention/drafts, sanitizer and the remaining auth/token lifecycle items. These are unresolved security work, not documentation-only fixes.
+3. Before deployment, have users save/export unsynced work. Take an access-restricted, encrypted whole-instance backup including ignored data, config and key; verify that it can be restored. Record current interpreter/Node/service environment, working directory, external data paths and key path. Stop the actual service during migrations. The agent did not restart or modify production services.
+4. Reconcile the rewritten history before updating. Fresh development clones are safest. For the live checkout, first inventory uncommitted code and private data, inspect the incoming tree for collisions, and preserve the same absolute data paths. A clean, reviewed checkout may use `git fetch origin main` then `git reset --keep origin/main` after this PR is merged; this updates tracked files without intentionally deleting ignored data, but refuses conflicting work. Do not use `git clean`, a destructive reset, a normal merge/pull from old history, or a blind folder replacement. Existing worktrees/old branches must be retired or carefully transplanted onto cleaned history. Retain a private rollback snapshot until deployment is verified, then retire old Git objects securely.
+5. Use the service's Python environment for read-only migration preflights:
+
+   ```bash
+   python tools/migrate_legacy_passwords.py --root /absolute/existing/instance
+   python tools/rotate_device_key.py --root /absolute/existing/instance --migrate-admin
+   python tools/strip_image_metadata.py /absolute/existing/instance/user_files
+   python tools/strip_image_metadata.py /absolute/wiki/media --wiki-catalog /absolute/wiki/wiki.db
+   ```
+
+   Review counts and backup first, then repeat the intended operations with `--apply` while stopped. Resolve conflicting credentials instead of discarding one silently. Set `EAGLEIDE_REJECT_LEGACY_PASSWORDS=1` only when no unresolved plaintext records remain. The key tool preserves the admin password/settings while invalidating remembered sign-ins; restart also revokes in-memory tokens. If using `EAGLEIDE_ADMIN_KEY_FILE`, give maintenance and service processes the same value. Inspect skipped/failed images; the tool refuses quota-increasing legacy rewrites and never treats a partial migration as complete. Wiki paths may be overridden, so use actual configured directories.
+6. Install with the supplied hash locks/launcher, keep the existing service working directory and external data configuration, and use supported Node (CI tests Node 24). Repair existing filesystem ownership/modes and key custody; a private umask does not repair old files. Do not restore an exposed key just to retain saved logins.
+7. Configure Cloudflare/Tunnel and firewall access so clients cannot reach plaintext/admin/Ollama ports directly. Bind `HOST=127.0.0.1` only after verifying that the configured tunnel/proxy can reach it; explicitly list any nonloopback proxy address. Require HTTPS. Review registration, allowed model host, public lesson notes/shares, current wiki privacy claims, recording disclosure and retention/backups with the responsible owner.
+8. Restart once in the maintenance window. Verify health, sign-in/restore per role, existing classes/rosters, old/new join codes, files/Trash, notebooks/photos, submissions/history/grades, Python/JS/Step Mode, HTML preview, lesson-plan sharing/PDF, wiki, simulator and configured external tools. Keep unsynced browser work recoverable until confirmed saved. If rolling back code, restore its compatible private config/key snapshot together; old code cannot read the new administrator hash format. Do not overwrite newer student data with a stale whole-instance backup as an ordinary rollback.
+
+No production dataset was automatically encrypted, renamed, purged or migrated during development. Automatic administrator hash conversion occurs only when the new server starts against an existing legacy configuration. The other destructive/privacy migrations require explicit operator execution.

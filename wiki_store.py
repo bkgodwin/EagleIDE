@@ -8,6 +8,8 @@ process and use atomic file replacement for content.
 
 from __future__ import annotations
 
+from media_security import clean_image
+
 import copy
 import hashlib
 import json
@@ -1842,6 +1844,12 @@ class WikiStore:
         if not validate_asset_signature(source, extension):
             raise ValueError("File contents do not match the expected file type")
         kind, mime_type, _ = ASSET_TYPES[extension]
+        if kind == "image":
+            cleaned = clean_image(source.read_bytes(), extension)
+            size = len(cleaned)
+            if size > self.max_asset_bytes or self.current_asset_bytes() + size > self.max_total_asset_bytes:
+                raise ValueError("Cleaned image exceeds the configured wiki storage limit")
+            source.write_bytes(cleaned)
         # Images are a global media library resource, not folder-tree content.
         parent_id = None if kind == "image" else (self._validate_id(parent_id) if parent_id else None)
         node_id = uuid.uuid4().hex
