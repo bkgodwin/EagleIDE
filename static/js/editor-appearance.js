@@ -137,7 +137,7 @@
   async function contextChanged() {
     const c = window.EagleIDE?.getContext?.() || {};
     const next = c.ADMIN_TOKEN ? 'admin' : c.currentUser?.email || c.currentTeacher?.email || '';
-    const nextHeaders = c.ADMIN_TOKEN ? { 'X-Admin-Token': c.ADMIN_TOKEN } : c.USER_TOKEN ? { 'X-User-Token': c.USER_TOKEN } : c.TEACHER_TOKEN ? { 'X-Teacher-Token': c.TEACHER_TOKEN } : null;
+    const nextHeaders = c.WIKI_MANAGER_TOKEN ? { 'X-Wiki-Manager-Token': c.WIKI_MANAGER_TOKEN } : c.ADMIN_TOKEN ? { 'X-Admin-Token': c.ADMIN_TOKEN } : c.USER_TOKEN ? { 'X-User-Token': c.USER_TOKEN } : c.TEACHER_TOKEN ? { 'X-Teacher-Token': c.TEACHER_TOKEN } : null;
     const signature = JSON.stringify(nextHeaders);
     if (next === identity && signature === JSON.stringify(headers)) return;
     const ticket = ++generation;

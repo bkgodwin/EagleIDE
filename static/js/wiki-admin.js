@@ -97,13 +97,13 @@
     if (!state.node?.parent_id) root.selected = true;
   }
 
-  async function loadTree({ preserveSelection = true } = {}) {
+  async function loadTree({ preserveSelection = true, reloadEditor = true } = {}) {
     const payload = await reader().fetchJson('/api/admin/wiki/tree', { headers: adminHeaders() });
     state.tree = payload.tree || [];
     renderTree();
-    if (preserveSelection && state.selectedId && flatten(state.tree).some(item => item.id === state.selectedId)) {
+    if (reloadEditor && preserveSelection && state.selectedId && flatten(state.tree).some(item => item.id === state.selectedId)) {
       await selectNode(state.selectedId, { skipDraftSave: true });
-    } else if (!preserveSelection) {
+    } else if (reloadEditor && !preserveSelection) {
       clearSelection();
     }
     await reader().loadHome({ quiet: true }).catch(() => {});
@@ -218,11 +218,13 @@
     clearTimeout(state.draftTimer);
     if (!state.draftDirty || !state.node || state.node.kind !== 'page' || state.node.tool_type) return;
     const content = $('wikiAdminContent').value || '';
+    const nodeId = state.node.id;
     try {
       const payload = await reader().fetchJson(`/api/admin/wiki/nodes/${state.node.id}/draft`, {
         method: 'PUT', headers: adminHeaders(true), body: JSON.stringify({ content }),
       });
-      state.draftDirty = false;
+      if (state.node?.id !== nodeId) return;
+      state.draftDirty = $('wikiAdminContent').value !== content;
       const stamp = payload.draft?.updated_at ? new Date(payload.draft.updated_at).toLocaleTimeString() : 'now';
       progress(`Draft autosaved ${stamp}.`);
       if (!immediate) setTimeout(() => { if (!state.draftDirty) progress(''); }, 1600);
@@ -243,6 +245,8 @@
     event?.preventDefault?.();
     if (!state.node) return;
     clearTimeout(state.draftTimer);
+    const nodeId = state.node.id;
+    const initialContent = $('wikiAdminContent').value;
     const payload = {
       title: $('wikiAdminTitle').value.trim(),
       slug: $('wikiAdminSlug').value.trim(),
@@ -262,11 +266,13 @@
       const result = await reader().fetchJson(`/api/admin/wiki/nodes/${state.node.id}`, {
         method: 'PATCH', headers: adminHeaders(true), body: JSON.stringify(payload),
       });
+      if (state.node?.id !== nodeId) return;
+      const editedDuringSave = $('wikiAdminContent').value !== initialContent;
       state.node = result.node;
       state.selectedId = result.node.id;
-      state.draftDirty = false;
+      state.draftDirty = editedDuringSave;
       progress(payload.status === 'published' ? 'Published successfully.' : 'Draft saved.');
-      await loadTree();
+      await loadTree({ reloadEditor: false });
     } catch (error) {
       progress(error.message || 'Could not save changes.', true);
     }
@@ -735,18 +741,20 @@
   }
 
   function showManagerSection(section) {
-    state.managerSection = ['home', 'media', 'analytics'].includes(section) ? section : 'content';
+    state.managerSection = ['home', 'media', 'analytics', 'history'].includes(section) ? section : 'content';
     const panels = {
       content: $('wikiAdminContentPanel'),
       home: $('wikiAdminHomePanel'),
       media: $('wikiAdminMediaPanel'),
       analytics: $('wikiAdminAnalytics'),
+      history: $('wikiAdminHistoryPanel'),
     };
     const buttons = {
       content: $('wikiAdminContentTabBtn'),
       home: $('wikiAdminHomeTabBtn'),
       media: $('wikiAdminMediaTabBtn'),
       analytics: $('wikiAdminAnalyticsBtn'),
+      history: $('wikiAdminHistoryBtn'),
     };
     for (const [name, panel] of Object.entries(panels)) panel.hidden = name !== state.managerSection;
     for (const [name, button] of Object.entries(buttons)) button.classList.toggle('is-active', name === state.managerSection);
@@ -1021,8 +1029,61 @@
     renderEmojiPicker();
   }
 
-  async function openManager() {
+  async function loadHistory(before = 0) {
     if (!reader().context().ADMIN_TOKEN) return;
+    const target = $('wikiAdminHistoryEntries');
+    target.textContent = 'Loading history…';
+    try {
+      const data = await reader().fetchJson(`/api/admin/wiki/history?before=${Number(before) || 0}`, {headers:adminHeaders()});
+      target.textContent = '';
+      for (const entry of data.entries) {
+        const row = document.createElement('article'); row.className = 'wiki-history-entry';
+        const text = document.createElement('p');
+        text.textContent = `${new Date(entry.created*1000).toLocaleString()} · ${entry.actor} · ${entry.action.replace(/^admin_wiki_/, '').replaceAll('_',' ')} · ${entry.status}${entry.target ? ' · '+entry.target : ''}`;
+        row.append(text);
+        if (entry.can_restore) {
+          const button = document.createElement('button'); button.className = 'btn secondary'; button.type = 'button';
+          button.textContent = 'Restore before this edit';
+          button.addEventListener('click', async () => {
+            if (!window.confirm('Roll back all wiki content and settings to immediately before this edit? A new milestone preserves the current wiki.')) return;
+            button.disabled = true;
+            try {
+              await reader().fetchJson(`/api/admin/wiki/history/${entry.id}/restore`, {method:'POST',headers:adminHeaders(true),body:'{}'});
+              clearSelection(); await loadTree(); await loadHomeSettings(); await reader().loadHome({quiet:true});
+              await loadHistory(); progress('Wiki restored. The previous state remains available for seven days.');
+            } catch (error) { progress(error.message,true); button.disabled = false; }
+          });
+          row.append(button);
+        } else {
+          const expired = document.createElement('small'); expired.textContent = 'Milestone expired'; row.append(expired);
+        }
+        target.append(row);
+      }
+      if (!data.entries.length) target.textContent = 'No edits recorded yet.';
+      state.historyCursor = data.entries.at(-1)?.seq || 0;
+      $('wikiAdminHistoryOlder').hidden = data.entries.length < 100;
+    } catch (error) { target.textContent = error.message; }
+  }
+
+  let managerAuth = '';
+  window.addEventListener('eagle-context-updated', () => {
+    const next = JSON.stringify(adminHeaders());
+    if (next === managerAuth) return;
+    managerAuth = next;
+    clearTimeout(state.draftTimer); clearTimeout(state.previewTimer);
+    state.draftDirty = false; state.node = null; state.tree = []; state.selectedId = '';
+    $('wikiManagerModal').style.display = 'none';
+    ['wikiAdminContent','wikiAdminPreview','wikiAdminTree','wikiAdminAnalyticsContent','wikiAdminHistoryEntries'].forEach(id => {
+      const element = $(id); if (element) { if ('value' in element) element.value = ''; else element.textContent = ''; }
+    });
+    ['wikiImageInsertModal','wikiEmojiPickerModal','wikiToolPickerModal'].forEach(id => { if ($(id)) $(id).style.display='none'; });
+  });
+
+  async function openManager() {
+    const ctx = reader().context();
+    if (!ctx.ADMIN_TOKEN && !ctx.WIKI_MANAGER_TOKEN) return;
+    ['wikiAdminAnalyticsBtn','wikiAdminBackupBtn','wikiAdminHistoryBtn','wikiAdminRestoreInput'].forEach(id => { $(id).hidden = !ctx.ADMIN_TOKEN; });
+    document.querySelector('label[for="wikiAdminRestoreInput"]').hidden = !ctx.ADMIN_TOKEN;
     $('wikiManagerModal').style.display = 'flex';
     showManagerSection('content');
     progress('Loading wiki content…');
@@ -1046,6 +1107,9 @@
   }
 
   function attachEvents() {
+    $('wikiAdminHistoryBtn')?.addEventListener('click', () => { showManagerSection('history'); loadHistory(); });
+    $('wikiAdminHistoryRefresh')?.addEventListener('click', () => loadHistory());
+    $('wikiAdminHistoryOlder')?.addEventListener('click', () => loadHistory(state.historyCursor));
     $('adminWikiBtn')?.addEventListener('click', openManager);
     $('wikiAdminCloseBtn')?.addEventListener('click', closeManager);
     $('wikiAdminHomeSaveBtn')?.addEventListener('click', saveHomeSettings);

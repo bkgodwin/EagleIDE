@@ -24,3 +24,6 @@ body.light-mode .teacher-dash-sidebar .teacher-dash-navbtn.active { color:#245a8
 #adminSettingsModal .admin-settings-shell .account-settings-card .admin-setting-toggle { margin:0; padding:0; border:0; background:transparent; }
 [data-admin-settings-pane="account"] > .account-settings-grid { margin-bottom:20px; }
 @media(max-width:760px) { .account-settings-grid { grid-template-columns:minmax(0,1fr); } .account-settings-card { padding:16px; } .account-settings-layout .account-settings-grid > :nth-child(n) { grid-column:auto; grid-row:auto; } }
+.wiki-manager-account { width:min(1000px,96vw) !important; max-width:1000px !important; max-height:90dvh; overflow:auto; background:var(--theme-panel) !important; color:var(--theme-text); }
+.wiki-manager-account h3 { color:var(--theme-text); }
+.wiki-manager-account > header { display:flex; justify-content:space-between; align-items:center; gap:16px; }

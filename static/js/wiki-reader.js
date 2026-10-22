@@ -58,7 +58,8 @@
     const ctx = context();
     const headers = {};
     if (json) headers['Content-Type'] = 'application/json';
-    if (ctx.USER_TOKEN) headers['X-User-Token'] = ctx.USER_TOKEN;
+    if (ctx.WIKI_MANAGER_TOKEN) headers['X-Wiki-Manager-Token'] = ctx.WIKI_MANAGER_TOKEN;
+    else if (ctx.USER_TOKEN) headers['X-User-Token'] = ctx.USER_TOKEN;
     else if (ctx.TEACHER_TOKEN) headers['X-Teacher-Token'] = ctx.TEACHER_TOKEN;
     else if (ctx.ADMIN_TOKEN) headers['X-Admin-Token'] = ctx.ADMIN_TOKEN;
     return headers;
@@ -67,7 +68,7 @@
   function isTeacher() { return !!context().TEACHER_TOKEN; }
   function isStudent() { return !!context().USER_TOKEN; }
   function isAdmin() { return !!context().ADMIN_TOKEN; }
-  function isSignedIn() { return isTeacher() || isStudent() || isAdmin(); }
+  function isSignedIn() { return isTeacher() || isStudent() || isAdmin() || !!context().WIKI_MANAGER_TOKEN; }
   function canAccessIDE() { return context().canAccessIDE !== false; }
 
   function ideAccessMessage() {
@@ -141,8 +142,10 @@
   }
 
   async function fetchJson(url, options = {}) {
+    const editorAuth = String(url).startsWith('/api/admin/wiki/') ? JSON.stringify(authHeaders()) : null;
     const response = await fetch(url, {signal:AbortSignal.timeout(12000),...options});
     const payload = await response.json().catch(() => {throw new Error('The wiki response could not be read. Try again.');});
+    if (editorAuth !== null && editorAuth !== JSON.stringify(authHeaders())) throw new Error('Account changed. Reopen the wiki manager.');
     if (!response.ok || payload?.ok === false) {
       const error = new Error(payload?.error || `Request failed (${response.status})`);
       error.status = response.status;
@@ -2167,14 +2170,14 @@
     }
     const signature = JSON.stringify({
       user: ctx.currentUser?.email || '', teacher: ctx.currentTeacher?.email || '',
-      admin: !!ctx.ADMIN_TOKEN, classes: availableClasses().map(cls => cls.id),
+      admin: !!ctx.ADMIN_TOKEN, manager: !!ctx.WIKI_MANAGER_TOKEN, classes: availableClasses().map(cls => cls.id),
       selected: defaultClassId(),
       ideAccess: canAccessIDE(),
       homeBackground: isStudent()
         ? availableClasses().find(cls => cls.id === state.selectedClassId)?.settings?.home_background_asset || ''
         : '',
     });
-    $('adminWikiBtn').style.display = isAdmin() ? '' : 'none';
+    $('adminWikiBtn').style.display = (isAdmin() || ctx.WIKI_MANAGER_TOKEN) ? '' : 'none';
     $('wikiArticleFeatureBtn').hidden = !isTeacher();
     if (signature === state.contextSignature) return;
     const previous = state.contextSignature ? JSON.parse(state.contextSignature) : {};

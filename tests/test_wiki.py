@@ -389,6 +389,8 @@ class WikiApiTests(unittest.TestCase):
             }
         }
         self.users = {"student@example.com": self.students["student-token"]}
+        self.managers = {"manager-token": {"email":"manager@example.invalid", "role":"wiki_manager"},
+                         "other-manager": {"email":"other-manager@example.invalid", "role":"wiki_manager"}}
         self.classes = {
             "class-one": {"id": "class-one", "name": "Coding 1", "teacher_email": "teacher@example.com"},
             "class-two": {"id": "class-two", "name": "Coding 2", "teacher_email": "other@example.com"},
@@ -398,6 +400,7 @@ class WikiApiTests(unittest.TestCase):
             base_dir=self.root / "wiki_data",
             backup_dir=self.root / "backups",
             require_admin=lambda req: req.headers.get("X-Admin-Token") in self.admin_tokens,
+            require_wiki_manager=lambda req: self.managers.get(req.headers.get("X-Wiki-Manager-Token")),
             require_teacher=lambda req: self.teachers.get(req.headers.get("X-Teacher-Token")),
             require_user=lambda req: self.students.get(req.headers.get("X-User-Token")),
             find_user=lambda email: self.users.get(email),

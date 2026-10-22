@@ -14,6 +14,23 @@ NODE = os.environ.get("EAGLEIDE_TEST_NODE") or shutil.which("node")
 
 @unittest.skipUnless(NODE, "Node.js is required for frontend authentication checks")
 class AuthFrontendTests(unittest.TestCase):
+    def test_wiki_manager_session_restores_as_its_own_role(self):
+        self.run_javascript(["validateRestoredAuthSession"], r"""
+USER_TOKEN = null;
+WIKI_MANAGER_TOKEN = 'manager-token';
+fetch = async (url, options) => {
+  assert.equal(url, '/api/auth/me');
+  assert.equal(options.headers['X-Wiki-Manager-Token'], 'manager-token');
+  assert.equal(options.headers['X-Teacher-Token'], undefined);
+  return {status:200,ok:true,json:async()=>({ok:true,user:{email:'manager@example.invalid',role:'wiki_manager'}})};
+};
+assert.equal(await validateRestoredAuthSession(),true);
+assert.equal(currentUser.role,'wiki_manager');
+assert.equal(USER_TOKEN,null);
+assert.equal(TEACHER_TOKEN,null);
+assert.equal(WIKI_MANAGER_TOKEN,'manager-token');
+""")
+
     def run_javascript(self, functions, checks):
         source = (ROOT / "static/js/app-core.js").read_text(encoding="utf-8")
         extracted = []
@@ -24,7 +41,7 @@ class AuthFrontendTests(unittest.TestCase):
             extracted.append(source[match.start():end])
         program = r"""
 const assert = require('node:assert/strict');
-let USER_TOKEN = 'student-token', TEACHER_TOKEN = null, ADMIN_TOKEN = null;
+let USER_TOKEN = 'student-token', TEACHER_TOKEN = null, ADMIN_TOKEN = null, WIKI_MANAGER_TOKEN = null;
 let currentUser = { role: 'student', email: 'student@school.test' }, currentTeacher = null;
 let savedSessions = 0;
 const saveAuthSession = () => { savedSessions++; };

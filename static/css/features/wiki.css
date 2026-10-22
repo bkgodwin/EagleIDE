@@ -1245,3 +1245,27 @@ body.wiki-mode .topbar-primary *,
     font-size: 10pt;
   }
 }
+
+.wiki-history-entry { padding:12px 0; border-bottom:1px solid var(--theme-border); overflow-wrap:anywhere; }
+.wiki-manager-modal [hidden] { display:none !important; }
+.light-mode .wiki-manager-modal { --wiki-link:#235f89; --wiki-border:#bfd0de; background:#f5f8fc !important; color:#172335; }
+.light-mode .wiki-manager-header,.light-mode .wiki-manager-tree-pane,.light-mode .wiki-home-settings,
+.light-mode .wiki-admin-properties,.light-mode .wiki-manager-tabs,.light-mode .wiki-admin-progress { background:#e8eff6; color:#172335; }
+.light-mode .wiki-manager-modal h3,.light-mode .wiki-manager-modal h4,.light-mode .wiki-manager-modal label,
+.light-mode .wiki-admin-properties summary,.light-mode .wiki-manager-modal .wiki-tree-title { color:#172335; }
+.light-mode .wiki-manager-modal .btn,.light-mode .wiki-markdown-toolbar button,.light-mode .wiki-revisions button { color:#183249; background:#fff; border-color:#a9bdcf; }
+.light-mode .wiki-manager-modal .btn.run { background:#246a41; color:#fff; }
+.light-mode .wiki-manager-modal .wiki-icon-btn { background:#fff; color:#183249; border-color:#a9bdcf; }
+.light-mode .wiki-manager-modal .wiki-admin-save-actions { background:#e8eff6; }
+.light-mode .wiki-manager-modal .btn--danger { background:#ad2633; color:#fff; }
+.light-mode .wiki-admin-preview-wrap { background:#fff; color:#172335; }
+.light-mode .wiki-manager-modal .wiki-upload-help,.light-mode .wiki-manager-modal .wiki-clipboard-image-hint { color:#4c6174; }
+@media(max-width:600px) {
+  .wiki-manager-layout { grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(130px,26%) minmax(0,1fr); }
+  .wiki-manager-tree-pane { border-right:0; border-bottom:1px solid var(--wiki-border); padding:8px; }
+  .wiki-manager-toolbar .btn { min-height:32px; padding:5px 8px; }
+  .wiki-manager-tree-pane .wiki-upload-help { display:none; }
+  .wiki-manager-toolbar { gap:4px; }
+  .wiki-manager-editor-pane { padding:8px; }
+  .wiki-editor-view-controls { margin-left:0; }
+}

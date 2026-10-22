@@ -85,6 +85,7 @@
   function authHeaders(json = false) {
     const ctx = context();
     const headers = json ? { 'Content-Type': 'application/json' } : {};
+    if (ctx.WIKI_MANAGER_TOKEN) headers['X-Wiki-Manager-Token'] = ctx.WIKI_MANAGER_TOKEN;
     if (ctx.USER_TOKEN) headers['X-User-Token'] = ctx.USER_TOKEN;
     if (ctx.TEACHER_TOKEN) headers['X-Teacher-Token'] = ctx.TEACHER_TOKEN;
     if (ctx.ADMIN_TOKEN) headers['X-Admin-Token'] = ctx.ADMIN_TOKEN;
@@ -92,6 +93,7 @@
   }
   function currentAuthKey() {
     const ctx = context();
+    if (ctx.WIKI_MANAGER_TOKEN) return `wiki_manager:${ctx.WIKI_MANAGER_TOKEN}`;
     if (ctx.ADMIN_TOKEN) return `admin:${ctx.ADMIN_TOKEN}`;
     if (ctx.TEACHER_TOKEN) return `teacher:${ctx.TEACHER_TOKEN}`;
     if (ctx.USER_TOKEN) return `student:${ctx.USER_TOKEN}`;

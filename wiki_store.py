@@ -1978,6 +1978,7 @@ class WikiStore:
         title: Any = "",
         description: Any = "",
         purpose: str = "asset",
+        owner: str = "admin",
     ) -> dict[str, Any]:
         filename = safe_filename(filename)
         total_size = int(total_size)
@@ -2005,6 +2006,7 @@ class WikiStore:
             "title": safe_title(title, Path(filename).stem),
             "description": safe_description(description),
             "purpose": purpose,
+            "owner": owner,
             "created_epoch": time.time(),
         }
         atomic_write_text(self.staging_dir / f"{upload_id}.json", json.dumps(metadata, ensure_ascii=False))
@@ -2246,14 +2248,9 @@ class WikiStore:
     def _table_rows(conn: sqlite3.Connection, table: str) -> list[dict[str, Any]]:
         return [dict(row) for row in conn.execute(f"SELECT * FROM {table}")]
 
-    def create_backup(self, destination: Optional[Path] = None) -> Path:
-        self.checkpoint()
-        self.backup_dir.mkdir(parents=True, exist_ok=True)
-        destination = Path(destination or self.backup_dir / f"wiki_backup_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.zip")
-        temp = destination.with_suffix(".tmp")
-        checksums: dict[str, str] = {}
+    def backup_manifest(self) -> dict[str, Any]:
         with self._connect() as conn:
-            manifest = {
+            return {
                 "format": "eagleide-wiki-backup",
                 "schema_version": SCHEMA_VERSION,
                 "exported_at": utc_timestamp(),
@@ -2282,22 +2279,31 @@ class WikiStore:
                     "analytics",
                 ],
             }
-        with zipfile.ZipFile(temp, "w", allowZip64=True) as archive:
-            for root_name, directory in (("content", self.content_dir), ("media", self.media_dir), ("revisions", self.revisions_dir), ("drafts", self.drafts_dir)):
-                if not directory.exists():
-                    continue
-                for path in directory.rglob("*"):
-                    if not path.is_file():
+
+    def create_backup(self, destination: Optional[Path] = None) -> Path:
+        with self._write_lock:
+            self.checkpoint()
+            self.backup_dir.mkdir(parents=True, exist_ok=True)
+            destination = Path(destination or self.backup_dir / f"wiki_backup_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.zip")
+            temp = destination.with_suffix(".tmp")
+            checksums: dict[str, str] = {}
+            manifest = self.backup_manifest()
+            with zipfile.ZipFile(temp, "w", allowZip64=True) as archive:
+                for root_name, directory in (("content", self.content_dir), ("media", self.media_dir), ("revisions", self.revisions_dir), ("drafts", self.drafts_dir)):
+                    if not directory.exists():
                         continue
-                    relative = path.relative_to(directory).as_posix()
-                    archive_name = f"{root_name}/{relative}"
-                    checksums[archive_name] = sha256_file(path)
-                    compression = zipfile.ZIP_STORED if path.suffix.lower() in {".mp4", ".zip", ".pdf"} else zipfile.ZIP_DEFLATED
-                    archive.write(path, archive_name, compress_type=compression)
-            manifest["checksums"] = checksums
-            archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2), compress_type=zipfile.ZIP_DEFLATED)
-        os.replace(temp, destination)
-        return destination
+                    for path in directory.rglob("*"):
+                        if not path.is_file():
+                            continue
+                        relative = path.relative_to(directory).as_posix()
+                        archive_name = f"{root_name}/{relative}"
+                        checksums[archive_name] = sha256_file(path)
+                        compression = zipfile.ZIP_STORED if path.suffix.lower() in {".mp4", ".zip", ".pdf"} else zipfile.ZIP_DEFLATED
+                        archive.write(path, archive_name, compress_type=compression)
+                manifest["checksums"] = checksums
+                archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2), compress_type=zipfile.ZIP_DEFLATED)
+            os.replace(temp, destination)
+            return destination
 
     @staticmethod
     def _safe_archive_name(name: str) -> str:
@@ -2508,116 +2514,121 @@ class WikiStore:
         self._validate_backup_manifest(manifest, infos)
         return manifest, infos
 
-    def restore_archive(self, archive_path: Path) -> dict[str, Any]:
-        archive_path = Path(archive_path)
-        manifest, infos = self._read_backup_manifest(archive_path)
-        restore_root = self.base_dir.parent / f".{self.base_dir.name}.restore.{uuid.uuid4().hex}"
-        old_root = self.base_dir.parent / f".{self.base_dir.name}.old.{uuid.uuid4().hex}"
-        preserved_bookmarks: list[dict[str, Any]] = []
-        with self._connect() as conn:
-            preserved_bookmarks = self._table_rows(conn, "bookmarks")
-        try:
-            new_store = WikiStore(
-                restore_root,
-                backup_dir=self.backup_dir,
-                max_asset_bytes=self.max_asset_bytes,
-                max_total_asset_bytes=self.max_total_asset_bytes,
-            )
-            checksums = manifest.get("checksums") or {}
-            with zipfile.ZipFile(archive_path, "r", allowZip64=True) as archive:
-                for info in infos:
-                    name = self._safe_archive_name(info.filename)
-                    if name == "manifest.json" or info.is_dir():
-                        continue
-                    if not any(name.startswith(prefix) for prefix in ("content/", "media/", "revisions/", "drafts/")):
-                        raise ValueError("Backup contains an unexpected file")
-                    destination = restore_root / PurePosixPath(name)
-                    destination.parent.mkdir(parents=True, exist_ok=True)
-                    with archive.open(info, "r") as source, destination.open("wb") as target:
-                        shutil.copyfileobj(source, target, length=1024 * 1024)
-                    expected = str(checksums.get(name) or "")
-                    if not expected or sha256_file(destination) != expected:
-                        raise ValueError(f"Backup checksum failed for {name}")
-            table_columns = {
-                "nodes": ("id","parent_id","kind","title","icon","slug","sort_order","status","file_name","storage_name","mime_type","size_bytes","description","tool_type","version","created_at","updated_at","deleted_at"),
-                "aliases": ("id","node_id","term","normalized","anchor"),
-                "sections": ("id","page_id","anchor","heading","normalized","level","ordinal"),
-                "redirects": ("old_slug","node_id","created_at"),
-                "class_features": ("class_id","node_id","teacher_email","created_at"),
-                "revisions": ("id","page_id","storage_name","title","created_at"),
-                "page_drafts": ("page_id","storage_name","updated_at"),
-                "standards": ("id","standard_id","normalized_id","description","sort_order","created_at","updated_at"),
-                "page_standards": ("page_id","standard_id","sort_order"),
-                "settings": ("key","value"),
-                "analytics_daily": ("day","event","event_key","count"),
-            }
-            with new_store._write_lock, new_store._connect() as conn:
-                conn.execute("PRAGMA foreign_keys=OFF")
-                for table in ("aliases","sections","redirects","class_features","bookmarks","page_standards","page_drafts","revisions","analytics_daily","standards","nodes","settings"):
-                    conn.execute(f"DELETE FROM {table}")
-                for table, columns in table_columns.items():
-                    rows = manifest.get(table) or []
-                    placeholders = ",".join("?" for _ in columns)
-                    statement = f"INSERT INTO {table}({','.join(columns)}) VALUES({placeholders})"
-                    for row in rows:
-                        if not isinstance(row, dict):
-                            raise ValueError(f"Backup table {table} is invalid")
-                        values = tuple(
-                            (row.get(column) or "")
-                            if table == "nodes" and column in {"icon", "tool_type"}
-                            else row.get(column)
-                            for column in columns
+    def restore_archive(self, archive_path: Path, *, create_pre_restore: bool = True) -> dict[str, Any]:
+        with self._write_lock:
+            archive_path = Path(archive_path)
+            previous_version = self.catalog_version()
+            manifest, infos = self._read_backup_manifest(archive_path)
+            restore_root = self.base_dir.parent / f".{self.base_dir.name}.restore.{uuid.uuid4().hex}"
+            old_root = self.base_dir.parent / f".{self.base_dir.name}.old.{uuid.uuid4().hex}"
+            preserved_bookmarks: list[dict[str, Any]] = []
+            with self._connect() as conn:
+                preserved_bookmarks = self._table_rows(conn, "bookmarks")
+            try:
+                new_store = WikiStore(
+                    restore_root,
+                    backup_dir=self.backup_dir,
+                    max_asset_bytes=self.max_asset_bytes,
+                    max_total_asset_bytes=self.max_total_asset_bytes,
+                )
+                checksums = manifest.get("checksums") or {}
+                with zipfile.ZipFile(archive_path, "r", allowZip64=True) as archive:
+                    for info in infos:
+                        name = self._safe_archive_name(info.filename)
+                        if name == "manifest.json" or info.is_dir():
+                            continue
+                        if not any(name.startswith(prefix) for prefix in ("content/", "media/", "revisions/", "drafts/")):
+                            raise ValueError("Backup contains an unexpected file")
+                        destination = restore_root / PurePosixPath(name)
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        with archive.open(info, "r") as source, destination.open("wb") as target:
+                            shutil.copyfileobj(source, target, length=1024 * 1024)
+                        expected = str(checksums.get(name) or "")
+                        if not expected or sha256_file(destination) != expected:
+                            raise ValueError(f"Backup checksum failed for {name}")
+                table_columns = {
+                    "nodes": ("id","parent_id","kind","title","icon","slug","sort_order","status","file_name","storage_name","mime_type","size_bytes","description","tool_type","version","created_at","updated_at","deleted_at"),
+                    "aliases": ("id","node_id","term","normalized","anchor"),
+                    "sections": ("id","page_id","anchor","heading","normalized","level","ordinal"),
+                    "redirects": ("old_slug","node_id","created_at"),
+                    "class_features": ("class_id","node_id","teacher_email","created_at"),
+                    "revisions": ("id","page_id","storage_name","title","created_at"),
+                    "page_drafts": ("page_id","storage_name","updated_at"),
+                    "standards": ("id","standard_id","normalized_id","description","sort_order","created_at","updated_at"),
+                    "page_standards": ("page_id","standard_id","sort_order"),
+                    "settings": ("key","value"),
+                    "analytics_daily": ("day","event","event_key","count"),
+                }
+                with new_store._write_lock, new_store._connect() as conn:
+                    conn.execute("PRAGMA foreign_keys=OFF")
+                    for table in ("aliases","sections","redirects","class_features","bookmarks","page_standards","page_drafts","revisions","analytics_daily","standards","nodes","settings"):
+                        conn.execute(f"DELETE FROM {table}")
+                    for table, columns in table_columns.items():
+                        rows = manifest.get(table) or []
+                        placeholders = ",".join("?" for _ in columns)
+                        statement = f"INSERT INTO {table}({','.join(columns)}) VALUES({placeholders})"
+                        for row in rows:
+                            if not isinstance(row, dict):
+                                raise ValueError(f"Backup table {table} is invalid")
+                            values = tuple(
+                                (row.get(column) or "")
+                                if table == "nodes" and column in {"icon", "tool_type"}
+                                else row.get(column)
+                                for column in columns
+                            )
+                            conn.execute(statement, values)
+                    valid_ids = {row["id"] for row in manifest.get("nodes") or [] if isinstance(row, dict)}
+                    bookmark_columns = ("id","owner_email","node_id","class_id","kind","created_at")
+                    for row in preserved_bookmarks:
+                        if row.get("node_id") not in valid_ids:
+                            continue
+                        conn.execute(
+                            f"INSERT OR IGNORE INTO bookmarks({','.join(bookmark_columns)}) VALUES(?,?,?,?,?,?)",
+                            tuple(row.get(column) for column in bookmark_columns),
                         )
-                        conn.execute(statement, values)
-                valid_ids = {row["id"] for row in manifest.get("nodes") or [] if isinstance(row, dict)}
-                bookmark_columns = ("id","owner_email","node_id","class_id","kind","created_at")
-                for row in preserved_bookmarks:
-                    if row.get("node_id") not in valid_ids:
-                        continue
-                    conn.execute(
-                        f"INSERT OR IGNORE INTO bookmarks({','.join(bookmark_columns)}) VALUES(?,?,?,?,?,?)",
-                        tuple(row.get(column) for column in bookmark_columns),
-                    )
-                conn.execute("INSERT OR REPLACE INTO schema_meta(key,value) VALUES('schema_version',?)", (str(SCHEMA_VERSION),))
-                try:
-                    conn.execute("DELETE FROM wiki_fts")
-                except sqlite3.OperationalError:
-                    pass
-                for row in conn.execute("SELECT id,kind,file_name,storage_name FROM nodes"):
-                    markdown = ""
-                    if row["kind"] == "page":
-                        path = new_store.content_dir / row["storage_name"]
-                        if not path.exists():
-                            raise ValueError("Backup is missing a Markdown content file")
-                        markdown = path.read_text(encoding="utf-8")
-                    elif row["kind"] in {"image","video","pdf","file"}:
-                        media_path = new_store.media_dir / row["storage_name"]
-                        if not media_path.exists():
-                            raise ValueError("Backup is missing an uploaded media file")
-                        if not validate_asset_signature(media_path, Path(row["file_name"]).suffix.lower()):
-                            raise ValueError("Backup media contents do not match the expected file type")
-                    new_store._reindex_node(conn, row["id"], markdown)
-                conn.execute("PRAGMA foreign_keys=ON")
-            new_store.prune_revisions()
-            new_store.checkpoint()
-            diagnostics = new_store.diagnostics()
-            if diagnostics["missing_files"]:
-                raise ValueError("Restored backup is missing files")
-            pre_restore = self.create_backup(self.backup_dir / f"pre_restore_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.zip")
-            self.checkpoint()
-            with self._write_lock:
-                os.replace(self.base_dir, old_root)
-                try:
-                    os.replace(restore_root, self.base_dir)
-                except Exception:
+                    conn.execute("INSERT OR REPLACE INTO schema_meta(key,value) VALUES('schema_version',?)", (str(SCHEMA_VERSION),))
+                    try:
+                        conn.execute("DELETE FROM wiki_fts")
+                    except sqlite3.OperationalError:
+                        pass
+                    for row in conn.execute("SELECT id,kind,file_name,storage_name FROM nodes"):
+                        markdown = ""
+                        if row["kind"] == "page":
+                            path = new_store.content_dir / row["storage_name"]
+                            if not path.exists():
+                                raise ValueError("Backup is missing a Markdown content file")
+                            markdown = path.read_text(encoding="utf-8")
+                        elif row["kind"] in {"image","video","pdf","file"}:
+                            media_path = new_store.media_dir / row["storage_name"]
+                            if not media_path.exists():
+                                raise ValueError("Backup is missing an uploaded media file")
+                            if not validate_asset_signature(media_path, Path(row["file_name"]).suffix.lower()):
+                                raise ValueError("Backup media contents do not match the expected file type")
+                        new_store._reindex_node(conn, row["id"], markdown)
+                    conn.execute("PRAGMA foreign_keys=ON")
+                with new_store._connect() as conn:
+                    next_version = max(previous_version, new_store.catalog_version()) + 1
+                    conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('catalog_version',?)", (str(next_version),))
+                new_store.prune_revisions()
+                new_store.checkpoint()
+                diagnostics = new_store.diagnostics()
+                if diagnostics["missing_files"]:
+                    raise ValueError("Restored backup is missing files")
+                pre_restore = self.create_backup(self.backup_dir / f"pre_restore_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.zip") if create_pre_restore else None
+                self.checkpoint()
+                with self._write_lock:
+                    os.replace(self.base_dir, old_root)
+                    try:
+                        os.replace(restore_root, self.base_dir)
+                    except Exception:
+                        os.replace(old_root, self.base_dir)
+                        raise
+                shutil.rmtree(old_root, ignore_errors=True)
+                self._prepare_directories()
+                self._clear_read_caches()
+                return {"ok": True, "pre_restore_backup": pre_restore.name if pre_restore else "", "catalog_version": self.catalog_version()}
+            except Exception:
+                shutil.rmtree(restore_root, ignore_errors=True)
+                if old_root.exists() and not self.base_dir.exists():
                     os.replace(old_root, self.base_dir)
-                    raise
-            shutil.rmtree(old_root, ignore_errors=True)
-            self._prepare_directories()
-            self._clear_read_caches()
-            return {"ok": True, "pre_restore_backup": pre_restore.name, "catalog_version": self.catalog_version()}
-        except Exception:
-            shutil.rmtree(restore_root, ignore_errors=True)
-            if old_root.exists() and not self.base_dir.exists():
-                os.replace(old_root, self.base_dir)
-            raise
+                raise

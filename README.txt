@@ -1346,3 +1346,31 @@ fails, the same action can safely be retried.
 For support or issues: https://github.com/bkgodwin/EagleIDE
 
 Last Updated: 2026-10-15
+WIKI MANAGER ACCOUNTS AND RECOVERY (October 2026)
+-----------------------------------------------
+Administrators can create a Teacher or Wiki manager in Users > Create staff
+account. Wiki managers sign in normally and can add, edit, publish, move and
+delete wiki pages, folders and media, and edit wiki Home content. They also have
+a personal IDE and access to globally enabled tools. They cannot manage accounts
+or classes, read wiki analytics, export wiki backups, or roll back the whole wiki.
+
+The main administrator can open Wiki Manager > History & rollback. Every content
+edit, including draft autosaves, records its actor and creates a milestone of the
+wiki immediately BEFORE that edit. Milestones begin with the first edit after
+upgrade; earlier edits are not retroactively recoverable. Restore before this
+edit rolls back wiki content/settings and creates a new milestone of the state
+being replaced. Current bookmarks, analytics, and class features survive where
+their target nodes still exist. The private audit log survives all rollback.
+
+Milestones expire after seven days. Cleanup runs at startup, during editing and
+hourly even while idle. Unchanged media are shared across milestones. A 20 GiB
+history file/manifest budget blocks new edits if necessary to retain unexpired
+milestones. History normally lives in wiki_backups/history; if the configured
+backup directory is inside the wiki directory, it uses the sibling hidden
+.<wiki directory name>-history folder. Include it in private encrypted instance
+backups; portable wiki exports do not include this audit/recovery history.
+
+This update also disconnects revoked classroom sockets on the server, rechecks
+classroom recipients before broadcasts, and allows Home scrolling to continue
+when the pointer is over an agenda day. The other open security items described
+in docs/security/remediation-2026-10.md still apply.
