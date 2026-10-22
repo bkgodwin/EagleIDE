@@ -869,6 +869,7 @@ def _html_preview_request_is_isolated() -> bool:
 _users_lock = threading.RLock()
 _student_tokens: Dict[str, dict] = SessionTokens()  # token -> user info dict
 _teacher_tokens: Dict[str, dict] = SessionTokens()  # token -> teacher info dict
+_wiki_manager_tokens: Dict[str, dict] = SessionTokens()
 _teacher_code_snapshots: Dict[str, str] = {}
 _teacher_code_languages: Dict[str, str] = {}
 _teacher_stream_last_emit: Dict[str, float] = {}
@@ -921,7 +922,7 @@ def _load_users() -> dict:
 def _normalize_user_record(user: dict) -> dict:
     normalized = dict(user or {})
     role = str(normalized.get("role") or "student").strip().lower()
-    if role not in {"student", "teacher"}:
+    if role not in {"student", "teacher", "wiki_manager"}:
         role = "student"
     normalized["role"] = role
     normalized["first_name"] = str(normalized.get("first_name", normalized.get("name") or "")).strip()[:120]
@@ -1065,8 +1066,8 @@ def _user_info_from_record(user: dict) -> dict:
     email = str(user.get("email") or "").strip().lower()
     profile = _profile_fields(user)
     role = str(user.get("role") or "student").strip().lower()
-    if role == "teacher":
-        return {"email": email, **profile, "role": "teacher"}
+    if role in {"teacher", "wiki_manager"}:
+        return {"email": email, **profile, "role": role}
     return {
         "email": email,
         **profile,
@@ -1147,7 +1148,7 @@ def _issue_access_token(role: str, user_info: dict, token: Optional[str] = None)
                 if token not in _admin_tokens:
                     _admin_tokens.add(token)
         else:
-            store = _teacher_tokens if role == "teacher" else _student_tokens
+            store = _wiki_manager_tokens if role == "wiki_manager" else _teacher_tokens if role == "teacher" else _student_tokens
             email = user_info.get("email", "").lower()
             with store.lock:
                 same_account = [key for key, info in list(store.items()) if info.get("email", "").lower() == email and store.active(key)]
@@ -1324,7 +1325,7 @@ def _validated_profile(data, current=None):
 
 
 def _refresh_profile_tokens(email, record):
-    for tokens in (_student_tokens, _teacher_tokens):
+    for tokens in (_student_tokens, _teacher_tokens, _wiki_manager_tokens):
         for info in list(tokens.values()):
             if info.get("email") == email:
                 info.update(_profile_fields(record))
@@ -1476,7 +1477,7 @@ def _login_succeeded(email):
 
 
 def _ai_identity(req):
-    user = _require_user(req) or _require_teacher(req, allow_coteacher=True)
+    user = _require_user(req) or _require_teacher(req, allow_coteacher=True) or _require_wiki_manager(req)
     if user:
         return "account:" + hashlib.sha256(user["email"].lower().encode()).hexdigest()
     if _require_admin(req):
@@ -2384,14 +2385,27 @@ def _require_user(req) -> Optional[dict]:
             return None
     return user
 
+def _require_wiki_manager(req) -> Optional[dict]:
+    token = req.headers.get("X-Wiki-Manager-Token", "").strip()
+    actor = _wiki_manager_tokens.get(token)
+    current = _find_user(actor.get("email", "")) if actor else None
+    if not current or not current.get("enabled", True) or current.get("role") != "wiki_manager":
+        _wiki_manager_tokens.pop(token, None)
+        return None
+    return _user_info_from_record(current)
+
+
 def _require_user_for_files(req) -> Optional[dict]:
-    """Allow a student, teacher, or the admin to access file routes."""
+    """Allow authenticated account roles to access their own workspace."""
     user = _require_user(req)
     if user:
         return user
     teacher = _require_teacher(req, allow_coteacher=True)
     if teacher:
         return teacher
+    manager = _require_wiki_manager(req)
+    if manager:
+        return manager
     admin_token = req.headers.get("X-Admin-Token", "").strip()
     if admin_token and admin_token in _admin_tokens:
         return {"email": ADMIN_ACCOUNT_EMAIL, "name": "Admin", "role": "admin"}
@@ -2661,6 +2675,59 @@ def _revoke_student_class_rooms(student_email: str, class_id: Optional[str] = No
                 print(f"Warning: failed to remove sid {sid} from class room {room_name}: {exc}")
 
 
+def _revoke_socket_sessions(*, email="", tokens=()):
+    """Disconnect server-side: clients need not cooperate with revocation."""
+    for sid, info in list(_socket_sid_info.items()):
+        if (email and info.get("email") == email.lower()) or info.get("token") in tokens:
+            _disconnect_auth_socket(sid)
+
+
+def _disconnect_auth_socket(sid):
+    for class_id in list(_socket_sid_rooms.get(sid, ())):
+        for room in (f"class_{class_id}", f"class_{class_id}_students", f"class_{class_id}_teachers"):
+            socketio.server.leave_room(sid, room, namespace="/")
+    _socket_sid_info.pop(sid, None)
+    socketio.server.disconnect(sid, namespace="/")
+
+
+def _revoke_account_sessions(email, keep_token=""):
+    for tokens in (_student_tokens, _teacher_tokens, _wiki_manager_tokens):
+        revoked = {token for token, info in list(tokens.items())
+                   if info.get("email", "").lower() == email.lower() and token != keep_token}
+        for token in revoked:
+            tokens.pop(token, None)
+        _revoke_socket_sessions(tokens=revoked)
+    if not keep_token:
+        _revoke_socket_sessions(email=email)
+
+
+def _validate_class_socket_sessions():
+    """Recheck expiry and current membership immediately before room delivery."""
+    for sid, info in list(_socket_sid_info.items()):
+        role, token, email = info.get("role"), info.get("token"), info.get("email", "")
+        if not token:
+            continue
+        if role == "admin":
+            valid = _admin_tokens.sessions.active(token)
+            record = None
+        else:
+            tokens = _wiki_manager_tokens if role == "wiki_manager" else _teacher_tokens if role == "teacher" else _student_tokens
+            record = _find_user(email)
+            valid = tokens.active(token) and record and record.get("enabled", True) and record.get("role") == role
+        if not valid:
+            _disconnect_auth_socket(sid)
+            continue
+        for class_id in list(_socket_sid_rooms.get(sid, ())):
+            cls = _find_class_by_id(class_id)
+            allowed = cls and (role == "admin" or
+                (role == "teacher" and cls.get("teacher_email") == email) or
+                (role == "student" and email in cls.get("students", [])))
+            if not allowed:
+                for room in (f"class_{class_id}", f"class_{class_id}_students", f"class_{class_id}_teachers"):
+                    socketio.server.leave_room(sid, room, namespace="/")
+                _socket_sid_rooms.get(sid, set()).discard(class_id)
+
+
 def _teacher_stream_active_for_class(class_id: str) -> bool:
     return bool(_live_teacher_stream_sids_by_class.get(str(class_id or "").strip(), set()))
 
@@ -2723,13 +2790,13 @@ def _effective_ai_enabled(req, payload: Optional[dict] = None) -> tuple[bool, Op
         # The class switch controls student access only. Teachers retain AI
         # tools for instruction, grading, and reporting for their own classes.
         return True, None
-    if _require_admin(req):
+    if _require_admin(req) or _require_wiki_manager(req):
         return True, None
     return False, "Sign in to use AI features"
 
 
 def _effective_challenges_enabled(req, payload: Optional[dict] = None) -> tuple[bool, Optional[str]]:
-    if _require_admin(req) or _require_teacher(req, allow_coteacher=True):
+    if _require_admin(req) or _require_teacher(req, allow_coteacher=True) or _require_wiki_manager(req):
         return True, None
     user = _require_user(req)
     if not user:
@@ -3075,7 +3142,7 @@ def auth_restore():
         _clear_device_session_cookie(response)
         return response
     current_fingerprint = _device_credential_fingerprint(role, email)
-    if payload.get("v") != 1 or role not in {"student", "teacher", "admin"} or not re.fullmatch(r"[0-9a-f]{32}", access_token) \
+    if payload.get("v") != 1 or role not in {"student", "teacher", "wiki_manager", "admin"} or not re.fullmatch(r"[0-9a-f]{32}", access_token) \
             or expires_at <= int(time.time()) or first_issued_at + 30 * 24 * 3600 <= int(time.time()) \
             or not current_fingerprint or not hmac.compare_digest(credential, current_fingerprint):
         response = jsonify(ok=False, error="Saved sign-in has expired", code="expired_saved_session")
@@ -3102,6 +3169,9 @@ def auth_logout():
     token = request.headers.get("X-User-Token", "").strip()
     teacher_token = request.headers.get("X-Teacher-Token", "").strip()
     admin_token = request.headers.get("X-Admin-Token", "").strip()
+    manager_token = request.headers.get("X-Wiki-Manager-Token", "").strip()
+    _revoke_socket_sessions(tokens={token, teacher_token, admin_token, manager_token} - {""})
+    _wiki_manager_tokens.pop(manager_token, None)
     _student_tokens.pop(token, None)
     _student_tokens.pop(teacher_token, None)
     _teacher_tokens.pop(teacher_token, None)
@@ -3112,7 +3182,7 @@ def auth_logout():
 
 @app.get("/api/auth/me")
 def auth_me():
-    user = _require_user(request)
+    user = _require_user(request) or _require_wiki_manager(request)
     if not user:
         user = _require_teacher(request, allow_coteacher=True)
     if not user:
@@ -3125,7 +3195,7 @@ def auth_me():
 
 @app.post("/api/auth/profile")
 def update_account_profile():
-    actor = _require_user(request) or _require_teacher(request, allow_coteacher=True)
+    actor = _require_user(request) or _require_teacher(request, allow_coteacher=True) or _require_wiki_manager(request)
     if not actor:
         return jsonify(ok=False, error="Authentication required"), 401
     data = request.get_json(silent=True) or {}
@@ -3167,7 +3237,7 @@ def _validated_editor_preferences(data):
 @app.route("/api/auth/editor-preferences", methods=["GET", "POST"])
 def editor_preferences():
     admin = _require_admin(request)
-    actor = None if admin else (_require_user(request) or _require_teacher(request, allow_coteacher=True))
+    actor = None if admin else (_require_user(request) or _require_teacher(request, allow_coteacher=True) or _require_wiki_manager(request))
     if not admin and not actor:
         return jsonify(ok=False, error="Authentication required"), 401
     preferences = None
@@ -4399,6 +4469,7 @@ def admin_list_users():
 
 
 @app.post("/api/admin/teachers/create")
+@app.post("/api/admin/wiki-managers/create")
 def admin_create_teacher():
     if not _require_admin(request):
         return jsonify(ok=False, error="Admin token required"), 401
@@ -4410,21 +4481,26 @@ def admin_create_teacher():
         return jsonify(ok=False, error="Name, email, and password are required"), 400
     if len(password) < 8:
         return jsonify(ok=False, error="Password must be at least 8 characters"), 400
-    if _find_user(email):
-        return jsonify(ok=False, error="Email already registered"), 409
-    users_data = _load_users()
+    role = "wiki_manager" if request.path.endswith("/wiki-managers/create") else "teacher"
+    password_hash = hash_password(password)
     timestamp = _current_timestamp()
-    users_data["users"].append({
+    record = {
         "email": email,
-        "password_hash": bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8"),
+        "password_hash": password_hash,
+        "password_hash_scheme": ADMIN_HASH_SCHEME,
         "name": name[:100],
-        "role": "teacher",
+        "role": role,
         "class_id": None,
         "created_at": timestamp,
         "last_sign_in": "",
         "enabled": True,
-    })
-    _save_users(users_data)
+    }
+    with _users_lock:
+        users_data = _load_users()
+        if any(u.get("email") == email for u in users_data["users"]):
+            return jsonify(ok=False, error="Email already registered"), 409
+        users_data["users"].append(record)
+        _save_users(users_data)
     _seed_example_files(email)
     return jsonify(ok=True)
 
@@ -4457,12 +4533,7 @@ def admin_reset_password():
     _save_users(users_data)
     
     # Invalidate existing tokens
-    for token, info in list(_student_tokens.items()):
-        if info.get("email", "").lower() == email:
-            del _student_tokens[token]
-    for token, info in list(_teacher_tokens.items()):
-        if info.get("email", "").lower() == email:
-            del _teacher_tokens[token]
+    _revoke_account_sessions(email)
     
     return jsonify(ok=True, temp_password=new_password)
 
@@ -4505,14 +4576,8 @@ def admin_toggle_user():
     
     _save_users(users_data)
     
-    # If disabling, invalidate tokens
     if not enabled:
-        for token, info in list(_student_tokens.items()):
-            if info.get("email", "").lower() == email:
-                del _student_tokens[token]
-        for token, info in list(_teacher_tokens.items()):
-            if info.get("email", "").lower() == email:
-                del _teacher_tokens[token]
+        _revoke_account_sessions(email)
     
     return jsonify(ok=True)
 
@@ -4585,12 +4650,7 @@ def _delete_user_by_email(email: str) -> bool:
             if (user.get("email") or "").lower() == email:
                 user["enabled"] = False
         _save_users(current)
-    for token, info in list(_student_tokens.items()):
-        if info.get("email", "").lower() == email:
-            _student_tokens.pop(token, None)
-    for token, info in list(_teacher_tokens.items()):
-        if info.get("email", "").lower() == email:
-            _teacher_tokens.pop(token, None)
+    _revoke_account_sessions(email)
     try:
         if user_dir.exists():
             shutil.rmtree(user_dir)
@@ -4675,12 +4735,7 @@ def admin_bulk_toggle_users():
     _save_users(users_data)
     if not enabled:
         for email in updated:
-            for token, info in list(_student_tokens.items()):
-                if info.get("email", "").lower() == email:
-                    del _student_tokens[token]
-            for token, info in list(_teacher_tokens.items()):
-                if info.get("email", "").lower() == email:
-                    del _teacher_tokens[token]
+            _revoke_account_sessions(email)
     return jsonify(ok=True, updated=updated)
 
 
@@ -5764,17 +5819,20 @@ def teacher_reset_password():
     if not found:
         return jsonify(ok=False, error="Student not found"), 404
     _save_users(users_data)
-    for token, info in list(_student_tokens.items()):
-        if (info.get("email") or "").lower() == email:
-            del _student_tokens[token]
+    _revoke_account_sessions(email)
     return jsonify(ok=True, temp_password=new_password)
 
 
 @app.post("/api/teacher/change-password")
+@app.post("/api/wiki-manager/change-password")
 def teacher_change_password():
-    teacher = _require_teacher(request)
+    manager = request.path == "/api/wiki-manager/change-password"
+    role = "wiki_manager" if manager else "teacher"
+    label = "Wiki manager" if manager else "Teacher"
+    header = "X-Wiki-Manager-Token" if manager else "X-Teacher-Token"
+    teacher = _require_wiki_manager(request) if manager else _require_teacher(request)
     if not teacher:
-        return jsonify(ok=False, error="Teacher token required"), 401
+        return jsonify(ok=False, error=f"{label} token required"), 401
     data = request.get_json(silent=True) or {}
     current_password = str(data.get("currentPassword") or "")
     new_password = str(data.get("newPassword") or "")
@@ -5786,8 +5844,8 @@ def teacher_change_password():
     if len(new_password.encode("utf-8")) > 72:
         return jsonify(ok=False, error="New password must be 72 UTF-8 bytes or fewer"), 400
     existing = _find_user(email)
-    if not existing or existing.get("role") != "teacher":
-        return jsonify(ok=False, error="Teacher account not found"), 404
+    if not existing or existing.get("role") != role:
+        return jsonify(ok=False, error=f"{label} account not found"), 404
     if not _verify_user_password(existing, current_password):
         return jsonify(ok=False, error="Current password is incorrect"), 403
     existing = _find_user(email) or existing
@@ -5795,20 +5853,18 @@ def teacher_change_password():
     next_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     with _users_lock:
         users_data = _load_users()
-        teacher_record = next((u for u in users_data.get("users", []) if u.get("email", "").lower() == email and u.get("role") == "teacher"), None)
+        teacher_record = next((u for u in users_data.get("users", []) if u.get("email", "").lower() == email and u.get("role") == role), None)
         if not teacher_record:
-            return jsonify(ok=False, error="Teacher account not found"), 404
+            return jsonify(ok=False, error=f"{label} account not found"), 404
         if not hmac.compare_digest(original_credential, str(teacher_record.get("password_hash") or "")):
             return jsonify(ok=False, error="Password changed in another session. Please sign in again."), 409
         teacher_record["password_hash"] = next_hash
         teacher_record.pop("password_hash_scheme", None)
         teacher_record.pop("password", None)
         _save_users(users_data)
-    for token, info in list(_teacher_tokens.items()):
-        if (info.get("email") or "").lower() == email and token != request.headers.get("X-Teacher-Token", "").strip():
-            del _teacher_tokens[token]
+    _revoke_account_sessions(email, keep_token=request.headers.get(header, "").strip())
     response = jsonify(ok=True)
-    _set_device_session_cookie(response, "teacher", email, request.headers.get("X-Teacher-Token", "").strip())
+    _set_device_session_cookie(response, role, email, request.headers.get(header, "").strip())
     return response
 
 
@@ -5853,9 +5909,7 @@ def student_change_password():
         student_record.pop("password", None)
         _save_users(users_data)
     current_token = request.headers.get("X-User-Token", "").strip()
-    for token, info in list(_student_tokens.items()):
-        if (info.get("email") or "").lower() == email and token != current_token:
-            del _student_tokens[token]
+    _revoke_account_sessions(email, keep_token=current_token)
     response = jsonify(ok=True)
     _set_device_session_cookie(response, "student", email, current_token)
     return response
@@ -8382,6 +8436,14 @@ def _resolve_execution_context(payload: dict, sid: str) -> tuple[Optional[dict],
         role = "teacher"
         if not info:
             return None, "Run rejected: invalid or expired teacher session"
+    elif payload.get("wiki_manager_token"):
+        info = _wiki_manager_tokens.get(str(payload["wiki_manager_token"]))
+        current = _find_user(info.get("email", "")) if info else None
+        if not current or not current.get("enabled", True) or current.get("role") != "wiki_manager":
+            info = None
+        role = "wiki_manager"
+        if not info:
+            return None, "Run rejected: invalid or expired wiki manager session"
     elif admin_token:
         if admin_token not in _admin_tokens:
             return None, "Run rejected: invalid or expired admin session"
@@ -8397,6 +8459,16 @@ def _resolve_execution_context(payload: dict, sid: str) -> tuple[Optional[dict],
         email = str(info.get("email") or "").strip().lower()
         if not email:
             return None, "Run rejected: account identity is unavailable"
+        token = {"student":user_token, "teacher":teacher_token, "admin":admin_token,
+                 "wiki_manager":str(payload.get("wiki_manager_token") or "")}[role]
+        previous = _socket_sid_info.get(sid)
+        if previous and (previous.get("token") != token or previous.get("role") != role):
+            for old_class in list(_socket_sid_rooms.get(sid, ())):
+                for room in (f"class_{old_class}", f"class_{old_class}_students", f"class_{old_class}_teachers"):
+                    socketio.server.leave_room(sid, room, namespace="/")
+                _set_teacher_stream_state_for_sid(sid, old_class, False)
+            _socket_sid_rooms[sid] = set()
+        _socket_sid_info[sid] = {**(_socket_sid_info.get(sid) or {}), "email":email, "role":role, "token":token}
         root = _get_user_dir(email)
         root.mkdir(parents=True, exist_ok=True)
         run_dir = root
@@ -9132,12 +9204,19 @@ def on_join_class_room(payload):
     token = str((payload or {}).get("token") or "").strip()
     if not class_id or not token:
         return
+    previous = _socket_sid_info.get(request.sid)
+    if previous and (previous.get("token") != token or previous.get("role") != role):
+        for old_class in list(_socket_sid_rooms.get(request.sid, ())):
+            for room in (f"class_{old_class}", f"class_{old_class}_students", f"class_{old_class}_teachers"):
+                leave_room(room)
+            _set_teacher_stream_state_for_sid(request.sid, old_class, False)
+        _socket_sid_rooms[request.sid] = set()
     if role == "student":
         student = _student_tokens.get(token)
         if not student:
             return
         student_record = _find_user(student.get("email", ""))
-        if not student_record:
+        if not student_record or not student_record.get("enabled", True) or student_record.get("role") != "student":
             return
         if not _user_in_class(student_record, class_id):
             return
@@ -9156,6 +9235,10 @@ def on_join_class_room(payload):
         _socket_sid_info[request.sid] = {"role": "admin", "email": ADMIN_ACCOUNT_EMAIL.lower()}
     else:
         return
+    _socket_sid_info[request.sid]["token"] = token
+    _validate_class_socket_sessions()
+    if request.sid not in _socket_sid_info:
+        return
     join_room(f"class_{class_id}")
     if role == "student":
         join_room(f"class_{class_id}_students")
@@ -9171,6 +9254,26 @@ def on_join_class_room(payload):
             to=request.sid,
         )
     _emit_class_presence(class_id)
+
+
+# Every feature shares this Socket.IO instance, including classroom_features.py.
+# Validate room recipients before delivery without extending token idle lifetimes.
+_emit_without_class_validation = socketio.emit
+_class_delivery_guard = threading.local()
+
+
+def _emit_with_class_validation(event, *args, **kwargs):
+    target = kwargs.get("to") or kwargs.get("room") or ""
+    if str(target).startswith("class_") and not getattr(_class_delivery_guard, "active", False):
+        _class_delivery_guard.active = True
+        try:
+            _validate_class_socket_sessions()
+        finally:
+            _class_delivery_guard.active = False
+    return _emit_without_class_validation(event, *args, **kwargs)
+
+
+socketio.emit = _emit_with_class_validation
 
 
 @socketio.on("leave_class_room")
@@ -13458,6 +13561,7 @@ _wiki_store = register_wiki_features(
     require_admin=_require_admin,
     require_teacher=_require_teacher,
     require_user=_require_user,
+    require_wiki_manager=_require_wiki_manager,
     find_user=_find_user,
     get_user_class_ids=_get_user_class_ids,
     find_class=_find_class_by_id,
@@ -13481,6 +13585,7 @@ register_network_features(
     require_admin=_require_admin,
     require_teacher=_require_teacher,
     require_user=_require_user,
+    require_wiki_manager=_require_wiki_manager,
     find_user=_find_user,
     get_user_class_ids=_get_user_class_ids,
     find_class=_find_class_by_id,
@@ -13506,7 +13611,7 @@ def _external_tool_account_id(record):
 _external_tools = register_external_tools(
     app, base_dir=Path(os.environ.get("EAGLEIDE_TOOL_DATA_DIR", str(BASE_DIR / "tool_data"))),
     source_dir=BASE_DIR, require_admin=_require_admin, require_teacher=_require_teacher,
-    require_user=_require_user, find_user=_find_user, get_user_class_ids=_get_user_class_ids,
+    require_user=_require_user, require_wiki_manager=_require_wiki_manager, find_user=_find_user, get_user_class_ids=_get_user_class_ids,
     find_class=_find_class_by_id, teacher_classes=_get_teacher_classes, account_id=_external_tool_account_id,
 )
 from workspace_data import register as register_workspace_data

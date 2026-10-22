@@ -10,11 +10,12 @@ body.light-mode #adminSettingsModal { --columbia-blue: #245a85; }
 .admin-management-kicker { color: var(--columbia-blue); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
 .admin-create-teacher { display: grid; grid-template-columns: 180px minmax(0, 1fr); align-items: end; gap: 18px; padding: 16px 24px; border-bottom: 1px solid var(--theme-border-mid); background: rgba(127,178,235,.06); }
 .admin-create-teacher h4 { margin: 2px 0 0; color: var(--theme-text); }
-.admin-create-teacher-form { display: grid; grid-template-columns: .8fr 1fr 1fr auto; gap: 8px; }
+.admin-create-teacher-form { display: grid; grid-template-columns: .8fr .8fr 1fr 1fr auto; gap: 8px; }
 .admin-management-shell .admin-create-teacher-form input,
+.admin-management-shell .admin-create-teacher-form select,
 .admin-management-shell .admin-users-toolbar input,
 .admin-management-shell .admin-users-toolbar select { min-height: 40px; padding: 8px 10px; border: 1px solid var(--theme-border-mid); border-radius: 0; background: var(--theme-input-bg); color: var(--theme-text); }
-.admin-user-summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--theme-border-mid); }
+.admin-user-summary-grid { display: grid; grid-template-columns: repeat(5, 1fr); border-bottom: 1px solid var(--theme-border-mid); }
 .admin-user-summary-grid > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 13px 20px; border-right: 1px solid var(--theme-border-mid); }
 .admin-user-summary-grid > div:last-child { border-right: 0; }
 .admin-user-summary-grid span { color: var(--theme-text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }

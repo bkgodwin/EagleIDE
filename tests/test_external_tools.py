@@ -159,6 +159,7 @@ class ExternalToolTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.users = {
             's': {'email': 'student@example.test', 'role': 'student', 'enabled': True, 'class_ids': ['one', 'two']},
+            'm': {'email':'manager@example.invalid','role':'wiki_manager','enabled':True},
             't': {'email': 'teacher@example.test', 'role': 'teacher', 'enabled': True},
             'ct': {'email': 'co@example.test', 'role': 'student', 'enabled': True, 'class_ids': ['one']},
         }
@@ -172,6 +173,7 @@ class ExternalToolTests(unittest.TestCase):
         self.app = Flask(__name__, static_folder=None)
         self.feature = register(self.app, base_dir=self.temp.name, source_dir=Path(__file__).parents[1],
                                 require_admin=lambda req: self.tokens.get(req.headers.get('X-Admin-Token')) is True,
+                                require_wiki_manager=require('X-Wiki-Manager-Token','wiki_manager'),
                                 require_teacher=require('X-Teacher-Token', 'teacher'), require_user=require('X-User-Token', 'student'),
                                 find_user=lambda email: next((value for value in self.users.values() if value['email'] == email), None),
                                 get_user_class_ids=lambda user: user.get('class_ids', []), find_class=self.classes.get,
@@ -332,6 +334,17 @@ class ExternalToolTests(unittest.TestCase):
         self.users['s']['enabled'] = True
         self.tokens.pop('s')
         self.assertEqual(self.client.get(launch['url']).status_code, 403)
+
+    def test_wiki_managers_can_launch_enabled_tools_but_cannot_administer_tools_or_class_grants(self):
+        self.registered()
+        manager = {'X-Wiki-Manager-Token':'m'}
+        self.assertEqual(len(self.call('GET','/api/tools',headers=manager)['tools']),1)
+        launch = self.launch(manager)
+        self.assertEqual(self.client.get(launch['url']).status_code,200)
+        self.assertIn(self.client.get('/api/admin/tools',headers=manager).status_code,(401,403))
+        self.assertIn(self.client.put('/api/teacher/classes/one/tools',json={'revision':self.revision(),'tool_ids':[]},headers=manager).status_code,(401,403))
+        self.users['m']['enabled'] = False
+        self.assertEqual(self.client.get(launch['url']).status_code,403)
 
     def test_teachers_have_enabled_tools_without_classes_or_grants_but_students_do_not(self):
         self.registered()

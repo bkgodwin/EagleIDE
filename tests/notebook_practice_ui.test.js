@@ -171,7 +171,7 @@ test('notebook run claims the shared execution state synchronously before emitti
   const snippet = core.slice(core.indexOf('    function runNotebookCode('), core.indexOf('    function sendNotebookInput('));
   const requests = [];
   const context = { socket: { emit(type, data) { requests.push({ type, data }); } } };
-  vm.runInNewContext(`let isProgramRunning=false, notebookRunHandlers=null, USER_TOKEN='student', TEACHER_TOKEN='', ADMIN_TOKEN='';
+  vm.runInNewContext(`let isProgramRunning=false, notebookRunHandlers=null, USER_TOKEN='student', TEACHER_TOKEN='', ADMIN_TOKEN='', WIKI_MANAGER_TOKEN='';
     function canExecuteCode() { return true; } function setRunButtonState(value) { isProgramRunning=value; }
     function isCoTeacher() { return false; } function getCurrentClassContext() { return {id:'class'}; }
     ${snippet} globalThis.run=runNotebookCode;`, context);

@@ -25,12 +25,16 @@ def register(
     get_user_class_ids,
     find_class,
     config_provider,
+    require_wiki_manager=lambda req: None,
 ):
     store = NetworkStore(base_dir)
 
     def actor():
         if require_admin(request):
             return {"role": "admin", "email": "__admin__", "record": None}
+        manager = require_wiki_manager(request)
+        if manager:
+            return {"role": "wiki_manager", "email": manager["email"], "record": manager}
         teacher = require_teacher(request)
         if teacher:
             return {"role": "teacher", "email": str(teacher.get("email") or "").strip().lower(), "record": teacher}

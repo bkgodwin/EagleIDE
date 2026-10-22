@@ -576,6 +576,9 @@ class RolePermissionTestCase(unittest.TestCase):
         signals_file = self.root / "classroom_signals.json"
         events_file = self.root / "classroom_events.json"
 
+        users = eagle._load_users()
+        users['users'].append({'email':self.teacher_email,'name':'Teacher','role':'teacher','enabled':True})
+        eagle._save_users(users)
         teacher_client = eagle.socketio.test_client(eagle.app, flask_test_client=self.http)
         student_client = eagle.socketio.test_client(eagle.app, flask_test_client=self.http)
         self.socket_clients.extend([teacher_client, student_client])
@@ -648,6 +651,9 @@ class RolePermissionTestCase(unittest.TestCase):
         }]})
         signals_file = self.root / "question_signals.json"
         events_file = self.root / "question_events.json"
+        users = eagle._load_users()
+        users['users'].append({'email':self.teacher_email,'name':'Teacher','role':'teacher','enabled':True})
+        eagle._save_users(users)
         teacher_client = eagle.socketio.test_client(eagle.app, flask_test_client=self.http)
         student_client = eagle.socketio.test_client(eagle.app, flask_test_client=self.http)
         self.socket_clients.extend([teacher_client, student_client])
@@ -809,7 +815,7 @@ class RolePermissionTestCase(unittest.TestCase):
     def test_frontend_keeps_teacher_ai_and_hides_admin_streaming(self):
         source = (Path(eagle.BASE_DIR) / "static/js/app-core.js").read_text(encoding="utf-8")
 
-        self.assertIn("ADMIN_TOKEN || TEACHER_TOKEN || aiEnabledForClass", source)
+        self.assertIn("ADMIN_TOKEN || TEACHER_TOKEN || WIKI_MANAGER_TOKEN || aiEnabledForClass", source)
         self.assertIn("streamingToggleBtn.style.display = TEACHER_TOKEN && !isCoTeacher() ? '' : 'none'", source)
         self.assertIn("const next = !!enabled && !!TEACHER_TOKEN", source)
         self.assertNotIn("role: ADMIN_TOKEN ? 'admin' : 'teacher'", source)

@@ -19,6 +19,8 @@
 .lesson-plan-day > header strong { font-size:14px; }
 .lesson-plan-day > header time { color:var(--theme-text-dim); font-size:11px; margin-top:2px; }
 .lesson-plan-day-scroll { min-height:0; overflow-y:auto; overflow-x:hidden; padding:12px; overscroll-behavior:contain; scrollbar-width:thin; }
+/* Home must keep scrolling when the pointer is over a day or its boundary. */
+#studentLessonPlanHost .lesson-plan-day-scroll { overscroll-behavior-y:auto; }
 .lesson-plan-markdown { font-size:13px; line-height:1.45; overflow-wrap:anywhere; }
 .lesson-plan-markdown > :first-child { margin-top:0; }
 .lesson-plan-markdown > :last-child { margin-bottom:0; }

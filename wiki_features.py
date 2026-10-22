@@ -12,10 +12,13 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
+from functools import wraps
+import sqlite3
 
 from flask import Flask, jsonify, request, send_file
 
 from wiki_store import MAX_PAGE_BYTES, ASSET_TYPES, WikiStore, safe_filename, safe_title
+from wiki_history import WikiHistory
 
 
 MAX_STANDARDS_CSV_BYTES = 1024 * 1024
@@ -33,6 +36,7 @@ def register(
     get_user_class_ids: Callable[[Optional[dict]], list[str]],
     find_class: Callable[[str], Optional[dict]],
     config_provider: Callable[[], dict],
+    require_wiki_manager: Callable[[Any], Optional[dict]] = lambda req: None,
 ) -> WikiStore:
     cfg = config_provider()
     max_asset_mb = max(1, min(4096, int(cfg.get("wiki_max_asset_mb", 1024))))
@@ -44,6 +48,8 @@ def register(
         max_total_asset_bytes=total_asset_mb * 1024 * 1024,
     )
     app.extensions["eagle_wiki_store"] = store
+    history = WikiHistory(store)
+    app.extensions["eagle_wiki_history"] = history
     backup_tickets: dict[str, dict[str, Any]] = {}
     backup_ticket_lock = threading.Lock()
 
@@ -64,7 +70,27 @@ def register(
     def _admin_required():
         if not require_admin(request):
             return None, _json_error("Admin token required", 401)
-        return {"role": "admin"}, None
+        return {"role": "admin", "email": config_provider().get("admin_email", "administrator")}, None
+
+    def _editor_required():
+        if require_admin(request):
+            return _admin_required()
+        manager = require_wiki_manager(request)
+        if manager:
+            return {**manager, "role": "wiki_manager"}, None
+        return None, _json_error("Wiki editor authentication required", 401)
+
+    def _owned_upload(upload_id):
+        actor, error = _editor_required()
+        if error:
+            return None
+        metadata, _, _ = store._upload_metadata(upload_id)
+        owner = "admin" if actor["role"] == "admin" else actor["email"]
+        if metadata.get("owner", "admin") != owner:
+            raise ValueError("Upload session not found")
+        if metadata.get("purpose") == "restore" and actor["role"] != "admin":
+            raise ValueError("Administrator access required for wiki restore")
+        return metadata
 
     def _actor() -> Optional[dict]:
         teacher = require_teacher(request)
@@ -349,7 +375,7 @@ def register(
 
     @app.get("/api/admin/wiki/tree")
     def admin_wiki_tree():
-        _, error = _admin_required()
+        _, error = _editor_required()
         if error:
             return error
         include_deleted = request.args.get("include_deleted") == "1"
@@ -361,14 +387,14 @@ def register(
 
     @app.get("/api/admin/wiki/settings")
     def admin_wiki_settings_get():
-        _, error = _admin_required()
+        _, error = _editor_required()
         if error:
             return error
         return jsonify(ok=True, home_settings=store.home_settings())
 
     @app.patch("/api/admin/wiki/settings")
     def admin_wiki_settings_update():
-        _, error = _admin_required()
+        _, error = _editor_required()
         if error:
             return error
         data = request.get_json(silent=True) or {}
@@ -387,7 +413,7 @@ def register(
 
     @app.post("/api/admin/wiki/standards/import")
     def admin_wiki_standards_import():
-        _, error = _admin_required()
+        _, error = _editor_required()
         if error:
             return error
         uploaded = request.files.get("file")
@@ -443,7 +469,7 @@ def register(
 
     @app.get("/api/admin/wiki/nodes/<node_id>")
     def admin_wiki_node_get(node_id: str):
-        _, error = _admin_required()
+        _, error = _editor_required()
         if error:
             return error
         node = store.get_node(node_id, include_drafts=True)
@@ -453,7 +479,7 @@ def register(
 
     @app.post("/api/admin/wiki/folders")
     def admin_wiki_folder_create():
-        _, error = _admin_required()
+        _, error = _editor_required()
         if error:
             return error
         data = request.get_json(silent=True) or {}
@@ -465,7 +491,7 @@ def register(
 
     @app.post("/api/admin/wiki/pages")
     def admin_wiki_page_create():
-        _, error = _admin_required()
+        _, error = _editor_required()
         if error:
             return error
         data = request.get_json(silent=True) or {}
@@ -484,7 +510,7 @@ def register(
 
     @app.post("/api/admin/wiki/tools")
     def admin_wiki_tool_create():
-        _, error = _admin_required()
+        _, error = _editor_required()
         if error:
             return error
         data = request.get_json(silent=True) or {}
@@ -501,7 +527,7 @@ def register(
 
     @app.post("/api/admin/wiki/pages/upload")
     def admin_wiki_page_upload():
-        _, error = _admin_required()
+        _, error = _editor_required()
         if error:
             return error
         uploaded = request.files.get("file")
@@ -532,7 +558,7 @@ def register(
 
     @app.patch("/api/admin/wiki/nodes/<node_id>")
     def admin_wiki_node_update(node_id: str):
-        _, error = _admin_required()
+        _, error = _editor_required()
         if error:
             return error
         data = request.get_json(silent=True) or {}
@@ -545,7 +571,7 @@ def register(
 
     @app.put("/api/admin/wiki/nodes/<node_id>/draft")
     def admin_wiki_node_draft(node_id: str):
-        _, error = _admin_required()
+        _, error = _editor_required()
         if error:
             return error
         data = request.get_json(silent=True) or {}
@@ -557,7 +583,7 @@ def register(
 
     @app.post("/api/admin/wiki/nodes/<node_id>/move")
     def admin_wiki_node_move(node_id: str):
-        _, error = _admin_required()
+        _, error = _editor_required()
         if error:
             return error
         data = request.get_json(silent=True) or {}
@@ -569,7 +595,7 @@ def register(
 
     @app.post("/api/admin/wiki/nodes/<node_id>/reorder")
     def admin_wiki_node_reorder(node_id: str):
-        _, error = _admin_required()
+        _, error = _editor_required()
         if error:
             return error
         data = request.get_json(silent=True) or {}
@@ -581,7 +607,7 @@ def register(
 
     @app.post("/api/admin/wiki/nodes/<node_id>/position")
     def admin_wiki_node_position(node_id: str):
-        _, error = _admin_required()
+        _, error = _editor_required()
         if error:
             return error
         data = request.get_json(silent=True) or {}
@@ -593,7 +619,7 @@ def register(
 
     @app.delete("/api/admin/wiki/nodes/<node_id>")
     def admin_wiki_node_delete(node_id: str):
-        _, error = _admin_required()
+        _, error = _editor_required()
         if error:
             return error
         try:
@@ -604,14 +630,14 @@ def register(
 
     @app.get("/api/admin/wiki/media")
     def admin_wiki_media_list():
-        _, error = _admin_required()
+        _, error = _editor_required()
         if error:
             return error
         return jsonify(ok=True, images=store.list_images(), catalog_version=store.catalog_version())
 
     @app.delete("/api/admin/wiki/media/<node_id>")
     def admin_wiki_media_delete(node_id: str):
-        _, error = _admin_required()
+        _, error = _editor_required()
         if error:
             return error
         try:
@@ -622,7 +648,7 @@ def register(
 
     @app.post("/api/admin/wiki/nodes/<node_id>/restore")
     def admin_wiki_node_restore(node_id: str):
-        _, error = _admin_required()
+        _, error = _editor_required()
         if error:
             return error
         try:
@@ -633,7 +659,7 @@ def register(
 
     @app.get("/api/admin/wiki/nodes/<node_id>/revisions")
     def admin_wiki_revisions(node_id: str):
-        _, error = _admin_required()
+        _, error = _editor_required()
         if error:
             return error
         try:
@@ -643,7 +669,7 @@ def register(
 
     @app.post("/api/admin/wiki/nodes/<node_id>/revisions/<revision_id>/restore")
     def admin_wiki_revision_restore(node_id: str, revision_id: str):
-        _, error = _admin_required()
+        _, error = _editor_required()
         if error:
             return error
         try:
@@ -654,10 +680,12 @@ def register(
 
     @app.post("/api/admin/wiki/uploads/start")
     def admin_wiki_upload_start():
-        _, error = _admin_required()
+        actor, error = _editor_required()
         if error:
             return error
         data = request.get_json(silent=True) or {}
+        if data.get("purpose") == "restore" and actor["role"] != "admin":
+            return _json_error("Administrator access required for wiki restore", 403)
         try:
             result = store.create_upload_session(
                 data.get("filename"), int(data.get("total_size") or 0),
@@ -665,6 +693,7 @@ def register(
                 title=data.get("title") or "",
                 description=data.get("description") or "",
                 purpose=data.get("purpose") or "asset",
+                owner="admin" if actor["role"] == "admin" else actor["email"],
             )
         except (ValueError, TypeError) as exc:
             return _json_error(str(exc), 400)
@@ -672,10 +701,11 @@ def register(
 
     @app.put("/api/admin/wiki/uploads/<upload_id>/chunk")
     def admin_wiki_upload_chunk(upload_id: str):
-        _, error = _admin_required()
+        _, error = _editor_required()
         if error:
             return error
         try:
+            _owned_upload(upload_id)
             offset = int(request.headers.get("X-Upload-Offset", "0"))
             chunk = request.get_data(cache=False)
             next_offset = store.append_upload_chunk(upload_id, offset, chunk)
@@ -685,10 +715,11 @@ def register(
 
     @app.post("/api/admin/wiki/uploads/<upload_id>/complete")
     def admin_wiki_upload_complete(upload_id: str):
-        _, error = _admin_required()
+        _, error = _editor_required()
         if error:
             return error
         try:
+            _owned_upload(upload_id)
             result = store.complete_upload(upload_id)
         except (ValueError, OSError, json.JSONDecodeError) as exc:
             return _json_error(str(exc), 400)
@@ -769,5 +800,70 @@ def register(
         if error:
             return error
         return jsonify(ok=True, data=store.analytics_summary())
+
+    @app.get("/api/admin/wiki/history")
+    def admin_wiki_history():
+        _, error = _admin_required()
+        if error:
+            return error
+        try:
+            before = max(0, int(request.args.get("before", 0)))
+            return jsonify(ok=True, entries=history.listing(before))
+        except (ValueError, OverflowError):
+            return _json_error("Invalid history cursor", 400)
+
+    @app.post("/api/admin/wiki/history/<milestone_id>/restore")
+    def admin_wiki_history_restore(milestone_id):
+        _, error = _admin_required()
+        if error:
+            return error
+        try:
+            return jsonify(ok=True, **{key: value for key, value in history.restore(milestone_id).items() if key != "ok"})
+        except ValueError as exc:
+            return _json_error(str(exc), 400)
+
+    # Serialize a recovery point, the edit, and its audit result. No credentials,
+    # source, free-text request data, or arbitrary paths enter the audit record.
+    edits = {
+        "admin_wiki_settings_update", "admin_wiki_standards_import", "admin_wiki_folder_create",
+        "admin_wiki_page_create", "admin_wiki_tool_create", "admin_wiki_page_upload",
+        "admin_wiki_node_update", "admin_wiki_node_draft", "admin_wiki_node_move",
+        "admin_wiki_node_reorder", "admin_wiki_node_position", "admin_wiki_node_delete",
+        "admin_wiki_media_delete", "admin_wiki_node_restore", "admin_wiki_revision_restore",
+        "admin_wiki_upload_complete", "admin_wiki_history_restore",
+    }
+
+    def audited(handler):
+        @wraps(handler)
+        def call(*args, **kwargs):
+            actor, error = _editor_required()
+            if error:
+                return error
+            if handler.__name__ == "admin_wiki_history_restore" and actor["role"] != "admin":
+                return _json_error("Administrator access required", 403)
+            identity = None
+            try:
+                with store._write_lock:
+                    # Check restore-upload ownership before taking a milestone.
+                    if handler.__name__ == "admin_wiki_upload_complete":
+                        _owned_upload(kwargs.get("upload_id", ""))
+                    identity = history.capture(actor, handler.__name__, kwargs.get("node_id") or kwargs.get("milestone_id") or "")
+                    response = app.make_response(handler(*args, **kwargs))
+                    history.finish(identity, response.status_code < 400)
+                    return response
+            except (OSError, sqlite3.Error):
+                return _json_error("Wiki history or storage is unavailable. The edit could not be completed; retry after checking storage.", 503)
+            except ValueError as exc:
+                return _json_error(str(exc), 400)
+        return call
+
+    for endpoint in edits:
+        app.view_functions[endpoint] = audited(app.view_functions[endpoint])
+
+    @app.after_request
+    def private_wiki_editor_response(response):
+        if request.path.startswith("/api/admin/wiki/"):
+            response.headers["Cache-Control"] = "private, no-store"
+        return response
 
     return store

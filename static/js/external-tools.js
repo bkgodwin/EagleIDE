@@ -6,6 +6,7 @@
   const ctx = () => window.EagleIDE?.getContext?.() || {};
   function headers() {
     const c = ctx();
+    if (c.WIKI_MANAGER_TOKEN) return { 'X-Wiki-Manager-Token': c.WIKI_MANAGER_TOKEN };
     if (c.ADMIN_TOKEN) return { 'X-Admin-Token': c.ADMIN_TOKEN };
     if (c.currentTeacher?.is_coteacher) return { 'X-User-Token': c.TEACHER_TOKEN };
     if (c.TEACHER_TOKEN) return { 'X-Teacher-Token': c.TEACHER_TOKEN };

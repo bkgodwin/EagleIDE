@@ -6,9 +6,9 @@ Flask-SocketIO==5.6.1     # WebSocket / Socket.IO support (real-time code output
 simple-websocket==1.1.0   # WebSocket transport for Flask-SocketIO threading mode
 requests==2.34.2          # HTTP client used for Ollama AI API calls
 bcrypt==5.0.0             # Password hashing for student and admin accounts
-cryptography==48.0.1      # Fernet encryption for stored admin credentials
+cryptography==50.0.0      # Fernet device credentials and legacy admin migration
 numpy==2.5.1              # Native numerical runtime required by Matplotlib
 matplotlib==3.11.1        # Headless student chart generation (Agg backend)
-Pillow==12.3.0            # Matplotlib image support and IDE image validation
+Pillow==13.0.0            # Matplotlib image support and IDE image validation
 tzdata==2026.5            # IANA class time zones, including on Windows
 reportlab==5.0.1          # Private all-class weekly lesson-plan PDFs

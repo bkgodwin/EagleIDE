@@ -43,6 +43,7 @@ server_state.json
 sign_in_events.json
 wiki_data/
 wiki_backups/
+.wiki_data-history/
 network_data/
 tool_data/
 lesson_plans/

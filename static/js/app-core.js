@@ -30,6 +30,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let ADMIN_TOKEN = null;
     let TEACHER_TOKEN = null;
     let USER_TOKEN = null;
+    let WIKI_MANAGER_TOKEN = null;
     const SHELL_DEBUG_STORAGE_KEY = 'eagleide-shell-debug-messages-v1';
     let currentUser = null;   // { email, name }
     let currentTeacher = null;
@@ -127,7 +128,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     function isAuthenticated() {
-      return !!(USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN || currentUser || currentTeacher);
+      return !!(USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN || WIKI_MANAGER_TOKEN || currentUser || currentTeacher);
     }
 
     function canUseShellDebugMessages() {
@@ -158,11 +159,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       ADMIN_TOKEN = null;
       TEACHER_TOKEN = null;
       USER_TOKEN = null;
+      WIKI_MANAGER_TOKEN = null;
       currentUser = null;
       currentTeacher = null;
     }
 
     function normalizeExclusiveAuthRole() {
+      if (WIKI_MANAGER_TOKEN) { USER_TOKEN = null; TEACHER_TOKEN = null; ADMIN_TOKEN = null; currentTeacher = null; return; }
       if (USER_TOKEN) { TEACHER_TOKEN = null; ADMIN_TOKEN = null; currentTeacher = null; return; }
       if (TEACHER_TOKEN) { USER_TOKEN = null; ADMIN_TOKEN = null; currentUser = null; return; }
       if (ADMIN_TOKEN) { USER_TOKEN = null; TEACHER_TOKEN = null; currentUser = null; currentTeacher = null; }
@@ -175,10 +178,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           adminToken: ADMIN_TOKEN || null,
           teacherToken: TEACHER_TOKEN || null,
           userToken: USER_TOKEN || null,
+          wikiManagerToken: WIKI_MANAGER_TOKEN || null,
           currentUser: currentUser || null,
           currentTeacher: currentTeacher || null,
         };
-        if (!payload.adminToken && !payload.teacherToken && !payload.userToken) {
+        if (!payload.adminToken && !payload.teacherToken && !payload.userToken && !payload.wikiManagerToken) {
           sessionStorage.removeItem(AUTH_SESSION_KEY);
           return;
         }
@@ -197,10 +201,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         ADMIN_TOKEN = typeof payload.adminToken === 'string' ? payload.adminToken : null;
         TEACHER_TOKEN = typeof payload.teacherToken === 'string' ? payload.teacherToken : null;
         USER_TOKEN = typeof payload.userToken === 'string' ? payload.userToken : null;
+        WIKI_MANAGER_TOKEN = typeof payload.wikiManagerToken === 'string' ? payload.wikiManagerToken : null;
         currentUser = payload.currentUser && typeof payload.currentUser === 'object' ? payload.currentUser : null;
         currentTeacher = payload.currentTeacher && typeof payload.currentTeacher === 'object' ? payload.currentTeacher : null;
         normalizeExclusiveAuthRole();
-        return !!(ADMIN_TOKEN || TEACHER_TOKEN || USER_TOKEN);
+        return !!(ADMIN_TOKEN || TEACHER_TOKEN || USER_TOKEN || WIKI_MANAGER_TOKEN);
       } catch (err) {
         console.warn('Failed to restore auth session.', err);
         return false;
@@ -208,9 +213,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     async function validateRestoredAuthSession() {
-      const role = USER_TOKEN ? 'student' : TEACHER_TOKEN ? 'teacher' : ADMIN_TOKEN ? 'admin' : null;
-      const token = USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN;
-      const isSameSession = () => token === (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN);
+      const role = WIKI_MANAGER_TOKEN ? 'wiki_manager' : USER_TOKEN ? 'student' : TEACHER_TOKEN ? 'teacher' : ADMIN_TOKEN ? 'admin' : null;
+      const token = USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN || WIKI_MANAGER_TOKEN;
+      const isSameSession = () => token === (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN || WIKI_MANAGER_TOKEN);
       const rejectRestoredSession = () => {
         if (!isSameSession()) return isAuthenticated();
         clearAuthStateMemory();
@@ -219,7 +224,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       };
       if (!token) return false;
       try {
-        const header = role === 'student' ? 'X-User-Token' : role === 'teacher' ? 'X-Teacher-Token' : 'X-Admin-Token';
+        const header = role === 'wiki_manager' ? 'X-Wiki-Manager-Token' : role === 'student' ? 'X-User-Token' : role === 'teacher' ? 'X-Teacher-Token' : 'X-Admin-Token';
         const res = await fetch(role === 'admin' ? '/api/admin/server-health' : '/api/auth/me', {
           headers: { [header]: token }
         });
@@ -232,7 +237,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         // expired session. Only reject a server-confirmed authentication error.
         if (!j?.ok || (role !== 'admin' && (!j.user || typeof j.user !== 'object'))) return true;
         if (role !== 'admin' && j.user.role !== role) return rejectRestoredSession();
-        if (role === 'student') {
+        if (role === 'student' || role === 'wiki_manager') {
           currentUser = j.user;
           currentTeacher = null;
           TEACHER_TOKEN = null;
@@ -255,7 +260,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         // A suspended iPad tab or a brief server/network interruption is not
         // proof that the token is invalid. Keep the saved session and retry
         // naturally on the next page load/API request.
-        return !!(USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN);
+        return !!(USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN || WIKI_MANAGER_TOKEN);
       }
     }
 
@@ -720,6 +725,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     // --- File auth helpers ---
     function fileAuthHeaders() {
+      if (WIKI_MANAGER_TOKEN) return { 'X-Wiki-Manager-Token': WIKI_MANAGER_TOKEN };
       if (USER_TOKEN) {
         const headers = { 'X-User-Token': USER_TOKEN };
         const classId = getCurrentClassContext()?.id || '';
@@ -989,7 +995,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     function canCurrentUserAccessIDE() {
-      if (ADMIN_TOKEN || TEACHER_TOKEN) return true;
+      if (ADMIN_TOKEN || TEACHER_TOKEN || WIKI_MANAGER_TOKEN) return true;
       if (USER_TOKEN) {
         const classCtx = getCurrentClassContext();
         return !classCtx || classCtx.settings?.student_ide_access_enabled !== false;
@@ -1150,6 +1156,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         language: String(language || 'python'),
         user_token: isCoTeacher() ? TEACHER_TOKEN : (USER_TOKEN || ''),
         teacher_token: isCoTeacher() ? '' : (TEACHER_TOKEN || ''),
+        wiki_manager_token: WIKI_MANAGER_TOKEN || '',
         admin_token: ADMIN_TOKEN || '',
         class_id: getCurrentClassContext()?.id || '',
         file_path: '',
@@ -1183,7 +1190,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       lastRunExceptionEntry = null;
       hideExceptionHelpButton();
       closeExceptionHelpModal();
-      if (currentOpenFile && (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN)) {
+      if (currentOpenFile && (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN || WIKI_MANAGER_TOKEN)) {
         saveCurrentFile().catch(() => false);
       }
       setRunButtonState(true, 'step');
@@ -1192,6 +1199,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         language: 'python',
         user_token: isCoTeacher() ? TEACHER_TOKEN : (USER_TOKEN || ''),
         teacher_token: isCoTeacher() ? '' : (TEACHER_TOKEN || ''),
+        wiki_manager_token: WIKI_MANAGER_TOKEN || '',
         admin_token: ADMIN_TOKEN || '',
         class_id: getCurrentClassContext()?.id || '',
         file_path: source.filePath || '',
@@ -1234,6 +1242,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         ...prev,
         getContext: () => ({
           USER_TOKEN,
+          WIKI_MANAGER_TOKEN,
           TEACHER_TOKEN,
           ADMIN_TOKEN,
           currentUser,
@@ -1275,7 +1284,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     function updateTeacherStreamPaneVisibility() {
       const classCtx = getCurrentClassContext();
-      const isStudentInClass = !!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && !!classCtx && canCurrentUserAccessIDE();
+      const isStudentInClass = !!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && !WIKI_MANAGER_TOKEN && !!classCtx && canCurrentUserAccessIDE();
       setTeacherPaneEnabled(isStudentInClass);
       updateTeacherStreamToggleState();
       if (isStudentInClass) syncEditorLanguage(currentOpenFile?.name || '');
@@ -1283,7 +1292,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     function applyClassTabVisibility() {
       const classCtx = getCurrentClassContext();
-      const isAuthenticatedUser = !!(USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN);
+      const isAuthenticatedUser = !!(USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN || WIKI_MANAGER_TOKEN);
       const isGuest = !isAuthenticatedUser;
       const isStudentNoClass = !!USER_TOKEN && !!currentUser && !classCtx;
       const aiEnabledForClass = !!classCtx?.settings?.ai_enabled;
@@ -1296,14 +1305,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const tAssignment = document.getElementById('assignmentTabBtn');
       const aiMasterEnabled = !!currentConfig?.ai_explainer_enabled;
       // A class AI switch limits students, not the teacher who manages it.
-      const effectiveAiEnabled = aiMasterEnabled && (ADMIN_TOKEN || TEACHER_TOKEN || aiEnabledForClass);
+      const effectiveAiEnabled = aiMasterEnabled && (ADMIN_TOKEN || TEACHER_TOKEN || WIKI_MANAGER_TOKEN || aiEnabledForClass);
       const shouldHideAiTabs = isGuest;
       const canViewWikiContent = true;
       const canShowWikiTab = true;
       const canSeeAssignments = !!TEACHER_TOKEN || (!!USER_TOKEN && !!classCtx);
       if (tAssignment) tAssignment.style.display = canSeeAssignments ? '' : 'none';
       if (tExplain) tExplain.style.display = (!shouldHideAiTabs && effectiveAiEnabled) ? '' : 'none';
-      const effectiveChallengesEnabled = effectiveAiEnabled && (ADMIN_TOKEN || TEACHER_TOKEN || challengesEnabledForClass);
+      const effectiveChallengesEnabled = effectiveAiEnabled && (ADMIN_TOKEN || TEACHER_TOKEN || WIKI_MANAGER_TOKEN || challengesEnabledForClass);
       if (tChal) tChal.style.display = (!shouldHideAiTabs && effectiveChallengesEnabled) ? '' : 'none';
       if (tAssist) tAssist.style.display = (!shouldHideAiTabs && effectiveAiEnabled) ? '' : 'none';
       if (tWiki) tWiki.style.display = canShowWikiTab ? '' : 'none';
@@ -1714,7 +1723,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         });
         socket.on('run_artifacts', msg => {
           const artifacts = Array.isArray(msg?.artifacts) ? msg.artifacts : [];
-          if (artifacts.length && (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN)) loadFileTree();
+          if (artifacts.length && (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN || WIKI_MANAGER_TOKEN)) loadFileTree();
         });
         socket.on('finished', () => {
           flushQueuedShellOutput();
@@ -1723,7 +1732,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             notebookRunHandlers?.onFinished?.();
             notebookRunHandlers = null;
             setRunButtonState(false, 'notebook');
-            if (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN) loadFileTree();
+            if (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN || WIKI_MANAGER_TOKEN) loadFileTree();
             return;
           }
           if (activeRunSource === 'step') {
@@ -1731,7 +1740,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             waitingForUserInput = false;
             setRunButtonState(false);
             window.StepMode?.onRunnerFinished?.();
-            if (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN) loadFileTree();
+            if (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN || WIKI_MANAGER_TOKEN) loadFileTree();
             return;
           }
           _inTraceback = false; // Reset traceback state when process finishes
@@ -1744,7 +1753,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           }
           appendOut('[Process finished]\n');
           // Refresh file browser so files created by the program appear immediately
-          if (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN) loadFileTree();
+          if (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN || WIKI_MANAGER_TOKEN) loadFileTree();
         });
         
         socket.on('teacher_code', (msg) => {
@@ -2147,7 +2156,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         }
         if (!openHtmlRuntimePopupShell()) return;
         setRunButtonState(true, 'editor');
-        if (currentOpenFile && (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN)) {
+        if (currentOpenFile && (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN || WIKI_MANAGER_TOKEN)) {
           try {
             if (!await saveCurrentFile() || currentBufferDirty) {
               notifyHtmlRuntimePopup({ type: 'error', message: 'Save did not complete. Check your connection before running HTML.' });
@@ -2181,7 +2190,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         return;
       }
       // Save current file before running Python or JavaScript.
-      if (currentOpenFile && (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN)) {
+      if (currentOpenFile && (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN || WIKI_MANAGER_TOKEN)) {
         // The runner receives the current editor buffer directly, so a slow
         // classroom network must not block Run while the same buffer autosaves.
         saveCurrentFile().then(ok => {
@@ -2199,7 +2208,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           language: getActiveLanguageInfo().mode,
           user_token: isCoTeacher() ? TEACHER_TOKEN : (USER_TOKEN || ''),
           teacher_token: isCoTeacher() ? '' : (TEACHER_TOKEN || ''),
-          admin_token: ADMIN_TOKEN || '',
+          wiki_manager_token: WIKI_MANAGER_TOKEN || '',
+        admin_token: ADMIN_TOKEN || '',
           class_id: getCurrentClassContext()?.id || '',
           file_path: currentOpenFile ? currentOpenFile.path : ''
         });
@@ -2269,6 +2279,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         language: language === 'javascript' ? 'javascript' : 'python',
         user_token: isCoTeacher() ? TEACHER_TOKEN : (USER_TOKEN || ''),
         teacher_token: isCoTeacher() ? '' : (TEACHER_TOKEN || ''),
+        wiki_manager_token: WIKI_MANAGER_TOKEN || '',
         admin_token: ADMIN_TOKEN || '',
         class_id: getCurrentClassContext()?.id || '',
         file_path: filePath,
@@ -2786,6 +2797,29 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       document.getElementById('loginModal').style.display = 'none';
     }
 
+    document.getElementById('wikiManagerAccountBtn')?.addEventListener('click', () => {
+      if (WIKI_MANAGER_TOKEN) document.getElementById('wikiManagerAccountModal').style.display = 'flex';
+    });
+    document.getElementById('wikiManagerAccountClose')?.addEventListener('click', () => {
+      document.getElementById('wikiManagerAccountModal').style.display = 'none';
+    });
+    document.getElementById('wikiManagerPasswordForm')?.addEventListener('submit', async event => {
+      event.preventDefault();
+      const form = event.currentTarget, status = form.querySelector('[role="status"]');
+      const payload = Object.fromEntries(new FormData(form)), token = WIKI_MANAGER_TOKEN;
+      if (!token) return;
+      if (payload.newPassword !== payload.confirmPassword) { status.textContent = 'Passwords do not match.'; return; }
+      form.querySelector('button').disabled = true;
+      try {
+        const response = await fetch('/api/wiki-manager/change-password', {method:'POST', headers:{'Content-Type':'application/json','X-Wiki-Manager-Token':token},body:JSON.stringify(payload)});
+        const result = await response.json();
+        if (WIKI_MANAGER_TOKEN !== token) return;
+        if (!response.ok || !result.ok) throw new Error(result.error || 'Could not change password.');
+        form.reset(); status.textContent = 'Password updated.';
+      } catch (error) { if (WIKI_MANAGER_TOKEN === token) status.textContent = error.message; }
+      finally { form.querySelector('button').disabled = false; }
+    });
+
     function isCoTeacher() { return !!currentTeacher?.is_coteacher; }
 
     function openProfileEditor(user, endpoint, headers, afterSave) {
@@ -2813,7 +2847,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     document.querySelectorAll('.profile-edit-btn').forEach(button=>button.onclick=()=>{
       const user=currentUser||currentTeacher;
       if(!user) return;
-      openProfileEditor(user,'/api/auth/profile',USER_TOKEN?{'X-User-Token':USER_TOKEN}:{'X-Teacher-Token':TEACHER_TOKEN}, result=>{
+      openProfileEditor(user,'/api/auth/profile',fileAuthHeaders(), result=>{
         if(currentUser) currentUser=result.user;
         if(currentTeacher) currentTeacher={...result.user,role:'teacher',is_coteacher:isCoTeacher()};
         saveAuthSession();updateAuthUI();window.EagleIDE?.emitContextChanged?.();
@@ -2869,6 +2903,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         loginBtn.title = 'Sign in';
         if (signOutBtn) signOutBtn.style.display = 'none';
       }
+      document.getElementById('wikiManagerAccountBtn').style.display = WIKI_MANAGER_TOKEN ? '' : 'none';
       adminSettingsBtn.style.display = ADMIN_TOKEN ? '' : 'none';
       adminSettingsBtn.title = 'Admin Settings';
       const teacherDashboardBtn = document.getElementById('teacherDashboardBtn');
@@ -3088,6 +3123,19 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     async function applyAuthLoginPayload(j) {
+      WIKI_MANAGER_TOKEN = null;
+      if (j.role === 'wiki_manager') {
+        clearAuthStateMemory();
+        WIKI_MANAGER_TOKEN = j.token;
+        currentUser = j.user;
+        teacherClasses = []; studentClasses = []; studentClassData = null;
+        currentTeacherClassId = null; currentStudentClassId = null;
+        document.body.classList.remove('admin-mode');
+        setTeacherStreamingEnabled(false); setTeacherPaneOpen(false);
+        saveAuthSession(); closeLoginModal(); updateAuthUI();
+        await showFileBrowser();
+        return;
+      }
       if (j.role === 'admin') {
         ADMIN_TOKEN = j.token;
         USER_TOKEN = null;
@@ -3252,8 +3300,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       stopAdminExecutionPolling();
       teacherSkills = [];
       editingSkillId = null;
-      if (USER_TOKEN) {
-        await fetch('/api/auth/logout', { method: 'POST', headers: { 'X-User-Token': USER_TOKEN } }).catch(() => {});
+      if (USER_TOKEN || WIKI_MANAGER_TOKEN) {
+        await fetch('/api/auth/logout', { method: 'POST', headers: fileAuthHeaders() }).catch(() => {});
+        WIKI_MANAGER_TOKEN = null;
+        document.getElementById('wikiManagerAccountModal').style.display = 'none';
         USER_TOKEN = null;
         currentUser = null;
         studentClasses = [];
@@ -4307,19 +4357,20 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const name = document.getElementById('newTeacherName').value.trim();
       const email = document.getElementById('newTeacherEmail').value.trim();
       const password = document.getElementById('newTeacherPassword').value.trim();
-      if (!name || !email || !password) return alert('Teacher name, email, and password are required.');
-      const res = await fetch('/api/admin/teachers/create', {
+      if (!name || !email || !password) return alert('Name, email, and password are required.');
+      const role = document.getElementById('newStaffRole').value;
+      const res = await fetch(role === 'wiki_manager' ? '/api/admin/wiki-managers/create' : '/api/admin/teachers/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
         body: JSON.stringify({ name, email, password })
       });
       const j = await res.json().catch(() => ({}));
-      if (!j?.ok) return alert(j?.error || 'Failed to create teacher account');
+      if (!j?.ok) return alert(j?.error || 'Failed to create staff account');
       document.getElementById('newTeacherName').value = '';
       document.getElementById('newTeacherEmail').value = '';
       document.getElementById('newTeacherPassword').value = '';
       await loadAdminUsersModal();
-      alert('Teacher account created.');
+      alert(role === 'wiki_manager' ? 'Wiki manager account created.' : 'Teacher account created.');
     }
 
     // ---- Admin Users Management Modal ----
@@ -4381,6 +4432,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         adminUsersTotalStat: _adminUsersData.length,
         adminUsersStudentStat: students,
         adminUsersTeacherStat: teachers,
+        adminUsersManagerStat: _adminUsersData.filter(user => user.role === 'wiki_manager').length,
         adminUsersDisabledStat: disabled,
       };
       Object.entries(stats).forEach(([id, value]) => {
@@ -4439,7 +4491,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const classNames = Array.isArray(u.class_names) ? u.class_names : (u.class_name ? [u.class_name] : []);
         const cells = [
           `<div class="admin-user-identity"><strong>${escapeHtml(u.name || 'Unnamed user')}</strong><span>${escapeHtml(u.email || '')}</span></div>`,
-          `<span class="admin-role-badge admin-role-badge--${escapeHtml(u.role || 'student')}">${escapeHtml(u.role || 'student')}</span>`,
+          `<span class="admin-role-badge admin-role-badge--${escapeHtml(u.role === 'wiki_manager' ? 'Wiki manager' : (u.role || 'student'))}">${escapeHtml(u.role === 'wiki_manager' ? 'Wiki manager' : (u.role || 'student'))}</span>`,
           `<div class="admin-class-list">${classNames.length ? classNames.map(name => `<span>${escapeHtml(name)}</span>`).join('') : '<em>None</em>'}</div>`,
           `<div class="admin-user-activity"><span><strong>Last sign-in</strong> ${escapeHtml(u.last_sign_in || 'Never')}</span><span><strong>Registered</strong> ${escapeHtml(u.created_at || '—')}</span><span class="stat-ip">${escapeHtml(u.last_ip || 'No IP recorded')}</span></div>`,
           `<div class="admin-user-storage"><strong>${_formatBytes(u.storage_bytes)}</strong><span>${String(u.file_count ?? 0)} file${Number(u.file_count || 0) === 1 ? '' : 's'}</span></div>`,
@@ -5941,7 +5993,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     async function refreshFileStorageStats() {
       const statsEl = document.getElementById('fileStorageStats');
       if (!statsEl) return;
-      if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) {
+      if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && !WIKI_MANAGER_TOKEN) {
         statsEl.textContent = 'Storage: —';
         return;
       }
@@ -5960,7 +6012,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     async function fetchFileTreeData() {
       if (window.EagleIDE?.connection?.isLost()) return false;
-      if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return false;
+      if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && !WIKI_MANAGER_TOKEN) return false;
       if (!canCurrentUserAccessIDE()) return false;
       const requestContext = JSON.stringify(fileAuthHeaders());
       const res = await fetchWithDeadline('/api/files/list', { headers: fileAuthHeaders() });
@@ -5992,7 +6044,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     async function loadFileTree() {
       if (window.EagleIDE?.connection?.isLost()) return;
-      if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return;
+      if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && !WIKI_MANAGER_TOKEN) return;
       const requestContext = JSON.stringify(fileAuthHeaders());
       if (_fileTreeLoadPromise) {
         if (_fileTreeLoadContext === requestContext) return _fileTreeLoadPromise;
@@ -6040,7 +6092,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         getItemsAtPath: _getItemsAtPath,
         findItemByPath: (path) => _findItemByPath(_allFileTree, path),
         ensureFileTree: async () => {
-          if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return false;
+          if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && !WIKI_MANAGER_TOKEN) return false;
           if (_fileTreeLoadPromise) {
             await _fileTreeLoadPromise;
             return true;
@@ -6070,7 +6122,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     window.eagleEditor?.on?.('change', () => window.WorkspaceData.changed());
     window.FileProvenance.configure({
       file: () => currentOpenFile,
-      enabled: () => !!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && !!currentOpenFile
+      enabled: () => !!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && !WIKI_MANAGER_TOKEN && !!currentOpenFile
         && !currentOpenFile.audit && !currentOpenFile.submission && !currentOpenFile.notebook && !csvEditorActive,
     });
     window.AssignmentDevelopment.configure({
@@ -6316,7 +6368,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     async function moveItem(srcPath, destFolderPath) {
-      if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return;
+      if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && !WIKI_MANAGER_TOKEN) return;
       const res = await fetchWithDeadline('/api/files/move', {
         method: 'POST',
         headers: fileJsonHeaders(),
@@ -6534,7 +6586,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         return saved;
       }
       if (fileArtifactPreviewActive || (currentOpenFile?.kind && currentOpenFile.kind !== 'text')) return true;
-      if (!currentOpenFile || (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN)) return true;
+      if (!currentOpenFile || (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && !WIKI_MANAGER_TOKEN)) return true;
       if (!currentBufferDirty) return true;
       if (window.EagleIDE?.connection?.isLost()) return false;
       syncEditorBridge();
@@ -6658,7 +6710,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (csvEditorActive) return;
       if (currentOpenFile?.notebook) return;
       if (currentOpenFile?.draft) return;
-      if (!currentOpenFile || (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN)) return;
+      if (!currentOpenFile || (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && !WIKI_MANAGER_TOKEN)) return;
       if (_autosaveTimer) clearTimeout(_autosaveTimer);
       _autosaveTimer = setTimeout(async () => {
         _autosaveTimer = null;
@@ -6838,7 +6890,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     async function openFile(item) {
       if (window.EagleIDE?.connection?.isLost()) return;
-      if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN) return;
+      if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && !WIKI_MANAGER_TOKEN) return;
       const requestId = ++fileOpenRequestId;
       const requestContext = JSON.stringify(fileAuthHeaders());
       if (auditPreviewActive) closeAuditPreview();

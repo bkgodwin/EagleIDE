@@ -38,6 +38,7 @@ Required runtime components:
 |-- lesson_plan_pdf.py           Bounded all-class weekly PDFs from published plans and saved local media
 |-- wiki_features.py             Public wiki and protected admin/teacher/student HTTP routes
 |-- wiki_store.py                Wiki SQLite catalog, search, assets, drafts, revisions, and backups
+|-- wiki_history.py              Private edit audit, deduplicated seven-day milestones, and admin rollback
 |-- network_features.py          Optional simulator auth, topology, class access, and lab HTTP routes
 |-- network_store.py             Validated simulator persistence, reachability, and lab grading
 |-- network_content.py           Source-controlled example topologies, labs, and CLI reference
@@ -173,6 +174,22 @@ Required runtime components:
 `network_features.py` is registered independently near the wiki module and adapts the same auth/class callbacks to `NetworkStore`. The global configuration switch and per-class access both apply to students; guests require only the global switch and cannot save; admins may privately preview while disabled. Built-in topology/lab content belongs in `network_content.py`, while all mutable data stays under `network_data/`.
 
 Authentication uses ephemeral in-memory token maps. Protected HTTP requests pass one of `X-Admin-Token`, `X-Teacher-Token`, or `X-User-Token`. Socket events carry the corresponding token in their payload and join role-specific rooms. Preserve authorization and class-ownership checks on every new route or event.
+
+Admin-created `wiki_manager` accounts use a separate expiring token map and
+`X-Wiki-Manager-Token`; execution carries `wiki_manager_token`. They can author
+wiki content/settings/media, use their personal IDE, and open globally enabled
+verified tools and the enabled network simulator. They have no teacher/class,
+account-administration, wiki analytics/export, or whole-wiki rollback authority.
+Creation uses the staff role selector in User Management. Never accept this role
+from public registration or place its tokens in student/teacher token maps.
+Account/profile/editor/password controls must retain this independent identity.
+
+Class-room Socket.IO delivery rechecks token lifetime without refreshing idle
+time, enabled/current role, and current class access. Session bindings retain
+the originating token server-side; never serialize these bindings to clients.
+Logout, account disable (including bulk), deletion, and password resets revoke
+the relevant sockets on the server. Changing a socket's identity removes its old
+class rooms. The shared `socketio.emit` room guard covers feature modules too.
 
 Student profiles retain `name` as the joined display name and store `first_name`,
 `last_name`, and a string `student_id` (preserving leading zeroes). Legacy names
@@ -479,6 +496,26 @@ Treat all of these as runtime data, not source fixtures. Do not delete, reset, c
 Persistence helpers generally use a lock plus write-to-temporary-file and replace. Follow that pattern for shared JSON state. Validate all user-relative paths with the existing path helpers and keep per-user storage inside `USER_FILES_DIR`.
 
 Wiki content is runtime data. `WikiStore` owns its SQLite connections and file layout; use its methods instead of hand-editing the database or media directories. Portable restores intentionally exclude bookmarks, preserve live bookmarks, validate archive paths/checksums, and make a pre-restore backup. `EAGLEIDE_WIKI_DATA_DIR` and `EAGLEIDE_WIKI_BACKUP_DIR` can isolate these paths for deployment or testing.
+
+`wiki_history.py` stores a private SQLite audit and content-addressed immutable
+files under `WIKI_BACKUP_DIR/history/`, outside the replaceable wiki root. If the
+backup directory is inside the wiki root, history uses its sibling
+`.<wiki directory name>-history/`. Each authoring mutation (including draft
+autosave, media deletion, and restore) captures the state before the edit under
+the wiki write lock; chunk transport alone creates no milestone. Upload sessions
+belong to their originating editor; only administrators may upload restores.
+Milestones are usable for seven days, pruned on startup, edits, and hourly idle
+maintenance; shared blobs remain until their last live reference expires. The
+20 GiB file/manifest budget rejects new edits when full rather than discarding
+unexpired milestones. The audit retains actor/action/target/status without
+source or credentials and survives rollback and milestone expiry. Whole-wiki
+rollback is admin-only, preserves live bookmarks/analytics/class features where
+their nodes still exist, and advances the public catalog version. Back up this
+history directory separately from portable wiki exports. `tests/test_wiki_history.py`,
+`tests/test_wiki_manager.py`, and `tests/wiki_manager_ui.test.js` cover these paths.
+Optional `tests/wiki_manager_browser_checks.js` uses the isolated agenda fixture
+and its existing environment variables to check staff creation, manager editing,
+admin rollback, account controls, IDE execution, themes and Home scroll chaining.
 
 Network simulator definitions are source data in `network_content.py`; assignments, progress, and personal topologies are runtime data. Use `NetworkStore` so validation and atomic per-student progress files remain intact. `EAGLEIDE_NETWORK_DATA_DIR` can isolate simulator runtime data.
 

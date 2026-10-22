@@ -67,7 +67,8 @@ def read_upload(req):
 
 
 def register(app, *, base_dir, source_dir, require_admin, require_teacher, require_user,
-             find_user, get_user_class_ids, find_class, teacher_classes, account_id):
+             find_user, get_user_class_ids, find_class, teacher_classes, account_id,
+             require_wiki_manager=lambda req: None):
     store, gateway = ToolStore(base_dir), Gateway()
     storage = ToolStorage(base_dir)
     snapshot_slots = threading.BoundedSemaphore(2)
@@ -80,6 +81,7 @@ def register(app, *, base_dir, source_dir, require_admin, require_teacher, requi
 
     def actor(req):
         for header, check, role in (("X-Admin-Token", require_admin, "admin"),
+                                    ("X-Wiki-Manager-Token", require_wiki_manager, "wiki_manager"),
                                     ("X-Teacher-Token", require_teacher, "teacher"),
                                     ("X-User-Token", require_user, "student")):
             token = req.headers.get(header, "")
@@ -102,7 +104,7 @@ def register(app, *, base_dir, source_dir, require_admin, require_teacher, requi
             return True
         if not data["enabled"] or not tool["enabled"] or tool["compatibility"] != "verified":
             return False
-        if current["role"] == "teacher":
+        if current["role"] in {"teacher", "wiki_manager"}:
             return True
         candidates = [find_class(cid) for cid in get_user_class_ids(current["record"])]
         for cls in candidates:

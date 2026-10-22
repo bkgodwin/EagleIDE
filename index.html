@@ -43,7 +43,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js" integrity="sha384-44q2s9jxk8W5N9gAB0yn7UYLi9E2oVw8eHyaTZLkDS3WuZM/AttkAiVj6JoZuGS4" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js" integrity="sha384-jgkY4GMNWfQcLLIoP1vg3FWXflDrRhcSXGBW6ONIWC2SOIv5H1Pa57sXs+aomCuZ" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js" integrity="sha384-EO/jSdjpPTVnKfaKudbmOTZBYv471ACLOeLdy0zhCEJrQAtjgUSCbn/Cc+9QWjIx" crossorigin="anonymous"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261021-security-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261022-wiki-manager-1">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -142,6 +142,7 @@
           <button class="btn btn--admin admin" id="studentDashboardBtn" title="Student Dashboard" style="display:none;">📋 Dashboard</button>
           <button class="btn btn--admin admin" id="adminUsersBtn" title="User Management" style="display:none;">👥 Users</button>
           <button class="btn btn--admin admin" id="serverHealthBtn" title="Server Health" style="display:none;">🖥️ Server Health</button>
+          <button class="btn secondary" id="wikiManagerAccountBtn" type="button" style="display:none;">Account</button>
           <button class="btn btn--admin admin" id="adminWikiBtn" title="Manage Wiki" style="display:none;">📚 Wiki Manager</button>
           <button class="btn btn--admin admin" id="adminSettingsBtn" title="Admin Settings" style="display:none;">⚙ Settings</button>
           <button class="btn btn--danger stop" id="signOutBtn" title="Sign out" style="display:none;">Sign Out</button>
@@ -1312,23 +1313,25 @@
         <button class="btn secondary" id="adminUsersCloseBtn" type="button">Close</button>
       </header>
       <section class="admin-create-teacher" aria-labelledby="createTeacherHeading">
-        <div><span class="admin-management-kicker">Staff accounts</span><h4 id="createTeacherHeading">Create teacher</h4></div>
+        <div><span class="admin-management-kicker">Staff accounts</span><h4 id="createTeacherHeading">Create staff account</h4></div>
         <div class="admin-create-teacher-form">
-          <input type="text" id="newTeacherName" placeholder="Teacher name" autocomplete="name">
+          <select id="newStaffRole" aria-label="Account type"><option value="teacher">Teacher</option><option value="wiki_manager">Wiki manager</option></select>
+          <input type="text" id="newTeacherName" placeholder="Name" autocomplete="name">
           <input type="email" id="newTeacherEmail" placeholder="teacher@example.com" autocomplete="email">
           <input type="password" id="newTeacherPassword" placeholder="Temporary password (8+ characters)" autocomplete="new-password">
-          <button class="btn run" id="createTeacherBtn" type="button">Add Teacher</button>
+          <button class="btn run" id="createTeacherBtn" type="button">Add account</button>
         </div>
       </section>
       <div class="admin-user-summary-grid" aria-label="Account summary">
         <div><span>Total accounts</span><strong id="adminUsersTotalStat">—</strong></div>
         <div><span>Students</span><strong id="adminUsersStudentStat">—</strong></div>
         <div><span>Teachers</span><strong id="adminUsersTeacherStat">—</strong></div>
+        <div><span>Wiki managers</span><strong id="adminUsersManagerStat">—</strong></div>
         <div><span>Disabled</span><strong id="adminUsersDisabledStat">—</strong></div>
       </div>
       <div class="admin-users-toolbar">
         <input type="search" id="adminUsersSearch" placeholder="Search name, email, role, or class" aria-label="Search users">
-        <select id="adminUsersRoleFilter" aria-label="Filter users by role"><option value="all">All roles</option><option value="student">Students</option><option value="teacher">Teachers</option><option value="disabled">Disabled</option></select>
+        <select id="adminUsersRoleFilter" aria-label="Filter users by role"><option value="all">All roles</option><option value="student">Students</option><option value="teacher">Teachers</option><option value="wiki_manager">Wiki managers</option><option value="disabled">Disabled</option></select>
         <button class="btn secondary" id="adminUsersRefreshBtn" type="button">Refresh</button>
       </div>
       <div class="admin-users-bulkbar" id="adminUsersBulkBar">
@@ -1428,6 +1431,24 @@
     </div>
   </div>
 
+  <div class="modal" id="wikiManagerAccountModal" style="display:none;">
+    <div class="modal-content wiki-manager-account" role="dialog" aria-modal="true" aria-labelledby="wikiManagerAccountTitle">
+      <header><h3 id="wikiManagerAccountTitle">Wiki manager account</h3><button class="btn secondary" id="wikiManagerAccountClose" type="button">Close</button></header>
+      <div class="account-settings-grid">
+        <section class="account-settings-card"><h3>Personal details</h3><button class="btn secondary profile-edit-btn" type="button">Edit profile</button></section>
+        <section class="account-settings-card"><h3>Saved tool data</h3><button class="btn secondary external-tool-storage-open" type="button">Manage storage</button></section>
+        <form class="account-settings-card" id="wikiManagerPasswordForm">
+          <h3>Change password</h3><p>Use at least eight characters. Other signed-in devices will be signed out.</p>
+          <label>Current password<input name="currentPassword" type="password" autocomplete="current-password" required></label>
+          <label>New password<input name="newPassword" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></label>
+          <label>Confirm new password<input name="confirmPassword" type="password" autocomplete="new-password" required></label>
+          <button class="btn run" type="submit">Change password</button><p role="status"></p>
+        </form>
+      </div>
+      <section class="editor-appearance-settings account-appearance-panel" data-editor-appearance aria-label="Wiki manager editor colors"></section>
+    </div>
+  </div>
+
   <div id="wikiManagerModal" class="modal" style="display:none;">
     <div class="modal-content wiki-manager-modal">
       <header class="wiki-manager-header">
@@ -1439,6 +1460,7 @@
             <button class="btn secondary" id="wikiAdminMediaTabBtn" type="button">Media</button>
             <button class="btn secondary" id="wikiAdminAnalyticsBtn" type="button">Analytics</button>
           </nav>
+          <button class="btn secondary" id="wikiAdminHistoryBtn" type="button">History &amp; rollback</button>
           <button class="btn secondary" id="wikiAdminBackupBtn" type="button" title="Includes wiki settings, structure, Markdown, media, drafts, revisions, standards, class features, and analytics. Bookmarks are intentionally excluded.">Download Backup</button>
           <label class="btn secondary wiki-file-label" for="wikiAdminRestoreInput">Restore Backup</label>
           <input id="wikiAdminRestoreInput" type="file" accept=".zip,application/zip" />
@@ -1575,6 +1597,13 @@
           <input id="wikiAdminMediaInput" type="file" accept=".png,.jpg,.jpeg,.webp,.gif" multiple />
         </div>
         <div class="wiki-media-grid" id="wikiAdminMediaGrid"></div>
+      </section>
+      <section class="wiki-manager-utility-panel" id="wikiAdminHistoryPanel" hidden>
+        <h3>Wiki edit history</h3>
+        <p>Each edit creates a milestone of the wiki immediately before that edit. Milestones expire after seven days. The audit log remains after milestones expire. Rollback preserves current bookmarks, class features, and analytics.</p>
+        <button class="btn secondary" id="wikiAdminHistoryRefresh" type="button">Refresh history</button>
+        <div id="wikiAdminHistoryEntries" aria-live="polite"></div>
+        <button class="btn secondary" id="wikiAdminHistoryOlder" type="button" hidden>Older edits</button>
       </section>
       <section class="wiki-manager-utility-panel wiki-admin-analytics" id="wikiAdminAnalytics" hidden>
         <div class="wiki-manager-panel-heading"><div><span class="wiki-eyebrow">Usage</span><h4>Wiki analytics</h4></div></div>
@@ -1954,14 +1983,14 @@
 
   <script src="/static/js/app.js"></script>
   <script src="/static/js/connection.js?v=20261011-files-5"></script>
-  <script src="/static/js/feature-loader.js?v=20261020-tool-storage-1"></script>
+  <script src="/static/js/feature-loader.js?v=20261022-wiki-manager-1"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20261021-security-1"></script>
   <script src="/static/js/layout.js?v=20261011-files-5"></script>
   <script src="/static/js/autocomplete.js?v=20261021-security-1"></script>
   <script src="/static/js/editor-behavior.js?v=20261009-assignment-step-2"></script>
   <script src="/static/js/editor-feedback.js?v=20261021-security-1"></script>
-  <script src="/static/js/editor-appearance.js?v=20261021-security-1"></script>
+  <script src="/static/js/editor-appearance.js?v=20261022-wiki-manager-1"></script>
   <script src="/static/js/editor-init.js?v=20261015-assignment-folders-1"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js?v=20261011-files-5"></script>
@@ -1971,13 +2000,13 @@
   <script src="/static/js/assignment-workflow.js?v=20261021-security-1"></script>
   <script src="/static/js/assignment-development.js?v=20261015-assignment-folders-1"></script>
   <script src="/static/js/teacher-assignments.js?v=20261015-assignment-folders-1"></script>
-  <script src="/static/js/app-core.js?v=20261021-security-1"></script>
+  <script src="/static/js/app-core.js?v=20261022-wiki-manager-1"></script>
   <script src="/static/js/step-mode.js?v=20261011-files-5"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20261021-security-1"></script>
-  <script src="/static/js/wiki-reader.js?v=20261021-security-1"></script>
-  <script src="/static/js/external-tools.js?v=20261021-security-1"></script>
+  <script src="/static/js/wiki-reader.js?v=20261022-wiki-manager-1"></script>
+  <script src="/static/js/external-tools.js?v=20261022-wiki-manager-1"></script>
   <script src="/static/js/lesson-plans.js?v=20261021-security-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20261021-security-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20261022-wiki-manager-1"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20261011-files-5"></script>
   <script src="/static/js/notebook-sync.js?v=20261011-notebook-topics-1"></script>
