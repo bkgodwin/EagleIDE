@@ -248,7 +248,7 @@ def register(
             path,
             mimetype=mime_type,
             as_attachment=force_download,
-            download_name=node["file_name"],
+            download_name=("image" + suffix) if node.get("kind") == "image" else node["file_name"],
             conditional=True,
             max_age=3600,
         )

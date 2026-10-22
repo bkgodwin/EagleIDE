@@ -1,5 +1,5 @@
 # Default admin credentials
-DEFAULT_ADMIN_PASSWORD = "password"
+DEFAULT_ADMIN_PASSWORD = None
 ADMIN_EMAIL = "admin@eagleide.local"
 
 # Server port

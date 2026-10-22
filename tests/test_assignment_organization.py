@@ -173,3 +173,10 @@ class AssignmentOrganizationTests(unittest.TestCase):
         self.assertEqual(self.catalog(),before)
         response=self.client.post('/api/teacher/classes/delete',headers=self.teacher_headers,json={'classId':self.class_one})
         self.assertEqual(response.status_code,200)
+
+    def test_public_plan_cleanup_failure_does_not_silently_delete_the_class(self):
+        store = eagle.app.extensions.get('eagle_lesson_plan_store')
+        with patch.object(store, 'delete_class', side_effect=OSError('fixture unavailable')):
+            response = self.client.post('/api/teacher/classes/delete', headers=self.teacher_headers, json={'classId': self.class_one})
+        self.assertEqual(response.status_code, 503)
+        self.assertIsNotNone(eagle._find_class_by_id(self.class_one))

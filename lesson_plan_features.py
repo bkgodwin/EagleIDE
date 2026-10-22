@@ -9,12 +9,12 @@ from pathlib import Path
 import re
 from secrets import token_urlsafe
 import socket
+import http.client
+import ssl
 from threading import BoundedSemaphore, Lock
 from time import monotonic
 from typing import Any, Callable, Optional
-from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
 from zoneinfo import ZoneInfo
 
 from flask import Flask, jsonify, request, send_file, send_from_directory
@@ -35,59 +35,81 @@ LINK_TITLE_RE = re.compile(r"<title\b[^>]*>(.*?)</title\s*>", re.IGNORECASE | re
 HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
-def _public_link_url(value: Any) -> str:
+def _public_link_target(value: Any):
     url = normalize_external_url(value)
     parsed = urlsplit(url)
     host = str(parsed.hostname or "")
     port = parsed.port or (443 if parsed.scheme.casefold() == "https" else 80)
     try:
-        addresses = {
-            item[4][0].split("%", 1)[0]
-            for item in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-        }
-    except OSError as exc:
-        raise LessonPlanDataError("Could not resolve that external link") from exc
-    if not addresses:
-        raise LessonPlanDataError("Could not resolve that external link")
-    try:
-        if any(not ip_address(address).is_global for address in addresses):
+        addresses = {item[4][0].split("%", 1)[0] for item in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)}
+        if not addresses or any(not ip_address(address).is_global for address in addresses):
             raise LessonPlanDataError("External link previews cannot access private networks")
-    except ValueError as exc:
+    except (OSError, ValueError) as exc:
         raise LessonPlanDataError("Could not resolve that external link") from exc
-    return url
+    return url, parsed, sorted(addresses)[0]
 
 
-class _SafeLinkRedirectHandler(HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        safe_url = _public_link_url(urljoin(req.full_url, newurl))
-        return super().redirect_request(req, fp, code, msg, headers, safe_url)
+class _PinnedPublicConnection(http.client.HTTPConnection):
+    def __init__(self, parsed, address, timeout):
+        super().__init__(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), timeout=timeout)
+        self.address, self.tls = address, parsed.scheme.casefold() == "https"
+
+    def connect(self):
+        sock = socket.create_connection((self.address, self.port), self.timeout)
+        try:
+            if self.tls:
+                sock = ssl.create_default_context().wrap_socket(sock, server_hostname=self.host)
+            self.sock = sock
+            self.transport = sock
+        except BaseException:
+            sock.close()
+            raise
 
 
 def fetch_external_link_metadata(value: Any) -> dict[str, str]:
-    url = _public_link_url(value)
-    parsed = urlsplit(url)
-    fallback = str(parsed.hostname or "External link").removeprefix("www.")
-    request_data = Request(
-        url,
-        headers={
-            "Accept": "text/html,application/xhtml+xml;q=0.9,text/plain;q=0.5",
-            "Accept-Encoding": "identity",
-            "User-Agent": "EagleIDE-LinkPreview/1.0",
-        },
-    )
+    deadline = monotonic() + 4
+    url = value
     try:
-        with build_opener(_SafeLinkRedirectHandler()).open(request_data, timeout=4) as response:
-            final_url = _public_link_url(response.geturl())
-            content_type = str(response.headers.get_content_type() or "").casefold()
-            charset = response.headers.get_content_charset() or "utf-8"
-            body = response.read(LINK_PREVIEW_MAX_BYTES + 1)
-            if len(body) > LINK_PREVIEW_MAX_BYTES:
-                raise LessonPlanDataError("That page is too large to preview")
-    except LessonPlanDataError:
-        raise
-    except (HTTPError, URLError, OSError, TimeoutError) as exc:
+        for _ in range(5):
+            url, parsed, address = _public_link_target(url)
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise TimeoutError()
+            connection = _PinnedPublicConnection(parsed, address, remaining)
+            try:
+                path = (parsed.path or "/") + (("?" + parsed.query) if parsed.query else "")
+                connection.request("GET", path, headers={"Accept": "text/html,text/plain;q=0.5", "Accept-Encoding": "identity", "User-Agent": "EagleIDE-LinkPreview/1.0"})
+                response = connection.getresponse()
+                if response.status in {301, 302, 303, 307, 308}:
+                    location = response.getheader("Location")
+                    if not location:
+                        raise LessonPlanDataError("Invalid external page redirect")
+                    url = urljoin(url, location)
+                    continue
+                if response.status >= 400 or response.getheader("Content-Encoding", "identity").lower() not in {"", "identity"}:
+                    raise LessonPlanDataError("Could not read that external page")
+                content_type = response.headers.get_content_type().casefold()
+                charset = response.headers.get_content_charset() or "utf-8"
+                body = bytearray()
+                while len(body) <= LINK_PREVIEW_MAX_BYTES:
+                    remaining = deadline - monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError()
+                    connection.transport.settimeout(remaining)
+                    chunk = response.read1(min(16384, LINK_PREVIEW_MAX_BYTES + 1 - len(body)))
+                    if not chunk:
+                        break
+                    body.extend(chunk)
+                if len(body) > LINK_PREVIEW_MAX_BYTES:
+                    raise LessonPlanDataError("That page is too large to preview")
+                break
+            finally:
+                connection.close()
+        else:
+            raise LessonPlanDataError("Too many external page redirects")
+    except (OSError, TimeoutError, http.client.HTTPException, UnicodeError) as exc:
         raise LessonPlanDataError("Could not read that external page") from exc
-    title = fallback
+    title = str(parsed.hostname or "External link").removeprefix("www.")
     if content_type in {"text/html", "application/xhtml+xml"}:
         try:
             text = body.decode(charset, errors="replace")
@@ -95,10 +117,8 @@ def fetch_external_link_metadata(value: Any) -> dict[str, str]:
             text = body.decode("utf-8", errors="replace")
         match = LINK_TITLE_RE.search(text)
         if match:
-            title = " ".join(
-                html_unescape(HTML_TAG_RE.sub("", match.group(1))).replace("\x00", "").split()
-            )[:200] or fallback
-    return {"url": final_url, "title": title}
+            title = " ".join(html_unescape(HTML_TAG_RE.sub("", match.group(1))).replace("\x00", "").split())[:200] or title
+    return {"url": url, "title": title}
 
 
 def register(
@@ -297,6 +317,7 @@ def register(
         through: Any = None,
         include_source: bool = False,
         student: Optional[dict] = None,
+        public: bool = False,
     ):
         selected = normalize_week_start(week)
         source_class = plan_source_class(cls)
@@ -327,6 +348,8 @@ def register(
             }
         assignments = agenda_assignments(source_class if include_source else cls, student, include_source)
         hydrated = hydrate_plan(plan, source_class_id, assignments, cls['id']) if plan else None
+        if hydrated and public and not hydrated.get('notes_public', False):
+            hydrated.pop('notes_markdown', None)
         zone = (cls.get('settings') or {}).get('assignment_submission_window', {}).get('timeZone') or 'UTC'
         try:
             zone_info = ZoneInfo(zone)
@@ -625,7 +648,7 @@ def register(
             selected = normalize_week_start(request.args.get("week"))
             if selected > current:
                 return error("Future lesson plans are not available", 404)
-            return jsonify(**response_payload(cls, selected, include_empty=True, through=current))
+            return jsonify(**response_payload(cls, selected, include_empty=True, through=current, public=True))
         except LessonPlanDataError as exc:
             return error(str(exc))
 
@@ -636,7 +659,7 @@ def register(
         if not cls:
             return error("Lesson plan not found", 404)
         current = normalize_week_start()
-        return jsonify(**response_payload(cls, current, include_empty=True, through=current))
+        return jsonify(**response_payload(cls, current, include_empty=True, through=current, public=True))
 
     @app.get("/api/lesson-plans/print/<token>")
     def teacher_print_lesson_plan_data(token: str):

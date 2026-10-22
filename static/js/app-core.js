@@ -2384,7 +2384,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (window.DOMPurify) {
         view.innerHTML = DOMPurify.sanitize(htmlContent || '');
       } else {
-        view.innerHTML = htmlContent || '';
+        view.textContent = htmlContent || '';
       }
     }
 
@@ -4279,7 +4279,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const safeEmail = document.createElement('b');
         safeEmail.textContent = email;
         const codeEl = document.createElement('code');
-        codeEl.style.cssText = 'display:block;background:#111;padding:10px 16px;border-radius:6px;font-size:1.1em;letter-spacing:.05em;margin:8px 0;user-select:all';
+        codeEl.style.cssText = 'display:block;background:#111;padding:10px 16px;border-radius:6px;font-size:1.1em;letter-spacing:.05em;margin:8px 0;user-select:all;overflow-wrap:anywhere';
         codeEl.textContent = pwd;
         const note = document.createElement('p');
         note.style.cssText = 'color:#f59e0b;font-size:.82em;margin:8px 0 16px';
@@ -8453,8 +8453,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (!USER_TOKEN || !currentUser) return;
       const status = document.getElementById('joinClassStatus');
       const code = (document.getElementById('joinClassCodeInput').value || '').trim().toUpperCase();
-      if (!code || code.length !== 6) {
-        status.textContent = 'Enter a valid 6-character code.';
+      if (!/^(?:[A-Z0-9]{6}|[A-Z0-9]{8})$/.test(code)) {
+        status.textContent = 'Enter the 6- or 8-character code from your teacher.';
         status.style.color = '#ef5350';
         return;
       }

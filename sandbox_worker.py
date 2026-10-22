@@ -1179,6 +1179,10 @@ def main() -> int:
     if trace_recorder is not None:
         safe_builtins["input"] = trace_recorder.make_input(real_stdout, sys.stdin, INPUT_TOKEN)
     _install_audit_hook(policy, code_path, write_budget, blocked_roots, blocked_exact)
+    # Trusted bootstrap has consumed these values; student os.environ must not expose them.
+    for key in tuple(os.environ):
+        if key.startswith("EAGLE_"):
+            os.environ.pop(key, None)
     _scrub_runtime_globals(safe_builtins)
 
     sandbox_globals: dict[str, Any] = {

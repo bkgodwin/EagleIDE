@@ -519,7 +519,7 @@ Linux LXC (recommended):
 
 The launcher installs supported Debian/Ubuntu or Fedora system prerequisites
 when authorized, creates an isolated `.venv`, installs pinned binary wheels
-when `requirements.txt` changes, verifies package provenance/versions, reports
+with required hashes when the requirements or lock files change, verifies package provenance/versions, reports
 Landlock status, validates Node.js 18+, and executes `app.py` with the venv
 interpreter. `EAGLEIDE_SETUP_ONLY=1 ./start.sh` performs setup without starting
 the server. Landlock must be enabled on the container host and cannot be
@@ -530,7 +530,8 @@ Manual Linux/macOS development:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install --only-binary=:all: -r requirements.txt
+python -m pip install --require-hashes --only-binary=:all: -r requirements-bootstrap.lock
+python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
 HOST=127.0.0.1 PORT=8000 python app.py
 ```
 
@@ -539,7 +540,8 @@ Windows PowerShell:
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+python -m pip install --require-hashes --only-binary=:all: -r requirements-bootstrap.lock
+python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
 $env:HOST = "127.0.0.1"
 $env:PORT = "8000"
 python app.py
@@ -551,23 +553,39 @@ python app.py
 import json
 import os
 from pathlib import Path
+import getpass
 from cryptography.fernet import Fernet
+from credential_security import hash_admin_password, ADMIN_HASH_SCHEME
 from config import DEFAULT_CONFIG
 
 base = Path(".")
 key = Fernet.generate_key()
 (base / ".admin_key").write_bytes(key)
 os.chmod(base / ".admin_key", 0o600)
-encrypted = Fernet(key).encrypt(b"DevAdmin123").decode()
+password = getpass.getpass("New private administrator password: ")
+if not password:
+    raise ValueError("An explicit password is required")
 config = {
     **DEFAULT_CONFIG,
     "admin_email": "admin@eagleide.local",
-    "admin_password_encrypted": encrypted,
+    "admin_password_hash": hash_admin_password(password),
+    "admin_password_scheme": ADMIN_HASH_SCHEME,
 }
 (base / "config.txt").write_text(json.dumps(config, indent=2), encoding="utf-8")
+os.chmod(base / "config.txt", 0o600)
 ```
 
-The local development credentials in that example are `admin@eagleide.local` / `DevAdmin123`. Never use them for a public deployment. Both generated credential files must remain uncommitted.
+Both generated credential files must remain uncommitted. Existing encrypted administrator credentials migrate atomically at startup without changing the password; keep a private configuration/key backup before upgrading. No checked-in administrator password is accepted by default.
+
+## Security controls and maintenance
+
+`security_controls.py` owns explicit proxy trust, bounded attempt windows and access-token lifetimes. `credential_security.py` owns versioned long-password-safe hashes and legacy bcrypt verification. Do not replace an existing token's issue timestamp during profile updates or renew its absolute lifetime. `media_security.py` strips metadata from JPEG/PNG/GIF/WebP while bounding decoded frames and pixels.
+
+`requirements.lock` and `requirements-bootstrap.lock` are hash-required installation inputs. Regenerate with `tools/update_dependency_locks.py` and review the Python 3.12/3.13 resolutions together. Run `python tools/check_private_data.py --staged --history` before committing; CI also checks the complete tracked tree. This guard does not replace a full-history or PII review.
+
+Maintenance scripts default to dry runs and must be applied only against a private backup with the server stopped: `tools/migrate_legacy_passwords.py`, `tools/rotate_device_key.py`, and `tools/strip_image_metadata.py`. Wiki media changes require `--wiki-catalog` to preserve quota accounting. Never run these automatically during an ordinary update or delete retained educational data as an incidental security migration.
+
+The October 2026 audit, finding-by-finding limitations, and deployment sequence are in `docs/security/`. Account deletion currently removes account/workspace/tool-profile data, not every retained educational record. Owners with classes receive a conflict instead of silently orphaning those classes; storage failures retain a disabled account for retry. Full multi-store erasure remains a separate migration and must not be represented as complete.
 
 ## Verification
 

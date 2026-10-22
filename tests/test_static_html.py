@@ -45,7 +45,10 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertEqual(missing, [])
         self.assertIn("marked@18.0.7/lib/marked.umd.js", self.raw)
         self.assertIn("dompurify@3.4.7/dist/purify.min.js", self.raw)
-        self.assertEqual(self.raw.count('integrity="sha384-'), 2)
+        for tag in re.findall(r'<(?:script|link)\b[^>]*>', self.raw, re.S):
+            if ('src="https://' in tag or 'rel="stylesheet"' in tag and 'href="https://' in tag) and 'fonts.googleapis.com' not in tag:
+                self.assertRegex(tag, r'integrity="sha384-[A-Za-z0-9+/=]+"')
+                self.assertIn('crossorigin="anonymous"', tag)
 
     def test_static_assets_use_classroom_friendly_cache_policy(self):
         source = (BASE_DIR / "app.py").read_text(encoding="utf-8")

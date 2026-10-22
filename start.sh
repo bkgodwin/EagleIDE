@@ -9,6 +9,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly SCRIPT_DIR
 readonly VENV_DIR="$SCRIPT_DIR/.venv"
 readonly REQUIREMENTS_FILE="$SCRIPT_DIR/requirements.txt"
+readonly REQUIREMENTS_LOCK_FILE="$SCRIPT_DIR/requirements.lock"
+readonly BOOTSTRAP_REQUIREMENTS_FILE="$SCRIPT_DIR/requirements-bootstrap.lock"
 readonly REQUIREMENTS_STAMP="$VENV_DIR/.eagleide-requirements.sha256"
 
 log() {
@@ -98,12 +100,16 @@ node_is_supported() {
 }
 
 requirements_hash() {
-  "$1" - "$REQUIREMENTS_FILE" <<'PY'
+  "$1" - "$REQUIREMENTS_FILE" "$REQUIREMENTS_LOCK_FILE" "$BOOTSTRAP_REQUIREMENTS_FILE" <<'PY'
 import hashlib
 import sys
 from pathlib import Path
 
-print(hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest())
+digest = hashlib.sha256()
+for name in sys.argv[1:]:
+    digest.update(Path(name).read_bytes())
+    digest.update(b"\0")
+print(digest.hexdigest())
 PY
 }
 
@@ -171,8 +177,8 @@ prepare_virtual_environment() {
 
   if [[ "$installed_hash" != "$wanted_hash" ]] || ! venv_imports_are_healthy "$venv_python"; then
     log "Installing pinned Python dependencies into $VENV_DIR."
-    "$venv_python" -m pip install --disable-pip-version-check --upgrade pip
-    "$venv_python" -m pip install --disable-pip-version-check --only-binary=:all: -r "$REQUIREMENTS_FILE"
+    "$venv_python" -m pip install --disable-pip-version-check --only-binary=:all: --require-hashes -r "$BOOTSTRAP_REQUIREMENTS_FILE"
+    "$venv_python" -m pip install --disable-pip-version-check --only-binary=:all: --require-hashes -r "$REQUIREMENTS_LOCK_FILE"
     "$venv_python" -m pip check
     venv_imports_are_healthy "$venv_python" ||
       fail "The virtual environment did not pass its dependency isolation check."
@@ -229,6 +235,9 @@ main() {
 
   log "Python: $("$venv_python" --version 2>&1)"
   log "Node.js: $(node --version)"
+  if (( $(node -p 'Number(process.versions.node.split(".")[0])') < 22 )); then
+    log "Warning: this Node.js release is end-of-life. Upgrade to Node.js 24 LTS; execution remains enabled for update compatibility."
+  fi
   if [[ "${EAGLEIDE_SETUP_ONLY:-0}" == "1" ]]; then
     log "Setup and validation complete."
     return

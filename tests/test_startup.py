@@ -20,6 +20,25 @@ class StartupScriptTests(unittest.TestCase):
         self.assertIn('exec "$venv_python" "$SCRIPT_DIR/app.py"', self.script)
         self.assertNotIn("source \"$VENV_DIR/bin/activate\"", self.script)
 
+    def test_installs_pin_hashes_for_runtime_transitives_and_installer(self):
+        self.assertIn("--require-hashes", self.script)
+        self.assertNotIn("--upgrade pip", self.script)
+        locked = (BASE_DIR / "requirements.lock").read_text(encoding="utf-8")
+        bootstrap = (BASE_DIR / "requirements-bootstrap.lock").read_text(encoding="utf-8")
+        declared = re.findall(r"(?m)^([A-Za-z0-9_.-]+)==([A-Za-z0-9_.+-]+)", self.requirements)
+        pins = {name.lower().replace("_", "-"): version for name, version in re.findall(r"(?m)^([A-Za-z0-9_.-]+)==([A-Za-z0-9_.+-]+)", locked)}
+        for name, version in declared:
+            self.assertEqual(pins[name.lower().replace("_", "-")], version)
+        for text in (locked, bootstrap):
+            for entry in re.split(r"\n(?=[A-Za-z0-9_.-]+==)", text):
+                if re.search(r"(?m)^[A-Za-z0-9_.-]+==", entry):
+                    self.assertRegex(entry, r"--hash=sha256:[a-f0-9]{64}")
+        self.assertRegex(bootstrap, r"(?m)^pip==[0-9.]+")
+        workflow = (BASE_DIR / ".github/workflows/tests.yml").read_text(encoding="utf-8")
+        for action in re.findall(r"uses:\s+(\S+)", workflow):
+            self.assertRegex(action, r"@[a-f0-9]{40}$")
+        self.assertIn('node-version: "24"', workflow)
+
     def test_launcher_covers_fresh_lxc_system_requirements(self):
         for value in (
             "apt-get",

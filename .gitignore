@@ -50,3 +50,9 @@ background_assets/
 logs/
 
 file_provenance/
+
+# Private submission bundles and local verification artifacts
+assignment_submissions/
+.venv-*/
+.tmp-*/
+baseline-*.log
