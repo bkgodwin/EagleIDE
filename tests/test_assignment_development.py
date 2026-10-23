@@ -173,6 +173,7 @@ class DevelopmentTests(unittest.TestCase):
         args={'assignmentId':a['id'],'studentEmail':self.student_email}
         self.assertEqual(self.client.get('/api/assignments/development',headers=self.student_headers,query_string=args).status_code,401)
         token='other-history-teacher';eagle._teacher_tokens[token]={'email':'other@example.com','role':'teacher'}
+        users = eagle._load_users(); users['users'].append({'email':'other@example.com','role':'teacher'}); eagle._save_users(users)
         try:
             self.assertEqual(self.client.get('/api/assignments/development',headers={'X-Teacher-Token':token},query_string=args).status_code,403)
         finally:eagle._teacher_tokens.pop(token)

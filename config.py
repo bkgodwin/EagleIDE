@@ -26,7 +26,7 @@ DEFAULT_CONFIG = {
     "ai_explainer_enabled": True,
     # Notebook practice feedback is independent of general/class AI access.
     "ai_notebook_feedback_enabled": True,
-    "ai_ollama_url": "http://192.168.0.105:11434",
+    "ai_ollama_url": "http://127.0.0.1:11434",
     "ai_model": "gemma3:4b",
     "ai_request_timeout_seconds": 120,
     "ai_rubric_context_tokens": 16384,

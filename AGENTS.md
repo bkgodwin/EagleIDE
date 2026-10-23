@@ -86,6 +86,7 @@ Required runtime components:
 |       |-- lazy-libs.js         Lazy browser dependency helpers
 |       |-- markdown.js          Sanitized Markdown rendering helpers
 |       |-- shell-commands.js    Browser-side virtual shell over workspace APIs
+|       |-- html-runtime-popup.js CSP-compatible popup bootstrap, runtime channel, stop/timeout and cleanup
 |       |-- step-mode.js         Python trace playback, variables, narration, and navigation
 |       |-- classroom-signals.js Raise-hand/question UI and socket handling
 |       |-- classroom-files.js   Sharing and teacher file-audit UI
@@ -617,6 +618,30 @@ Both generated credential files must remain uncommitted. Existing encrypted admi
 ## Security controls and maintenance
 
 `security_controls.py` owns explicit proxy trust, bounded attempt windows and access-token lifetimes. `credential_security.py` owns versioned long-password-safe hashes and legacy bcrypt verification. Do not replace an existing token's issue timestamp during profile updates or renew its absolute lifetime. `media_security.py` strips metadata from JPEG/PNG/GIF/WebP while bounding decoded frames and pixels.
+
+HTTP student, teacher and wiki-manager guards share `_current_session_user`:
+require a current enabled account of the matching role in its separate token
+store. Never fall back to a cached identity for a missing record. Route-specific
+class checks remain mandatory; co-teacher use requires explicit opt-in and current
+student membership. Keep full co-teacher catalog enumeration in profile responses,
+not the frequent workspace auth path. Session-cap eviction disconnects only the
+removed token's sockets, after releasing issuance/token locks. Teacher disable
+uses the same account revocation helper as admin disable.
+
+All new admin/class background uploads use `media_security.clean_image` before
+atomic storage, retain their supported format and apply byte caps after cleaning.
+Existing media is not rewritten on update. HTML popup bootstrap must remain in
+`static/js/html-runtime-popup.js` to run under the main enforcing CSP; do not
+restore an inline script or relax the script policy. Its channel attribute is
+limited by the popup route's channel-ID validation.
+
+`tests/test_security_followup.py` covers these boundaries and local Ollama default
+compatibility. The optional `tests/security_followup_browser_checks.js` runs only
+against `tests/lesson_plan_browser_fixture.py`: popup ready/load/stop/timeout/exit,
+cleanup, desktop/mobile rendering and live revocation with retained editor work.
+It disables the fixture student, so run it last or restart the fixture before
+other browser suites. The private-data guard also rejects database extensions,
+SQLite sidecars and renamed SQLite header signatures outside known runtime roots.
 
 `requirements.lock` and `requirements-bootstrap.lock` are hash-required installation inputs. Regenerate with `tools/update_dependency_locks.py` and review the Python 3.12/3.13 resolutions together. Run `python tools/check_private_data.py --staged --history` before committing; CI also checks the complete tracked tree. This guard does not replace a full-history or PII review.
 

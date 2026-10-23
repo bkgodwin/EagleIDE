@@ -112,6 +112,9 @@ class CsvUpgradeTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         patcher = patch.object(eagle, 'USER_FILES_DIR', self.root)
         patcher.start(); self.addCleanup(patcher.stop)
+        users_patch = patch.object(eagle, 'USERS_FILE', self.root / 'users.json')
+        users_patch.start(); self.addCleanup(users_patch.stop)
+        eagle._save_users({'users': [{'email': 'csv@school.test', 'role': 'student'}]})
         self.token = 'csv-upgrade-token'
         eagle._student_tokens[self.token] = {'email': 'csv@school.test', 'role': 'student'}
         self.addCleanup(eagle._student_tokens.pop, self.token, None)

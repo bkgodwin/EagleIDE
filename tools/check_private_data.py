@@ -30,6 +30,7 @@ SECRET_PATTERNS = {
     "AWS access key": rb"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b",
     "Google API key": rb"\bAIza[0-9A-Za-z_-]{35}\b",
 }
+DATABASE_NAME = re.compile(r"\.(?:db|sqlite|sqlite3)(?:-(?:wal|shm|journal))?$", re.IGNORECASE)
 
 
 def inspect(path, data):
@@ -38,6 +39,8 @@ def inspect(path, data):
         return []
     name = parts[-1].lower()
     issues = []
+    if DATABASE_NAME.search(name) or data.startswith(b"SQLite format 3\0"):
+        issues.append("private database or sidecar")
     if parts[0] in PRIVATE_ROOTS or name in PRIVATE_FILES or name.endswith(".log") or name in {".env", "id_rsa", "id_ed25519"}:
         issues.append("private runtime path")
     if len(data) > 10 * 1024 * 1024:

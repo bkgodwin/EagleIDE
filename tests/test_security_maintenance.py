@@ -125,3 +125,22 @@ class SecurityMaintenanceTests(unittest.TestCase):
         result = self.run_tool("check_private_data.py", "--history", cwd=self.root)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("root ancestry", result.stderr)
+
+    def test_databases_sidecars_and_renamed_sqlite_are_rejected_outside_runtime_roots(self):
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        names = ["export.db", "data.SQLITE", "class.sqlite3", "export.db-wal", "data.sqlite-shm",
+                 "class.sqlite3-journal", "renamed.bin"]
+        directory = self.root / "unrecognized"
+        directory.mkdir()
+        for name in names:
+            content = b"SQLite format 3\0" if name == "renamed.bin" else b"synthetic private database content"
+            (directory / name).write_bytes(content)
+        (directory / "safe.py").write_text('description = "SQLite format 3"\n')
+        subprocess.run(["git", "-C", str(self.root), "add", "-f", "."], check=True)
+        for args in (("--staged",), ()):
+            result = self.run_tool("check_private_data.py", *args, cwd=self.root)
+            self.assertNotEqual(result.returncode, 0)
+            for name in names:
+                self.assertIn("unrecognized/" + name + ": private database or sidecar", result.stderr)
+            self.assertNotIn("safe.py", result.stderr)
+            self.assertNotIn("synthetic private database content", result.stdout + result.stderr)
