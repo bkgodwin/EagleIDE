@@ -595,6 +595,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
     }
 
+    function aiRequestHeaders() {
+      const headers = { 'Content-Type': 'application/json' };
+      if (WIKI_MANAGER_TOKEN) headers['X-Wiki-Manager-Token'] = WIKI_MANAGER_TOKEN;
+      else if (USER_TOKEN) headers['X-User-Token'] = USER_TOKEN;
+      else if (TEACHER_TOKEN) headers[isCoTeacher() ? 'X-User-Token' : 'X-Teacher-Token'] = TEACHER_TOKEN;
+      else if (ADMIN_TOKEN) headers['X-Admin-Token'] = ADMIN_TOKEN;
+      return headers;
+    }
+
     function buildAiContext(extra = {}) {
       const info = getActiveLanguageInfo();
       const classCtx = getCurrentClassContext();
@@ -7359,7 +7368,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       try {
         const res = await fetch('/api/explain', {
           method:'POST',
-          headers:{ 'Content-Type':'application/json', 'X-SID': (window.mySid || '') },
+          headers: aiRequestHeaders(),
           body: JSON.stringify(buildAiContext({ code, sid: (mySid || window.mySid || '') }))
         });
         const j = await res.json().catch(()=>({}));
@@ -7453,7 +7462,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       try {
         const response = await fetch('/api/assistant/chat', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-SID': ensureAssistantSid() },
+          headers: aiRequestHeaders(),
           body: JSON.stringify(buildAiContext({
             sid: ensureAssistantSid(),
             code: editor.getValue().slice(0, MAX_ASSISTANT_CODE_CHARS),

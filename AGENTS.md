@@ -665,6 +665,20 @@ not the frequent workspace auth path. Session-cap eviction disconnects only the
 removed token's sockets, after releasing issuance/token locks. Teacher disable
 uses the same account revocation helper as admin disable.
 
+`_current_session_user` uses an authoritative `_find_user`/`_load_users` read:
+unavailable, malformed or missing account stores return retryable HTTP 503 without
+revoking the token. A successfully read store confirming deletion, disable or a
+role change still rejects and revokes. Rejections log a bounded reason, expected
+role, endpoint and normalized field types; the account fingerprint matches private
+sign-in logs. Never log full records, raw emails, credentials, tokens or source.
+AI Explain/Chat must use `aiRequestHeaders()` on every request, including a
+co-teacher's student identity; a Socket.IO SID is not authentication. Keep the
+versioned app-core asset fresh when changing browser requests.
+`tests/test_ai_auth.py` and `tests/ai_auth_ui.test.js` cover auth/legacy/recovery and
+the actual UI handlers. `tests/ai_auth_browser_checks.js` clicks both AI buttons
+for every role against `tests/lesson_plan_browser_fixture.py --mock-ai`; this
+explicit fixture option uses a loopback Ollama stub through the real dispatcher.
+
 All new admin/class background uploads use `media_security.clean_image` before
 atomic storage, retain their supported format and apply byte caps after cleaning.
 Existing media is not rewritten on update. HTML popup bootstrap must remain in

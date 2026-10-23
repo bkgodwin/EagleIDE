@@ -1,4 +1,5 @@
 """Run an isolated EagleIDE copy for opt-in agenda browser checks; all data is temporary."""
+import argparse
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,9 @@ from cryptography.fernet import Fernet
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--mock-ai', action='store_true', help='Use a local fake Ollama HTTP endpoint for AI browser checks')
+    args = parser.parse_args()
     repo = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(repo))
     with tempfile.TemporaryDirectory(prefix='eagle-agenda-browser-') as temporary:
@@ -50,6 +54,23 @@ def main():
         eagle._teacher_tokens['agenda-teacher'] = teacher
         eagle._student_tokens['agenda-student'] = student
         eagle._admin_tokens.add('agenda-admin')
+        if args.mock_ai:
+            manager = {'email': 'ai-manager@example.test', 'name': 'AI Fixture Manager', 'role': 'wiki_manager', 'enabled': True}
+            coteacher = {**student, 'email': 'ai-coteacher@example.test', 'name': 'AI Fixture CoTeacher'}
+            users = eagle._load_users(); users['users'].extend([manager, coteacher]); eagle._save_users(users)
+            classes = eagle._load_classes()
+            classes['classes'][0]['students'].append(coteacher['email'])
+            classes['classes'][0]['coteachers'] = [coteacher['email']]
+            eagle._save_classes(classes)
+            eagle._wiki_manager_tokens['agenda-ai-manager'] = manager
+            eagle._student_tokens['agenda-ai-coteacher'] = coteacher
+
+            @eagle.app.post('/fixture-ollama/api/generate')
+            def mock_ollama_generate():
+                # Exercise the real AI dispatcher/HTTP protocol, without a model
+                # installation or sending fixture prompts to any external service.
+                return eagle.app.response_class(json.dumps({'response': 'AI browser fixture response.', 'done': True}) + '\n',
+                                                mimetype='application/x-ndjson')
         student_root = eagle._get_user_dir(student['email'])
         student_root.mkdir(parents=True, exist_ok=True)
         (student_root / 'preview.html').write_text('<h1>Preview fixture</h1>', encoding='utf-8')
@@ -92,6 +113,9 @@ def main():
                 eagle._save_trash_metadata(student_root, metadata)
         from werkzeug.serving import make_server
         server = make_server('127.0.0.1', 0, eagle.app, threaded=True)
+        if args.mock_ai:
+            eagle._update_config({'ai_ollama_url': f'http://127.0.0.1:{server.server_port}/fixture-ollama',
+                                  'ai_explainer_enabled': True})
         print(json.dumps({'url': f'http://127.0.0.1:{server.server_port}', 'teacher': teacher, 'student': student,
                           'wiki_id': page['id'], 'assignment_id': assignment['id'], 'week': week}), flush=True)
         server.serve_forever()
