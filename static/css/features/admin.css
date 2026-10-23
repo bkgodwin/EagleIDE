@@ -184,4 +184,22 @@ body.light-mode #adminSettingsModal { --columbia-blue: #245a85; }
       .execution-admin-table td:nth-child(3) { display:none; }
     }
 
+.cleanup-rule { display:grid; grid-template-columns:minmax(0,1fr) auto 120px; align-items:center; gap:16px; padding:16px 0; border-bottom:1px solid var(--theme-border-mid); }
+.cleanup-rule-description p { margin:5px 0 0; font-size:12px; color:var(--theme-text-dim); }
+.cleanup-rule label { display:flex; flex-direction:column; gap:5px; font-size:12px; }
+.cleanup-rule input { width:100%; box-sizing:border-box; }
+.cleanup-toggle[aria-pressed="true"] { border-color:var(--columbia-blue); color:var(--columbia-blue); }
+.cleanup-actions { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:16px 0; }
+.cleanup-log-scroll { max-width:100%; max-height:420px; overflow:auto; border:1px solid var(--theme-border-mid); }
+.cleanup-log-table { width:100%; min-width:600px; border-collapse:collapse; font-size:12px; }
+.cleanup-log-table th, .cleanup-log-table td { padding:10px; text-align:left; border-bottom:1px solid var(--theme-border-mid); vertical-align:top; overflow-wrap:anywhere; }
+.cleanup-log-table th { position:sticky; top:0; background:var(--theme-panel); }
+.cleanup-log-table code { display:block; margin-top:5px; font-size:11px; white-space:normal; overflow-wrap:anywhere; }
+#cleanupStatus { min-height:1.5em; }
+#cleanupRuns { font-size:12px; overflow-wrap:anywhere; }
+@media (max-width:640px) {
+  .cleanup-rule { grid-template-columns:1fr 120px; gap:12px; }
+  .cleanup-rule-description { grid-column:1 / -1; }
+}
+
     /* Context menu */

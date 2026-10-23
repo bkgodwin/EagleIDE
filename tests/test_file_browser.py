@@ -158,7 +158,7 @@ class FileBrowserTests(unittest.TestCase):
         self.assertTrue(trash_item["in_trash"])
         self.assertTrue(trash_item["restorable"])
         self.assertEqual(trash_item["original_path"], "lesson.py")
-        self.assertEqual(trash_item["expires_at"] - trash_item["deleted_at"], eagle.TRASH_RETENTION_SECONDS)
+        self.assertEqual(trash_item["expires_at"], 0)  # Cleanup starts disabled.
 
         restored = self.post("restore", {"path": payload["trash_path"]})
         self.assertEqual(restored.status_code, 200)
@@ -184,7 +184,7 @@ class FileBrowserTests(unittest.TestCase):
         self.assertEqual(conflict.status_code, 409)
         self.assertTrue((self.workspace / second).exists())
 
-    def test_trash_protections_and_expiration(self):
+    def test_trash_protections_and_no_implicit_expiration(self):
         self.list_files()
         self.assertEqual(self.delete("Trash").status_code, 400)
         self.assertEqual(self.post("create", {"name": "blocked.py", "parent": "Trash"}).status_code, 400)
@@ -195,8 +195,8 @@ class FileBrowserTests(unittest.TestCase):
         self.post("create", {"name": "old.py"})
         deleted = self.delete("old.py").get_json()
         eagle._purge_expired_trash(self.workspace, now=deleted["expires_at"] + 1)
-        self.assertFalse((self.workspace / deleted["trash_path"]).exists())
-        self.assertEqual(self.post("restore", {"path": deleted["trash_path"]}).status_code, 404)
+        self.assertTrue((self.workspace / deleted["trash_path"]).exists())
+        self.assertEqual(self.post("restore", {"path": deleted["trash_path"]}).status_code, 200)
 
     def test_startup_file_limit_cleanup_is_recoverable(self):
         self.workspace.mkdir(parents=True, exist_ok=True)

@@ -394,6 +394,7 @@ class WikiStore:
         backup_dir: Optional[Path] = None,
         max_asset_bytes: int = 1024 * 1024 * 1024,
         max_total_asset_bytes: int = 10 * 1024 * 1024 * 1024,
+        managed_retention: bool = False,
     ) -> None:
         self.base_dir = Path(base_dir)
         self.content_dir = self.base_dir / "content"
@@ -416,7 +417,8 @@ class WikiStore:
         self._prepare_directories()
         self._init_schema()
         self.prune_revisions()
-        self.cleanup_staging()
+        if not managed_retention:
+            self.cleanup_staging()
 
     def _prepare_directories(self) -> None:
         for directory in (

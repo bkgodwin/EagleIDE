@@ -37,6 +37,7 @@ def register(
     find_class: Callable[[str], Optional[dict]],
     config_provider: Callable[[], dict],
     require_wiki_manager: Callable[[Any], Optional[dict]] = lambda req: None,
+    history_retention=None,
 ) -> WikiStore:
     cfg = config_provider()
     max_asset_mb = max(1, min(4096, int(cfg.get("wiki_max_asset_mb", 1024))))
@@ -46,9 +47,10 @@ def register(
         backup_dir=Path(backup_dir),
         max_asset_bytes=max_asset_mb * 1024 * 1024,
         max_total_asset_bytes=total_asset_mb * 1024 * 1024,
+        managed_retention=history_retention is not None,
     )
     app.extensions["eagle_wiki_store"] = store
-    history = WikiHistory(store)
+    history = WikiHistory(store, retention_provider=history_retention)
     app.extensions["eagle_wiki_history"] = history
     backup_tickets: dict[str, dict[str, Any]] = {}
     backup_ticket_lock = threading.Lock()

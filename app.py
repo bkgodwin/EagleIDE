@@ -887,7 +887,12 @@ _default_skills_seed_lock = threading.Lock()
 _notebooks_lock = threading.Lock()
 _server_health_lock = threading.Lock()
 _wiki_example_lock = threading.Lock()
-_trash_lock = threading.RLock()
+_trash_lock = threading.RLock()  # retained for compatibility; workspace locks avoid global cleanup stalls
+_trash_locks = [threading.RLock() for _ in range(64)]
+
+
+def _trash_lock_for(user_dir):
+    return _trash_locks[int(hashlib.sha256(str(user_dir).encode()).hexdigest()[:8], 16) % len(_trash_locks)]
 _users_cache: Optional[tuple[str, int, dict]] = None
 _classes_cache: Optional[tuple[str, int, dict]] = None
 _skills_cache: Optional[tuple[str, int, dict]] = None
@@ -1049,6 +1054,9 @@ def _save_users(data: dict) -> None:
     global _users_cache
     with _users_lock:
         data = _normalize_users_data(data)
+        manager = globals().get("_data_cleanup")
+        if manager:
+            manager.guard_account_save(data)
         tmp = USERS_FILE.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(USERS_FILE)
@@ -1499,8 +1507,9 @@ def _record_sign_in_event(email: str, role: str, ip: str, source: str) -> None:
     with _server_health_lock:
         events = _read_json_list_file(SIGN_IN_EVENTS_FILE)
         events.append(event)
-        cutoff = int(time.time()) - (SIGN_IN_RETENTION_DAYS * 24 * 3600)
-        events = [row for row in events if int(row.get("ts", 0)) >= cutoff][-MAX_SIGN_IN_EVENTS:]
+        # Age-based retention belongs to the opt-in, receipted cleanup service.
+        # Keep the independent event-count safety budget.
+        events = events[-MAX_SIGN_IN_EVENTS:]
         try:
             _write_json_list_file(SIGN_IN_EVENTS_FILE, events)
         except Exception:
@@ -2315,14 +2324,14 @@ def _is_trash_path(user_dir: Path, target: Path, *, include_root: bool = True) -
 
 
 def _load_trash_metadata(user_dir: Path) -> dict[str, dict]:
-    with _trash_lock:
+    with _trash_lock_for(user_dir):
         raw = _read_json_file(_trash_metadata_path(user_dir), {"items": {}})
         items = raw.get("items", {}) if isinstance(raw, dict) else {}
         return {str(key): value for key, value in items.items() if isinstance(key, str) and isinstance(value, dict)}
 
 
 def _save_trash_metadata(user_dir: Path, items: dict[str, dict]) -> None:
-    with _trash_lock:
+    with _trash_lock_for(user_dir):
         _write_json_file_atomic(_trash_metadata_path(user_dir), {"version": 1, "items": items})
 
 
@@ -2349,48 +2358,18 @@ def _unique_trash_destination(trash_dir: Path, source: Path) -> Path:
 
 
 def _purge_expired_trash(user_dir: Path, *, now: Optional[float] = None) -> int:
-    """Permanently remove top-level trash entries after the seven-day retention window."""
-    with _trash_lock:
-        _ensure_workspace_system_dirs(user_dir)
-        trash_dir = _trash_dir(user_dir)
-        items = _load_trash_metadata(user_dir)
-        current_time = float(time.time() if now is None else now)
-        removed = 0
-        changed = False
-        try:
-            entries = list(os.scandir(trash_dir))
-        except OSError:
-            entries = []
-        existing_keys = set()
-        for entry in entries:
-            trash_path = Path(entry.path)
-            key = trash_path.relative_to(user_dir.resolve()).as_posix()
-            existing_keys.add(key)
-            record = items.get(key, {})
-            try:
-                deleted_at = float(record.get("deleted_at") or entry.stat(follow_symlinks=False).st_mtime)
-            except (OSError, TypeError, ValueError):
-                deleted_at = current_time
-            if current_time - deleted_at < TRASH_RETENTION_SECONDS:
-                continue
-            try:
-                _remove_workspace_item(trash_path)
-                file_provenance.remove(sys.modules[__name__], user_dir, trash_path)
-                removed += 1
-                items.pop(key, None)
-                changed = True
-            except OSError:
-                continue
-        for stale_key in set(items) - existing_keys:
-            items.pop(stale_key, None)
-            changed = True
-        if changed:
-            _save_trash_metadata(user_dir, items)
-        return removed
+    """Retention runs in the admin cleanup worker, never on a file-tree read."""
+    return 0
+
+
+def _trash_expires_at(deleted_at):
+    manager = globals().get("_data_cleanup")
+    seconds = manager.retention("workspace_trash") if manager else None
+    return int(deleted_at) + seconds if seconds and deleted_at else 0
 
 
 def _move_workspace_item_to_trash(user_dir: Path, target: Path) -> tuple[Path, int]:
-    with _trash_lock:
+    with _trash_lock_for(user_dir):
         _ensure_workspace_system_dirs(user_dir)
         trash_dir = _trash_dir(user_dir)
         destination = _unique_trash_destination(trash_dir, target)
@@ -2410,7 +2389,7 @@ def _move_workspace_item_to_trash(user_dir: Path, target: Path) -> tuple[Path, i
 
 
 def _restore_workspace_item(user_dir: Path, target: Path) -> Path:
-    with _trash_lock:
+    with _trash_lock_for(user_dir):
         parts = _relative_workspace_parts(user_dir, target)
         if len(parts) != 2 or parts[0].casefold() != TRASH_DIR_NAME.casefold():
             raise ValueError("Select a top-level item in Trash to restore")
@@ -2438,7 +2417,7 @@ def _restore_workspace_item(user_dir: Path, target: Path) -> Path:
 
 
 def _permanently_delete_trash_item(user_dir: Path, target: Path) -> None:
-    with _trash_lock:
+    with _trash_lock_for(user_dir):
         parts = _relative_workspace_parts(user_dir, target)
         if len(parts) < 2 or parts[0].casefold() != TRASH_DIR_NAME.casefold():
             raise ValueError("Only items inside Trash can be permanently deleted")
@@ -3496,7 +3475,7 @@ def files_list():
                             "restorable": rel == trash_root and bool(record.get("original_path")),
                             "original_path": record.get("original_path", ""),
                             "deleted_at": int(record.get("deleted_at") or 0),
-                            "expires_at": int(record.get("deleted_at") or 0) + TRASH_RETENTION_SECONDS if record.get("deleted_at") else 0,
+                            "expires_at": _trash_expires_at(record.get("deleted_at")),
                         })
                 items.append(item)
             for entry in file_entries:
@@ -3530,7 +3509,7 @@ def files_list():
                         "restorable": rel == trash_root and bool(record.get("original_path")),
                         "original_path": record.get("original_path", ""),
                         "deleted_at": int(record.get("deleted_at") or 0),
-                        "expires_at": int(record.get("deleted_at") or 0) + TRASH_RETENTION_SECONDS if record.get("deleted_at") else 0,
+                        "expires_at": _trash_expires_at(record.get("deleted_at")),
                     })
                 items.append(item)
         except PermissionError:
@@ -4105,7 +4084,7 @@ def files_delete():
             ok=True,
             trashed=True,
             trash_path=destination.relative_to(user_dir).as_posix(),
-            expires_at=deleted_at + TRASH_RETENTION_SECONDS,
+            expires_at=_trash_expires_at(deleted_at),
         )
     except FileExistsError as exc:
         return jsonify(ok=False, error=str(exc) or "Trash contains too many items with this name"), 409
@@ -4772,6 +4751,10 @@ def _delete_user_by_email(email: str) -> bool:
     with _users_lock:
         current = _load_users()
         current["users"] = [user for user in current.get("users", []) if (user.get("email") or "").lower() != email]
+        try:
+            _data_cleanup.remember_deleted(email)
+        except (OSError, sqlite3.Error) as exc:
+            raise AccountCleanupError("Account disabled; deletion tracking could not be saved. Retry deletion.") from exc
         _save_users(current)
     return True
 
@@ -7670,13 +7653,8 @@ def _delete_runner_sandbox_quietly(path: Optional[Path]) -> None:
 
 
 def _cleanup_stale_runner_sandboxes() -> None:
-    try:
-        entries = list(SANDBOX_DIR.iterdir())
-    except OSError:
-        return
-    for entry in entries:
-        if entry.is_dir() and entry.name.startswith(("pyide_", "jside_")):
-            _delete_runner_sandbox_quietly(entry)
+    """Abandoned directories are retained until the admin enables cleanup."""
+    return None
 
 
 def _runner_environment(extra: Optional[dict[str, str]] = None) -> dict[str, str]:
@@ -13537,6 +13515,10 @@ def admin_server_health():
 def health():
     return jsonify(ok=True)
 
+from data_cleanup import CleanupManager, register as register_data_cleanup
+_data_cleanup = CleanupManager(sys.modules[__name__], Path(os.environ.get(
+    "EAGLEIDE_CLEANUP_DATA_DIR", str(BASE_DIR / "cleanup_data"))))
+
 _wiki_store = register_wiki_features(
     app,
     base_dir=WIKI_DATA_DIR,
@@ -13549,6 +13531,7 @@ _wiki_store = register_wiki_features(
     get_user_class_ids=_get_user_class_ids,
     find_class=_find_class_by_id,
     config_provider=_load_config,
+    history_retention=lambda: _data_cleanup.retention("wiki_recovery"),
 )
 register_lesson_plan_features(
     app,
@@ -13606,6 +13589,8 @@ from notebook_practice import register_notebook_practice
 register_notebook_practice(sys.modules[__name__])
 from notebook_media import register_notebook_media
 register_notebook_media(sys.modules[__name__])
+register_data_cleanup(app, sys.modules[__name__], _data_cleanup)
+atexit.register(_data_cleanup.close)
 
 # -------------------------
 # Main

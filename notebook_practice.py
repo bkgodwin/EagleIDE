@@ -334,6 +334,18 @@ def register_notebook_practice(eagle):
     eagle._notebook_practice_jobs = jobs
     eagle._enqueue_notebook_practice = enqueue
 
+    def drop_account(email):
+        with pending_lock:
+            removed = [job for job in pending_order if job[0].lower() == email.lower()]
+            for job in removed:
+                pending.discard(job)
+                pending_order.remove(job)
+            if removed:
+                write_journal()
+            return len(removed)
+
+    eagle._drop_notebook_practice_account = drop_account
+
     def restore_queue():
         nonlocal worker_thread
         journal_path = Path(eagle.NOTEBOOKS_DIR) / ".practice-queue.json"
