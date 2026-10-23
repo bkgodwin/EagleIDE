@@ -83,7 +83,7 @@ Required runtime components:
 |       |-- external-tools.js     Tool workspace, class grants, navigation and account/session cleanup
 |       |-- external-tools-admin.js Lazy generic catalog, policy, test and compatibility confirmation UI
 |       |-- editor-init.js       CodeMirror setup and textarea fallback
-|       |-- editor-appearance.js Saved account palettes, read-only previews, Python token styling, and gutter measurement lifecycle
+|       |-- editor-appearance.js Saved workspace/editor palettes, read-only previews, member token styling, and gutter lifecycle
 |       |-- editor-feedback.js   Local occurrences, delimiters, diagnostics, block guides, and caret visibility
 |       |-- editor-behavior.js   Predictable Python Enter indentation and CodeMirror block folding
 |       |-- autocomplete.js      Bounded code analysis, catalog-backed suggestions, and completion UI
@@ -546,6 +546,25 @@ Network simulator definitions are source data in `network_content.py`; assignmen
 - Workspace orientation and viewport sizing: `layout.js`; pointer/keyboard splitters and per-orientation sizes: `app-core.js`. Vertical (side-by-side) is the default; horizontal puts the editor above Shell/Resources and uses a right-hand file-action rail. Orientation and each layout's sizes persist in localStorage. Keep collapse/view controls and splitter ARIA axes working in both orientations.
 - Editor occurrences, local lexical diagnostics, delimiter shading, block guides, and caret-line visuals: `editor-feedback.js` and `features/editor.css`. Feedback is bounded, debounced, and browser-local; no student code is sent or executed. Undefined-name hints are advisory Python/JavaScript checks, not full scope analysis. The removed indent-guide toggle must not be restored; guides follow actual blocks. Insert overwrite is disabled in the editable editor (including its textarea fallback), while Shift+Insert keeps paste.
 - Autocomplete analysis, popup lifecycle, import/from-module suggestions, and user-symbol inference: `autocomplete.js`; editable Python member help belongs in `autocomplete_metadata.csv`, while the effective import-module list comes from `sandbox_policy.py` through the read-only catalog API in `app.py`.
+- Completion placement uses fixed positioning with CodeMirror window coordinates
+  and visualViewport bounds (including keyboard/zoom offsets). Keep both list and
+  details scrollable when constrained. Shared blurred surfaces need a nearly
+  opaque fallback and must respect reduced transparency for every account role.
+- Workspace profiles in `editor-appearance.js` scope matching tones to
+  editor/Files, Shell and Resources panels. Custom dark/light background overrides
+  apply only to editors. Preserve the existing preference schema and keep the
+  backend `EDITOR_COLOR_SCHEMES` allowlist synchronized. Legacy profiles use the
+  September 21 Monokai/default token categories with contrast correction;
+  `eagleLegacyColors` disables added semantic tokens without changing source or
+  undo history. Python/JavaScript dotted members get bounded depth styles; never
+  classify strings/comments or run student code. Palette changes must not restart
+  mode tokenization on ordinary context refreshes. The optional
+  `tests/editor_polish_browser_checks.js` uses the isolated agenda fixture with
+  `--mock-ai` and existing EAGLE_AGENDA variables; all five account roles, three
+  viewport sizes, profile previews/persistence and class streaming are covered.
+- `selectTeacherClass` stops the old class stream and cancels pending flushes
+  before changing identity/rooms. Never automatically enable streaming for the
+  new class. Keep the wider class selector bounded on narrow screens.
 - Editor color controls live in every role's Account settings. `editor-appearance.js` owns named light/dark palettes, per-mode custom backgrounds, contrast adjustment, and noneditable CodeMirror previews. `/api/auth/editor-preferences` stores student/teacher preferences in their user record and administrator preferences in config; never accept a client-supplied account identity. Local caches are account-scoped, and late loads/saves must not repaint a different account. The CodeMirror init hook also handles notebook editors and releases measurement listeners when editors are removed. Reserve three gutter digits and remeasure on digit boundaries, resize/unhide, and font loading without refreshing on ordinary edits. Page-theme changes must preserve explicitly selected editor schemes. Python logical declarations and balanced function signatures in `autocomplete.js` are shared with advisory hints; annotation-only/dataclass fields are bindings.
 - Virtual shell parsing: `shell-commands.js`; it must call workspace APIs and must never expose an operating-system shell.
 - DOM structure or third-party CDN versions: `index.html`.

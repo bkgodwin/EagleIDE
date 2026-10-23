@@ -43,6 +43,15 @@ class EditorPreferencesTests(unittest.TestCase):
                 self.assertEqual(self.client.post(self.route, headers=headers, json=next_value).status_code, 200)
                 self.assertEqual(eagle._load_config()['admin_editor_preferences'], next_value)
 
+    def test_new_profiles_round_trip_without_changing_existing_background_overrides(self):
+        for scheme in ('legacy-dark', 'legacy-light', 'midnight-dark', 'forest-dark', 'graphite-dark', 'alpine-dark'):
+            for token in (self.fixture.student_token, self.fixture.teacher_token):
+                header = 'X-User-Token' if token == self.fixture.student_token else 'X-Teacher-Token'
+                value = {**self.value, 'scheme': scheme}
+                response = self.client.post(self.route, headers={header: token}, json=value)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(self.client.get(self.route, headers={header: token}).json['preferences'], value)
+
     def test_invalid_payloads_and_unauthenticated_requests_are_rejected(self):
         self.assertEqual(self.client.get(self.route).status_code, 401)
         self.assertEqual(self.client.post(self.route, json=self.value).status_code, 401)

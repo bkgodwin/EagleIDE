@@ -680,6 +680,17 @@
     return ({ function: 'ƒ', method: 'M', class: 'C', variable: 'V', attribute: 'A', module: 'M', keyword: 'K' })[kind] || '•';
   }
 
+  function popupPlacement(coords, size, viewport) {
+    const left = (viewport.offsetLeft || 0) + 8, top = (viewport.offsetTop || 0) + 8;
+    const right = left + Math.max(1, viewport.width - 16), bottom = top + Math.max(1, viewport.height - 16);
+    const above = Math.max(0, coords.top - top - 3), below = Math.max(0, bottom - coords.bottom - 3);
+    const up = size.height > below && above > below;
+    const height = Math.max(1, Math.min(size.height, up ? above : below));
+    const width = Math.min(size.width, right - left);
+    return {left: Math.max(left, Math.min(coords.left, right - width)),
+      top: Math.max(top, Math.min(up ? coords.top - height - 3 : coords.bottom + 3, bottom - height)), width, height, up};
+  }
+
   function createEngine(cm, options) {
     const settings = options || {};
     const doc = settings.document || (typeof document !== 'undefined' ? document : null);
@@ -783,17 +794,18 @@
     function position(coords) {
       if (!popup || !win) return;
       popup.classList.remove('details-left');
-      popup.style.left = `${Math.max(8, coords.left)}px`;
-      popup.style.top = `${coords.bottom + 3}px`;
+      popup.style.height = '';
+      popup.style.width = '';
+      popup.style.left = '0px';
+      popup.style.top = '0px';
       const rect = popup.getBoundingClientRect();
-      if (rect.right > win.innerWidth - 8) {
-        if (coords.left > rect.width + 8) popup.classList.add('details-left');
-        popup.style.left = `${Math.max(8, Math.min(coords.left, win.innerWidth - rect.width - 8))}px`;
-      }
-      const nextRect = popup.getBoundingClientRect();
-      if (nextRect.bottom > win.innerHeight - 8) {
-        popup.style.top = `${Math.max(8, coords.top - nextRect.height - 3)}px`;
-      }
+      const viewport = win.visualViewport || {width: win.innerWidth, height: win.innerHeight};
+      const placement = popupPlacement(coords, rect, viewport);
+      if (placement.left < coords.left) popup.classList.add('details-left');
+      popup.style.left = `${placement.left}px`;
+      popup.style.top = `${placement.top}px`;
+      popup.style.width = `${placement.width}px`;
+      popup.style.height = `${placement.height}px`;
     }
 
     function show(items, context, cursor) {
@@ -827,7 +839,7 @@
       });
       updateDetails();
       popup.classList.remove('hidden');
-      position(cm.cursorCoords(cursor, 'page'));
+      position(cm.cursorCoords(cursor, 'window'));
     }
 
     function currentAnalysis(source, currentLanguage) {
@@ -930,6 +942,10 @@
     });
     if (doc) doc.addEventListener('mousedown', event => { if (popup && !popup.contains(event.target)) hide(); });
     if (win) win.addEventListener('resize', hide);
+    if (win?.visualViewport) {
+      win.visualViewport.addEventListener('resize', hide);
+      win.visualViewport.addEventListener('scroll', hide);
+    }
     if (active) loadCatalog();
 
     function setSuspended(value) {
@@ -943,6 +959,6 @@
   return {
     MAX_ANALYSIS_LENGTH, PYTHON_KEYWORDS, PYTHON_BUILTINS,
     analyzePython, analyzeJavascript, pythonLogicalLines, pythonFunctionHeader, contextAt, catalogIndex,
-    buildSuggestionSet, createEngine
+    buildSuggestionSet, popupPlacement, createEngine
   };
 });

@@ -7,7 +7,9 @@
 })(typeof window !== 'undefined' ? window : globalThis, function () {
   'use strict';
   const colors = (background, foreground, keyword, definition, variable, string, number, comment, type) =>
-    ({ background, foreground, keyword, definition, variable, string, number, comment, type });
+    ({ background, foreground, keyword, definition, variable, string, number, comment, type,
+       builtin:type, atom:type, property:variable, variable2:variable, operator:foreground, meta:keyword,
+       attribute:variable, tag:keyword, qualifier:type, bracket:foreground, string2:string });
   const schemes = {
     'eagle-dark': { label: 'Eagle · Dark', mode: 'dark', colors: colors('#1e2229', '#dde4ed', '#c792ea', '#f1d488', '#9cdbff', '#e8a782', '#b5cea8', '#90ab89', '#82b4ee') },
     'ocean-dark': { label: 'Ocean · Dark', mode: 'dark', colors: colors('#0d2233', '#e0efff', '#cbb2ff', '#ffe0a3', '#9edfff', '#9ee1ce', '#ffc4a3', '#96afc3', '#b8caff') },
@@ -17,6 +19,19 @@
     'paper-light': { label: 'Paper · Light', mode: 'light', colors: colors('#fffbed', '#30312e', '#744097', '#735012', '#175a83', '#923f25', '#326543', '#626453', '#345e99') },
     'accessible-light': { label: 'Blue & Gold · Light (color vision friendly)', mode: 'light', colors: colors('#ffffff', '#222b36', '#765500', '#005b99', '#293340', '#75521c', '#58419a', '#58616b', '#00647a') },
     'mono-light': { label: 'High contrast · Light (minimal color)', mode: 'light', colors: colors('#ffffff', '#171717', '#000000', '#111111', '#171717', '#383838', '#000000', '#595959', '#000000') },
+    // September 21 (e811099) used CodeMirror's Monokai/default themes.
+    // Preserve their token categories; contrast is still adjusted for readability.
+    'legacy-dark': { label: 'Legacy dark (September)', mode: 'dark', legacy:true, colors: {
+      ...colors('#272822', '#f8f8f2', '#f92672', '#fd971f', '#f8f8f2', '#e6db74', '#ae81ff', '#75715e', '#66d9ef'),
+      builtin:'#66d9ef', atom:'#ae81ff', property:'#a6e22e', attribute:'#a6e22e', variable2:'#9effff', meta:'#f8f8f2', string2:'#f8f8f2'} },
+    'legacy-light': { label: 'Legacy light (September)', mode: 'light', legacy:true, colors: {
+      ...colors('#ffffff', '#000000', '#770088', '#0000ff', '#000000', '#aa1111', '#116644', '#aa5500', '#008855'),
+      builtin:'#3300aa', atom:'#221199', variable2:'#0055aa', meta:'#555555', attribute:'#0000cc',
+      tag:'#117700', qualifier:'#555555', bracket:'#999977', string2:'#ff5500'} },
+    'midnight-dark': { label: 'Midnight · Dark blue', mode:'dark', colors: colors('#111c32', '#e0e9ff', '#c6b1ef', '#e8d19d', '#9dd4ed', '#b3d8b8', '#dfb1ae', '#9baec7', '#a6baf3') },
+    'forest-dark': { label: 'Forest · Dark green', mode:'dark', colors: colors('#17251f', '#dfe9df', '#c7b5e5', '#e2c58d', '#a4d4bb', '#c9d996', '#ddba93', '#98b5a0', '#9dbfdf') },
+    'graphite-dark': { label: 'Graphite · Grey', mode:'dark', colors: colors('#26282c', '#e5e6e9', '#c5b5d9', '#e0c99d', '#b0cedb', '#c9d1a0', '#d4b6a8', '#a6acae', '#b0bfe0') },
+    'alpine-dark': { label: 'Alpine · Dark', mode:'dark', colors: colors('#102b25', '#e4eee8', '#c6b8dd', '#e2c99c', '#a3d8c4', '#cad9a8', '#deb59c', '#9bbcaf', '#a7cbd9') },
   };
   const defaults = () => ({ scheme: 'auto', backgrounds: { dark: '', light: '' } });
   function normalize(value) {
@@ -45,7 +60,31 @@
     const background = preferences.backgrounds[scheme.mode] || scheme.colors.background;
     const result = { ...scheme.colors, background, mode: scheme.mode };
     for (const key of Object.keys(scheme.colors)) if (key !== 'background') result[key] = readable(result[key], background);
+    const chain = scheme === schemes['eagle-dark'] ? ['#a1e6b3','#80ce99','#62b480','#4d9c6c'] :
+      [result.variable, result.definition, result.type, result.variable2];
+    chain.forEach((color, i) => { result[`member${i + 1}`] = readable(color, background); });
     return result;
+  }
+
+  function mix(a, b, amount) {
+    const target = rgb(b);
+    return '#' + rgb(a).map((c,i) => Math.round(c + (target[i]-c)*amount).toString(16).padStart(2,'0')).join('');
+  }
+  function workspacePalette(value, light) {
+    // The custom override belongs only to editors, never other workspace areas.
+    const p = palette({...normalize(value), backgrounds:{dark:'',light:''}}, light);
+    const popup = mix(p.background,p.foreground,.08);
+    return {background:p.background, foreground:readable(p.foreground,popup), accent:readable(p.variable,popup),
+      muted:readable(p.comment,popup), popup,
+      input:mix(p.background,p.mode === 'dark' ? '#000000' : '#ffffff',.12),
+      files:mix(p.background,'#000000',p.mode === 'dark' ? .08 : .015),
+      shell:mix(p.background,'#000000',p.mode === 'dark' ? .18 : .04),
+      resources:mix(p.background,p.foreground,.025), header:mix(p.background,p.foreground,.055)};
+  }
+
+  function memberDepth(prefix) {
+    const chain = prefix.slice(-4096).match(/(?:\b[A-Za-z_]\w*\s*\.\s*)+$/);
+    return chain ? Math.min(4, (chain[0].match(/\./g) || []).length) : /\.\s*$/.test(prefix) ? 1 : 0;
   }
 
   // CodeMirror normally measures gutters synchronously. Refresh only at digit
@@ -85,23 +124,27 @@
   }
 
   function installHighlighting(CM) {
-    const python = CM.modes.python;
-    if (!python) return;
-    CM.defineMode('python', (config, options) => {
-      const base = python(config, options);
-      return { ...base, token(stream, state) {
-        const style = base.token(stream, state);
-        if (!/(?:^|\s)(?:variable|builtin|def)(?:\s|$)/.test(style || '')) return style;
-        const prefix = stream.string.slice(0, stream.start);
-        const suffix = stream.string.slice(stream.pos);
-        if (/\bclass\s+$/.test(prefix)) return `${style} eagle-type`;
-        if (style.includes('def')) return style;
-        if (/^\s*\(/.test(suffix)) return `${style} eagle-call`;
-        if (/^\s*=(?!=)/.test(suffix) && /[(,]\s*$/.test(prefix)) return `${style} eagle-parameter`;
-        if (/^(?:int|float|str|bool|bytes|list|dict|set|tuple|None|Any|Optional|Union|Callable|ClassVar|InitVar|Self|Literal|[A-Z][a-z]\w*)$/.test(stream.current())) return `${style} eagle-type`;
-        return style;
-      } };
-    });
+    for (const name of ['python','javascript']) {
+      const original = CM.modes[name];
+      if (!original) continue;
+      CM.defineMode(name, (config, options) => {
+        const base = original(config, options);
+        return { ...base, token(stream, state) {
+          const style = base.token(stream, state);
+          if (config.eagleLegacyColors || !/(?:^|\s)(?:variable(?:-2)?|property|builtin|def)(?:\s|$)/.test(style || '')) return style;
+          const prefix = stream.string.slice(0, stream.start);
+          const suffix = stream.string.slice(stream.pos);
+          if (/\bclass\s+$/.test(prefix)) return `${style} eagle-type`;
+          if (style.includes('def')) return style;
+          const depth = memberDepth(prefix);
+          if (depth) return `${style} eagle-member-${depth}${/^\s*\(/.test(suffix) ? ' eagle-call' : ''}`;
+          if (/^\s*\(/.test(suffix)) return `${style} eagle-call`;
+          if (/^\s*=(?!=)/.test(suffix) && /[(,]\s*$/.test(prefix)) return `${style} eagle-parameter`;
+          if (/^(?:int|float|str|bool|bytes|list|dict|set|tuple|None|Any|Optional|Union|Callable|ClassVar|InitVar|Self|Literal|[A-Z][a-z]\w*)$/.test(stream.current())) return `${style} eagle-type`;
+          return style;
+        } };
+      });
+    }
   }
 
   let saved = defaults(), draft = defaults(), identity = '', headers = null, generation = 0, edited = false, saving = false;
@@ -110,6 +153,14 @@
   function apply(cm, preferences = saved) {
     const wrapper = cm.getWrapperElement();
     const p = palette(preferences, lightMode());
+    const normalized = normalize(preferences);
+    const legacy = !!schemes[normalized.scheme]?.legacy;
+    if (wrapper.dataset.editorLegacy !== String(legacy)) {
+      wrapper.dataset.editorLegacy = String(legacy);
+      cm.setOption('eagleLegacyColors', legacy);
+      const mode = cm.getOption?.('mode');
+      if (mode) cm.setOption('mode', mode);
+    }
     cm.setOption('theme', 'eagle');
     wrapper.dataset.editorMode = contrast('#000000', p.background) > contrast('#ffffff', p.background) ? 'light' : 'dark';
     Object.entries(p).forEach(([key, value]) => { if (key !== 'mode') wrapper.style.setProperty(`--editor-${key}`, value); });
@@ -117,6 +168,19 @@
   function applyAll() {
     document.querySelectorAll('.CodeMirror').forEach(wrapper => { if (wrapper.CodeMirror) apply(wrapper.CodeMirror, wrapper.closest('[data-editor-appearance]') ? draft : saved); });
     const p = palette(saved, lightMode());
+    const workspace = workspacePalette(saved, lightMode());
+    Object.entries(workspace).forEach(([key,value]) => document.body.style?.setProperty(`--workspace-${key}`,value));
+    for (const [id, background] of [['editorPanel',workspace.files],['shellPanel',workspace.shell],['rightStackPanel',workspace.resources]]) {
+      const panel = document.getElementById(id);
+      if (!panel) continue;
+      const vars = {bg:background, panel:background, 'panel-hdr':workspace.header, text:workspace.foreground,
+        'text-dim':workspace.muted, 'shell-bg':workspace.shell, 'shell-text':workspace.foreground,
+        'output-bg':background, 'input-bg':workspace.input, 'tab-bg':workspace.header,
+        'tab-btn':workspace.input, btn:workspace.input, 'btn-hover':workspace.header, secondary:workspace.header,
+        border:mix(background,workspace.foreground,.25), 'border-mid':mix(background,workspace.foreground,.15)};
+      Object.entries(vars).forEach(([key,value]) => panel.style.setProperty(`--theme-${key}`,value));
+      panel.style.setProperty('--columbia-blue',workspace.accent);
+    }
     for (const id of ['editor', 'teacherStreamEditor']) {
       const ta = document.getElementById(id);
       if (ta) { ta.style.background = p.background; ta.style.color = p.foreground; }
@@ -193,10 +257,10 @@
     document.querySelectorAll('[data-editor-appearance]').forEach((panel, index) => {
       panels.push(panel);
       const id = `editor-colors-${index}`;
-      panel.innerHTML = `<h3>Editor colors</h3><p>Choose a syntax scheme and background. Colors save to your account for future sessions.</p>
+      panel.innerHTML = `<h3>Workspace colors</h3><p>Choose colors for the editor, Files, Shell and Resources. Colors save to your account for future sessions.</p>
         <label for="${id}-scheme">Syntax color scheme</label><select id="${id}-scheme"><option value="auto">Follow page theme (Eagle)</option>${Object.entries(schemes).map(([key, scheme]) => `<option value="${key}">${scheme.label}</option>`).join('')}</select>
         <div class="editor-background-control"><label for="${id}-background" data-background-label>Editor background</label><input id="${id}-background" type="color" value="#1e2229"><button class="btn secondary" type="button" data-background-reset>Use scheme background</button></div>
-        <p class="editor-colors-help">Blue &amp; Gold avoids red/green distinctions. High contrast uses minimal color. Keywords are bold; types are underlined. Text contrast adjusts to your background. Dark and light backgrounds are saved separately.</p>
+        <p class="editor-colors-help">Each profile supplies a default editor background and matching workspace tones. The background override changes only editors. Legacy restores September token colors with readable contrast. Blue &amp; Gold avoids red/green distinctions; High contrast uses minimal color. Dark and light overrides are saved separately.</p>
         <div class="editor-color-preview" aria-label="Read-only Python color preview"></div><button class="btn run" type="button" data-appearance-save>Save editor colors</button><p role="status" aria-live="polite"></p>`;
       const preview = panel.querySelector('.editor-color-preview');
       if (window.CodeMirror) window.CodeMirror(preview, { value: 'from dataclasses import dataclass\n\n# A typed record and function contract\n@dataclass\nclass Student:\n    name: str\n    score: float = 95.5\n\ndef welcome(student: Student) -> str:\n    return f"Hello, {student.name}!"\n\nprint(welcome(Student("Eagle")))', mode: 'python', readOnly: 'nocursor', lineNumbers: true, cursorBlinkRate: -1, dragDrop: false, viewportMargin: 20 });
@@ -215,5 +279,5 @@
     syncPanels();
     contextChanged();
   }
-  return { schemes, normalize, palette, contrast, attachGeometry, installHighlighting, apply, applyAll, init };
+  return { schemes, normalize, palette, workspacePalette, memberDepth, contrast, attachGeometry, installHighlighting, apply, applyAll, init };
 });

@@ -1392,15 +1392,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const previousId = currentTeacherClassId;
       const changed = !!previousId && previousId !== nextId;
       if (changed) {
+        // Stop and cancel pending sends while the previous class is still
+        // current. Never carry a broadcast into another class implicitly.
+        setTeacherStreamingEnabled(false);
         emitLeaveClassRoom(previousId);
-        if (teacherStreamingEnabled && socket) {
-          socket.emit('teacher_stream_status', {
-            token: TEACHER_TOKEN,
-            role: 'teacher',
-            class_id: previousId,
-            active: false,
-          });
-        }
       }
       currentTeacherClassId = nextId;
       activeAssignmentsClassId = nextId;
@@ -3517,12 +3512,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
     
     function stopTeacherBroadcast() {
+      if (teacherBroadcastFlushTimer) {
+        clearTimeout(teacherBroadcastFlushTimer);
+        teacherBroadcastFlushTimer = null;
+      }
       if (teacherBroadcastActive) {
         const activeClassId = getCurrentClassContext()?.id;
-        if (teacherBroadcastFlushTimer) {
-          clearTimeout(teacherBroadcastFlushTimer);
-          teacherBroadcastFlushTimer = null;
-        }
         teacherBroadcastActive = false;
         if (socket && activeClassId) {
           socket.emit('teacher_stream_status', {
