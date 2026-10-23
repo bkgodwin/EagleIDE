@@ -1,0 +1,35 @@
+/* Workspace profiles can differ from the page theme. Inherit their ink along
+   with their surfaces, including Home/AI prose and native form placeholders. */
+[data-workspace-palette] { color:var(--theme-text); }
+[data-workspace-palette="light"] { color-scheme:light; }
+[data-workspace-palette="dark"] { color-scheme:dark; }
+:is(#editorPanel,#shellPanel,#rightStackPanel)[data-workspace-palette] a { color:var(--columbia-blue); }
+:is(#editorPanel,#shellPanel,#rightStackPanel)[data-workspace-palette] ::placeholder { color:var(--theme-text-dim); opacity:1; }
+#editorPanel[data-workspace-palette] .file-sidebar-breadcrumb { background:var(--theme-panel-hdr); }
+
+/* Keep semantic colors legible on light profiles as well as dark profiles. */
+#shellPanel[data-workspace-palette] .sys-msg { color:var(--theme-system); }
+#shellPanel[data-workspace-palette] .shell-warning { color:var(--theme-warning); }
+#shellPanel[data-workspace-palette] .shell-error { color:var(--theme-danger); }
+#shellPanel[data-workspace-palette] .shell-user-input { color:var(--theme-success); }
+#rightStackPanel[data-workspace-palette] .assignment-ai-status:is(.queued,.running) { color:var(--theme-info); }
+#rightStackPanel[data-workspace-palette] :is(.assignment-ai-status.failed,.assignment-not-turned-in) { color:var(--theme-danger); }
+#rightStackPanel[data-workspace-palette] .assignment-ai-status.completed { color:var(--theme-success); }
+#rightStackPanel[data-workspace-palette] .assignment-feedback-section.is-deductions h5 { color:var(--theme-warning); }
+
+/* Embedded reference headings otherwise retain full-wiki dark-page colors. */
+#rightStackPanel[data-workspace-palette] :is(.wiki-article-body,.wiki-markdown,.wiki-card) :is(h1,h2,h3,h4) { color:var(--theme-text); }
+#rightStackPanel[data-workspace-palette] :is(.wiki-tree-meta,figcaption) { color:var(--theme-text-dim); }
+
+/* Rendered Markdown has its own stable profile background, independent of the
+   optional editor-only override and the CDN highlight.js page theme. */
+:is(#editorPanel,#shellPanel,#rightStackPanel)[data-workspace-palette] .hljs { color:var(--workspace-code-foreground); background:var(--workspace-code-background); }
+:is(#editorPanel,#shellPanel,#rightStackPanel)[data-workspace-palette] .hljs * { color:inherit; }
+:is(#editorPanel,#shellPanel,#rightStackPanel)[data-workspace-palette] .hljs-subst { color:var(--workspace-code-foreground); }
+:is(#editorPanel,#shellPanel,#rightStackPanel)[data-workspace-palette] :is(.hljs-keyword,.hljs-selector-tag,.hljs-meta) { color:var(--workspace-code-keyword); }
+:is(#editorPanel,#shellPanel,#rightStackPanel)[data-workspace-palette] :is(.hljs-title,.hljs-section) { color:var(--workspace-code-definition); }
+:is(#editorPanel,#shellPanel,#rightStackPanel)[data-workspace-palette] :is(.hljs-variable,.hljs-attr,.hljs-property,.hljs-params) { color:var(--workspace-code-variable); }
+:is(#editorPanel,#shellPanel,#rightStackPanel)[data-workspace-palette] :is(.hljs-string,.hljs-regexp) { color:var(--workspace-code-string); }
+:is(#editorPanel,#shellPanel,#rightStackPanel)[data-workspace-palette] .hljs-number { color:var(--workspace-code-number); }
+:is(#editorPanel,#shellPanel,#rightStackPanel)[data-workspace-palette] :is(.hljs-type,.hljs-built_in,.hljs-literal) { color:var(--workspace-code-type); }
+:is(#editorPanel,#shellPanel,#rightStackPanel)[data-workspace-palette] :is(.hljs-comment,.hljs-quote) { color:var(--workspace-code-comment); }

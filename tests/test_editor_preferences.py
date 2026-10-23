@@ -44,7 +44,7 @@ class EditorPreferencesTests(unittest.TestCase):
                 self.assertEqual(eagle._load_config()['admin_editor_preferences'], next_value)
 
     def test_new_profiles_round_trip_without_changing_existing_background_overrides(self):
-        for scheme in ('legacy-dark', 'legacy-light', 'midnight-dark', 'forest-dark', 'graphite-dark', 'alpine-dark'):
+        for scheme in sorted(eagle.EDITOR_COLOR_SCHEMES):
             for token in (self.fixture.student_token, self.fixture.teacher_token):
                 header = 'X-User-Token' if token == self.fixture.student_token else 'X-Teacher-Token'
                 value = {**self.value, 'scheme': scheme}

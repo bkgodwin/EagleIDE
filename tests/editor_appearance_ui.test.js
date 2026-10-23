@@ -23,9 +23,39 @@ test('profile surfaces keep their tone when only the editor background is overri
     const normal = appearance.workspacePalette({scheme},false);
     assert.deepEqual(normal,appearance.workspacePalette({scheme,backgrounds:{dark:'#ff0000',light:'#0000ff'}},false));
     assert.notEqual(normal.files, normal.shell); assert.notEqual(normal.shell, normal.resources);
-    for (const surface of ['files','shell','resources','header','popup']) {
-      for (const ink of ['foreground','muted','accent']) assert.ok(appearance.contrast(normal[ink],normal[surface]) >= 4.5,`${scheme} ${ink}/${surface}`);
+    for (const surface of ['files','shell','resources','header','popup','input','selection']) {
+      for (const ink of ['foreground','muted','accent','danger','warning','success','info','system']) assert.ok(appearance.contrast(normal[ink],normal[surface]) >= 4.5,`${scheme} ${ink}/${surface}`);
     }
+  }
+});
+
+test('indexed and called receivers preserve member depth without counting their arguments', () => {
+  for (const prefix of ['self.elements[element2].', 'self.elements[0][1].',
+    'self.elements[self.lookup["]."]].', 'self.elements[index.get("[)")].',
+    'self.elements["a\\\"].b"].', 'self.get_elements(item.value)[index].',
+    'answer = self . elements [ element2 ] .', 'f"Mass: {self.elements[element2].']) {
+    assert.equal(appearance.memberDepth(prefix),2,prefix);
+  }
+  assert.equal(appearance.memberDepth('self.elements[element2].atomic_mass.'),3);
+  assert.equal(appearance.memberDepth('root.one()[x].two(thing.value).three[y].four.'),4);
+  assert.equal(appearance.memberDepth('root?.one[index]?.two.'),3);
+  assert.equal(appearance.memberDepth('print(self.elements[index].atomic_mass), other.'),1);
+  assert.equal(appearance.memberDepth('root.items[index + '),0);
+  assert.equal(appearance.memberDepth('x'.repeat(100000)+' self.items[0].'),2);
+});
+
+test('new profiles are distinct and nonlegacy member shades progressively darken', () => {
+  const names=['ember-rose-dark','pastel-aura-dark','nightglass-dark','cinder-dark','gilded-night-dark',
+    'fern-dark','harbor-paper-light','phosphor-amber-dark','meadow-fog-dark','clay-study-dark',
+    'mineral-ink-dark','crimson-dark','industrial-dark'];
+  for (const name of names) assert.ok(appearance.schemes[name],name);
+  assert.equal(appearance.schemes['alpine-dark'].colors.background,'#0b1b17');
+  assert.equal(appearance.schemes['crimson-dark'].colors.background,'#290e17');
+  for (const [scheme,value] of Object.entries(appearance.schemes)) {
+    if (value.legacy || scheme.startsWith('mono-')) continue;
+    const p=appearance.palette({scheme},false);
+    assert.equal(new Set([p.member1,p.member2,p.member3,p.member4]).size,4,scheme);
+    for (let n=1;n<4;n++) assert.ok(appearance.contrast(p['member'+n],'#000000')>appearance.contrast(p['member'+(n+1)],'#000000'),`${scheme} level ${n}`);
   }
 });
 

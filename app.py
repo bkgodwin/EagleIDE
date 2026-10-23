@@ -3288,7 +3288,10 @@ def update_account_profile():
 
 EDITOR_COLOR_SCHEMES = {"auto", "eagle-dark", "eagle-light", "ocean-dark", "paper-light",
                         "accessible-dark", "accessible-light", "mono-dark", "mono-light",
-                        "legacy-dark", "legacy-light", "midnight-dark", "forest-dark", "graphite-dark", "alpine-dark"}
+                        "legacy-dark", "legacy-light", "midnight-dark", "forest-dark", "graphite-dark", "alpine-dark",
+                        "ember-rose-dark", "pastel-aura-dark", "nightglass-dark", "cinder-dark", "gilded-night-dark",
+                        "fern-dark", "harbor-paper-light", "phosphor-amber-dark", "meadow-fog-dark", "clay-study-dark",
+                        "mineral-ink-dark", "crimson-dark", "industrial-dark"}
 
 
 def _validated_editor_preferences(data):
