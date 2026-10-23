@@ -2934,6 +2934,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       window.ClassroomSignals?.onAuthChanged?.();
       window.StudentNotebook?.onAuthChanged?.();
       window.StudentDashboard?.onAuthChanged?.();
+      window.AdminCleanup?.onAuthChanged?.();
       updateSendFileButtonVisibility();
       if (TEACHER_TOKEN) startTeacherClassroomPolling();
       else stopTeacherClassroomPolling();
@@ -3669,6 +3670,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     // Admin settings modal handlers
     document.getElementById('adminSettingsBtn').addEventListener('click', () => {
       if (!ADMIN_TOKEN) return;
+      window.AdminCleanup?.pause?.();
+      document.getElementById('settingsSaveBtn').disabled = false;
+      document.getElementById('settingsSaveBtn').textContent = 'Save Settings';
       document.getElementById('adminSettingsModal').style.display = 'flex';
       syncShellDebugSettings();
       document.querySelectorAll('[data-admin-settings-section]').forEach(button => {
@@ -3724,11 +3728,22 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     });
 
     document.querySelectorAll('[data-admin-settings-section]').forEach(button => {
-      button.addEventListener('click', () => {
+      button.addEventListener('click', async () => {
         const section = button.dataset.adminSettingsSection;
         document.querySelectorAll('[data-admin-settings-section]').forEach(item => item.classList.toggle('active', item === button));
         document.querySelectorAll('[data-admin-settings-pane]').forEach(pane => pane.classList.toggle('active', pane.dataset.adminSettingsPane === section));
         if (section === 'python-runtime') loadPythonRuntimeAdmin();
+        window.AdminCleanup?.pause?.();
+        const save = document.getElementById('settingsSaveBtn');
+        save.textContent = section === 'cleanup' ? 'Save cleanup rules' : 'Save Settings';
+        save.disabled = section === 'cleanup';
+        if (section === 'cleanup') {
+          const who = ADMIN_TOKEN;
+          try {
+            await window.EagleFeatures.load('adminCleanup');
+            if (who === ADMIN_TOKEN && document.getElementById('cleanupPane').classList.contains('active')) window.AdminCleanup.open();
+          } catch (error) { document.getElementById('cleanupStatus').textContent = 'Could not load cleanup controls. Reopen this tab to retry.'; }
+        }
       });
     });
 
@@ -3830,6 +3845,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     });
 
     document.getElementById('settingsCancelBtn').addEventListener('click', () => {
+      window.AdminCleanup?.pause?.();
       document.getElementById('adminSettingsModal').style.display = 'none';
     });
 
@@ -4171,6 +4187,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
 
     document.getElementById('settingsSaveBtn').addEventListener('click', async () => {
+      if (document.getElementById('cleanupPane')?.classList?.contains('active')) {
+        await window.AdminCleanup?.save?.();
+        return;
+      }
       // Page settings
       const page_title = document.getElementById('pageTitleInput').value.trim();
       const topbar_color = document.getElementById('topBarColorInput').value.trim();

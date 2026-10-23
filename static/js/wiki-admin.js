@@ -1050,7 +1050,7 @@
             try {
               await reader().fetchJson(`/api/admin/wiki/history/${entry.id}/restore`, {method:'POST',headers:adminHeaders(true),body:'{}'});
               clearSelection(); await loadTree(); await loadHomeSettings(); await reader().loadHome({quiet:true});
-              await loadHistory(); progress('Wiki restored. The previous state remains available for seven days.');
+              await loadHistory(); progress('Wiki restored. The previous state is retained under the saved recovery-point cleanup policy.');
             } catch (error) { progress(error.message,true); button.disabled = false; }
           });
           row.append(button);

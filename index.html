@@ -43,7 +43,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js" integrity="sha384-44q2s9jxk8W5N9gAB0yn7UYLi9E2oVw8eHyaTZLkDS3WuZM/AttkAiVj6JoZuGS4" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js" integrity="sha384-jgkY4GMNWfQcLLIoP1vg3FWXflDrRhcSXGBW6ONIWC2SOIv5H1Pa57sXs+aomCuZ" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js" integrity="sha384-EO/jSdjpPTVnKfaKudbmOTZBYv471ACLOeLdy0zhCEJrQAtjgUSCbn/Cc+9QWjIx" crossorigin="anonymous"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261022-wiki-manager-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261023-cleanup-1">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -1600,7 +1600,7 @@
       </section>
       <section class="wiki-manager-utility-panel" id="wikiAdminHistoryPanel" hidden>
         <h3>Wiki edit history</h3>
-        <p>Each edit creates a milestone of the wiki immediately before that edit. Milestones expire after seven days. The audit log remains after milestones expire. Rollback preserves current bookmarks, class features, and analytics.</p>
+        <p>Each edit creates a milestone of the wiki immediately before that edit. Recovery-point and audit retention are managed in Admin Settings → Trash cleanup; automatic deletion starts disabled. Rollback preserves current bookmarks, class features, and analytics.</p>
         <button class="btn secondary" id="wikiAdminHistoryRefresh" type="button">Refresh history</button>
         <div id="wikiAdminHistoryEntries" aria-live="polite"></div>
         <button class="btn secondary" id="wikiAdminHistoryOlder" type="button" hidden>Older edits</button>
@@ -1784,6 +1784,7 @@
           <button type="button" data-admin-settings-section="python-runtime">Python Runtime</button>
           <button type="button" data-admin-settings-section="runtime">Web Runtime</button>
           <button type="button" data-admin-settings-section="access">Access</button>
+          <button type="button" data-admin-settings-section="cleanup">Trash cleanup</button>
         </nav>
         <div id="siteWideSettingsSection" class="admin-settings-content">
           <section class="admin-settings-pane active" data-admin-settings-pane="general">
@@ -1909,6 +1910,18 @@
             <label class="admin-setting-toggle"><input type="checkbox" id="registrationEnabledModal"><span><strong>Allow student registration</strong><small>Students can create their own account from the sign-in dialog.</small></span></label>
             <div class="admin-wiki-settings-card"><div><strong>Users and teachers</strong><span>Create teacher accounts, review class memberships, reset passwords, and manage storage.</span></div><button class="btn secondary" id="settingsOpenUsersBtn" type="button">Open User Management</button></div>
           </section>
+          <section class="admin-settings-pane" data-admin-settings-pane="cleanup" id="cleanupPane">
+            <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Data retention</span><h4>Trash cleanup</h4><p>Choose which old data EagleIDE permanently removes. Everything starts disabled. Saved rules run hourly; Clean now applies the same age limits.</p></div>
+            <label class="admin-setting-toggle"><input type="checkbox" role="switch" id="cleanupEnabled"><span><strong>Enable automatic data cleanup</strong><small>Changes take effect after Save cleanup rules. Disabling stops further deletions in an active run.</small></span></label>
+            <div id="cleanupRules" class="cleanup-rules" aria-label="Retention rules"></div>
+            <p class="cleanup-help">Active accounts (including disabled accounts), active user files, current wiki content, and the cleanup ledger are protected. Existing storage quotas and short-lived execution/upload limits still apply.</p>
+            <div class="cleanup-actions"><button type="button" class="btn run" id="cleanupRunNow" disabled>Clean now</button><button type="button" class="btn secondary" id="cleanupRefresh">Refresh</button><a href="/static/docs/data-cleanup.html" target="_blank" rel="noopener">Cleanup guide</a></div>
+            <p id="cleanupStatus" role="status" aria-live="polite">Open this section to load saved cleanup rules.</p>
+            <h5>Recent cleanup runs</h5><div id="cleanupRuns" class="cleanup-run-list"></div>
+            <h5>Permanent deletion log</h5><p class="cleanup-help">This administrator-only log retains file names and paths indefinitely, which can include personal information. It stores no file contents and is never removed by cleanup. Planned or failed entries do not confirm deletion.</p>
+            <div class="cleanup-log-scroll" tabindex="0" aria-label="Cleanup deletion log"><table class="cleanup-log-table"><thead><tr><th>Time</th><th>Data type / action</th><th>Name and path</th><th>Result</th></tr></thead><tbody id="cleanupLog"></tbody></table></div>
+            <div class="cleanup-actions"><button type="button" class="btn secondary" id="cleanupNewest">Newest entries</button><button type="button" class="btn secondary" id="cleanupOlder" disabled>Older entries</button></div>
+          </section>
         </div>
       </div>
       <footer class="admin-settings-actions"><span id="adminSettingsStatus" role="status" aria-live="polite"></span><button class="btn run" id="settingsSaveBtn" type="button">Save Settings</button></footer>
@@ -1983,7 +1996,7 @@
 
   <script src="/static/js/app.js"></script>
   <script src="/static/js/connection.js?v=20261011-files-5"></script>
-  <script src="/static/js/feature-loader.js?v=20261022-wiki-manager-1"></script>
+  <script src="/static/js/feature-loader.js?v=20261023-cleanup-1"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20261021-security-1"></script>
   <script src="/static/js/layout.js?v=20261011-files-5"></script>
@@ -2000,13 +2013,13 @@
   <script src="/static/js/assignment-workflow.js?v=20261021-security-1"></script>
   <script src="/static/js/assignment-development.js?v=20261015-assignment-folders-1"></script>
   <script src="/static/js/teacher-assignments.js?v=20261015-assignment-folders-1"></script>
-  <script src="/static/js/app-core.js?v=20261022-wiki-manager-1"></script>
+  <script src="/static/js/app-core.js?v=20261023-cleanup-1"></script>
   <script src="/static/js/step-mode.js?v=20261011-files-5"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20261021-security-1"></script>
-  <script src="/static/js/wiki-reader.js?v=20261022-wiki-manager-1"></script>
+  <script src="/static/js/wiki-reader.js?v=20261023-cleanup-1"></script>
   <script src="/static/js/external-tools.js?v=20261022-wiki-manager-1"></script>
   <script src="/static/js/lesson-plans.js?v=20261021-security-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20261022-wiki-manager-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20261023-cleanup-1"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20261011-files-5"></script>
   <script src="/static/js/notebook-sync.js?v=20261011-notebook-topics-1"></script>

@@ -140,8 +140,8 @@ def append_classroom_event(
     with _classroom_events_lock:
         events = _read_json_list(CLASSROOM_EVENTS_FILE)
         events.append(entry)
-        cutoff = int(time.time()) - (CLASSROOM_RETENTION_DAYS * 24 * 3600)
-        events = [row for row in events if int(row.get("ts", 0)) >= cutoff][-MAX_CLASSROOM_EVENTS:]
+        # Age retention is administered by data_cleanup; this is a size budget.
+        events = events[-MAX_CLASSROOM_EVENTS:]
         try:
             _write_json_list(CLASSROOM_EVENTS_FILE, events)
         except Exception:

@@ -23,7 +23,7 @@ def main():
         for key, folder in [('EAGLEIDE_TOOL_DATA_DIR', 'tools'), ('EAGLEIDE_NETWORK_DATA_DIR', 'network'),
                             ('EAGLEIDE_WIKI_DATA_DIR', 'wiki'), ('EAGLEIDE_WIKI_BACKUP_DIR', 'backups'),
                             ('EAGLEIDE_LESSON_PLAN_DATA_DIR', 'plans'), ('EAGLEIDE_BACKGROUND_ASSETS_DIR', 'backgrounds'),
-                            ('EAGLEIDE_ASSIGNMENT_SUBMISSIONS_DIR', 'submissions')]:
+                            ('EAGLEIDE_ASSIGNMENT_SUBMISSIONS_DIR', 'submissions'), ('EAGLEIDE_CLEANUP_DATA_DIR', 'cleanup')]:
             os.environ[key] = str(root / folder)
         from config import DEFAULT_CONFIG
         key = Fernet.generate_key()
@@ -80,6 +80,16 @@ def main():
                     ('Start with patterns','Build a loop','Make it your own','Practice & reflect','Checkpoint')))}
         eagle.app.extensions['eagle_lesson_plan_store'].save_plan('agenda-class', week, {'days': days})
         eagle.app.extensions['eagle_lesson_plan_store'].set_plan_source('agenda-section','agenda-class')
+        if os.environ.get('EAGLE_CLEANUP_BROWSER_FIXTURE') == '1':
+            import time
+            eagle._ensure_workspace_system_dirs(student_root)
+            for name, age in [('cleanup-old.py', 40), ('cleanup-recent.py', 0)]:
+                original = student_root / name
+                original.write_text('print("synthetic cleanup fixture")', encoding='utf-8')
+                target, _ = eagle._move_workspace_item_to_trash(student_root, original)
+                metadata = eagle._load_trash_metadata(student_root)
+                metadata[target.relative_to(student_root).as_posix()]['deleted_at'] = time.time() - age * 86400
+                eagle._save_trash_metadata(student_root, metadata)
         from werkzeug.serving import make_server
         server = make_server('127.0.0.1', 0, eagle.app, threaded=True)
         print(json.dumps({'url': f'http://127.0.0.1:{server.server_port}', 'teacher': teacher, 'student': student,

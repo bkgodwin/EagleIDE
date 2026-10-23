@@ -38,7 +38,12 @@ Required runtime components:
 |-- lesson_plan_pdf.py           Bounded all-class weekly PDFs from published plans and saved local media
 |-- wiki_features.py             Public wiki and protected admin/teacher/student HTTP routes
 |-- wiki_store.py                Wiki SQLite catalog, search, assets, drafts, revisions, and backups
-|-- wiki_history.py              Private edit audit, deduplicated seven-day milestones, and admin rollback
+|-- wiki_history.py              Private edit audit, managed recovery milestones, and admin rollback
+|-- data_cleanup.py              Opt-in admin retention worker, routes, ownership guards, and scheduling
+|-- cleanup_store.py             Private policy, observation clocks, and permanent SQLite deletion receipts
+|-- cleanup_files.py             Bounded link-refusing, receipted file and JSON cleanup operations
+|-- cleanup_accounts.py          Deleted-account remnants across owned classroom/workspace stores
+|-- cleanup_wiki.py              Catalog-aware wiki Trash, backups, recovery, audit and analytics expiry
 |-- network_features.py          Optional simulator auth, topology, class access, and lab HTTP routes
 |-- network_store.py             Validated simulator persistence, reachability, and lab grading
 |-- network_content.py           Source-controlled example topologies, labs, and CLI reference
@@ -482,8 +487,8 @@ Checked-in seed/reference data is limited to files such as `challenges.csv` and 
   `user_files/`, and `sandboxes/`; each user workspace
   has a protected visible `Trash/` folder and private `.eagleide/trash.json`
   restore metadata. Ordinary file-browser and teacher-audit deletes move items to
-  Trash, top-level items restore to their original paths, and expired items are
-  purged after seven days during startup or file-tree access.
+  Trash and top-level items restore to their original paths. Age expiry is
+  administered by data_cleanup; startup and file-tree access never purge Trash.
 - `lesson_plans/` (weekly plans, class-source mappings, and revocable public-link tokens)
 - `background_assets/` (administrator IDE/home backgrounds and per-class home backgrounds)
 - `wiki_data/` (SQLite catalog, Markdown, media, drafts, and revisions) and `wiki_backups/`
@@ -491,6 +496,7 @@ Checked-in seed/reference data is limited to files such as `challenges.csv` and 
 - `challenge_scores.json` and `leaderboard.csv`
 - `classroom_events.json` and `classroom_signals.json`
 - server/sign-in event JSON files and `server.log`
+- `cleanup_data/cleanup.sqlite3` (private policy, observation clocks, permanent deletion ledger)
 
 Treat all of these as runtime data, not source fixtures. Do not delete, reset, commit, or hand-edit them unless the task explicitly concerns persistence or recovery. Some runtime files are not currently listed in `.gitignore`, so always inspect `git status` before finishing.
 
@@ -505,8 +511,10 @@ backup directory is inside the wiki root, history uses its sibling
 autosave, media deletion, and restore) captures the state before the edit under
 the wiki write lock; chunk transport alone creates no milestone. Upload sessions
 belong to their originating editor; only administrators may upload restores.
-Milestones are usable for seven days, pruned on startup, edits, and hourly idle
-maintenance; shared blobs remain until their last live reference expires. The
+Milestone expiry is administered by data_cleanup and starts disabled. The
+suggested enabled age is 14 days; shared blobs remain until their last retained
+reference expires. Standalone WikiHistory callers retain the legacy seven-day
+default unless they supply the app's retention provider. The
 20 GiB file/manifest budget rejects new edits when full rather than discarding
 unexpired milestones. The audit retains actor/action/target/status without
 source or credentials and survives rollback and milestone expiry. Whole-wiki
@@ -616,6 +624,35 @@ os.chmod(base / "config.txt", 0o600)
 Both generated credential files must remain uncommitted. Existing encrypted administrator credentials migrate atomically at startup without changing the password; keep a private configuration/key backup before upgrading. No checked-in administrator password is accepted by default.
 
 ## Security controls and maintenance
+
+`data_cleanup.py` owns the admin-only `/api/admin/cleanup`, `/policy` and `/run`
+routes. The master switch and all ten type switches default off; manual runs
+apply saved retention ages too. `cleanup_store.py` retains private policy,
+successful account-deletion timestamps, first-observation grace periods and
+permanent deletion receipts under `cleanup_data/` (override
+`EAGLEIDE_CLEANUP_DATA_DIR`). Never expose or expire this ledger. File names and
+paths are intentionally retained admin-only; never copy deleted contents into it.
+Every physical unlink must commit a planned receipt first and record its outcome.
+Ledger failure stops further deletes. No arbitrary cleanup path API is allowed.
+
+Use existing store locks, strict readable ownership stores, and unresolved-path
+link/containment checks before deleting. Disabled/recreated accounts are live;
+old orphan data receives a fresh grace period. Account saves check the manager's
+busy identity/workspace guard while a deleted account is purged. Preserve current
+classroom and shared/peer-owned content; this is not universal identity erasure.
+Known runtime disposal and byte/count quotas remain independent. `WikiHistory`
+must use the retention provider and only the cleanup worker may age-prune its
+managed files, so ordinary edits cannot bypass the permanent receipt ledger.
+
+The lazy `static/js/admin-cleanup.js` integrates through Admin Settings and
+`EagleIDE.getContext()`, never browser credential/history storage. Guard stale
+account/load responses and preserve a draft's original policy revision during
+polling. Tests: `tests/test_data_cleanup.py`, `tests/admin_cleanup_ui.test.js`.
+For opt-in Playwright checks, run `tests/lesson_plan_browser_fixture.py` with
+`EAGLE_CLEANUP_BROWSER_FIXTURE=1`, then `tests/data_cleanup_browser_checks.js`
+using the existing `EAGLE_AGENDA_TEST_URL`, `EAGLE_AGENDA_BROWSER` and optional
+private `EAGLE_AGENDA_SCREENSHOTS` variables. Never target production. Operator
+scope/defaults/deployment are in `static/docs/data-cleanup.html`.
 
 `security_controls.py` owns explicit proxy trust, bounded attempt windows and access-token lifetimes. `credential_security.py` owns versioned long-password-safe hashes and legacy bcrypt verification. Do not replace an existing token's issue timestamp during profile updates or renew its absolute lifetime. `media_security.py` strips metadata from JPEG/PNG/GIF/WebP while bounding decoded frames and pixels.
 

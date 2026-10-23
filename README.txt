@@ -348,7 +348,8 @@ Features:
 - Checkbox-only multi-selection: tapping a file opens it and tapping a folder enters it without changing the selected set.
 - A protected Trash folder for every account. Normal deletes move items to Trash,
   top-level trash items can be restored to their original location, and students
-  can choose Delete Forever. Items remaining in Trash expire after seven days.
+  can choose Delete Forever. Automatic expiry is disabled until the administrator
+  enables User file Trash in Settings > Trash cleanup and saves retention rules.
 - Scaled previews for PNG, JPEG, GIF, and WebP images
 - Safe metadata views for .db, .sqlite, and .sqlite3 database artifacts
 
@@ -1362,8 +1363,9 @@ edit rolls back wiki content/settings and creates a new milestone of the state
 being replaced. Current bookmarks, analytics, and class features survive where
 their target nodes still exist. The private audit log survives all rollback.
 
-Milestones expire after seven days. Cleanup runs at startup, during editing and
-hourly even while idle. Unchanged media are shared across milestones. A 20 GiB
+Milestone expiry is managed in Settings > Trash cleanup and starts disabled
+(suggested age: 14 days). Enabled cleanup runs hourly or with Clean now.
+Unchanged media are shared across milestones. A 20 GiB
 history file/manifest budget blocks new edits if necessary to retain unexpired
 milestones. History normally lives in wiki_backups/history; if the configured
 backup directory is inside the wiki directory, it uses the sibling hidden
@@ -1374,3 +1376,19 @@ This update also disconnects revoked classroom sockets on the server, rechecks
 classroom recipients before broadcasts, and allows Home scrolling to continue
 when the pointer is over an agenda day. The other open security items described
 in docs/security/remediation-2026-10.md still apply.
+
+ADMINISTRATOR TRASH CLEANUP (October 2026)
+-----------------------------------------
+Settings > Trash cleanup provides a master enable switch, independent switches
+and retention days for ten data types, Clean now, recent runs and a permanent
+file-name/path deletion log. All switches start off. Save cleanup rules before
+running; Clean now deletes only data older than saved enabled limits. Disable
+and save to stop further operations. Existing quotas/count caps and successful
+runtime/upload disposal still apply independently.
+
+The private cleanup_data/cleanup.sqlite3 holds policy, clocks and permanent
+receipts; EAGLEIDE_CLEANUP_DATA_DIR overrides its directory. Preserve and protect
+it with instance backups. Paths in its permanent admin-only log may contain
+personal information; deleted file/record contents are not copied into the log.
+See static/docs/data-cleanup.html for defaults, exact scope, failure handling,
+deleted-account limitations, deployment and operator instructions.

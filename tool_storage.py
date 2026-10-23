@@ -39,6 +39,7 @@ class ToolStorage:
         try:
             db.row_factory = sqlite3.Row
             db.execute('PRAGMA foreign_keys=ON')
+            db.execute('PRAGMA secure_delete=ON')
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS accounts (
                   id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1,

@@ -1,4 +1,4 @@
-"""Private, deduplicated seven-day wiki recovery points and durable edit audit.
+"""Private, deduplicated wiki recovery points and separately retained edit audit.
 
 History lives outside the replaceable wiki root. Rollback never rewinds the audit
 or imports old bookmarks, class grants, or search analytics.
@@ -43,8 +43,9 @@ def _maintenance():
 
 
 class WikiHistory:
-    def __init__(self, store):
+    def __init__(self, store, *, retention_provider=None):
         self.store = weakref.proxy(store)
+        self.retention_provider = retention_provider
         self.root = store.backup_dir / "history"
         if self.root.resolve().is_relative_to(store.base_dir.resolve()):
             self.root = store.base_dir.parent / ("." + store.base_dir.name + "-history")
@@ -90,25 +91,37 @@ class WikiHistory:
         finally:
             conn.close()
 
-    def prune(self):
+    def retention(self):
+        return self.retention_provider() if self.retention_provider is not None else RETENTION_SECONDS
+
+    def prune(self, *, max_age_seconds=None, now=None, delete_file=None):
+        # The app's manager supplies audited deletion callbacks. Editing and the
+        # legacy idle timer must not bypass disabled admin rules or the ledger.
+        if max_age_seconds is None and self.retention_provider is not None:
+            return 0
+        age = RETENTION_SECONDS if max_age_seconds is None else max_age_seconds
+        current = time.time() if now is None else now
+        remove = delete_file or (lambda path: path.unlink(missing_ok=True))
         with self.lock, self.connect() as conn:
-            expired = [row[0] for row in conn.execute("SELECT id FROM milestones WHERE created<=?", (time.time()-RETENTION_SECONDS,))]
+            expired = [row[0] for row in conn.execute("SELECT id FROM milestones WHERE created<=?", (current-age,))]
             for identity in expired:
                 conn.execute("DELETE FROM refs WHERE id=?", (identity,))
                 conn.execute("DELETE FROM milestones WHERE id=?", (identity,))
-                (self.manifests / (identity + ".json")).unlink(missing_ok=True)
+                conn.commit()
+                remove(self.manifests / (identity + ".json"))
             for row in conn.execute("SELECT digest FROM blobs WHERE digest NOT IN (SELECT digest FROM refs)").fetchall():
-                (self.blobs / row[0]).unlink(missing_ok=True)
+                remove(self.blobs / row[0])
                 conn.execute("DELETE FROM blobs WHERE digest=?", (row[0],))
             # A crash can leave a file before its catalog transaction committed.
             known = {row[0] for row in conn.execute("SELECT digest FROM blobs")}
             for path in self.blobs.iterdir():
-                if path.name not in known:
-                    path.unlink(missing_ok=True)
+                if path.name not in known and path.stat().st_mtime <= current-age:
+                    remove(path)
             live = {row[0]+".json" for row in conn.execute("SELECT id FROM milestones")}
             for path in self.manifests.iterdir():
-                if path.name not in live:
-                    path.unlink(missing_ok=True)
+                if path.name not in live and path.stat().st_mtime <= current-age:
+                    remove(path)
+            return len(expired)
 
     def capture(self, actor, action, target=""):
         """Persist the state BEFORE an edit, or refuse the edit on failure."""
@@ -177,16 +190,18 @@ class WikiHistory:
                 LEFT JOIN milestones m ON a.id=m.id
                 WHERE (?=0 OR a.seq<?) ORDER BY a.seq DESC LIMIT 100""", (before,before)).fetchall()
             now = time.time()
-            return [dict(row, can_restore=row["milestone_created"] is not None and row["created"]+RETENTION_SECONDS>now,
-                         expires_at=row["created"]+RETENTION_SECONDS) for row in rows]
+            retention = self.retention()
+            return [dict(row, can_restore=row["milestone_created"] is not None and (retention is None or row["created"]+retention>now),
+                         expires_at=row["created"]+retention if retention is not None else None) for row in rows]
 
     def restore(self, identity):
         if not re.fullmatch(r"[0-9a-f]{32}", identity):
             raise ValueError("Invalid milestone")
         with self.lock, self.connect() as conn:
             row = conn.execute("SELECT created FROM milestones WHERE id=?", (identity,)).fetchone()
-            if not row or row[0]+RETENTION_SECONDS <= time.time():
-                raise ValueError("Milestone is unavailable or older than seven days")
+            retention = self.retention()
+            if not row or (retention is not None and row[0]+retention <= time.time()):
+                raise ValueError("Recovery point is unavailable or past its retention limit")
             manifest = json.loads((self.manifests / (identity+".json")).read_text(encoding="utf-8"))
             live = self.store.backup_manifest()
             valid_ids = {node["id"] for node in manifest["nodes"]}
