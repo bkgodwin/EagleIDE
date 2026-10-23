@@ -31,7 +31,20 @@
     'midnight-dark': { label: 'Midnight · Dark blue', mode:'dark', colors: colors('#111c32', '#e0e9ff', '#c6b1ef', '#e8d19d', '#9dd4ed', '#b3d8b8', '#dfb1ae', '#9baec7', '#a6baf3') },
     'forest-dark': { label: 'Forest · Dark green', mode:'dark', colors: colors('#17251f', '#dfe9df', '#c7b5e5', '#e2c58d', '#a4d4bb', '#c9d996', '#ddba93', '#98b5a0', '#9dbfdf') },
     'graphite-dark': { label: 'Graphite · Grey', mode:'dark', colors: colors('#26282c', '#e5e6e9', '#c5b5d9', '#e0c99d', '#b0cedb', '#c9d1a0', '#d4b6a8', '#a6acae', '#b0bfe0') },
-    'alpine-dark': { label: 'Alpine · Dark', mode:'dark', colors: colors('#102b25', '#e4eee8', '#c6b8dd', '#e2c99c', '#a3d8c4', '#cad9a8', '#deb59c', '#9bbcaf', '#a7cbd9') },
+    'alpine-dark': { label: 'Alpine · Dark', mode:'dark', colors: colors('#0b1b17', '#dce9e1', '#bdb0d5', '#d8c194', '#9accb6', '#becfa0', '#d3aa91', '#8fae9c', '#9bbfd1') },
+    'ember-rose-dark': { label:'Ember Rose · Dark', mode:'dark', colors:colors('#1b1112', '#f2e8e8', '#f48a8a', '#a7d5d8', '#e9b3ba', '#d99686', '#e7c394', '#bba0a2', '#d6b5ed') },
+    'pastel-aura-dark': { label:'Pastel Aura · Dark', mode:'dark', colors:colors('#282a36', '#f8f8f2', '#cbc3e3', '#8be9fd', '#bde0fe', '#ffc8dd', '#f1d79e', '#a8aec7', '#b8dfc5') },
+    'nightglass-dark': { label:'Nightglass · Dark', mode:'dark', colors:colors('#111216', '#e6e6e6', '#80b3ff', '#ffcc66', '#9aceda', '#80e680', '#e6a5a5', '#9b9fac', '#cc99dd') },
+    'cinder-dark': { label:'Cinder · Dark', mode:'dark', colors:colors('#141312', '#e0d4c2', '#e9a06b', '#a7b8c4', '#c8c5ae', '#bcc79d', '#ddb98c', '#a6a094', '#b4a6be') },
+    'gilded-night-dark': { label:'Gilded Night · Dark', mode:'dark', colors:colors('#121212', '#d9d9d9', '#dbb42c', '#ffee69', '#d6d5ce', '#c8be9c', '#e8ca80', '#aaa596', '#c9c1a7') },
+    'fern-dark': { label:'Fern · Dark', mode:'dark', colors:colors('#1d271f', '#e4d8b4', '#a9c787', '#89d9d0', '#b4d3a0', '#d29c5a', '#d6b793', '#a6b49a', '#80b0df') },
+    'harbor-paper-light': { label:'Harbor Paper · Light', mode:'light', colors:colors('#eef0e2', '#1c2d28', '#805779', '#405f83', '#3d625a', '#486246', '#93503b', '#5a685e', '#356873') },
+    'phosphor-amber-dark': { label:'Phosphor Amber · Dark', mode:'dark', colors:colors('#0a0a08', '#e2b45b', '#ffcc00', '#ffd17a', '#e5b867', '#c99a4a', '#f5c071', '#b29b6d', '#d6bc7b') },
+    'meadow-fog-dark': { label:'Meadow Fog · Dark', mode:'dark', colors:colors('#232a2e', '#adc9bc', '#b2caed', '#b3e6db', '#b4d7c0', '#c4d99d', '#f5d098', '#9fb4b0', '#d2bbe3') },
+    'clay-study-dark': { label:'Clay Study · Dark', mode:'dark', colors:colors('#151515', '#e7e7e7', '#dc987f', '#8faee5', '#c4c8cb', '#9dcb99', '#dfb766', '#aaa6a1', '#ceaad9') },
+    'mineral-ink-dark': { label:'Mineral Ink · Dark', mode:'dark', colors:colors('#100f0f', '#cecdc3', '#d0a215', '#69a0ce', '#aab5b0', '#9cbd72', '#d69a75', '#96968c', '#58bfb5') },
+    'crimson-dark': { label:'Crimson · Dark red', mode:'dark', colors:colors('#290e17', '#f3e2e6', '#ff8fa3', '#f4c78a', '#e7b8c5', '#c0d4b0', '#e3ab90', '#bca0aa', '#b8c9ef') },
+    'industrial-dark': { label:'Industrial · Grey & rust', mode:'dark', colors:colors('#232629', '#e4e1d9', '#efb94c', '#edab76', '#bfcbd0', '#c9cf9b', '#e2b27e', '#a9acaa', '#9ebdce') },
   };
   const defaults = () => ({ scheme: 'auto', backgrounds: { dark: '', light: '' } });
   function normalize(value) {
@@ -44,13 +57,13 @@
       .reduce((sum, c, i) => sum + c * [.2126, .7152, .0722][i], 0);
   }
   function contrast(a, b) { const x = luminance(a), y = luminance(b); return (Math.max(x, y) + .05) / (Math.min(x, y) + .05); }
-  function readable(color, background) {
-    if (contrast(color, background) >= 4.5) return color;
+  function readable(color, background, minimum = 4.5) {
+    if (contrast(color, background) >= minimum) return color;
     const target = contrast('#ffffff', background) > contrast('#000000', background) ? 255 : 0;
     const original = rgb(color);
     for (let step = 1; step <= 20; step++) {
       const next = '#' + original.map(c => Math.round(c + (target - c) * step / 20).toString(16).padStart(2, '0')).join('');
-      if (contrast(next, background) >= 4.5) return next;
+      if (contrast(next, background) >= minimum) return next;
     }
     return target ? '#ffffff' : '#000000';
   }
@@ -60,8 +73,10 @@
     const background = preferences.backgrounds[scheme.mode] || scheme.colors.background;
     const result = { ...scheme.colors, background, mode: scheme.mode };
     for (const key of Object.keys(scheme.colors)) if (key !== 'background') result[key] = readable(result[key], background);
+    const start = readable(result.variable, background, 7);
+    const end = readable(mix(start, '#000000', .48), background);
     const chain = scheme === schemes['eagle-dark'] ? ['#a1e6b3','#80ce99','#62b480','#4d9c6c'] :
-      [result.variable, result.definition, result.type, result.variable2];
+      [start, mix(start,end,1/3), mix(start,end,2/3), end];
     chain.forEach((color, i) => { result[`member${i + 1}`] = readable(color, background); });
     return result;
   }
@@ -73,18 +88,49 @@
   function workspacePalette(value, light) {
     // The custom override belongs only to editors, never other workspace areas.
     const p = palette({...normalize(value), backgrounds:{dark:'',light:''}}, light);
-    const popup = mix(p.background,p.foreground,.08);
-    return {background:p.background, foreground:readable(p.foreground,popup), accent:readable(p.variable,popup),
-      muted:readable(p.comment,popup), popup,
+    const surfaces = {popup:mix(p.background,p.foreground,.08),
       input:mix(p.background,p.mode === 'dark' ? '#000000' : '#ffffff',.12),
       files:mix(p.background,'#000000',p.mode === 'dark' ? .08 : .015),
       shell:mix(p.background,'#000000',p.mode === 'dark' ? .18 : .04),
       resources:mix(p.background,p.foreground,.025), header:mix(p.background,p.foreground,.055)};
+    // Choose ink against the worst surface, including tinted hover/selection rows.
+    surfaces.selection = mix(surfaces.files,p.variable,.14);
+    const backgrounds = Object.values(surfaces);
+    const ink = color => backgrounds.reduce((value,bg) => readable(value,bg),color);
+    return {background:p.background, ...surfaces, foreground:ink(p.foreground), accent:ink(p.variable),
+      muted:ink(p.comment), danger:ink('#ef5350'), warning:ink('#dba348'), success:ink('#66bb6a'), info:ink('#90caf9'), system:ink('#ff9933')};
   }
 
   function memberDepth(prefix) {
-    const chain = prefix.slice(-4096).match(/(?:\b[A-Za-z_]\w*\s*\.\s*)+$/);
-    return chain ? Math.min(4, (chain[0].match(/\./g) || []).length) : /\.\s*$/.test(prefix) ? 1 : 0;
+    // Walk backwards through the receiver, skipping balanced indices/call arguments.
+    // Dots inside an index, call or quoted key do not add receiver depth.
+    const source = prefix.slice(-4096);
+    let i = source.length - 1, depth = 0;
+    const space = () => { while (i >= 0 && /\s/.test(source[i])) i--; };
+    const escaped = at => { let n=0; while (at > 0 && source[--at] === '\\') n++; return n % 2; };
+    function skipGroup() {
+      const stack = [source[i--] === ']' ? '[' : '('];
+      while (i >= 0 && stack.length) {
+        const char = source[i--];
+        if (char === '"' || char === "'" || char === '`') {
+          let closed = false;
+          while (i >= 0) { if (source[i] === char && !escaped(i)) { i--; closed=true; break; } i--; }
+          if (!closed) return false;
+        } else if (char === ']' || char === ')' || char === '}') stack.push({']':'[',')':'(','}':'{'}[char]);
+        else if (char === '[' || char === '(' || char === '{') { if (stack.pop() !== char) return false; }
+      }
+      return !stack.length;
+    }
+    space();
+    while (source[i] === '.' && depth < 4) {
+      depth++; i--; if (source[i] === '?') i--; space();
+      while (source[i] === ']' || source[i] === ')') { if (!skipGroup()) return depth; space(); }
+      const end = i;
+      while (i >= 0 && /[\w$]/.test(source[i])) i--;
+      if (i === end) break;
+      space();
+    }
+    return depth;
   }
 
   // CodeMirror normally measures gutters synchronously. Refresh only at digit
@@ -169,17 +215,21 @@
     document.querySelectorAll('.CodeMirror').forEach(wrapper => { if (wrapper.CodeMirror) apply(wrapper.CodeMirror, wrapper.closest('[data-editor-appearance]') ? draft : saved); });
     const p = palette(saved, lightMode());
     const workspace = workspacePalette(saved, lightMode());
+    const syntax = palette({...saved, backgrounds:{dark:'',light:''}}, lightMode());
     Object.entries(workspace).forEach(([key,value]) => document.body.style?.setProperty(`--workspace-${key}`,value));
     for (const [id, background] of [['editorPanel',workspace.files],['shellPanel',workspace.shell],['rightStackPanel',workspace.resources]]) {
       const panel = document.getElementById(id);
       if (!panel) continue;
+      panel.dataset.workspacePalette = p.mode;
       const vars = {bg:background, panel:background, 'panel-hdr':workspace.header, text:workspace.foreground,
         'text-dim':workspace.muted, 'shell-bg':workspace.shell, 'shell-text':workspace.foreground,
         'output-bg':background, 'input-bg':workspace.input, 'tab-bg':workspace.header,
         'tab-btn':workspace.input, btn:workspace.input, 'btn-hover':workspace.header, secondary:workspace.header,
+        danger:workspace.danger, warning:workspace.warning, success:workspace.success, info:workspace.info, system:workspace.system,
         border:mix(background,workspace.foreground,.25), 'border-mid':mix(background,workspace.foreground,.15)};
       Object.entries(vars).forEach(([key,value]) => panel.style.setProperty(`--theme-${key}`,value));
       panel.style.setProperty('--columbia-blue',workspace.accent);
+      Object.entries(syntax).forEach(([key,value]) => { if (key !== 'mode') panel.style.setProperty(`--workspace-code-${key}`,value); });
     }
     for (const id of ['editor', 'teacherStreamEditor']) {
       const ta = document.getElementById(id);
@@ -260,7 +310,7 @@
       panel.innerHTML = `<h3>Workspace colors</h3><p>Choose colors for the editor, Files, Shell and Resources. Colors save to your account for future sessions.</p>
         <label for="${id}-scheme">Syntax color scheme</label><select id="${id}-scheme"><option value="auto">Follow page theme (Eagle)</option>${Object.entries(schemes).map(([key, scheme]) => `<option value="${key}">${scheme.label}</option>`).join('')}</select>
         <div class="editor-background-control"><label for="${id}-background" data-background-label>Editor background</label><input id="${id}-background" type="color" value="#1e2229"><button class="btn secondary" type="button" data-background-reset>Use scheme background</button></div>
-        <p class="editor-colors-help">Each profile supplies a default editor background and matching workspace tones. The background override changes only editors. Legacy restores September token colors with readable contrast. Blue &amp; Gold avoids red/green distinctions; High contrast uses minimal color. Dark and light overrides are saved separately.</p>
+        <p class="editor-colors-help">Each profile supplies a default editor background and matching workspace tones. The background override changes only editors. Legacy restores September token colors with readable contrast. Blue &amp; Gold avoids red/green distinctions; High contrast uses minimal color. Dark and light overrides are saved separately. <a href="/static/docs/workspace-colors.html" target="_blank" rel="noopener">Palette guide</a></p>
         <div class="editor-color-preview" aria-label="Read-only Python color preview"></div><button class="btn run" type="button" data-appearance-save>Save editor colors</button><p role="status" aria-live="polite"></p>`;
       const preview = panel.querySelector('.editor-color-preview');
       if (window.CodeMirror) window.CodeMirror(preview, { value: 'from dataclasses import dataclass\n\n# A typed record and function contract\n@dataclass\nclass Student:\n    name: str\n    score: float = 95.5\n\ndef welcome(student: Student) -> str:\n    return f"Hello, {student.name}!"\n\nprint(welcome(Student("Eagle")))', mode: 'python', readOnly: 'nocursor', lineNumbers: true, cursorBlinkRate: -1, dragDrop: false, viewportMargin: 20 });

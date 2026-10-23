@@ -297,12 +297,18 @@ Features:
 - Dashboard > Account > Workspace colors (Settings > Account for administrators)
   offers light/dark syntax palettes, color-vision-friendly Blue & Gold palettes,
   minimal-color high-contrast palettes, Legacy dark/light (September's Monokai
-  and default token colors), Midnight, Forest, Graphite, and Alpine. Profiles
+  and default token colors), Midnight, Forest, Graphite, and deep-green Alpine.
+  Additional palettes are Ember Rose, Pastel Aura, Nightglass, Cinder, Gilded
+  Night, Fern, Harbor Paper (light), Phosphor Amber, Meadow Fog, Clay Study,
+  Mineral Ink, Crimson (dark red), and Industrial (grey, rust, and gold). Profiles
   apply matching tones to Files, Shell and Resources. Custom backgrounds affect
   editors only; Use scheme background restores that profile's default. Preview
   the noneditable Python sample, then choose Save editor colors. Preferences
   follow your account across sessions and devices; custom dark/light backgrounds
   are separate. Text colors adjust for readable contrast on custom backgrounds.
+  Workspace prose, links, placeholders, Shell messages, and rendered code use
+  profile colors even when the page uses the opposite light/dark mode. Palette
+  descriptions and inspiration credits are in static/docs/workspace-colors.html.
 - Intelligent autocomplete with Python file, CSV reader/writer, collection, NumPy,
   and Matplotlib object members; every admin-togglable module and the effective
   student import catalog after `import` or `from`; user-defined
@@ -312,8 +318,11 @@ Features:
   inferred types so string and list member suggestions remain available.
   The blurred completion surface is shared by every role. It fits above/below
   the caret within the visible viewport and scrolls internally on small screens.
-  Eagle Dark uses progressively shaded green dotted members; method calls are
-  underlined. Legacy retains the earlier token categories with readable contrast.
+  Eagle Dark uses progressively shaded green members; other current profiles
+  shade their own accent colors. Depth continues through indexed/called values
+  such as self.elements[index].atomic_mass, without counting dots inside the
+  index or arguments. Method calls are underlined. Legacy retains the earlier
+  token categories with readable contrast.
   Dataclass annotation-only fields and generated constructor arguments appear in
   completions. Multiline function contracts, nested defaults, quoted return
   annotations, and comma-separated/aliased imports are recognized locally.

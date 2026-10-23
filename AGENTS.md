@@ -556,12 +556,22 @@ Network simulator definitions are source data in `network_content.py`; assignmen
   backend `EDITOR_COLOR_SCHEMES` allowlist synchronized. Legacy profiles use the
   September 21 Monokai/default token categories with contrast correction;
   `eagleLegacyColors` disables added semantic tokens without changing source or
-  undo history. Python/JavaScript dotted members get bounded depth styles; never
+  undo history. Python/JavaScript dotted members get bounded depth styles through
+  balanced indexing/calls (quoted keys and argument dots do not add depth); never
   classify strings/comments or run student code. Palette changes must not restart
   mode tokenization on ordinary context refreshes. The optional
   `tests/editor_polish_browser_checks.js` uses the isolated agenda fixture with
   `--mock-ai` and existing EAGLE_AGENDA variables; all five account roles, three
   viewport sizes, profile previews/persistence and class streaming are covered.
+- `features/workspace-themes.css` scopes inherited prose, link, placeholder,
+  semantic Shell/status colors, and rendered Markdown syntax to the three
+  workspace panels, independently of page mode. Never recolor the public wiki or
+  admin dialogs through a profile. `tests/workspace_themes_browser_checks.js`
+  uses the same isolated fixture and checks actual rendered contrast across all
+  profiles in both page modes, indexed Python/f-string/JavaScript tokens, and
+  persistence. Keep default and overridden editor backgrounds independent from
+  workspace prose/code colors. Palette descriptions/credits are in
+  `static/docs/workspace-colors.html`.
 - `selectTeacherClass` stops the old class stream and cancels pending flushes
   before changing identity/rooms. Never automatically enable streaming for the
   new class. Keep the wider class selector bounded on narrow screens.
