@@ -99,7 +99,7 @@ body.light-mode .topbar-primary .topbar-tools-btn {
 .ide-topbar-tools .control-group { padding: 2px 5px; gap: 4px; }
 .ide-topbar-tools .font-range { width: 76px; }
 .ide-topbar-tools #classSelectorWrap { min-width: 160px; padding: 2px 5px; }
-.ide-topbar-tools #classSelector { max-width: 150px; }
+.ide-topbar-tools #classSelector { width:clamp(260px, 28vw, 480px); max-width:min(480px, calc(100vw - 64px)); }
 
 .ide-topbar-tools #autocompleteBtn,
 #roleMenuBtn {

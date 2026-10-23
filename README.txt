@@ -294,9 +294,12 @@ Features:
   between sessions. Drag splitters or focus them and use arrow keys to resize;
   double-click a splitter to restore that layout's default size.
 - Syntax highlighting for Python, JavaScript, HTML, and CSS
-- Dashboard > Account > Editor colors (Settings > Account for administrators)
+- Dashboard > Account > Workspace colors (Settings > Account for administrators)
   offers light/dark syntax palettes, color-vision-friendly Blue & Gold palettes,
-  minimal-color high-contrast palettes, and custom editor backgrounds. Preview
+  minimal-color high-contrast palettes, Legacy dark/light (September's Monokai
+  and default token colors), Midnight, Forest, Graphite, and Alpine. Profiles
+  apply matching tones to Files, Shell and Resources. Custom backgrounds affect
+  editors only; Use scheme background restores that profile's default. Preview
   the noneditable Python sample, then choose Save editor colors. Preferences
   follow your account across sessions and devices; custom dark/light backgrounds
   are separate. Text colors adjust for readable contrast on custom backgrounds.
@@ -307,6 +310,10 @@ Features:
   keyboard-navigable help panel showing arguments, return types, and descriptions.
   Values returned by input(), common collection methods, and aliases inherit their
   inferred types so string and list member suggestions remain available.
+  The blurred completion surface is shared by every role. It fits above/below
+  the caret within the visible viewport and scrolls internally on small screens.
+  Eagle Dark uses progressively shaded green dotted members; method calls are
+  underlined. Legacy retains the earlier token categories with readable contrast.
   Dataclass annotation-only fields and generated constructor arguments appear in
   completions. Multiline function contracts, nested defaults, quoted return
   annotations, and comma-separated/aliased imports are recognized locally.

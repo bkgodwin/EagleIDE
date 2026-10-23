@@ -8,7 +8,7 @@ test('all palettes keep text readable on default and custom backgrounds', () => 
   for (const scheme of Object.keys(appearance.schemes)) {
     for (const bg of ['', '#000000', '#ffffff', '#808080', '#00ff00', '#33117f']) {
       const p = appearance.palette({scheme, backgrounds:{dark:bg,light:bg}}, false);
-      for (const key of ['foreground','keyword','definition','variable','string','number','comment','type']) {
+      for (const key of Object.keys(p).filter(key => key !== 'background' && key !== 'mode')) {
         assert.ok(appearance.contrast(p[key],p.background) >= 4.5, `${scheme} ${bg} ${key}`);
       }
     }
@@ -16,6 +16,28 @@ test('all palettes keep text readable on default and custom backgrounds', () => 
   assert.equal(appearance.palette(null,true).mode,'light');
   assert.equal(appearance.palette({scheme:'accessible-dark'},true).mode,'dark');
   assert.deepEqual(appearance.normalize({scheme:'bad',backgrounds:{dark:'url(x)',light:'#AbCdEf'}}), {scheme:'auto',backgrounds:{dark:'',light:'#abcdef'}});
+});
+
+test('profile surfaces keep their tone when only the editor background is overridden', () => {
+  for (const scheme of Object.keys(appearance.schemes)) {
+    const normal = appearance.workspacePalette({scheme},false);
+    assert.deepEqual(normal,appearance.workspacePalette({scheme,backgrounds:{dark:'#ff0000',light:'#0000ff'}},false));
+    assert.notEqual(normal.files, normal.shell); assert.notEqual(normal.shell, normal.resources);
+    for (const surface of ['files','shell','resources','header','popup']) {
+      for (const ink of ['foreground','muted','accent']) assert.ok(appearance.contrast(normal[ink],normal[surface]) >= 4.5,`${scheme} ${ink}/${surface}`);
+    }
+  }
+});
+
+test('September legacy profiles and new dark profiles are available with bounded member colors', () => {
+  for (const name of ['legacy-dark','legacy-light','midnight-dark','forest-dark','graphite-dark','alpine-dark']) assert.ok(appearance.schemes[name]);
+  assert.equal(appearance.schemes['legacy-dark'].colors.keyword,'#f92672');
+  assert.equal(appearance.schemes['legacy-light'].colors.keyword,'#770088');
+  assert.equal(appearance.memberDepth('self.'),1); assert.equal(appearance.memberDepth('self.thing.'),2);
+  assert.equal(appearance.memberDepth('root.a.b.c.d.e.'),4); assert.equal(appearance.memberDepth('plain = '),0);
+  const palette = appearance.palette({scheme:'eagle-dark'},false);
+  for (let n=1;n<=4;n++) assert.ok(appearance.contrast(palette['member'+n],palette.background)>=4.5);
+  assert.equal(new Set([palette.member1,palette.member2,palette.member3,palette.member4]).size,4);
 });
 
 test('gutter remeasurement is bounded, preserves scroll, and releases observers', async () => {

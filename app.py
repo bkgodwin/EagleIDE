@@ -3287,7 +3287,8 @@ def update_account_profile():
 
 
 EDITOR_COLOR_SCHEMES = {"auto", "eagle-dark", "eagle-light", "ocean-dark", "paper-light",
-                        "accessible-dark", "accessible-light", "mono-dark", "mono-light"}
+                        "accessible-dark", "accessible-light", "mono-dark", "mono-light",
+                        "legacy-dark", "legacy-light", "midnight-dark", "forest-dark", "graphite-dark", "alpine-dark"}
 
 
 def _validated_editor_preferences(data):
