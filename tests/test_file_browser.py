@@ -21,6 +21,11 @@ class FileBrowserTests(unittest.TestCase):
         self.patch = patch.object(eagle, "USER_FILES_DIR", self.root / "files")
         self.patch.start()
         self.addCleanup(self.patch.stop)
+        users_patch = patch.object(eagle, "USERS_FILE", self.root / "users.json")
+        users_patch.start()
+        self.addCleanup(users_patch.stop)
+        eagle._save_users({"users": [{"email": email, "role": "student", "enabled": True}
+                                     for email in ("files@school.test", "other@school.test")]})
         self.token = "file-browser-test-student"
         self.other = "file-browser-test-other"
         for token, email in [(self.token, "files@school.test"), (self.other, "other@school.test")]:

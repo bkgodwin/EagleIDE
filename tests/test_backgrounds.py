@@ -35,11 +35,14 @@ class BackgroundRouteTests(unittest.TestCase):
             "PERSIST_FILE": eagle.PERSIST_FILE,
             "BACKGROUND_ASSETS_DIR": eagle.BACKGROUND_ASSETS_DIR,
             "CLASSES_FILE": eagle.CLASSES_FILE,
+            "USERS_FILE": eagle.USERS_FILE,
         }
         eagle.PERSIST_FILE = self.root / "config.json"
         eagle.BACKGROUND_ASSETS_DIR = self.root / "background_assets"
         eagle.BACKGROUND_ASSETS_DIR.mkdir()
         eagle.CLASSES_FILE = self.root / "classes.json"
+        eagle.USERS_FILE = self.root / "users.json"
+        eagle._save_users({"users": [{"email": "teacher@example.com", "name": "Teacher", "role": "teacher"}]})
         eagle.PERSIST_FILE.write_text(json.dumps(eagle.DEFAULT_CONFIG), encoding="utf-8")
         eagle.CLASSES_FILE.write_text(json.dumps({"classes": [{
             "id": "class-one",

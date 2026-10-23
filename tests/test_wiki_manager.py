@@ -75,6 +75,20 @@ class WikiManagerAccountTests(unittest.TestCase):
         self.broadcast()
         self.assertTrue(any(item["name"]=="teacher_code" for item in second.get_received()))
 
+    def test_teacher_disable_disconnects_all_target_sessions_only(self):
+        first = self.socket()
+        eagle._student_tokens["revocation-second"] = dict(self.student)
+        self.addCleanup(eagle._student_tokens.pop, "revocation-second", None)
+        second = self.socket("revocation-second")
+        teacher = self.socket("revocation-teacher", "teacher")
+        response = self.client.post("/api/teacher/students/toggle",
+            headers={"X-Teacher-Token": "revocation-teacher"}, json={"email": self.student["email"], "enabled": False})
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertFalse(first.is_connected())
+        self.assertFalse(second.is_connected())
+        self.assertTrue(teacher.is_connected())
+        self.assertEqual(self.client.get("/api/auth/me", headers={"X-User-Token": "revocation-second"}).status_code, 401)
+
     def test_token_expiry_is_checked_without_a_new_http_request(self):
         student = self.socket()
         now = time.monotonic()

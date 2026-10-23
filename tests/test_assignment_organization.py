@@ -65,6 +65,7 @@ class AssignmentOrganizationTests(unittest.TestCase):
         own = self.create_assignment()
         self.assertEqual(self.folders(action='move',assignmentId=own['id'],folderId=other).status_code,404)
         token = 'folder-other-teacher'; eagle._teacher_tokens[token]={'email':'other@example.com','role':'teacher'}
+        users = eagle._load_users(); users['users'].append({'email':'other@example.com','role':'teacher'}); eagle._save_users(users)
         self.addCleanup(eagle._teacher_tokens.pop,token,None)
         self.assertEqual(self.client.get('/api/assignments/folders',headers={'X-Teacher-Token':token},query_string={'classId':self.class_one}).status_code,403)
         self.assertEqual(self.finalize(own,{'X-Teacher-Token':token}).status_code,403)

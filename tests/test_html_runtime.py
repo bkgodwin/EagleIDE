@@ -26,6 +26,7 @@ class HtmlRuntimeTestCase(unittest.TestCase):
         self.sandbox_dir.mkdir()
 
         self.original_user_files_dir = eagle.USER_FILES_DIR
+        self.original_users_file = eagle.USERS_FILE
         self.original_sandbox_dir = eagle.SANDBOX_DIR
         self.original_asset_limit = eagle.MAX_HTML_RUNTIME_ASSET_BYTES
         self.original_session_limit = eagle.MAX_HTML_RUNTIME_SESSIONS_PER_USER
@@ -35,6 +36,7 @@ class HtmlRuntimeTestCase(unittest.TestCase):
         eagle.HTML_RUNTIME_PREVIEW_ISOLATED = False
         eagle.USER_FILES_DIR = self.user_files_dir
         eagle.SANDBOX_DIR = self.sandbox_dir
+        eagle.USERS_FILE = self.root / "users.json"
         eagle._html_runtime_sessions.clear()
 
         self.email = "html.student@example.com"
@@ -46,6 +48,7 @@ class HtmlRuntimeTestCase(unittest.TestCase):
             "class_id": None,
             "class_ids": [],
         }
+        eagle._save_users({"users": [dict(eagle._student_tokens[self.token])]})
         self.user_dir = eagle._get_user_dir(self.email)
         self.user_dir.mkdir(parents=True)
         (self.user_dir / "index.html").write_text(
@@ -62,6 +65,7 @@ class HtmlRuntimeTestCase(unittest.TestCase):
         eagle._student_tokens.pop(self.token, None)
         eagle._html_runtime_sessions.clear()
         eagle.USER_FILES_DIR = self.original_user_files_dir
+        eagle.USERS_FILE = self.original_users_file
         eagle.SANDBOX_DIR = self.original_sandbox_dir
         eagle.MAX_HTML_RUNTIME_ASSET_BYTES = self.original_asset_limit
         eagle.MAX_HTML_RUNTIME_SESSIONS_PER_USER = self.original_session_limit
@@ -142,7 +146,16 @@ class HtmlRuntimeTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         body = response.get_data(as_text=True)
-        self.assertIn("BroadcastChannel", body)
+        self.assertIn('data-runtime-channel="testchannel"', body)
+        self.assertIn('/static/js/html-runtime-popup.js?', body)
+        self.assertNotIn('<script>', body)
+        script_policy = next(part for part in response.headers["Content-Security-Policy"].split(";") if part.strip().startswith("script-src "))
+        self.assertIn("'self'", script_policy)
+        self.assertNotIn("'unsafe-inline'", script_policy)
+        script = self.client.get("/static/js/html-runtime-popup.js")
+        self.assertEqual(script.status_code, 200)
+        self.assertIn("BroadcastChannel", script.get_data(as_text=True))
+        script.close()
         self.assertIn("sandbox=\"allow-scripts\"", body)
         self.assertEqual(response.headers.get("Cross-Origin-Opener-Policy"), "same-origin")
 

@@ -17,7 +17,7 @@ class FileOpenPerformanceTests(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         root = Path(temp.name)
-        for name, value in [("CLASSES_FILE", root / "classes.json"), ("USER_FILES_DIR", root / "files"), ("_classes_cache", None)]:
+        for name, value in [("CLASSES_FILE", root / "classes.json"), ("USERS_FILE", root / "users.json"), ("USER_FILES_DIR", root / "files"), ("_classes_cache", None)]:
             context = patch.object(eagle, name, value)
             context.start()
             self.addCleanup(context.stop)
@@ -25,6 +25,7 @@ class FileOpenPerformanceTests(unittest.TestCase):
         self.classes += [{"id": f"unrelated-{i}", "students": [f"student-{i}-{j}@example.test" for j in range(30)]} for i in range(100)]
         eagle._save_classes({"classes": self.classes})
         eagle._student_tokens["file-open-perf"] = {"email": "files@example.test", "class_id": "selected", "class_ids": ["selected"]}
+        eagle._save_users({"users": [{**eagle._student_tokens["file-open-perf"], "role": "student"}]})
         self.addCleanup(eagle._student_tokens.pop, "file-open-perf", None)
         folder = eagle._get_user_dir("files@example.test")
         folder.mkdir(parents=True)

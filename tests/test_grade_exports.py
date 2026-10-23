@@ -80,6 +80,7 @@ class GradeExportTests(unittest.TestCase):
         query = {"classId": self.fixture.class_id, "promptId": prompt['id']}
         for headers in ({}, {"X-User-Token": self.fixture.student_token}):
             self.assertEqual(self.client.get('/api/teacher/notebook-prompts/csv', query_string=query, headers=headers).status_code, 401)
+        users = eagle._load_users(); users['users'].append({"email": "other@example.com", "role": "teacher"}); eagle._save_users(users)
         with patch.dict(eagle._teacher_tokens, {'other-teacher': {"email": "other@example.com", "role": "teacher"}}):
             self.assertEqual(self.client.get('/api/teacher/notebook-prompts/csv', query_string=query,
                                             headers={"X-Teacher-Token": 'other-teacher'}).status_code, 404)

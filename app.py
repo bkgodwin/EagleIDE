@@ -669,6 +669,9 @@ def _store_background_upload(upload: Any) -> str:
     if width <= 0 or height <= 0 or width > 16_384 or height > 16_384 or width * height > MAX_BACKGROUND_PIXELS:
         raise ValueError("Background image dimensions exceed the safe limit")
     suffix = {"JPEG": "jpg", "PNG": "png", "WEBP": "webp"}[image_format]
+    payload = clean_image(payload, "." + suffix)
+    if len(payload) > MAX_UPLOAD_FILE_BYTES:
+        raise ValueError("The cleaned background image exceeds the upload size limit")
     filename = f"{uuid.uuid4().hex}.{suffix}"
     BACKGROUND_ASSETS_DIR.mkdir(parents=True, exist_ok=True)
     target = BACKGROUND_ASSETS_DIR / filename
@@ -1061,7 +1064,7 @@ def _verify_user_password(user: dict, password: str) -> bool:
     return False
 
 
-def _user_info_from_record(user: dict) -> dict:
+def _user_info_from_record(user: dict, *, include_coteacher_classes=True) -> dict:
     user = _normalize_user_record(user)
     email = str(user.get("email") or "").strip().lower()
     profile = _profile_fields(user)
@@ -1071,7 +1074,8 @@ def _user_info_from_record(user: dict) -> dict:
     return {
         "email": email,
         **profile,
-        "coteacher_class_ids": [c["id"] for c in _get_dashboard_classes(email) if _is_coteacher(email, c)],
+        **({"coteacher_class_ids": [c["id"] for c in _get_dashboard_classes(email) if _is_coteacher(email, c)]}
+           if include_coteacher_classes else {}),
         "role": "student",
         "class_id": user.get("class_id"),
         "class_ids": _get_user_class_ids(user),
@@ -1136,26 +1140,40 @@ _session_issue_lock = threading.Lock()
 
 def _issue_access_token(role: str, user_info: dict, token: Optional[str] = None) -> str:
     token = token or uuid.uuid4().hex
+    revoked = set()
     with _session_issue_lock:
         if role == "admin":
             with _admin_tokens.sessions.lock:
                 for candidate in list(_admin_tokens):
                     if not _admin_tokens.sessions.active(candidate):
                         _admin_tokens.discard(candidate)
+                        revoked.add(candidate)
                 while len(_admin_tokens) >= 5 and token not in _admin_tokens:
                     oldest = min(_admin_tokens.sessions.times, key=lambda value: _admin_tokens.sessions.times[value][0])
                     _admin_tokens.discard(oldest)
+                    revoked.add(oldest)
                 if token not in _admin_tokens:
                     _admin_tokens.add(token)
         else:
             store = _wiki_manager_tokens if role == "wiki_manager" else _teacher_tokens if role == "teacher" else _student_tokens
             email = user_info.get("email", "").lower()
             with store.lock:
-                same_account = [key for key, info in list(store.items()) if info.get("email", "").lower() == email and store.active(key)]
+                same_account = []
+                for key, info in list(store.items()):
+                    if info.get("email", "").lower() == email:
+                        if store.active(key):
+                            same_account.append(key)
+                        else:
+                            revoked.add(key)
                 while len(same_account) >= 5 and token not in same_account:
-                    store.pop(same_account.pop(0), None)
+                    oldest = same_account.pop(0)
+                    store.pop(oldest, None)
+                    revoked.add(oldest)
                 if not store.get(token):
                     store[token] = user_info
+    # Disconnect handlers can reenter session code; never call them under locks.
+    if revoked:
+        _revoke_socket_sessions(tokens=revoked)
     return token
 
 
@@ -1263,21 +1281,31 @@ def _generate_join_code(existing_codes: set[str]) -> str:
     raise RuntimeError("Could not generate unique class join code")
 
 
+def _current_session_user(store, token: str, role: str) -> Optional[dict]:
+    with store.lock:
+        known = token in store.times
+        actor = store.get(token)
+    current = _find_user(actor.get("email", "")) if actor else None
+    if not current or not current.get("enabled", True) or current.get("role", "student") != role:
+        store.pop(token, None)
+        if known:
+            _revoke_socket_sessions(tokens={token})
+        return None
+    # Route authorization checks class access separately. Avoid copying every
+    # class roster on each file request; auth/me supplies the full UI profile.
+    return _user_info_from_record(current, include_coteacher_classes=False)
+
+
 def _require_teacher(req, *, allow_coteacher=False) -> Optional[dict]:
     token = req.headers.get("X-Teacher-Token", "").strip()
-    teacher = _teacher_tokens.get(token)
+    teacher = _current_session_user(_teacher_tokens, token, "teacher")
     if teacher:
-        current = _find_user(teacher.get("email", ""))
-        if current and (not current.get("enabled", True) or current.get("role", "student") != "teacher"):
-            _teacher_tokens.pop(token, None)
-            return None
         return teacher
     if allow_coteacher:
-        student = _student_tokens.get(token)
+        student = _current_session_user(_student_tokens, token, "student")
         if student:
-            record = _find_user(student.get("email", ""))
-            if record and record.get("enabled", True) and any(_is_coteacher(record["email"], c) for c in _load_classes().get("classes", [])):
-                return {**_user_info_from_record(record), "role": "teacher", "is_coteacher": True}
+            if any(_is_coteacher(student["email"], c) for c in _load_classes().get("classes", [])):
+                return {**student, "role": "teacher", "is_coteacher": True}
     return None
 
 
@@ -2377,22 +2405,11 @@ def _seed_example_files(email: str) -> None:
 
 def _require_user(req) -> Optional[dict]:
     token = req.headers.get("X-User-Token", "").strip()
-    user = _student_tokens.get(token)
-    if user:
-        current = _find_user(user.get("email", ""))
-        if current and (not current.get("enabled", True) or current.get("role", "student") != "student"):
-            _student_tokens.pop(token, None)
-            return None
-    return user
+    return _current_session_user(_student_tokens, token, "student")
 
 def _require_wiki_manager(req) -> Optional[dict]:
     token = req.headers.get("X-Wiki-Manager-Token", "").strip()
-    actor = _wiki_manager_tokens.get(token)
-    current = _find_user(actor.get("email", "")) if actor else None
-    if not current or not current.get("enabled", True) or current.get("role") != "wiki_manager":
-        _wiki_manager_tokens.pop(token, None)
-        return None
-    return _user_info_from_record(current)
+    return _current_session_user(_wiki_manager_tokens, token, "wiki_manager")
 
 
 def _require_user_for_files(req) -> Optional[dict]:
@@ -5961,9 +5978,7 @@ def teacher_toggle_student():
         return jsonify(ok=False, error="Student not found"), 404
     _save_users(users_data)
     if not enabled:
-        for token, info in list(_student_tokens.items()):
-            if (info.get("email") or "").lower() == email:
-                del _student_tokens[token]
+        _revoke_account_sessions(email)
     return jsonify(ok=True)
 
 # -------------------------
@@ -6962,7 +6977,6 @@ def spa_route(wiki_path: str = ""):
 
 
 def _html_runtime_popup_shell(channel_id: str) -> str:
-    channel_json = json.dumps(channel_id)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -6979,119 +6993,14 @@ def _html_runtime_popup_shell(channel_id: str) -> str:
     #runtimeFrame{{flex:1;width:100%;border:0;background:#fff;display:none}}
   </style>
 </head>
-<body>
+<body data-runtime-channel="{channel_id}">
   <div class="hdr">
     <div><strong id="runtimeTitle">HTML WebView</strong><div class="runtime-msg" id="runtimeMsg">Preparing preview...</div></div>
     <button id="runtimeExitBtn" type="button">Exit X</button>
   </div>
   <div class="empty" id="runtimeEmpty">Preparing HTML preview...</div>
   <iframe id="runtimeFrame" sandbox="allow-scripts"></iframe>
-  <script>
-    (function(){{
-      const channelId = {channel_json};
-      const channelName = "eagle-html-runtime-" + channelId;
-      const frame = document.getElementById("runtimeFrame");
-      const empty = document.getElementById("runtimeEmpty");
-      const msgEl = document.getElementById("runtimeMsg");
-      const titleEl = document.getElementById("runtimeTitle");
-      let runtimeId = "";
-      let timeoutHandle = null;
-      let stopped = false;
-      let channel = null;
-
-      const setMsg = (text) => {{ if (msgEl) msgEl.textContent = text || ""; }};
-      const send = (payload) => {{
-        try {{ if (channel) channel.postMessage(payload); }} catch {{}}
-      }};
-      const sendLog = (level, message) => {{
-        send({{ type: "eagle-html-runtime-log", level, message }});
-      }};
-      const cleanupRuntime = () => {{
-        if (!runtimeId) return;
-        try {{
-          navigator.sendBeacon("/api/html-runtime/cleanup", new Blob([JSON.stringify({{ runtime_id: runtimeId }})], {{ type: "application/json" }}));
-        }} catch {{
-          fetch("/api/html-runtime/cleanup", {{ method: "POST", headers: {{ "Content-Type": "application/json" }}, body: JSON.stringify({{ runtime_id: runtimeId }}) }}).catch(() => {{}});
-        }}
-      }};
-      const terminate = (reason, cleanup = true) => {{
-        if (stopped) return;
-        stopped = true;
-        if (timeoutHandle) clearTimeout(timeoutHandle);
-        frame.src = "about:blank";
-        frame.style.display = "none";
-        empty.style.display = "grid";
-        empty.textContent = reason || "Execution stopped.";
-        setMsg(reason || "Execution stopped.");
-        sendLog("warn", reason || "Execution stopped.");
-        if (cleanup) cleanupRuntime();
-      }};
-      const loadRuntime = (runtime) => {{
-        if (!runtime || !runtime.runtime_id || !runtime.view_url) {{
-          terminate("Invalid HTML runtime response.", false);
-          return;
-        }}
-        stopped = false;
-        runtimeId = String(runtime.runtime_id);
-        const timeoutSeconds = Number(runtime.timeout_seconds || 30);
-        const sandboxFlags = ["allow-scripts"];
-        if (runtime.allow_popups) sandboxFlags.push("allow-popups");
-        frame.setAttribute("sandbox", sandboxFlags.join(" "));
-        if (titleEl) titleEl.textContent = runtime.title || "HTML WebView";
-        empty.style.display = "none";
-        frame.style.display = "block";
-        setMsg("Running...");
-        timeoutHandle = setTimeout(() => terminate("Execution time limit reached."), Math.max(1000, Math.floor(timeoutSeconds * 1000)));
-        frame.src = runtime.view_url;
-      }};
-
-      if ("BroadcastChannel" in window) {{
-        channel = new BroadcastChannel(channelName);
-        channel.onmessage = (event) => {{
-          const data = event.data || {{}};
-          if (data.type === "load") {{
-            loadRuntime(data.runtime || {{}});
-          }} else if (data.type === "stop") {{
-            terminate(data.reason || "Execution stopped.");
-          }} else if (data.type === "error") {{
-            terminate(data.message || "Could not start HTML runtime.", false);
-          }}
-        }};
-        send({{ type: "ready" }});
-      }} else {{
-        empty.textContent = "This browser does not support isolated HTML previews.";
-        setMsg("BroadcastChannel unavailable.");
-      }}
-
-      window.addEventListener("message", (event) => {{
-        if (event.source !== frame.contentWindow) return;
-        const data = event.data || {{}};
-        if (!data.__eagleHtmlRuntime) return;
-        if (data.type === "limit") {{
-          terminate(data.message || "Execution time limit reached.");
-        }} else if (data.type === "error") {{
-          sendLog("error", data.message || "JavaScript runtime error");
-        }} else if (data.type === "console" && data.level === "error") {{
-          sendLog("error", data.message || "console.error");
-        }} else if (data.type === "status") {{
-          sendLog("warn", data.message || "Runtime status");
-        }}
-      }});
-      frame.addEventListener("load", () => {{
-        if (!stopped && runtimeId) setMsg("Running...");
-      }});
-      frame.addEventListener("error", () => terminate("Execution stopped due to iframe load error."));
-      document.getElementById("runtimeExitBtn").addEventListener("click", () => {{
-        cleanupRuntime();
-        window.close();
-      }});
-      window.addEventListener("beforeunload", () => {{
-        cleanupRuntime();
-        send({{ type: "closed", runtime_id: runtimeId }});
-        try {{ if (channel) channel.close(); }} catch {{}}
-      }});
-    }})();
-  </script>
+  <script src="/static/js/html-runtime-popup.js?v=20261022-1" defer></script>
 </body>
 </html>"""
 

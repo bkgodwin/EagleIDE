@@ -62,6 +62,7 @@ class RolePermissionTestCase(unittest.TestCase):
             "class_id": "class-one",
             "class_ids": ["class-one"],
         }
+        eagle._save_users({"users": [dict(eagle._student_tokens[self.student_token]), dict(eagle._teacher_tokens[self.teacher_token])]})
         self.http = eagle.app.test_client()
         self.socket_clients = []
 
@@ -107,7 +108,7 @@ class RolePermissionTestCase(unittest.TestCase):
         eagle._classes_cache = None
 
     def _set_disabled_challenges_class(self):
-        eagle.USERS_FILE.write_text(json.dumps({"users": [{
+        eagle.USERS_FILE.write_text(json.dumps({"users": [dict(eagle._teacher_tokens[self.teacher_token]), {
             "email": self.student_email,
             "name": "Student",
             "role": "student",
@@ -209,6 +210,7 @@ class RolePermissionTestCase(unittest.TestCase):
         self.assertEqual({path.name for path in examples_dir.iterdir()}, set(eagle.EXAMPLE_FILES))
 
     def test_sixty_students_can_register_sign_in_and_join_from_one_network(self):
+        eagle._save_users({"users": []})
         shared_ip = "10.20.30.40"
         student_count = 60
 
@@ -436,6 +438,7 @@ class RolePermissionTestCase(unittest.TestCase):
         self.assertGreaterEqual(len(response.get_json()["temp_password"]), 22)
 
     def test_malformed_auth_requests_return_validation_errors(self):
+        eagle._save_users({"users": []})
         with patch("app._load_config", return_value={"registration_enabled": True}):
             for route in ("/api/auth/register", "/api/auth/login", "/api/admin/login"):
                 for payload in (["not", "an", "object"], {"email": ["student@school.test"], "password": 123, "name": "Student"}):
@@ -508,7 +511,7 @@ class RolePermissionTestCase(unittest.TestCase):
         self.assertIn("disabled", response.get_json()["error"].lower())
 
     def test_teacher_can_send_multiple_checked_files_in_one_request(self):
-        eagle.USERS_FILE.write_text(json.dumps({"users": [{
+        eagle.USERS_FILE.write_text(json.dumps({"users": [dict(eagle._teacher_tokens[self.teacher_token]), {
             "email": self.student_email,
             "name": "Student",
             "role": "student",

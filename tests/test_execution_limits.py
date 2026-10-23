@@ -35,6 +35,7 @@ class ExecutionLimitTestCase(unittest.TestCase):
         self.original_user_files_dir = eagle.USER_FILES_DIR
         self.original_sandbox_dir = eagle.SANDBOX_DIR
         self.original_classes_file = eagle.CLASSES_FILE
+        self.original_users_file = eagle.USERS_FILE
         self.original_output_bytes = eagle.MAX_OUTPUT_BYTES
         self.original_wall_time = eagle.MAX_WALL_TIME
         self.original_interactive_wall_time = eagle.MAX_INTERACTIVE_WALL_TIME
@@ -46,6 +47,7 @@ class ExecutionLimitTestCase(unittest.TestCase):
         eagle.USER_FILES_DIR = self.user_files_dir
         eagle.SANDBOX_DIR = self.sandbox_dir
         eagle.CLASSES_FILE = self.root / "classes.json"
+        eagle.USERS_FILE = self.root / "users.json"
         eagle._stop_all_runners()
         eagle._run_start_history.clear()
         eagle._run_history_last_seen.clear()
@@ -69,6 +71,7 @@ class ExecutionLimitTestCase(unittest.TestCase):
             "name": "Runner Teacher",
             "role": "teacher",
         }
+        eagle._save_users({"users": [dict(eagle._student_tokens[self.token]), dict(eagle._teacher_tokens[self.teacher_token])]})
         eagle.CLASSES_FILE.write_text(
             json.dumps({
                 "classes": [{
@@ -122,6 +125,7 @@ class ExecutionLimitTestCase(unittest.TestCase):
         eagle.USER_FILES_DIR = self.original_user_files_dir
         eagle.SANDBOX_DIR = self.original_sandbox_dir
         eagle.CLASSES_FILE = self.original_classes_file
+        eagle.USERS_FILE = self.original_users_file
         self.tmp.cleanup()
 
     def _socket(self):
@@ -533,6 +537,7 @@ class ExecutionLimitTestCase(unittest.TestCase):
             "class_id": "owned-class",
             "class_ids": ["owned-class"],
         })
+        eagle._save_users({"users": [dict(eagle._student_tokens[self.token]), dict(eagle._teacher_tokens[self.teacher_token])]})
         classes = json.loads(eagle.CLASSES_FILE.read_text(encoding="utf-8"))
         classes["classes"][0]["students"] = [self.email]
         classes["classes"][0]["settings"] = {"student_ide_access_enabled": False}

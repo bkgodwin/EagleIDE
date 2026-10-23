@@ -42,6 +42,7 @@ jobs:
         run: |
           python -m py_compile app.py sandbox_worker.py sandbox_policy.py sandbox_containment.py external_tools.py tool_store.py tool_gateway.py tool_storage.py
           node --check static/js/app-core.js
+          node --check static/js/html-runtime-popup.js
           node --check static/js/external-tools.js
           node --check static/js/external-tools-admin.js
           node --check static/js/external-tool-runtime.js
