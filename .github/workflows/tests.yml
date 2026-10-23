@@ -41,6 +41,8 @@ jobs:
       - name: Validate Python and browser scripts
         run: |
           python -m py_compile app.py sandbox_worker.py sandbox_policy.py sandbox_containment.py external_tools.py tool_store.py tool_gateway.py tool_storage.py
+          python -m py_compile data_cleanup.py cleanup_store.py cleanup_files.py cleanup_accounts.py cleanup_wiki.py
+          node --check static/js/admin-cleanup.js
           node --check static/js/app-core.js
           node --check static/js/html-runtime-popup.js
           node --check static/js/external-tools.js

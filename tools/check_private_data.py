@@ -17,7 +17,7 @@ CLEAN_HISTORY_ROOT = "0e8206f26efe1953330a6a2256bff8a3aa911c3a"
 PRIVATE_ROOTS = {
     "assignments", "assignment_submissions", "notebooks", "user_files", "sandboxes",
     "wiki_data", "wiki_backups", "network_data", "tool_data", "lesson_plans",
-    "background_assets", "file_provenance", "logs",
+    "background_assets", "file_provenance", "logs", "cleanup_data",
 }
 PRIVATE_FILES = {
     "users.json", "classes.json", "skills.json", "config.txt", ".admin_key",
