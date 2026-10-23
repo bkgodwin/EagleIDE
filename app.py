@@ -905,7 +905,19 @@ def _sanitize_email_for_path(email: str) -> str:
     digest = hashlib.sha256(email.encode("utf-8")).hexdigest()[:16]
     return f"user_{digest}"
 
-def _load_users() -> dict:
+class UserStoreUnavailable(RuntimeError):
+    """A failed read must not be interpreted as confirmed account deletion."""
+
+
+@app.errorhandler(UserStoreUnavailable)
+def _account_store_unavailable(_error):
+    response = jsonify(ok=False, code="account_store_unavailable",
+                       error="Account data is temporarily unavailable. Try again shortly.")
+    response.headers["Retry-After"] = "5"
+    return response, 503
+
+
+def _load_users(*, require_available=False) -> dict:
     global _users_cache
     with _users_lock:
         if USERS_FILE.exists():
@@ -914,11 +926,30 @@ def _load_users() -> dict:
                 mtime_ns = USERS_FILE.stat().st_mtime_ns
                 if _users_cache and _users_cache[0] == cache_path and _users_cache[1] == mtime_ns:
                     return copy.deepcopy(_users_cache[2])
-                normalized = _normalize_users_data(json.loads(USERS_FILE.read_text(encoding="utf-8")))
-                _users_cache = (cache_path, mtime_ns, normalized)
+                raw = json.loads(USERS_FILE.read_text(encoding="utf-8"))
+                valid_schema = (isinstance(raw, dict) and isinstance(raw.get("users"), list)
+                                and all(isinstance(user, dict) for user in raw["users"]))
+                if require_available and not valid_schema:
+                    raise UserStoreUnavailable("invalid_structure")
+                normalized = _normalize_users_data(raw)
+                # A permissive caller must not cache an invalid/partial store
+                # as an authoritative empty account list for authentication.
+                if valid_schema:
+                    _users_cache = (cache_path, mtime_ns, normalized)
                 return copy.deepcopy(normalized)
-            except Exception:
-                pass
+            except UserStoreUnavailable:
+                raise
+            except json.JSONDecodeError as exc:
+                if require_available:
+                    raise UserStoreUnavailable("invalid_json") from exc
+            except OSError as exc:
+                if require_available:
+                    raise UserStoreUnavailable("unreadable") from exc
+            except (ValueError, TypeError, AttributeError) as exc:
+                if require_available:
+                    raise UserStoreUnavailable("invalid_records") from exc
+        elif require_available:
+            raise UserStoreUnavailable("missing")
         return {"users": []}
 
 
@@ -1023,10 +1054,11 @@ def _save_users(data: dict) -> None:
         tmp.replace(USERS_FILE)
         _users_cache = (str(USERS_FILE.resolve()), USERS_FILE.stat().st_mtime_ns, copy.deepcopy(data))
 
-def _find_user(email: str) -> Optional[dict]:
-    data = _load_users()
+def _find_user(email: str, *, require_available=False) -> Optional[dict]:
+    data = _load_users(require_available=require_available)
     for u in data.get("users", []):
-        if u.get("email", "").lower() == email.lower():
+        candidate = u.get("email")
+        if isinstance(candidate, str) and candidate.lower() == str(email or "").lower():
             return _normalize_user_record(u)
     return None
 
@@ -1281,12 +1313,50 @@ def _generate_join_code(existing_codes: set[str]) -> str:
     raise RuntimeError("Could not generate unique class join code")
 
 
+_auth_rejection_log_limits = AttemptLimiter(1, 60)
+
+
+def _log_auth_rejection(reason, role, actor=None, current=None):
+    email = str((actor or {}).get("email") or "").strip().lower()
+    account = hashlib.sha256(email.encode()).hexdigest()[:12] if email else "unknown"
+    if not _auth_rejection_log_limits.admit((reason, role, account)):
+        return
+    # Correlate with the existing sign-in fingerprint, without recording the
+    # account's name/email, token, credentials, source or arbitrary record values.
+    shape = None if current is None else {
+        "role": current.get("role") if current.get("role") in {"student", "teacher", "wiki_manager"} else "invalid",
+        "enabled_type": type(current.get("enabled")).__name__,
+        "enabled": current.get("enabled") if isinstance(current.get("enabled"), bool) else "non_boolean",
+        **{key + "_type": type(current.get(key)).__name__ for key in ("email", "name", "class_id", "class_ids")},
+    }
+    _append_server_log("Auth rejected: " + json.dumps({
+        "reason": reason, "expected_role": role, "account": account,
+        "endpoint": request.endpoint if has_request_context() else None,
+        "normalized_record_shape": shape,
+    }, separators=(",", ":")), "WARNING")
+
+
 def _current_session_user(store, token: str, role: str) -> Optional[dict]:
     with store.lock:
+        candidate = dict.get(store, token)
         known = token in store.times
         actor = store.get(token)
-    current = _find_user(actor.get("email", "")) if actor else None
-    if not current or not current.get("enabled", True) or current.get("role", "student") != role:
+    if not actor:
+        if known:
+            _log_auth_rejection("session_expired", role, candidate)
+            _revoke_socket_sessions(tokens={token})
+        return None
+    try:
+        current = _find_user(actor.get("email", ""), require_available=True)
+    except UserStoreUnavailable as exc:
+        _log_auth_rejection("account_store_" + str(exc), role, actor)
+        # Fail closed for this request, but allow recovery without signing out
+        # every account after a transient read/replace/parse failure.
+        raise
+    reason = ("account_missing" if not current else "account_disabled" if not current.get("enabled", True)
+              else "role_mismatch" if current.get("role", "student") != role else None)
+    if reason:
+        _log_auth_rejection(reason, role, actor, current)
         store.pop(token, None)
         if known:
             _revoke_socket_sessions(tokens={token})
@@ -2809,6 +2879,10 @@ def _effective_ai_enabled(req, payload: Optional[dict] = None) -> tuple[bool, Op
         return True, None
     if _require_admin(req) or _require_wiki_manager(req):
         return True, None
+    roles = [role for role, header in (("student", "X-User-Token"), ("teacher", "X-Teacher-Token"),
+                                      ("admin", "X-Admin-Token"), ("wiki_manager", "X-Wiki-Manager-Token"))
+             if req.headers.get(header)]
+    _log_auth_rejection("invalid_session" if roles else "missing_auth_header", ",".join(roles) or "none")
     return False, "Sign in to use AI features"
 
 
