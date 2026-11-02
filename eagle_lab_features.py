@@ -12,6 +12,7 @@ from pathlib import Path
 from flask import jsonify, request
 
 from eagle_lab_store import EagleLabDataError, EagleLabStore
+from eagle_lab_gateway import LabGateway, AUTH_HEADERS
 
 
 _STATUS_TTL = 5.0
@@ -53,6 +54,7 @@ def register(
     get_user_class_ids,
     find_class,
     config_provider,
+    gateway_settings=None,
 ):
     store = EagleLabStore(base_dir)
     status_cache: dict[str, tuple[float, dict]] = {}
@@ -61,14 +63,14 @@ def register(
     def global_enabled() -> bool:
         return bool((config_provider() or {}).get("eagle_lab_enabled", False))
 
-    def actor():
-        if require_admin(request):
+    def actor(req=request):
+        if require_admin(req):
             return {"role": "admin", "email": "__admin__", "record": None}
-        teacher = require_teacher(request)
+        teacher = require_teacher(req)
         if teacher:
             email = str(teacher.get("email") or "").strip().lower()
             return {"role": "teacher", "email": email, "record": teacher}
-        user = require_user(request)
+        user = require_user(req)
         if user:
             fresh = find_user(str(user.get("email") or "")) or user
             return {"role": "student", "email": str(fresh.get("email") or "").strip().lower(), "record": fresh}
@@ -116,6 +118,9 @@ def register(
             status_cache[server["id"]] = (now, result)
         return dict(result)
 
+    gateway = LabGateway(app, store, actor, class_access, settings=gateway_settings)
+    app.extensions["eagle_lab_gateway"] = gateway
+
     def with_status(servers: list[dict]) -> list[dict]:
         if not servers:
             return []
@@ -147,6 +152,7 @@ def register(
             "role": current["role"],
             "class_id": class_id,
             "show_credentials": bool(rule.get("show_credentials")) or current["role"] in {"admin", "teacher"},
+            "gateway_configured": gateway.configured,
             "servers": with_status(servers),
         })
 
@@ -161,6 +167,9 @@ def register(
             return jsonify(ok=False, error="This server is not assigned to the class"), 403
         if current["role"] == "student" and not rule.get("show_credentials"):
             return jsonify(ok=False, error="Credentials are hidden for this class"), 403
+        auth_headers = {key: request.headers[key] for key in AUTH_HEADERS if request.headers.get(key)}
+        if current["role"] == "student" and not gateway.pin_unlocked(server_id, auth_headers, class_id):
+            return jsonify(ok=False, error="Unlock this server with its PIN first"), 403
         server = store.get_server(server_id, credentials=True)
         if not server:
             return jsonify(ok=False, error="Lab server not found"), 404
@@ -170,7 +179,7 @@ def register(
     def eagle_lab_admin_servers():
         if not require_admin(request):
             return jsonify(ok=False, error="Administrator access required"), 401
-        return jsonify(ok=True, data={"enabled": global_enabled(), "servers": store.list_servers()})
+        return jsonify(ok=True, data={"enabled": global_enabled(), "servers": store.list_servers(), "gateway_configured": gateway.configured, "proxy_domain": gateway.domain})
 
     @app.post("/api/eagle-lab/admin/servers")
     def eagle_lab_admin_server_create():

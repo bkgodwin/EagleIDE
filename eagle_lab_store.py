@@ -13,6 +13,7 @@ import uuid
 from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
+from credential_security import hash_password, verify_password, ADMIN_HASH_SCHEME
 
 
 SCHEMA_VERSION = 1
@@ -125,6 +126,8 @@ class EagleLabStore:
             "notes": server.get("notes", ""),
             "allow_self_signed": bool(server.get("allow_self_signed", True)),
             "created_at": server.get("created_at"),
+            "pin_required": bool(server.get("pin_hash")),
+            "revision": int(server.get("revision", 1)),
         }
 
     def list_servers(self) -> list[dict]:
@@ -171,6 +174,10 @@ class EagleLabStore:
         if password is not None:
             if not isinstance(password, str) or not password or len(password) > 512:
                 raise EagleLabDataError("Enter a PVE password of at most 512 characters")
+        pin = raw.get("pin")
+        if pin is not None and pin != "" and (not isinstance(pin, str) or not re.fullmatch(r"[0-9]{4,12}", pin)):
+            raise EagleLabDataError("PIN must contain 4–12 digits")
+        pin_hash = hash_password(pin) if pin else ""
         with self._lock:
             data = self._read()
             duplicate = next((item for item in data["servers"] if item.get("ip") == ip and int(item.get("port", 8006)) == port and item.get("id") != server_id), None)
@@ -185,11 +192,22 @@ class EagleLabStore:
                     raise EagleLabDataError("The lab server limit has been reached")
                 if password is None:
                     raise EagleLabDataError("Enter the PVE password")
-                server = {"id": uuid.uuid4().hex, "password": self._encrypt(password), "created_at": int(time.time())}
+                server = {"id": uuid.uuid4().hex, "password": self._encrypt(password), "created_at": int(time.time()), "revision": 0}
                 data["servers"].append(server)
             server.update(hostname=hostname, ip=ip, port=port, username=username, notes=notes, allow_self_signed=allow_self_signed)
+            if "pin" in raw:
+                server["pin_hash"] = pin_hash
+                server["pin_scheme"] = ADMIN_HASH_SCHEME if pin_hash else ""
+            server["revision"] = int(server.get("revision", 1)) + 1
             self._write(data)
             return self.public_server(server)
+
+    def verify_pin(self, server_id: str, pin: str) -> bool:
+        with self._lock:
+            server = self._server(self._read(), server_id)
+            stored = server.get("pin_hash")
+            scheme = server.get("pin_scheme", ADMIN_HASH_SCHEME)
+        return not stored or (isinstance(pin, str) and re.fullmatch(r"[0-9]{4,12}", pin) is not None and verify_password(pin, stored, scheme))
 
     def delete_server(self, server_id: str) -> bool:
         with self._lock:
@@ -227,8 +245,8 @@ class EagleLabStore:
             if any(item not in known for item in requested):
                 raise EagleLabDataError("A selected server no longer exists")
             rule = {
-                "enabled": raw["enabled"],
-                "show_credentials": raw["show_credentials"],
+                "enabled": raw.get("enabled", False),
+                "show_credentials": raw.get("show_credentials", False),
                 "server_ids": list(dict.fromkeys(requested)),
             }
             data["class_rules"][str(class_id)] = rule

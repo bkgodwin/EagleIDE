@@ -429,13 +429,15 @@ def _add_security_headers(response):
         csp_host = request.host if re.fullmatch(r"[A-Za-z0-9.\-:\[\]]+", request.host) else ""
         socket_origins = f"ws://{csp_host} wss://{csp_host}" if csp_host else ""
         preview_origin = globals().get("HTML_RUNTIME_PREVIEW_ORIGIN", "")
+        lab_gateway = app.extensions.get("eagle_lab_gateway")
+        lab_form_origin = f"https://*.{lab_gateway.domain}" if lab_gateway and lab_gateway.configured else ""
         response.headers.setdefault("Content-Security-Policy", (
             "default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://cdn.socket.io; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
             "font-src 'self' data: https://fonts.gstatic.com https://cdnjs.cloudflare.com; "
             "img-src 'self' data: blob: https:; media-src 'self' blob: https:; "
             f"connect-src 'self' blob: {socket_origins}; frame-src 'self' blob: https: {preview_origin}; "
-            "worker-src 'self' blob:; object-src blob:; base-uri 'self'; frame-ancestors 'self'; form-action 'self'"
+            f"worker-src 'self' blob:; object-src blob:; base-uri 'self'; frame-ancestors 'self'; form-action 'self' {lab_form_origin}"
         ))
     if request.path.startswith("/lesson-plans/embed/"):
         response.headers.pop("X-Frame-Options", None)
@@ -13741,6 +13743,7 @@ if __name__ == "__main__":
     _append_server_log(f"Server listening on http://{host}:{port} (async={socketio.async_mode})", "INFO")
     _cleanup_stale_runner_sandboxes()
     _cleanup_all_user_files()
+    app.extensions["eagle_lab_gateway"].start(port=port)
     try:
         from werkzeug.serving import WSGIRequestHandler
 

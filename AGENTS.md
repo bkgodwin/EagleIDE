@@ -49,6 +49,8 @@ Required runtime components:
 |-- network_content.py           Source-controlled example topologies, labs, and CLI reference
 |-- eagle_lab_features.py        Native PVE lab auth, class rules, status probes, and routes
 |-- eagle_lab_store.py           Atomic lab catalog and encrypted PVE credentials
+|-- eagle_lab_gateway.py         PIN-gated launch capabilities, live authorization, and gateway lifecycle
+|-- lab_gateway/                 Isolated Node HTTP/WebSocket relay and PVE browser compatibility bridges
 |-- lab_reports.py               Account-isolated autosave drafts for continuous lab reports
 |-- external_tools.py            Generic tool registration, class grants, scoped launch sessions, and workspace routes
 |-- tool_store.py                Bounded atomic private tool catalog and network policy
@@ -156,6 +158,8 @@ Required runtime components:
 |   |-- test_network_sim.py      Simulator validation, persistence, grading, auth, and class access
 |   |-- test_eagle_lab.py        PVE catalog encryption, class auth, and lab-report draft tests
 |   |-- eagle_lab_ui.test.js     Native lab/report wiring and autosave regressions
+|   |-- eagle_lab_gateway.test.js Synthetic PVE HTTP, cookie isolation, binary WebSocket and revocation checks
+|   |-- eagle_lab_browser_checks.mjs Optional HTTPS Chromium fixture for PIN/login, clipboard, nested VM console and report recovery
 |   |-- test_external_tools.py   Generic HTTP fixture, tool permissions, revocation, SSRF and gateway boundaries
 |   |-- external_tools_ui.test.js Tool launch, late responses, outage, navigation and lifecycle regressions
 |   `-- test_wiki.py             Wiki persistence, auth, media, class features, and backup tests
@@ -191,9 +195,25 @@ probes their HTTPS version route server-side, and requires both the off-by-defau
 global switch and a class-owner rule for student access. Admins enroll servers;
 teachers can assign enrolled servers only to classes they own. Credentials are
 encrypted by `EagleLabStore` and are returned only for an authorized assigned
-server when the class rule permits them. PVE opens as a top-level LAN URL because
-Proxmox login/WebSocket/frame behavior is not compatible with the sandboxed
-generic gateway. Never add a general-purpose proxy or accept public/loopback IPs.
+server when the class rule permits them and the server PIN is unlocked.
+`eagle_lab_gateway.py` issues one-use 60-second POST launches and four-hour
+host-only sessions bound to the originating EagleIDE session, actor, class,
+server, and server revision. PIN hashes use the existing versioned password
+hasher; PIN failures are limited per account/server and globally per server.
+Changes to PINs/server records, class access, and original auth revoke proxy
+delivery; active transfers and WebSockets recheck every two seconds.
+`lab_gateway/server.mjs` starts only with EAGLEIDE_LAB_PROXY_DOMAIN and an HTTPS
+EAGLEIDE_PUBLIC_ORIGIN. It listens on loopback port 8010 (configurable), asks
+Flask for fresh authority using a private process key, and proxies only the
+enrolled RFC1918 destination returned by Flask. It carries HTTP writes/uploads,
+PVE cookies, and raw binary console WebSockets over TLS. Each server gets an
+isolated `s-<id>.<proxy domain>` public HTTPS hostname, routed by the operator's
+existing tunnel/reverse proxy. Never mount this relay on EagleIDE's own origin,
+pass EagleIDE auth headers to PVE, expose arbitrary target URLs, or relax the
+generic external-tool sandbox. The parent explicitly delegates clipboard and
+fullscreen; nested frame ancestors include the portal and the proxy itself.
+Deployment, limits, native PVE ACL boundaries and guest clipboard prerequisites
+are in `docs/EAGLE_LAB_DEPLOYMENT.md`.
 
 `lab_reports.py` stores revision-checked, account-isolated draft responses below
 `assignments/.lab-reports/`. Assignment metadata remains in the existing additive

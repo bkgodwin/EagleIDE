@@ -1,0 +1,142 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const http = require('node:http');
+const net = require('node:net');
+const crypto = require('node:crypto');
+const vm = require('node:vm');
+
+const id = 'a'.repeat(32), session = 's'.repeat(43), ticket = 't'.repeat(43);
+const host = `s-${id}.pve.school.test`, origin = `https://${host}`;
+async function listen(server) {
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  return server.address().port;
+}
+async function fixture(t) {
+  const {createGateway} = await import('../lab_gateway/proxy.mjs');
+  const received = [];
+  const upstream = http.createServer((req, res) => {
+    received.push({url:req.url,headers:req.headers});
+    if(req.url==='/html') {res.writeHead(200,{'Content-Type':'text/html','X-Frame-Options':'SAMEORIGIN'});res.end('<html><head></head><script>document.cookie="PVEAuthCookie=ticket; Secure"</script></html>');}
+    else if(req.url==='/login') {res.writeHead(200,{'Content-Type':'application/json','Set-Cookie':'PVEAuthCookie=private; Path=/; Secure; Domain=10.0.0.10'});res.end('{}');}
+    else if(req.url==='/reject') {res.writeHead(401);res.end();}
+    else {res.writeHead(200,{'Content-Type':'application/octet-stream'});req.pipe(res);}
+  });
+  upstream.on('upgrade',(req,socket)=>{
+    received.push({url:req.url,headers:req.headers});
+    if(req.url.includes('reject'))return socket.end('HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
+    const accept=crypto.createHash('sha1').update(req.headers['sec-websocket-key']+'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: ${accept}\r\nSec-WebSocket-Protocol: binary\r\n\r\n`);
+    socket.write(Buffer.from([0x82,3,82,70,66])); // noVNC/RFB binary greeting
+    socket.on('data',data=>socket.write(data));socket.on('error',()=>{});
+  });
+  const upstreamPort=await listen(upstream);
+  const state={allowed:true};
+  const gateway=createGateway({domain:'pve.school.test',portalOrigin:'https://ide.school.test',recheckMs:25,
+    authorize:async body=>state.allowed&&body.server_id===id&&(body.session===session||body.ticket===ticket)
+      ? {session,server:{id,ip:'10.0.0.10',port:8006,allow_self_signed:true,revision:1}} : null,
+    upstreamRequest:(options,callback)=>{
+      assert.equal(options.hostname,'10.0.0.10');assert.equal(options.port,8006);assert.equal(options.rejectUnauthorized,false);
+      return http.request({...options,hostname:'127.0.0.1',port:upstreamPort},callback);
+    }});
+  const port=await listen(gateway);
+  t.after(()=>{gateway.closeAllConnections();gateway.close();upstream.closeAllConnections();upstream.close();});
+  const request=(path,headers={},method='GET',body)=>new Promise((resolve,reject)=>{
+    const req=http.request({hostname:'127.0.0.1',port,path,method,headers:{Host:host,Cookie:`__Host-EagleLab=${session}; PVEAuthCookie_${id}=pve-session; EagleIDE=must-not-forward`,...headers}},res=>{
+      const chunks=[];res.on('data',chunk=>chunks.push(chunk));res.on('end',()=>resolve({status:res.statusCode,headers:new Headers(Object.entries(res.headers).map(([key,value])=>[key,Array.isArray(value)?value.join(','):value])),text:async()=>Buffer.concat(chunks).toString()}));res.on('error',reject);
+    });req.on('error',reject);req.end(body===undefined?undefined:String(body));
+  });
+  return {gateway,port,state,request,received};
+}
+
+test('PVE management pages allow only the portal and nested same-node frames; cookies and EagleIDE headers are isolated',async t=>{
+  const f=await fixture(t);
+  const page=await f.request('/html',{'X-User-Token':'secret-ide-token','X-Lab-Gateway-Key':'never-forward'});
+  assert.equal(page.status,200);
+  const html=await page.text();
+  assert.match(html,/<head><script src="\/_eagle\/bridge.js"><\/script>/);
+  assert.match(html,new RegExp('PVEAuthCookie_'+id));
+  assert.equal(page.headers.get('x-frame-options'),null);
+  assert.match(page.headers.get('content-security-policy'),/frame-ancestors https:\/\/ide.school.test 'self'/);
+  assert.match(page.headers.get('permissions-policy'),/clipboard-read/);
+  assert.equal(f.received[0].headers.cookie,'PVEAuthCookie=pve-session');
+  assert.equal(f.received[0].headers['x-user-token'],undefined);
+  assert.equal(f.received[0].headers['x-lab-gateway-key'],undefined);
+  const login=await f.request('/login',{Origin:origin},'POST','login=data');await login.text();
+  const cookie=login.headers.get('set-cookie');
+  assert.match(cookie,new RegExp('PVEAuthCookie_'+id));assert.doesNotMatch(cookie,/Domain=/i);assert.match(cookie,/Secure; SameSite=None; Partitioned/);
+});
+
+test('one-time launch POST sets a host-only HttpOnly gateway cookie without putting capabilities in URLs',async t=>{
+  const f=await fixture(t);
+  const response=await f.request('/_eagle/launch',{Origin:'https://ide.school.test'},'POST',new URLSearchParams({ticket}));
+  assert.equal(response.status,303);assert.equal(response.headers.get('location'),'/');
+  assert.match(response.headers.get('set-cookie'),/^__Host-EagleLab=.*HttpOnly; Secure; SameSite=None; Partitioned/);
+  assert.equal(f.received.length,0);
+  const denied=await f.request('/_eagle/launch',{Origin:'https://evil.test'},'POST',new URLSearchParams({ticket}));
+  assert.equal(denied.status,403);
+});
+
+test('unknown node origins, forged sessions and cross-origin mutations fail before contacting PVE',async t=>{
+  const f=await fixture(t);
+  assert.equal((await f.request('/',{Host:'code.school.test'})).status,403);
+  assert.equal((await f.request('/',{Cookie:'__Host-EagleLab=forged'})).status,403);
+  assert.equal((await f.request('/api2/json/nodes',{Origin:'https://evil.test'},'POST','data')).status,403);
+  assert.equal(f.received.length,0);
+});
+
+test('authenticated PVE API writes and binary uploads/downloads are streamed unchanged',async t=>{
+  const f=await fixture(t);
+  const data='API payload '.repeat(10000);
+  const response=await f.request('/api2/json/nodes/pve/storage/upload',{Origin:origin,'Content-Type':'application/octet-stream'},'POST',data);
+  assert.equal(response.status,200);assert.equal(await response.text(),data);
+  assert.equal(f.received[0].headers.origin,'https://10.0.0.10:8006');
+  f.state.allowed=false;
+  const denied=await f.request('/html');assert.equal(denied.status,403);
+  assert.equal(f.received.length,1);
+});
+
+function rawSocket(port,path) {
+  const socket=net.connect(port,'127.0.0.1');let chunks=[];
+  const connected=new Promise((resolve,reject)=>{
+    socket.on('error',reject);
+    socket.on('data',chunk=>{chunks.push(chunk);if(Buffer.concat(chunks).includes(Buffer.from('\r\n\r\n')))resolve();});
+    socket.on('connect',()=>socket.write(`GET ${path} HTTP/1.1\r\nHost: ${host}\r\nOrigin: ${origin}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: binary\r\nCookie: __Host-EagleLab=${session}; PVEAuthCookie_${id}=pve-session\r\n\r\n`));
+  });
+  return {socket,connected,data:()=>Buffer.concat(chunks)};
+}
+
+test('nested noVNC preserves tickets and binary subprotocol, tunnels RFB bytes, and closes after revocation',async t=>{
+  const f=await fixture(t);
+  const path='/api2/json/nodes/pve/qemu/100/vncwebsocket?port=5900&vncticket=PVEVNC%3Aticket%2B%3D';
+  const ws=rawSocket(f.port,path);t.after(()=>ws.socket.destroy());
+  await ws.connected;
+  if(!ws.data().includes(Buffer.from([0x82,3,82,70,66])))await new Promise(resolve=>ws.socket.once('data',resolve));
+  assert.match(ws.data().toString('latin1'),/101 Switching Protocols/);
+  assert.match(ws.data().toString('latin1'),/sec-websocket-protocol: binary/i);
+  assert.ok(ws.data().includes(Buffer.from([0x82,3,82,70,66])));
+  assert.equal(f.received[0].url,path);
+  assert.equal(f.received[0].headers.cookie,'PVEAuthCookie=pve-session');
+  const payload=Buffer.from([0x82,0x83,1,2,3,4,96,96,96]);
+  const echoed=new Promise(resolve=>ws.socket.once('data',resolve));ws.socket.write(payload);
+  assert.deepEqual(await echoed,payload);
+  const closed=new Promise((resolve,reject)=>{const timeout=setTimeout(()=>reject(Error('Revoked console stayed connected')),1500);ws.socket.once('close',()=>{clearTimeout(timeout);resolve();});});
+  f.state.allowed=false;await closed;
+});
+
+test('PVE upgrade rejection keeps the real HTTP status',async t=>{
+  const f=await fixture(t);const ws=rawSocket(f.port,'/api2/json/nodes/reject/vncwebsocket');t.after(()=>ws.socket.destroy());await ws.connected;
+  assert.match(ws.data().toString(),/^HTTP\/1.1 401 Unauthorized/);
+});
+
+test('PVE cookie bridge preserves clipboard-compatible secure partitioned cookies and WebSocket binary protocols',async()=>{
+  const {bridgeSource}=await import('../lab_gateway/bridges.mjs');let assigned;const calls=[];
+  class Document{};Object.defineProperty(Document.prototype,'cookie',{get:()=>assigned||'',set:value=>{assigned=value;}});
+  class Socket{constructor(...args){calls.push(args);}}
+  const document=new Document(),window={WebSocket:Socket};
+  vm.runInNewContext(bridgeSource('PVEAuthCookie_'+id),{document,Document,window,URL,location:{href:origin+'/',host,protocol:'https:'}});
+  document.cookie='PVEAuthCookie=ticket; Secure; Path=/; Domain=school.test';
+  assert.match(assigned,new RegExp('^PVEAuthCookie_'+id+'=ticket'));
+  assert.doesNotMatch(assigned,/Domain=/);assert.match(assigned,/Secure; SameSite=None; Partitioned/);
+  new window.WebSocket('ws://'+host+'/api2/json/nodes/pve/qemu/100/vncwebsocket?ticket=x',['binary']);
+  assert.match(calls[0][0],/^wss:/);assert.deepEqual(calls[0][1],['binary']);
+});
