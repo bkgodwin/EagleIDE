@@ -149,10 +149,11 @@
     if(originalSession!==sessionKey())return;
     const root=document.createElement('section'),frameName='eagle-pve-'+server.id+'-'+Date.now();
     root.className='eagle-lab-workspace';root.setAttribute('aria-label','PVE management workspace');
+    const sandbox='allow-scripts allow-forms allow-downloads allow-modals allow-popups allow-pointer-lock'+(launch.transport==='path'?'':' allow-same-origin');
     root.innerHTML=`<header class="eagle-lab-workspace-toolbar"><button class="btn secondary" data-workspace-exit type="button">← Eagle Lab</button><strong>${esc(server.hostname)}</strong><span class="eagle-lab-clipboard-hint">Terminal: Ctrl+Shift+C / Ctrl+Shift+V · VM: noVNC clipboard or serial terminal</span>${credentials?'<button class="btn secondary" data-workspace-credentials type="button">Credentials</button>':''}<select data-workspace-report aria-label="Lab report"><option value="">Choose lab report</option>${state.assignments.map(item=>`<option value="${esc(item.id)}">${esc(item.name)}</option>`).join('')}</select><button class="btn secondary" data-workspace-open-report type="button">Open report</button></header>
-      <iframe name="${esc(frameName)}" title="${esc(server.hostname)} management interface" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-modals allow-popups allow-pointer-lock" allow="clipboard-read *; clipboard-write *; fullscreen *" allowfullscreen referrerpolicy="no-referrer"></iframe>`;
+      <iframe name="${esc(frameName)}" title="${esc(server.hostname)} management interface" sandbox="${sandbox}" allow="clipboard-read *; clipboard-write *; fullscreen *" allowfullscreen referrerpolicy="no-referrer"></iframe>`;
     document.body.append(root);
-    state.workspace={root,serverId:server.id,session:originalSession};
+    state.workspace={root,serverId:server.id,session:originalSession,transport:launch.transport,clipboardKey:launch.clipboard_key,clipboardTimes:[]};
     root.querySelector('[data-workspace-exit]').onclick=()=>closeWorkspace();
     root.querySelector('[data-workspace-credentials]')?.addEventListener('click',()=>{
       const panel=document.createElement('div');panel.className='modal glass-modal';panel.style.display='flex';
@@ -174,7 +175,7 @@
 
   async function loadAdmin() {
     if(!context().ADMIN_TOKEN) return;
-    try {const data=await api('/api/eagle-lab/admin/servers');state.adminServers=data.servers||[];renderAdminServers();$('eagleLabAdminStatus').textContent=data.gateway_configured?`Embedded gateway configured: s-<server-id>.${data.proxy_domain}`:'Embedded PVE needs EAGLEIDE_LAB_PROXY_DOMAIN and EAGLEIDE_PUBLIC_ORIGIN; see deployment instructions.';}
+    try {const data=await api('/api/eagle-lab/admin/servers');state.adminServers=data.servers||[];renderAdminServers();$('eagleLabAdminStatus').textContent=data.gateway_configured?(data.gateway_transport==='path'?'Automatic relay uses the current EagleIDE address.':`Embedded gateway configured: s-<server-id>.${data.proxy_domain}`):'Embedded PVE gateway is disabled.';}
     catch(error){$('eagleLabAdminStatus').textContent=error.message;}
   }
   function resetAdminForm() {
@@ -252,6 +253,21 @@
   function applyConfig(config={}){const ctx=context(),available=!!(config.eagle_lab_enabled||ctx.ADMIN_TOKEN);if($('eagleLabViewBtn'))$('eagleLabViewBtn').hidden=!available;}
   async function refreshAvailability(){let config=context().currentConfig;if(!config&&window.EagleIDE?.configReady){await window.EagleIDE.configReady;config=context().currentConfig;}applyConfig(config||{});}
   function attach(){
+    window.addEventListener('message',async event=>{
+      const data=event.data,workspace=state.workspace;
+      if(!workspace||workspace.transport!=='path'||!workspace.root.isConnected||event.origin!=='null'||!data||data.type!=='eagle-lab-clipboard'||data.key!==workspace.clipboardKey||typeof data.id!=='string'||data.id.length>100||!['readText','writeText'].includes(data.method))return;
+      workspace.clipboardTimes=workspace.clipboardTimes.filter(time=>Date.now()-time<2000);
+      if(workspace.clipboardTimes.length>=8)return;workspace.clipboardTimes.push(Date.now());
+      const result={type:'eagle-lab-clipboard-result',key:workspace.clipboardKey,id:data.id};
+      try{
+        if(!document.hasFocus()||workspace.session!==sessionKey())throw new Error('Focus the Eagle Lab window to use the clipboard.');
+        if(data.method==='writeText'){
+          if(typeof data.text!=='string'||data.text.length>1000000)throw new Error('Clipboard text is too large.');
+          await navigator.clipboard.writeText(data.text);
+        }else {result.text=await navigator.clipboard.readText();if(result.text.length>1000000)throw new Error('Clipboard text is too large.');}
+      }catch(error){result.error=error.message||'Clipboard permission is required.';}
+      if(state.workspace===workspace&&workspace.session===sessionKey())event.source?.postMessage(result,'*');
+    });
     window.addEventListener('eagle-context-updated',()=>{if(state.workspace&&state.workspace.session!==sessionKey())closeWorkspace(false);document.querySelectorAll('.eagle-lab-credentials').forEach(item=>item.closest('.modal')?.remove());});
     [$('wikiViewBtn'),$('wikiHomeBtn'),$('ideViewBtn'),$('networkViewBtn'),$('eagleLabViewBtn')].forEach(button=>button?.addEventListener('click',()=>closeWorkspace()));
     window.addEventListener('popstate',()=>closeWorkspace());

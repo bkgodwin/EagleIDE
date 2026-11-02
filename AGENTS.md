@@ -6,7 +6,7 @@ This file is the working map for agents modifying EagleIDE. Read it before chang
 
 ## Product Summary
 
-EagleIDE is a classroom-focused browser IDE for Python, JavaScript, HTML, and CSS. A single Flask + Socket.IO process serves the page, static assets, REST APIs, and real-time execution on port 8000.
+EagleIDE is a classroom-focused browser IDE for Python, JavaScript, HTML, and CSS. A single Flask + Socket.IO process serves the page, static assets, REST APIs, and real-time execution. The normal launcher places a Node front on the existing public HOST/PORT (8000 by default) for the native PVE relay; Flask uses a private, automatically selected loopback port.
 
 There is no frontend build system, package manager, or separate API service. The browser UI uses plain HTML, CSS, and global JavaScript. Most application data is stored in JSON, CSV, and per-user directories beside the source tree; the wiki uses a local SQLite catalog plus ordinary Markdown/media files.
 
@@ -51,6 +51,9 @@ Required runtime components:
 |-- eagle_lab_store.py           Atomic lab catalog and encrypted PVE credentials
 |-- eagle_lab_gateway.py         PIN-gated launch capabilities, live authorization, and gateway lifecycle
 |-- lab_gateway/                 Isolated Node HTTP/WebSocket relay and PVE browser compatibility bridges
+|   |-- front.mjs                Fixed loopback Flask/Socket.IO forwarding on the existing public listener
+|   |-- path-runtime.mjs         Opaque PVE URL, virtual cookie/storage and scoped clipboard bridges
+|   `-- path-rewrite.mjs         Prefix rewriting for PVE documents, styles and console modules
 |-- lab_reports.py               Account-isolated autosave drafts for continuous lab reports
 |-- external_tools.py            Generic tool registration, class grants, scoped launch sessions, and workspace routes
 |-- tool_store.py                Bounded atomic private tool catalog and network policy
@@ -159,6 +162,7 @@ Required runtime components:
 |   |-- test_eagle_lab.py        PVE catalog encryption, class auth, and lab-report draft tests
 |   |-- eagle_lab_ui.test.js     Native lab/report wiring and autosave regressions
 |   |-- eagle_lab_gateway.test.js Synthetic PVE HTTP, cookie isolation, binary WebSocket and revocation checks
+|   |-- test_eagle_lab_single_address.py Public listener lifecycle, authenticated peer restoration and path launch/revocation
 |   |-- eagle_lab_browser_checks.mjs Optional HTTPS Chromium fixture for PIN/login, clipboard, nested VM console and report recovery
 |   |-- test_external_tools.py   Generic HTTP fixture, tool permissions, revocation, SSRF and gateway boundaries
 |   |-- external_tools_ui.test.js Tool launch, late responses, outage, navigation and lifecycle regressions
@@ -197,21 +201,28 @@ teachers can assign enrolled servers only to classes they own. Credentials are
 encrypted by `EagleLabStore` and are returned only for an authorized assigned
 server when the class rule permits them and the server PIN is unlocked.
 `eagle_lab_gateway.py` issues one-use 60-second POST launches and four-hour
-host-only sessions bound to the originating EagleIDE session, actor, class,
+capability sessions bound to the originating EagleIDE session, actor, class,
 server, and server revision. PIN hashes use the existing versioned password
 hasher; PIN failures are limited per account/server and globally per server.
 Changes to PINs/server records, class access, and original auth revoke proxy
 delivery; active transfers and WebSockets recheck every two seconds.
-`lab_gateway/server.mjs` starts only with EAGLEIDE_LAB_PROXY_DOMAIN and an HTTPS
-EAGLEIDE_PUBLIC_ORIGIN. It listens on loopback port 8010 (configurable), asks
-Flask for fresh authority using a private process key, and proxies only the
-enrolled RFC1918 destination returned by Flask. It carries HTTP writes/uploads,
-PVE cookies, and raw binary console WebSockets over TLS. Each server gets an
-isolated `s-<id>.<proxy domain>` public HTTPS hostname, routed by the operator's
-existing tunnel/reverse proxy. Never mount this relay on EagleIDE's own origin,
-pass EagleIDE auth headers to PVE, expose arbitrary target URLs, or relax the
-generic external-tool sandbox. The parent explicitly delegates clipboard and
-fullscreen; nested frame ancestors include the portal and the proxy itself.
+`lab_gateway/server.mjs` defaults to the existing public HOST/PORT with no extra
+DNS or tunnel route. `front.mjs` forwards ordinary HTTP/Socket.IO to a fixed
+private Flask listener. `_TrustedLabFront` restores the real transport peer only
+from loopback with a per-process secret, before existing proxy-trust checks.
+Lab paths use `/_eagle/lab/<server-id>/<session>/`; Flask provides fresh authority
+for the enrolled RFC1918 destination only. Path mode MUST stay opaque: both the
+iframe sandbox and response CSP sandbox omit allow-same-origin, even for direct
+navigation. Prefix rewrites and the runtime support PVE URLs, cookie/storage
+state held in bounded per-session Node profiles, and keyed parent clipboard
+delegation. No browser PVE cookie is set on EagleIDE's origin. Never forward
+EagleIDE credentials to PVE, expose arbitrary target URLs, remove the mandatory
+sandbox, or relax the independent generic external-tool sandbox.
+Existing EAGLEIDE_LAB_PROXY_DOMAIN + HTTPS EAGLEIDE_PUBLIC_ORIGIN settings retain
+the previous isolated hostname mode on loopback 8010. EAGLEIDE_LAB_TRANSPORT can
+explicitly select path, origin, or disabled (direct Flask, no embedded relay).
+HTTP writes/uploads and raw binary console WebSockets use TLS to PVE. The
+existing public HTTPS tunnel must preserve Host, all paths and WebSocket upgrades.
 Deployment, limits, native PVE ACL boundaries and guest clipboard prerequisites
 are in `docs/EAGLE_LAB_DEPLOYMENT.md`.
 

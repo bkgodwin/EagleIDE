@@ -153,6 +153,7 @@ def register(
             "class_id": class_id,
             "show_credentials": bool(rule.get("show_credentials")) or current["role"] in {"admin", "teacher"},
             "gateway_configured": gateway.configured,
+            "gateway_transport": gateway.transport,
             "servers": with_status(servers),
         })
 
@@ -179,7 +180,7 @@ def register(
     def eagle_lab_admin_servers():
         if not require_admin(request):
             return jsonify(ok=False, error="Administrator access required"), 401
-        return jsonify(ok=True, data={"enabled": global_enabled(), "servers": store.list_servers(), "gateway_configured": gateway.configured, "proxy_domain": gateway.domain})
+        return jsonify(ok=True, data={"enabled": global_enabled(), "servers": store.list_servers(), "gateway_configured": gateway.configured, "proxy_domain": gateway.domain, "gateway_transport": gateway.transport})
 
     @app.post("/api/eagle-lab/admin/servers")
     def eagle_lab_admin_server_create():
