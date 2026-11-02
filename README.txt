@@ -53,14 +53,18 @@ Native Eagle Lab (disabled by default):
   which enrolled PVE servers students can see, and decide whether students may
   reveal the enrolled credentials. Removing a server safely removes it from all
   class selections without changing accounts, classes, assignments, or PVE data.
-- EagleIDE probes /api2/json/version from the server host. The EagleIDE host and
-  each student browser must be able to route to the PVE LAN address. "Open PVE"
-  uses a top-level HTTPS tab so Proxmox login, console WebSockets, and downloads
-  work normally; a self-signed PVE certificate may require one browser trust step.
-  Do not expose PVE management addresses to the public internet.
-  Class rules control access through Eagle Lab. PVE accounts and permissions
-  remain managed in PVE; changing a class rule does not revoke an existing PVE
-  login or change a password that a student has already received.
+- Connect opens an embedded PVE management window, including node/LXC terminals
+  and nested VM/noVNC consoles. Only the EagleIDE host needs LAN access to PVE;
+  students reach the HTTPS gateway through the school's public tunnel. See
+  docs/EAGLE_LAB_DEPLOYMENT.md for the required proxy hostnames and tunnel routes.
+- Administrators can set/change/remove a 4–12 digit server PIN. Students need
+  both class access and the PIN before connecting or revealing credentials.
+  PIN changes and server edits revoke existing gateway sessions. Exiting the
+  window disconnects; class removal, logout, and disablement stop active proxies.
+- PVE accounts and permissions remain managed in PVE. Shared root credentials
+  grant cluster-wide rights where PVE allows them; use dedicated PVE accounts
+  and native ACLs for isolation within a cluster. A PIN does not change PVE ACLs
+  or a password a student already knows. Do not expose PVE itself publicly.
 - Teachers can create the Lab report assignment type with written responses,
   fill-in-the-blank answers, and procedure checklists. Students open the report
   as one continuous window above Eagle Lab. Drafts autosave, survive closing and

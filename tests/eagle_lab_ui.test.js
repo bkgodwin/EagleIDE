@@ -55,7 +55,7 @@ function reportFixture(writeDraft) {
     document: {
       getElementById: () => null, addEventListener() {},
       createElement: () => overlay,
-      body: { append(element) { element.isConnected = true; } },
+      body: { append(element) { element.isConnected = true; }, classList: { contains: () => false } },
       querySelectorAll: () => [],
     },
     CSS: { escape: String },
@@ -115,7 +115,7 @@ test('account changes cancel the old report before another draft request can be 
   const fixture = reportFixture(async () => { throw new Error('Unexpected save'); });
   await fixture.api.openReportById('assignment', { name: 'Lab report' });
   fixture.ctx.USER_TOKEN = 'session-two';
-  fixture.windowEvents['eagle-context-updated'][0]();
+  fixture.windowEvents['eagle-context-updated'].forEach(callback => callback());
   assert.equal(fixture.overlay.isConnected, false);
   assert.equal(fixture.api.getState().report, null);
   assert.equal(fixture.sent.length, 0);
