@@ -42,6 +42,11 @@ jobs:
         run: |
           python -m py_compile app.py sandbox_worker.py sandbox_policy.py sandbox_containment.py external_tools.py tool_store.py tool_gateway.py tool_storage.py
           python -m py_compile data_cleanup.py cleanup_store.py cleanup_files.py cleanup_accounts.py cleanup_wiki.py
+          python -m py_compile eagle_lab_features.py eagle_lab_store.py eagle_lab_gateway.py lab_reports.py
+          node --check lab_gateway/proxy.mjs
+          node --check lab_gateway/server.mjs
+          node --check lab_gateway/bridges.mjs
+          node --check static/js/eagle-lab.js
           node --check static/js/admin-cleanup.js
           node --check static/js/editor-appearance.js
           node --check static/js/autocomplete.js

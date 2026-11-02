@@ -43,7 +43,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js" integrity="sha384-44q2s9jxk8W5N9gAB0yn7UYLi9E2oVw8eHyaTZLkDS3WuZM/AttkAiVj6JoZuGS4" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js" integrity="sha384-jgkY4GMNWfQcLLIoP1vg3FWXflDrRhcSXGBW6ONIWC2SOIv5H1Pa57sXs+aomCuZ" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js" integrity="sha384-EO/jSdjpPTVnKfaKudbmOTZBYv471ACLOeLdy0zhCEJrQAtjgUSCbn/Cc+9QWjIx" crossorigin="anonymous"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261102-eagle-lab-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261102-eagle-lab-2">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -1896,6 +1896,8 @@
                 <label><span>PVE HTTPS port</span><input id="eagleLabServerPort" type="number" min="1" max="65535" value="8006"></label>
                 <label><span>Username</span><input id="eagleLabServerUsername" maxlength="120" value="root"></label>
                 <label><span>Password</span><input id="eagleLabServerPassword" type="password" maxlength="512" autocomplete="new-password"><small>Leave blank when editing to keep the existing password.</small></label>
+                <label><span>Student server PIN (optional)</span><input id="eagleLabServerPin" type="password" inputmode="numeric" pattern="[0-9]{4,12}" minlength="4" maxlength="12" autocomplete="new-password"><small>4–12 digits. Leave blank when editing to keep the PIN.</small></label>
+                <label class="admin-setting-toggle compact"><input id="eagleLabServerClearPin" type="checkbox"><span><strong>Remove existing PIN</strong></span></label>
                 <label class="admin-setting-toggle compact"><input id="eagleLabServerSelfSigned" type="checkbox" checked><span><strong>Trust this server's self-signed certificate</strong><small>Common for local PVE installations.</small></span></label>
               </div>
               <label><span>Student notes</span><textarea id="eagleLabServerNotes" maxlength="6000" placeholder="Connection or classroom instructions"></textarea></label>
@@ -2063,30 +2065,30 @@
 
   <script src="/static/js/app.js"></script>
   <script src="/static/js/connection.js?v=20261011-files-5"></script>
-  <script src="/static/js/feature-loader.js?v=20261102-eagle-lab-1"></script>
+  <script src="/static/js/feature-loader.js?v=20261102-eagle-lab-2"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20261021-security-1"></script>
   <script src="/static/js/layout.js?v=20261011-files-5"></script>
-  <script src="/static/js/autocomplete.js?v=20261102-eagle-lab-1"></script>
+  <script src="/static/js/autocomplete.js?v=20261102-eagle-lab-2"></script>
   <script src="/static/js/editor-behavior.js?v=20261009-assignment-step-2"></script>
   <script src="/static/js/editor-feedback.js?v=20261021-security-1"></script>
-  <script src="/static/js/editor-appearance.js?v=20261102-eagle-lab-1"></script>
+  <script src="/static/js/editor-appearance.js?v=20261102-eagle-lab-2"></script>
   <script src="/static/js/editor-init.js?v=20261015-assignment-folders-1"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js?v=20261011-files-5"></script>
   <script src="/static/js/server-performance.js?v=20261011-files-5"></script>
   <script src="/static/js/workspace-data.js?v=20261011-files-5"></script>
   <script src="/static/js/file-provenance.js?v=20261015-assignment-folders-1"></script>
-  <script src="/static/js/assignment-workflow.js?v=20261102-eagle-lab-1"></script>
+  <script src="/static/js/assignment-workflow.js?v=20261102-eagle-lab-2"></script>
   <script src="/static/js/assignment-development.js?v=20261015-assignment-folders-1"></script>
   <script src="/static/js/teacher-assignments.js?v=20261015-assignment-folders-1"></script>
-  <script src="/static/js/app-core.js?v=20261102-eagle-lab-1"></script>
+  <script src="/static/js/app-core.js?v=20261102-eagle-lab-2"></script>
   <script src="/static/js/step-mode.js?v=20261011-files-5"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20261021-security-1"></script>
-  <script src="/static/js/wiki-reader.js?v=20261102-eagle-lab-1"></script>
+  <script src="/static/js/wiki-reader.js?v=20261102-eagle-lab-2"></script>
   <script src="/static/js/external-tools.js?v=20261022-wiki-manager-1"></script>
   <script src="/static/js/lesson-plans.js?v=20261021-security-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20261102-eagle-lab-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20261102-eagle-lab-2"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20261011-files-5"></script>
   <script src="/static/js/notebook-sync.js?v=20261011-notebook-topics-1"></script>

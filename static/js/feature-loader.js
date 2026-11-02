@@ -5,7 +5,7 @@
   const definitions = {
     adminCleanup: ['/static/js/admin-cleanup.js?v=20261023-cleanup-1'],
     externalToolsAdmin: ['/static/js/external-tools-admin.js?v=20261020-storage-1'],
-    eagleLab: ['/static/js/eagle-lab.js?v=20261102-1'],
+    eagleLab: ['/static/js/eagle-lab.js?v=20261102-2'],
     network: [
       '/static/js/network-sim.js?v=20261022-wiki-manager-1',
       '/static/js/network-sim-advanced.js?v=20260714-4',

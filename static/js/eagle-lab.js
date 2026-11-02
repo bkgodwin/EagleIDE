@@ -4,7 +4,7 @@
 
   const $ = id => document.getElementById(id);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
-  const state = { initialized:false, bootstrap:null, classId:'', search:'', assignments:[], adminServers:[], teacherData:null, report:null };
+  const state = { initialized:false, bootstrap:null, classId:'', search:'', assignments:[], adminServers:[], teacherData:null, report:null, workspace:null };
 
   function context() { return window.EagleIDE?.getContext?.() || {}; }
   function sessionKey() { const ctx=context(); return ctx.ADMIN_TOKEN || ctx.TEACHER_TOKEN || ctx.USER_TOKEN || ''; }
@@ -98,13 +98,15 @@
     renderReports();
   }
   function renderReports() {
+    const workspaceSelect=state.workspace?.root.querySelector('[data-workspace-report]');
+    if(workspaceSelect){const previous=workspaceSelect.value;workspaceSelect.innerHTML='<option value="">Choose lab report</option>'+state.assignments.map(item=>`<option value="${esc(item.id)}">${esc(item.name)}</option>`).join('');workspaceSelect.value=previous;}
     $('eagleLabReportList').innerHTML=state.assignments.map(item=>`
       <button class="eagle-lab-report-card" type="button" data-lab-report="${esc(item.id)}"><strong>${esc(item.name)}</strong><span>${item.studentSubmissionSummary?.submittedAt?'Submitted':'Autosaves while you work'}</span></button>`).join('') || '<div class="eagle-lab-empty">No active lab reports for this class.</div>';
   }
   async function openServer(serverId) {
     const server=(state.bootstrap?.servers||[]).find(item=>item.id===serverId); if(!server) return;
     let credentials=null;
-    if(state.bootstrap?.show_credentials) {
+    if(state.bootstrap?.show_credentials && !server.pin_required) {
       try {credentials=await api(`/api/eagle-lab/servers/${encodeURIComponent(serverId)}/credentials?class_id=${encodeURIComponent(state.classId||'')}`);} catch(error) {credentials={error:error.message};}
     }
     const modal=document.createElement('div'); modal.className='modal glass-modal'; modal.style.display='flex';
@@ -113,20 +115,70 @@
       <div class="eagle-lab-detail-grid"><div class="eagle-lab-detail-item"><span>Address</span><code>${esc(server.ip)}:${Number(server.port)||8006}</code></div><div class="eagle-lab-detail-item"><span>Status</span><strong>${esc(server.status||'unknown')}</strong></div>
       ${credentials && !credentials.error ? `<div class="eagle-lab-detail-item"><span>Username</span><div class="eagle-lab-secret-row"><code>${esc(credentials.username)}</code><button class="btn secondary" data-copy="${esc(credentials.username)}" type="button">Copy</button></div></div><div class="eagle-lab-detail-item"><span>Password</span><div class="eagle-lab-secret-row"><code data-secret>••••••••</code><button class="btn secondary" data-reveal="${esc(credentials.password)}" type="button">Reveal</button><button class="btn secondary" data-copy="${esc(credentials.password)}" type="button">Copy</button></div></div>` : ''}</div>
       ${credentials?.error?`<p class="meta">${esc(credentials.error)}</p>`:''}<p>${esc(server.notes||'')}</p>
-      <div class="modal-actions"><a class="btn run" href="${esc(server.connect_url)}" target="_blank" rel="noopener noreferrer">Open PVE</a><button class="btn secondary" data-close type="button">Close</button></div></div>`;
+      ${server.pin_required?'<label>Server PIN<input data-lab-pin type="password" inputmode="numeric" maxlength="12" autocomplete="off" placeholder="Enter the PIN assigned by your administrator"></label>':''}
+      <p data-connect-status role="status"></p>
+      <div class="modal-actions"><button class="btn run" data-connect type="button">Connect to PVE</button><button class="btn secondary" data-close type="button">Close</button></div></div>`;
     document.body.append(modal);
     modal.querySelectorAll('[data-close]').forEach(button=>button.onclick=()=>modal.remove());
     modal.onclick=event=>{if(event.target===modal)modal.remove();};
     modal.querySelector('[data-reveal]')?.addEventListener('click',event=>{const code=modal.querySelector('[data-secret]');code.textContent=event.currentTarget.dataset.reveal;event.currentTarget.remove();});
     modal.querySelectorAll('[data-copy]').forEach(button=>button.onclick=async()=>{try{await navigator.clipboard.writeText(button.dataset.copy);button.textContent='Copied';}catch{button.textContent='Select manually';}});
+    modal.querySelector('[data-connect]').onclick=async event=>{
+      const button=event.currentTarget,status=modal.querySelector('[data-connect-status]');button.disabled=true;status.textContent='Connecting…';
+      try{
+        await closeWorkspace();
+        const launch=await api(`/api/eagle-lab/servers/${encodeURIComponent(serverId)}/launch`,{method:'POST',body:JSON.stringify({class_id:state.classId,pin:modal.querySelector('[data-lab-pin]')?.value||''})});
+        if(!modal.isConnected)return;
+        await openWorkspace(server,launch);modal.remove();
+      }catch(error){status.textContent=error.message;button.disabled=false;}
+    };
+  }
+
+  function closeWorkspace(revoke=true){
+    const workspace=state.workspace;if(!workspace)return;
+    workspace.root.remove();state.workspace=null;
+    if(revoke&&workspace.session===sessionKey())return api(`/api/eagle-lab/servers/${encodeURIComponent(workspace.serverId)}/disconnect`,{method:'POST',body:'{}'}).catch(()=>{});
+  }
+  async function openWorkspace(server,launch){
+    closeWorkspace(false);
+    const originalSession=sessionKey();
+    let credentials=null;
+    if(state.bootstrap?.show_credentials){
+      try{credentials=await api(`/api/eagle-lab/servers/${encodeURIComponent(server.id)}/credentials?class_id=${encodeURIComponent(state.classId||'')}`);}catch{}
+    }
+    if(originalSession!==sessionKey())return;
+    const root=document.createElement('section'),frameName='eagle-pve-'+server.id+'-'+Date.now();
+    root.className='eagle-lab-workspace';root.setAttribute('aria-label','PVE management workspace');
+    root.innerHTML=`<header class="eagle-lab-workspace-toolbar"><button class="btn secondary" data-workspace-exit type="button">← Eagle Lab</button><strong>${esc(server.hostname)}</strong><span class="eagle-lab-clipboard-hint">Terminal: Ctrl+Shift+C / Ctrl+Shift+V · VM: noVNC clipboard or serial terminal</span>${credentials?'<button class="btn secondary" data-workspace-credentials type="button">Credentials</button>':''}<select data-workspace-report aria-label="Lab report"><option value="">Choose lab report</option>${state.assignments.map(item=>`<option value="${esc(item.id)}">${esc(item.name)}</option>`).join('')}</select><button class="btn secondary" data-workspace-open-report type="button">Open report</button></header>
+      <iframe name="${esc(frameName)}" title="${esc(server.hostname)} management interface" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-modals allow-popups allow-pointer-lock" allow="clipboard-read *; clipboard-write *; fullscreen *" allowfullscreen referrerpolicy="no-referrer"></iframe>`;
+    document.body.append(root);
+    state.workspace={root,serverId:server.id,session:originalSession};
+    root.querySelector('[data-workspace-exit]').onclick=()=>closeWorkspace();
+    root.querySelector('[data-workspace-credentials]')?.addEventListener('click',()=>{
+      const panel=document.createElement('div');panel.className='modal glass-modal';panel.style.display='flex';
+      panel.innerHTML=`<section class="modal-content eagle-lab-credentials"><h3>${esc(server.hostname)}</h3><p>Username: <code>${esc(credentials.username)}</code></p><p>Password: <code data-password>••••••••</code></p><button class="btn secondary" data-reveal-password type="button">Reveal password</button><button class="btn secondary" data-copy-password type="button">Copy password</button><button class="btn secondary" data-close-credentials type="button">Close</button></section>`;
+      document.body.append(panel);
+      panel.querySelector('[data-reveal-password]').onclick=()=>{panel.querySelector('[data-password]').textContent=credentials.password;};
+      panel.querySelector('[data-copy-password]').onclick=async event=>{try{await navigator.clipboard.writeText(credentials.password);event.target.textContent='Copied';}catch{panel.querySelector('[data-password]').textContent=credentials.password;}};
+      panel.querySelector('[data-close-credentials]').onclick=()=>panel.remove();
+    });
+    root.querySelector('[data-workspace-open-report]').onclick=()=>{
+      const id=root.querySelector('[data-workspace-report]').value;
+      if(id)openReportById(id,state.assignments.find(item=>item.id===id));
+    };
+    // A one-time POST exchanges the capability for a host-only HttpOnly cookie.
+    // EagleIDE auth tokens never enter the frame, its URL, or its storage.
+    const form=document.createElement('form');form.method='POST';form.action=launch.url;form.target=frameName;form.hidden=true;
+    const ticket=document.createElement('input');ticket.type='hidden';ticket.name='ticket';ticket.value=launch.ticket;form.append(ticket);document.body.append(form);form.submit();form.remove();
   }
 
   async function loadAdmin() {
     if(!context().ADMIN_TOKEN) return;
-    try {const data=await api('/api/eagle-lab/admin/servers');state.adminServers=data.servers||[];renderAdminServers();$('eagleLabAdminStatus').textContent='';}
+    try {const data=await api('/api/eagle-lab/admin/servers');state.adminServers=data.servers||[];renderAdminServers();$('eagleLabAdminStatus').textContent=data.gateway_configured?`Embedded gateway configured: s-<server-id>.${data.proxy_domain}`:'Embedded PVE needs EAGLEIDE_LAB_PROXY_DOMAIN and EAGLEIDE_PUBLIC_ORIGIN; see deployment instructions.';}
     catch(error){$('eagleLabAdminStatus').textContent=error.message;}
   }
   function resetAdminForm() {
+    if($('eagleLabServerPin'))$('eagleLabServerPin').placeholder='Optional 4–12 digits';
     $('eagleLabServerForm')?.reset(); $('eagleLabServerId').value=''; $('eagleLabServerPort').value='8006'; $('eagleLabServerUsername').value='root'; $('eagleLabServerSelfSigned').checked=true; $('eagleLabServerCancelBtn').hidden=true; $('eagleLabServerSaveBtn').textContent='Enroll server';
   }
   function renderAdminServers() {
@@ -134,12 +186,15 @@
   }
   function editAdminServer(id) {
     const server=state.adminServers.find(item=>item.id===id);if(!server)return;
+    $('eagleLabServerPin').value='';$('eagleLabServerPin').placeholder=server.pin_required?'PIN is set — leave blank to keep':'Optional 4–12 digits';$('eagleLabServerClearPin').checked=false;
     $('eagleLabServerId').value=server.id;$('eagleLabServerHostname').value=server.hostname;$('eagleLabServerIp').value=server.ip;$('eagleLabServerPort').value=server.port||8006;$('eagleLabServerUsername').value=server.username||'root';$('eagleLabServerPassword').value='';$('eagleLabServerNotes').value=server.notes||'';$('eagleLabServerSelfSigned').checked=server.allow_self_signed!==false;$('eagleLabServerCancelBtn').hidden=false;$('eagleLabServerSaveBtn').textContent='Save server';
   }
   async function saveAdminServer(event) {
     event.preventDefault(); const id=$('eagleLabServerId').value;
     const payload={hostname:$('eagleLabServerHostname').value.trim(),ip:$('eagleLabServerIp').value.trim(),port:Number($('eagleLabServerPort').value||8006),username:$('eagleLabServerUsername').value.trim(),notes:$('eagleLabServerNotes').value,allow_self_signed:$('eagleLabServerSelfSigned').checked};
     if($('eagleLabServerPassword').value)payload.password=$('eagleLabServerPassword').value;
+    if($('eagleLabServerClearPin').checked)payload.pin='';
+    else if($('eagleLabServerPin').value)payload.pin=$('eagleLabServerPin').value;
     $('eagleLabAdminStatus').textContent='Saving…';
     try{await api(id?`/api/eagle-lab/admin/servers/${encodeURIComponent(id)}`:'/api/eagle-lab/admin/servers',{method:id?'PUT':'POST',body:JSON.stringify(payload)});resetAdminForm();await loadAdmin();$('eagleLabAdminStatus').textContent='Server saved.';}catch(error){$('eagleLabAdminStatus').textContent=error.message;}
   }
@@ -197,6 +252,9 @@
   function applyConfig(config={}){const ctx=context(),available=!!(config.eagle_lab_enabled||ctx.ADMIN_TOKEN);if($('eagleLabViewBtn'))$('eagleLabViewBtn').hidden=!available;}
   async function refreshAvailability(){let config=context().currentConfig;if(!config&&window.EagleIDE?.configReady){await window.EagleIDE.configReady;config=context().currentConfig;}applyConfig(config||{});}
   function attach(){
+    window.addEventListener('eagle-context-updated',()=>{if(state.workspace&&state.workspace.session!==sessionKey())closeWorkspace(false);document.querySelectorAll('.eagle-lab-credentials').forEach(item=>item.closest('.modal')?.remove());});
+    [$('wikiViewBtn'),$('wikiHomeBtn'),$('ideViewBtn'),$('networkViewBtn'),$('eagleLabViewBtn')].forEach(button=>button?.addEventListener('click',()=>closeWorkspace()));
+    window.addEventListener('popstate',()=>closeWorkspace());
     window.addEventListener('beforeunload',event=>{if(state.report?.dirty?.()){event.preventDefault();event.returnValue='';}});
     $('eagleLabViewBtn')?.addEventListener('click',()=>show());$('eagleLabClassSelect')?.addEventListener('change',event=>{state.classId=event.target.value;loadLab();});$('eagleLabSearch')?.addEventListener('input',event=>{state.search=event.target.value;renderServers();});$('eagleLabRefreshBtn')?.addEventListener('click',loadLab);$('eagleLabServerGrid')?.addEventListener('click',event=>{const card=event.target.closest('[data-lab-server]');if(card)openServer(card.dataset.labServer);});$('eagleLabReportList')?.addEventListener('click',event=>{const card=event.target.closest('[data-lab-report]');if(card)openReportById(card.dataset.labReport,state.assignments.find(item=>item.id===card.dataset.labReport));});
     $('eagleLabServerForm')?.addEventListener('submit',saveAdminServer);$('eagleLabServerCancelBtn')?.addEventListener('click',resetAdminForm);$('eagleLabAdminServers')?.addEventListener('click',event=>{const edit=event.target.closest('[data-admin-edit]'),remove=event.target.closest('[data-admin-delete]');if(edit)editAdminServer(edit.dataset.adminEdit);if(remove)deleteAdminServer(remove.dataset.adminDelete);});
