@@ -96,7 +96,7 @@
         <div class="assignment-actions">
           ${s ? `<button type="button" class="btn secondary view-student-submission-btn" data-id="${esc(id)}">View submission</button><button type="button" class="btn secondary view-score-report-btn" data-id="${esc(id)}">Score report</button>` : ''}
           ${mayAttempt && a.allowFileSubmission !== false ? `<button type="button" class="btn run submit-assignment-btn" data-id="${esc(id)}" ${canSubmit && a.canSubmitFiles !== false ? '' : 'disabled'}>${submitted(a) ? 'Resubmit' : 'Submit files'}</button>` : ''}
-          ${mayAttempt && a.quiz?.questions?.length ? `<button type="button" class="btn secondary open-questions-btn" data-id="${esc(id)}" ${canSubmit && a.canSubmit !== false ? '' : 'disabled'}>Questions (${a.quiz.questions.length})</button>` : ''}
+          ${mayAttempt && a.quiz?.questions?.length ? `<button type="button" class="btn secondary open-questions-btn" data-id="${esc(id)}" ${canSubmit && a.canSubmit !== false ? '' : 'disabled'}>${a.assignmentType === 'lab_report' ? 'Open lab report' : `Questions (${a.quiz.questions.length})`}</button>` : ''}
         </div>
       </div></details>`;
   }

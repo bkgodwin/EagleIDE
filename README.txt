@@ -44,6 +44,31 @@ Optional External Tools (empty and disabled by default):
   users.json. Back up these together with the server stopped or SQLite backup API.
   Existing registrations keep new permissions off until edited/tested/reapproved.
 
+Native Eagle Lab (disabled by default):
+- Administrators enable Eagle Lab in Settings > Eagle Lab and enroll each local
+  Proxmox VE server by RFC1918 IPv4 address, HTTPS port, username, and password.
+  Credentials are encrypted at rest in lab_data/secret.key + catalog.json; back
+  up both together and restrict the directory to the EagleIDE service account.
+- Class owners open Dashboard > Eagle Lab to enable the section per class, choose
+  which enrolled PVE servers students can see, and decide whether students may
+  reveal the enrolled credentials. Removing a server safely removes it from all
+  class selections without changing accounts, classes, assignments, or PVE data.
+- EagleIDE probes /api2/json/version from the server host. The EagleIDE host and
+  each student browser must be able to route to the PVE LAN address. "Open PVE"
+  uses a top-level HTTPS tab so Proxmox login, console WebSockets, and downloads
+  work normally; a self-signed PVE certificate may require one browser trust step.
+  Do not expose PVE management addresses to the public internet.
+  Class rules control access through Eagle Lab. PVE accounts and permissions
+  remain managed in PVE; changing a class rule does not revoke an existing PVE
+  login or change a password that a student has already received.
+- Teachers can create the Lab report assignment type with written responses,
+  fill-in-the-blank answers, and procedure checklists. Students open the report
+  as one continuous window above Eagle Lab. Drafts autosave, survive closing and
+  reopening, detect edits from another session, and are removed after submission.
+- Upgrades are additive: existing assignments default to the standard type, the
+  feature starts disabled, and lab data lives in new ignored runtime paths. For a
+  customized deployment, set EAGLEIDE_LAB_DATA_DIR or EAGLEIDE_LAB_REPORT_DATA_DIR.
+
 Workspace data and classroom accounts:
 - Create .csv and .json files with New File. CSV opens in an editable grid with
   sticky headers, row/column paging, Save, Add row, and Add column. Large files
@@ -84,6 +109,8 @@ Workspace data and classroom accounts:
 12. Important Notes
 13. Troubleshooting
 14. Network Deployment
+15. Optional Network Simulator
+16. Native Eagle Lab
 
 ================================================================================
                            1. SYSTEM REQUIREMENTS
@@ -1279,6 +1306,14 @@ See docs/NETWORK_SIMULATOR.md for the full illustrated workflow, device
 capabilities, lab descriptions, command reference, and operations notes.
 
 ================================================================================
+                         16. NATIVE EAGLE LAB
+================================================================================
+
+Eagle Lab is a native EagleIDE section for locally hosted Proxmox VE servers.
+It is off by default. See "Native Eagle Lab" near the beginning of this file for
+deployment, classroom access, credential storage, and lab-report instructions.
+
+================================================================================
 
 Teacher make-ups and review
 --------------------------
@@ -1362,7 +1397,7 @@ fails, the same action can safely be retried.
 
 For support or issues: https://github.com/bkgodwin/EagleIDE
 
-Last Updated: 2026-10-15
+Last Updated: 2026-11-02
 WIKI MANAGER ACCOUNTS AND RECOVERY (October 2026)
 -----------------------------------------------
 Administrators can create a Teacher or Wiki manager in Users > Create staff

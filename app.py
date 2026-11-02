@@ -50,6 +50,8 @@ import file_provenance
 import assignment_development
 import assignment_organization
 from lesson_plan_features import register as register_lesson_plan_features
+from eagle_lab_features import register as register_eagle_lab_features
+from lab_reports import register as register_lab_reports
 from network_features import register as register_network_features
 from sandbox_containment import landlock_status
 from sandbox_policy import (
@@ -87,6 +89,10 @@ NOTEBOOKS_DIR = BASE_DIR / "notebooks"
 WIKI_DATA_DIR = Path(os.environ.get("EAGLEIDE_WIKI_DATA_DIR", str(BASE_DIR / "wiki_data"))).expanduser().resolve()
 WIKI_BACKUP_DIR = Path(os.environ.get("EAGLEIDE_WIKI_BACKUP_DIR", str(BASE_DIR / "wiki_backups"))).expanduser().resolve()
 NETWORK_DATA_DIR = Path(os.environ.get("EAGLEIDE_NETWORK_DATA_DIR", str(BASE_DIR / "network_data"))).expanduser().resolve()
+EAGLE_LAB_DATA_DIR = Path(os.environ.get("EAGLEIDE_LAB_DATA_DIR", str(BASE_DIR / "lab_data"))).expanduser().resolve()
+LAB_REPORT_DATA_DIR = Path(
+    os.environ.get("EAGLEIDE_LAB_REPORT_DATA_DIR", str(ASSIGNMENTS_DIR / ".lab-reports"))
+).expanduser().resolve()
 LESSON_PLAN_DATA_DIR = Path(
     os.environ.get("EAGLEIDE_LESSON_PLAN_DATA_DIR", str(BASE_DIR / "lesson_plans"))
 ).expanduser().resolve()
@@ -323,6 +329,7 @@ except Exception:
         "registration_enabled": True,
         "guest_ide_access_enabled": True,
         "network_sim_enabled": False,
+        "eagle_lab_enabled": False,
         "python_memory_limit_mb": 750,
         "python_execution_timeout_seconds": 30,
         "python_max_concurrent_runs": 8,
@@ -592,6 +599,9 @@ def _normalize_config_partial(partial: Dict[str, Any]) -> Dict[str, Any]:
         normalized["ai_rubric_context_tokens"] = tokens
     if "guest_ide_access_enabled" in normalized:
         normalized["guest_ide_access_enabled"] = bool(normalized["guest_ide_access_enabled"])
+    if "eagle_lab_enabled" in normalized:
+        if not isinstance(normalized["eagle_lab_enabled"], bool):
+            raise ValueError("Eagle Lab must be enabled or disabled with a boolean")
     if "ai_notebook_feedback_enabled" in normalized:
         if not isinstance(normalized["ai_notebook_feedback_enabled"], bool):
             raise ValueError("Notebook AI feedback must be enabled or disabled with a boolean")
@@ -7030,6 +7040,7 @@ def root():
 
 @app.get("/ide")
 @app.get("/network")
+@app.get("/lab")
 @app.get("/standards-coverage")
 @app.get("/wiki")
 @app.get("/wiki/<path:wiki_path>")
@@ -9602,6 +9613,8 @@ def _assignment_external_grading_error(assignment: dict) -> str:
 
 def _normalize_assignment_schema(assignment: dict) -> dict:
     normalized = dict(assignment or {})
+    assignment_type = str(normalized.get("assignmentType") or "standard").strip().lower()
+    normalized["assignmentType"] = assignment_type if assignment_type in {"standard", "lab_report"} else "standard"
     normalized["studentExtensions"] = assignment_workflow.normalize_extensions(sys.modules[__name__], normalized.get("studentExtensions"))
     normalized["id"] = str(normalized.get("id") or "").strip().lower()
     normalized["allowFileSubmission"] = bool(normalized.get("allowFileSubmission", True))
@@ -9644,7 +9657,7 @@ def _normalize_assignment_schema(assignment: dict) -> dict:
                 continue
             qn = dict(q)
             q_type = str(qn.get("type") or "written").strip()
-            if q_type not in {"multiple_choice", "written", "multiple_choice_code", "written_code"}:
+            if q_type not in {"multiple_choice", "written", "multiple_choice_code", "written_code", "fill_blank", "procedure"}:
                 q_type = "written"
             qn["type"] = q_type
             qn["question"] = str(qn.get("question") or "").strip()
@@ -9669,6 +9682,15 @@ def _normalize_assignment_schema(assignment: dict) -> dict:
                 if code_lang not in {"python", "javascript", "html"}:
                     code_lang = "python"
                 qn["codeLanguage"] = code_lang
+            if q_type == "fill_blank":
+                answers = qn.get("acceptedAnswers")
+                if not isinstance(answers, list):
+                    answers = [qn.get("correctAnswer", "")]
+                qn["acceptedAnswers"] = [str(item or "").strip()[:500] for item in answers if str(item or "").strip()][:20]
+                qn.pop("correctAnswer", None)
+            if q_type == "procedure":
+                steps = qn.get("steps") if isinstance(qn.get("steps"), list) else []
+                qn["steps"] = [str(item or "").strip()[:500] for item in steps if str(item or "").strip()][:50]
             questions.append(qn)
         quiz["questions"] = questions
         quiz["totalPoints"] = sum(max(0, int(q.get("points") or 0)) for q in questions)
@@ -9704,6 +9726,27 @@ def _normalize_assignment_schema(assignment: dict) -> dict:
         submissions.append(sub_n)
     normalized["submissions"] = submissions
     return normalized
+
+
+def _lab_report_quiz_error(quiz: object) -> str:
+    """Validate only report-specific controls without rewriting legacy assignments."""
+    if quiz is None:
+        return ""
+    if not isinstance(quiz, dict) or not isinstance(quiz.get("questions", []), list):
+        return "Lab report sections must be a question list"
+    allowed = {"written", "fill_blank", "procedure"}
+    for question in quiz.get("questions", []):
+        if not isinstance(question, dict) or str(question.get("type") or "written") not in allowed:
+            return "Lab reports support written responses, fill-in-the-blank responses, and procedure checklists only"
+        if question.get("type") == "fill_blank":
+            answers = question.get("acceptedAnswers")
+            if not isinstance(answers, list) or not answers or len(answers) > 20 or any(not isinstance(item, str) or not item.strip() or len(item) > 500 for item in answers):
+                return "Every fill-in-the-blank section needs 1–20 accepted answers of at most 500 characters"
+        if question.get("type") == "procedure":
+            steps = question.get("steps")
+            if not isinstance(steps, list) or not steps or len(steps) > 50 or any(not isinstance(item, str) or not item.strip() or len(item) > 500 for item in steps):
+                return "Every procedure checklist needs 1–50 steps of at most 500 characters"
+    return ""
 
 
 def _normalize_assignment_due_at(value: Any) -> str:
@@ -9772,6 +9815,9 @@ def _assignment_quiz_complete(assignment: dict, submission: Optional[dict]) -> t
         answer = response.get("answer")
         if question.get("type") in {"multiple_choice", "multiple_choice_code"}:
             is_answered = isinstance(answer, int) and not isinstance(answer, bool)
+        elif question.get("type") == "procedure":
+            steps = question.get("steps") or []
+            is_answered = isinstance(answer, list) and len(answer) == len(steps) and all(type(item) is bool for item in answer)
         else:
             is_answered = bool(str(answer or "").strip())
         if is_answered:
@@ -10055,6 +10101,7 @@ def _student_assignment_payload(assignment: dict, student_email: str, *, include
         for question in quiz_copy.get("questions", []) or []:
             if isinstance(question, dict):
                 question.pop("correctAnswer", None)
+                question.pop("acceptedAnswers", None)
     payload["quiz"] = quiz_copy
     submission = next(
         (row for row in (assignment.get("submissions") or []) if (row.get("email") or "").lower() == student_email.lower()),
@@ -10175,6 +10222,13 @@ def _create_assignment_locked():
     name = (data.get("name") or "").strip()
     task = (data.get("task") or "").strip()
     max_score = data.get("maxScore", 100)
+    assignment_type = str(data.get("assignmentType") or "standard").strip().lower()
+    if assignment_type not in {"standard", "lab_report"}:
+        return jsonify(ok=False, error="Invalid assignment type"), 400
+    if assignment_type == "lab_report":
+        report_error = _lab_report_quiz_error(data.get("quiz"))
+        if report_error:
+            return jsonify(ok=False, error=report_error), 400
     
     if not name:
         return jsonify(ok=False, error="Assignment name required"), 400
@@ -10222,6 +10276,8 @@ def _create_assignment_locked():
     rubric_context = _assignment_rubric_context(task, max_score, ai_grading_criteria) if ai_grading_rubric else ""
     try:
         due_at = _normalize_assignment_due_at(data.get("dueAt"))
+        if assignment_type == "lab_report" and data.get("fileControl"):
+            raise ValueError("Lab reports cannot use file control")
         file_control = assignment_development.validate_options(data)
         for key in ("allowMultiFileSubmission", "allowSubmissionAnyTime"):
             if key in data and not isinstance(data[key], bool):
@@ -10238,9 +10294,10 @@ def _create_assignment_locked():
         "createdAt": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
         "name": name,
         "task": task,
+        "assignmentType": assignment_type,
         "maxScore": max_score,
-        "allowFileSubmission": bool(data.get("allowFileSubmission", True)),
-        "allowMultiFileSubmission": bool(data.get("allowMultiFileSubmission", False)),
+        "allowFileSubmission": False if assignment_type == "lab_report" else bool(data.get("allowFileSubmission", True)),
+        "allowMultiFileSubmission": False if assignment_type == "lab_report" else bool(data.get("allowMultiFileSubmission", False)),
         "allowSubmissionAnyTime": bool(data.get("allowSubmissionAnyTime", False)),
         "maxFileSubmissions": int(attempts),
         **file_control,
@@ -10307,12 +10364,21 @@ def _update_assignment_locked():
         assignment.get("task"), assignment.get("maxScore"), assignment.get("aiGradingCriteria")
     )
     # Update fields
+    if "assignmentType" in data:
+        assignment_type = str(data.get("assignmentType") or "standard").strip().lower()
+        if assignment_type not in {"standard", "lab_report"}:
+            return jsonify(ok=False, error="Invalid assignment type"), 400
+        if assignment_type != assignment.get("assignmentType", "standard") and (assignment.get("releasedAt") or assignment.get("submissions")):
+            return jsonify(ok=False, error="Copy this assignment to change its type after release"), 409
+        if assignment_type == "lab_report" and assignment.get("fileControl"):
+            return jsonify(ok=False, error="File-control assignments cannot become lab reports"), 409
+        assignment["assignmentType"] = assignment_type
     if "task" in data:
         assignment["task"] = data["task"]
     if "maxScore" in data:
         assignment["maxScore"] = data["maxScore"]
     if "allowFileSubmission" in data:
-        assignment["allowFileSubmission"] = bool(data.get("allowFileSubmission"))
+        assignment["allowFileSubmission"] = False if assignment.get("assignmentType") == "lab_report" else bool(data.get("allowFileSubmission"))
     for key in ("allowMultiFileSubmission", "allowSubmissionAnyTime"):
         if key in data:
             if not isinstance(data[key], bool):
@@ -10345,6 +10411,12 @@ def _update_assignment_locked():
         assignment["quiz"] = data["quiz"]
     if "quizSettings" in data:
         assignment["quizSettings"] = data.get("quizSettings") or {}
+    if assignment.get("assignmentType") == "lab_report":
+        report_error = _lab_report_quiz_error(assignment.get("quiz"))
+        if report_error:
+            return jsonify(ok=False, error=report_error), 400
+        assignment["allowFileSubmission"] = False
+        assignment["allowMultiFileSubmission"] = False
     if "skillTags" in data:
         assignment["skillTags"] = _normalize_skill_tags(data.get("skillTags") or [])
     if "aiGradingInstructions" in data:
@@ -10458,6 +10530,7 @@ def _copy_assignment_to_class_locked():
         "createdAt": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
         "name": copy_name,
         "task": source.get("task") or "",
+        "assignmentType": source.get("assignmentType", "standard"),
         "maxScore": source.get("maxScore", 100),
         "allowFileSubmission": bool(source.get("allowFileSubmission", True)),
         "allowMultiFileSubmission": bool(source.get("allowMultiFileSubmission", False)),
@@ -10495,6 +10568,9 @@ def _delete_assignment_storage_locked(assignment, *, forget_folder=True):
     if forget_folder:
         assignment_organization.forget_assignment(sys.modules[__name__], assignment)
     assignment_development.purge(sys.modules[__name__], assignment["id"], remove_binding=True)
+    drafts = globals().get("_lab_report_drafts")
+    if drafts is not None:
+        drafts.clear_assignment(assignment["id"])
     submission_dir = _assignment_submission_directory(assignment)
     if submission_dir.exists():
         shutil.rmtree(submission_dir)
@@ -12618,6 +12694,8 @@ def get_quiz(assignment_reference: str):
     for question in quiz_copy.get("questions", []):
         if question.get("type") in {"multiple_choice", "multiple_choice_code"}:
             question.pop("correctAnswer", None)
+        if question.get("type") == "fill_blank":
+            question.pop("acceptedAnswers", None)
     max_submissions = assignment_workflow.attempt_limit(sys.modules[__name__], assignment, user.get("email", ""), "quiz")
     remaining = None if max_submissions <= 0 else max(0, max_submissions - submission_count)
     return jsonify(
@@ -12682,6 +12760,10 @@ def _submit_quiz_locked():
         if question.get("type") in {"multiple_choice", "multiple_choice_code"}:
             if answer is not None and (type(answer) is not int or not 0 <= answer < len(question.get("options", []))):
                 return jsonify(ok=False, error="Invalid answer option"), 400
+        elif question.get("type") == "procedure":
+            steps = question.get("steps") or []
+            if not isinstance(answer, list) or len(answer) != len(steps) or any(type(item) is not bool for item in answer):
+                return jsonify(ok=False, error="Invalid procedure checklist"), 400
         elif not isinstance(answer, str) or len(answer) > 20000:
             return jsonify(ok=False, error="Written answers must be text of at most 20,000 characters"), 400
         clean_responses.append({"questionId": identity, "answer": answer, "questionType": question.get("type")})
@@ -12699,6 +12781,17 @@ def _submit_quiz_locked():
             else:
                 response["isCorrect"] = False
                 response["pointsEarned"] = 0
+        elif question.get("type") == "fill_blank":
+            accepted = {str(item or "").strip().casefold() for item in question.get("acceptedAnswers", []) if str(item or "").strip()}
+            correct = bool(accepted and str(response.get("answer") or "").strip().casefold() in accepted)
+            response["isCorrect"] = correct
+            response["pointsEarned"] = question.get("points", 0) if correct else 0
+            quiz_score += response["pointsEarned"]
+        elif question.get("type") == "procedure":
+            complete = bool(response.get("answer")) and all(response.get("answer") or [])
+            response["isCorrect"] = complete
+            response["pointsEarned"] = question.get("points", 0) if complete else 0
+            quiz_score += response["pointsEarned"]
         else:
             response["pointsEarned"] = 0
             response["aiScore"] = None
@@ -12761,6 +12854,10 @@ def _submit_quiz_locked():
 
     assignment["submissions"] = submissions
     if _save_assignment(assignment):
+        if assignment.get("assignmentType") == "lab_report":
+            drafts = globals().get("_lab_report_drafts")
+            if drafts is not None:
+                drafts.delete(assignment["id"], student_email)
         assignment_workflow.prune_history(sys.modules[__name__], assignment, previous)
         next_count = (current_count + 1) if max_submissions > 0 else None
         remaining = None if max_submissions <= 0 else max(0, max_submissions - (current_count + 1))
@@ -13561,6 +13658,18 @@ register_network_features(
     find_class=_find_class_by_id,
     config_provider=_load_config,
 )
+_eagle_lab_store = register_eagle_lab_features(
+    app,
+    base_dir=EAGLE_LAB_DATA_DIR,
+    require_admin=_require_admin,
+    require_teacher=_require_teacher,
+    require_user=_require_user,
+    find_user=_find_user,
+    get_user_class_ids=_get_user_class_ids,
+    find_class=_find_class_by_id,
+    config_provider=_load_config,
+)
+_lab_report_drafts = register_lab_reports(app, sys.modules[__name__], base_dir=LAB_REPORT_DATA_DIR)
 register_classroom_features(app, socketio)
 from external_tools import register as register_external_tools
 from tool_store import ToolError as ExternalToolError

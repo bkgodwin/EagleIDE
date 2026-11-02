@@ -5,6 +5,7 @@
   const definitions = {
     adminCleanup: ['/static/js/admin-cleanup.js?v=20261023-cleanup-1'],
     externalToolsAdmin: ['/static/js/external-tools-admin.js?v=20261020-storage-1'],
+    eagleLab: ['/static/js/eagle-lab.js?v=20261102-1'],
     network: [
       '/static/js/network-sim.js?v=20261022-wiki-manager-1',
       '/static/js/network-sim-advanced.js?v=20260714-4',
@@ -73,6 +74,7 @@
   function load(name) {
     if (!definitions[name]) return Promise.reject(new Error(`Unknown EagleIDE feature: ${name}`));
     if (name === 'network' && window.NetworkSim && window.NetworkSimAdvanced) return Promise.resolve();
+    if (name === 'eagleLab' && window.EagleLab) return Promise.resolve();
     if (name === 'wikiTools' && window.WikiTools) return Promise.resolve();
     if (pending.has(name)) return pending.get(name);
     const request = definitions[name]
@@ -105,12 +107,43 @@
     }
   }
 
+  async function openEagleLab(trigger, options) {
+    window.WikiReader?.disposeActiveContent?.();
+    if (trigger) { trigger.disabled = true; trigger.setAttribute('aria-busy', 'true'); }
+    try {
+      await load('eagleLab');
+      await window.EagleLab?.show?.(options || {});
+    } catch (error) {
+      console.error('Eagle Lab failed to load:', error);
+      window.alert('Eagle Lab could not be loaded. Refresh the page and try again.');
+    } finally {
+      if (trigger) { trigger.disabled = false; trigger.removeAttribute('aria-busy'); }
+    }
+  }
+
+  async function openLabReport(assignmentId, assignment) {
+    await load('eagleLab');
+    return window.EagleLab?.openReportById?.(assignmentId, assignment);
+  }
+
   const networkTriggerSelector = '#networkViewBtn, #wikiHeroNetworkBtn, #settingsOpenNetworkSimBtn';
+  const eagleLabTriggerSelector = '#eagleLabViewBtn, [data-view="dash-eagle-lab"], [data-admin-settings-section="eagle-lab"]';
   document.addEventListener('pointerover', event => {
     if (event.target.closest?.(networkTriggerSelector)) load('network').catch(() => {});
+    if (event.target.closest?.(eagleLabTriggerSelector)) load('eagleLab').catch(() => {});
   }, { passive: true, capture: true });
   document.addEventListener('focusin', event => {
     if (event.target.closest?.(networkTriggerSelector)) load('network').catch(() => {});
+    if (event.target.closest?.(eagleLabTriggerSelector)) load('eagleLab').catch(() => {});
+  }, true);
+  document.addEventListener('click', event => {
+    const trigger = event.target.closest?.('#eagleLabViewBtn');
+    if (!trigger || window.EagleLab) return;
+    event.preventDefault(); event.stopImmediatePropagation(); openEagleLab(trigger);
+  }, true);
+  document.addEventListener('click', event => {
+    if (!event.target.closest?.('[data-admin-settings-section="eagle-lab"]')) return;
+    load('eagleLab').then(() => window.EagleLab?.loadAdmin?.()).catch(() => {});
   }, true);
   document.addEventListener('click', event => {
     const trigger = event.target.closest?.(networkTriggerSelector);
@@ -127,8 +160,11 @@
   window.EagleFeatures = Object.freeze({
     load,
     openNetwork,
+    openEagleLab,
+    openLabReport,
     isLoaded: name => (
       (name === 'network' && !!window.NetworkSim && !!window.NetworkSimAdvanced)
+      || (name === 'eagleLab' && !!window.EagleLab)
       || (name === 'wikiTools' && !!window.WikiTools)
     ),
   });

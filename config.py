@@ -73,6 +73,10 @@ DEFAULT_CONFIG = {
     # class-by-class; admins may privately preview it while this is disabled.
     "network_sim_enabled": False,
 
+    # Optional native Eagle Lab. Admin enrollment and teacher class rules are
+    # stored separately, and existing deployments remain disabled by default.
+    "eagle_lab_enabled": False,
+
     # Student Python execution. The server retains a hard upper bound from its
     # environment; admins can reduce these limits without restarting.
     "python_memory_limit_mb": 750,

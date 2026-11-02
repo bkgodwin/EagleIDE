@@ -293,6 +293,89 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         self.assertTrue(summary["quizComplete"])
         self.assertEqual(summary["quizAnsweredCount"], 2)
 
+    def test_lab_report_assignment_autosaves_continuous_responses_and_clears_draft_on_submit(self):
+        original_draft_dir = eagle._lab_report_drafts.base_dir
+        eagle._lab_report_drafts.base_dir = self.root / "lab-report-drafts"
+        try:
+            invalid = self.client.post(
+                "/api/assignments/create",
+                headers=self.teacher_headers,
+                json={
+                    "name": "Invalid Lab Report", "classId": self.class_one,
+                    "assignmentType": "lab_report",
+                    "quiz": {"questions": [{"id": "mc", "type": "multiple_choice", "question": "No", "options": ["A", "B"]}]},
+                },
+            )
+            self.assertEqual(invalid.status_code, 400)
+            response = self.client.post(
+                "/api/assignments/create",
+                headers=self.teacher_headers,
+                json={
+                    "name": "Router Lab Report",
+                    "task": "Record the lab results.",
+                    "classId": self.class_one,
+                    "assignmentType": "lab_report",
+                    "active": True,
+                    "allowFileSubmission": True,
+                    "allowMultiFileSubmission": True,
+                    "quiz": {"questions": [
+                        {"id": "written", "type": "written", "question": "Observation", "points": 2},
+                        {"id": "blank", "type": "fill_blank", "question": "Port", "points": 3, "acceptedAnswers": ["8006"]},
+                        {"id": "steps", "type": "procedure", "question": "Procedure", "points": 5, "steps": ["Log in", "Verify node"]},
+                    ]},
+                },
+            )
+            self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+            assignment = response.get_json()["assignment"]
+            self.assertEqual(assignment["assignmentType"], "lab_report")
+            self.assertFalse(assignment["allowFileSubmission"])
+            self.assertFalse(assignment["allowMultiFileSubmission"])
+            activated = self.client.post(
+                "/api/assignments/update",
+                headers=self.teacher_headers,
+                json={"assignmentId": assignment["id"], "active": True},
+            )
+            self.assertEqual(activated.status_code, 200, activated.get_data(as_text=True))
+
+            quiz = self.client.get(f"/api/quiz/{assignment['id']}", headers=self.student_headers)
+            self.assertEqual(quiz.status_code, 200)
+            self.assertNotIn("acceptedAnswers", quiz.get_data(as_text=True))
+
+            responses = [
+                {"questionId": "written", "answer": "The node responded."},
+                {"questionId": "blank", "answer": "8006"},
+                {"questionId": "steps", "answer": [True, True]},
+            ]
+            saved = self.client.put(
+                f"/api/lab-reports/{assignment['id']}/draft",
+                headers=self.student_headers,
+                json={"revision": 0, "responses": responses},
+            )
+            self.assertEqual(saved.status_code, 200, saved.get_data(as_text=True))
+            self.assertEqual(saved.get_json()["data"]["revision"], 1)
+            restored = self.client.get(
+                f"/api/lab-reports/{assignment['id']}/draft", headers=self.student_headers,
+            ).get_json()["data"]
+            self.assertEqual(
+                [{"questionId": item["questionId"], "answer": item["answer"]} for item in restored["responses"]],
+                responses,
+            )
+
+            submitted = self.client.post(
+                "/api/quiz/submit",
+                headers=self.student_headers,
+                json={"assignmentId": assignment["id"], "quizResponses": responses},
+            )
+            self.assertEqual(submitted.status_code, 200, submitted.get_data(as_text=True))
+            self.assertEqual(submitted.get_json()["quizScore"], 8)
+            cleared = self.client.get(
+                f"/api/lab-reports/{assignment['id']}/draft", headers=self.student_headers,
+            ).get_json()["data"]
+            self.assertEqual(cleared["revision"], 0)
+            self.assertEqual(cleared["responses"], [])
+        finally:
+            eagle._lab_report_drafts.base_dir = original_draft_dir
+
     def test_submission_storage_is_separate_and_not_counted_in_teacher_workspace(self):
         assignment = self.create_assignment(active=True)
         teacher_root = eagle._get_user_dir(self.teacher_email)
