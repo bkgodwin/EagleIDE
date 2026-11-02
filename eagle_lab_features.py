@@ -139,6 +139,8 @@ def register(
             return jsonify(ok=False, error=message, enabled=False), 403
         rule = store.class_rule(class_id) if current["role"] != "admin" else {"enabled": True, "show_credentials": True, "server_ids": [item["id"] for item in store.list_servers()]}
         servers = store.list_servers() if current["role"] == "admin" else store.servers_for_class(class_id)
+        if current["role"] == "student":
+            servers = [{key: value for key, value in server.items() if key != "username"} for server in servers]
         return jsonify(ok=True, data={
             "enabled": global_enabled(),
             "admin_preview": current["role"] == "admin" and not global_enabled(),

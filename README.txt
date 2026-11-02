@@ -58,6 +58,9 @@ Native Eagle Lab (disabled by default):
   uses a top-level HTTPS tab so Proxmox login, console WebSockets, and downloads
   work normally; a self-signed PVE certificate may require one browser trust step.
   Do not expose PVE management addresses to the public internet.
+  Class rules control access through Eagle Lab. PVE accounts and permissions
+  remain managed in PVE; changing a class rule does not revoke an existing PVE
+  login or change a password that a student has already received.
 - Teachers can create the Lab report assignment type with written responses,
   fill-in-the-blank answers, and procedure checklists. Students open the report
   as one continuous window above Eagle Lab. Drafts autosave, survive closing and

@@ -99,6 +99,7 @@ class EagleLabRouteTests(unittest.TestCase):
         payload = bootstrap.get_json()["data"]
         self.assertEqual([item["id"] for item in payload["servers"]], [server_id])
         self.assertNotIn("password", payload["servers"][0])
+        self.assertNotIn("username", payload["servers"][0])
         hidden = self.client.get(
             f"/api/eagle-lab/servers/{server_id}/credentials?class_id=class-a",
             headers=self.student_headers,
