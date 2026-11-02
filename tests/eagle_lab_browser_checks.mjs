@@ -112,6 +112,8 @@ try{
   const frame=page.frames().find(frame=>frame.url()===proxyOrigin+'/');
   await frame.evaluate(()=>navigator.clipboard.writeText('echo clipboard fixture'));
   await terminal.press('Control+V');assert.equal(await terminal.inputValue(),'echo clipboard fixture');
+  await terminal.fill('copied from embedded terminal');await terminal.press('Control+A');await terminal.press('Control+C');
+  assert.equal(await frame.evaluate(()=>navigator.clipboard.readText()),'copied from embedded terminal');
   await pveFrame.getByRole('button',{name:'Open VM console'}).click();
   const consoleFrame=pveFrame.frameLocator('iframe[title="VM console"]');
   await consoleFrame.getByText('RFB 003.008',{exact:true}).waitFor();
