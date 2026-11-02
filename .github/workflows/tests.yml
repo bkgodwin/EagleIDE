@@ -46,6 +46,9 @@ jobs:
           node --check lab_gateway/proxy.mjs
           node --check lab_gateway/server.mjs
           node --check lab_gateway/bridges.mjs
+          node --check lab_gateway/front.mjs
+          node --check lab_gateway/path-runtime.mjs
+          node --check lab_gateway/path-rewrite.mjs
           node --check static/js/eagle-lab.js
           node --check static/js/admin-cleanup.js
           node --check static/js/editor-appearance.js

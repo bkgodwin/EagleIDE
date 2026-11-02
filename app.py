@@ -430,7 +430,7 @@ def _add_security_headers(response):
         socket_origins = f"ws://{csp_host} wss://{csp_host}" if csp_host else ""
         preview_origin = globals().get("HTML_RUNTIME_PREVIEW_ORIGIN", "")
         lab_gateway = app.extensions.get("eagle_lab_gateway")
-        lab_form_origin = f"https://*.{lab_gateway.domain}" if lab_gateway and lab_gateway.configured else ""
+        lab_form_origin = f"https://*.{lab_gateway.domain}" if lab_gateway and lab_gateway.configured and lab_gateway.transport == "origin" else ""
         response.headers.setdefault("Content-Security-Policy", (
             "default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://cdn.socket.io; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
@@ -13743,7 +13743,9 @@ if __name__ == "__main__":
     _append_server_log(f"Server listening on http://{host}:{port} (async={socketio.async_mode})", "INFO")
     _cleanup_stale_runner_sandboxes()
     _cleanup_all_user_files()
-    app.extensions["eagle_lab_gateway"].start(port=port)
+    gateway = app.extensions["eagle_lab_gateway"]
+    application_host, application_port = gateway.application_listener(host, port)
+    gateway.start(port=application_port, public_host=host, public_port=port)
     try:
         from werkzeug.serving import WSGIRequestHandler
 
@@ -13752,7 +13754,7 @@ if __name__ == "__main__":
                 if keyword.lower() != "server":
                     super().send_header(keyword, value)
 
-        socketio.run(app, host=host, port=port, debug=False, allow_unsafe_werkzeug=True,
+        socketio.run(app, host=application_host, port=application_port, debug=False, allow_unsafe_werkzeug=True,
                      request_handler=PrivateRequestHandler)
     except (KeyboardInterrupt, SystemExit):
         pass

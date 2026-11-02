@@ -16,6 +16,7 @@ const generated=spawnSync(process.env.EAGLE_LAB_TEST_PYTHON || 'python',[root+'t
 if(generated.status!==0)throw Error('The fixture needs Python with the project cryptography dependency.');
 const tls=JSON.parse(generated.stdout);
 const id='a'.repeat(32),assignmentId='b'.repeat(32),domain='pve.school.test';
+const pathMode=process.env.EAGLE_LAB_TEST_TRANSPORT==='path',clipboardKey='synthetic-clipboard-key';
 const nodeHost='s-'+id+'.'+domain;
 const questions=[{id:'written',type:'written',question:'Record your observations',points:5},{id:'blank',type:'fill_blank',question:'Management port',points:2},{id:'steps',type:'procedure',question:'Complete the procedure',steps:['Sign in','Inspect the VM'],points:3}];
 const assignment={id:assignmentId,name:'Virtualization lab report',task:'Inspect the assigned node and record the results.',assignmentType:'lab_report',targetClassId:'class-a',quiz:{questions}};
@@ -31,7 +32,7 @@ const pve=http.createServer(async(req,res)=>{
   if(req.url==='/pve.js'){
     res.writeHead(200,{'Content-Type':'text/javascript'});return res.end(`
       document.querySelector('#login').onsubmit=async event=>{
-        event.preventDefault(); const result=await fetch('/api2/json/access/ticket',{method:'POST',body:'username=fixture'}).then(r=>r.json());
+        event.preventDefault(); const result=await new Promise((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open('POST','/api2/json/access/ticket');xhr.setRequestHeader('CSRFPreventionToken','fixture-csrf');xhr.withCredentials=true;xhr.onload=()=>resolve(JSON.parse(xhr.responseText));xhr.onerror=reject;xhr.send('username=fixture');});
         document.cookie='PVEAuthCookie='+result.data.ticket+'; Path=/; Secure';
         document.querySelector('#login').hidden=true;document.querySelector('#management').hidden=false;
       };
@@ -39,14 +40,17 @@ const pve=http.createServer(async(req,res)=>{
   }
   if(req.url==='/console.js'){
     res.writeHead(200,{'Content-Type':'text/javascript'});return res.end(`
+      import {marker} from '/novnc/core/fixture.js';
       const socket=new WebSocket('wss://'+location.host+'/api2/json/nodes/pve/qemu/100/vncwebsocket?port=5900&vncticket=PVEVNC%3Asynthetic%2B%3D','binary');
       socket.binaryType='arraybuffer';socket.onmessage=event=>document.querySelector('#consoleStatus').textContent=new TextDecoder().decode(event.data).trim();
       socket.onclose=()=>document.querySelector('#consoleStatus').textContent='Disconnected';`);
   }
+  if(req.url==='/novnc/core/fixture.js'){res.writeHead(200,{'Content-Type':'text/javascript'});return res.end('export const marker="RFB";');}
   if(req.url==='/api2/json/access/ticket')return json(res,{data:{ticket:'synthetic-session'}});
   res.writeHead(200,{'Content-Type':'text/html','X-Frame-Options':'SAMEORIGIN'});
-  if(req.url.includes('console=kvm'))return res.end('<!doctype html><html><head><title>VM console</title></head><body><div id="consoleStatus">Connecting</div><textarea aria-label="VM clipboard"></textarea><script src="/console.js"></script></body></html>');
-  res.end('<!doctype html><html><head><title>PVE management fixture</title></head><body style="font:16px sans-serif;background:#e7edf3;color:#192734"><h1>PVE management</h1><form id="login"><label>Username<input name="username"></label><label>Password<input name="password" type="password"></label><button>Sign in to PVE</button></form><section id="management" hidden><h2>Node management loaded</h2><label>Terminal<textarea aria-label="Terminal" rows="5" style="width:90%"></textarea></label><button id="console">Open VM console</button><div id="consolePanel"></div></section><script src="/pve.js"></script></body></html>');
+  if(req.url.includes('console=kvm'))return res.end('<!doctype html><html><head><title>VM console</title></head><body><div id="consoleStatus">Connecting</div><textarea aria-label="VM clipboard"></textarea><script type="module" src="/console.js"></script></body></html>');
+  const loggedIn=req.headers.cookie?.includes('PVEAuthCookie=synthetic-session');
+  res.end('<!doctype html><html><head><title>PVE management fixture</title></head><body style="font:16px sans-serif;background:#e7edf3;color:#192734"><h1>PVE management</h1><form id="login" '+(loggedIn?'hidden':'')+'><label>Username<input name="username"></label><label>Password<input name="password" type="password"></label><button>Sign in to PVE</button></form><section id="management" '+(loggedIn?'':'hidden')+'><h2>Node management loaded</h2><label>Terminal<textarea aria-label="Terminal" rows="5" style="width:90%"></textarea></label><button id="console">Open VM console</button><div id="consolePanel"></div></section><script src="/pve.js"></script></body></html>');
 });
 pve.on('upgrade',(req,socket)=>{
   seen.push(req.headers);
@@ -61,6 +65,7 @@ let relay;
 const pageMain=readFileSync(root+'index.html','utf8').match(/<main class="eagle-lab-view"[\s\S]*?<\/main>/)[0];
 const portal=https.createServer(tls,async(req,res)=>{
   try{
+    if(pathMode&&req.url.startsWith('/_eagle/lab/'))return relay.emit('request',req,res);
     if(req.url.startsWith('/static/')){
       const path=new URL(req.url,'https://fixture.test').pathname;
       if(path.includes('..')){res.writeHead(404);return res.end();}
@@ -75,7 +80,7 @@ const portal=https.createServer(tls,async(req,res)=>{
       if(req.method==='PUT'){const next=await body(req);if(next.revision!==draft.revision)return json(res,{ok:false,error:'Conflict'},409);draft={revision:draft.revision+1,responses:next.responses,updated_at:Date.now()};}
       return json(res,{ok:true,data:draft});
     }
-    if(req.url===`/api/eagle-lab/servers/${id}/launch`){const data=await body(req);if(data.pin!=='1234')return json(res,{ok:false,error:'Incorrect server PIN'},403);const ticket=randomBytes(32).toString('base64url');tickets.add(ticket);unlocked=true;return json(res,{ok:true,data:{url:proxyOrigin+'/_eagle/launch',ticket}});}
+    if(req.url===`/api/eagle-lab/servers/${id}/launch`){const data=await body(req);if(data.pin!=='1234')return json(res,{ok:false,error:'Incorrect server PIN'},403);const ticket=randomBytes(32).toString('base64url');tickets.add(ticket);unlocked=true;return json(res,{ok:true,data:{url:pathMode?portalOrigin+`/_eagle/lab/${id}/launch`:proxyOrigin+'/_eagle/launch',ticket,transport:pathMode?'path':'origin',clipboard_key:clipboardKey}});}
     if(req.url.startsWith(`/api/eagle-lab/servers/${id}/credentials`))return json(res,{ok:unlocked,data:{username:'fixture@pve',password:'fixture-only'}});
     if(req.url===`/api/eagle-lab/servers/${id}/disconnect`){sessions.clear();return json(res,{ok:true});}
     res.writeHead(200,{'Content-Type':'text/html','Content-Security-Policy':`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; frame-src ${proxyOrigin}; form-action 'self' ${proxyOrigin}`});
@@ -83,13 +88,14 @@ const portal=https.createServer(tls,async(req,res)=>{
   }catch{res.writeHead(500);res.end('Fixture error');}
 });
 const portalPort=await listen(portal);portalOrigin=`https://ide.school.test:${portalPort}`;
-relay=createGateway({domain,portalOrigin,recheckMs:50,authorize:async({ticket,session,server_id})=>{
+portal.on('upgrade',(req,socket,head)=>relay.emit('upgrade',req,socket,head));
+relay=createGateway({domain,portalOrigin,transport:pathMode?'path':'origin',recheckMs:50,authorize:async({ticket,session,server_id})=>{
   if(!allowed||server_id!==id)return null;
   if(ticket){if(!tickets.delete(ticket))return null;session=randomBytes(32).toString('base64url');sessions.add(session);}
-  return sessions.has(session)?{session,server:{id,ip:'10.40.0.10',port:8006,allow_self_signed:true,revision:1}}:null;
+  return sessions.has(session)?{session,portal_origin:portalOrigin,clipboard_key:clipboardKey,server:{id,ip:'10.40.0.10',port:8006,allow_self_signed:true,revision:1}}:null;
 },upstreamRequest:(options,callback)=>http.request({...options,hostname:'127.0.0.1',port:pvePort},callback)});
 const front=https.createServer(tls,(req,res)=>relay.emit('request',req,res));front.on('upgrade',(req,socket,head)=>relay.emit('upgrade',req,socket,head));
-const proxyPort=await listen(front);proxyOrigin=`https://${nodeHost}:${proxyPort}`;
+const proxyPort=await listen(front);proxyOrigin=pathMode?portalOrigin:`https://${nodeHost}:${proxyPort}`;
 
 let browser;
 try{
@@ -99,6 +105,7 @@ try{
   const page=await context.newPage();const failures=[];
   page.on('pageerror',error=>failures.push(error.message));
   await page.goto(portalOrigin);
+  await page.evaluate(()=>{localStorage.setItem('EagleIDEPrivate','not-for-pve');document.cookie='EagleIDEPrivate=not-for-pve; Path=/; Secure';});
   await page.getByRole('button',{name:/PVE Lab 01/}).click();
   await page.locator('[data-lab-pin]').fill('0000');await page.getByRole('button',{name:'Connect to PVE'}).click();
   await page.getByText('Incorrect server PIN').waitFor();
@@ -109,11 +116,21 @@ try{
   const isolated=await page.locator('iframe[title="PVE Lab 01 management interface"]').evaluate(frame=>{try{return !!frame.contentWindow.document;}catch{return false;}});
   assert.equal(isolated,false,'PVE must not share the parent origin');
   const terminal=pveFrame.getByRole('textbox',{name:'Terminal'});await terminal.click();
-  const frame=page.frames().find(frame=>frame.url()===proxyOrigin+'/');
+  const frame=page.frames().find(frame=>frame.parentFrame()===page.mainFrame()&&(pathMode?frame.url().includes('/_eagle/lab/'):frame.url()===proxyOrigin+'/'));
+  assert.equal(await frame.evaluate(()=>localStorage.getItem('EagleIDEPrivate')),null);
+  assert.equal((await frame.evaluate(()=>document.cookie)).includes('EagleIDEPrivate'),false);
   await frame.evaluate(()=>navigator.clipboard.writeText('echo clipboard fixture'));
   await terminal.press('Control+V');assert.equal(await terminal.inputValue(),'echo clipboard fixture');
   await terminal.fill('copied from embedded terminal');await terminal.press('Control+A');await terminal.press('Control+C');
   assert.equal(await frame.evaluate(()=>navigator.clipboard.readText()),'copied from embedded terminal');
+  if(pathMode){
+    const saved=page.waitForResponse(response=>response.url().endsWith('/_eagle/state')&&response.status()===200);
+    await frame.evaluate(()=>localStorage.setItem('pve-fixture','restored'));await saved;
+    await frame.goto(frame.url());await pveFrame.getByRole('heading',{name:'Node management loaded'}).waitFor();
+    assert.equal(await frame.evaluate(()=>localStorage.getItem('pve-fixture')),'restored');
+    const direct=await context.newPage();await direct.goto(frame.url());
+    assert.equal(await direct.evaluate(()=>window.origin),'null');assert.equal(await direct.evaluate(()=>localStorage.getItem('EagleIDEPrivate')),null);await direct.close();await page.bringToFront();
+  }
   await pveFrame.getByRole('button',{name:'Open VM console'}).click();
   const consoleFrame=pveFrame.frameLocator('iframe[title="VM console"]');
   await consoleFrame.getByText('RFB 003.008',{exact:true}).waitFor();
@@ -137,6 +154,7 @@ try{
   await page.locator('.lab-report-overlay').waitFor({state:'detached'});
   allowed=false;await consoleFrame.getByText('Disconnected',{exact:true}).waitFor();
   assert.equal(seen.some(headers=>headers['x-user-token']),false);
+  assert.equal(seen.some(headers=>headers.cookie?.includes('EagleIDEPrivate')),false);
   assert.deepEqual(failures,[]);
   console.log('PASS: PIN denial/unlock, isolated embedded login, clipboard paste, nested binary VM console, report autosave/reopen, mobile bounds, and live revocation.');
 }finally{

@@ -11,12 +11,13 @@ async function listen(server) {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   return server.address().port;
 }
-async function fixture(t) {
+async function fixture(t,transport='origin') {
   const {createGateway} = await import('../lab_gateway/proxy.mjs');
   const received = [];
   const upstream = http.createServer((req, res) => {
     received.push({url:req.url,headers:req.headers});
-    if(req.url==='/html') {res.writeHead(200,{'Content-Type':'text/html','X-Frame-Options':'SAMEORIGIN'});res.end('<html><head></head><script>document.cookie="PVEAuthCookie=ticket; Secure"</script></html>');}
+    if(req.url==='/slow')setTimeout(()=>res.end('loaded'),20);
+    else if(req.url==='/html') {res.writeHead(200,{'Content-Type':'text/html','X-Frame-Options':'SAMEORIGIN'});res.end('<html><head></head><script>document.cookie="PVEAuthCookie=ticket; Secure"</script></html>');}
     else if(req.url==='/login') {res.writeHead(200,{'Content-Type':'application/json','Set-Cookie':'PVEAuthCookie=private; Path=/; Secure; Domain=10.0.0.10'});res.end('{}');}
     else if(req.url==='/reject') {res.writeHead(401);res.end();}
     else {res.writeHead(200,{'Content-Type':'application/octet-stream'});req.pipe(res);}
@@ -31,9 +32,9 @@ async function fixture(t) {
   });
   const upstreamPort=await listen(upstream);
   const state={allowed:true};
-  const gateway=createGateway({domain:'pve.school.test',portalOrigin:'https://ide.school.test',recheckMs:25,
+  const gateway=createGateway({domain:'pve.school.test',portalOrigin:'https://ide.school.test',recheckMs:25,transport,
     authorize:async body=>state.allowed&&body.server_id===id&&(body.session===session||body.ticket===ticket)
-      ? {session,server:{id,ip:'10.0.0.10',port:8006,allow_self_signed:true,revision:1}} : null,
+      ? {session,portal_origin:'https://ide.school.test',clipboard_key:'c'.repeat(43),server:{id,ip:'10.0.0.10',port:8006,allow_self_signed:true,revision:1}} : null,
     upstreamRequest:(options,callback)=>{
       assert.equal(options.hostname,'10.0.0.10');assert.equal(options.port,8006);assert.equal(options.rejectUnauthorized,false);
       return http.request({...options,hostname:'127.0.0.1',port:upstreamPort},callback);
@@ -41,7 +42,8 @@ async function fixture(t) {
   const port=await listen(gateway);
   t.after(()=>{gateway.closeAllConnections();gateway.close();upstream.closeAllConnections();upstream.close();});
   const request=(path,headers={},method='GET',body)=>new Promise((resolve,reject)=>{
-    const req=http.request({hostname:'127.0.0.1',port,path,method,headers:{Host:host,Cookie:`__Host-EagleLab=${session}; PVEAuthCookie_${id}=pve-session; EagleIDE=must-not-forward`,...headers}},res=>{
+    if(transport==='path')path=path==='/_eagle/launch'?`/_eagle/lab/${id}/launch`:`/_eagle/lab/${id}/${session}`+path;
+    const req=http.request({hostname:'127.0.0.1',port,path,method,headers:{Host:transport==='path'?'ide.school.test':host,Cookie:`__Host-EagleLab=${session}; PVEAuthCookie_${id}=pve-session; EagleIDE=must-not-forward`,...headers}},res=>{
       const chunks=[];res.on('data',chunk=>chunks.push(chunk));res.on('end',()=>resolve({status:res.statusCode,headers:new Headers(Object.entries(res.headers).map(([key,value])=>[key,Array.isArray(value)?value.join(','):value])),text:async()=>Buffer.concat(chunks).toString()}));res.on('error',reject);
     });req.on('error',reject);req.end(body===undefined?undefined:String(body));
   });
@@ -95,12 +97,12 @@ test('authenticated PVE API writes and binary uploads/downloads are streamed unc
   assert.equal(f.received.length,1);
 });
 
-function rawSocket(port,path) {
+function rawSocket(port,path,requestOrigin=origin,requestHost=host) {
   const socket=net.connect(port,'127.0.0.1');let chunks=[];
   const connected=new Promise((resolve,reject)=>{
     socket.on('error',reject);
     socket.on('data',chunk=>{chunks.push(chunk);if(Buffer.concat(chunks).includes(Buffer.from('\r\n\r\n')))resolve();});
-    socket.on('connect',()=>socket.write(`GET ${path} HTTP/1.1\r\nHost: ${host}\r\nOrigin: ${origin}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: binary\r\nCookie: __Host-EagleLab=${session}; PVEAuthCookie_${id}=pve-session\r\n\r\n`));
+    socket.on('connect',()=>socket.write(`GET ${path} HTTP/1.1\r\nHost: ${requestHost}\r\nOrigin: ${requestOrigin}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: binary\r\nCookie: __Host-EagleLab=${session}; PVEAuthCookie_${id}=pve-session\r\n\r\n`));
   });
   return {socket,connected,data:()=>Buffer.concat(chunks)};
 }
@@ -139,4 +141,65 @@ test('PVE cookie bridge preserves clipboard-compatible secure partitioned cookie
   assert.doesNotMatch(assigned,/Domain=/);assert.match(assigned,/Secure; SameSite=None; Partitioned/);
   new window.WebSocket('ws://'+host+'/api2/json/nodes/pve/qemu/100/vncwebsocket?ticket=x',['binary']);
   assert.match(calls[0][0],/^wss:/);assert.deepEqual(calls[0][1],['binary']);
+});
+
+test('single-address pages stay opaque even on direct navigation and use only session-local PVE state',async t=>{
+  const f=await fixture(t,'path'),prefix=`/_eagle/lab/${id}/${session}/`;
+  const launch=await f.request('/_eagle/launch',{Origin:'https://ide.school.test'},'POST',new URLSearchParams({ticket}));
+  assert.equal(launch.status,303);assert.equal(launch.headers.get('location'),prefix);assert.equal(launch.headers.get('set-cookie'),null);
+  const page=await f.request('/html');const html=await page.text();
+  assert.match(html,new RegExp('<base href="https://ide.school.test'+prefix+'">'));
+  assert.ok(html.includes(`src="${prefix}_eagle/bridge.js"`));
+  const policy=page.headers.get('content-security-policy');assert.match(policy,/sandbox allow-scripts/);assert.doesNotMatch(policy,/allow-same-origin/);
+  assert.equal(page.headers.get('access-control-allow-origin'),'null');
+  const saved=await f.request('/_eagle/state',{Origin:'null'},'POST',JSON.stringify({cookie:'PVEAuthCookie=opaque-ticket; Secure; Path=/'}));assert.equal(saved.status,200);
+  const next=await f.request('/html');await next.text();assert.equal(f.received.at(-1).headers.cookie,'PVEAuthCookie=opaque-ticket');
+  const bridge=await f.request('/_eagle/bridge.js',{Origin:'null'});assert.match(await bridge.text(),/opaque-ticket/);
+  const denied=await f.request('/html',{Origin:'https://unrelated.test'});assert.equal(denied.status,403);
+});
+
+test('single-address console WebSockets use opaque Origin and server-side PVE cookies',async t=>{
+  const f=await fixture(t,'path');
+  await f.request('/_eagle/state',{Origin:'null'},'POST',JSON.stringify({cookie:'PVEAuthCookie=console-session; Secure'}));
+  const ws=rawSocket(f.port,`/_eagle/lab/${id}/${session}/api2/json/nodes/pve/qemu/100/vncwebsocket?port=5900&vncticket=kept%2Bticket`,'null','ide.school.test');t.after(()=>ws.socket.destroy());await ws.connected;
+  assert.match(ws.data().toString('latin1'),/101 Switching Protocols/);assert.equal(f.received.at(-1).headers.cookie,'PVEAuthCookie=console-session');
+  assert.equal(f.received.at(-1).url,'/api2/json/nodes/pve/qemu/100/vncwebsocket?port=5900&vncticket=kept%2Bticket');
+  f.state.allowed=false;await new Promise(resolve=>ws.socket.once('close',resolve));
+});
+
+test('path rewriting preserves PVE API semantics and rewrites static assets, CSS, modules and console reloads',async()=>{
+  const {rewritePathContent}=await import('../lab_gateway/path-rewrite.mjs');const prefix='/_eagle/lab/node/session/';
+  const html=rewritePathContent('<head><script src="/pve2/main.js"></script><link href="/pwt/style.css"></head>','text/html',prefix,'https://ide.school.test');
+  assert.ok(html.includes('src="'+prefix+'pve2/main.js"'));assert.ok(html.includes('href="'+prefix+'pwt/style.css"'));
+  assert.equal(rewritePathContent('a{background:url(/pve2/image.svg)}','text/css',prefix,''),'a{background:url('+prefix+'pve2/image.svg)}');
+  const js=rewritePathContent('import RFB from "/novnc/core/rfb.js";const api="/api2/json";box.getWin().location.reload();','text/javascript',prefix,'');
+  assert.ok(js.includes(prefix+'novnc/core/rfb.js'));assert.ok(js.includes('api="/api2/json"'));assert.ok(js.includes('box.load(box.getFrame().src)'));
+});
+
+test('automatic front preserves ordinary EagleIDE responses and replaces forged transport-peer headers',async t=>{
+  const {installApplicationForwarding}=await import('../lab_gateway/front.mjs');let received;
+  const app=http.createServer((req,res)=>{received=req.headers;res.writeHead(200,{'Content-Type':'application/octet-stream','Cache-Control':'private, no-store'});req.pipe(res);});
+  const backendPort=await listen(app),lab=http.createServer((_req,res)=>res.end('lab')),front=http.createServer();
+  installApplicationForwarding(front,lab,{backendPort,key:'private-front-key'});const port=await listen(front);
+  t.after(()=>{for(const server of [front,lab,app]){server.closeAllConnections();server.close();}});
+  const response=await fetch(`http://127.0.0.1:${port}/api/files/save`,{method:'POST',headers:{'X-User-Token':'kept','X-Eagle-Front-Peer':'8.8.8.8','X-Eagle-Front-Key':'forged'},body:'normal EagleIDE payload'});
+  assert.equal(await response.text(),'normal EagleIDE payload');assert.equal(response.headers.get('cache-control'),'private, no-store');
+  assert.equal(received['x-user-token'],'kept');assert.equal(received['x-eagle-front-key'],'private-front-key');assert.equal(received['x-eagle-front-peer'],'127.0.0.1');
+});
+
+test('PVE asset bursts queue behind bounded transfers instead of failing module loads',async t=>{
+  const f=await fixture(t,'path');const responses=await Promise.all(Array.from({length:50},()=>f.request('/slow')));
+  assert.ok(responses.every(response=>response.status===200));assert.equal(f.received.length,50);
+});
+
+test('ordinary EagleIDE WebSocket upgrades and bytes pass through the automatic front unchanged',async t=>{
+  const {installApplicationForwarding}=await import('../lab_gateway/front.mjs');let headers;
+  const app=http.createServer();app.on('upgrade',(req,socket)=>{
+    headers=req.headers;const accept=crypto.createHash('sha1').update(req.headers['sec-websocket-key']+'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);socket.on('data',data=>socket.write(data));socket.on('end',()=>socket.destroy());socket.on('error',()=>{});
+  });
+  const backendPort=await listen(app),lab=http.createServer(),front=http.createServer();installApplicationForwarding(front,lab,{backendPort,key:'front-key'});const port=await listen(front);
+  const ws=rawSocket(port,'/socket.io/?EIO=4&transport=websocket');t.after(()=>{ws.socket.destroy();for(const server of [front,lab,app]){server.closeAllConnections();server.close();}});await ws.connected;
+  assert.match(ws.data().toString(),/101 Switching Protocols/);assert.equal(headers['x-eagle-front-key'],'front-key');assert.equal(headers.origin,origin);
+  const payload=Buffer.from([0x82,0x83,1,2,3,4,96,96,96]);const echoed=new Promise(resolve=>ws.socket.once('data',resolve));ws.socket.write(payload);assert.deepEqual(await echoed,payload);
 });

@@ -55,8 +55,11 @@ Native Eagle Lab (disabled by default):
   class selections without changing accounts, classes, assignments, or PVE data.
 - Connect opens an embedded PVE management window, including node/LXC terminals
   and nested VM/noVNC consoles. Only the EagleIDE host needs LAN access to PVE;
-  students reach the HTTPS gateway through the school's public tunnel. See
-  docs/EAGLE_LAB_DEPLOYMENT.md for the required proxy hostnames and tunnel routes.
+  students use the existing public EagleIDE HTTPS address. The normal launcher
+  provides the relay automatically on the same HOST/PORT; no additional DNS,
+  public ports, or per-node tunnel routes are needed. The existing tunnel must
+  forward all paths and WebSockets. See docs/EAGLE_LAB_DEPLOYMENT.md for details
+  and compatibility with previously configured separate proxy hostnames.
 - Administrators can set/change/remove a 4–12 digit server PIN. Students need
   both class access and the PIN before connecting or revealing credentials.
   PIN changes and server edits revoke existing gateway sessions. Exiting the
