@@ -190,12 +190,14 @@
     document.body.classList.toggle('wiki-mode', wiki);
     if (!wiki) syncHomeBackground(false);
     document.body.classList.remove('network-mode');
+    document.body.classList.remove('eagle-lab-mode');
     document.body.classList.remove('wiki-drawer-open');
     syncSidebarControls();
     $('wikiHomeBtn')?.setAttribute('aria-current', wiki ? 'page' : 'false');
     $('wikiViewBtn')?.setAttribute('aria-current', wiki ? 'page' : 'false');
     $('ideViewBtn')?.setAttribute('aria-current', wiki ? 'false' : 'page');
     $('networkViewBtn')?.setAttribute('aria-current', 'false');
+    $('eagleLabViewBtn')?.setAttribute('aria-current', 'false');
     closeFloatingPanels();
     if (!push) return;
     const destination = wiki ? (path || '/') : '/ide';
@@ -2163,7 +2165,7 @@
   function refreshContext() {
     const ctx = context();
     syncIdeAccessControls();
-    if (!canAccessIDE() && !document.body.classList.contains('wiki-mode') && !document.body.classList.contains('network-mode') && !document.body.classList.contains('external-tool-mode')) {
+    if (!canAccessIDE() && !document.body.classList.contains('wiki-mode') && !document.body.classList.contains('network-mode') && !document.body.classList.contains('eagle-lab-mode') && !document.body.classList.contains('external-tool-mode')) {
       showHome({ push: false }).catch(() => {});
       history.replaceState({ eagleView: 'wiki' }, '', '/');
       showStatus(ideAccessMessage(), true);
@@ -2284,7 +2286,7 @@
     document.addEventListener('pointerdown', event => { state.lastPointerType = event.pointerType || 'mouse'; }, true);
     document.addEventListener('click', handleDocumentClick, true);
     document.addEventListener('click', event => {
-      if (event.target.closest?.('#networkViewBtn,#wikiHeroNetworkBtn,#settingsOpenNetworkSimBtn')) {
+      if (event.target.closest?.('#networkViewBtn,#wikiHeroNetworkBtn,#settingsOpenNetworkSimBtn,#eagleLabViewBtn')) {
         disposeActiveContent();
       }
       const tab = event.target.closest?.('.tab-btn');
@@ -2334,6 +2336,11 @@
       } else {
         window.NetworkSim?.show?.({ push: false });
       }
+      return;
+    }
+    if (path === '/lab') {
+      if (window.EagleFeatures?.openEagleLab) await window.EagleFeatures.openEagleLab(null, { push: false });
+      else window.EagleLab?.show?.({ push: false });
       return;
     }
     if (path === '/ide') {

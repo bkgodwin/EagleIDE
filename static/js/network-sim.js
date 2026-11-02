@@ -265,6 +265,7 @@
 
   function showMode({ push = true } = {}) {
     document.body.classList.remove('wiki-mode');
+    document.body.classList.remove('eagle-lab-mode');
     document.body.classList.add('network-mode');
     $('networkViewBtn')?.setAttribute('aria-current', 'page');
     $('wikiViewBtn')?.setAttribute('aria-current', 'false');

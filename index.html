@@ -43,7 +43,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js" integrity="sha384-44q2s9jxk8W5N9gAB0yn7UYLi9E2oVw8eHyaTZLkDS3WuZM/AttkAiVj6JoZuGS4" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js" integrity="sha384-jgkY4GMNWfQcLLIoP1vg3FWXflDrRhcSXGBW6ONIWC2SOIv5H1Pa57sXs+aomCuZ" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js" integrity="sha384-EO/jSdjpPTVnKfaKudbmOTZBYv471ACLOeLdy0zhCEJrQAtjgUSCbn/Cc+9QWjIx" crossorigin="anonymous"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261023-workspace-themes-1">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261102-eagle-lab-1">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -84,6 +84,7 @@
         <button class="site-nav-link site-nav-link--return ide-only" id="wikiReturnBtn" type="button" hidden>← Return to Wiki</button>
         <button class="site-nav-link site-nav-link--wiki ide-only" id="wikiViewBtn" type="button">Wiki</button>
         <button class="site-nav-link site-nav-link--network" id="networkViewBtn" type="button" hidden>Network Sim</button>
+        <button class="site-nav-link site-nav-link--lab" id="eagleLabViewBtn" type="button" hidden>Eagle Lab</button>
         <button class="site-nav-link site-nav-link--ide" id="ideViewBtn" type="button">Open IDE</button>
         <button class="site-nav-link" id="wikiBookmarksBtn" type="button" aria-expanded="false" aria-controls="wikiBookmarksPanel">Bookmarks</button>
       </nav>
@@ -456,6 +457,28 @@
     </section>
   </main>
 
+  <main class="eagle-lab-view" id="eagleLabView" aria-label="Eagle Lab">
+    <header class="eagle-lab-header">
+      <div class="eagle-lab-name">Eagle Lab</div>
+      <div class="eagle-lab-controls">
+        <label for="eagleLabClassSelect">Class<select id="eagleLabClassSelect"></select></label>
+        <label class="eagle-lab-search"><span aria-hidden="true">⌕</span><input id="eagleLabSearch" type="search" placeholder="Search servers" autocomplete="off"></label>
+        <button class="btn secondary" id="eagleLabRefreshBtn" type="button">Refresh</button>
+      </div>
+    </header>
+    <div class="eagle-lab-preview" id="eagleLabPreview" hidden>Administrator preview: Eagle Lab is currently disabled for other users.</div>
+    <div class="eagle-lab-layout">
+      <section class="eagle-lab-servers" aria-labelledby="eagleLabServersHeading">
+        <div class="eagle-lab-section-heading"><h1 id="eagleLabServersHeading">Servers</h1><span id="eagleLabStatus" role="status">Loading…</span></div>
+        <div class="eagle-lab-server-grid" id="eagleLabServerGrid"></div>
+      </section>
+      <aside class="eagle-lab-reports" aria-labelledby="eagleLabReportsHeading">
+        <div class="eagle-lab-section-heading"><h2 id="eagleLabReportsHeading">Lab Reports</h2></div>
+        <div id="eagleLabReportList"></div>
+      </aside>
+    </div>
+  </main>
+
   <div class="outer no-sidebar" id="outer">
     <!-- Left: Editor -->
     <section class="panel" id="editorPanel">
@@ -805,6 +828,9 @@
           <button class="teacher-dash-navbtn" data-view="dash-network">
             <span class="navbtn-icon">🌐</span><span>Network Sim</span>
           </button>
+          <button class="teacher-dash-navbtn" data-view="dash-eagle-lab">
+            <span class="navbtn-icon">▣</span><span>Eagle Lab</span>
+          </button>
           <button class="teacher-dash-navbtn" data-view="dash-account">
             <span class="navbtn-icon">⚙️</span><span>Account</span>
           </button>
@@ -995,6 +1021,27 @@
             </div>
             <div id="networkTeacherStatus" class="network-teacher-status" role="status"></div>
             <div id="networkTeacherLabList" class="network-teacher-labs"></div>
+          </div>
+        </div>
+
+        <!-- Eagle Lab View -->
+        <div class="teacher-dash-view" id="dash-eagle-lab">
+          <div class="teacher-dash-view-hdr">
+            <h2 class="teacher-dash-view-title">Eagle Lab Access</h2>
+            <div class="teacher-dash-view-actions">
+              <label for="eagleLabTeacherClassSelect">Class</label>
+              <select id="eagleLabTeacherClassSelect"></select>
+              <button class="btn secondary" id="eagleLabTeacherRefreshBtn" type="button">Refresh</button>
+            </div>
+          </div>
+          <div class="teacher-dash-scroll">
+            <div class="eagle-lab-teacher-settings">
+              <label class="admin-setting-toggle"><input id="eagleLabTeacherEnabled" type="checkbox"><span><strong>Allow Eagle Lab for this class</strong><small>The administrator must also enable Eagle Lab globally.</small></span></label>
+              <label class="admin-setting-toggle"><input id="eagleLabTeacherCredentials" type="checkbox"><span><strong>Show enrolled PVE credentials</strong><small>Students can reveal the saved username and password for servers assigned below.</small></span></label>
+              <div><strong>Available servers</strong><p>Select the locally hosted PVE servers this class may access.</p></div>
+              <div id="eagleLabTeacherServers" class="eagle-lab-teacher-server-list"></div>
+              <div class="eagle-lab-teacher-actions"><button class="btn run" id="eagleLabTeacherSaveBtn" type="button">Save class rules</button><span id="eagleLabTeacherStatus" role="status"></span></div>
+            </div>
           </div>
         </div>
 
@@ -1779,6 +1826,7 @@
           <button type="button" data-admin-settings-section="account">Account</button>
           <button type="button" data-admin-settings-section="wiki">Wiki</button>
           <button type="button" data-admin-settings-section="network">Network Sim</button>
+          <button type="button" data-admin-settings-section="eagle-lab">Eagle Lab</button>
           <button type="button" data-admin-settings-section="tools">External Tools</button>
           <button type="button" data-admin-settings-section="ai">AI</button>
           <button type="button" data-admin-settings-section="python-runtime">Python Runtime</button>
@@ -1836,6 +1884,25 @@
               <div><strong>Private admin preview</strong><span>You can test the full simulator while it is disabled. Existing simulator data is preserved when the feature is turned off.</span></div>
               <button class="btn secondary" id="settingsOpenNetworkSimBtn" type="button">Open Simulator</button>
             </div>
+          </section>
+          <section class="admin-settings-pane" data-admin-settings-pane="eagle-lab">
+            <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Local infrastructure</span><h4>Eagle Lab</h4><p>Enroll private-network Proxmox VE servers and let class owners choose student access.</p></div>
+            <label class="admin-setting-toggle"><input type="checkbox" id="eagleLabEnabledModal"><span><strong>Enable Eagle Lab</strong><small>Students still require access from one of their classes. Existing lab data is retained when disabled.</small></span></label>
+            <form id="eagleLabServerForm" class="eagle-lab-admin-form">
+              <input type="hidden" id="eagleLabServerId">
+              <div class="admin-settings-fields two-column">
+                <label><span>Display name</span><input id="eagleLabServerHostname" maxlength="120" required placeholder="pve-node-01"></label>
+                <label><span>Private IPv4 address</span><input id="eagleLabServerIp" required placeholder="192.168.1.10"></label>
+                <label><span>PVE HTTPS port</span><input id="eagleLabServerPort" type="number" min="1" max="65535" value="8006"></label>
+                <label><span>Username</span><input id="eagleLabServerUsername" maxlength="120" value="root"></label>
+                <label><span>Password</span><input id="eagleLabServerPassword" type="password" maxlength="512" autocomplete="new-password"><small>Leave blank when editing to keep the existing password.</small></label>
+                <label class="admin-setting-toggle compact"><input id="eagleLabServerSelfSigned" type="checkbox" checked><span><strong>Trust this server's self-signed certificate</strong><small>Common for local PVE installations.</small></span></label>
+              </div>
+              <label><span>Student notes</span><textarea id="eagleLabServerNotes" maxlength="6000" placeholder="Connection or classroom instructions"></textarea></label>
+              <div class="modal-actions"><button class="btn run" type="submit" id="eagleLabServerSaveBtn">Enroll server</button><button class="btn secondary" type="button" id="eagleLabServerCancelBtn" hidden>Cancel edit</button></div>
+            </form>
+            <div id="eagleLabAdminStatus" role="status"></div>
+            <div id="eagleLabAdminServers" class="eagle-lab-admin-server-list"></div>
           </section>
           <section class="admin-settings-pane" data-admin-settings-pane="wiki">
             <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Public knowledge base</span><h4>Coding Wiki</h4><p>The built-in wiki is the landing page. Teachers feature existing pages and folders for their classes.</p></div>
@@ -1996,30 +2063,30 @@
 
   <script src="/static/js/app.js"></script>
   <script src="/static/js/connection.js?v=20261011-files-5"></script>
-  <script src="/static/js/feature-loader.js?v=20261023-cleanup-1"></script>
+  <script src="/static/js/feature-loader.js?v=20261102-eagle-lab-1"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20261021-security-1"></script>
   <script src="/static/js/layout.js?v=20261011-files-5"></script>
-  <script src="/static/js/autocomplete.js?v=20261023-workspace-themes-1"></script>
+  <script src="/static/js/autocomplete.js?v=20261102-eagle-lab-1"></script>
   <script src="/static/js/editor-behavior.js?v=20261009-assignment-step-2"></script>
   <script src="/static/js/editor-feedback.js?v=20261021-security-1"></script>
-  <script src="/static/js/editor-appearance.js?v=20261023-workspace-themes-1"></script>
+  <script src="/static/js/editor-appearance.js?v=20261102-eagle-lab-1"></script>
   <script src="/static/js/editor-init.js?v=20261015-assignment-folders-1"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js?v=20261011-files-5"></script>
   <script src="/static/js/server-performance.js?v=20261011-files-5"></script>
   <script src="/static/js/workspace-data.js?v=20261011-files-5"></script>
   <script src="/static/js/file-provenance.js?v=20261015-assignment-folders-1"></script>
-  <script src="/static/js/assignment-workflow.js?v=20261021-security-1"></script>
+  <script src="/static/js/assignment-workflow.js?v=20261102-eagle-lab-1"></script>
   <script src="/static/js/assignment-development.js?v=20261015-assignment-folders-1"></script>
   <script src="/static/js/teacher-assignments.js?v=20261015-assignment-folders-1"></script>
-  <script src="/static/js/app-core.js?v=20261023-workspace-themes-1"></script>
+  <script src="/static/js/app-core.js?v=20261102-eagle-lab-1"></script>
   <script src="/static/js/step-mode.js?v=20261011-files-5"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20261021-security-1"></script>
-  <script src="/static/js/wiki-reader.js?v=20261023-workspace-themes-1"></script>
+  <script src="/static/js/wiki-reader.js?v=20261102-eagle-lab-1"></script>
   <script src="/static/js/external-tools.js?v=20261022-wiki-manager-1"></script>
   <script src="/static/js/lesson-plans.js?v=20261021-security-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20261023-workspace-themes-1"></script>
+  <script src="/static/js/wiki-admin.js?v=20261102-eagle-lab-1"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20261011-files-5"></script>
   <script src="/static/js/notebook-sync.js?v=20261011-notebook-topics-1"></script>

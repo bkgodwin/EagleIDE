@@ -47,6 +47,9 @@ Required runtime components:
 |-- network_features.py          Optional simulator auth, topology, class access, and lab HTTP routes
 |-- network_store.py             Validated simulator persistence, reachability, and lab grading
 |-- network_content.py           Source-controlled example topologies, labs, and CLI reference
+|-- eagle_lab_features.py        Native PVE lab auth, class rules, status probes, and routes
+|-- eagle_lab_store.py           Atomic lab catalog and encrypted PVE credentials
+|-- lab_reports.py               Account-isolated autosave drafts for continuous lab reports
 |-- external_tools.py            Generic tool registration, class grants, scoped launch sessions, and workspace routes
 |-- tool_store.py                Bounded atomic private tool catalog and network policy
 |-- tool_storage.py              Account/tool SQLite profiles, quotas and atomic chunked saves
@@ -108,6 +111,7 @@ Required runtime components:
 |       |-- network-sim.js       Browser topology engine, packet tools, CLI, labs, and teacher UI
 |       |-- network-sim-advanced.js Diagnostics, capture, deterministic traffic, IPv6, routing, and canvas tools
 |       |-- network-sim-worker.js Seeded background-traffic generator running off the UI thread
+|       |-- eagle-lab.js         Native PVE lab section, admin/teacher controls, and report window
 |       |-- ui/modal.js          Shared modal helper
 |       |-- state-socket.js      Migration-era source fragment; not loaded directly
 |       `-- app-main.js          Migration-era source fragment; not loaded directly
@@ -150,6 +154,8 @@ Required runtime components:
 |   |-- test_server_lifecycle.py Graceful shutdown state and false crash-alert regression coverage
 |   |-- test_static_html.py      Static HTML structure, IDs, and local asset wiring
 |   |-- test_network_sim.py      Simulator validation, persistence, grading, auth, and class access
+|   |-- test_eagle_lab.py        PVE catalog encryption, class auth, and lab-report draft tests
+|   |-- eagle_lab_ui.test.js     Native lab/report wiring and autosave regressions
 |   |-- test_external_tools.py   Generic HTTP fixture, tool permissions, revocation, SSRF and gateway boundaries
 |   |-- external_tools_ui.test.js Tool launch, late responses, outage, navigation and lifecycle regressions
 |   `-- test_wiki.py             Wiki persistence, auth, media, class features, and backup tests
@@ -178,6 +184,23 @@ Required runtime components:
 `wiki_features.py` is also registered near the end of `app.py`. It adapts the existing in-memory admin, teacher, and student authentication to `WikiStore`. Keep public reads separate from protected mutations, require teacher ownership for every class feature or Lesson Material bookmark, and do not expose drafts through public routes.
 
 `network_features.py` is registered independently near the wiki module and adapts the same auth/class callbacks to `NetworkStore`. The global configuration switch and per-class access both apply to students; guests require only the global switch and cannot save; admins may privately preview while disabled. Built-in topology/lab content belongs in `network_content.py`, while all mutable data stays under `network_data/`.
+
+`eagle_lab_features.py` registers the native Eagle Lab section independently of
+the generic external-tool gateway. It accepts RFC1918 IPv4 PVE endpoints only,
+probes their HTTPS version route server-side, and requires both the off-by-default
+global switch and a class-owner rule for student access. Admins enroll servers;
+teachers can assign enrolled servers only to classes they own. Credentials are
+encrypted by `EagleLabStore` and are returned only for an authorized assigned
+server when the class rule permits them. PVE opens as a top-level LAN URL because
+Proxmox login/WebSocket/frame behavior is not compatible with the sandboxed
+generic gateway. Never add a general-purpose proxy or accept public/loopback IPs.
+
+`lab_reports.py` stores revision-checked, account-isolated draft responses below
+`assignments/.lab-reports/`. Assignment metadata remains in the existing additive
+assignment schema with `assignmentType: "lab_report"`; existing assignments
+default to `standard`. A successful final quiz submission deletes only that
+student's draft. Preserve written, fill-blank, and fixed-length boolean procedure
+validation on both draft and final submission routes.
 
 Authentication uses ephemeral in-memory token maps. Protected HTTP requests pass one of `X-Admin-Token`, `X-Teacher-Token`, or `X-User-Token`. Socket events carry the corresponding token in their payload and join role-specific rooms. Preserve authorization and class-ownership checks on every new route or event.
 
@@ -493,6 +516,8 @@ Checked-in seed/reference data is limited to files such as `challenges.csv` and 
 - `background_assets/` (administrator IDE/home backgrounds and per-class home backgrounds)
 - `wiki_data/` (SQLite catalog, Markdown, media, drafts, and revisions) and `wiki_backups/`
 - `network_data/` (class access, lab assignments/progress, and per-account saved topologies)
+- `lab_data/` (atomic native Eagle Lab catalog plus its local Fernet key) and
+  `assignments/.lab-reports/` (hashed-account, revisioned report drafts)
 - `challenge_scores.json` and `leaderboard.csv`
 - `classroom_events.json` and `classroom_signals.json`
 - server/sign-in event JSON files and `server.log`
@@ -532,6 +557,7 @@ Network simulator definitions are source data in `network_content.py`; assignmen
 
 - Accounts, classes, files, assignments, quizzes, mastery, admin, AI, or core API behavior: `app.py` plus the matching section of `app-core.js`. Keep the Trash root protected, use the locked metadata helpers for restore records, and preserve the distinction between recoverable active-workspace deletion and permanent deletion inside Trash.
 - Network simulator catalog, permissions, grading, migrations, or storage: `network_features.py`, `network_store.py`, and `network_content.py`. Core browser topology/packet behavior belongs in `network-sim.js`; diagnostics, capture, deterministic traffic, IPv6, dynamic-routing views, and productivity tools belong in `network-sim-advanced.js`; background generation belongs in `network-sim-worker.js`; visuals belong in `features/network-sim.css`. Saved topology schema version 2 supports media-aware ports, parallel links, link properties, IPv6, RSTP, routing protocols, wireless radio settings, stateful policy, and seeded simulation metadata; preserve `migrate_topology()` compatibility when evolving it.
+- Native PVE lab enrollment/access: `eagle_lab_features.py` and `eagle_lab_store.py`; continuous report draft validation/storage: `lab_reports.py`; assignment-type normalization/scoring: `app.py`; browser section/report overlay: `eagle-lab.js` and `features/eagle-lab.css`.
 - Raise hand, classroom questions, file sharing, or teacher audit: `classroom_features.py`, `classroom-signals.js`, and/or `classroom-files.js`.
 - Notebook prompts and student notes: notebook helpers/routes in `app.py`, `student-notebook.js`, and `features/student-notebook.css`.
 - Student mastery dashboard: mastery routes in `app.py`, `student-dashboard.js`, and `features/student-dashboard.css`.

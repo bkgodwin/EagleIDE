@@ -2450,7 +2450,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const u = document.getElementById('aiUrlInput'); if (u) u.value = cfg.ai_ollama_url || '';
       const m = document.getElementById('aiModelInput'); if (m) m.value = cfg.ai_model || 'gemma3:4b';
       const ap = document.getElementById('assistantPromptInput'); if (ap) ap.value = cfg.ai_assistant_preprompt || '';
+      const eagleLabNav = document.getElementById('eagleLabViewBtn');
+      if (eagleLabNav) eagleLabNav.hidden = !(cfg.eagle_lab_enabled || ADMIN_TOKEN);
       window.NetworkSim?.applyConfig?.(cfg);
+      window.EagleLab?.applyConfig?.(cfg);
       applyClassTabVisibility();
       refreshEagleIDEContext();
     }
@@ -3722,6 +3725,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       document.getElementById('registrationEnabledModal').checked = currentConfig?.registration_enabled !== false;
       document.getElementById('guestIdeAccessEnabledModal').checked = currentConfig?.guest_ide_access_enabled !== false;
       document.getElementById('networkSimEnabledModal').checked = !!currentConfig?.network_sim_enabled;
+      document.getElementById('eagleLabEnabledModal').checked = !!currentConfig?.eagle_lab_enabled;
       document.getElementById('pythonMemoryLimitModal').value = Number(currentConfig?.python_memory_limit_mb || 750);
       document.getElementById('pythonExecutionTimeoutModal').value = Number(currentConfig?.python_execution_timeout_seconds || 30);
       document.getElementById('pythonConcurrencyLimitModal').value = Number(currentConfig?.python_max_concurrent_runs || 8);
@@ -3952,6 +3956,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
                 console.error('Network Simulator failed to load:', error);
                 alert('The Network Simulator could not be loaded. Refresh the page and try again.');
               }
+            } else if (btn.dataset.view === 'dash-eagle-lab') {
+              stopTeacherDashboardRosterPolling();
+              try {
+                await window.EagleFeatures?.load?.('eagleLab');
+                await window.EagleLab?.openTeacherPanel?.();
+              } catch (error) {
+                console.error('Eagle Lab failed to load:', error);
+                alert('Eagle Lab could not be loaded. Refresh the page and try again.');
+              }
             } else {
               stopTeacherDashboardRosterPolling();
             }
@@ -4021,7 +4034,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (classCreation) classCreation.hidden = co;
       document.getElementById('createClassBtn') && (document.getElementById('createClassBtn').hidden=co);
       document.getElementById('teacherPasswordSection').hidden=co;
-      const targetView = co && ['dash-skills','dash-network'].includes(view) ? 'dash-reports' : (view || 'dash-reports');
+      const targetView = co && ['dash-skills','dash-network','dash-eagle-lab'].includes(view) ? 'dash-reports' : (view || 'dash-reports');
       if (targetView) {
         const viewEl = document.getElementById(targetView);
         const navBtn = modal.querySelector(`.teacher-dash-navbtn[data-view="${targetView}"]`);
@@ -4053,6 +4066,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           } catch (error) {
             console.error('Network Simulator failed to load:', error);
             alert('The Network Simulator could not be loaded. Refresh the page and try again.');
+          }
+        }
+        if (targetView === 'dash-eagle-lab') {
+          try {
+            await window.EagleFeatures?.load?.('eagleLab');
+            window.EagleLab?.openTeacherPanel?.();
+          } catch (error) {
+            console.error('Eagle Lab failed to load:', error);
+            alert('Eagle Lab could not be loaded. Refresh the page and try again.');
           }
         }
       });
@@ -4228,6 +4250,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const registration_enabled = document.getElementById('registrationEnabledModal').checked;
       const guest_ide_access_enabled = document.getElementById('guestIdeAccessEnabledModal').checked;
       const network_sim_enabled = document.getElementById('networkSimEnabledModal').checked;
+      const eagle_lab_enabled = document.getElementById('eagleLabEnabledModal').checked;
       const status = document.getElementById('adminSettingsStatus');
       if (status) status.textContent = 'Saving…';
       const settingsResult = await saveConfig({
@@ -4256,6 +4279,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         python_module_access,
         python_execution_timeout_seconds,
         network_sim_enabled,
+        eagle_lab_enabled,
         guest_ide_access_enabled
       });
       if (!settingsResult?.ok) {
@@ -6160,7 +6184,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       studentHeaders: () => ({'X-User-Token': USER_TOKEN}), managerHeaders: assignmentManagerHeaders,
       files: () => flattenFiles(_allFileTree || []), openFile: () => currentOpenFile, save: saveCurrentFile,
       reloadAssignments: loadAssignments, renderStudent: renderStudentAssignments,
-      questions: openQuestions, scoreReport: openStudentScoreReport,
+      questions: assignmentReference => {
+        const assignment = getAssignmentByName(assignmentReference);
+        if (assignment?.assignmentType === 'lab_report') {
+          return window.EagleFeatures?.openLabReport?.(assignment.id || assignmentReference, assignment);
+        }
+        return openQuestions(assignmentReference);
+      }, scoreReport: openStudentScoreReport,
       roster: classId => teacherClasses.find(c => c.id === classId)?.students || [],
       maxScore: assignmentTotalMaxScore, feedback: renderAssignmentAiFeedback, markdown: renderMarkdownTo,
       reloadClasses: async () => {await loadTeacherClasses(); renderTeacherClassManagement();},
@@ -8585,13 +8615,16 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           <div class="workspace-modal-body">
           <label>Assignment Name</label>
           <input type="text" id="modalAssignmentName" value="${escapeHtml(existingAssignment?.name || '')}" ${existingAssignment ? 'disabled' : ''} placeholder="e.g., Loops Practice 1" />
+          <label>Assignment Type</label>
+          <select id="modalAssignmentType"><option value="standard" ${existingAssignment?.assignmentType !== 'lab_report' ? 'selected' : ''}>Standard assignment</option><option value="lab_report" ${existingAssignment?.assignmentType === 'lab_report' ? 'selected' : ''}>Lab report</option></select>
+          <div class="option-help">Lab reports are continuous, autosaving pages with written responses, fill-in blanks, and procedure checklists.</div>
           <label>Task Description</label>
           <textarea id="modalAssignmentTask" placeholder="Describe what students need to do...">${escapeHtml(existingAssignment?.task || '')}</textarea>
           <div class="option-help">Markdown is supported, including headings, bold text, lists, quotes, links, and fenced code blocks.</div>
           <label for="modalAssignmentDueAt">Due Date and Time (optional)</label>
           <input type="datetime-local" id="modalAssignmentDueAt" value="${escapeHtml(assignmentDueInputValue(existingAssignment?.dueAt))}" />
           <div class="option-help">The assignment locks automatically at this time. You can unlock it again after the deadline if needed.</div>
-          <label>Max Score (Code)</label>
+          <label id="modalAssignmentMaxScoreLabel">Max Score (Code)</label>
           <input type="number" id="modalAssignmentMaxScore" value="${existingAssignment?.maxScore || 100}" min="1" />
           <label style="margin-bottom:2px;">Assignment Options</label>
           <label class="choice-item"><input type="checkbox" id="modalAssignmentFileControl" ${existingAssignment?.fileControl ? 'checked' : ''} ${existingAssignment ? 'disabled' : ''}> File control — dedicated file with development history</label>
@@ -8627,7 +8660,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           <label>Quiz Max Submissions (0 = unlimited)</label>
           <input type="number" id="modalAssignmentMaxQuizSubmissions" value="${maxQuizSubmissions}" min="0" max="100" />
           <div style="margin-top:20px; padding-top:20px; border-top:1px solid #333;">
-            <h4 style="color:var(--columbia-blue); margin:0 0 12px;">Quiz (Optional)</h4>
+            <h4 id="assignmentQuestionSectionTitle" style="color:var(--columbia-blue); margin:0 0 12px;">Quiz (Optional)</h4>
             <div id="quizBuilder">
               <div id="quizQuestionsList"></div>
               <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
@@ -8645,13 +8678,24 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       document.body.appendChild(modal);
 
       const syncFileControl = () => {
-        const controlled = !!modal.querySelector('#modalAssignmentFileControl')?.checked;
+        const labReport = modal.querySelector('#modalAssignmentType')?.value === 'lab_report';
+        const fileControlBox = modal.querySelector('#modalAssignmentFileControl');
+        if (labReport && fileControlBox) fileControlBox.checked = false;
+        const controlled = !labReport && !!fileControlBox?.checked;
         const multiple = modal.querySelector('#modalAssignmentMultiFile'), allow = modal.querySelector('#modalAssignmentAllowFileSubmission');
         if (controlled) {multiple.checked=false; allow.checked=true;}
-        multiple.disabled=controlled; allow.disabled=controlled;
+        if (labReport) { multiple.checked=false; allow.checked=false; }
+        fileControlBox.disabled=!!existingAssignment || labReport;
+        multiple.disabled=controlled||labReport; allow.disabled=controlled||labReport;
         modal.querySelector('#modalAssignmentFileControlExtension').disabled=!!existingAssignment || !controlled;
+        modal.querySelector('#modalAssignmentMaxScoreLabel').textContent='Max Score (Code)';
+        modal.querySelector('#modalAssignmentMaxScoreLabel').hidden=labReport;
+        modal.querySelector('#modalAssignmentMaxScore').hidden=labReport;
+        modal.querySelector('#assignmentQuestionSectionTitle').textContent=labReport?'Lab Report Sections':'Quiz (Optional)';
+        modal.querySelector('#viewQuizAsStudentBtn').textContent=labReport?'Preview lab report':'View as Student';
       };
       modal.querySelector('#modalAssignmentFileControl').onchange=syncFileControl;
+      modal.querySelector('#modalAssignmentType').onchange=syncFileControl;
       syncFileControl();
 
       let quizQuestions = JSON.parse(JSON.stringify(existingAssignment?.quiz?.questions || []));
@@ -8672,6 +8716,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
                   q.type === 'multiple_choice' ? 'Multiple Choice' :
                   q.type === 'multiple_choice_code' ? 'Multiple Choice (Code Reading)' :
                   q.type === 'written_code' ? 'Written Response (Code Reading)' :
+                  q.type === 'fill_blank' ? 'Fill in the Blank' :
+                  q.type === 'procedure' ? 'Procedure Checklist' :
                   'Written Response'
                 }, ${q.points} pts)</span>
                 <div style="color:#ddd; margin-top:8px;">${escapeHtml(q.question)}</div>
@@ -8689,7 +8735,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         }));
       }
 
-      document.getElementById('addQuestionBtn').addEventListener('click', () => showAddQuestionModal(quizQuestions, renderQuizQuestions, questionIdCounter));
+      document.getElementById('addQuestionBtn').addEventListener('click', () => showAddQuestionModal(quizQuestions, renderQuizQuestions, questionIdCounter, modal.querySelector('#modalAssignmentType')?.value === 'lab_report'));
       document.getElementById('viewQuizAsStudentBtn')?.addEventListener('click', () => {
         const assignmentName = existingAssignment?.name || (document.getElementById('modalAssignmentName')?.value || 'Untitled Assignment');
         showTeacherQuizPreviewModal(assignmentName, quizQuestions);
@@ -8710,16 +8756,22 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const selectedSkillTags = [...modal.querySelectorAll('.modal-skill-check:checked')].map(cb => cb.value).filter(Boolean);
         const mergedSkillTags = [...new Set(selectedSkillTags)];
         const maxQuizSubmissions = Math.max(0, Math.min(100, parseInt(document.getElementById('modalAssignmentMaxQuizSubmissions')?.value, 10) || 0));
+        const assignmentType = modal.querySelector('#modalAssignmentType')?.value || 'standard';
         if (!name) {
           modal.querySelector('#composer-tab-details')?.click();
           modal.querySelector('#modalAssignmentName')?.focus();
           alert('Please enter an assignment name.');
           return;
         }
+        if (assignmentType === 'lab_report' && quizQuestions.some(question => !['written', 'fill_blank', 'procedure'].includes(question.type))) {
+          alert('Lab reports can only contain written responses, fill-in-the-blank responses, and procedure checklists. Remove incompatible questions before saving.');
+          return;
+        }
         const payload = {
           assignmentId: existingAssignment?.id || undefined,
           name,
           task,
+          assignmentType,
           dueAt,
           maxScore,
           allowFileSubmission,
@@ -8752,7 +8804,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       });
     }
 
-    function showAddQuestionModal(quizQuestions, renderCallback, questionIdCounter) {
+    function showAddQuestionModal(quizQuestions, renderCallback, questionIdCounter, labReport = false) {
       const questionModal = document.createElement('div');
       questionModal.className = 'modal workspace-modal glass-modal';
       questionModal.innerHTML = `
@@ -8764,16 +8816,22 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           <div class="workspace-modal-body">
           <label>Question Type</label>
           <select id="questionType" style="width:100%; padding:8px; background:#0c0c0c; border:1px solid #333; color:#ddd; border-radius:4px; margin-bottom:12px;">
-            <option value="multiple_choice">Multiple Choice</option>
-            <option value="written">Written Response</option>
-            <option value="multiple_choice_code">Multiple Choice (Code Reading)</option>
-            <option value="written_code">Written Response (Code Reading)</option>
+            ${labReport ? `
+              <option value="written">Written Response</option>
+              <option value="fill_blank">Fill in the Blank</option>
+              <option value="procedure">Procedure Checklist</option>
+            ` : `
+              <option value="multiple_choice">Multiple Choice</option>
+              <option value="written">Written Response</option>
+              <option value="multiple_choice_code">Multiple Choice (Code Reading)</option>
+              <option value="written_code">Written Response (Code Reading)</option>
+            `}
           </select>
           <label>Question Text</label>
           <textarea id="questionText" placeholder="Enter your question..." style="width:100%; min-height:80px; padding:8px; background:#0c0c0c; border:1px solid #333; color:#ddd; border-radius:4px; margin-bottom:12px; font-family:inherit;"></textarea>
           <label>Points</label>
           <input type="number" id="questionPoints" value="10" min="1" style="width:100%; padding:8px; background:#0c0c0c; border:1px solid #333; color:#ddd; border-radius:4px; margin-bottom:12px;" />
-          <div id="mcOptionsSection" style="display:block; margin-top:12px;">
+          <div id="mcOptionsSection" style="display:${labReport ? 'none' : 'block'}; margin-top:12px;">
             <label style="display:block; margin-bottom:8px; color:#aaa; font-weight:600;">Answer Options (select the correct answer)</label>
             <div id="optionsList" style="margin-bottom:12px;"></div>
             <button type="button" class="btn secondary" id="addOptionBtn" style="font-size:13px; padding:8px 16px;">+ Add Option</button>
@@ -8787,6 +8845,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             </select>
             <label>Code Snippet</label>
             <textarea id="questionCodeSnippet" placeholder="Paste or type code students must read..." style="width:100%; min-height:140px; padding:8px; background:#0c0c0c; border:1px solid #333; color:#ddd; border-radius:4px; margin-bottom:12px; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;"></textarea>
+          </div>
+          <div id="fillBlankSection" style="display:none; margin-top:12px;">
+            <label>Accepted Answers</label>
+            <textarea id="questionAcceptedAnswers" placeholder="Enter one accepted answer per line" style="width:100%; min-height:100px; padding:8px; background:#0c0c0c; border:1px solid #333; color:#ddd; border-radius:4px; margin-bottom:12px; font-family:inherit;"></textarea>
+            <div style="color:#aaa; font-size:12px;">Answers are matched case-insensitively after surrounding whitespace is removed.</div>
+          </div>
+          <div id="procedureSection" style="display:none; margin-top:12px;">
+            <label>Procedure Steps</label>
+            <textarea id="questionProcedureSteps" placeholder="Enter one checklist step per line" style="width:100%; min-height:140px; padding:8px; background:#0c0c0c; border:1px solid #333; color:#ddd; border-radius:4px; margin-bottom:12px; font-family:inherit;"></textarea>
           </div>
           <div class="modal-actions">
             <button class="btn run modal-add-btn-q">Add Question</button>
@@ -8822,6 +8889,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const type = e.target.value;
         document.getElementById('mcOptionsSection').style.display = (type === 'multiple_choice' || type === 'multiple_choice_code') ? 'block' : 'none';
         document.getElementById('codeReadingSection').style.display = (type === 'multiple_choice_code' || type === 'written_code') ? 'block' : 'none';
+        document.getElementById('fillBlankSection').style.display = type === 'fill_blank' ? 'block' : 'none';
+        document.getElementById('procedureSection').style.display = type === 'procedure' ? 'block' : 'none';
       });
       renderOptions();
       questionModal.querySelector('.modal-exit-btn-q')?.addEventListener('click', () => questionModal.remove());
@@ -8850,6 +8919,18 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           if (!snippet) { alert('Code-reading questions require a code snippet.'); return; }
           question.codeLanguage = document.getElementById('questionCodeLanguage').value || 'python';
           question.codeSnippet = snippet;
+        }
+        if (type === 'fill_blank') {
+          const acceptedAnswers = (document.getElementById('questionAcceptedAnswers').value || '')
+            .split(/\r?\n/).map(answer => answer.trim()).filter(Boolean);
+          if (!acceptedAnswers.length) { alert('Add at least one accepted answer.'); return; }
+          question.acceptedAnswers = acceptedAnswers;
+        }
+        if (type === 'procedure') {
+          const steps = (document.getElementById('questionProcedureSteps').value || '')
+            .split(/\r?\n/).map(step => step.trim()).filter(Boolean);
+          if (!steps.length) { alert('Add at least one procedure step.'); return; }
+          question.steps = steps;
         }
         quizQuestions.push(question);
         questionModal.remove();
@@ -8892,7 +8973,20 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
                   <div style="color:var(--columbia-blue); font-weight:700; margin-bottom:12px;">Question ${idx + 1} (${q.points || 0} pts)</div>
                   ${q.type === 'written_code' ? `<div class="question-split"><div class="question-code-panel">${renderCodeSnippetBlock(q.codeSnippet || '', q.codeLanguage || 'python')}</div><div>` : ''}
                   <div style="color:#eee; margin-bottom:12px; font-size:15px; line-height:1.6;">${escapeHtml(q.question || '')}</div>
-                  <textarea id="preview_written_answer_${q.id}" placeholder="Type your answer here..." style="width:100%; min-height:140px; padding:14px; background:#1a1a1a; border:2px solid #444; border-radius:8px; color:#eee; font-family:inherit; resize:vertical; font-size:15px; line-height:1.5;"></textarea>
+                  ${q.type === 'procedure' ? `
+                    <div class="preview-procedure-steps">
+                      ${(q.steps || []).map((step, stepIndex) => `
+                        <label style="display:flex; align-items:flex-start; gap:10px; margin:8px 0; padding:10px; background:#1a1a1a; border:1px solid #333; border-radius:8px;">
+                          <input type="checkbox" name="preview_procedure_${q.id}" value="${stepIndex}">
+                          <span>${escapeHtml(step)}</span>
+                        </label>
+                      `).join('')}
+                    </div>
+                  ` : q.type === 'fill_blank' ? `
+                    <input id="preview_written_answer_${q.id}" type="text" placeholder="Type your answer here..." style="width:100%; padding:14px; background:#1a1a1a; border:2px solid #444; border-radius:8px; color:#eee; font-family:inherit; font-size:15px;">
+                  ` : `
+                    <textarea id="preview_written_answer_${q.id}" placeholder="Type your answer here..." style="width:100%; min-height:140px; padding:14px; background:#1a1a1a; border:2px solid #444; border-radius:8px; color:#eee; font-family:inherit; resize:vertical; font-size:15px; line-height:1.5;"></textarea>
+                  `}
                   ${q.type === 'written_code' ? '</div></div>' : ''}
                 </div>
               `).join('')}
@@ -8914,11 +9008,18 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             if (selected && parseInt(selected.value, 10) === q.correctAnswer) {
               score += parseInt(q.points, 10) || 0;
             }
+          } else if (q.type === 'fill_blank') {
+            const answer = previewModal.querySelector(`#preview_written_answer_${CSS.escape(q.id)}`)?.value?.trim().toLocaleLowerCase() || '';
+            const accepted = (q.acceptedAnswers || []).some(value => String(value).trim().toLocaleLowerCase() === answer);
+            if (answer && accepted) score += parseInt(q.points, 10) || 0;
+          } else if (q.type === 'procedure') {
+            const checked = previewModal.querySelectorAll(`input[name="preview_procedure_${CSS.escape(q.id)}"]:checked`).length;
+            if ((q.steps || []).length > 0 && checked === q.steps.length) score += parseInt(q.points, 10) || 0;
           }
         });
         const result = previewModal.querySelector('#previewResultBox');
         if (result) {
-          result.innerHTML = `<strong>Preview Score:</strong> ${score} / ${totalPoints} <span style="color:#888;">(written-response questions are shown but not auto-scored in preview)</span>`;
+          result.innerHTML = `<strong>Preview Score:</strong> ${score} / ${totalPoints} <span style="color:#888;">(written responses are shown but require teacher grading)</span>`;
         }
       });
     }
@@ -9393,7 +9494,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
                   <div style="font-weight:700; color:var(--columbia-blue); margin-bottom:6px;">Question ${idx + 1} (${maxPts} pts)</div>
                   ${q.type === 'written_code' || q.type === 'multiple_choice_code' ? `<div class="question-code-panel" style="margin-bottom:10px; max-height:220px;">${renderCodeSnippetBlock(q.codeSnippet || '', q.codeLanguage || 'python')}</div>` : ''}
                   <div style="margin-bottom:8px; color:#ddd;">${escapeHtml(q.question || 'Question')}</div>
-                  <div style="margin-bottom:8px;"><strong>Student Answer:</strong> ${isWritten ? `<div style="margin-top:6px; padding:8px; background:#111; border:1px solid #333; border-radius:6px; white-space:pre-wrap;">${escapeHtml(answer)}</div>` : escapeHtml(String(answer))}</div>
+                  <div style="margin-bottom:8px;"><strong>Student Answer:</strong> ${q.type === 'procedure' ? `<ul>${(q.steps || []).map((step, stepIndex) => `<li>${Array.isArray(answer) && answer[stepIndex] ? '☑' : '☐'} ${escapeHtml(step)}</li>`).join('')}</ul>` : isWritten ? `<div style="margin-top:6px; padding:8px; background:#111; border:1px solid #333; border-radius:6px; white-space:pre-wrap;">${escapeHtml(answer)}</div>` : escapeHtml(String(answer))}</div>
                   <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
                     <label style="margin:0;">Score</label>
                     <input type="number" class="quiz-manual-score" data-question-id="${escapeHtml(resp.questionId)}" data-max="${maxPts}" value="${resp.manualScore ?? resp.pointsEarned ?? ''}" min="0" max="${maxPts}" style="width:120px;">
