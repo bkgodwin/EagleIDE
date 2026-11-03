@@ -124,7 +124,7 @@ export function createGateway({domain, portalOrigin, authorize, upstreamRequest 
         res.setHeader('Access-Control-Allow-Origin','null');res.setHeader('Vary','Origin');
         res.setHeader('Access-Control-Expose-Headers','Content-Disposition, Content-Length, CSRFPreventionToken');
         if(req.method==='OPTIONS'){
-          res.writeHead(204,{'Access-Control-Allow-Methods':'GET, HEAD, POST, PUT, DELETE, OPTIONS','Access-Control-Allow-Headers':'Content-Type, CSRFPreventionToken, X-Requested-With, Authorization','Access-Control-Max-Age':'120'});return res.end();
+          res.writeHead(204,{'Access-Control-Allow-Methods':'GET, HEAD, POST, PUT, DELETE, OPTIONS','Access-Control-Allow-Headers':'Content-Type, CSRFPreventionToken, X-Requested-With, Authorization, Cache-Control, Pragma','Access-Control-Max-Age':'120'});return res.end();
         }
       }
       if(!await waitForTransfer(access.session,res)){if(!res.destroyed)return fail(res,429,'Too many lab connections.');return;}

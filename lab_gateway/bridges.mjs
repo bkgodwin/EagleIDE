@@ -22,15 +22,14 @@ export function bridgeSource(cookieName) {
     // Browser transport stays HTTPS/WSS; the gateway always uses TLS to PVE.
     if (window.WebSocket) {
       const Native = window.WebSocket;
-      window.WebSocket = class extends Native {
-        constructor(url, protocols) {
+      window.WebSocket = new Proxy(Native, {construct(Target, [url, protocols]) {
           const target = new URL(url, location.href);
           if (target.host === location.host && /^\\/api2\\/(?:json|extjs)\\/.*\\/(?:vncwebsocket|termwebsocket)$/.test(target.pathname)) {
             target.protocol = 'wss:'; url = target.href;
           }
-          if (protocols === undefined) super(url); else super(url, protocols);
+          return protocols === undefined ? new Target(url) : new Target(url, protocols);
         }
-      };
+      });
     }
   })();`;
 }

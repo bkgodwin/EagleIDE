@@ -134,6 +134,20 @@ class EagleLabStore:
         with self._lock:
             return [self.public_server(item) for item in self._read()["servers"]]
 
+    def reorder_servers(self, server_ids: object) -> list[dict]:
+        if (not isinstance(server_ids, list) or len(server_ids) > MAX_SERVERS
+                or any(not isinstance(item, str) for item in server_ids)
+                or len(set(server_ids)) != len(server_ids)):
+            raise EagleLabDataError("Provide each enrolled server once in the desired order")
+        with self._lock:
+            data = self._read()
+            known = {item["id"]: item for item in data["servers"]}
+            if set(server_ids) != set(known):
+                raise EagleLabDataError("The server list changed; reload it before reordering")
+            data["servers"] = [known[item] for item in server_ids]
+            self._write(data)
+            return [self.public_server(item) for item in data["servers"]]
+
     def _server(self, data: dict, server_id: str) -> dict:
         found = next((item for item in data["servers"] if item.get("id") == str(server_id)), None)
         if not found:

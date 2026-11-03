@@ -133,13 +133,14 @@ test('PVE upgrade rejection keeps the real HTTP status',async t=>{
 test('PVE cookie bridge preserves clipboard-compatible secure partitioned cookies and WebSocket binary protocols',async()=>{
   const {bridgeSource}=await import('../lab_gateway/bridges.mjs');let assigned;const calls=[];
   class Document{};Object.defineProperty(Document.prototype,'cookie',{get:()=>assigned||'',set:value=>{assigned=value;}});
-  class Socket{constructor(...args){calls.push(args);}}
+  class Socket{constructor(...args){calls.push(args);}send(){}close(){}}
   const document=new Document(),window={WebSocket:Socket};
   vm.runInNewContext(bridgeSource('PVEAuthCookie_'+id),{document,Document,window,URL,location:{href:origin+'/',host,protocol:'https:'}});
   document.cookie='PVEAuthCookie=ticket; Secure; Path=/; Domain=school.test';
   assert.match(assigned,new RegExp('^PVEAuthCookie_'+id+'=ticket'));
   assert.doesNotMatch(assigned,/Domain=/);assert.match(assigned,/Secure; SameSite=None; Partitioned/);
-  new window.WebSocket('ws://'+host+'/api2/json/nodes/pve/qemu/100/vncwebsocket?ticket=x',['binary']);
+  const socket=new window.WebSocket('ws://'+host+'/api2/json/nodes/pve/qemu/100/vncwebsocket?ticket=x',['binary']);
+  assert.equal(Object.getPrototypeOf(socket),Socket.prototype);assert.ok(Object.getOwnPropertyNames(Object.getPrototypeOf(socket)).includes('send'));
   assert.match(calls[0][0],/^wss:/);assert.deepEqual(calls[0][1],['binary']);
 });
 
@@ -174,6 +175,35 @@ test('path rewriting preserves PVE API semantics and rewrites static assets, CSS
   assert.equal(rewritePathContent('a{background:url(/pve2/image.svg)}','text/css',prefix,''),'a{background:url('+prefix+'pve2/image.svg)}');
   const js=rewritePathContent('import RFB from "/novnc/core/rfb.js";const api="/api2/json";box.getWin().location.reload();','text/javascript',prefix,'');
   assert.ok(js.includes(prefix+'novnc/core/rfb.js'));assert.ok(js.includes('api="/api2/json"'));assert.ok(js.includes('box.load(box.getFrame().src)'));
+  const template=rewritePathContent('<head><script type="module">import UI from "/novnc/app.js";UI.start();</script></head>','text/html',prefix,'https://ide.school.test');
+  assert.ok(template.includes(`import UI from "${prefix}novnc/app.js"`));
+});
+
+test('opaque console API preflights permit the headers sent by real PVE xterm and noVNC clients',async t=>{
+  const f=await fixture(t,'path');
+  const response=await f.request('/api2/json/nodes/pve/lxc/100/termproxy',{Origin:'null','Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'cache-control,csrfpreventiontoken,content-type'},'OPTIONS');
+  assert.equal(response.status,204);assert.equal(response.headers.get('access-control-allow-origin'),'null');
+  const allowed=response.headers.get('access-control-allow-headers').toLowerCase().split(/,\s*/);
+  for(const header of ['cache-control','csrfpreventiontoken','content-type'])assert.ok(allowed.includes(header));
+  assert.equal(f.received.length,0,'preflight must not contact PVE');
+});
+
+test('path WebSocket bridge retains the native prototype required by noVNC and never doubles a session prefix',async()=>{
+  const {pathRuntimeSource}=await import('../lab_gateway/path-runtime.mjs');const urls=[];
+  class NativeSocket{static OPEN=1;constructor(url,protocols){urls.push({url,protocols});}send(){}close(){}get binaryType(){return 'arraybuffer';}}
+  class XHR{open(){}send(){}}
+  class Element{setAttribute(){}}
+  const document={baseURI:'https://ide.school.test/_eagle/lab/node/session/'};
+  const window={XMLHttpRequest:XHR,WebSocket:NativeSocket,fetch(){},open(){},addEventListener(){}};window.top=window;
+  const sandbox={window,document,navigator:{},location:{protocol:'https:'},URL,Map,Proxy,Object,Element,MutationObserver:class{observe(){}}};
+  vm.runInNewContext(pathRuntimeSource({prefix:'/_eagle/lab/node/session/',origin:'https://ide.school.test',upstreamOrigin:'https://10.0.0.1:8006'}),sandbox);
+  for(const url of ['wss://ide.school.test/api2/json/nodes/pve/qemu/100/vncwebsocket?ticket=x','wss://ide.school.test/_eagle/lab/node/session/api2/json/nodes/pve/qemu/100/vncwebsocket?ticket=x']){
+    const socket=new window.WebSocket(url,['binary']);
+    assert.equal(Object.getPrototypeOf(socket),NativeSocket.prototype);
+    for(const property of ['send','close','binaryType'])assert.ok(Object.getOwnPropertyNames(Object.getPrototypeOf(socket)).includes(property));
+    assert.ok(socket instanceof window.WebSocket);assert.equal(window.WebSocket.OPEN,1);
+  }
+  assert.equal(urls[0].url,'wss://ide.school.test/_eagle/lab/node/session/api2/json/nodes/pve/qemu/100/vncwebsocket?ticket=x');assert.equal(urls[1].url,urls[0].url);
 });
 
 test('automatic front preserves ordinary EagleIDE responses and replaces forged transport-peer headers',async t=>{

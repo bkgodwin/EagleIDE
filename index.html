@@ -43,7 +43,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js" integrity="sha384-44q2s9jxk8W5N9gAB0yn7UYLi9E2oVw8eHyaTZLkDS3WuZM/AttkAiVj6JoZuGS4" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js" integrity="sha384-jgkY4GMNWfQcLLIoP1vg3FWXflDrRhcSXGBW6ONIWC2SOIv5H1Pa57sXs+aomCuZ" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js" integrity="sha384-EO/jSdjpPTVnKfaKudbmOTZBYv471ACLOeLdy0zhCEJrQAtjgUSCbn/Cc+9QWjIx" crossorigin="anonymous"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261102-eagle-lab-3">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261102-eagle-lab-4">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -1888,21 +1888,7 @@
           <section class="admin-settings-pane" data-admin-settings-pane="eagle-lab">
             <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Local infrastructure</span><h4>Eagle Lab</h4><p>Enroll private-network Proxmox VE servers and let class owners choose student access.</p></div>
             <label class="admin-setting-toggle"><input type="checkbox" id="eagleLabEnabledModal"><span><strong>Enable Eagle Lab</strong><small>Students still require access from one of their classes. Existing lab data is retained when disabled.</small></span></label>
-            <form id="eagleLabServerForm" class="eagle-lab-admin-form">
-              <input type="hidden" id="eagleLabServerId">
-              <div class="admin-settings-fields two-column">
-                <label><span>Display name</span><input id="eagleLabServerHostname" maxlength="120" required placeholder="pve-node-01"></label>
-                <label><span>Private IPv4 address</span><input id="eagleLabServerIp" required placeholder="192.168.1.10"></label>
-                <label><span>PVE HTTPS port</span><input id="eagleLabServerPort" type="number" min="1" max="65535" value="8006"></label>
-                <label><span>Username</span><input id="eagleLabServerUsername" maxlength="120" value="root"></label>
-                <label><span>Password</span><input id="eagleLabServerPassword" type="password" maxlength="512" autocomplete="new-password"><small>Leave blank when editing to keep the existing password.</small></label>
-                <label><span>Student server PIN (optional)</span><input id="eagleLabServerPin" type="password" inputmode="numeric" pattern="[0-9]{4,12}" minlength="4" maxlength="12" autocomplete="new-password"><small>4–12 digits. Leave blank when editing to keep the PIN.</small></label>
-                <label class="admin-setting-toggle compact"><input id="eagleLabServerClearPin" type="checkbox"><span><strong>Remove existing PIN</strong></span></label>
-                <label class="admin-setting-toggle compact"><input id="eagleLabServerSelfSigned" type="checkbox" checked><span><strong>Trust this server's self-signed certificate</strong><small>Common for local PVE installations.</small></span></label>
-              </div>
-              <label><span>Student notes</span><textarea id="eagleLabServerNotes" maxlength="6000" placeholder="Connection or classroom instructions"></textarea></label>
-              <div class="modal-actions"><button class="btn run" type="submit" id="eagleLabServerSaveBtn">Enroll server</button><button class="btn secondary" type="button" id="eagleLabServerCancelBtn" hidden>Cancel edit</button></div>
-            </form>
+            <div class="eagle-lab-admin-heading"><div><strong>Enrolled servers</strong><p>Move servers up or down, or choose a position. Students see their assigned servers in this order.</p></div><button class="btn run" type="button" id="eagleLabServerEnrollBtn">Enroll server</button></div>
             <div id="eagleLabAdminStatus" role="status"></div>
             <div id="eagleLabAdminServers" class="eagle-lab-admin-server-list"></div>
           </section>
@@ -2063,32 +2049,55 @@
 
   </div><!-- .app-shell -->
 
+  <dialog id="eagleLabServerDialog" class="eagle-lab-server-dialog" aria-labelledby="eagleLabServerDialogTitle">
+    <form id="eagleLabServerForm" class="eagle-lab-admin-form">
+      <header><div><h2 id="eagleLabServerDialogTitle">Enroll server</h2><p id="eagleLabServerDialogHelp">Add a Proxmox VE server reachable from EagleIDE's local network.</p></div><button class="btn secondary" id="eagleLabServerDialogClose" type="button" aria-label="Close server editor">✕</button></header>
+      <input type="hidden" id="eagleLabServerId">
+      <fieldset><legend>Server connection</legend><div class="eagle-lab-form-grid">
+        <label><span>Display name</span><input id="eagleLabServerHostname" maxlength="120" required placeholder="e.g. Networking Lab 01" autocomplete="off"><small>The name students see on the Lab page.</small></label>
+        <label><span>Private IPv4 address</span><input id="eagleLabServerIp" required placeholder="192.168.1.10" autocomplete="off"><small>Enter the LAN address, without https:// or a port.</small></label>
+        <label><span>PVE HTTPS port</span><input id="eagleLabServerPort" type="number" min="1" max="65535" value="8006" required><small>Usually 8006.</small></label>
+        <label class="eagle-lab-checkbox"><input id="eagleLabServerSelfSigned" type="checkbox" checked><span>Trust this server's self-signed certificate<small>Common for local PVE installations.</small></span></label>
+      </div></fieldset>
+      <fieldset><legend>PVE credentials</legend><p>These are the credentials students may reveal when their teacher permits it.</p><div class="eagle-lab-form-grid">
+        <label><span>Username</span><input id="eagleLabServerUsername" maxlength="120" value="root" required autocomplete="off"><small>Include the realm when needed, e.g. student@pve.</small></label>
+        <label><span>Password</span><input id="eagleLabServerPassword" type="password" maxlength="512" autocomplete="new-password"><small id="eagleLabServerPasswordHelp">Required for enrollment.</small></label>
+      </div></fieldset>
+      <fieldset><legend>Student access</legend><div class="eagle-lab-form-grid">
+        <label><span>Server PIN (optional)</span><input id="eagleLabServerPin" type="password" inputmode="numeric" pattern="[0-9]{4,12}" minlength="4" maxlength="12" autocomplete="new-password"><small id="eagleLabServerPinHelp">Use 4–12 digits. Students also need class access.</small></label>
+        <label id="eagleLabServerClearPinLabel" class="eagle-lab-checkbox" hidden><input id="eagleLabServerClearPin" type="checkbox"><span>Remove existing PIN</span></label>
+      </div><label><span>Student notes</span><textarea id="eagleLabServerNotes" maxlength="6000" rows="3" placeholder="Connection or classroom instructions"></textarea></label></fieldset>
+      <div id="eagleLabServerFormStatus" role="status" aria-live="polite"></div>
+      <footer><button class="btn secondary" type="button" id="eagleLabServerCancelBtn">Cancel</button><button class="btn run" type="submit" id="eagleLabServerSaveBtn">Enroll server</button></footer>
+    </form>
+  </dialog>
+
   <script src="/static/js/app.js"></script>
   <script src="/static/js/connection.js?v=20261011-files-5"></script>
-  <script src="/static/js/feature-loader.js?v=20261102-eagle-lab-3"></script>
+  <script src="/static/js/feature-loader.js?v=20261102-eagle-lab-4"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20261021-security-1"></script>
   <script src="/static/js/layout.js?v=20261011-files-5"></script>
-  <script src="/static/js/autocomplete.js?v=20261102-eagle-lab-3"></script>
+  <script src="/static/js/autocomplete.js?v=20261102-eagle-lab-4"></script>
   <script src="/static/js/editor-behavior.js?v=20261009-assignment-step-2"></script>
   <script src="/static/js/editor-feedback.js?v=20261021-security-1"></script>
-  <script src="/static/js/editor-appearance.js?v=20261102-eagle-lab-3"></script>
+  <script src="/static/js/editor-appearance.js?v=20261102-eagle-lab-4"></script>
   <script src="/static/js/editor-init.js?v=20261015-assignment-folders-1"></script>
   <script src="/static/js/markdown.js"></script>
   <script src="/static/js/shell-commands.js?v=20261011-files-5"></script>
   <script src="/static/js/server-performance.js?v=20261011-files-5"></script>
   <script src="/static/js/workspace-data.js?v=20261011-files-5"></script>
   <script src="/static/js/file-provenance.js?v=20261015-assignment-folders-1"></script>
-  <script src="/static/js/assignment-workflow.js?v=20261102-eagle-lab-3"></script>
+  <script src="/static/js/assignment-workflow.js?v=20261102-eagle-lab-4"></script>
   <script src="/static/js/assignment-development.js?v=20261015-assignment-folders-1"></script>
   <script src="/static/js/teacher-assignments.js?v=20261015-assignment-folders-1"></script>
-  <script src="/static/js/app-core.js?v=20261102-eagle-lab-3"></script>
+  <script src="/static/js/app-core.js?v=20261102-eagle-lab-4"></script>
   <script src="/static/js/step-mode.js?v=20261011-files-5"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20261021-security-1"></script>
-  <script src="/static/js/wiki-reader.js?v=20261102-eagle-lab-3"></script>
+  <script src="/static/js/wiki-reader.js?v=20261102-eagle-lab-4"></script>
   <script src="/static/js/external-tools.js?v=20261022-wiki-manager-1"></script>
   <script src="/static/js/lesson-plans.js?v=20261021-security-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20261102-eagle-lab-3"></script>
+  <script src="/static/js/wiki-admin.js?v=20261102-eagle-lab-4"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20261011-files-5"></script>
   <script src="/static/js/notebook-sync.js?v=20261011-notebook-topics-1"></script>

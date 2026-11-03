@@ -64,6 +64,9 @@ Native Eagle Lab (disabled by default):
   both class access and the PIN before connecting or revealing credentials.
   PIN changes and server edits revoke existing gateway sessions. Exiting the
   window disconnects; class removal, logout, and disablement stop active proxies.
+- Enroll server opens a blank dialog; Edit opens the selected server separately.
+  Blank passwords/PINs on edit keep their saved values. Administrators can use
+  up/down arrows or an exact Position to set the student-facing server order.
 - PVE accounts and permissions remain managed in PVE. Shared root credentials
   grant cluster-wide rights where PVE allows them; use dedicated PVE accounts
   and native ACLs for isolation within a cluster. A PIN does not change PVE ACLs

@@ -12,7 +12,9 @@ function runtime(config) {
   const urlFor=value=>{
     if(value==null||String(value).startsWith('#')||/^(?:data|blob|mailto|javascript):/i.test(String(value)))return value;
     const url=new URL(String(value),document.baseURI);
-    if(url.origin===origin&&url.pathname.startsWith(prefix))return url.href;
+    // noVNC may already resolve a relative socket path against the capability URL.
+    // Compare hosts across HTTP/WS schemes so the session prefix is applied once.
+    if([origin,new URL(origin).origin.replace(/^http/,'ws')].includes(url.origin)&&url.pathname.startsWith(prefix))return url.href;
     if(url.origin!==origin&&url.origin!==upstreamOrigin&&!(['ws:','wss:'].includes(url.protocol)&&[new URL(origin).host,new URL(upstreamOrigin).host].includes(url.host)))return url.href;
     return origin+prefix+url.pathname.replace(/^\//,'')+url.search+url.hash;
   };
@@ -45,9 +47,12 @@ function runtime(config) {
   const nativeFetch=window.fetch.bind(window);
   window.fetch=(input,options={})=>nativeFetch(input instanceof Request?new Request(urlFor(input.url),input):urlFor(input),{...options,mode:'cors',credentials:'omit'});
   const NativeSocket=window.WebSocket;
-  window.WebSocket=class extends NativeSocket{
-    constructor(value,protocols){const url=new URL(urlFor(value));url.protocol=location.protocol==='https:'?'wss:':'ws:';if(protocols===undefined)super(url.href);else super(url.href,protocols);}
-  };
+  // Return an actual native instance: noVNC checks the immediate prototype for
+  // send/close/binaryType, so a subclass breaks its raw-channel validation.
+  window.WebSocket=new Proxy(NativeSocket,{construct(Target,[value,protocols]){
+    const url=new URL(urlFor(value));url.protocol=location.protocol==='https:'?'wss:':'ws:';
+    return protocols===undefined?new Target(url.href):new Target(url.href,protocols);
+  }});
   if(window.EventSource){const Native=window.EventSource;window.EventSource=class extends Native{constructor(url){super(urlFor(url),{withCredentials:false});}};}
   const nativeSet=Element.prototype.setAttribute;
   Element.prototype.setAttribute=function(name,value){if(/^(?:src|href|action|poster|data)$/i.test(name))value=urlFor(value);return nativeSet.call(this,name,value);};
