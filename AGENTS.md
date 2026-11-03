@@ -164,6 +164,8 @@ Required runtime components:
 |   |-- eagle_lab_gateway.test.js Synthetic PVE HTTP, cookie isolation, binary WebSocket and revocation checks
 |   |-- test_eagle_lab_single_address.py Public listener lifecycle, authenticated peer restoration and path launch/revocation
 |   |-- eagle_lab_browser_checks.mjs Optional HTTPS Chromium fixture for PIN/login, clipboard, nested VM console and report recovery
+|   |-- eagle_lab_console_browser_checks.mjs Optional official PVE xterm/noVNC clients against fake PTY/RFB APIs
+|   |-- eagle_lab_admin_browser_checks.mjs Optional modal enrollment/editing, ordering, student view and responsive/theme checks
 |   |-- test_external_tools.py   Generic HTTP fixture, tool permissions, revocation, SSRF and gateway boundaries
 |   |-- external_tools_ui.test.js Tool launch, late responses, outage, navigation and lifecycle regressions
 |   `-- test_wiki.py             Wiki persistence, auth, media, class features, and backup tests
@@ -225,6 +227,14 @@ HTTP writes/uploads and raw binary console WebSockets use TLS to PVE. The
 existing public HTTPS tunnel must preserve Host, all paths and WebSocket upgrades.
 Deployment, limits, native PVE ACL boundaries and guest clipboard prerequisites
 are in `docs/EAGLE_LAB_DEPLOYMENT.md`.
+Keep inline noVNC module imports prefix-scoped as well as external modules, and
+allow the console clients' Cache-Control header in opaque CORS preflights.
+WebSocket wrappers must return native instances: noVNC validates immediate
+prototype properties. Ctrl+C must reach xterm's PTY as ETX, without clipboard
+interception. Server enrollment/editing uses a native modal dialog; enrollment
+always resets fields and editing preserves blank passwords/PINs. Admin-only
+server-order saves atomically permute the existing catalog list, preserving
+credentials, revisions and class grants. Student filtering retains that order.
 
 `lab_reports.py` stores revision-checked, account-isolated draft responses below
 `assignments/.lab-reports/`. Assignment metadata remains in the existing additive

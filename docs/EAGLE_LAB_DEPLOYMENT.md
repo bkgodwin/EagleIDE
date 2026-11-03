@@ -62,6 +62,14 @@ workflows are not covered by the browser fixture.
    provides Exit, Credentials, clipboard hints and continuous lab report windows.
    Reports autosave independently of console traffic.
 
+Enrollment opens a blank dialog with the standard port/username defaults. Edit
+opens the selected server in a separate dialog; blank password/PIN fields keep
+the saved values. Errors retain the form so the administrator can correct/retry.
+In the enrolled-server list, use the up/down arrows or choose an exact Position.
+The order saves immediately and applies to students' assigned-server cards and
+teacher server lists. Reordering does not revoke consoles or change credentials,
+PINs, class grants or PVE settings; stale lists are rejected for a reload.
+
 The launch ticket expires after 60 seconds and is exchanged once by POST. Proxy
 sessions last at most four hours and never outlive the EagleIDE login. Editing a
 server/PIN, removing class access, global disablement, or revoking the EagleIDE
@@ -82,7 +90,8 @@ required; school device policy still applies. No EagleIDE account data is sent
 to PVE.
 
 - Host/LXC terminals: select xterm.js and use Ctrl+Shift+C / Ctrl+Shift+V (Cmd on
-  macOS where supported).
+  macOS where supported) for copy/paste. Click inside the terminal before typing.
+  Ctrl+C sends the normal interrupt to the foreground program.
 - Graphical VMs: use noVNC's clipboard panel when the PVE version and guest
   support it. Guest clipboard integration remains a guest/PVE capability. A
   configured serial terminal is an alternative for text work.
@@ -159,3 +168,21 @@ nested binary consoles, report recovery, mobile/themes and live revocation.
 `PLAYWRIGHT_BROWSERS_PATH` selects its browser cache; `EAGLE_LAB_SCREENSHOT`
 selects an optional private scratch screenshot. The temporary browser context
 grants clipboard permission to exercise the browser permission flow.
+
+`node tests/eagle_lab_admin_browser_checks.mjs` independently checks the modal
+editor, blank enrollment, retained secrets and failed-save drafts, order after
+reload and student display, keyboard dismissal, both themes and mobile bounds.
+
+`node tests/eagle_lab_console_browser_checks.mjs` can run the actual official
+Proxmox xterm and patched noVNC clients against fake PVE API/PTY/RFB services.
+Set `EAGLE_LAB_XTERM_ROOT` to the `xterm.js/src` directory from
+`https://github.com/proxmox/pve-xtermjs` and `EAGLE_LAB_NOVNC_ROOT` to the patched
+`novnc` tree from `https://git.proxmox.com/git/novnc-pve.git`. Initialize its
+submodule, apply `debian/patches/series` in order, and bundle `app/ui.js` into
+`app.js` with esbuild (`--bundle --format=esm`), matching the package build.
+Install `ws` alongside the browser tooling; `EAGLE_LAB_WS_MODULE` optionally
+selects its module entry point. Run both `EAGLE_LAB_TEST_TRANSPORT=path` and
+`origin`. The fixture verifies API preflights, terminal authentication/input and
+Ctrl+C ETX, real noVNC framebuffer rendering and keyboard events, and revocation.
+Client sources and tooling remain development-only, outside tracked assets;
+no PVE node, account or guest is contacted.

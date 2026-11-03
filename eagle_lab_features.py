@@ -192,6 +192,16 @@ def register(
             return jsonify(ok=False, error=str(exc)), 400
         return jsonify(ok=True, data=saved), 201
 
+    @app.put("/api/eagle-lab/admin/server-order")
+    def eagle_lab_admin_server_order():
+        if not require_admin(request):
+            return jsonify(ok=False, error="Administrator access required"), 401
+        try:
+            servers = store.reorder_servers(object_body().get("server_ids"))
+        except EagleLabDataError as exc:
+            return jsonify(ok=False, error=str(exc)), 409 if "list changed" in str(exc) else 400
+        return jsonify(ok=True, data={"servers": servers})
+
     @app.put("/api/eagle-lab/admin/servers/<server_id>")
     def eagle_lab_admin_server_update(server_id):
         if not require_admin(request):

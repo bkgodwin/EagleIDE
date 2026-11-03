@@ -50,6 +50,26 @@ class EagleLabStoreTests(unittest.TestCase):
         self.assertEqual(self.store.class_rule("class-a")["server_ids"], [second["id"]])
         self.assertEqual([item["id"] for item in self.store.servers_for_class("class-a")], [second["id"]])
 
+    def test_order_is_persistent_filters_class_grants_and_preserves_credentials_and_revisions(self):
+        first = self.store.save_server({"hostname": "One", "ip": "10.0.0.2", "password": "one", "pin": "1234"})
+        second = self.store.save_server({"hostname": "Two", "ip": "10.0.0.3", "password": "two"})
+        third = self.store.save_server({"hostname": "Three", "ip": "10.0.0.4", "password": "three"})
+        self.store.set_class_rule("class-a", {"enabled": True, "server_ids": [first["id"], third["id"]]})
+        before = json.loads(self.store.catalog_path.read_text(encoding="utf-8"))
+        desired = [third["id"], second["id"], first["id"]]
+        self.store.reorder_servers(desired)
+        reopened = EagleLabStore(self.root / "lab")
+        self.assertEqual([item["id"] for item in reopened.list_servers()], desired)
+        self.assertEqual([item["id"] for item in reopened.servers_for_class("class-a")], [third["id"], first["id"]])
+        after = json.loads(self.store.catalog_path.read_text(encoding="utf-8"))
+        self.assertEqual({item["id"]: item for item in before["servers"]}, {item["id"]: item for item in after["servers"]})
+        self.assertEqual(before["class_rules"], after["class_rules"])
+        self.assertTrue(reopened.verify_pin(first["id"], "1234"))
+        for invalid in (None, [first["id"]], [first["id"]]*3, desired + ["missing"], [{"id": "bad"}]):
+            with self.subTest(order=invalid), self.assertRaises(EagleLabDataError):
+                reopened.reorder_servers(invalid)
+            self.assertEqual([item["id"] for item in reopened.list_servers()], desired)
+
 
 class EagleLabRouteTests(unittest.TestCase):
     def setUp(self):
@@ -83,6 +103,23 @@ class EagleLabRouteTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    @patch("eagle_lab_features._probe", return_value={"status": "up"})
+    def test_only_admin_can_reorder_and_students_receive_catalog_order(self, _probe):
+        first = self.store.save_server({"hostname": "One", "ip": "10.0.0.2", "password": "one"})
+        second = self.store.save_server({"hostname": "Two", "ip": "10.0.0.3", "password": "two"})
+        order = [second["id"], first["id"]]
+        route = "/api/eagle-lab/admin/server-order"
+        for headers in ({}, self.student_headers, self.teacher_headers):
+            self.assertEqual(self.client.put(route, headers=headers, json={"server_ids": order}).status_code, 401)
+        self.assertEqual(self.client.put(route, headers=self.admin_headers, json={"server_ids": [first["id"]]}).status_code, 409)
+        self.assertEqual(self.client.put(route, headers=self.admin_headers, json={"server_ids": order*2}).status_code, 400)
+        saved = self.client.put(route, headers=self.admin_headers, json={"server_ids": order})
+        self.assertEqual(saved.status_code, 200)
+        self.config["eagle_lab_enabled"] = True
+        self.store.set_class_rule("class-a", {"enabled": True, "server_ids": list(reversed(order))})
+        result = self.client.get("/api/eagle-lab/bootstrap?class_id=class-a", headers=self.student_headers).get_json()["data"]
+        self.assertEqual([item["id"] for item in result["servers"]], order)
 
     @patch("eagle_lab_features._probe", return_value={"status": "up", "http_status": 200, "latency_ms": 2, "status_reason": "ready"})
     def test_global_and_class_rules_gate_students_and_credentials(self, _probe):

@@ -4,7 +4,7 @@
 
   const $ = id => document.getElementById(id);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
-  const state = { initialized:false, bootstrap:null, classId:'', search:'', assignments:[], adminServers:[], teacherData:null, report:null, workspace:null };
+  const state = { initialized:false, bootstrap:null, classId:'', search:'', assignments:[], adminServers:[], adminOrdering:false, adminSaving:false, teacherData:null, report:null, workspace:null };
 
   function context() { return window.EagleIDE?.getContext?.() || {}; }
   function sessionKey() { const ctx=context(); return ctx.ADMIN_TOKEN || ctx.TEACHER_TOKEN || ctx.USER_TOKEN || ''; }
@@ -150,7 +150,7 @@
     const root=document.createElement('section'),frameName='eagle-pve-'+server.id+'-'+Date.now();
     root.className='eagle-lab-workspace';root.setAttribute('aria-label','PVE management workspace');
     const sandbox='allow-scripts allow-forms allow-downloads allow-modals allow-popups allow-pointer-lock'+(launch.transport==='path'?'':' allow-same-origin');
-    root.innerHTML=`<header class="eagle-lab-workspace-toolbar"><button class="btn secondary" data-workspace-exit type="button">← Eagle Lab</button><strong>${esc(server.hostname)}</strong><span class="eagle-lab-clipboard-hint">Terminal: Ctrl+Shift+C / Ctrl+Shift+V · VM: noVNC clipboard or serial terminal</span>${credentials?'<button class="btn secondary" data-workspace-credentials type="button">Credentials</button>':''}<select data-workspace-report aria-label="Lab report"><option value="">Choose lab report</option>${state.assignments.map(item=>`<option value="${esc(item.id)}">${esc(item.name)}</option>`).join('')}</select><button class="btn secondary" data-workspace-open-report type="button">Open report</button></header>
+    root.innerHTML=`<header class="eagle-lab-workspace-toolbar"><button class="btn secondary" data-workspace-exit type="button">← Eagle Lab</button><strong>${esc(server.hostname)}</strong><span class="eagle-lab-clipboard-hint">Terminal: Ctrl+C interrupts · Ctrl+Shift+C / Ctrl+Shift+V copy/paste · VM: noVNC clipboard</span>${credentials?'<button class="btn secondary" data-workspace-credentials type="button">Credentials</button>':''}<select data-workspace-report aria-label="Lab report"><option value="">Choose lab report</option>${state.assignments.map(item=>`<option value="${esc(item.id)}">${esc(item.name)}</option>`).join('')}</select><button class="btn secondary" data-workspace-open-report type="button">Open report</button></header>
       <iframe name="${esc(frameName)}" title="${esc(server.hostname)} management interface" sandbox="${sandbox}" allow="clipboard-read *; clipboard-write *; fullscreen *" allowfullscreen referrerpolicy="no-referrer"></iframe>`;
     document.body.append(root);
     state.workspace={root,serverId:server.id,session:originalSession,transport:launch.transport,clipboardKey:launch.clipboard_key,clipboardTimes:[]};
@@ -179,25 +179,49 @@
     catch(error){$('eagleLabAdminStatus').textContent=error.message;}
   }
   function resetAdminForm() {
-    if($('eagleLabServerPin'))$('eagleLabServerPin').placeholder='Optional 4–12 digits';
-    $('eagleLabServerForm')?.reset(); $('eagleLabServerId').value=''; $('eagleLabServerPort').value='8006'; $('eagleLabServerUsername').value='root'; $('eagleLabServerSelfSigned').checked=true; $('eagleLabServerCancelBtn').hidden=true; $('eagleLabServerSaveBtn').textContent='Enroll server';
+    $('eagleLabServerForm')?.reset(); $('eagleLabServerId').value=''; $('eagleLabServerPort').value='8006'; $('eagleLabServerUsername').value='root'; $('eagleLabServerSelfSigned').checked=true;
+    $('eagleLabServerPassword').required=true;$('eagleLabServerPin').disabled=false;$('eagleLabServerPin').placeholder='Optional 4–12 digits';
+    $('eagleLabServerDialogTitle').textContent='Enroll server';$('eagleLabServerDialogHelp').textContent="Add a Proxmox VE server reachable from EagleIDE's local network.";
+    $('eagleLabServerPasswordHelp').textContent='Required for enrollment.';$('eagleLabServerPinHelp').textContent='Use 4–12 digits. Students also need class access.';
+    $('eagleLabServerClearPinLabel').hidden=true;$('eagleLabServerFormStatus').textContent='';$('eagleLabServerSaveBtn').textContent='Enroll server';
+  }
+  function closeAdminEditor(){if(state.adminSaving)return;$('eagleLabServerDialog')?.close();resetAdminForm();}
+  function openAdminEditor(id='') {
+    if(!context().ADMIN_TOKEN||state.adminSaving)return;
+    resetAdminForm();
+    if(id&&!editAdminServer(id))return;
+    state.editorSession=sessionKey();$('eagleLabServerDialog').showModal();$('eagleLabServerHostname').focus();
   }
   function renderAdminServers() {
-    $('eagleLabAdminServers').innerHTML=state.adminServers.map(server=>`<article class="eagle-lab-admin-server"><div><strong>${esc(server.hostname)}</strong><small>${esc(server.ip)}:${Number(server.port)||8006} · ${esc(server.username)}</small></div><div class="eagle-lab-admin-server-actions"><button class="btn secondary" type="button" data-admin-edit="${esc(server.id)}">Edit</button><button class="btn stop" type="button" data-admin-delete="${esc(server.id)}">Remove</button></div></article>`).join('')||'<p>No PVE servers enrolled.</p>';
+    $('eagleLabAdminServers').innerHTML=state.adminServers.map((server,index)=>`<article class="eagle-lab-admin-server"><div class="eagle-lab-server-summary"><strong>${esc(server.hostname)}</strong><small>${esc(server.ip)}:${Number(server.port)||8006} · ${esc(server.username)} · ${server.pin_required?'PIN protected':'No PIN'}</small></div><div class="eagle-lab-admin-server-actions"><label class="eagle-lab-position">Position<select data-admin-position="${esc(server.id)}" aria-label="Position for ${esc(server.hostname)}" ${state.adminOrdering?'disabled':''}>${state.adminServers.map((_,position)=>`<option value="${position}" ${position===index?'selected':''}>${position+1}</option>`).join('')}</select></label><button class="btn secondary" type="button" data-admin-move="${esc(server.id)}" data-direction="-1" aria-label="Move ${esc(server.hostname)} up" ${index===0||state.adminOrdering?'disabled':''}>↑</button><button class="btn secondary" type="button" data-admin-move="${esc(server.id)}" data-direction="1" aria-label="Move ${esc(server.hostname)} down" ${index===state.adminServers.length-1||state.adminOrdering?'disabled':''}>↓</button><button class="btn secondary" type="button" data-admin-edit="${esc(server.id)}">Edit</button><button class="btn stop" type="button" data-admin-delete="${esc(server.id)}">Remove</button></div></article>`).join('')||'<p>No PVE servers enrolled. Choose Enroll server to add one.</p>';
   }
   function editAdminServer(id) {
-    const server=state.adminServers.find(item=>item.id===id);if(!server)return;
+    const server=state.adminServers.find(item=>item.id===id);if(!server)return false;
     $('eagleLabServerPin').value='';$('eagleLabServerPin').placeholder=server.pin_required?'PIN is set — leave blank to keep':'Optional 4–12 digits';$('eagleLabServerClearPin').checked=false;
-    $('eagleLabServerId').value=server.id;$('eagleLabServerHostname').value=server.hostname;$('eagleLabServerIp').value=server.ip;$('eagleLabServerPort').value=server.port||8006;$('eagleLabServerUsername').value=server.username||'root';$('eagleLabServerPassword').value='';$('eagleLabServerNotes').value=server.notes||'';$('eagleLabServerSelfSigned').checked=server.allow_self_signed!==false;$('eagleLabServerCancelBtn').hidden=false;$('eagleLabServerSaveBtn').textContent='Save server';
+    $('eagleLabServerId').value=server.id;$('eagleLabServerHostname').value=server.hostname;$('eagleLabServerIp').value=server.ip;$('eagleLabServerPort').value=server.port||8006;$('eagleLabServerUsername').value=server.username||'root';$('eagleLabServerPassword').value='';$('eagleLabServerNotes').value=server.notes||'';$('eagleLabServerSelfSigned').checked=server.allow_self_signed!==false;$('eagleLabServerSaveBtn').textContent='Save changes';
+    $('eagleLabServerPassword').required=false;$('eagleLabServerDialogTitle').textContent='Edit server';$('eagleLabServerDialogHelp').textContent=server.hostname;
+    $('eagleLabServerPasswordHelp').textContent='Leave blank to keep the saved password.';$('eagleLabServerPinHelp').textContent=server.pin_required?'A PIN is set. Leave blank to keep it, enter a replacement, or choose Remove existing PIN.':'No PIN is set. Enter 4–12 digits to require one.';
+    $('eagleLabServerClearPinLabel').hidden=!server.pin_required;return true;
+  }
+  async function reorderAdminServer(id,position){
+    if(state.adminOrdering||!context().ADMIN_TOKEN)return;
+    const items=state.adminServers.slice(),index=items.findIndex(item=>item.id===id);
+    if(index<0||!Number.isInteger(position)||position<0||position>=items.length||index===position)return;
+    items.splice(position,0,items.splice(index,1)[0]);state.adminOrdering=true;renderAdminServers();$('eagleLabAdminStatus').textContent='Saving server order…';
+    try{const data=await api('/api/eagle-lab/admin/server-order',{method:'PUT',body:JSON.stringify({server_ids:items.map(item=>item.id)})});state.adminServers=data.servers;$('eagleLabAdminStatus').textContent='Server order saved. Students see this order.';state.bootstrap=null;}
+    catch(error){await loadAdmin();$('eagleLabAdminStatus').textContent=error.message;}
+    finally{state.adminOrdering=false;renderAdminServers();}
   }
   async function saveAdminServer(event) {
-    event.preventDefault(); const id=$('eagleLabServerId').value;
+    event.preventDefault();if(state.adminSaving||!context().ADMIN_TOKEN)return;const id=$('eagleLabServerId').value;
     const payload={hostname:$('eagleLabServerHostname').value.trim(),ip:$('eagleLabServerIp').value.trim(),port:Number($('eagleLabServerPort').value||8006),username:$('eagleLabServerUsername').value.trim(),notes:$('eagleLabServerNotes').value,allow_self_signed:$('eagleLabServerSelfSigned').checked};
     if($('eagleLabServerPassword').value)payload.password=$('eagleLabServerPassword').value;
     if($('eagleLabServerClearPin').checked)payload.pin='';
     else if($('eagleLabServerPin').value)payload.pin=$('eagleLabServerPin').value;
-    $('eagleLabAdminStatus').textContent='Saving…';
-    try{await api(id?`/api/eagle-lab/admin/servers/${encodeURIComponent(id)}`:'/api/eagle-lab/admin/servers',{method:id?'PUT':'POST',body:JSON.stringify(payload)});resetAdminForm();await loadAdmin();$('eagleLabAdminStatus').textContent='Server saved.';}catch(error){$('eagleLabAdminStatus').textContent=error.message;}
+    state.adminSaving=true;$('eagleLabServerSaveBtn').disabled=true;$('eagleLabServerFormStatus').textContent='Saving…';const originalSession=sessionKey();
+    try{await api(id?`/api/eagle-lab/admin/servers/${encodeURIComponent(id)}`:'/api/eagle-lab/admin/servers',{method:id?'PUT':'POST',body:JSON.stringify(payload)});state.adminSaving=false;closeAdminEditor();await loadAdmin();$('eagleLabAdminStatus').textContent=id?'Server changes saved.':'Server enrolled.';}
+    catch(error){if(sessionKey()===originalSession)$('eagleLabServerFormStatus').textContent=error.message;}
+    finally{state.adminSaving=false;$('eagleLabServerSaveBtn').disabled=false;}
   }
   async function deleteAdminServer(id){if(!confirm('Remove this PVE server from Eagle Lab and every class rule?'))return;try{await api(`/api/eagle-lab/admin/servers/${encodeURIComponent(id)}`,{method:'DELETE'});await loadAdmin();}catch(error){$('eagleLabAdminStatus').textContent=error.message;}}
 
@@ -273,7 +297,13 @@
     window.addEventListener('popstate',()=>closeWorkspace());
     window.addEventListener('beforeunload',event=>{if(state.report?.dirty?.()){event.preventDefault();event.returnValue='';}});
     $('eagleLabViewBtn')?.addEventListener('click',()=>show());$('eagleLabClassSelect')?.addEventListener('change',event=>{state.classId=event.target.value;loadLab();});$('eagleLabSearch')?.addEventListener('input',event=>{state.search=event.target.value;renderServers();});$('eagleLabRefreshBtn')?.addEventListener('click',loadLab);$('eagleLabServerGrid')?.addEventListener('click',event=>{const card=event.target.closest('[data-lab-server]');if(card)openServer(card.dataset.labServer);});$('eagleLabReportList')?.addEventListener('click',event=>{const card=event.target.closest('[data-lab-report]');if(card)openReportById(card.dataset.labReport,state.assignments.find(item=>item.id===card.dataset.labReport));});
-    $('eagleLabServerForm')?.addEventListener('submit',saveAdminServer);$('eagleLabServerCancelBtn')?.addEventListener('click',resetAdminForm);$('eagleLabAdminServers')?.addEventListener('click',event=>{const edit=event.target.closest('[data-admin-edit]'),remove=event.target.closest('[data-admin-delete]');if(edit)editAdminServer(edit.dataset.adminEdit);if(remove)deleteAdminServer(remove.dataset.adminDelete);});
+    $('eagleLabServerForm')?.addEventListener('submit',saveAdminServer);$('eagleLabServerEnrollBtn')?.addEventListener('click',()=>openAdminEditor());
+    $('eagleLabServerCancelBtn')?.addEventListener('click',closeAdminEditor);$('eagleLabServerDialogClose')?.addEventListener('click',closeAdminEditor);
+    $('eagleLabServerDialog')?.addEventListener('cancel',event=>{event.preventDefault();closeAdminEditor();});
+    $('eagleLabServerClearPin')?.addEventListener('change',()=>{if($('eagleLabServerClearPin').checked)$('eagleLabServerPin').value='';$('eagleLabServerPin').disabled=$('eagleLabServerClearPin').checked;});
+    $('eagleLabAdminServers')?.addEventListener('click',event=>{const edit=event.target.closest('[data-admin-edit]'),remove=event.target.closest('[data-admin-delete]'),move=event.target.closest('[data-admin-move]');if(edit)openAdminEditor(edit.dataset.adminEdit);if(remove&&!state.adminOrdering)deleteAdminServer(remove.dataset.adminDelete);if(move)reorderAdminServer(move.dataset.adminMove,state.adminServers.findIndex(item=>item.id===move.dataset.adminMove)+Number(move.dataset.direction));});
+    $('eagleLabAdminServers')?.addEventListener('change',event=>{const select=event.target.closest('[data-admin-position]');if(select)reorderAdminServer(select.dataset.adminPosition,Number(select.value));});
+    window.addEventListener('eagle-context-updated',()=>{if(state.editorSession!==sessionKey()&&$('eagleLabServerDialog')?.open){$('eagleLabServerDialog').close();resetAdminForm();}});
     $('eagleLabTeacherClassSelect')?.addEventListener('change',event=>{state.classId=event.target.value;openTeacherPanel();});$('eagleLabTeacherRefreshBtn')?.addEventListener('click',openTeacherPanel);$('eagleLabTeacherSaveBtn')?.addEventListener('click',saveTeacher);
     window.addEventListener('eagle-context-updated',()=>{if(state.report&&state.report.session!==sessionKey()){state.report.cancel();state.report=null;}if(!sessionKey()){state.bootstrap=null;state.assignments=[];state.adminServers=[];state.teacherData=null;document.querySelectorAll('.eagle-lab-detail').forEach(item=>item.closest('.modal')?.remove());}});
     [$('wikiViewBtn'),$('ideViewBtn'),$('networkViewBtn')].forEach(button=>button?.addEventListener('click',()=>state.report?.save?.()));window.addEventListener('eagle-context-updated',()=>{refreshAvailability();if(document.body.classList.contains('eagle-lab-mode')){state.classId=populateClassSelect($('eagleLabClassSelect'),preferredClassId());loadLab();}});window.addEventListener('pagehide',()=>state.report?.save?.());
