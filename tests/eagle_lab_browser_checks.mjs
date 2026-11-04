@@ -84,7 +84,7 @@ const portal=https.createServer(tls,async(req,res)=>{
     if(req.url.startsWith(`/api/eagle-lab/servers/${id}/credentials`))return json(res,{ok:unlocked,data:{username:'fixture@pve',password:'fixture-only'}});
     if(req.url===`/api/eagle-lab/servers/${id}/disconnect`){sessions.clear();return json(res,{ok:true});}
     res.writeHead(200,{'Content-Type':'text/html','Content-Security-Policy':`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; frame-src ${proxyOrigin}; form-action 'self' ${proxyOrigin}`});
-    res.end('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/static/css/main.css"></head><body class="dark eagle-lab-mode" style="display:flex;flex-direction:column;height:100vh;margin:0"><header class="topbar topbar-primary"><button id="eagleLabViewBtn">Eagle Lab</button></header>'+pageMain+'<script src="/context.js"></script><script src="/static/js/eagle-lab.js"></script><script src="/init.js"></script></body></html>');
+    res.end('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/static/css/main.css"></head><body class="dark eagle-lab-mode" style="display:flex;flex-direction:column;height:100vh;margin:0"><header class="topbar topbar-primary"><button id="eagleLabViewBtn">Eagle Lab</button></header>'+pageMain+'<script src="/context.js"></script><script src="/static/js/lab-report-content.js"></script><script src="/static/js/eagle-lab.js"></script><script src="/static/js/lab-manual.js"></script><script src="/static/js/lab-report-editor.js"></script><script src="/init.js"></script></body></html>');
   }catch{res.writeHead(500);res.end('Fixture error');}
 });
 const portalPort=await listen(portal);portalOrigin=`https://ide.school.test:${portalPort}`;
@@ -99,7 +99,7 @@ const proxyPort=await listen(front);proxyOrigin=pathMode?portalOrigin:`https://$
 
 let browser;
 try{
-  browser=await chromium.launch({headless:true,args:['--no-proxy-server','--host-resolver-rules=MAP *.school.test 127.0.0.1']});
+  browser=await chromium.launch({headless:true,executablePath:process.env.EAGLE_LAB_BROWSER,args:['--no-proxy-server','--host-resolver-rules=MAP *.school.test 127.0.0.1']});
   const context=await browser.newContext({ignoreHTTPSErrors:true,viewport:{width:1440,height:1000}});
   await context.grantPermissions(['clipboard-read','clipboard-write']);
   const page=await context.newPage();const failures=[];

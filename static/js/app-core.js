@@ -2451,7 +2451,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const m = document.getElementById('aiModelInput'); if (m) m.value = cfg.ai_model || 'gemma3:4b';
       const ap = document.getElementById('assistantPromptInput'); if (ap) ap.value = cfg.ai_assistant_preprompt || '';
       const eagleLabNav = document.getElementById('eagleLabViewBtn');
-      if (eagleLabNav) eagleLabNav.hidden = !(cfg.eagle_lab_enabled || ADMIN_TOKEN);
+      if (eagleLabNav) eagleLabNav.hidden = !ADMIN_TOKEN && !window.EagleLabAccess?.get?.().available;
+      window.EagleLabAccess?.refresh?.(cfg);
       window.NetworkSim?.applyConfig?.(cfg);
       window.EagleLab?.applyConfig?.(cfg);
       applyClassTabVisibility();
@@ -8693,6 +8694,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         modal.querySelector('#modalAssignmentMaxScore').hidden=labReport;
         modal.querySelector('#assignmentQuestionSectionTitle').textContent=labReport?'Lab Report Sections':'Quiz (Optional)';
         modal.querySelector('#viewQuizAsStudentBtn').textContent=labReport?'Preview lab report':'View as Student';
+        modal.querySelector('#addQuestionBtn').textContent=labReport?'+ Add section':'+ Add Question';
+        modal.querySelector('.workspace-modal-header h3').textContent=labReport?(existingAssignment?'Edit Lab Report':'New Lab Report'):(existingAssignment?'Edit Assignment':'New Assignment');
+        const skillBox=modal.querySelector('#modalAssignmentSkillTags');if(skillBox){skillBox.hidden=labReport;if(skillBox.previousElementSibling)skillBox.previousElementSibling.hidden=labReport;}
       };
       modal.querySelector('#modalAssignmentFileControl').onchange=syncFileControl;
       modal.querySelector('#modalAssignmentType').onchange=syncFileControl;
@@ -8702,6 +8706,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       let questionIdCounter = { value: quizQuestions.length };
 
       function renderQuizQuestions() {
+        modal.labPreviewRefresh?.();
         const list = document.getElementById('quizQuestionsList');
         if (!quizQuestions.length) {
           list.innerHTML = '<p style="color:#888; font-size:12px;">No questions added yet.</p>';
@@ -8711,7 +8716,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           <div class="quiz-question-item" style="background:#0c0c0c; border:1px solid #333; border-radius:6px; padding:12px; margin-bottom:10px;">
             <div style="display:flex; justify-content:space-between; align-items:start; gap:12px;">
               <div style="flex:1;">
-                <strong style="color:var(--columbia-blue);">Question ${idx + 1}</strong>
+                <strong style="color:var(--columbia-blue);">${modal.querySelector('#modalAssignmentType')?.value==='lab_report'?'Section':'Question'} ${idx + 1}</strong>
                 <span style="color:#888; margin-left:10px;">(${
                   q.type === 'multiple_choice' ? 'Multiple Choice' :
                   q.type === 'multiple_choice_code' ? 'Multiple Choice (Code Reading)' :
@@ -8720,15 +8725,17 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
                   q.type === 'procedure' ? 'Procedure Checklist' :
                   'Written Response'
                 }, ${q.points} pts)</span>
-                <div style="color:#ddd; margin-top:8px;">${escapeHtml(q.question)}</div>
+                <div style="color:#ddd; margin-top:8px;">${escapeHtml(modal.querySelector('#modalAssignmentType')?.value==='lab_report'&&window.LabReportEditor?window.LabReportEditor.summary(q.question):q.question)}</div>
                 ${(q.type === 'multiple_choice_code' || q.type === 'written_code') ? `
                   <div class="question-code-panel" style="margin-top:10px; max-height:180px;">${renderCodeSnippetBlock(q.codeSnippet || '', q.codeLanguage || 'python')}</div>
                 ` : ''}
               </div>
-              <button class="btn-delete-question" data-idx="${idx}" style="background:#d32f2f; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:11px;">Delete</button>
+              ${modal.querySelector('#modalAssignmentType')?.value==='lab_report'?`<button class="btn secondary" data-edit-report="${idx}" type="button">Edit</button><button class="btn secondary" data-move-report="${idx}" type="button" ${idx===0?'disabled':''} aria-label="Move section ${idx+1} up">↑</button>`:''}<button class="btn-delete-question" data-idx="${idx}" style="background:#d32f2f; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:11px;">Delete</button>
             </div>
           </div>
         `).join('');
+        list.querySelectorAll('[data-edit-report]').forEach(button=>button.onclick=()=>window.LabReportEditor?.open({questions:quizQuestions,onChange:renderQuizQuestions,counter:questionIdCounter,index:Number(button.dataset.editReport),classId:modal.querySelector('#modalAssignmentClassId')?.value||''}));
+        list.querySelectorAll('[data-move-report]').forEach(button=>button.onclick=()=>{const i=Number(button.dataset.moveReport);if(i>0){[quizQuestions[i-1],quizQuestions[i]]=[quizQuestions[i],quizQuestions[i-1]];renderQuizQuestions();}});
         list.querySelectorAll('.btn-delete-question').forEach(btn => btn.addEventListener('click', () => {
           quizQuestions.splice(parseInt(btn.dataset.idx, 10), 1);
           renderQuizQuestions();
@@ -8738,10 +8745,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       document.getElementById('addQuestionBtn').addEventListener('click', () => showAddQuestionModal(quizQuestions, renderQuizQuestions, questionIdCounter, modal.querySelector('#modalAssignmentType')?.value === 'lab_report'));
       document.getElementById('viewQuizAsStudentBtn')?.addEventListener('click', () => {
         const assignmentName = existingAssignment?.name || (document.getElementById('modalAssignmentName')?.value || 'Untitled Assignment');
-        showTeacherQuizPreviewModal(assignmentName, quizQuestions);
+        if(modal.querySelector('#modalAssignmentType').value==='lab_report'){modal.labPreviewRefresh?.();modal.querySelector('.lab-composer-preview')?.scrollIntoView({block:'nearest'});}else showTeacherQuizPreviewModal(assignmentName, quizQuestions);
       });
       renderQuizQuestions();
       window.TeacherAssignments?.enhanceComposer(modal);
+      const enhanceLabComposer=async()=>{if(modal.querySelector('#modalAssignmentType').value!=='lab_report')return;await window.EagleFeatures?.load?.('eagleLab');if(modal.isConnected){window.LabReportEditor?.attachComposer(modal,()=>quizQuestions);renderQuizQuestions();}};
+      modal.querySelector('#modalAssignmentType').addEventListener('change',enhanceLabComposer);
+      enhanceLabComposer();
       modal.querySelector('.modal-exit-btn')?.addEventListener('click', () => modal.remove());
       modal.querySelector('.modal-save-btn').addEventListener('click', async () => {
         const name = existingAssignment
@@ -8805,6 +8815,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     function showAddQuestionModal(quizQuestions, renderCallback, questionIdCounter, labReport = false) {
+      if(labReport){window.EagleFeatures.load('eagleLab').then(()=>window.LabReportEditor.open({questions:quizQuestions,onChange:renderCallback,counter:questionIdCounter,classId:document.getElementById('modalAssignmentClassId')?.value||''}));return;}
       const questionModal = document.createElement('div');
       questionModal.className = 'modal workspace-modal glass-modal';
       questionModal.innerHTML = `

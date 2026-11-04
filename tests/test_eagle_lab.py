@@ -72,6 +72,43 @@ class EagleLabStoreTests(unittest.TestCase):
 
 
 class EagleLabRouteTests(unittest.TestCase):
+    def test_access_is_lightweight_and_rechecks_global_class_and_membership(self):
+        route='/api/eagle-lab/access'
+        with patch('eagle_lab_features._probe') as probe:
+            self.assertFalse(self.client.get(route).json['data']['available'])
+            self.assertFalse(self.client.get(route,headers=self.student_headers).json['data']['available'])
+            self.config['eagle_lab_enabled']=True
+            self.store.set_class_rule('class-a',{'enabled':True,'server_ids':[]})
+            response=self.client.get(route,headers=self.student_headers)
+            self.assertEqual(response.json['data']['class_ids'],['class-a'])
+            self.assertEqual(response.headers['Cache-Control'],'private, no-store')
+            self.student['class_ids']=[]
+            self.assertFalse(self.client.get(route,headers=self.student_headers).json['data']['available'])
+            probe.assert_not_called()
+
+    def test_classroom_refreshes_share_one_probe_and_cache_then_invalidate_on_edit(self):
+        import concurrent.futures
+        import time
+        self.config['eagle_lab_enabled']=True
+        server=self.store.save_server({'hostname':'One','ip':'10.0.0.2','password':'fixture'})
+        self.store.set_class_rule('class-a',{'enabled':True,'server_ids':[server['id']]})
+        def probe(_):
+            time.sleep(.08)
+            return {'status':'up'}
+        def refresh(_):
+            with self.client.application.test_client() as client:
+                return client.get('/api/eagle-lab/bootstrap?class_id=class-a',headers=self.student_headers).json
+        with patch('eagle_lab_features._probe',side_effect=probe) as checked:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
+                responses=list(pool.map(refresh,range(12)))
+            self.assertTrue(all(item['data']['servers'][0]['status']=='up' for item in responses))
+            self.assertEqual(checked.call_count,1)
+            refresh(0)
+            self.assertEqual(checked.call_count,1)
+            self.client.put('/api/eagle-lab/admin/servers/'+server['id'],headers=self.admin_headers,json={'hostname':'Renamed','ip':'10.0.0.3'})
+            refresh(0)
+            self.assertEqual(checked.call_count,2)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.config = {"eagle_lab_enabled": False}

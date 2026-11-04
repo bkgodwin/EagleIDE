@@ -55,6 +55,7 @@ Required runtime components:
 |   |-- path-runtime.mjs         Opaque PVE URL, virtual cookie/storage and scoped clipboard bridges
 |   `-- path-rewrite.mjs         Prefix rewriting for PVE documents, styles and console modules
 |-- lab_reports.py               Account-isolated autosave drafts for continuous lab reports
+|-- lab_report_media.py          Bounded private report illustrations and class-checked reads
 |-- external_tools.py            Generic tool registration, class grants, scoped launch sessions, and workspace routes
 |-- tool_store.py                Bounded atomic private tool catalog and network policy
 |-- tool_storage.py              Account/tool SQLite profiles, quotas and atomic chunked saves
@@ -117,6 +118,10 @@ Required runtime components:
 |       |-- network-sim-advanced.js Diagnostics, capture, deterministic traffic, IPv6, routing, and canvas tools
 |       |-- network-sim-worker.js Seeded background-traffic generator running off the UI thread
 |       |-- eagle-lab.js         Native PVE lab section, admin/teacher controls, and report window
+|       |-- eagle-lab-access.js  Lightweight eager class entitlement check for Lab navigation
+|       |-- lab-report-content.js Escaped copy commands, authenticated images, floating windows
+|       |-- lab-report-editor.js Teacher report sections, image attachments, and live preview
+|       |-- lab-manual.js        Local searchable Linux/PVE/networking/hosting reference
 |       |-- ui/modal.js          Shared modal helper
 |       |-- state-socket.js      Migration-era source fragment; not loaded directly
 |       `-- app-main.js          Migration-era source fragment; not loaded directly
@@ -242,6 +247,33 @@ assignment schema with `assignmentType: "lab_report"`; existing assignments
 default to `standard`. A successful final quiz submission deletes only that
 student's draft. Preserve written, fill-blank, and fixed-length boolean procedure
 validation on both draft and final submission routes.
+
+`/api/eagle-lab/access` checks navigation entitlement without probing PVE. Students
+see only enabled, enrolled classes in the lab selector. Status refreshes share
+eight probe workers, at most 100 in-flight/queued probes, revision-keyed 15-second
+results, and a 4.5-second whole-request wait. Never poll or remount a live console
+to update catalog status. Teacher class-rule drafts are session/class scoped;
+refresh and late saves must retain newer edits.
+
+Reports and the Lab Manual are nonmodal, movable, resizable windows with pointer
+capture, keyboard controls, visualViewport clamping, and minimization. Keep the
+background interactive and retain dirty report close/unload protections. Report
+text is escaped; `{text}` creates a copy button, never executable markup.
+`lab_report_media.py` stores immutable metadata-free JPEGs below
+`assignments/.lab-report-media/<hashed author>/`. Uploads require current class
+author access (including current CoTeachers), accept static JPEG/PNG up to 5 MB
+and 25 million decoded pixels, resize to 1920px, and allow two concurrent encodes.
+Each author has 100 images / 50 MB. Referenced reads require the original class,
+current membership or staff authority, and the assignment's actual image token;
+IDs alone grant no student access. No remote images or HTML are rendered.
+Image tokens remain additive plain assignment text. The section editor exposes
+image descriptions/removal without exposing token identifiers. The shared
+renderer lazily loads two images per window, releases object URLs, and bounds
+its account-scoped preview blob cache to 12 items / 12 MB. Preserve auth headers
+instead of putting tokens into image URLs. Full UI verification uses
+`tests/lesson_plan_browser_fixture.py --lab` and
+`tests/eagle_lab_polish_browser_checks.mjs`; media authorization/quota tests live
+in `tests/test_lab_report_media.py`. See `docs/EAGLE_LAB_UI.md` for workflows.
 
 Authentication uses ephemeral in-memory token maps. Protected HTTP requests pass one of `X-Admin-Token`, `X-Teacher-Token`, or `X-User-Token`. Socket events carry the corresponding token in their payload and join role-specific rooms. Preserve authorization and class-ownership checks on every new route or event.
 
