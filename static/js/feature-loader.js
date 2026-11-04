@@ -5,7 +5,7 @@
   const definitions = {
     adminCleanup: ['/static/js/admin-cleanup.js?v=20261023-cleanup-1'],
     externalToolsAdmin: ['/static/js/external-tools-admin.js?v=20261020-storage-1'],
-    eagleLab: ['/static/js/eagle-lab.js?v=20261102-4'],
+    eagleLab: ['/static/js/lab-report-content.js?v=20261103', '/static/js/eagle-lab.js?v=20261103', '/static/js/lab-manual.js?v=20261103', '/static/js/lab-report-editor.js?v=20261103'],
     network: [
       '/static/js/network-sim.js?v=20261022-wiki-manager-1',
       '/static/js/network-sim-advanced.js?v=20260714-4',
@@ -74,7 +74,7 @@
   function load(name) {
     if (!definitions[name]) return Promise.reject(new Error(`Unknown EagleIDE feature: ${name}`));
     if (name === 'network' && window.NetworkSim && window.NetworkSimAdvanced) return Promise.resolve();
-    if (name === 'eagleLab' && window.EagleLab) return Promise.resolve();
+    if (name === 'eagleLab' && window.EagleLab && window.LabReportEditor && window.LabManual) return Promise.resolve();
     if (name === 'wikiTools' && window.WikiTools) return Promise.resolve();
     if (pending.has(name)) return pending.get(name);
     const request = definitions[name]

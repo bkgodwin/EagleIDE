@@ -143,7 +143,15 @@ def _clean_responses(assignment: dict, raw: object) -> list[dict]:
 
 
 def register(app, eagle, *, base_dir: Path):
+    from lab_report_media import register as register_media
+    register_media(app, eagle, base_dir=Path(base_dir).parent / '.lab-report-media')
     store = LabReportDraftStore(base_dir)
+
+    @app.after_request
+    def private_report_responses(response):
+        if request.path.startswith('/api/lab-reports/'):
+            response.headers['Cache-Control'] = 'private, no-store'
+        return response
 
     def assignment_for_student(reference: str):
         student = eagle._require_user(request)

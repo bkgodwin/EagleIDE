@@ -15,7 +15,7 @@ from eagle_lab_store import EagleLabDataError, EagleLabStore
 from eagle_lab_gateway import LabGateway, AUTH_HEADERS
 
 
-_STATUS_TTL = 5.0
+_STATUS_TTL = 15.0
 
 
 def _probe(server: dict) -> dict:
@@ -59,6 +59,16 @@ def register(
     store = EagleLabStore(base_dir)
     status_cache: dict[str, tuple[float, dict]] = {}
     status_lock = threading.Lock()
+    # One bounded pool and one in-flight probe per server across the classroom.
+    # Refreshes never multiply PVE connections by the number of students.
+    probe_pool = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix="eagle-lab-probe")
+    pending: dict[tuple, concurrent.futures.Future] = {}
+
+    @app.after_request
+    def private_lab_responses(response):
+        if request.path.startswith('/api/eagle-lab/'):
+            response.headers['Cache-Control'] = 'private, no-store'
+        return response
 
     def global_enabled() -> bool:
         return bool((config_provider() or {}).get("eagle_lab_enabled", False))
@@ -106,27 +116,61 @@ def register(
             return class_id in {str(item) for item in get_user_class_ids(current.get("record"))} and store.class_rule(class_id)["enabled"]
         return False
 
-    def status(server: dict) -> dict:
-        now = time.monotonic()
-        with status_lock:
-            cached = status_cache.get(server["id"])
-            if cached and now - cached[0] < _STATUS_TTL:
-                return dict(cached[1])
+    def probe(server: dict) -> tuple[float, dict]:
         result = _probe(server)
         result["checked_at"] = int(time.time())
-        with status_lock:
-            status_cache[server["id"]] = (now, result)
-        return dict(result)
+        return time.monotonic(), dict(result)
 
     gateway = LabGateway(app, store, actor, class_access, settings=gateway_settings)
     app.extensions["eagle_lab_gateway"] = gateway
 
     def with_status(servers: list[dict]) -> list[dict]:
-        if not servers:
-            return []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(servers)), thread_name_prefix="eagle-lab-probe") as pool:
-            results = list(pool.map(status, servers))
+        now = time.monotonic()
+        futures, results = [], []
+        with status_lock:
+            for key, future in list(pending.items()):
+                if future.done():
+                    try:
+                        status_cache[key] = future.result()
+                    except Exception:
+                        pass
+                    pending.pop(key, None)
+            for server in servers:
+                key = (server['id'], server.get('revision'), server['ip'], server.get('port'), server.get('allow_self_signed'))
+                cached = status_cache.get(key)
+                future = pending.get(key)
+                if not cached or now - cached[0] >= _STATUS_TTL:
+                    if not future and len(pending) < 100:
+                        future = pending[key] = probe_pool.submit(probe, dict(server))
+                futures.append((key, future))
+                results.append(dict(cached[1]) if cached else None)
+            # Bound stale entries after edits/deletions without persisting status.
+            if len(status_cache) > 128:
+                for key in list(status_cache):
+                    if key not in {item[0] for item in futures}:
+                        status_cache.pop(key, None)
+        # A whole refresh has one time budget, including unreachable nodes.
+        concurrent.futures.wait([future for _, future in futures if future], timeout=4.5)
+        for index, (key, future) in enumerate(futures):
+            if future and future.done():
+                try:
+                    results[index] = future.result()[1]
+                except Exception:
+                    pass
+            if results[index] is None:
+                results[index] = {"status": "checking", "status_reason": "Status check in progress. Refresh shortly."}
         return [{**server, **state, "connect_url": f"https://{server['ip']}:{server.get('port', 8006)}/"} for server, state in zip(servers, results)]
+
+    @app.get("/api/eagle-lab/access")
+    def eagle_lab_access():
+        current = actor()
+        class_ids = []
+        if current["role"] == "student" and global_enabled():
+            class_ids = [str(item) for item in get_user_class_ids(current.get("record")) if class_access(current, str(item))]
+        available = current["role"] == "admin" or (global_enabled() and (current["role"] == "teacher" or bool(class_ids)))
+        response = jsonify(ok=True, data={"available": available, "class_ids": class_ids, "role": current["role"]})
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
 
     @app.get("/api/eagle-lab/bootstrap")
     def eagle_lab_bootstrap():
@@ -212,7 +256,9 @@ def register(
             status_code = 404 if str(exc) == "Lab server not found" else 400
             return jsonify(ok=False, error=str(exc)), status_code
         with status_lock:
-            status_cache.pop(server_id, None)
+            for key in list(status_cache):
+                if key[0] == server_id:
+                    status_cache.pop(key, None)
         return jsonify(ok=True, data=saved)
 
     @app.delete("/api/eagle-lab/admin/servers/<server_id>")
@@ -222,7 +268,9 @@ def register(
         if not store.delete_server(server_id):
             return jsonify(ok=False, error="Lab server not found"), 404
         with status_lock:
-            status_cache.pop(server_id, None)
+            for key in list(status_cache):
+                if key[0] == server_id:
+                    status_cache.pop(key, None)
         return jsonify(ok=True)
 
     @app.get("/api/eagle-lab/teacher/classes/<class_id>")

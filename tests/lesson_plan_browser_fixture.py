@@ -15,6 +15,7 @@ from cryptography.fernet import Fernet
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--mock-ai', action='store_true', help='Use a local fake Ollama HTTP endpoint for AI browser checks')
+    parser.add_argument('--lab', action='store_true', help='Seed isolated Eagle Lab rules and a report; mock status probes')
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(repo))
@@ -93,6 +94,25 @@ def main():
             due = datetime.combine(date.fromisoformat(week), datetime.min.time(), tzinfo=timezone.utc) + timedelta(days=2, hours=20)
             client.post('/api/assignments/update', headers={'X-Teacher-Token': 'agenda-teacher'},
                 json={'assignmentId': assignment['id'], 'active': True, 'dueAt': due.isoformat()})
+        if args.lab:
+            import eagle_lab_features
+            eagle_lab_features._probe = lambda _: {'status':'up', 'status_reason':'Fixture node is ready.'}
+            eagle._update_config({'eagle_lab_enabled': True})
+            lab = eagle.app.extensions['eagle_lab_store']
+            for index in range(1, 4):
+                lab.save_server({'hostname':f'Self hosting {index:02d}', 'ip':f'10.40.0.{index}', 'password':'fixture-only', 'notes':'Use your assigned container. Record its IP address in your report.'})
+            lab.set_class_rule('agenda-class', {'enabled':True, 'server_ids':[s['id'] for s in lab.list_servers()]})
+            with eagle.app.test_client() as client:
+                response = client.post('/api/assignments/create', headers={'X-Teacher-Token':'agenda-teacher'}, json={
+                    'classId':'agenda-class','name':'Your first self hosted service','assignmentType':'lab_report',
+                    'task':'Explore your assigned Linux guest. Use {hostname} to check the machine name.',
+                    'allowSubmissionAnyTime':True, 'quiz':{'questions':[
+                        {'id':'notes','type':'written','question':'Record the output of {ip -br addr} and explain which address belongs to your guest.','points':5},
+                        {'id':'port','type':'fill_blank','question':'Which port did you use for your website?','acceptedAnswers':['8000'],'points':2},
+                        {'id':'steps','type':'procedure','question':'Bring your website online.','steps':['Create your project directory.','Start your web server.','Test it from another classroom computer.'],'points':3}
+                    ]}})
+                report = response.json['assignment']
+                client.post('/api/assignments/update', headers={'X-Teacher-Token':'agenda-teacher'}, json={'assignmentId':report['id'],'active':True})
         days = {day: {'markdown': f'### {title}\n\n- Warm-up: trace a loop\n- Explore a worked example\n- Try it together',
                       'wiki_links': [{'node_id': page['id'], 'anchor': ''}],
                       'assignment_ids': [assignment['id']] if index == 2 else [],

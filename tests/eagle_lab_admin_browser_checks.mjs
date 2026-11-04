@@ -33,11 +33,11 @@ const server=http.createServer(async(req,res)=>{
     return json(res,{ok:false},404);
   }
   const admin=url.pathname!=='/student';res.writeHead(200,{'Content-Type':'text/html'});
-  res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/static/css/main.css"></head><body class="${admin?'':'eagle-lab-mode'}" style="margin:0;min-height:100vh;overflow:auto"><button id="eagleLabViewBtn">Eagle Lab</button>${admin?panel+dialog:main}<script src="/context.js${admin?'?admin=1':''}"></script><script src="/static/js/eagle-lab.js"></script><script src="/init.js"></script></body></html>`);
+  res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/static/css/main.css"></head><body class="${admin?'':'eagle-lab-mode'}" style="margin:0;min-height:100vh;overflow:auto"><button id="eagleLabViewBtn">Eagle Lab</button>${admin?panel+dialog:main}<script src="/context.js${admin?'?admin=1':''}"></script><script src="/static/js/lab-report-content.js"></script><script src="/static/js/eagle-lab.js"></script><script src="/static/js/lab-manual.js"></script><script src="/static/js/lab-report-editor.js"></script><script src="/init.js"></script></body></html>`);
 });
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));let browser;
 try{
-  browser=await chromium.launch({headless:true});const page=await browser.newPage({viewport:{width:1280,height:1000}}),errors=[];page.on('pageerror',error=>errors.push(error.message));
+  browser=await chromium.launch({headless:true,executablePath:process.env.EAGLE_LAB_BROWSER});const page=await browser.newPage({viewport:{width:1280,height:1000}}),errors=[];page.on('pageerror',error=>errors.push(error.message));
   const base=`http://127.0.0.1:${server.address().port}`;await page.goto(base);
   await page.locator('[data-admin-edit]').first().click();const modal=page.getByRole('dialog',{name:'Edit server'});await modal.waitFor();
   assert.equal(await page.locator('#eagleLabServerHostname').inputValue(),'Networking 01');assert.equal(await page.locator('#eagleLabServerPassword').inputValue(),'');assert.equal(await page.locator('#eagleLabServerPassword').evaluate(el=>el.required),false);

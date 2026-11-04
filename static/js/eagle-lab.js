@@ -4,21 +4,21 @@
 
   const $ = id => document.getElementById(id);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
-  const state = { initialized:false, bootstrap:null, classId:'', search:'', assignments:[], adminServers:[], adminOrdering:false, adminSaving:false, teacherData:null, report:null, workspace:null };
+  const state = { initialized:false, bootstrap:null, classId:'', search:'', assignments:[], adminServers:[], adminOrdering:false, adminSaving:false, teacherData:null, teacherClassId:'', teacherDrafts:new Map(), teacherVersion:0, teacherSaving:false, labLoad:0, reportOpening:false, report:null, workspace:null };
 
   function context() { return window.EagleIDE?.getContext?.() || {}; }
   function sessionKey() { const ctx=context(); return ctx.ADMIN_TOKEN || ctx.TEACHER_TOKEN || ctx.USER_TOKEN || ''; }
   function headers(json = false) {
     const ctx = context(), result = {};
     if (ctx.ADMIN_TOKEN) result['X-Admin-Token'] = ctx.ADMIN_TOKEN;
-    else if (ctx.TEACHER_TOKEN) result['X-Teacher-Token'] = ctx.TEACHER_TOKEN;
+    else if (ctx.TEACHER_TOKEN) result[ctx.currentTeacher?.is_coteacher?'X-User-Token':'X-Teacher-Token'] = ctx.TEACHER_TOKEN;
     else if (ctx.USER_TOKEN) result['X-User-Token'] = ctx.USER_TOKEN;
     if (json) result['Content-Type'] = 'application/json';
     return result;
   }
   async function api(url, options = {}) {
     const requestSession=sessionKey();
-    const response = await fetch(url, { cache:'no-store', ...options, headers:{...headers(!!options.body), ...(options.headers || {})} });
+    const response = await fetch(url, { cache:'no-store', signal:typeof AbortSignal!=='undefined'?AbortSignal.timeout(15000):undefined, ...options, headers:{...headers(!!options.body), ...(options.headers || {})} });
     const data = await response.json().catch(() => ({}));
     if(requestSession!==sessionKey())throw new Error('Your session changed. Reopen Eagle Lab.');
     if (!response.ok || !data.ok) { const error = new Error(data.error || `Request failed (${response.status})`); error.status=response.status; error.data=data.data; throw error; }
@@ -26,8 +26,8 @@
   }
   function classes() {
     const ctx=context();
-    if (ctx.TEACHER_TOKEN) return ctx.teacherClasses || [];
-    if (ctx.USER_TOKEN) return ctx.studentClasses || [];
+    if (ctx.TEACHER_TOKEN&&!ctx.currentTeacher?.is_coteacher) return ctx.teacherClasses || [];
+    if (ctx.USER_TOKEN||ctx.currentTeacher?.is_coteacher) {const allowed=window.EagleLabAccess?.get?.();return (ctx.studentClasses?.length?ctx.studentClasses:ctx.teacherClasses||[]).filter(item=>!allowed || allowed.class_ids.includes(item.id));}
     return [];
   }
   function preferredClassId() {
@@ -60,20 +60,25 @@
     await loadLab();
   }
   async function loadLab() {
+    const load=++state.labLoad, classId=state.classId;
     const status=$('eagleLabStatus');
+    if($('eagleLabRefreshBtn'))$('eagleLabRefreshBtn').disabled=true;
     if(status) status.textContent='Checking servers…';
     try {
       const query=state.classId ? `?class_id=${encodeURIComponent(state.classId)}` : '';
-      state.bootstrap=await api(`/api/eagle-lab/bootstrap${query}`);
+      const data=await api(`/api/eagle-lab/bootstrap${query}`);
+      if(load!==state.labLoad||classId!==state.classId)return;
+      state.bootstrap=data;state.classId=data.class_id||state.classId;
       $('eagleLabPreview').hidden=!state.bootstrap.admin_preview;
       renderServers();
       await loadReports();
     } catch(error) {
+      if(load!==state.labLoad)return;
       state.bootstrap=null;
       if(status) status.textContent=error.message;
       if($('eagleLabServerGrid')) $('eagleLabServerGrid').innerHTML=`<div class="eagle-lab-empty">${esc(error.message)}</div>`;
       if($('eagleLabReportList')) $('eagleLabReportList').innerHTML='<div class="eagle-lab-empty">No lab reports available.</div>';
-    }
+    } finally {if(load===state.labLoad&&$('eagleLabRefreshBtn'))$('eagleLabRefreshBtn').disabled=false;}
   }
   function renderServers() {
     const servers=state.bootstrap?.servers || [], query=state.search.trim().toLowerCase();
@@ -82,19 +87,20 @@
     $('eagleLabStatus').textContent=`${servers.length} server${servers.length===1?'':'s'} · ${up} up`;
     $('eagleLabServerGrid').innerHTML=filtered.map(server=>`
       <button class="eagle-lab-server-card is-${esc(server.status || 'down')}" type="button" data-lab-server="${esc(server.id)}">
-        <div class="eagle-lab-server-top"><div><h3>${esc(server.hostname)}</h3><span class="eagle-lab-address">${esc(server.ip)}:${Number(server.port)||8006}</span></div><span class="eagle-lab-state ${esc(server.status)}">● ${esc(server.status || 'unknown')}</span></div>
+        <div class="eagle-lab-server-top"><span class="eagle-lab-server-icon" aria-hidden="true">▤</span><div><h3>${esc(server.hostname)}</h3><span class="eagle-lab-address">${esc(server.ip)}:${Number(server.port)||8006}</span></div><span class="eagle-lab-state ${esc(server.status)}">● ${esc(server.status || 'unknown')}</span></div>
         <p class="eagle-lab-server-reason">${esc(server.status_reason || 'Status unavailable.')}</p>
-        <div class="eagle-lab-card-action"><span>Open server</span><span>→</span></div>
+        <div class="eagle-lab-card-action"><span>Server details &amp; connect</span><span>→</span></div>
       </button>`).join('') || '<div class="eagle-lab-empty">No matching servers are available for this class.</div>';
   }
   async function loadReports() {
-    const ctx=context();
-    if(!ctx.USER_TOKEN || ctx.TEACHER_TOKEN || ctx.ADMIN_TOKEN) {state.assignments=[];renderReports();return;}
+    const ctx=context(),classId=state.classId;
+    if((!ctx.USER_TOKEN&&!ctx.currentTeacher?.is_coteacher) || (ctx.TEACHER_TOKEN&&!ctx.currentTeacher?.is_coteacher) || ctx.ADMIN_TOKEN) {state.assignments=[];renderReports();return;}
     try {
       const result=await api('/api/assignments');
+      if(classId!==state.classId)return;
       const list=Array.isArray(result.assignments) ? result.assignments : [];
       state.assignments=list.filter(item=>item.assignmentType==='lab_report' && (!state.classId || item.targetClassId===state.classId));
-    } catch { state.assignments=[]; }
+    } catch { if(classId!==state.classId)return;state.assignments=[]; }
     renderReports();
   }
   function renderReports() {
@@ -105,20 +111,24 @@
   }
   async function openServer(serverId) {
     const server=(state.bootstrap?.servers||[]).find(item=>item.id===serverId); if(!server) return;
+    const detailSession=sessionKey(),detailClass=state.classId;
     let credentials=null;
     if(state.bootstrap?.show_credentials && !server.pin_required) {
       try {credentials=await api(`/api/eagle-lab/servers/${encodeURIComponent(serverId)}/credentials?class_id=${encodeURIComponent(state.classId||'')}`);} catch(error) {credentials={error:error.message};}
     }
-    const modal=document.createElement('div'); modal.className='modal glass-modal'; modal.style.display='flex';
-    modal.innerHTML=`<div class="modal-content eagle-lab-detail" role="dialog" aria-modal="true" aria-label="${esc(server.hostname)}">
-      <div class="workspace-modal-header"><h3>${esc(server.hostname)}</h3><button class="btn secondary" data-close type="button">Close</button></div>
+    if(detailSession!==sessionKey()||detailClass!==state.classId)return;
+    document.querySelectorAll('.eagle-lab-detail').forEach(item=>item.closest('.modal')?.remove());
+    const modal=document.createElement('dialog'); modal.className='modal glass-modal eagle-lab-detail-dialog';modal.setAttribute('aria-label',server.hostname);
+    modal.innerHTML=`<div class="modal-content eagle-lab-detail">
+      <div class="workspace-modal-header"><div><span class="lab-report-eyebrow">PROXMOX VE · SERVER</span><h3>${esc(server.hostname)}</h3></div><button class="btn secondary" data-close type="button">Close</button></div>
       <div class="eagle-lab-detail-grid"><div class="eagle-lab-detail-item"><span>Address</span><code>${esc(server.ip)}:${Number(server.port)||8006}</code></div><div class="eagle-lab-detail-item"><span>Status</span><strong>${esc(server.status||'unknown')}</strong></div>
       ${credentials && !credentials.error ? `<div class="eagle-lab-detail-item"><span>Username</span><div class="eagle-lab-secret-row"><code>${esc(credentials.username)}</code><button class="btn secondary" data-copy="${esc(credentials.username)}" type="button">Copy</button></div></div><div class="eagle-lab-detail-item"><span>Password</span><div class="eagle-lab-secret-row"><code data-secret>••••••••</code><button class="btn secondary" data-reveal="${esc(credentials.password)}" type="button">Reveal</button><button class="btn secondary" data-copy="${esc(credentials.password)}" type="button">Copy</button></div></div>` : ''}</div>
       ${credentials?.error?`<p class="meta">${esc(credentials.error)}</p>`:''}<p>${esc(server.notes||'')}</p>
       ${server.pin_required?'<label>Server PIN<input data-lab-pin type="password" inputmode="numeric" maxlength="12" autocomplete="off" placeholder="Enter the PIN assigned by your administrator"></label>':''}
       <p data-connect-status role="status"></p>
       <div class="modal-actions"><button class="btn run" data-connect type="button">Connect to PVE</button><button class="btn secondary" data-close type="button">Close</button></div></div>`;
-    document.body.append(modal);
+    document.body.append(modal);state.detail={root:modal,session:detailSession};modal.showModal();
+    modal.addEventListener('cancel',event=>{event.preventDefault();modal.remove();});
     modal.querySelectorAll('[data-close]').forEach(button=>button.onclick=()=>modal.remove());
     modal.onclick=event=>{if(event.target===modal)modal.remove();};
     modal.querySelector('[data-reveal]')?.addEventListener('click',event=>{const code=modal.querySelector('[data-secret]');code.textContent=event.currentTarget.dataset.reveal;event.currentTarget.remove();});
@@ -128,7 +138,7 @@
       try{
         await closeWorkspace();
         const launch=await api(`/api/eagle-lab/servers/${encodeURIComponent(serverId)}/launch`,{method:'POST',body:JSON.stringify({class_id:state.classId,pin:modal.querySelector('[data-lab-pin]')?.value||''})});
-        if(!modal.isConnected)return;
+        if(!modal.isConnected||detailSession!==sessionKey()||detailClass!==state.classId)return;
         await openWorkspace(server,launch);modal.remove();
       }catch(error){status.textContent=error.message;button.disabled=false;}
     };
@@ -150,10 +160,11 @@
     const root=document.createElement('section'),frameName='eagle-pve-'+server.id+'-'+Date.now();
     root.className='eagle-lab-workspace';root.setAttribute('aria-label','PVE management workspace');
     const sandbox='allow-scripts allow-forms allow-downloads allow-modals allow-popups allow-pointer-lock'+(launch.transport==='path'?'':' allow-same-origin');
-    root.innerHTML=`<header class="eagle-lab-workspace-toolbar"><button class="btn secondary" data-workspace-exit type="button">← Eagle Lab</button><strong>${esc(server.hostname)}</strong><span class="eagle-lab-clipboard-hint">Terminal: Ctrl+C interrupts · Ctrl+Shift+C / Ctrl+Shift+V copy/paste · VM: noVNC clipboard</span>${credentials?'<button class="btn secondary" data-workspace-credentials type="button">Credentials</button>':''}<select data-workspace-report aria-label="Lab report"><option value="">Choose lab report</option>${state.assignments.map(item=>`<option value="${esc(item.id)}">${esc(item.name)}</option>`).join('')}</select><button class="btn secondary" data-workspace-open-report type="button">Open report</button></header>
+    root.innerHTML=`<header class="eagle-lab-workspace-toolbar"><button class="btn secondary" data-workspace-manual type="button">Lab Manual</button><button class="btn secondary" data-workspace-exit type="button">← Eagle Lab</button><strong>${esc(server.hostname)}</strong><span class="eagle-lab-clipboard-hint">Terminal: Ctrl+C interrupts · Ctrl+Shift+C / Ctrl+Shift+V copy/paste · VM: noVNC clipboard</span>${credentials?'<button class="btn secondary" data-workspace-credentials type="button">Credentials</button>':''}<select data-workspace-report aria-label="Lab report"><option value="">Choose lab report</option>${state.assignments.map(item=>`<option value="${esc(item.id)}">${esc(item.name)}</option>`).join('')}</select><button class="btn secondary" data-workspace-open-report type="button">Open report</button></header>
       <iframe name="${esc(frameName)}" title="${esc(server.hostname)} management interface" sandbox="${sandbox}" allow="clipboard-read *; clipboard-write *; fullscreen *" allowfullscreen referrerpolicy="no-referrer"></iframe>`;
     document.body.append(root);
     state.workspace={root,serverId:server.id,session:originalSession,transport:launch.transport,clipboardKey:launch.clipboard_key,clipboardTimes:[]};
+    root.querySelector('[data-workspace-manual]').onclick=()=>window.LabManual?.open();
     root.querySelector('[data-workspace-exit]').onclick=()=>closeWorkspace();
     root.querySelector('[data-workspace-credentials]')?.addEventListener('click',()=>{
       const panel=document.createElement('div');panel.className='modal glass-modal';panel.style.display='flex';
@@ -225,38 +236,65 @@
   }
   async function deleteAdminServer(id){if(!confirm('Remove this PVE server from Eagle Lab and every class rule?'))return;try{await api(`/api/eagle-lab/admin/servers/${encodeURIComponent(id)}`,{method:'DELETE'});await loadAdmin();}catch(error){$('eagleLabAdminStatus').textContent=error.message;}}
 
-  async function openTeacherPanel(){
-    state.classId=populateClassSelect($('eagleLabTeacherClassSelect'),$('eagleLabTeacherClassSelect')?.value||preferredClassId());
-    if(!state.classId){$('eagleLabTeacherStatus').textContent='Create or select a class first.';return;}
-    $('eagleLabTeacherStatus').textContent='Loading…';
-    try{state.teacherData=await api(`/api/eagle-lab/teacher/classes/${encodeURIComponent(state.classId)}`);renderTeacher();}catch(error){$('eagleLabTeacherStatus').textContent=error.message;}
+  function captureTeacherDraft(){
+    if(!state.teacherClassId||!state.teacherData)return;
+    state.teacherDrafts.set(state.teacherClassId,{enabled:$('eagleLabTeacherEnabled').checked,show_credentials:$('eagleLabTeacherCredentials').checked,server_ids:[...document.querySelectorAll('[data-teacher-server]:checked')].map(item=>item.dataset.teacherServer),version:++state.teacherVersion});
+    $('eagleLabTeacherStatus').textContent='Unsaved changes · refresh keeps your edits';
   }
-  function renderTeacher(){const data=state.teacherData||{},rule=data.rule||{};$('eagleLabTeacherEnabled').checked=!!rule.enabled;$('eagleLabTeacherCredentials').checked=!!rule.show_credentials;$('eagleLabTeacherServers').innerHTML=(data.servers||[]).map(server=>`<label class="eagle-lab-teacher-server"><span><strong>${esc(server.hostname)}</strong><small>${esc(server.ip)}:${Number(server.port)||8006} · ${esc(server.status)}</small></span><input type="checkbox" data-teacher-server="${esc(server.id)}" ${(rule.server_ids||[]).includes(server.id)?'checked':''}></label>`).join('')||'<p>No servers have been enrolled by the administrator.</p>';$('eagleLabTeacherStatus').textContent=data.globally_enabled?'':'Eagle Lab is globally disabled; these rules will be retained.';}
-  async function saveTeacher(){const payload={enabled:$('eagleLabTeacherEnabled').checked,show_credentials:$('eagleLabTeacherCredentials').checked,server_ids:[...document.querySelectorAll('[data-teacher-server]:checked')].map(item=>item.dataset.teacherServer)};$('eagleLabTeacherStatus').textContent='Saving…';try{await api(`/api/eagle-lab/teacher/classes/${encodeURIComponent(state.classId)}`,{method:'PUT',body:JSON.stringify(payload)});await openTeacherPanel();$('eagleLabTeacherStatus').textContent='Class rules saved.';}catch(error){$('eagleLabTeacherStatus').textContent=error.message;}}
+  async function openTeacherPanel(){
+    const classId=populateClassSelect($('eagleLabTeacherClassSelect'),$('eagleLabTeacherClassSelect')?.value||preferredClassId());
+    const request=state.teacherLoad=(state.teacherLoad||0)+1, original=sessionKey();
+    if(!classId){$('eagleLabTeacherStatus').textContent='Create or select a class first.';return;}
+    state.teacherSession=original;
+    $('eagleLabTeacherStatus').textContent='Refreshing server availability…';
+    try{const data=await api(`/api/eagle-lab/teacher/classes/${encodeURIComponent(classId)}`);if(request!==state.teacherLoad||original!==sessionKey()||$('eagleLabTeacherClassSelect').value!==classId)return;state.teacherData=data;state.teacherClassId=classId;renderTeacher();}catch(error){if(request===state.teacherLoad)$('eagleLabTeacherStatus').textContent=error.message;}
+  }
+  function renderTeacher(){
+    const data=state.teacherData||{},draft=state.teacherDrafts.get(state.teacherClassId),rule=draft||data.rule||{};
+    $('eagleLabTeacherEnabled').checked=!!rule.enabled;$('eagleLabTeacherCredentials').checked=!!rule.show_credentials;
+    $('eagleLabTeacherServers').innerHTML=(data.servers||[]).map(server=>`<label class="eagle-lab-teacher-server"><input type="checkbox" data-teacher-server="${esc(server.id)}" ${(rule.server_ids||[]).includes(server.id)?'checked':''}><span class="eagle-lab-teacher-server-icon" aria-hidden="true">▤</span><span><strong>${esc(server.hostname)}</strong><small>${esc(server.ip)}:${Number(server.port)||8006}</small></span><span class="eagle-lab-state ${esc(server.status||'checking')}">${esc(server.status||'checking')}</span></label>`).join('')||'<p>No servers have been enrolled by the administrator.</p>';
+    $('eagleLabTeacherStatus').textContent=draft?'Unsaved changes · refresh keeps your edits':data.globally_enabled?'Choose the servers students in this class can use.':'Eagle Lab is globally disabled; these rules will be retained.';
+  }
+  async function saveTeacher(){
+    if(state.teacherSaving||!state.teacherClassId||state.teacherClassId!==$('eagleLabTeacherClassSelect').value)return;
+    captureTeacherDraft();const classId=state.teacherClassId,draft=state.teacherDrafts.get(classId),original=sessionKey();
+    const payload={enabled:draft.enabled,show_credentials:draft.show_credentials,server_ids:draft.server_ids};
+    state.teacherSaving=true;$('eagleLabTeacherSaveBtn').disabled=true;$('eagleLabTeacherStatus').textContent='Saving class access…';
+    try{const result=await api(`/api/eagle-lab/teacher/classes/${encodeURIComponent(classId)}`,{method:'PUT',body:JSON.stringify(payload)});if(original!==sessionKey())return;if(state.teacherDrafts.get(classId)?.version===draft.version)state.teacherDrafts.delete(classId);if(state.teacherClassId===classId){state.teacherData.rule=result.rule;renderTeacher();$('eagleLabTeacherStatus').textContent=state.teacherDrafts.has(classId)?'Saved. Newer edits are still unsaved.':'Class access saved.';}window.EagleLabAccess?.refresh?.(null,true);}
+    catch(error){if(original===sessionKey())$('eagleLabTeacherStatus').textContent=error.message;}
+    finally{state.teacherSaving=false;$('eagleLabTeacherSaveBtn').disabled=false;}
+  }
 
   function reportResponses(questions, root, partial=true){const responses=[],missing=[];questions.forEach((question,index)=>{let answer;if(question.type==='procedure'){answer=(question.steps||[]).map((_,step)=>!!root.querySelector(`[data-report-question="${CSS.escape(question.id)}"][data-step="${step}"]`)?.checked);if(!partial&&!answer.every(Boolean))missing.push(index+1);}else{answer=root.querySelector(`[data-report-question="${CSS.escape(question.id)}"]`)?.value||'';if(!partial&&!answer.trim())missing.push(index+1);}responses.push({questionId:question.id,questionType:question.type,answer});});return{responses,missing};}
   async function openReportById(assignmentId, assignmentHint=null){
     const reportSession=sessionKey();
-    if(state.report?.root?.isConnected){state.report.root.querySelector('textarea,input')?.focus();return;}
+    if(state.reportOpening)return;
+    if(state.report?.root?.isConnected){if(state.report.assignmentId===assignmentId){state.report.root.querySelector('textarea,input')?.focus();return;}if(!await state.report.close())return;}
+    state.reportOpening=true;
     const assignment=assignmentHint||state.assignments.find(item=>item.id===assignmentId)||{id:assignmentId,name:'Lab Report',task:''};
     try{
       const [quizData,draft]=await Promise.all([api(`/api/quiz/${encodeURIComponent(assignmentId)}`),api(`/api/lab-reports/${encodeURIComponent(assignmentId)}/draft`)]);
       if(reportSession!==sessionKey())return;
       const questions=quizData.quiz?.questions||[], saved=Object.fromEntries((quizData.savedResponses||[]).map(item=>[item.questionId,item.answer])), drafted=Object.fromEntries((draft.responses||[]).map(item=>[item.questionId,item.answer]));
       const answers={...saved,...drafted},overlay=document.createElement('div');overlay.className='lab-report-overlay';
-      overlay.innerHTML=`<section class="lab-report-window" role="dialog" aria-modal="true" aria-label="${esc(assignment.name)}"><header><div><h2>${esc(assignment.name)}</h2><span class="lab-report-save-state" role="status">${draft.updated_at?'Draft restored':'Ready'}</span></div><button class="btn secondary" data-report-close type="button">Close</button></header><div class="lab-report-page"><div class="lab-report-description">${esc(assignment.task||'')}</div>${questions.map((question,index)=>`<section class="lab-report-question"><h3>${index+1}. ${esc(question.question||'')}</h3><p>${Number(question.points)||0} points</p>${question.type==='procedure'?`<div class="lab-report-procedure">${(question.steps||[]).map((step,i)=>`<label><input type="checkbox" data-report-question="${esc(question.id)}" data-step="${i}" ${Array.isArray(answers[question.id])&&answers[question.id][i]?'checked':''}><span>${esc(step)}</span></label>`).join('')}</div>`:question.type==='fill_blank'?`<input type="text" data-report-question="${esc(question.id)}" value="${esc(answers[question.id]||'')}" autocomplete="off">`:`<textarea data-report-question="${esc(question.id)}">${esc(answers[question.id]||'')}</textarea>`}</section>`).join('')}</div><div class="lab-report-actions"><button class="btn secondary" data-report-close type="button">Close for now</button><button class="btn run" data-report-submit type="button">Submit lab report</button></div></section>`;
+      const content=window.LabReportContent, prose=value=>content?.render(value)||`<div class="lab-report-prose">${esc(value)}</div>`;
+      overlay.innerHTML=`<section class="lab-report-window" role="dialog" aria-modal="false" aria-label="${esc(assignment.name)}"><header><div><span class="lab-report-eyebrow">LAB REPORT · AUTOSAVE</span><h2>${esc(assignment.name)}</h2><span class="lab-report-save-state" role="status">${draft.updated_at?'Draft restored':'Ready'}</span></div><div class="lab-report-window-tools"><button class="btn secondary" data-float-move type="button" aria-label="Move report with arrow keys" title="Drag to move · arrow keys to move">⠿</button><button class="btn secondary" data-float-minimize type="button" aria-expanded="true">Minimize</button><button class="btn secondary" data-report-close type="button" aria-label="Close report">✕</button></div></header><div class="lab-report-page"><p class="lab-report-hint">Keep this window open while you work. Drag the grip to move it or use Minimize to see more of your console.</p><div class="lab-report-description">${prose(assignment.task||'')}</div>${questions.map((question,index)=>`<section class="lab-report-question"><div class="lab-report-question-meta"><span>SECTION ${index+1} · ${esc(question.type==='procedure'?'CHECKLIST':question.type==='fill_blank'?'SHORT ANSWER':'WRITTEN RESPONSE')}</span><span>${Number(question.points)||0} points</span></div><div class="lab-report-prompt" id="report-label-${index}">${prose(question.question||'')}</div>${question.type==='procedure'?`<p class="lab-report-check-hint">Select every checkbox in this checklist to receive credit for this section.</p><div class="lab-report-procedure">${(question.steps||[]).map((step,i)=>`<div class="lab-report-check-row"><input type="checkbox" aria-label="Section ${index+1}, step ${i+1}" data-report-question="${esc(question.id)}" data-step="${i}" ${Array.isArray(answers[question.id])&&answers[question.id][i]?'checked':''}><div>${prose(step)}</div></div>`).join('')}</div>`:question.type==='fill_blank'?`<input type="text" aria-labelledby="report-label-${index}" placeholder="Your answer" maxlength="20000" data-report-question="${esc(question.id)}" value="${esc(answers[question.id]||'')}" autocomplete="off">`:`<textarea aria-labelledby="report-label-${index}" maxlength="20000" placeholder="Record your observations…" data-report-question="${esc(question.id)}">${esc(answers[question.id]||'')}</textarea>`}</section>`).join('')}</div><div class="lab-report-actions"><span data-copy-status role="status" aria-live="polite"></span><button class="btn secondary" data-report-close type="button">Close for now</button><button class="btn run" data-report-submit type="button">Submit report</button></div><button type="button" class="lab-report-resize" data-float-resize aria-label="Resize report with arrow keys" title="Drag or use arrow keys to resize">◢</button></section>`;
       document.body.append(overlay);let revision=Number(draft.revision||0),timer=null,saveChain=Promise.resolve(),conflicted=false;const saveState=overlay.querySelector('.lab-report-save-state');
-      let savedOkay=true,submitting=false,editVersion=0;
+      const disposeContent=content?.mount(overlay,{assignmentId,student:true}),disposeFloating=content?.floating(overlay);
+      const dispose=()=>{disposeContent?.();disposeFloating?.();overlay.remove();};
+      let savedOkay=true,submitting=false,editVersion=0,savedVersion=0;
       const save=()=>{
         if(conflicted||submitting||!overlay.isConnected||reportSession!==sessionKey())return Promise.resolve(false);
         clearTimeout(timer);
+        if(savedOkay&&savedVersion===editVersion)return saveChain.then(()=>true);
         const responses=reportResponses(questions,overlay,true).responses,version=editVersion;
         saveState.textContent='Saving…';
         saveChain=saveChain.then(async()=>{
           if(reportSession!==sessionKey())return false;
+          if(version<=savedVersion)return true;
           try{
             const result=await api(`/api/lab-reports/${encodeURIComponent(assignmentId)}/draft`,{method:'PUT',body:JSON.stringify({revision,responses})});
-            revision=result.revision;savedOkay=version===editVersion;
+            revision=result.revision;savedVersion=version;savedOkay=version===editVersion;
             saveState.textContent=savedOkay?'Saved':'Unsaved';return true;
           }catch(error){
             savedOkay=false;
@@ -268,15 +306,29 @@
         return saveChain;
       };
       overlay.querySelector('.lab-report-page').addEventListener('input',()=>{editVersion++;savedOkay=false;clearTimeout(timer);saveState.textContent='Unsaved';timer=setTimeout(save,700);});overlay.querySelector('.lab-report-page').addEventListener('change',()=>{editVersion++;savedOkay=false;clearTimeout(timer);saveState.textContent='Unsaved';timer=setTimeout(save,250);});
-      const close=async()=>{if(submitting)return;if(!await save()||!savedOkay)return;overlay.remove();if(state.report?.root===overlay)state.report=null;};overlay.querySelectorAll('[data-report-close]').forEach(button=>button.onclick=close);
-      overlay.querySelector('[data-report-submit]').onclick=async()=>{if(submitting||conflicted||reportSession!==sessionKey())return;const result=reportResponses(questions,overlay,false);if(result.missing.length){alert(`Complete every response and procedure step before submitting. Missing: ${result.missing.join(', ')}`);return;}if(!confirm('Submit this lab report?'))return;submitting=true;clearTimeout(timer);await saveChain;if(reportSession!==sessionKey()){submitting=false;return;}try{await api('/api/quiz/submit',{method:'POST',body:JSON.stringify({assignmentId,quizResponses:result.responses,closedByStudent:false})});overlay.remove();state.report=null;await loadReports();alert('Lab report submitted.');}catch(error){saveState.textContent=error.message;submitting=false;}};
-      state.report={root:overlay,assignmentId,save,dirty:()=>!savedOkay,session:reportSession,cancel:()=>{clearTimeout(timer);overlay.remove();}};
-    }catch(error){alert(error.message||'Could not open the lab report.');}
+      const close=async()=>{if(submitting)return false;if(!await save()||!savedOkay)return false;dispose();if(state.report?.root===overlay)state.report=null;return true;};overlay.querySelectorAll('[data-report-close]').forEach(button=>button.onclick=close);
+      overlay.querySelector('[data-report-submit]').onclick=async()=>{if(submitting||conflicted||reportSession!==sessionKey())return;const result=reportResponses(questions,overlay,false);if(result.missing.length){alert(`Complete every response and procedure step before submitting. Missing: ${result.missing.join(', ')}`);return;}if(!confirm('Submit this lab report?'))return;submitting=true;overlay.querySelectorAll('textarea,input,[data-report-submit]').forEach(field=>field.disabled=true);clearTimeout(timer);await saveChain;if(reportSession!==sessionKey()){submitting=false;return;}try{await api('/api/quiz/submit',{method:'POST',body:JSON.stringify({assignmentId,quizResponses:result.responses,closedByStudent:false})});dispose();state.report=null;await loadReports();alert('Lab report submitted.');}catch(error){saveState.textContent=error.message;submitting=false;overlay.querySelectorAll('textarea,input,[data-report-submit]').forEach(field=>field.disabled=false);}};
+      state.report={root:overlay,assignmentId,save,close,dirty:()=>!savedOkay,session:reportSession,cancel:()=>{clearTimeout(timer);dispose();}};
+    }catch(error){alert(error.message||'Could not open the lab report.');}finally{state.reportOpening=false;}
   }
 
-  function applyConfig(config={}){const ctx=context(),available=!!(config.eagle_lab_enabled||ctx.ADMIN_TOKEN);if($('eagleLabViewBtn'))$('eagleLabViewBtn').hidden=!available;}
+  function applyConfig(config={}){window.EagleLabAccess?.refresh?.(config);}
   async function refreshAvailability(){let config=context().currentConfig;if(!config&&window.EagleIDE?.configReady){await window.EagleIDE.configReady;config=context().currentConfig;}applyConfig(config||{});}
   function attach(){
+    window.addEventListener('eagle-context-updated',()=>{
+      if(state.uiSession===sessionKey())return;
+      state.uiSession=sessionKey();state.labLoad++;state.teacherLoad=(state.teacherLoad||0)+1;
+      state.bootstrap=null;state.assignments=[];state.adminServers=[];state.classId='';
+      state.teacherData=null;state.teacherDrafts.clear();state.teacherClassId='';
+      ['eagleLabServerGrid','eagleLabReportList','eagleLabAdminServers','eagleLabTeacherServers'].forEach(id=>$(id)?.replaceChildren());
+      ['eagleLabTeacherEnabled','eagleLabTeacherCredentials'].forEach(id=>{if($(id))$(id).checked=false;});
+    });
+    window.addEventListener('eagle-lab-access-updated',event=>{
+      if(event.detail.available)return;
+      closeWorkspace();state.bootstrap=null;state.labLoad++;
+      if($('eagleLabServerGrid'))$('eagleLabServerGrid').innerHTML='<div class="eagle-lab-empty">Eagle Lab is not enabled for your current classes.</div>';
+      if($('eagleLabStatus'))$('eagleLabStatus').textContent='Class access required';
+    });
     window.addEventListener('message',async event=>{
       const data=event.data,workspace=state.workspace;
       if(!workspace||workspace.transport!=='path'||!workspace.root.isConnected||event.origin!=='null'||!data||data.type!=='eagle-lab-clipboard'||data.key!==workspace.clipboardKey||typeof data.id!=='string'||data.id.length>100||!['readText','writeText'].includes(data.method))return;
@@ -292,11 +344,11 @@
       }catch(error){result.error=error.message||'Clipboard permission is required.';}
       if(state.workspace===workspace&&workspace.session===sessionKey())event.source?.postMessage(result,'*');
     });
-    window.addEventListener('eagle-context-updated',()=>{if(state.workspace&&state.workspace.session!==sessionKey())closeWorkspace(false);document.querySelectorAll('.eagle-lab-credentials').forEach(item=>item.closest('.modal')?.remove());});
+    window.addEventListener('eagle-context-updated',()=>{if(state.workspace&&state.workspace.session!==sessionKey())closeWorkspace(false);if(state.detail&&state.detail.session!==sessionKey()){state.detail.root.remove();state.detail=null;}document.querySelectorAll('.eagle-lab-credentials').forEach(item=>item.closest('.modal')?.remove());});
     [$('wikiViewBtn'),$('wikiHomeBtn'),$('ideViewBtn'),$('networkViewBtn'),$('eagleLabViewBtn')].forEach(button=>button?.addEventListener('click',()=>closeWorkspace()));
     window.addEventListener('popstate',()=>closeWorkspace());
     window.addEventListener('beforeunload',event=>{if(state.report?.dirty?.()){event.preventDefault();event.returnValue='';}});
-    $('eagleLabViewBtn')?.addEventListener('click',()=>show());$('eagleLabClassSelect')?.addEventListener('change',event=>{state.classId=event.target.value;loadLab();});$('eagleLabSearch')?.addEventListener('input',event=>{state.search=event.target.value;renderServers();});$('eagleLabRefreshBtn')?.addEventListener('click',loadLab);$('eagleLabServerGrid')?.addEventListener('click',event=>{const card=event.target.closest('[data-lab-server]');if(card)openServer(card.dataset.labServer);});$('eagleLabReportList')?.addEventListener('click',event=>{const card=event.target.closest('[data-lab-report]');if(card)openReportById(card.dataset.labReport,state.assignments.find(item=>item.id===card.dataset.labReport));});
+    $('eagleLabManualBtn')?.addEventListener('click',()=>window.LabManual?.open());$('eagleLabManualCard')?.addEventListener('click',()=>window.LabManual?.open());$('eagleLabViewBtn')?.addEventListener('click',()=>show());$('eagleLabClassSelect')?.addEventListener('change',event=>{state.classId=event.target.value;loadLab();});$('eagleLabSearch')?.addEventListener('input',event=>{state.search=event.target.value;renderServers();});$('eagleLabRefreshBtn')?.addEventListener('click',loadLab);$('eagleLabServerGrid')?.addEventListener('click',event=>{const card=event.target.closest('[data-lab-server]');if(card)openServer(card.dataset.labServer);});$('eagleLabReportList')?.addEventListener('click',event=>{const card=event.target.closest('[data-lab-report]');if(card)openReportById(card.dataset.labReport,state.assignments.find(item=>item.id===card.dataset.labReport));});
     $('eagleLabServerForm')?.addEventListener('submit',saveAdminServer);$('eagleLabServerEnrollBtn')?.addEventListener('click',()=>openAdminEditor());
     $('eagleLabServerCancelBtn')?.addEventListener('click',closeAdminEditor);$('eagleLabServerDialogClose')?.addEventListener('click',closeAdminEditor);
     $('eagleLabServerDialog')?.addEventListener('cancel',event=>{event.preventDefault();closeAdminEditor();});
@@ -304,10 +356,11 @@
     $('eagleLabAdminServers')?.addEventListener('click',event=>{const edit=event.target.closest('[data-admin-edit]'),remove=event.target.closest('[data-admin-delete]'),move=event.target.closest('[data-admin-move]');if(edit)openAdminEditor(edit.dataset.adminEdit);if(remove&&!state.adminOrdering)deleteAdminServer(remove.dataset.adminDelete);if(move)reorderAdminServer(move.dataset.adminMove,state.adminServers.findIndex(item=>item.id===move.dataset.adminMove)+Number(move.dataset.direction));});
     $('eagleLabAdminServers')?.addEventListener('change',event=>{const select=event.target.closest('[data-admin-position]');if(select)reorderAdminServer(select.dataset.adminPosition,Number(select.value));});
     window.addEventListener('eagle-context-updated',()=>{if(state.editorSession!==sessionKey()&&$('eagleLabServerDialog')?.open){$('eagleLabServerDialog').close();resetAdminForm();}});
-    $('eagleLabTeacherClassSelect')?.addEventListener('change',event=>{state.classId=event.target.value;openTeacherPanel();});$('eagleLabTeacherRefreshBtn')?.addEventListener('click',openTeacherPanel);$('eagleLabTeacherSaveBtn')?.addEventListener('click',saveTeacher);
-    window.addEventListener('eagle-context-updated',()=>{if(state.report&&state.report.session!==sessionKey()){state.report.cancel();state.report=null;}if(!sessionKey()){state.bootstrap=null;state.assignments=[];state.adminServers=[];state.teacherData=null;document.querySelectorAll('.eagle-lab-detail').forEach(item=>item.closest('.modal')?.remove());}});
-    [$('wikiViewBtn'),$('ideViewBtn'),$('networkViewBtn')].forEach(button=>button?.addEventListener('click',()=>state.report?.save?.()));window.addEventListener('eagle-context-updated',()=>{refreshAvailability();if(document.body.classList.contains('eagle-lab-mode')){state.classId=populateClassSelect($('eagleLabClassSelect'),preferredClassId());loadLab();}});window.addEventListener('pagehide',()=>state.report?.save?.());
+    $('eagleLabTeacherClassSelect')?.addEventListener('change',()=>openTeacherPanel());
+    ['eagleLabTeacherEnabled','eagleLabTeacherCredentials','eagleLabTeacherServers'].forEach(id=>$(id)?.addEventListener('change',captureTeacherDraft));$('eagleLabTeacherRefreshBtn')?.addEventListener('click',openTeacherPanel);$('eagleLabTeacherSaveBtn')?.addEventListener('click',saveTeacher);
+    window.addEventListener('eagle-context-updated',()=>{if(state.report&&state.report.session!==sessionKey()){state.report.cancel();state.report=null;}if(state.teacherSession!==sessionKey()){state.teacherDrafts.clear();state.teacherData=null;state.teacherClassId='';state.teacherSession=sessionKey();}if(!sessionKey()){state.bootstrap=null;state.assignments=[];state.adminServers=[];state.teacherData=null;document.querySelectorAll('.eagle-lab-detail').forEach(item=>item.closest('.modal')?.remove());}});
+    [$('wikiViewBtn'),$('ideViewBtn'),$('networkViewBtn')].forEach(button=>button?.addEventListener('click',()=>state.report?.save?.()));window.addEventListener('eagle-context-updated',()=>{refreshAvailability();const ctx=context(),scope=JSON.stringify([sessionKey(),ctx.currentStudentClassId,ctx.currentTeacherClassId]);if(document.body.classList.contains('eagle-lab-mode')&&state.contextScope!==scope){state.contextScope=scope;state.classId=populateClassSelect($('eagleLabClassSelect'),preferredClassId());loadLab();}});window.addEventListener('pagehide',()=>state.report?.save?.());
   }
-  function initialize(){if(state.initialized)return;state.initialized=true;attach();refreshAvailability();}
+  function initialize(){if(state.initialized)return;state.initialized=true;state.uiSession=sessionKey();attach();refreshAvailability();}
   window.EagleLab={show,applyConfig,refreshAvailability,openTeacherPanel,openReportById,loadAdmin,getState:()=>state};initialize();
 })();
