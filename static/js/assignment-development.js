@@ -47,7 +47,7 @@
     if (state?.file === file && state?.auth === auth() && file?.development?.recording) return state;
     if (state) {persist(state); if (state.auth === auth()) upload(state);}
     state = null;
-    if (!student || !file?.development?.recording || file.audit || file.submission || file.notebook || file.draft) {status(student && file?.development?.error || '', !!file?.development?.error); return null;}
+    if (!student || !file?.development?.recording || file.workspaceHistory || file.audit || file.submission || file.notebook || file.draft) {status(student && file?.development?.error || '', !!file?.development?.error); return null;}
     const info = file.development;
     const s = {file, auth:auth(), assignmentId:info.assignmentId, path:file.path, version:info.version, resync:false,
       base:info.content || '', last:info.content || '', frames:[], batch:null, pending:null,

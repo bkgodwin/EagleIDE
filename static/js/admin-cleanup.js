@@ -17,6 +17,7 @@
     if (owner === token()) return;
     pause(); owner = token(); generation++; requestSequence++; data = null; dirty = false; pending = false; cursor = 0; editRevision = null;
     el('cleanupRules')?.replaceChildren(); el('cleanupLog')?.replaceChildren(); el('cleanupRuns')?.replaceChildren();
+    el('workspaceHistoryUsage')?.replaceChildren();
     if (el('cleanupEnabled')) el('cleanupEnabled').checked = false;
     el('cleanupStatus').textContent = '';
     controls();
@@ -138,6 +139,25 @@
     } catch (error) { if (current(who, epoch) && !error.stale) el('cleanupStatus').textContent = error.message; }
     finally { if (current(who, epoch)) {pending = false; controls();} }
   }
+  async function historyUsage() {
+    onAuthChanged();
+    const who = owner, epoch = generation, host = el('workspaceHistoryUsage');
+    if (!who || !host) return;
+    const mib = n => (n / (1024 * 1024)).toFixed(1) + ' MiB';
+    host.textContent = 'Loading history usage…';
+    try {
+      const result = await api('/api/admin/workspace-history');
+      if (!current(who, epoch)) return;
+      host.replaceChildren(text('p', `Rolling ${mib(result.rollingBytes)} · Submitted ${mib(result.pinnedBytes)} · Budget ${mib(result.limit)}`));
+      if (result.assignments.length) {
+        const list = document.createElement('ul');
+        for (const row of result.assignments) list.append(text('li', `${row.name} · ${row.className || 'Class'} · ${row.clips} timelines`));
+        host.append(list);
+      }
+    } catch (error) {
+      if (current(who, epoch) && !error.stale) host.textContent = error.message;
+    }
+  }
   el('cleanupEnabled').addEventListener('change', changed);
   el('cleanupRunNow').addEventListener('click', runNow);
   el('cleanupRefresh').addEventListener('click', () => {
@@ -146,5 +166,6 @@
   });
   el('cleanupNewest').addEventListener('click', () => load(0));
   el('cleanupOlder').addEventListener('click', () => { if (data?.next_before) load(data.next_before); });
+  el('loadWorkspaceHistoryUsage')?.addEventListener('click', historyUsage);
   window.AdminCleanup = Object.freeze({open: () => load(cursor), save, pause, onAuthChanged});
 })();

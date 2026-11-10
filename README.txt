@@ -699,15 +699,15 @@ FOR STUDENTS
 3. Current and Past tabs show released assignment titles and due dates. Click a
    title to expand details. Unreleased drafts stay hidden.
 4. Sign in with your student account
-5. Submit selects your open file by default. When multiple files are enabled,
-   add other workspace files or upload attachments of any type.
+5. Turn in selects your open file by default. Choose a workspace file or upload
+   an attachment. When multiple files are enabled, combine the files you need.
 6. Submitted work shows a green checkmark. View submission opens your saved
    files read-only; scores and shared feedback also remain available in Past.
 7. A teacher-provided extended deadline skips weekends and stays in Current
    until that deadline. With a no-deadline accommodation, late submissions
    remain available in Past while the assignment is explicitly unlocked.
-8. Class submission windows apply on weekdays in the displayed class time zone,
-   unless the assignment allows submissions at any time.
+8. In class only assignments use the class meeting schedule. Choose Request
+   extension on released work to send the teacher a reason and number of days.
 
 --------------------------------------------------
 FOR TEACHERS
@@ -735,7 +735,7 @@ FOR TEACHERS
     accommodation, and set the class submission hours/time zone. Accommodations
     are private to that student. Manual assignment locks still apply.
 14. Assignment creation/editing controls multiple files, maximum file attempts
-    (0 means unlimited), and whether to ignore the class submission window.
+    (0 means unlimited), and In class only or Any time submission.
 15. Submitted files are kept together in protected student/revision folders.
     Select any file to preview/download; History retains three prior submissions.
     Grading always uses the latest; AI includes only its .py and .js files.
@@ -1327,12 +1327,12 @@ deployment, classroom access, credential storage, and lab-report instructions.
 
 Teacher make-ups and review
 --------------------------
-Open an assignment in Teacher Dashboard > Assignments and choose "Extend for a
-student…" (or Extend beside a roster entry). Choose 1–365 calendar days from now.
-The selected student can submit files and questions during that time even when
-the assignment is past/locked or school-hour submissions are closed. Exhausted
-attempt limits receive one more attempt; previous evidence and grades stay intact.
-Only the class owner can grant/remove this exception.
+Open an assignment in Teacher Dashboard > Assignments and choose Extension
+requests or Grant extension. The class owner can approve, deny, or adjust the
+requested days. A positive grant ends at school dismissal after the selected
+number of school days and follows the assignment's submission hours. A zero-day
+grant reopens submissions immediately through today's dismissal. Use Revoke
+extension to remove a grant. Previous work and grades stay intact.
 
 "Grade written responses by question" shows the class answers together. Use 0,
 Half, Full, or enter a score and choose Save. Half credit can include fractions.
@@ -1359,51 +1359,23 @@ class switches and cover copy, cut, paste, and text dropping in code editors.
 Teachers and administrators are exempt. These browser controls discourage casual
 copying; they cannot establish independent authorship.
 
-Enable "File control" when creating a single-file assignment and choose Python,
-JavaScript, HTML, or CSS. When the released assignment next loads for a student,
-EagleIDE creates its title-based file in Home. Existing work is never overwritten;
-collisions receive a numbered suffix. The option/language cannot change later.
-The student assignment card opens this file, and it is the only accepted file for
-submission. Direct submission attachments and uploads over a protected file are
-rejected. Programs cannot replace/delete protected files through Python's reviewed
-filesystem APIs. Students can still edit normally in the IDE.
+Student workspace text files up to 256 KiB record changed editor samples about
+every two seconds. Small batches upload in the background around every 15
+seconds. A bounded device journal retries interrupted uploads. Original files
+from existing controlled assignments remain available in the same Turn in picker.
 
-The file cannot be moved, renamed, or deleted until that student's effective
-deadline, including accommodations and make-up time. Reopened work remains
-protected while its deadline is open. Without a deadline, protection ends when
-grading is marked complete. Students can freely manage the file after release
-from protection; move it back to its assigned Home path before any later retest.
+Open a submitted file and choose Edit history to play or seek through recorded
+changes. The slider is green during the configured class meeting hours and red
+outside class. Timestamps appear in the class time zone. Pasted text is
+highlighted when the original editor recorded it. Gaps are possible with
+direct uploads, old assignments, large edits, or network outages.
 
-Changed code is sampled at one-second resolution, uploaded in ten-second batches,
-and flushed during saves and page suspension. Idle time creates no snapshots.
-Compressed edits and occasional checkpoints keep recordings small. A bounded
-device journal retries failed uploads; keep the page open if its backup warning
-appears. Each file is limited to 2 MB, and each student/assignment recording to
-100,000 changes or 16 MB. A 512 MB server recording budget prevents unbounded
-growth. Recording failures show a warning but never block ordinary code saves.
-Very large edits are captured by the next ordinary file save rather than sent
-repeatedly as oversized recording batches.
-
-Teacher Dashboard > Assignments > Watch development history provides a student
-selector, Play/Pause, previous/next change, a seek slider, 1x/5x/20x speed, and an
-option to skip idle gaps longer than five seconds. Opening a controlled-file
-submission in the main editor also shows these controls beside the grading
-information. Submitted code appears first; Play or seek switches to read-only
-recorded code, and "Show submitted code" restores the submitted version. Playback
-cannot save over a submission. "Follow edits" scrolls to changes as they leave
-the visible code area; turn it off to read elsewhere. A completion-time hint in
-minutes measures the first-to-last recorded edit, including idle periods; it is
-not a claim of active working time.
-Both device sample and server receipt timestamps are retained. Resynchronization
-and direct file saves are labelled because browser observations can have gaps.
-CoTeachers may review history. Students cannot access the recording database.
-
-The class owner can choose "Mark grading complete & delete timelines". This
-closes submissions, stops recording, releases the files, and permanently removes
-all development timelines for that assignment. Scores, feedback, immutable
-submission versions, and student files are kept. This cannot restart an old
-recording; copy the assignment to create a fresh recorded attempt. If cleanup
-fails, the same action can safely be retried.
+Unsubmitted history expires after 14 days. Submitted timelines stay available
+until the class owner chooses Finalize grading. Submissions and playback close
+then, and the server schedules history deletion within 72 hours. Submission
+files, grades, and feedback remain available. Administrators can check storage
+in Trash cleanup. Set EAGLE_WORKSPACE_HISTORY_ENABLED=0 to pause new recording
+while retaining playback and cleanup.
 
 For support or issues: https://github.com/bkgodwin/EagleIDE
 

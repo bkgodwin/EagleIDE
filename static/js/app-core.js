@@ -3910,7 +3910,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       else stopTeacherDashboardRosterPolling();
     }
 
-    function openTeacherDashboard(view) {
+    function openTeacherDashboard(view, preserveAssignmentVisit = false) {
       const modal = document.getElementById('teacherDashboardModal');
       if (!modal) return;
       const minimizedBar = document.getElementById('teacherDashMinimizedBar');
@@ -3937,6 +3937,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         // Sidebar nav tab switching
         modal.querySelectorAll('.teacher-dash-navbtn').forEach(btn => {
           btn.addEventListener('click', async () => {
+            if (btn.dataset.view === 'dash-assignments' && !btn.classList.contains('active')) window.TeacherAssignments?.beginVisit();
             modal.querySelectorAll('.teacher-dash-navbtn').forEach(b => b.classList.toggle('active', b === btn));
             modal.querySelectorAll('.teacher-dash-view').forEach(v => v.classList.toggle('active', v.id === btn.dataset.view));
             if (btn.dataset.view === 'dash-reports') {
@@ -4044,6 +4045,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       document.getElementById('createClassBtn') && (document.getElementById('createClassBtn').hidden=co);
       document.getElementById('teacherPasswordSection').hidden=co;
       const targetView = co && ['dash-skills','dash-network','dash-eagle-lab'].includes(view) ? 'dash-reports' : (view || 'dash-reports');
+      if (targetView === 'dash-assignments' && !preserveAssignmentVisit) window.TeacherAssignments?.beginVisit();
       if (targetView) {
         const viewEl = document.getElementById(targetView);
         const navBtn = modal.querySelector(`.teacher-dash-navbtn[data-view="${targetView}"]`);
@@ -6187,6 +6189,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       classes: () => studentClasses || [], file: () => currentOpenFile,
       content: () => {syncEditorBridge(); return editor.getValue();},
     });
+    window.WorkspaceHistory.configure({
+      request: fetchWithDeadline, headers: fileAuthHeaders, file: () => currentOpenFile,
+      account: () => USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN ? currentUser?.email : '',
+      content: () => editor.getValue(),
+    });
     window.AssignmentWorkflow.configure({
       request: fetchWithDeadline, assignment: getAssignmentByName,
       studentHeaders: () => ({'X-User-Token': USER_TOKEN}), managerHeaders: assignmentManagerHeaders,
@@ -6625,7 +6632,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     // Save the currently open file (if any).
     // Returns true on success (or if nothing to save), false on error.
     async function saveCurrentFile() {
-      if (currentOpenFile?.development?.recording) await window.AssignmentDevelopment?.flush();
+      window.WorkspaceHistory?.sample();
+      if (currentOpenFile?.development?.recording) window.AssignmentDevelopment?.flush();
       // Serialize writes so an older slow request cannot overwrite a newer save.
       while (fileSavePromise) {
         if (!await fileSavePromise) return false;
@@ -6684,7 +6692,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const res = await fetchWithDeadline('/api/files/write', {
           method: 'POST',
           headers: fileJsonHeaders(),
-          body: JSON.stringify({ path: savedFile.path, content, require_existing: true, ...(USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN ? {pasteRanges:savedFile.pasteRanges || []} : {}) })
+          body: JSON.stringify({ path: savedFile.path, content, require_existing: true,
+            ...(USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN ? {pasteRanges:savedFile.pasteRanges || [],
+              workspaceHistorySampled:window.WorkspaceHistory?.tracking(savedFile)} : {}) })
         }, 10000);
         if (!res.ok) return false;
         const j = await res.json().catch(() => ({}));
@@ -6700,6 +6710,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     // Update the editor header to show the active filename
     function updateActiveFileName() {
+      window.WorkspaceHistory?.opened();
       window.AssignmentWorkflow?.syncEditorDevelopment?.(currentOpenFile);
       const el = document.getElementById('activeFileName');
       if (el) el.textContent = currentOpenFile ? currentOpenFile.name : '';
@@ -6981,7 +6992,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           || previousContent !== (csvEditorActive ? csvBufferContent() : editor.getValue()) || window.EagleIDE?.connection?.isLost()) return;
       if (!res.ok || !j.ok) { alert(j.error || 'Cannot open file'); return; }
       const kind = j.kind || item.kind || 'text';
-      currentOpenFile = { path: item.path, name: item.name, kind, development:j.development, pasteRanges:j.pasteRanges || [] };
+      currentOpenFile = { path: item.path, name: item.name, kind, development:j.development,
+        workspaceHistory:j.workspaceHistory, pasteRanges:j.pasteRanges || [] };
       setMainEditorReadOnly(false);
       clearFileArtifactPreview();
       if (kind === 'image' || kind === 'database') {
@@ -8024,6 +8036,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           const { assignment, submission } = getSubmissionForAssignment(activeSubmissionContext.assignmentId || activeSubmissionContext.assignmentName, activeSubmissionContext.studentEmail);
           if (assignment && submission) {
             populateSubmissionScoringPanel(assignment, submission);
+            if (assignment.gradingCompletedAt) window.AssignmentWorkflow?.disposeEditorDevelopment?.();
           } else {
             hideSubmissionScoringPanel();
           }
@@ -8216,10 +8229,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       list.innerHTML = classAssignments.map(a => `
         <section class="assignment-list-item" data-name="${escapeHtml(a.name).replace(/"/g, '&quot;')}" data-status="${a.gradingCompletedAt ? 'complete' : a.active ? 'open' : 'locked'}">
           <button type="button" class="assignment-title-row" data-id="${escapeHtml(a.id || a.name)}" aria-expanded="${currentAdminAssignmentName === (a.id || a.name)}" aria-controls="assignmentWorkspace">
-            <span class="assignment-library-card-top"><span class="assignment-state is-${a.gradingCompletedAt ? 'complete' : a.active ? 'open' : 'locked'}">${a.gradingCompletedAt ? 'Complete' : a.active ? 'Open' : 'Locked'}</span><span class="assignment-library-kind">${a.allowFileSubmission === false ? 'Quiz' : a.fileControl ? 'Controlled file' : 'Files'}${a.allowFileSubmission !== false && a.quiz?.questions?.length ? ' + quiz' : ''}</span></span>
+            <span class="assignment-library-card-top"><span class="assignment-state is-${a.gradingCompletedAt ? 'complete' : a.active ? 'open' : 'locked'}">${a.gradingCompletedAt ? 'Complete' : a.active ? 'Open' : 'Locked'}</span><span class="assignment-library-kind">${a.allowFileSubmission === false ? 'Quiz' : 'Files'}${a.allowFileSubmission !== false && a.quiz?.questions?.length ? ' + quiz' : ''}</span></span>
             <strong>${escapeHtml(a.name)}</strong>
             <span class="assignment-library-card-meta">${a.dueAt ? `Due ${escapeHtml(assignmentDueLabel(a.dueAt))}` : 'No due date'}</span>
-            <span class="assignment-library-card-meta">${(a.submissions || []).filter(sub => !sub.withdrawn).length} turned in <span aria-hidden="true">·</span> ${(a.allowFileSubmission === false ? 0 : (a.maxScore || 0)) + (a.quiz?.totalPoints || 0)} points</span>
+            <span class="assignment-library-card-meta">${(a.submissions || []).filter(sub => !sub.withdrawn).length} turned in <span aria-hidden="true">·</span> ${(a.allowFileSubmission === false ? 0 : (a.maxScore || 0)) + (a.quiz?.totalPoints || 0)} points${!isCoTeacher() && a.pendingExtensionRequests ? ` · ${a.pendingExtensionRequests} extension request${a.pendingExtensionRequests === 1 ? '' : 's'}` : ''}</span>
           </button>
           ${currentAdminAssignmentName === (a.id || a.name) ? '<div id="assignmentDetailPanel" class="assignment-detail-panel"></div>' : ''}
         </section>
@@ -8248,7 +8261,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       detail.innerHTML = `
         <h4>${escapeHtml(assignment.name)}</h4>
         ${window.AssignmentWorkflow.teacherToolbar(assignment, !isCoTeacher())}
-        <section class="assignment-development-actions assignment-finalization-card"><strong>${assignment.gradingCompletedAt ? 'Grading finalized' : 'Finalize grading'}</strong><p>Close submissions and permanently remove development timelines and obsolete recording data. All submitted files and retained submission versions, quiz answers, scores, and feedback stay available until this assignment or its class is deleted.</p><div>${assignment.fileControl ? '<button type="button" class="btn secondary assignment-development-open">Watch development history</button>' : ''}${!isCoTeacher() ? `<button type="button" class="btn secondary assignment-grading-complete">${assignment.gradingCompletedAt ? 'Run cleanup again' : 'Finalize grading & clean up'}</button>` : ''}</div></section>
+        <section class="assignment-development-actions assignment-finalization-card"><strong>${assignment.gradingCompletedAt ? 'Grading finalized' : 'Finalize grading'}</strong><p>${assignment.gradingCompletedAt ? (assignment.historyCleanup === 'pending' ? 'Edit history cleanup is scheduled.' : assignment.historyCleanup === 'overdue' ? 'Edit history cleanup is overdue. Contact your administrator.' : 'Edit history cleanup is complete.') : 'Close submissions and schedule edit history deletion within three days. Submitted work, grades and feedback stay available.'}</p><div>${!assignment.gradingCompletedAt && assignment.submissions?.length ? '<button type="button" class="btn secondary assignment-development-open">Browse edit histories</button>' : ''}${!isCoTeacher() && !assignment.gradingCompletedAt ? '<button type="button" class="btn secondary assignment-grading-complete">Finalize grading</button>' : ''}</div></section>
         <div class="meta assignment-markdown" data-assignment-markdown="${escapeHtml(assignment.id || assignment.name)}" style="margin-bottom:12px;">${escapeHtml(assignment.task || '(No task description)')}</div>
         <div class="meta" style="margin-bottom:12px;">Max score ${(assignment.allowFileSubmission === false ? 0 : (assignment.maxScore || 0)) + (assignment.quiz?.totalPoints || 0)}${assignment.allowFileSubmission === false ? ' (Quiz only)' : ''}${assignment.quiz?.totalPoints ? ` · Quiz ${assignment.quiz.totalPoints} pts` : ''} · Class ${escapeHtml(assignment.targetClassName || 'All')} · Quiz max submissions ${assignment.quizSettings?.maxSubmissions > 0 ? assignment.quizSettings.maxSubmissions : 'Unlimited'}${assignment.dueAt ? ` · Due ${escapeHtml(assignmentDueLabel(assignment.dueAt))}` : ' · No due date'}${assignment.dueExpired ? ' · Deadline passed' : ''}</div>
         ${(assignment.skillTags || []).length ? `<div class="skill-tags" style="margin-bottom:12px;">${(assignment.skillTags || []).map(tag => `<span class="skill-chip">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
@@ -8649,19 +8662,16 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           <label id="modalAssignmentMaxScoreLabel">Max Score (Code)</label>
           <input type="number" id="modalAssignmentMaxScore" value="${existingAssignment?.maxScore || 100}" min="1" />
           <label style="margin-bottom:2px;">Assignment Options</label>
-          <label class="choice-item"><input type="checkbox" id="modalAssignmentFileControl" ${existingAssignment?.fileControl ? 'checked' : ''} ${existingAssignment ? 'disabled' : ''}> File control — dedicated file with development history</label>
-          <label>Assignment file language<select id="modalAssignmentFileControlExtension" ${existingAssignment ? 'disabled' : ''}>${[['.py','Python'],['.js','JavaScript'],['.html','HTML'],['.css','CSS']].map(([value,label]) => `<option value="${value}" ${(existingAssignment?.fileControlExtension || '.py') === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
-          <p class="option-help">File control creates a new file named after this assignment in each student's Home when the assignment is released. Only that file can be submitted. Changes are recorded at one-second resolution while the file is protected, with no idle snapshots. Students may move/delete it after their effective deadline or grading completion. Without a deadline it stays protected until grading is complete. File control and language are fixed after creation.</p>
-          <label class="choice-item"><input type="checkbox" id="modalAssignmentMultiFile" ${existingAssignment?.allowMultiFileSubmission ? 'checked' : ''}> Allow multiple files and attachments</label>
-          <label class="choice-item"><input type="checkbox" id="modalAssignmentAnyTime" ${existingAssignment?.allowSubmissionAnyTime ? 'checked' : ''}> Allow submission at any time (ignore the class submission window)</label>
+          <label class="choice-item"><input type="checkbox" id="modalAssignmentMultiFile" ${existingAssignment?.allowMultiFileSubmission ? 'checked' : ''}> Allow multiple files</label>
+          <label for="modalAssignmentSubmissionAccess">When students can turn in work</label>
+          <select id="modalAssignmentSubmissionAccess">
+            ${existingAssignment && !existingAssignment.submissionAccess ? '<option value="" selected>Keep current rules</option>' : ''}
+            <option value="any" ${existingAssignment?.submissionAccess === 'any' ? 'selected' : ''}>Any time</option>
+            <option value="class" ${existingAssignment?.submissionAccess === 'class' ? 'selected' : ''}>In class only</option>
+          </select>
+          <div class="option-help">In-class submissions use the selected class’s meeting schedule. The due date applies in either mode.</div>
           <label>Maximum file submission attempts (0 = unlimited)<input type="number" id="modalAssignmentFileAttempts" min="0" max="100" step="1" value="${existingAssignment?.maxFileSubmissions || 0}"></label>
-          <div class="assignment-option-card">
-            <label class="option-title">
-              <input type="checkbox" id="modalAssignmentAllowFileSubmission" ${existingAssignment?.allowFileSubmission === false ? '' : 'checked'}>
-              <span>Students upload a code file for this assignment</span>
-            </label>
-            <div class="option-help">Turn this off for quiz-only assignments so students only answer the questions below.</div>
-          </div>
+          <input type="checkbox" id="modalAssignmentAllowFileSubmission" hidden ${existingAssignment?.allowFileSubmission === false ? '' : 'checked'}>
           ${TEACHER_TOKEN ? `
           <label>Class</label>
           <select id="modalAssignmentClassId" ${existingAssignment?.fileControl ? 'disabled' : ''} style="width:100%; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;">
@@ -8699,17 +8709,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       `;
       document.body.appendChild(modal);
 
-      const syncFileControl = () => {
+      const syncSubmissionOptions = () => {
         const labReport = modal.querySelector('#modalAssignmentType')?.value === 'lab_report';
-        const fileControlBox = modal.querySelector('#modalAssignmentFileControl');
-        if (labReport && fileControlBox) fileControlBox.checked = false;
-        const controlled = !labReport && !!fileControlBox?.checked;
         const multiple = modal.querySelector('#modalAssignmentMultiFile'), allow = modal.querySelector('#modalAssignmentAllowFileSubmission');
-        if (controlled) {multiple.checked=false; allow.checked=true;}
-        if (labReport) { multiple.checked=false; allow.checked=false; }
-        fileControlBox.disabled=!!existingAssignment || labReport;
-        multiple.disabled=controlled||labReport; allow.disabled=controlled||labReport;
-        modal.querySelector('#modalAssignmentFileControlExtension').disabled=!!existingAssignment || !controlled;
+        multiple.disabled = labReport || existingAssignment?.allowFileSubmission === false;
+        allow.checked = !labReport && (existingAssignment?.allowFileSubmission !== false || existingAssignment?.assignmentType === 'lab_report');
         modal.querySelector('#modalAssignmentMaxScoreLabel').textContent='Max Score (Code)';
         modal.querySelector('#modalAssignmentMaxScoreLabel').hidden=labReport;
         modal.querySelector('#modalAssignmentMaxScore').hidden=labReport;
@@ -8719,9 +8723,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         modal.querySelector('.workspace-modal-header h3').textContent=labReport?(existingAssignment?'Edit Lab Report':'New Lab Report'):(existingAssignment?'Edit Assignment':'New Assignment');
         const skillBox=modal.querySelector('#modalAssignmentSkillTags');if(skillBox){skillBox.hidden=labReport;if(skillBox.previousElementSibling)skillBox.previousElementSibling.hidden=labReport;}
       };
-      modal.querySelector('#modalAssignmentFileControl').onchange=syncFileControl;
-      modal.querySelector('#modalAssignmentType').onchange=syncFileControl;
-      syncFileControl();
+      modal.querySelector('#modalAssignmentType').onchange=syncSubmissionOptions;
+      syncSubmissionOptions();
 
       let quizQuestions = JSON.parse(JSON.stringify(existingAssignment?.quiz?.questions || []));
       let questionIdCounter = { value: quizQuestions.length };
@@ -8806,10 +8809,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           dueAt,
           maxScore,
           allowFileSubmission,
-          fileControl: !!document.getElementById('modalAssignmentFileControl')?.checked,
-          fileControlExtension: document.getElementById('modalAssignmentFileControlExtension')?.value || '.py',
           allowMultiFileSubmission: !!document.getElementById('modalAssignmentMultiFile')?.checked,
-          allowSubmissionAnyTime: !!document.getElementById('modalAssignmentAnyTime')?.checked,
+          submissionAccess: document.getElementById('modalAssignmentSubmissionAccess').value || undefined,
           maxFileSubmissions: Number(document.getElementById('modalAssignmentFileAttempts')?.value || 0),
           classId,
           skillTags: mergedSkillTags,
@@ -9388,7 +9389,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         currentAdminAssignmentName = assignment.id || assignment.name;
       }
       syncTeacherDashboardClassSelectors();
-      openTeacherDashboard('dash-assignments');
+      openTeacherDashboard('dash-assignments', true);
       renderAdminAssignments();
       const tab = document.getElementById('assignment-tab-submissions');
       tab?.click();
@@ -9482,6 +9483,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       let submittedContent = editor.getValue(), preparing = null;
       const valid = file => currentOpenFile === reviewedFile && (!file || file === reviewedFile) && auth === JSON.stringify(assignmentManagerHeaders());
       window.AssignmentWorkflow.attachEditorDevelopment(assignment, submission.email, {
+        clip: () => {
+          const file = submission.files?.[0];
+          return file && reviewedFile.revisionId ? {
+            revision: reviewedFile.revisionId, attachment: file.id, legacyFallback: !!assignment.fileControl,
+          } : null;
+        },
         valid,
         async prepare() {
           if (reviewedFile.historyPlayback) return;
@@ -9683,7 +9690,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       aiBtn.textContent = submission.aiGradingStatus === 'running' ? 'AI grading…' : (busy ? 'AI queued' : 'AI Grade');
       document.getElementById('submissionQuizGradeBtn').hidden = !submission.quizResponses?.length;
       document.getElementById('submissionFilesBtn').hidden = !submission.files?.length && !submission.history?.length;
-      document.getElementById('submissionDevelopmentBtn').hidden = !assignment.fileControl || currentOpenFile?.kind !== 'text';
+      document.getElementById('submissionDevelopmentBtn').hidden = !!assignment.gradingCompletedAt
+        || (!submission.files?.length && !submission.history?.length && !assignment.fileControl);
       panel.querySelector('.submission-more').hidden = [...panel.querySelectorAll('.submission-more-actions button')].every(button => button.hidden);
 
       const submitted = assignmentReviewSubmissions(assignment);
@@ -9768,9 +9776,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       ['submissionQuizGradeBtn', (a, s) => openQuizGradingModal(a.id || a.name, s.email)],
       ['submissionFilesBtn', (a, s) => window.AssignmentWorkflow.openFiles(a.id || a.name, s.email)],
       ['submissionDevelopmentBtn', (a, s) => {
-        const button = document.getElementById('submissionDevelopmentBtn');
-        if (button.getAttribute('aria-expanded') === 'true') window.AssignmentWorkflow.disposeEditorDevelopment();
-        else attachSubmissionDevelopment(a, s);
+        if (currentOpenFile?.kind !== 'text' || s.files?.length !== 1 || activeSubmissionContext.stale) {
+          window.AssignmentWorkflow.openDevelopment(a, s.email, activeSubmissionContext.revisionId);
+        } else if (document.getElementById('submissionDevelopmentBtn').getAttribute('aria-expanded') === 'true') {
+          window.AssignmentWorkflow.disposeEditorDevelopment();
+        } else {
+          attachSubmissionDevelopment(a, s);
+        }
       }],
     ]) {
       document.getElementById(id).addEventListener('click', event => {

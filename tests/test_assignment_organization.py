@@ -123,8 +123,8 @@ class AssignmentOrganizationTests(unittest.TestCase):
 
     def test_finalize_deletes_recordings_and_obsolete_bindings_but_not_submission_or_workspace(self):
         response=self.client.post('/api/assignments/create',headers=self.teacher_headers,json={
-            'name':'Controlled','task':'Print','classId':self.class_one,'fileControl':True})
-        assignment=response.get_json()['assignment']; assignment.update(active=True,releasedAt='2026-01-01T00:00:00Z'); eagle._save_assignment(assignment)
+            'name':'Controlled','task':'Print','classId':self.class_one})
+        assignment=response.get_json()['assignment']; assignment.update(fileControl=True,active=True,releasedAt='2026-01-01T00:00:00Z'); eagle._save_assignment(assignment)
         visible=next(row for row in self.client.get('/api/assignments',headers=self.student_headers).get_json()['assignments'] if row['id']==assignment['id'])
         path=visible['controlledFilePath']; code='print(42)'
         recorded=self.client.post('/api/assignments/development/record',headers=self.student_headers,json={
@@ -136,6 +136,7 @@ class AssignmentOrganizationTests(unittest.TestCase):
         saved=eagle._load_assignment(assignment['id']); snapshot=eagle._assignment_submission_path(saved,saved['submissions'][0]['submissionPath'])
         before=snapshot.read_bytes(); self.assertTrue(development._path(eagle,assignment['id']).exists())
         self.assertEqual(self.finalize(assignment).status_code,200)
+        eagle.workspace_history.maintenance(eagle)
         self.assertFalse(development._path(eagle,assignment['id']).exists()); self.assertIsNone(development.binding(eagle,assignment['id'],self.student_email))
         self.assertEqual(snapshot.read_bytes(),before); self.assertTrue((eagle._get_user_dir(self.student_email)/path).exists())
 
@@ -145,9 +146,12 @@ class AssignmentOrganizationTests(unittest.TestCase):
         self.assertEqual(self.finalize(assignment).status_code,409); self.assertFalse(eagle._load_assignment(assignment['id'])['gradingCompletedAt'])
         assignment['submissions'][0]['aiGradingStatus']=''; eagle._save_assignment(assignment)
         with patch.object(development,'purge',side_effect=OSError('locked')):
-            self.assertEqual(self.finalize(assignment).status_code,503)
+            self.assertEqual(self.finalize(assignment).get_json()['historyCleanup'],'pending')
+            with self.assertRaises(OSError):
+                eagle.workspace_history.maintenance(eagle)
         self.assertFalse(eagle._load_assignment(assignment['id'])['active'])
         self.assertEqual(self.finalize(assignment).status_code,200)
+        eagle.workspace_history.maintenance(eagle)
         self.assertEqual(self.finalize(assignment,self.student_headers).status_code,401)
 
     def test_class_delete_cleans_only_its_assignments_and_keeps_student_workspaces(self):
