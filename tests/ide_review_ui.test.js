@@ -8,6 +8,55 @@ function extract(source,name) {
   return source.slice(start,source.indexOf('\n    }',start)+6);
 }
 function deferred() {let resolve; const promise=new Promise(r=>resolve=r); return {promise,resolve};}
+test('review navigation uses the roster and includes every submitted format', async () => {
+  const first = {email:'zed@example.test', hasGradableFiles:true};
+  const second = {email:'ada@example.test', files:[{name:'photo.png'}], hasGradableFiles:false};
+  const third = {email:'ben@example.test', quizResponses:[{}]};
+  const assignment = {id:'a', targetClassId:'class', submissions:[third, second, first]};
+  const roster = [
+    {email:third.email, first_name:'Ben', last_name:'Dawson'},
+    {email:second.email, first_name:'Ada', last_name:'Chen'},
+    {email:'missing@example.test', first_name:'Lin', last_name:'Brown'},
+    {email:first.email, first_name:'Zed', last_name:'Adams'},
+  ];
+  const opened = [];
+  const context = {
+    teacherClasses:[{id:'class', students:roster}], activeSubmissionContext:{assignmentId:'a', studentEmail:first.email},
+    saveReviewedScore:async () => true,
+    getSubmissionForAssignment:(_id, email) => ({assignment, submission:assignment.submissions.find(row => row.email === email)}),
+    openAssignmentSubmission:async (id, email) => {opened.push(email); context.activeSubmissionContext = {assignmentId:id, studentEmail:email};},
+  };
+  vm.runInNewContext(['studentNameSort','assignmentRoster','assignmentReviewSubmissions','navigateAssignmentSubmission']
+    .map(name => extract(app,name)).join('\n'), context);
+  for (const direction of [1, 1, 1, -1, -1, -1]) await context.navigateAssignmentSubmission(direction);
+  assert.deepEqual(opened, [second.email, third.email, second.email, first.email]);
+});
+
+test('stream snapshots preserve scroll and cursor-only updates keep the document intact', () => {
+  let code = 'a\nb', scroll = {left:50, top:160}, marker = null, replacements = 0;
+  const cm = {
+    getScrollInfo:() => scroll, operation:update => update(),
+    scrollTo:(left, top) => {scroll = {left, top};},
+    getOption:() => 'python', getValue:() => code,
+    setValue:value => {code = value; scroll = {left:0, top:0}; replacements++;},
+    clearHistory(){}, removeLineClass:line => {assert.equal(line, marker); marker = null;},
+    addLineClass:line => {marker = {line}; return marker;},
+  };
+  const indicator = {};
+  const context = {
+    document:{getElementById:() => indicator}, initTeacherViewer:() => cm, teacherCursorMarker:null,
+    getLanguageInfoForKey:() => ({mode:'python'}),
+  };
+  vm.runInNewContext(extract(app,'applyTeacherCodeToViewer'), context);
+  context.applyTeacherCodeToViewer({code:'a\nb\nc', language:'python', cursorLine:2});
+  assert.deepEqual(scroll, {left:50, top:160});
+  assert.equal(marker.line, 2);
+  context.applyTeacherCodeToViewer({code, language:'python', cursorLine:0});
+  assert.equal(replacements, 1);
+  assert.equal(marker.line, 0);
+  assert.match(indicator.textContent, /Line 1$/);
+});
+
 test('late submission opens cannot overwrite edits or a changed teacher account',async()=>{
   for(const mutation of ['edit','account']) {
     const response=deferred();let value='teacher draft',token='teacher',requested=false;

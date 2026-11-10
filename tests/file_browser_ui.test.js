@@ -177,7 +177,7 @@ test('CSV opens fetch one bounded page; text and JSON opens fetch their source o
   })()`, { assert, window: {WorkspaceData:{jsonMode() {}}} });
 });
 
-test('unchanged editor languages preserve token state; language changes still apply', () => {
+test('workspace language changes leave the teacher stream in its broadcast language', () => {
   const modes = {student:'python', teacher:'python'}, changes = [];
   const makeEditor = name => ({getOption: () => modes[name], setOption(option, value) {changes.push([name,option,value]); modes[name] = value;}});
   vm.runInNewContext(`
@@ -189,5 +189,5 @@ test('unchanged editor languages preserve token state; language changes still ap
     assert.equal(changes.length,0);
     syncEditorLanguage('script.js'); syncEditorLanguage('script.js');
   `, {assert, changes, teacher:makeEditor('teacher'), window:{eagleEditor:makeEditor('student')}, document:{querySelector: () => null}});
-  assert.deepEqual(changes,[['student','mode','javascript'],['teacher','mode','javascript']]);
+  assert.deepEqual(changes,[['student','mode','javascript']]);
 });

@@ -73,9 +73,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let fileArtifactPreviewRequestId = 0;
     let fileArtifactDatabaseItem = null;
     let fileArtifactDatabaseMetadata = {};
-    let lastTeacherCodeSnapshot = '';
-    let _pendingTeacherCode = null;
-    let _pendingTeacherLanguage = '';
+    let pendingTeacherSnapshot = null;
+    let teacherStreamScope = '';
+    let teacherCursorMarker = null;
     let _teacherCodeFlushRaf = null;
     let errorLineMarkers = []; // Track error line highlights
     let waitingForUserInput = false; // Track if we're waiting for user input
@@ -88,8 +88,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let _workspaceTab = WORKSPACE_TAB_EDITOR;
     let teacherBroadcastActive = false;
     let teacherBroadcastFlushTimer = null;
-    let lastBroadcastedCode = '';
-    let lastBroadcastedLanguage = 'python';
+    let lastTeacherBroadcast = null;
     const LANGUAGE_INFO = {
       python: { mode: 'python', label: 'Python', highlight: 'python' },
       javascript: { mode: 'javascript', label: 'JavaScript', highlight: 'javascript' },
@@ -288,7 +287,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       // Setting an unchanged CodeMirror mode still clears token state and
       // restarts editor feedback. File opens call this from several UI helpers.
       try { if (window.eagleEditor?.getOption('mode') !== info.mode) window.eagleEditor?.setOption('mode', info.mode); } catch {}
-      try { if (teacherEditor?.getOption('mode') !== info.mode) teacherEditor?.setOption('mode', info.mode); } catch {}
       const editorHeader = document.querySelector('#editorPanel header');
       if (editorHeader) {
         editorHeader.setAttribute('aria-label', `Code editor with ${info.label} syntax highlighting`);
@@ -826,30 +824,43 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
     window.ensureEditorTabForTeacherStream = ensureEditorTabForTeacherStream;
 
-    function applyTeacherCodeToViewer(code, language) {
-      if (typeof code !== 'string' || document.hidden) return;
-      initTeacherViewer();
-      const modeInfo = getLanguageInfoForKey(language);
-      try { teacherEditor?.setOption('mode', modeInfo.mode); } catch {}
-      if (teacherEditor) teacherEditor.setValue(code);
-      const ta = document.getElementById('teacherStreamEditor');
-      if (ta && !teacherEditor) ta.value = code;
+    function applyTeacherCodeToViewer({ code, language, cursorLine }) {
+      const cm = initTeacherViewer();
+      const indicator = document.getElementById('teacherStreamCursor');
+      indicator.textContent = cursorLine == null ? 'Teacher stream' : `Teacher cursor · Line ${cursorLine + 1}`;
+      if (cm) {
+        const scroll = cm.getScrollInfo();
+        const mode = getLanguageInfoForKey(language).mode;
+        cm.operation(() => {
+          if (cm.getOption('mode') !== mode) cm.setOption('mode', mode);
+          if (teacherCursorMarker) cm.removeLineClass(teacherCursorMarker, 'background', 'teacher-stream-cursor-line');
+          if (cm.getValue() !== code) {
+            cm.setValue(code);
+            cm.clearHistory();
+          }
+          teacherCursorMarker = cursorLine == null ? null : cm.addLineClass(cursorLine, 'background', 'teacher-stream-cursor-line');
+          cm.scrollTo(scroll.left, scroll.top);
+        });
+      } else {
+        const textarea = document.getElementById('teacherStreamEditor');
+        if (textarea.value === code) return;
+        const { scrollTop, scrollLeft } = textarea;
+        textarea.value = code;
+        textarea.scrollTop = scrollTop;
+        textarea.scrollLeft = scrollLeft;
+      }
     }
 
     function flushPendingTeacherStream() {
       _teacherCodeFlushRaf = null;
-      if (!teacherPaneOpen || document.hidden || _pendingTeacherCode == null) return;
-      applyTeacherCodeToViewer(_pendingTeacherCode, _pendingTeacherLanguage);
+      if (!teacherPaneOpen || document.hidden || _workspaceTab === WORKSPACE_TAB_FILES) return;
+      applyTeacherCodeToViewer(pendingTeacherSnapshot || { code: '', language: 'python', cursorLine: null });
     }
     window.applyPendingTeacherStream = flushPendingTeacherStream;
 
-    function queueTeacherStreamCode(code, language, applyToViewer) {
-      if (typeof code !== 'string' || code === lastTeacherCodeSnapshot) return;
-      lastTeacherCodeSnapshot = code;
-      _pendingTeacherCode = code;
-      _pendingTeacherLanguage = language || _pendingTeacherLanguage || 'python';
-      try { localStorage.setItem(TEACHER_CODE_KEY, code); } catch {}
-      if (!applyToViewer || !teacherPaneOpen || document.hidden) return;
+    function queueTeacherStreamCode(snapshot) {
+      pendingTeacherSnapshot = snapshot;
+      if (!teacherPaneOpen || document.hidden || _workspaceTab === WORKSPACE_TAB_FILES) return;
       if (!_teacherCodeFlushRaf) {
         _teacherCodeFlushRaf = requestAnimationFrame(flushPendingTeacherStream);
       }
@@ -864,15 +875,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         ensureEditorTabForTeacherStream();
         if (!teacherPaneOpen) setTeacherPaneOpen(true);
       }
-      if (teacherPaneOpen) {
-        if (_pendingTeacherCode != null) flushPendingTeacherStream();
-        else {
-          try {
-            const saved = localStorage.getItem(TEACHER_CODE_KEY);
-            if (saved !== null) queueTeacherStreamCode(saved, _pendingTeacherLanguage, true);
-          } catch {}
-        }
-      }
+      if (teacherPaneOpen) flushPendingTeacherStream();
       updateTeacherStreamToggleState();
     }
 
@@ -883,6 +886,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       teacherStreamLiveClasses[msg.class_id] = isLive;
       const selectedClassId = getCurrentClassContext()?.id;
       if (selectedClassId !== msg.class_id) return;
+      if (!isLive && pendingTeacherSnapshot) queueTeacherStreamCode({ ...pendingTeacherSnapshot, cursorLine: null });
       if (isStudentViewer() && isLive && !wasLive) presentTeacherStreamForStudent(true);
       updateTeacherStreamToggleState();
     }
@@ -1294,6 +1298,21 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     function updateTeacherStreamPaneVisibility() {
       const classCtx = getCurrentClassContext();
       const isStudentInClass = !!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && !WIKI_MANAGER_TOKEN && !!classCtx && canCurrentUserAccessIDE();
+      const scope = isStudentInClass ? JSON.stringify([USER_TOKEN, classCtx.id]) : '';
+      if (scope !== teacherStreamScope) {
+        teacherStreamScope = scope;
+        pendingTeacherSnapshot = null;
+        if (teacherEditor) {
+          if (teacherCursorMarker) teacherEditor.removeLineClass(teacherCursorMarker, 'background', 'teacher-stream-cursor-line');
+          teacherEditor.setValue('');
+          teacherEditor.clearHistory();
+        }
+        const textarea = document.getElementById('teacherStreamEditor');
+        if (textarea) textarea.value = '';
+        const indicator = document.getElementById('teacherStreamCursor');
+        if (indicator) indicator.textContent = 'Teacher stream';
+        teacherCursorMarker = null;
+      }
       setTeacherPaneEnabled(isStudentInClass);
       updateTeacherStreamToggleState();
       if (isStudentInClass) syncEditorLanguage(currentOpenFile?.name || '');
@@ -1764,7 +1783,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           if (!msg || typeof msg.code !== 'string' || !msg.class_id) return;
           if (msg.class_id !== getCurrentClassContext()?.id) return;
           if (!isStudentViewer()) return;
-          queueTeacherStreamCode(msg.code, msg.language, teacherPaneOpen);
+          queueTeacherStreamCode(msg);
         });
         socket.on('teacher_stream_status', handleTeacherStreamStatus);
         socket.on('class_presence_updated', (data) => {
@@ -3457,30 +3476,30 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const currentCode = editor.getValue();
       const langInfo = getActiveLanguageInfo();
       const language = langInfo?.highlight || 'python';
-      if (!force && currentCode === lastBroadcastedCode && language === lastBroadcastedLanguage) return;
-      lastTeacherCodeSnapshot = currentCode;
-      try { localStorage.setItem(TEACHER_CODE_KEY, currentCode); } catch(e) {}
+      const cursorLine = window.eagleEditor?.getCursor().line
+        ?? (currentCode.slice(0, document.getElementById('editor').selectionEnd).match(/\n/g) || []).length;
+      const last = lastTeacherBroadcast;
+      if (!force && last?.code === currentCode && last.language === language && last.cursorLine === cursorLine && last.classId === activeClassId) return;
       socket.emit('teacher_code_update', {
         token,
         role,
         class_id: activeClassId,
         code: currentCode,
-        language
+        language,
+        cursorLine
       });
-      lastBroadcastedCode = currentCode;
-      lastBroadcastedLanguage = language;
+      lastTeacherBroadcast = { code: currentCode, language, cursorLine, classId: activeClassId };
     }
 
     function scheduleTeacherBroadcastFlush(force = false) {
       if (!teacherStreamingEnabled || !teacherBroadcastActive) return;
-      if (teacherBroadcastFlushTimer) {
+      if (force) {
         clearTimeout(teacherBroadcastFlushTimer);
         teacherBroadcastFlushTimer = null;
-      }
-      if (force) {
         flushTeacherBroadcast(true);
         return;
       }
+      if (teacherBroadcastFlushTimer) return;
       teacherBroadcastFlushTimer = setTimeout(() => {
         teacherBroadcastFlushTimer = null;
         flushTeacherBroadcast(false);
@@ -3491,12 +3510,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (teacherBroadcastActive || !TEACHER_TOKEN) return;
       const classId = getCurrentClassContext()?.id;
       if (!classId) return;
-      const initialCode = editor.getValue();
-      const initialLangInfo = getActiveLanguageInfo();
-      lastTeacherCodeSnapshot = initialCode;
-      lastBroadcastedCode = initialCode;
-      lastBroadcastedLanguage = initialLangInfo?.highlight || 'python';
-      try { localStorage.setItem(TEACHER_CODE_KEY, initialCode); } catch(e) {}
+      teacherBroadcastActive = true;
       if (socket) {
         socket.emit('teacher_stream_status', {
           token: TEACHER_TOKEN,
@@ -3504,15 +3518,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           class_id: classId,
           active: true
         });
-        socket.emit('teacher_code_update', {
-          token: TEACHER_TOKEN,
-          role: 'teacher',
-          class_id: classId,
-          code: initialCode,
-          language: lastBroadcastedLanguage
-        });
       }
-      teacherBroadcastActive = true;
+      flushTeacherBroadcast(true);
     }
     
     function stopTeacherBroadcast() {
@@ -3536,8 +3543,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     if (window.eagleEditor) {
       window.eagleEditor.on('change', () => scheduleTeacherBroadcastFlush(false));
+      window.eagleEditor.on('cursorActivity', () => scheduleTeacherBroadcastFlush(false));
     } else {
-      document.getElementById('editor')?.addEventListener('input', () => scheduleTeacherBroadcastFlush(false));
+      for (const event of ['input', 'keyup', 'pointerup']) {
+        document.getElementById('editor')?.addEventListener(event, () => scheduleTeacherBroadcastFlush(false));
+      }
     }
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) {
@@ -3914,7 +3924,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           modal.style.display = 'none';
           modal.classList.remove('is-minimized');
           const minimizedBar = document.getElementById('teacherDashMinimizedBar');
-          if (minimizedBar) minimizedBar.hidden = true;
+          if (minimizedBar) minimizedBar.hidden = !activeSubmissionContext;
           stopTeacherDashboardRosterPolling();
           syncAssignmentAiPolling();
         };
@@ -4208,8 +4218,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     document.getElementById('teacherDashboardBtn')?.addEventListener('click', () => {
       openTeacherDashboard('dash-reports');
     });
-    document.getElementById('teacherDashRestoreBtn')?.addEventListener('click', () => {
-      openTeacherDashboard('dash-assignments');
+    document.getElementById('teacherDashRestoreBtn')?.addEventListener('click', async () => {
+      if (await saveReviewedScore()) openTeacherDashboard('dash-assignments');
     });
 
 
@@ -5882,6 +5892,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         requestAnimationFrame(() => {
           try { window.eagleEditor?.refresh?.(); } catch {}
           try { teacherEditor?.refresh?.(); } catch {}
+          if (teacherPaneOpen) flushPendingTeacherStream();
         });
       }
     }
@@ -6695,8 +6706,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       window.AssignmentWorkflow?.syncEditorDevelopment?.(currentOpenFile);
       const el = document.getElementById('activeFileName');
       if (el) el.textContent = currentOpenFile ? currentOpenFile.name : '';
-      const minimizedBar = document.getElementById('teacherDashMinimizedBar');
-      if (minimizedBar && !currentOpenFile?.submission) minimizedBar.hidden = true;
+      if (activeSubmissionContext && !currentOpenFile?.submission) hideSubmissionScoringPanel();
       if (typeof socket !== 'undefined' && socket.connected) socket.emit('workspace_file_opened', {name: currentOpenFile && !currentOpenFile.audit && !currentOpenFile.submission ? currentOpenFile.name : ''});
       if (!currentOpenFile || !currentOpenFile.name?.toLowerCase().endsWith('.json')) window.WorkspaceData?.jsonMode(false);
       const saveDraftBtn = document.getElementById('saveDraftBtn');
@@ -7690,7 +7700,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let isAdmin = false;
     let currentAdminAssignmentName = null; // Stable assignment ID; legacy name fallback is accepted.
     let activeSubmissionContext = null;
-    let submissionSaveTimer = null;
     let assignmentAiPollTimer = null;
     let assignmentsLoadPromise = null;
     let assignmentsReloadQueued = false;
@@ -7890,15 +7899,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     function hideSubmissionScoringPanel() {
       window.AssignmentWorkflow?.disposeEditorDevelopment?.();
+      activeSubmissionContext?.disposeFiles?.();
       const minimizedBar = document.getElementById('teacherDashMinimizedBar');
       if (minimizedBar) minimizedBar.hidden = true;
       activeSubmissionContext = null;
-      if (submissionSaveTimer) {
-        clearTimeout(submissionSaveTimer);
-        submissionSaveTimer = null;
-      }
       const panel = document.getElementById('submissionScoringPanel');
-      if (panel) panel.style.display = 'none';
+      if (panel) panel.hidden = true;
       const input = document.getElementById('submissionScoreInput');
       if (input) input.value = '';
       const status = document.getElementById('submissionScoreSaveStatus');
@@ -7917,6 +7923,22 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (!assignment) return { assignment: null, submission: null };
       const submission = (assignment.submissions || []).find(s => (s.email || '').toLowerCase() === (email || '').toLowerCase());
       return { assignment, submission };
+    }
+
+    function assignmentRoster(assignment) {
+      const submissionsByEmail = new Map((assignment.submissions || []).map(sub => [String(sub.email || '').toLowerCase(), sub]));
+      const roster = [...(teacherClasses.find(c => c.id === assignment.targetClassId)?.students || [])];
+      const enrolled = new Set(roster.map(student => String(student.email || '').toLowerCase()));
+      for (const [email, sub] of submissionsByEmail) {
+        if (!enrolled.has(email)) roster.push({ email: sub.email, name: sub.name || sub.email });
+      }
+      roster.sort(studentNameSort);
+      return { roster, submissionsByEmail };
+    }
+
+    function assignmentReviewSubmissions(assignment) {
+      const { roster, submissionsByEmail } = assignmentRoster(assignment);
+      return roster.map(student => submissionsByEmail.get(String(student.email || '').toLowerCase())).filter(Boolean);
     }
 
     function assignmentRequestPayload(assignment, extra = {}) {
@@ -7960,8 +7982,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         return;
       }
       currentAdminAssignmentName = assignment.id || assignment.name;
-      populateSubmissionScoringPanel(assignment, submission);
+      populateSubmissionScoringPanel(assignment, submission, submission.revisionId ?? null);
       renderAdminAssignments();
+      minimizeTeacherDashboardForSubmission(assignment, submission);
     }
 
     async function loadAssignments() {
@@ -7971,11 +7994,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
       assignmentsLoadPromise = (async () => {
       try {
-        const headers = TEACHER_TOKEN
-          ? { 'X-Teacher-Token': TEACHER_TOKEN }
-          : (USER_TOKEN ? { 'X-User-Token': USER_TOKEN } : {});
+        const teacherToken = TEACHER_TOKEN, userToken = USER_TOKEN;
+        const headers = teacherToken
+          ? { 'X-Teacher-Token': teacherToken }
+          : (userToken ? { 'X-User-Token': userToken } : {});
         const resp = await fetch('/api/assignments', { headers });
         const data = await resp.json().catch(() => ({}));
+        if (teacherToken !== TEACHER_TOKEN || userToken !== USER_TOKEN) return;
         if (!data.ok) {
           currentAssignments = [];
           isAdmin = false;
@@ -8216,15 +8241,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       detail.dataset.rubricContext = assignment.aiGradingRubricContext || '';
 
       const submissions = [...(assignment.submissions || [])];
-      const submissionsByEmail = new Map(submissions.map(sub => [String(sub.email || '').toLowerCase(), sub]));
-      const targetClass = teacherClasses.find(c => c.id === assignment.targetClassId);
-      const roster = [...(targetClass?.students || [])];
-      submissions.forEach(sub => {
-        if (!roster.some(student => String(student.email || '').toLowerCase() === String(sub.email || '').toLowerCase())) {
-          roster.push({ email: sub.email, name: sub.name || sub.email });
-        }
-      });
-      roster.sort(studentNameSort);
+      const { roster, submissionsByEmail } = assignmentRoster(assignment);
       const pendingCount = submissions.filter(sub => ['queued', 'running'].includes(sub.aiGradingStatus)).length;
       const gradingMode = ['legacy', 'rubric_beta', 'external'].includes(assignment.aiGradingMode) ? assignment.aiGradingMode : 'legacy';
       const selectedGradingCriteria = Array.isArray(assignment.aiGradingCriteria) ? assignment.aiGradingCriteria : [];
@@ -8335,11 +8352,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
                 ${studentNameCells(student, sub.hasPastedText)}
                 <td>${sub.withdrawn ? 'Un-submitted' : '<span class="assignment-submitted-check" aria-label="Submitted">✓</span> Turned in'}${aiStatus ? `<div><span class="assignment-ai-status ${escapeHtml(aiStatus)}">${escapeHtml(aiStatus)}</span></div>` : ''}${sub.aiGradingError ? `<div class="assignment-not-turned-in">${escapeHtml(sub.aiGradingError)}</div>` : ''}</td>
                 <td>${window.AssignmentWorkflow.teacherFiles(assignment, sub)}</td>
-                <td>${assignment.allowFileSubmission === false ? '—' : `<input class="assignment-grade-input" type="number" min="0" max="${assignment.maxScore || 0}" step="1" value="${sub.codeScore ?? sub.score ?? ''}" data-email="${escapeHtml(sub.email)}" aria-label="Score for ${escapeHtml(sub.name || sub.email)}"><div class="meta">${sub.manualScoreOverride ? 'Manual override' : (sub.aiSuggestedScore !== null && sub.aiSuggestedScore !== undefined ? `${sub.gradingSource === 'external' ? 'External' : 'AI'} ${sub.aiSuggestedScore}` : '')}</div>`}</td>
+                <td>${assignment.allowFileSubmission === false ? '—' : `<input class="assignment-grade-input" type="number" min="0" max="${assignment.maxScore || 0}" step="0.01" value="${sub.codeScore ?? sub.score ?? ''}" data-email="${escapeHtml(sub.email)}" aria-label="Score for ${escapeHtml(sub.name || sub.email)}"><div class="meta" role="status">${sub.manualScoreOverride ? 'Manual override' : (sub.aiSuggestedScore !== null && sub.aiSuggestedScore !== undefined ? `${sub.gradingSource === 'external' ? 'External' : 'AI'} ${sub.aiSuggestedScore}` : '')}</div>`}</td>
                 <td>${assignmentScoreValue(sub) ?? '—'} / ${assignmentTotalMaxScore(assignment)}<div class="meta">${assignmentPercentValue(sub, assignment) ?? '—'}</div></td>
                 <td><div style="display:flex; gap:6px; flex-wrap:wrap;">
                   ${!isCoTeacher() ? `<button type="button" class="btn secondary assignment-extend-student" data-email="${escapeHtml(sub.email)}">Extend…</button>` : ''}
-                  ${assignment.allowFileSubmission === false ? '' : `<button class="btn secondary open-submission-btn" data-email="${escapeHtml(sub.email)}">Open</button>${gradingMode === 'external' ? '' : `<button class="btn secondary ai-grade-submission-btn" data-email="${escapeHtml(sub.email)}" ${['queued', 'running'].includes(aiStatus) || aiGradingDisabled || sub.withdrawn || !(sub.hasGradableFiles ?? sub.code) ? 'disabled' : ''} ${aiGradingDisabled ? 'title="Accept a current beta rubric before grading"' : ''}>AI Grade</button>`}`}
+                  <button class="btn secondary open-submission-btn" data-email="${escapeHtml(sub.email)}">Review</button>
+                  ${assignment.allowFileSubmission === false || gradingMode === 'external' ? '' : `<button class="btn secondary ai-grade-submission-btn" data-email="${escapeHtml(sub.email)}" ${['queued', 'running'].includes(aiStatus) || aiGradingDisabled || sub.withdrawn || !(sub.hasGradableFiles ?? sub.code) ? 'disabled' : ''} ${aiGradingDisabled ? 'title="Accept a current beta rubric before grading"' : ''}>AI Grade</button>`}
                   ${assignment.quiz?.questions?.length ? `<button class="btn secondary grade-quiz-btn" data-email="${escapeHtml(sub.email)}">Grade Quiz</button>` : ''}
                   ${assignment.quiz?.questions?.length ? `<button class="btn secondary reset-quiz-counter-btn" data-email="${escapeHtml(sub.email)}">Reset Attempts</button>` : ''}
                   <button type="button" class="btn secondary assignment-edit-feedback" data-email="${escapeHtml(sub.email)}">Edit feedback</button>
@@ -8432,10 +8450,16 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       detail.querySelectorAll('.grade-quiz-btn').forEach(btn => btn.addEventListener('click', () => openQuizGradingModal(assignment.id || assignment.name, btn.dataset.email)));
       detail.querySelectorAll('.reset-quiz-counter-btn').forEach(btn => btn.addEventListener('click', () => resetQuizCounter(assignment.id || assignment.name, btn.dataset.email)));
       detail.querySelectorAll('.assignment-grade-input').forEach(input => {
-        let timer = null;
-        input.addEventListener('input', () => {
-          if (timer) clearTimeout(timer);
-          timer = setTimeout(() => saveSubmissionScore(assignment.id || assignment.name, input.dataset.email, input.value), 500);
+        input.addEventListener('change', async () => {
+          if (!input.reportValidity()) return;
+          const sub = submissionsByEmail.get(input.dataset.email.toLowerCase());
+          const status = input.nextElementSibling;
+          input.disabled = true;
+          try {
+            if (await saveSubmissionScore(assignment, sub, input.value, status)) await loadAssignments();
+          } finally {
+            input.disabled = false;
+          }
         });
       });
       window.TeacherAssignments?.decorate({ list, detail, assignment, roster, owner: !isCoTeacher(), scoreOf: assignmentScoreValue });
@@ -9367,7 +9391,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       stopTeacherDashboardRosterPolling();
       bar.hidden = false;
       if (label) {
-        label.textContent = `${assignment.name} · ${submission.name || submission.email}`;
+        label.textContent = `${submission.name || submission.email} · ${assignment.name}`;
         label.title = label.textContent;
       }
     }
@@ -9376,10 +9400,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const { assignment, submission } = getSubmissionForAssignment(assignmentReference, email);
       if (!assignment || !submission) return;
       currentAdminAssignmentName = assignment.id || assignment.name;
-      if ((submission.files || []).length > 1 || !(assignment.fileControl ? /\.(py|js|html|css)$/i : /\.(py|js)$/i).test(submission.submittedFileName || 'submission.py')) {
-        await window.AssignmentWorkflow.openFiles(assignment.id, submission.email || email);
-        return;
-      }
       window.AssignmentWorkflow?.pauseEditorDevelopment?.();
       if (!await saveCurrentFile()) {
         alert('Your current file could not be saved before opening the submission.');
@@ -9388,10 +9408,17 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const requestId = ++fileOpenRequestId;
       const requestContext = JSON.stringify(assignmentManagerHeaders());
       const previousFile = currentOpenFile, previousContent = editor.getValue();
+      const sourceName = submission.submittedFileName || submission.files?.[0]?.name
+        || (submission.hasGradableFiles || submission.code ? 'submission.py' : '');
+      const useEditor = assignment.allowFileSubmission !== false && (submission.files || []).length <= 1
+        && (assignment.fileControl ? /\.(py|js|html|css)$/i : /\.(py|js)$/i).test(sourceName);
       try {
-        const query = new URLSearchParams({ assignmentId: assignment.id || assignment.name, studentEmail: submission.email || email });
-        const response = await fetch(`/api/assignments/submission?${query.toString()}`, { headers: assignmentManagerHeaders() });
-        const result = await response.json().catch(() => ({}));
+        let result = { ok: true, fileName: sourceName || 'Submitted work', revisionId: submission.revisionId };
+        if (useEditor) {
+          const query = new URLSearchParams({ assignmentId: assignment.id || assignment.name, studentEmail: submission.email || email });
+          const response = await fetch(`/api/assignments/submission?${query.toString()}`, { headers: assignmentManagerHeaders() });
+          result = await response.json().catch(() => ({}));
+        }
         if (requestId !== fileOpenRequestId || requestContext !== JSON.stringify(assignmentManagerHeaders())
             || currentOpenFile !== previousFile || editor.getValue() !== previousContent) return;
         if (!result.ok) {
@@ -9399,21 +9426,21 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           return;
         }
         currentOpenFile = {
-          name: result.fileName || submission.submittedFileName || 'submission.py',
+          name: result.fileName || sourceName,
           submission: true,
           assignmentId: assignment.id || assignment.name,
           studentEmail: submission.email || email,
           revisionId: result.revisionId,
-          readOnly: !/\.(py|js)$/i.test(result.fileName || submission.submittedFileName || 'submission.py'),
+          readOnly: !useEditor || !/\.(py|js)$/i.test(result.fileName || sourceName),
           pasteRanges: result.pasteRanges || [],
-          kind: 'text',
+          kind: useEditor ? 'text' : 'submission-preview',
         };
         clearFileArtifactPreview();
         setCsvMode(false);
-        editor.setValue(result.content || submission.code || '');
+        editor.setValue(useEditor ? (result.content ?? submission.code ?? '') : '');
         window.AssignmentWorkflow.highlightEditor(result.pasteRanges || []);
         currentBufferDirty = false;
-        syncEditorLanguage(result.fileName || submission.submittedFileName || 'submission.py');
+        syncEditorLanguage(currentOpenFile.name);
         setMainEditorReadOnly(currentOpenFile.readOnly || isCoTeacher());
         updateActiveFileName();
         updateEditorOverlay();
@@ -9423,10 +9450,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         alert('Network error while opening submission.');
         return;
       }
-      populateSubmissionScoringPanel(assignment, submission);
-      attachSubmissionDevelopment(assignment, submission);
+      populateSubmissionScoringPanel(assignment, submission, currentOpenFile.revisionId ?? null);
+      if (!useEditor) {
+        activeSubmissionContext.disposeFiles = window.AssignmentWorkflow.mountReviewFiles(
+          document.getElementById('submissionAttachmentPreview'), assignment, submission);
+      }
       renderAdminAssignments();
       minimizeTeacherDashboardForSubmission(assignment, submission);
+      if (activeSubmissionContext?.stale) loadAssignments();
     }
 
     function attachSubmissionDevelopment(assignment, submission) {
@@ -9590,97 +9621,164 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
     }
 
-    function populateSubmissionScoringPanel(assignment, submission) {
-      activeSubmissionContext = { assignmentId: assignment.id || assignment.name, assignmentName: assignment.name, studentEmail: submission.email };
-      const panel = document.getElementById('submissionScoringPanel');
-      const title = document.getElementById('submissionScoringTitle');
-      const meta = document.getElementById('submissionScoringMeta');
-      const quiz = document.getElementById('submissionQuizSummary');
-      const totals = document.getElementById('submissionScoreTotals');
+    function populateSubmissionScoringPanel(assignment, submission, revisionId) {
       const input = document.getElementById('submissionScoreInput');
+      const status = document.getElementById('submissionScoreSaveStatus');
+      const panel = document.getElementById('submissionScoringPanel');
+      const serverScore = String(submission.codeScore ?? submission.score ?? '');
+      if (revisionId !== undefined) {
+        hideSubmissionScoringPanel();
+        activeSubmissionContext = {
+          assignmentId: assignment.id || assignment.name, studentEmail: submission.email,
+          revisionId, savedScore: serverScore,
+        };
+        input.value = serverScore;
+        panel.querySelector('.submission-more').open = false;
+      }
+      const review = activeSubmissionContext;
+      if (!review) return;
+      panel.hidden = false;
+      review.stale = review.revisionId !== (submission.revisionId ?? null);
+      if (!review.stale && !review.saving && input.value === review.savedScore && !input.validity.badInput) {
+        input.value = review.savedScore = serverScore;
+      }
+      if (review.stale) status.textContent = 'A newer submission is available. Reopen it to grade.';
+      const busy = ['queued', 'running'].includes(submission.aiGradingStatus);
+      const codeScoring = assignment.allowFileSubmission !== false;
+      const maxScore = assignment.maxScore ?? 0;
+      document.getElementById('submissionScoreForm').hidden = !codeScoring;
+      input.max = String(maxScore);
+      input.disabled = review.stale || busy || !!review.saving;
+      input.title = busy ? 'Wait for AI grading to finish or cancel it in the queue' : 'Leave blank and save to clear the code grade';
+      document.getElementById('submissionScoreMax').textContent = '/ ' + maxScore;
+      document.getElementById('submissionScoreSaveBtn').disabled = input.disabled;
+      document.getElementById('submissionFeedbackBtn').disabled = review.stale;
+      const quizScore = submission.quizScore;
+      const total = assignmentScoreValue(submission);
+      document.getElementById('submissionScoreTotals').textContent = quizScore == null
+        ? (total == null ? 'Ungraded' : '')
+        : 'Quiz ' + quizScore + ' / ' + (assignment.quiz?.totalPoints || 0)
+          + (codeScoring ? ' · Total ' + total + ' / ' + assignmentTotalMaxScore(assignment) : '');
       const aiBtn = document.getElementById('submissionAiGradeBtn');
-      const feedback = document.getElementById('submissionAiFeedback');
-      const maxScore = assignment.maxScore || 100;
-      const maxTotal = assignmentTotalMaxScore(assignment);
-      panel.style.display = 'flex';
-      title.innerHTML = `
-        <span class="submission-scoring-line assignment">${escapeHtml(assignment.name || 'Assignment')}</span>
-        <span class="submission-scoring-line student">${escapeHtml(submission.name || submission.email || 'Student')}</span>
-      `;
-      meta.innerHTML = `File: <strong>${escapeHtml(submission.submittedFileName || '—')}</strong><br>Submitted: ${escapeHtml(submission.submittedAt || '—')}`;
-      if (submission.quizScore !== null && submission.quizScore !== undefined) {
-        quiz.style.display = 'block';
-        quiz.textContent = `Quiz score: ${submission.quizScore}${assignment.quiz?.totalPoints ? ` / ${assignment.quiz.totalPoints}` : ''}`;
-      } else {
-        quiz.style.display = 'none';
-        quiz.textContent = '';
-      }
-      input.max = String(assignment.allowFileSubmission === false ? 0 : maxScore);
-      input.disabled = assignment.allowFileSubmission === false;
-      input.value = submission.codeScore ?? submission.score ?? '';
-      totals.textContent = `Code max ${assignment.allowFileSubmission === false ? 0 : maxScore} · Total max ${maxTotal}${submission.totalScore !== null && submission.totalScore !== undefined ? ` · Total ${submission.totalScore}` : ''}`;
-      aiBtn.style.display = (currentConfig?.ai_explainer_enabled && assignment.allowFileSubmission !== false) ? '' : 'none';
-      aiBtn.disabled = ['queued', 'running'].includes(submission.aiGradingStatus);
-      aiBtn.textContent = submission.aiGradingStatus === 'running' ? 'AI Grading…' : (submission.aiGradingStatus === 'queued' ? 'AI Queued' : 'AI Grade');
-      if (feedback) {
-        feedback.style.display = submission.aiFeedback ? '' : 'none';
-        feedback.innerHTML = submission.aiFeedback ? renderAssignmentAiFeedback(submission.aiFeedback) : '';
-      }
-      const submitted = (assignment.submissions || []).filter(row => !row.withdrawn && ((assignment.fileControl && row.submittedFileName) || (row.hasGradableFiles ?? row.code))).sort((a, b) => String(a.name || a.email || '').localeCompare(String(b.name || b.email || ''), undefined, { sensitivity: 'base' }));
-      const index = submitted.findIndex(row => String(row.email || '').toLowerCase() === String(submission.email || '').toLowerCase());
-      const previousDisabled = index <= 0;
-      const nextDisabled = index < 0 || index >= submitted.length - 1;
-      ['previousSubmissionBtn', 'teacherDashPreviousSubmissionBtn'].forEach((id) => {
-        const button = document.getElementById(id);
-        if (button) button.disabled = previousDisabled;
-      });
-      ['nextSubmissionBtn', 'teacherDashNextSubmissionBtn'].forEach((id) => {
-        const button = document.getElementById(id);
-        if (button) button.disabled = nextDisabled;
-      });
-      document.getElementById('submissionScoreSaveStatus').textContent = '';
+      aiBtn.hidden = !currentConfig?.ai_explainer_enabled || !codeScoring || assignment.aiGradingMode === 'external'
+        || submission.withdrawn || !(submission.hasGradableFiles ?? submission.code);
+      aiBtn.disabled = busy || review.stale || (assignment.aiGradingMode === 'rubric_beta' && !assignment.aiGradingRubricContext);
+      aiBtn.textContent = submission.aiGradingStatus === 'running' ? 'AI grading…' : (busy ? 'AI queued' : 'AI Grade');
+      document.getElementById('submissionQuizGradeBtn').hidden = !submission.quizResponses?.length;
+      document.getElementById('submissionFilesBtn').hidden = !submission.files?.length && !submission.history?.length;
+      document.getElementById('submissionDevelopmentBtn').hidden = !assignment.fileControl || currentOpenFile?.kind !== 'text';
+      panel.querySelector('.submission-more').hidden = [...panel.querySelectorAll('.submission-more-actions button')].every(button => button.hidden);
+
+      const submitted = assignmentReviewSubmissions(assignment);
+      const index = submitted.indexOf(submission);
+      document.getElementById('submissionReviewPosition').textContent = index < 0 ? '' : (index + 1) + ' / ' + submitted.length;
+      document.getElementById('teacherDashPreviousSubmissionBtn').disabled = index <= 0;
+      document.getElementById('teacherDashNextSubmissionBtn').disabled = index < 0 || index >= submitted.length - 1;
     }
 
-    async function saveSubmissionScore(assignmentReference, email, rawScore) {
-      const status = document.getElementById('submissionScoreSaveStatus');
-      const parsedScore = rawScore === '' ? null : Number(rawScore);
-      if (rawScore !== '' && Number.isNaN(parsedScore)) {
-        status.textContent = 'Enter a valid score.';
-        return;
-      }
+    async function saveSubmissionScore(assignment, submission, rawScore, status) {
+      const headers = assignmentManagerHeaders();
+      const currentAccount = () => JSON.stringify(headers) === JSON.stringify(assignmentManagerHeaders());
       status.textContent = 'Saving…';
       try {
-        const response = await fetch('/api/assignments/score', {
+        const response = await fetchWithDeadline('/api/assignments/score', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...assignmentManagerHeaders() },
-          body: JSON.stringify(assignmentRequestPayload(getAssignmentByName(assignmentReference), { studentEmail: email, score: parsedScore }))
-        });
+          headers: { 'Content-Type': 'application/json', ...headers },
+          body: JSON.stringify(assignmentRequestPayload(assignment, {
+            studentEmail: submission.email, revisionId: submission.revisionId ?? null,
+            score: rawScore === '' ? null : Number(rawScore),
+          })),
+        }, 10000);
         const result = await response.json().catch(() => ({}));
+        if (!currentAccount()) return null;
         if (!result.ok) {
           status.textContent = result.error || 'Failed to save score.';
-          return;
+          return null;
         }
-        status.textContent = 'Saved automatically.';
-        await loadAssignments();
-      } catch (error) {
-        status.textContent = 'Network error while saving.';
+        status.textContent = result.score === null ? 'Code grade cleared.' : 'Score saved.';
+        return result;
+      } catch {
+        if (currentAccount()) status.textContent = 'Network error while saving.';
+        return null;
       }
     }
 
-    document.getElementById('submissionScoreInput').addEventListener('input', (e) => {
-      if (!activeSubmissionContext) return;
-      if (submissionSaveTimer) clearTimeout(submissionSaveTimer);
-      submissionSaveTimer = setTimeout(() => {
-        saveSubmissionScore(activeSubmissionContext.assignmentId, activeSubmissionContext.studentEmail, e.target.value);
-      }, 500);
+    async function saveReviewedScore() {
+      const review = activeSubmissionContext;
+      if (!review) return false;
+      if (review.saving) return review.saving;
+      const input = document.getElementById('submissionScoreInput');
+      if (input.validity.badInput || input.value !== review.savedScore) {
+        if (review.stale) return confirm('Discard the unsaved score for this older submission?');
+        if (input.disabled || !input.reportValidity()) return false;
+      } else {
+        return true;
+      }
+      const { assignment, submission } = getSubmissionForAssignment(review.assignmentId, review.studentEmail);
+      if (!assignment || !submission) return false;
+      const status = document.getElementById('submissionScoreSaveStatus');
+      input.disabled = document.getElementById('submissionScoreSaveBtn').disabled = true;
+      review.saving = (async () => {
+        // Keep a late response from updating the status for another student.
+        const scopedStatus = { set textContent(value) { if (activeSubmissionContext === review) status.textContent = value; } };
+        const result = await saveSubmissionScore(assignment, { ...submission, revisionId: review.revisionId }, input.value, scopedStatus);
+        review.saving = null;
+        if (activeSubmissionContext !== review) return false;
+        input.disabled = document.getElementById('submissionScoreSaveBtn').disabled = review.stale;
+        if (!result) return false;
+        input.value = review.savedScore = String(result.score ?? '');
+        await loadAssignments();
+        return activeSubmissionContext === review;
+      })();
+      return review.saving;
+    }
+
+    document.getElementById('submissionScoreForm').addEventListener('submit', event => {
+      event.preventDefault();
+      saveReviewedScore();
+    });
+    document.getElementById('submissionScoreInput').addEventListener('input', () => {
+      document.getElementById('submissionScoreSaveStatus').textContent = 'Unsaved score';
+    });
+    document.getElementById('submissionFeedbackBtn').addEventListener('click', () => {
+      const review = activeSubmissionContext;
+      if (!review || review.stale) return;
+      const { assignment, submission } = getSubmissionForAssignment(review.assignmentId, review.studentEmail);
+      if (submission) window.AssignmentWorkflow.editFeedback(assignment, submission.email, submission);
     });
 
-    document.getElementById('submissionAiGradeBtn').addEventListener('click', async () => {
-      if (!activeSubmissionContext) return;
-      const { assignment, submission } = getSubmissionForAssignment(activeSubmissionContext.assignmentId, activeSubmissionContext.studentEmail);
+    for (const [id, open] of [
+      ['submissionQuizGradeBtn', (a, s) => openQuizGradingModal(a.id || a.name, s.email)],
+      ['submissionFilesBtn', (a, s) => window.AssignmentWorkflow.openFiles(a.id || a.name, s.email)],
+      ['submissionDevelopmentBtn', (a, s) => {
+        const button = document.getElementById('submissionDevelopmentBtn');
+        if (button.getAttribute('aria-expanded') === 'true') window.AssignmentWorkflow.disposeEditorDevelopment();
+        else attachSubmissionDevelopment(a, s);
+      }],
+    ]) {
+      document.getElementById(id).addEventListener('click', event => {
+        const review = activeSubmissionContext;
+        if (!review) return;
+        const { assignment, submission } = getSubmissionForAssignment(review.assignmentId, review.studentEmail);
+        if (!submission) return;
+        const menu = event.target.closest('details');
+        menu.open = false;
+        menu.querySelector('summary').focus();
+        open(assignment, submission);
+      });
+    }
+
+    document.getElementById('submissionAiGradeBtn').addEventListener('click', async event => {
+      const review = activeSubmissionContext;
+      if (!review || review.stale) return;
+      const menu = event.target.closest('details');
+      menu.open = false;
+      menu.querySelector('summary').focus();
+      if (!await saveReviewedScore() || activeSubmissionContext !== review) return;
+      const { assignment, submission } = getSubmissionForAssignment(review.assignmentId, review.studentEmail);
       if (!assignment || !submission) return;
       const status = document.getElementById('submissionScoreSaveStatus');
-      status.textContent = 'Adding submission to the AI grading queue…';
+      status.textContent = 'Adding to the AI grading queue…';
       try {
         const response = await fetch('/api/assignments/grade-ai', {
           method: 'POST',
@@ -9688,14 +9786,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           body: JSON.stringify(buildAiContext(assignmentRequestPayload(assignment, { studentEmail: submission.email })))
         });
         const result = await response.json().catch(() => ({}));
+        if (activeSubmissionContext !== review) return;
         if (!result.ok) {
           status.textContent = result.error || 'AI grading failed.';
           return;
         }
-        status.textContent = result.queued ? 'Queued. You can leave while grading continues.' : 'This submission is already queued.';
+        status.textContent = result.queued ? 'AI grading queued.' : 'This submission is already queued.';
         await loadAssignments();
-      } catch (error) {
-        status.textContent = 'Network error during AI grading.';
+      } catch {
+        if (activeSubmissionContext === review) status.textContent = 'Network error during AI grading.';
       }
     });
 
@@ -9945,25 +10044,24 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     async function navigateAssignmentSubmission(direction) {
-      if (!activeSubmissionContext) return;
-      const assignment = getAssignmentByName(activeSubmissionContext.assignmentId);
-      if (!assignment) return;
-      const submitted = (assignment.submissions || []).filter(row => !row.withdrawn && ((assignment.fileControl && row.submittedFileName) || (row.hasGradableFiles ?? row.code))).sort((a, b) => String(a.name || a.email || '').localeCompare(String(b.name || b.email || ''), undefined, { sensitivity: 'base' }));
-      const index = submitted.findIndex(row => String(row.email || '').toLowerCase() === String(activeSubmissionContext.studentEmail || '').toLowerCase());
-      const target = submitted[index + direction];
-      if (target) await openAssignmentSubmission(assignment.id || assignment.name, target.email);
+      const review = activeSubmissionContext;
+      if (!review || review.navigating) return;
+      review.navigating = true;
+      try {
+        if (!await saveReviewedScore() || activeSubmissionContext !== review) return;
+        const { assignment, submission } = getSubmissionForAssignment(review.assignmentId, review.studentEmail);
+        if (!assignment || !submission) return;
+        const submitted = assignmentReviewSubmissions(assignment);
+        const index = submitted.indexOf(submission);
+        const target = submitted[index + direction];
+        if (index >= 0 && target) await openAssignmentSubmission(assignment.id || assignment.name, target.email);
+      } finally {
+        review.navigating = false;
+      }
     }
 
-    document.getElementById('previousSubmissionBtn')?.addEventListener('click', () => navigateAssignmentSubmission(-1));
-    document.getElementById('nextSubmissionBtn')?.addEventListener('click', () => navigateAssignmentSubmission(1));
-    document.getElementById('teacherDashPreviousSubmissionBtn')?.addEventListener('click', (event) => {
-      event.stopPropagation();
-      navigateAssignmentSubmission(-1);
-    });
-    document.getElementById('teacherDashNextSubmissionBtn')?.addEventListener('click', (event) => {
-      event.stopPropagation();
-      navigateAssignmentSubmission(1);
-    });
+    document.getElementById('teacherDashPreviousSubmissionBtn')?.addEventListener('click', () => navigateAssignmentSubmission(-1));
+    document.getElementById('teacherDashNextSubmissionBtn')?.addEventListener('click', () => navigateAssignmentSubmission(1));
 
     async function downloadExternalGradingPackage(assignmentReference, assignmentName) {
       const status = document.getElementById('assignmentDetailPanel')?.querySelector('#externalGradingStatus');

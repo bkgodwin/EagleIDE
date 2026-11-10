@@ -190,12 +190,15 @@
       border-radius: 16px;
     }
     .teacher-dash-minimized-bar {
+      position: relative;
+      z-index: 30;
       flex: 0 0 auto;
       min-width: 0;
       min-height: 46px;
       display: flex;
       align-items: center;
-      gap: 12px;
+      flex-wrap: wrap;
+      gap: 4px 12px;
       padding: 6px 12px;
       border-bottom: 1px solid var(--theme-border-mid);
       background: var(--theme-panel-hdr);
@@ -203,15 +206,30 @@
       font-size: 13px;
     }
     .teacher-dash-minimized-bar[hidden] { display:none !important; }
-    .teacher-dash-minimized-copy { flex:1; min-width:0; overflow-wrap:anywhere; color:var(--theme-text); }
+    .teacher-dash-minimized-copy { flex:1 1 140px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .teacher-dash-minimized-bar .btn { flex-shrink:0; min-height:34px; padding:6px 10px; font-size:12px; }
-    .teacher-dash-minimized-actions { display:flex; flex:0 0 auto; gap:6px; }
+    .teacher-dash-minimized-actions { display:flex; flex:0 0 auto; align-items:center; gap:6px; }
     .teacher-dash-minimized-actions button:disabled { opacity:.42; cursor:not-allowed; }
+    .submission-scoring-panel, .submission-score-form { display:flex; align-items:center; gap:6px; }
+    .submission-scoring-panel { flex-wrap:wrap; min-width:0; }
+    .submission-scoring-panel [hidden], .submission-scoring-panel[hidden] { display:none !important; }
+    .submission-score-form input { width:4.5rem; min-height:34px; padding:4px 6px; border:1px solid var(--theme-border); border-radius:6px; background:var(--theme-input-bg); color:var(--theme-text); }
+    .submission-score-form input:focus-visible { outline:2px solid var(--columbia-blue); outline-offset:1px; }
+    .submission-scoring-meta, .submission-save-status { color:var(--theme-text-dim); font-size:12px; }
+    .submission-scoring-meta { font-variant-numeric:tabular-nums; }
+    .submission-save-status:empty, .submission-scoring-meta:empty { display:none; }
+    .submission-more { position:relative; }
+    .submission-more summary { padding:7px 4px; cursor:pointer; }
+    .submission-more-actions { position:absolute; right:0; top:100%; display:grid; gap:4px; min-width:max-content; padding:6px; border:1px solid var(--theme-border-mid); border-radius:8px; background:var(--theme-panel-hdr); box-shadow:0 6px 16px rgba(0,0,0,.2); }
+    .submission-more-actions button { text-align:left; }
     .teacher-dash-modal.is-minimized { display:none !important; }
     @media (max-width: 600px) {
       .teacher-dash-minimized-bar { flex-wrap:wrap; gap:6px 10px; padding:6px 8px; }
-      .teacher-dash-minimized-copy { order:-1; flex-basis:100%; }
-      .teacher-dash-minimized-actions { margin-left:auto; }
+      .teacher-dash-minimized-copy { flex-basis:0; }
+      .submission-scoring-panel { flex-basis:100%; }
+      .submission-score-kind { display:none; }
+      .submission-score-form input { width:3.5rem; }
+      .submission-more { margin-left:auto; }
     }
     .teacher-dash-mobile-close { display: none; }
     .teacher-dash-sidebar {

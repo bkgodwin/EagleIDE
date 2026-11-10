@@ -1293,10 +1293,19 @@ class ExecutionLimitTestCase(unittest.TestCase):
             "token": self.teacher_token,
             "role": "teacher",
             "class_id": "owned-class",
-            "code": "x = 1",
+            "code": "x = 1\ny",
             "language": "python",
+            "cursorLine": 1,
         })
-        self.assertEqual(eagle._teacher_code_snapshots.get("owned-class"), "x = 1")
+        self.assertEqual(eagle._teacher_code_snapshots["owned-class"], {
+            "code": "x = 1\ny", "class_id": "owned-class", "language": "python", "cursorLine": 1,
+        })
+        eagle._teacher_stream_last_emit.clear()
+        client.emit("teacher_code_update", {
+            "token": self.teacher_token, "role": "teacher", "class_id": "owned-class",
+            "code": "x = 1\ny", "cursorLine": 100,
+        })
+        self.assertIsNone(eagle._teacher_code_snapshots["owned-class"]["cursorLine"])
 
 
 if __name__ == "__main__":

@@ -44,8 +44,7 @@ test('student dashboard opens locked assignment submissions as read-only copies'
 });
 
 test('submission editor navigation and minimized dashboard use stable assignment IDs', () => {
-  assert.match(html, /id="previousSubmissionBtn"/);
-  assert.match(html, /id="nextSubmissionBtn"/);
+  assert.match(html, /id="submissionReviewPosition"/);
   assert.match(html, /id="teacherDashMinimizedBar"/);
   assert.match(html, /id="teacherDashPreviousSubmissionBtn"/);
   assert.match(html, /id="teacherDashNextSubmissionBtn"/);
@@ -88,7 +87,7 @@ test('submission review updates the context and clears on leaving the submission
   ].join('\n'), context);
   assert.equal(nodes.teacherDashMinimizedBar.hidden, false);
   assert.equal(nodes.teacherDashboardModal.classList.value, 'is-minimized');
-  assert.equal(nodes.teacherDashMinimizedLabel.textContent, 'Functions · Student One');
+  assert.equal(nodes.teacherDashMinimizedLabel.textContent, 'Student One · Functions');
   assert.equal(pollingStopped, true);
   vm.runInNewContext('updateActiveFileName()', context);
   assert.equal(nodes.teacherDashMinimizedBar.hidden, false);
@@ -143,7 +142,8 @@ function assignmentViewHarness(assignments) {
     assignmentPercentValue: () => '80.0%',
     rigorLevelLabel: () => 'High School', assignmentRigorSummary: () => 'Core objectives',
   };
-  const helpers = source.slice(source.indexOf('function studentNameCells('), source.indexOf('function renderTeacherClassManagement()'));
+  const helpers = source.slice(source.indexOf('function studentNameCells('), source.indexOf('function renderTeacherClassManagement()'))
+    + source.slice(source.indexOf('function assignmentRoster('), source.indexOf('function assignmentRequestPayload('));
   context.currentTeacher = null;
   vm.runInNewContext(`function isCoTeacher() { return !!currentTeacher?.is_coteacher; }\n${helpers}\n${source.slice(start, end)}\nglobalThis.views = { renderAdminAssignments, renderTeacherReferenceAssignments, renderAssignmentAiFeedback };`, context);
   return { context, list, detail, reference, heading };

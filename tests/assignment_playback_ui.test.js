@@ -191,7 +191,7 @@ test('controlled Python, JavaScript, HTML and CSS submissions open in the editor
   for(const extension of ['py','js','html','css']) {
     let value='old source',attached=0,ideOpened=0,readOnly;
     const context={getSubmissionForAssignment:()=>({assignment:{id:'a',fileControl:true},submission:{email:'student',submittedFileName:'Project.'+extension}}),
-      currentAdminAssignmentName:null,saveCurrentFile:async()=>true,fileOpenRequestId:0,currentOpenFile:{name:'old.py'},
+      currentAdminAssignmentName:null,activeSubmissionContext:null,saveCurrentFile:async()=>true,fileOpenRequestId:0,currentOpenFile:{name:'old.py'},
       assignmentManagerHeaders:()=>({teacher:'one'}),editor:{getValue:()=>value,setValue:next=>{value=next;}},
       fetch:async()=>({json:async()=>({ok:true,content:'submitted source',fileName:'Project.'+extension,revisionId:'one',pasteRanges:[[0,3]]})}),
       window:{eagleEditor:null,AssignmentWorkflow:{highlightEditor(){}},WikiReader:{showIDE(){ideOpened++;}}},URLSearchParams,
@@ -200,7 +200,7 @@ test('controlled Python, JavaScript, HTML and CSS submissions open in the editor
       attachSubmissionDevelopment(){attached++;},renderAdminAssignments(){},minimizeTeacherDashboardForSubmission(){}};
     vm.createContext(context);vm.runInContext(extract('openAssignmentSubmission'),context);
     await context.openAssignmentSubmission('a','student');
-    assert.equal(value,'submitted source');assert.equal(attached,1);assert.equal(ideOpened,1);
+    assert.equal(value,'submitted source');assert.equal(attached,0);assert.equal(ideOpened,1);
     assert.equal(readOnly,['html','css'].includes(extension));assert.equal(context.currentOpenFile.submission,true);
     assert.deepEqual(Array.from(context.currentOpenFile.pasteRanges[0]),[0,3]);
   }

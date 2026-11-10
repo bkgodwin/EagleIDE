@@ -159,18 +159,35 @@
     };
   }
 
-  async function openFiles(reference, studentEmail = '', fileId = '') {
+  const submissionFilesMarkup = '<div class="assignment-version-control"></div><div class="assignment-submission-layout"><nav class="assignment-submission-files" aria-label="Submitted files"></nav><section class="assignment-submission-preview" aria-live="polite">Loading submission…</section></div><div class="assignment-submitted-answers"></div>';
+  function openFiles(reference, studentEmail = '', fileId = '') {
     const a = bridge.assignment(reference) || {id:reference, name:'Assignment'};
+    const m = modal(`${a.name} · Submission`, submissionFilesMarkup, 'assignment-files-dialog');
+    return loadSubmissionFiles(a, studentEmail, fileId, m);
+  }
+
+  function mountReviewFiles(root, a, submission) {
+    root.hidden = false;
+    root.innerHTML = submissionFilesMarkup;
+    const cleanups = [];
+    loadSubmissionFiles(a, submission.email, '', {root, cleanups}, submission.revisionId || '');
+    return () => {
+      cleanups.forEach(cleanup => cleanup());
+      root.hidden = true;
+      root.replaceChildren();
+    };
+  }
+
+  async function loadSubmissionFiles(a, studentEmail, fileId, m, reviewRevision = null) {
     const teacher = !!studentEmail;
     const headers = teacher ? bridge.managerHeaders() : bridge.studentHeaders();
     const auth = JSON.stringify(headers);
-    const m = modal(`${a.name} · Submission`, `<div class="assignment-version-control"></div><div class="assignment-submission-layout"><nav class="assignment-submission-files" aria-label="Submitted files"></nav><section class="assignment-submission-preview" aria-live="polite">Loading submission…</section></div><div class="assignment-submitted-answers"></div>`, 'assignment-files-dialog');
-    let revision = '', sequence = 0, objectUrl = '';
+    let revision = '', sequence = 0, objectUrl = '', disposed = false;
     const preview = m.root.querySelector('.assignment-submission-preview');
-    const params = extra => new URLSearchParams({assignmentId:a.id || reference, ...(teacher ? {studentEmail} : {}), ...(revision ? {revisionId:revision} : {}), ...extra});
-    const valid = () => m.root.isConnected && auth === JSON.stringify(teacher ? bridge.managerHeaders() : bridge.studentHeaders());
+    const params = extra => new URLSearchParams({assignmentId:a.id, ...(teacher ? {studentEmail} : {}), ...(revision ? {revisionId:revision} : {}), ...extra});
+    const valid = () => !disposed && m.root.isConnected && auth === JSON.stringify(teacher ? bridge.managerHeaders() : bridge.studentHeaders());
     const release = () => {if (objectUrl) URL.revokeObjectURL(objectUrl); objectUrl = '';};
-    m.cleanups.push(() => {sequence++; release();});
+    m.cleanups.push(() => {disposed = true; sequence++; release();});
     async function download(f) {
       const response = await bridge.request(`/api/assignments/submission-file?${params({fileId:f.id, download:'1'})}`, {headers});
       if (!response.ok) throw new Error('Could not download attachment.');
@@ -213,18 +230,21 @@
         if (!valid() || request !== sequence || version !== revision) return;
         revision = data.revisionId || '';
         const control = m.root.querySelector('.assignment-version-control');
-        control.innerHTML = teacher ? `<label>Submission version<select aria-label="Submission version"><option value="${esc(data.latestRevisionId || '')}">Latest submission</option>${data.history.map((h,i) => `<option value="${esc(h.revisionId)}">Previous ${i+1} · ${esc(h.submittedAt || 'Unknown time')}</option>`).join('')}</select></label>` : `<p>Submitted ${esc(data.submittedAt || '—')} · Read-only copy</p>`;
+        if (reviewRevision === null) {
+          control.innerHTML = teacher ? `<label>Submission version<select aria-label="Submission version"><option value="${esc(data.latestRevisionId || '')}">Latest submission</option>${data.history.map((h,i) => `<option value="${esc(h.revisionId)}">Previous ${i+1} · ${esc(h.submittedAt || 'Unknown time')}</option>`).join('')}</select></label>` : `<p>Submitted ${esc(data.submittedAt || '—')} · Read-only copy</p>`;
+        }
         const select = control.querySelector('select'); if (select) {select.value = revision; select.onchange = () => load(select.value);}
         const files = m.root.querySelector('.assignment-submission-files');
         files.innerHTML = data.files.map(f => `<button type="button" class="assignment-submitted-file" data-submitted-file="${esc(f.id)}"><span>${esc(f.name)}</span><small>${size(f.size)}</small></button>`).join('');
+        files.hidden = !data.files.length;
         files.querySelectorAll('button').forEach(button => button.onclick = () => show(data.files.find(f => f.id === button.dataset.submittedFile)));
         const answers = m.root.querySelector('.assignment-submitted-answers');
         answers.innerHTML = data.quizResponses.length ? `<h4>Submitted question answers</h4>${data.quizResponses.map(r => {const q=a.quiz?.questions?.find(q => q.id === r.questionId); const answer = q?.options && typeof r.answer === 'number' ? q.options[r.answer] : r.answer; return `<details><summary>${esc(q?.question || r.questionId)}</summary><pre>${esc(answer ?? '')}</pre></details>`;}).join('')}` : '';
         if (data.files.length) await show(data.files.find(f => f.id === fileId) || data.files[0]);
-        else preview.textContent = 'No files submitted. Question answers are shown below.';
+        else preview.textContent = data.quizResponses.length ? 'Question answers are shown below.' : 'No files or answers in this submission.';
       } catch (error) {if (valid() && request === sequence) preview.textContent = error.message;}
     }
-    await load();
+    await load(reviewRevision || '');
   }
 
   function gradeByQuestion(a) {
@@ -463,6 +483,7 @@
     editorPlayer.player.dispose(); editorPlayer=null;
     const root=document.getElementById('submissionDevelopmentPanel'); root.hidden=true; root.replaceChildren();
     document.getElementById('editorContentStack').classList.remove('has-development-player');
+    document.getElementById('submissionDevelopmentBtn')?.setAttribute('aria-expanded', 'false');
     window.eagleEditor?.refresh();
   }
   function syncEditorDevelopment(file) {
@@ -476,6 +497,7 @@
     root.innerHTML=`<div class="development-toolbar"><strong>Development history</strong><button type="button" class="btn secondary development-refresh">Refresh history</button><button type="button" class="btn secondary development-submitted">Show submitted code</button></div>${developmentControls()}`;
     root.hidden=false;
     document.getElementById('editorContentStack').classList.add('has-development-player');
+    document.getElementById('submissionDevelopmentBtn')?.setAttribute('aria-expanded', 'true');
     const player=mountDevelopmentPlayer(root,a,{...adapter,email});
     editorPlayer={player,valid:adapter.valid,restore:adapter.restore}; window.eagleEditor?.refresh();
     return player.ready;
@@ -495,15 +517,30 @@
     }});
     m.cleanups.push(player.dispose); await player.ready;
   }
-  function editFeedback(a, email) {
-    const sub = a.submissions.find(s => s.email === email);
+  function editFeedback(a, email, sub = a.submissions.find(s => s.email === email)) {
     if (!sub) return;
-    const value = sub.teacherFeedbackEdited ? sub.teacherFeedback : sub.aiFeedback;
-    const m = modal(`Feedback · ${sub.name || email}`, `<p>Students see this feedback when feedback sharing is enabled for this assignment.</p><label>Feedback<textarea class="assignment-feedback-editor" maxlength="12000">${esc(value || '')}</textarea></label><p role="status"></p><div class="modal-actions"><button class="btn run assignment-save-feedback" type="button">Save feedback</button></div>`);
+    const headers = bridge.managerHeaders();
+    const authorized = () => JSON.stringify(headers) === JSON.stringify(bridge.managerHeaders());
+    const value = (sub.teacherFeedbackEdited ? sub.teacherFeedback : sub.aiFeedback) || '';
+    const m = modal(`Feedback · ${sub.name || email}`, `<p>${a.shareAiFeedback ? 'Feedback sharing is on for this assignment.' : 'This feedback is private until sharing is enabled for this assignment.'}</p><label>Feedback<textarea class="assignment-feedback-editor" maxlength="12000" placeholder="Write feedback for this submission">${esc(value)}</textarea></label>${sub.aiFeedback ? `<details class="assignment-feedback-details"><summary>Original grading feedback</summary>${bridge.feedback(sub.aiFeedback)}</details>` : ''}<p role="status"></p><div class="modal-actions"><button class="btn run assignment-save-feedback" type="button">Save feedback</button></div>`);
+    const input = m.root.querySelector('textarea');
+    let saving = false;
+    m.beforeClose = () => !saving && (!authorized() || input.value === value || confirm('Discard unsaved feedback?'));
     m.root.querySelector('.assignment-save-feedback').onclick = async event => {
-      event.target.disabled = true;
-      try {await mutate('/api/assignments/feedback',{assignmentId:a.id,studentEmail:email,revisionId:sub.revisionId,feedback:m.root.querySelector('textarea').value}); m.close(); await bridge.reloadAssignments();}
-      catch(error) {m.root.querySelector('[role="status"]').textContent = error.message; event.target.disabled = false;}
+      if (!authorized()) return m.close();
+      saving = input.disabled = event.target.disabled = true;
+      try {
+        await json('/api/assignments/feedback', {
+          method:'POST', headers:{'Content-Type':'application/json', ...headers},
+          body:JSON.stringify({assignmentId:a.id, studentEmail:email, revisionId:sub.revisionId ?? null, feedback:input.value}),
+        });
+        m.beforeClose = null;
+        m.close();
+        if (authorized()) await bridge.reloadAssignments();
+      } catch(error) {
+        m.root.querySelector('[role="status"]').textContent = error.message;
+        saving = input.disabled = event.target.disabled = false;
+      }
     };
   }
   function present(reference) {
@@ -536,7 +573,7 @@
     });
   }
   window.AssignmentWorkflow = {configure(value) {bridge = value; try {highlights=localStorage.getItem('eagleide-paste-highlights') !== '0';} catch {} if(document.body) setHighlights(highlights); window.eagleEditor?.on?.('beforeChange', (_cm,change) => {if(change.origin === 'setValue') clearEditorHighlights();});}, teacherToolbar, highlightSource, highlightEditor, card, bindStudent, submitDialog, openFiles, teacherFiles, bindTeacher, present, windowForm, bindClass, accommodationLabel,
-    attachEditorDevelopment, syncEditorDevelopment, disposeEditorDevelopment, pauseEditorDevelopment, renderEditorFrame,
+    attachEditorDevelopment, syncEditorDevelopment, disposeEditorDevelopment, pauseEditorDevelopment, renderEditorFrame, mountReviewFiles, editFeedback,
     focusStudentAssignment(assignment, email) {if(email!==account) {account=email;expanded.clear();} tab=(assignment.isPast ?? !assignment.active) ? 'past' : 'current'; expanded.add(assignment.id);},
     studentTab(email) {if (email !== account) {account=email; tab='current'; expanded.clear();} return tab;}};
 })();
