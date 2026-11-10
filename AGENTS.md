@@ -33,7 +33,9 @@ Required runtime components:
 |-- notebook_media.py            Quota-counted photo uploads, protected previews, and shared-tab copies
 |-- workspace_data.py            Bounded CSV pages and version-checked streaming workspace edits
 |-- server_metrics.py            On-demand Linux/Windows per-core CPU counters
-|-- classroom_features.py        Classroom signals, file sharing, audit routes, and socket events
+|-- classroom_features.py        Classroom signals, file-copy sharing, audit routes, and socket events
+|-- group_projects.py            Class-scoped project membership, canonical files, schedules, and live presence
+|-- group_project_text.py        Bounded UTF-16 operations, rebasing, and contributor ranges
 |-- lesson_plan_features.py      Lesson-plan APIs, source linking, link previews, and public routes
 |-- lesson_plan_store.py         Atomic plans, external links, source mappings, and share tokens
 |-- lesson_plan_resources.py     Bounded private agenda images, immutable IDE snapshots, and student Home copies
@@ -107,7 +109,10 @@ Required runtime components:
 |       |-- html-runtime-popup.js CSP-compatible popup bootstrap, runtime channel, stop/timeout and cleanup
 |       |-- step-mode.js         Python trace playback, variables, narration, and navigation
 |       |-- classroom-signals.js Raise-hand/question UI and socket handling
-|       |-- classroom-files.js   Sharing and teacher file-audit UI
+|       |-- classroom-files.js   File-copy sharing and teacher file-audit UI
+|       |-- group-project-text.js Text operation composition, undo rebasing, and range mapping
+|       |-- group-projects.js    Shared editor transport, presence, and device drafts
+|       |-- group-project-ui.js  Project browser, invitations, class controls, and contribution review
 |       |-- student-notebook.js  Notebook tabs, practice feedback/notes, recovery, checks, and inline runs
 |       |-- notebook-sync.js     Pure three-way draft merging and conflict recovery
 |       |-- notebook-photos.js   Device-photo resizing, lazy authenticated previews, and URL cleanup
@@ -312,6 +317,41 @@ assignments/prompts, and grade submissions. Owners retain membership, profile,
 lock/unlock, delete, assignment-setting, and lesson-plan sharing/source controls.
 
 All Ollama generation goes through the shared in-memory AI dispatcher in `app.py`. It keeps the configured concurrency full while healthy, queues excess interactive and background work, applies a global cooldown when Ollama reports overload, and retries overloaded requests. Assignment grading adds a durable submission-status layer with teacher queue inspection and cancellation; do not bypass the dispatcher with direct Ollama HTTP calls.
+
+### Group projects
+
+Group projects are opt-in per class and separate from file-copy sharing. The
+class owner can schedule access in the class time zone, browse active projects,
+remove members and cancel all groups. Each project has up to four places,
+including pending invitations. Membership and canonical files live under
+`group_projects/` (override `EAGLEIDE_GROUP_PROJECTS_DIR`) in private SQLite.
+Cancellation revokes live access and retains a bounded 30-day download for
+members. Class deletion removes project storage. Account deletion revokes
+membership before the address can be reused.
+
+The server orders UTF-16 edits by revision, keeps a bounded operation journal,
+and acknowledges committed updates. Only two or more distinct students on the
+same file trigger live edit and cursor delivery. Recipient checks use current
+class policy, session lifetime and membership. A single viewer saves over HTTP.
+Device drafts are scoped to account, project and file. A stale draft is offered
+for recovery when the revision journal cannot reconcile it. CodeMirror marks
+are viewport-bounded. Server-authenticated contributors and surviving ranges
+are separate from paste evidence.
+
+Project reads and tree mutations use stable IDs and bounded storage. Never map
+a group file into a personal workspace path. Runner and isolated HTML preview
+sessions receive disposable project snapshots, with current access checked at
+launch and on HTML asset fetches. Keep project data and recovery copies out of
+personal workspace cleanup and worker write paths.
+
+Assignment group credit is opt-in per assignment. Validate each recipient and
+selected file revision under the assignment lock before committing one metadata
+update. The protected bundle is shared by independent grading records. Keep
+contribution sidecars with immutable files and copy them when a new quiz revision
+copies the file bundle. Teachers can toggle contributor highlights in the
+attachment preview independently of paste highlights. Maintain lock order from
+the assignment lock to the group database, and from the group lock to class
+catalog reads. Never broadcast project source to a class room.
 
 ### External applications
 
@@ -619,6 +659,7 @@ Checked-in seed/reference data is limited to files such as `challenges.csv` and 
   `assignments/.lab-reports/` (hashed-account, revisioned report drafts)
 - `challenge_scores.json` and `leaderboard.csv`
 - `classroom_events.json` and `classroom_signals.json`
+- `group_projects/` (private group membership, project files, and bounded recovery)
 - server/sign-in event JSON files and `server.log`
 - `cleanup_data/cleanup.sqlite3` (private policy, observation clocks, permanent deletion ledger)
 
@@ -856,6 +897,14 @@ Maintenance scripts default to dry runs and must be applied only against a priva
 The October 2026 audit, finding-by-finding limitations, and deployment sequence are in `docs/security/`. Account deletion currently removes account/workspace/tool-profile data, not every retained educational record. Owners with classes receive a conflict instead of silently orphaning those classes; storage failures retain a disabled account for retry. Full multi-store erasure remains a separate migration and must not be represented as complete.
 
 ## Verification
+
+`tests/test_group_projects.py` and `tests/group_project_text.test.js` cover access,
+revisions, group turn-in and simultaneous edits. For the opt-in five-browser
+group check, make Playwright available to Node, set `EAGLE_GROUP_PYTHON` to the
+application Python interpreter and optionally set `EAGLE_GROUP_BROWSER` and
+`EAGLE_GROUP_SCREENSHOTS`. Run `node tests/group_projects_browser_checks.js`.
+It starts a temporary loopback fixture with synthetic accounts.
+
 
 Run the automated suite from the repository root:
 

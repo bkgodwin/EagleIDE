@@ -1,0 +1,1107 @@
+"""Class-owned projects, revisioned files, and private editor presence."""
+from contextlib import closing, contextmanager
+from datetime import datetime
+from io import BytesIO
+from pathlib import Path, PurePosixPath
+from threading import BoundedSemaphore, RLock
+from time import monotonic, time, time_ns
+from uuid import uuid4
+from zoneinfo import ZoneInfo
+import json
+import re
+import sqlite3
+import zipfile
+
+from flask import jsonify, request, send_file
+
+import file_provenance
+import group_project_text as text_ops
+from security_controls import AttemptLimiter
+
+MAX_MEMBERS = 4
+MAX_FILES = 100
+MAX_NODES = 160
+MAX_FILE_BYTES = 10 * 1024 * 1024
+MAX_PROJECT_BYTES = 32 * 1024 * 1024
+MAX_CLASS_BYTES = 256 * 1024 * 1024
+MAX_GLOBAL_BYTES = 2 * 1024 * 1024 * 1024
+MAX_PROJECTS = 40
+RECOVERY_SECONDS = 30 * 86400
+LEASE_SECONDS = 35
+MAX_RANGES = 16000
+PALETTE_SIZE = 12
+_lock = RLock()
+_watchers = {}
+_edits_per_student = AttemptLimiter(18, 1)
+_project_creation = AttemptLimiter(6, 60)
+_download_slots = BoundedSemaphore(2)
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS projects(
+ id TEXT PRIMARY KEY, class_id TEXT NOT NULL, name TEXT NOT NULL,
+ folder INTEGER NOT NULL, owner TEXT NOT NULL, status TEXT NOT NULL,
+ changed INTEGER NOT NULL, size INTEGER NOT NULL DEFAULT 0,
+ file_count INTEGER NOT NULL DEFAULT 0, node_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS projects_by_class ON projects(class_id, status);
+CREATE TABLE IF NOT EXISTS members(
+ project TEXT REFERENCES projects(id) ON DELETE CASCADE,
+ email TEXT NOT NULL, author TEXT NOT NULL, name TEXT NOT NULL,
+ color INTEGER NOT NULL, state TEXT NOT NULL, joined INTEGER NOT NULL,
+ PRIMARY KEY(project, email)
+);
+CREATE INDEX IF NOT EXISTS membership_by_email ON members(email, state);
+CREATE TABLE IF NOT EXISTS files(
+ id TEXT PRIMARY KEY, project TEXT REFERENCES projects(id) ON DELETE CASCADE,
+ path TEXT NOT NULL, folder INTEGER NOT NULL, content BLOB NOT NULL,
+ size INTEGER NOT NULL, revision INTEGER NOT NULL DEFAULT 0,
+ authors TEXT NOT NULL DEFAULT '[]', spans TEXT NOT NULL DEFAULT '[]',
+ paste TEXT NOT NULL DEFAULT '[]', UNIQUE(project, path COLLATE NOCASE)
+);
+CREATE TRIGGER IF NOT EXISTS project_file_added AFTER INSERT ON files BEGIN
+ UPDATE projects SET size=size+NEW.size, file_count=file_count+1-NEW.folder, node_count=node_count+1 WHERE id=NEW.project;
+END;
+CREATE TRIGGER IF NOT EXISTS project_file_resized AFTER UPDATE OF size ON files BEGIN
+ UPDATE projects SET size=size+NEW.size-OLD.size WHERE id=NEW.project;
+END;
+CREATE TRIGGER IF NOT EXISTS project_file_removed AFTER DELETE ON files BEGIN
+ UPDATE projects SET size=size-OLD.size, file_count=file_count-1+OLD.folder, node_count=node_count-1 WHERE id=OLD.project;
+END;
+CREATE TABLE IF NOT EXISTS edits(
+ file TEXT REFERENCES files(id) ON DELETE CASCADE, revision INTEGER NOT NULL,
+ op_id TEXT NOT NULL, operation TEXT NOT NULL, author TEXT NOT NULL,
+ PRIMARY KEY(file, revision), UNIQUE(file, op_id)
+);
+"""
+
+
+class ProjectError(Exception):
+    def __init__(self, message, status=400):
+        super().__init__(message)
+        self.status = status
+
+
+def policy_lock():
+    return _lock
+
+
+@contextmanager
+def database(eagle):
+    with _lock:
+        path = eagle.GROUP_PROJECTS_DIR / "index.sqlite3"
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with closing(sqlite3.connect(path)) as db, db:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA foreign_keys = ON")
+            if not db.execute("PRAGMA user_version").fetchone()[0]:
+                db.execute("PRAGMA auto_vacuum = INCREMENTAL")
+                db.executescript(_SCHEMA + "\nPRAGMA user_version = 1;")
+            yield db
+
+
+def schedule(value):
+    if value is None:
+        return {"enabled": False, "days": [0, 1, 2, 3, 4],
+                "start": "08:00", "end": "15:00", "timeZone": "UTC"}
+    if not isinstance(value, dict) or type(value.get("enabled")) is not bool:
+        raise ProjectError("Choose a valid group project schedule")
+    days, start, end, zone = (value.get(k) for k in ("days", "start", "end", "timeZone"))
+    if (not isinstance(days, list) or not 1 <= len(days) <= 7 or
+            any(type(day) is not int or not 0 <= day <= 6 for day in days) or
+            not all(isinstance(s, str) and re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", s) for s in (start, end)) or
+            start >= end or not isinstance(zone, str) or len(zone) > 80):
+        raise ProjectError("Select class days, a start and end time, and a time zone")
+    try:
+        ZoneInfo(zone)
+    except (ValueError, KeyError) as exc:
+        raise ProjectError("Enter an IANA time zone, such as America/Chicago") from exc
+    return {"enabled": value["enabled"], "days": sorted(set(days)), "start": start, "end": end, "timeZone": zone}
+
+
+def class_open(cls, now=None):
+    settings = cls.get("settings") or {}
+    if settings.get("group_projects_enabled") is not True:
+        return False, "Group projects are disabled for this class"
+    if settings.get("student_ide_access_enabled") is False:
+        return False, "IDE access is disabled for this class"
+    try:
+        window = schedule(settings.get("group_project_schedule"))
+    except ProjectError:
+        return False, "Ask your teacher to check the group project schedule"
+    if window["enabled"]:
+        zone = ZoneInfo(window["timeZone"])
+        local = now.astimezone(zone) if now else datetime.now(zone)
+        if local.weekday() not in window["days"] or not window["start"] <= local.strftime("%H:%M") < window["end"]:
+            return False, f"Group projects open during class, {window['start']}–{window['end']} ({window['timeZone']})"
+    return True, ""
+
+
+def roster_student(eagle, cls, email):
+    if email not in cls.get("students", []):
+        return None
+    user = eagle._find_user(email)
+    if user and user.get("enabled", True) and user.get("role", "student") == "student":
+        return user
+    return None
+
+
+def student_class(eagle, class_id, email):
+    cls = eagle._find_class_by_id(class_id) if isinstance(class_id, str) and class_id else None
+    if not cls or not roster_student(eagle, cls, email):
+        raise ProjectError("This class is unavailable", 403)
+    return cls
+
+
+def must_open(cls):
+    allowed, reason = class_open(cls)
+    if not allowed:
+        raise ProjectError(reason, 403)
+
+
+def identity(user):
+    return str(user["email"]).lower()
+
+
+def name_of(user):
+    return str(user.get("name") or user.get("email") or "Student")[:120]
+
+
+def member_info(row):
+    return {"id": row["author"], "name": row["name"], "color": row["color"]}
+
+
+def project_record(db, project_id):
+    row = db.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+    if not row:
+        raise ProjectError("Group project not found", 404)
+    return row
+
+
+def require_member(db, project, email, *, states=("active",)):
+    member = db.execute("SELECT * FROM members WHERE project=? AND email=?", (project["id"], email)).fetchone()
+    if not member or member["state"] not in states:
+        raise ProjectError("You no longer have access to this group project", 403)
+    return member
+
+
+def select_file(db, project, file_id, *, content=False):
+    columns = "*" if content else "id, project, path, folder, size, revision"
+    row = db.execute(f"SELECT {columns} FROM files WHERE project=? AND id=?", (project, file_id)).fetchone()
+    if not row:
+        raise ProjectError("This project file has been removed", 404)
+    return row
+
+
+def file_info(row):
+    return {key: row[key] for key in ("id", "path", "folder", "size", "revision")}
+
+
+def summary(db, project, *, email="", teacher=False, tree=False, cls=None):
+    rows = db.execute("SELECT * FROM members WHERE project=? ORDER BY joined, author", (project["id"],)).fetchall()
+    members = []
+    for row in rows:
+        if row["state"] in ("active", "pending", "removed") and (teacher or row["state"] == "active"):
+            available = row["state"] == "active" and (not cls or row["email"] in cls.get("students", []))
+            if not teacher and not available:
+                continue
+            item = {**member_info(row), "owner": row["email"] == project["owner"]}
+            if teacher:
+                item.update(state=row["state"], available=available)
+            members.append(item)
+    own = next((row for row in rows if row["email"] == email), None)
+    result = {k: project[k] for k in ("id", "name", "folder", "status", "changed")}
+    result.update(classId=project["class_id"], members=members,
+                  own=member_info(own) if own else None, membership=own["state"] if own else "",
+                  canInvite=bool(own and own["email"] == project["owner"] and own["state"] == "active"))
+    if project["status"] == "canceled":
+        result["recoverUntil"] = project["changed"] + RECOVERY_SECONDS
+    if tree and result["canInvite"]:
+        result["invitations"] = [member_info(row) for row in rows if row["state"] == "pending"]
+        result["invitedEmails"] = [row["email"] for row in rows if row["state"] in ("active", "pending", "removed")]
+    if tree:
+        result["files"] = [file_info(row) for row in db.execute(
+            "SELECT id,path,folder,size,revision FROM files WHERE project=? ORDER BY path COLLATE NOCASE", (project["id"],))]
+    return result
+
+
+def bump(db, project):
+    db.execute("UPDATE projects SET changed=? WHERE id=?", (int(time()), project))
+
+
+def prune(db):
+    db.execute("DELETE FROM projects WHERE status!='active' AND changed<?", (int(time()) - RECOVERY_SECONDS,))
+
+
+def safe_path(eagle, value):
+    if not isinstance(value, str) or not 1 <= len(value) <= 360 or "\\" in value:
+        raise ProjectError("Choose a valid project path")
+    try:
+        value.encode("utf-8")
+    except UnicodeError as exc:
+        raise ProjectError("Choose a valid project path") from exc
+    parts = value.split("/")
+    if len(parts) > 12 or any(not eagle._valid_workspace_name(part) or part.startswith(".") or
+            part.casefold() == "trash" or re.fullmatch(r"(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])",
+                                                     part.split(".", 1)[0], re.IGNORECASE) for part in parts):
+        raise ProjectError("Choose a valid project path")
+    return value
+
+
+def text_file(eagle, path, content):
+    if Path(path).suffix.lower() not in eagle.TEXT_EXTENSIONS or len(content) > text_ops.MAX_TEXT_BYTES:
+        return None
+    try:
+        source = content.decode("utf-8")
+    except UnicodeError:
+        return None
+    return None if "\x00" in source else source.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def check_quota(db, project, class_id, files, nodes, extra):
+    count, node_count, size = db.execute(
+        "SELECT file_count,node_count,size FROM projects WHERE id=?", (project,)).fetchone()
+    if count + files > MAX_FILES or node_count + nodes > MAX_NODES or size + extra > MAX_PROJECT_BYTES:
+        raise ProjectError("This project has reached its file or storage limit", 413)
+    if extra <= 0:
+        return
+    used = db.execute("SELECT COALESCE(SUM(size),0) FROM projects WHERE class_id=?", (class_id,)).fetchone()[0]
+    global_used = db.execute("SELECT COALESCE(SUM(size),0) FROM projects").fetchone()[0]
+    if used + extra > MAX_CLASS_BYTES or global_used + extra > MAX_GLOBAL_BYTES:
+        raise ProjectError("Group project storage is full. Ask your teacher for help.", 413)
+
+
+def add_member(db, project, user, state):
+    email = identity(user)
+    existing = db.execute("SELECT * FROM members WHERE project=? AND email=?", (project, email)).fetchone()
+    if existing and existing["state"] in ("active", "pending", "removed"):
+        raise ProjectError("This classmate already has a membership or a teacher restriction", 409)
+    members = db.execute("SELECT color,state FROM members WHERE project=?", (project,)).fetchall()
+    if len(members) >= 64 and not existing:
+        raise ProjectError("This project has reached its membership history limit", 409)
+    reserved = [row["color"] for row in members if row["state"] in ("active", "pending")]
+    if len(reserved) >= MAX_MEMBERS:
+        raise ProjectError("All four group places are filled or reserved by invitations", 409)
+    used = {row["color"] for row in members}
+    color = next((i for i in range(PALETTE_SIZE) if i not in used),
+                 next(i for i in range(PALETTE_SIZE) if i not in reserved))
+    if existing:
+        color = existing["color"] if existing["color"] not in reserved else color
+        db.execute("UPDATE members SET state=?,name=?,color=?,joined=? WHERE project=? AND email=?",
+                   (state, name_of(user), color, time_ns(), project, email))
+    else:
+        db.execute("INSERT INTO members VALUES (?,?,?,?,?,?,?)",
+                   (project, email, uuid4().hex, name_of(user), color, state, time_ns()))
+
+
+def remove_member(db, project, member, state):
+    db.execute("UPDATE members SET state=? WHERE project=? AND email=?", (state, project["id"], member["email"]))
+    successor = db.execute(
+        "SELECT email FROM members WHERE project=? AND state='active' ORDER BY joined,author LIMIT 1",
+        (project["id"],)).fetchone()
+    if not successor:
+        db.execute("DELETE FROM projects WHERE id=?", (project["id"],))
+    elif project["owner"] == member["email"]:
+        db.execute("UPDATE projects SET owner=? WHERE id=?", (successor["email"], project["id"]))
+    if successor:
+        bump(db, project["id"])
+
+
+def insert_file(db, project, path, folder, data=b"", paste=()):
+    ident = uuid4().hex
+    db.execute("INSERT INTO files(id,project,path,folder,content,size,paste) VALUES (?,?,?,?,?,?,?)",
+               (ident, project, path, int(folder), data, len(data), json.dumps(paste)))
+    return ident
+
+
+def import_workspace(eagle, user, source):
+    root = eagle._get_user_dir(identity(user)).resolve()
+    safe_path(eagle, source)
+    target = eagle._validate_workspace_path(root, source)
+    unresolved = root.joinpath(*source.split("/"))
+    if (not target or not target.exists() or eagle._is_trash_path(root, target) or
+            unresolved != target or any(p.is_symlink() for p in [unresolved, *unresolved.parents] if p != root)):
+        raise ProjectError("Choose an ordinary workspace file or folder")
+    folder = target.is_dir()
+    results = []
+    total = 0
+
+    def visit(path):
+        nonlocal total
+        relative = path.relative_to(target if folder else target.parent).as_posix()
+        safe_path(eagle, relative)
+        if path.is_symlink() or path.resolve() != path or not (path.is_dir() or path.is_file()):
+            raise ProjectError("The selection contains a link or unsupported file")
+        if len(results) >= MAX_NODES:
+            raise ProjectError("This folder exceeds the group project file limit", 413)
+        if path.is_dir():
+            results.append((relative, True, b"", ()))
+            for child in path.iterdir():
+                visit(child)
+            return
+        workspace_path = path.relative_to(root).as_posix()
+        if eagle.assignment_development.bindings_for_path(eagle, identity(user), workspace_path):
+            raise ProjectError("The selection includes a teacher-controlled assignment file")
+        with path.open("rb") as handle:
+            content = handle.read(min(MAX_FILE_BYTES, MAX_PROJECT_BYTES - total) + 1)
+        total += len(content)
+        if len(content) > MAX_FILE_BYTES or total > MAX_PROJECT_BYTES:
+            raise ProjectError("The selection exceeds group project storage limits", 413)
+        source_text = text_file(eagle, relative, content)
+        paste = ()
+        if source_text is not None:
+            paste = file_provenance.read(eagle, root, path, source_text)
+            content = source_text.encode("utf-8")
+        results.append((relative, False, content, paste))
+
+    if folder:
+        for child in target.iterdir():
+            visit(child)
+    else:
+        visit(target)
+    return target.name, folder, results
+
+
+def projects_for(db, cls, email="", *, teacher=False):
+    if teacher:
+        projects = db.execute("SELECT * FROM projects WHERE class_id=? AND status='active' ORDER BY changed DESC", (cls["id"],))
+    else:
+        projects = db.execute(
+            """SELECT p.* FROM projects p JOIN members m ON m.project=p.id
+               WHERE p.class_id=? AND m.email=? AND
+               ((p.status='active' AND m.state IN ('active','pending')) OR
+                (p.status='canceled' AND m.state='active' AND p.changed>=?)) ORDER BY p.changed DESC""",
+            (cls["id"], email, int(time()) - RECOVERY_SECONDS))
+    return [summary(db, row, email=email, teacher=teacher, cls=cls) for row in projects]
+
+
+def changes_since(db, row, since):
+    revision = row["revision"]
+    if since < 0 or since > revision:
+        return None
+    if since == revision:
+        return []
+    if revision - since > 120:
+        return None
+    rows = db.execute(
+        "SELECT revision,op_id,operation,author FROM edits WHERE file=? AND revision>? ORDER BY revision",
+        (row["id"], since)).fetchall()
+    if len(rows) != revision - since or sum(len(row["operation"]) for row in rows) > 512 * 1024:
+        return None
+    return [{"revision": r["revision"], "opId": r["op_id"], "parts": json.loads(r["operation"]),
+             "author": r["author"]} for r in rows]
+
+
+def apply_edit(eagle, db, project, member, row, data):
+    base, op_id = data.get("revision"), data.get("opId")
+    if type(base) is not int or not isinstance(op_id, str) or not re.fullmatch(r"[a-f0-9]{32}", op_id):
+        raise ProjectError("Invalid edit revision")
+    cached = db.execute("SELECT author FROM edits WHERE file=? AND op_id=?", (row["id"], op_id)).fetchone()
+    if cached:
+        if json.loads(cached["author"])["id"] != member["author"]:
+            raise ProjectError("This edit ID is already in use", 409)
+        return None
+    if not _edits_per_student.admit(member["email"]):
+        raise ProjectError("Group edits are arriving too quickly. Retry shortly.", 429)
+    updates = changes_since(db, row, base)
+    if updates is None:
+        raise ProjectError("Your draft is behind the saved file. Review it before applying it.", 409)
+    content = text_file(eagle, row["path"], row["content"])
+    if row["folder"] or content is None:
+        raise ProjectError("This file uses saved revisions", 409)
+    author = member_info(member)
+    try:
+        parts = text_ops.validate(data.get("parts"))
+        for update in updates:
+            parts = text_ops.transform(parts, update["parts"])
+            if len(parts) > text_ops.MAX_PARTS:
+                raise ValueError("Too many overlapping edits. Review your draft before reloading.")
+        source, spans = text_ops.apply(content, parts, json.loads(row["spans"]), author["id"])
+    except (ValueError, UnicodeError) as exc:
+        raise ProjectError(str(exc)) from exc
+    encoded = source.encode("utf-8")
+    if len(encoded) > text_ops.MAX_TEXT_BYTES:
+        raise ProjectError("Shared text files can be at most 2 MiB", 413)
+    if source == content:
+        parts = [text_ops.length(content)] if content else []
+        spans = json.loads(row["spans"])
+    authors = json.loads(row["authors"])
+    paste = json.loads(row["paste"])
+    if source != content:
+        authors = [a for a in authors if a["id"] != author["id"]] + [author]
+        if paste or data.get("pasted") is True:
+            _, marks = text_ops.apply(content, parts, [(*span, True) for span in paste],
+                                      True if data.get("pasted") is True else None)
+            paste = [span[:2] for span in marks[:file_provenance.MAX_RANGES]]
+    check_quota(db, project["id"], project["class_id"], 0, 0, len(encoded) - row["size"])
+    revision = row["revision"] + 1
+    db.execute("UPDATE files SET content=?,size=?,revision=?,authors=?,spans=?,paste=? WHERE id=?",
+               (encoded, len(encoded), revision, json.dumps(authors), json.dumps(spans[:MAX_RANGES]), json.dumps(paste), row["id"]))
+    operation = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
+    db.execute("INSERT INTO edits VALUES (?,?,?,?,?)", (row["id"], revision, op_id, operation, json.dumps(author)))
+    db.execute("""DELETE FROM edits WHERE file=? AND revision<?""", (row["id"], revision - 120))
+    total = 0
+    for edit in db.execute("SELECT revision,length(CAST(operation AS BLOB)) FROM edits WHERE file=? ORDER BY revision DESC",
+                           (row["id"],)).fetchall():
+        total += edit[1]
+        if total > 1024 * 1024:
+            db.execute("DELETE FROM edits WHERE file=? AND revision<=?", (row["id"], edit[0]))
+            break
+    bump(db, project["id"])
+    return {"revision": revision, "opId": op_id, "parts": parts, "author": author}
+
+
+def edit_receipt(eagle, db, row, base):
+    latest = select_file(db, row["project"], row["id"])
+    updates = changes_since(db, latest, base)
+    if updates is not None:
+        return {**file_info(latest), "kind":"text", "updates":updates}
+    return file_payload(eagle, db, select_file(db, row["project"], row["id"], content=True))
+
+
+def file_payload(eagle, db, row, since=None):
+    data = file_info(row)
+    source = text_file(eagle, row["path"], row["content"])
+    data["kind"] = "text" if source is not None else "asset"
+    data["contribution"] = {"spans": json.loads(row["spans"]), "authors": json.loads(row["authors"])}
+    if source is not None:
+        updates = changes_since(db, row, since) if since is not None else None
+        if updates is None:
+            data["content"] = source
+        else:
+            data["updates"] = updates
+    return data
+
+
+def snapshot_for_submission(eagle, db, user, assignment, selection):
+    if not isinstance(selection, dict) or selection.get("mode") not in ("self", "group"):
+        raise ProjectError("Choose how to submit this group project")
+    if assignment.get("fileControl") or assignment.get("assignmentType") == "lab_report":
+        raise ProjectError("This assignment uses its own files", 403)
+    project_id, files = selection.get("projectId"), selection.get("files")
+    if (not isinstance(project_id, str) or not isinstance(files, list) or not 1 <= len(files) <= 20 or
+            any(not isinstance(f, dict) or not isinstance(f.get("id"), str) or type(f.get("revision")) is not int for f in files) or
+            len({f["id"] for f in files}) != len(files)):
+        raise ProjectError("Select distinct files and saved revisions")
+    project = project_record(db, project_id)
+    if project["class_id"] != assignment.get("targetClassId") or project["status"] != "active":
+        raise ProjectError("This project is unavailable for this assignment", 403)
+    cls = student_class(eagle, project["class_id"], identity(user))
+    must_open(cls)
+    require_member(db, project, identity(user))
+    recipient_ids = [identity(user)]
+    if selection["mode"] == "group":
+        if assignment.get("allowGroupSubmission") is not True:
+            raise ProjectError("This assignment allows individual turn-in only", 403)
+        recipient_ids = [r["email"] for r in db.execute(
+            "SELECT email FROM members WHERE project=? AND state='active' ORDER BY joined,email", (project_id,))]
+        if len(recipient_ids) < 2:
+            raise ProjectError("At least two students must belong to the group to turn in together", 409)
+        expected = sorted(r["author"] for r in db.execute(
+            "SELECT author FROM members WHERE project=? AND state='active'", (project_id,)))
+        if selection.get("recipients") != expected:
+            raise ProjectError("The group membership changed. Review who will receive credit.", 409)
+    recipients = [roster_student(eagle, cls, email) for email in recipient_ids]
+    if not all(recipients):
+        raise ProjectError("A group member is no longer eligible. Ask your teacher to review the group.", 409)
+    records = []
+    total = 0
+    for f in files:
+        row = select_file(db, project_id, f["id"], content=True)
+        if row["folder"] or row["revision"] != f["revision"]:
+            raise ProjectError("A selected file changed. Review the latest revision before submitting.", 409)
+        total += row["size"]
+        if total > 25 * 1024 * 1024:
+            raise ProjectError("Submission files exceed the 25 MiB total limit", 413)
+        records.append(row)
+    return project, records, recipients
+
+def forget_account(eagle, email):
+    if not (eagle.GROUP_PROJECTS_DIR / "index.sqlite3").exists():
+        return
+    with database(eagle) as db:
+        rows = db.execute("""SELECT p.* FROM projects p JOIN members m ON m.project=p.id
+                             WHERE m.email=? AND m.state IN ('active','pending') AND p.status='active'""", (email,)).fetchall()
+        for project in rows:
+            member = require_member(db, project, email, states=("active", "pending"))
+            remove_member(db, project, member, "left")
+            revoke_project_watches(eagle, db, project["id"], email)
+        db.execute("DELETE FROM members WHERE email=?", (email,))
+
+
+def start_maintenance(eagle):
+    def maintain():
+        while True:
+            if (eagle.GROUP_PROJECTS_DIR / "index.sqlite3").exists():
+                try:
+                    with database(eagle) as db:
+                        prune(db)
+                        db.commit()
+                        db.execute("PRAGMA incremental_vacuum(128)")
+                except (OSError, sqlite3.Error):
+                    eagle.app.logger.warning("Group project recovery cleanup could not finish")
+            eagle.socketio.sleep(3600)
+    eagle.socketio.start_background_task(maintain)
+
+
+def class_changed(eagle, class_id, *, disabled=False, removed="", deleted=False):
+    """Synchronously invalidate existing watches when policy or roster changes."""
+    with _lock:
+        if (eagle.GROUP_PROJECTS_DIR / "index.sqlite3").exists():
+            with database(eagle) as db:
+                if deleted:
+                    db.execute("DELETE FROM projects WHERE class_id=?", (class_id,))
+                elif disabled:
+                    db.execute("UPDATE projects SET status='canceled',changed=? WHERE class_id=? AND status='active'",
+                               (int(time()), class_id))
+                    db.execute("""UPDATE members SET state='left' WHERE state='pending' AND project IN
+                                   (SELECT id FROM projects WHERE class_id=? AND status='canceled')""", (class_id,))
+                elif removed:
+                    rows = db.execute(
+                        """SELECT p.* FROM projects p JOIN members m ON m.project=p.id
+                           WHERE p.class_id=? AND m.email=? AND m.state IN ('active','pending')""",
+                        (class_id, removed)).fetchall()
+                    for project in rows:
+                        member = require_member(db, project, removed, states=("active", "pending"))
+                        if project["status"] == "active":
+                            remove_member(db, project, member, "removed")
+                        else:
+                            db.execute("UPDATE members SET state='removed' WHERE project=? AND email=?",
+                                       (project["id"], removed))
+        for sid, watch in list(_watchers.items()):
+            if watch["classId"] == class_id and (not removed or watch["email"] == removed):
+                _watchers.pop(sid, None)
+                eagle.socketio.emit("group_project_access_changed", {"projectId": watch["projectId"]}, to=sid)
+
+
+def watcher_valid(eagle, sid, watch, cls, active):
+    info = eagle._socket_sid_info.get(sid) or {}
+    return (watch["expires"] > monotonic() and watch["email"] in active and
+            info.get("token") == watch["token"] and info.get("role") == "student" and
+            watch["classId"] in eagle._socket_sid_rooms.get(sid, ()) and
+            eagle._student_tokens.active(watch["token"]) and watch["email"] in cls.get("students", []))
+
+
+def live_viewers(eagle, db, project_id, file_id):
+    project = project_record(db, project_id)
+    cls = eagle._find_class_by_id(project["class_id"])
+    active = {row["email"] for row in db.execute("SELECT email FROM members WHERE project=? AND state='active'", (project_id,))}
+    recipients = {}
+    allowed = bool(cls and project["status"] == "active" and class_open(cls)[0])
+    now = monotonic()
+    for sid, watch in list(_watchers.items()):
+        if watch["expires"] <= now:
+            _watchers.pop(sid, None)
+        if watch["projectId"] != project_id or watch["fileId"] != file_id:
+            continue
+        if allowed and watcher_valid(eagle, sid, watch, cls, active):
+            recipients[sid] = watch
+        else:
+            _watchers.pop(sid, None)
+    return recipients
+
+
+def presence(eagle, db, project_id, file_id):
+    try:
+        select_file(db, project_id, file_id)
+        viewers = live_viewers(eagle, db, project_id, file_id)
+    except ProjectError:
+        return []
+    distinct = list(dict.fromkeys(w["author"] for w in viewers.values()))
+    data = {"projectId": project_id, "fileId": file_id, "viewers": distinct}
+    for sid in viewers:
+        eagle.socketio.emit("group_project_presence", data, to=sid)
+    return distinct
+
+
+def close_watch(eagle, sid):
+    with _lock:
+        watch = _watchers.pop(sid, None)
+        if watch:
+            with database(eagle) as db:
+                presence(eagle, db, watch["projectId"], watch["fileId"])
+
+
+def deliver_edit(eagle, db, project, row, update):
+    viewers = live_viewers(eagle, db, project["id"], row["id"])
+    if len({w["email"] for w in viewers.values()}) >= 2:
+        event = {key: update[key] for key in ("revision", "opId", "parts", "author")}
+        event.update(projectId=project["id"], fileId=row["id"])
+        for sid in viewers:
+            eagle.socketio.emit("group_project_edit", event, to=sid)
+
+
+def checked_project(eagle, db, project_id, class_id, email):
+    project = project_record(db, project_id)
+    if class_id != project["class_id"] or project["status"] != "active":
+        raise ProjectError("This project is unavailable in the selected class", 403)
+    must_open(student_class(eagle, class_id, email))
+    return project, require_member(db, project, email)
+
+
+def mutate_tree(eagle, db, project, member, data):
+    action = data.get("action")
+    file_id = data.get("fileId")
+    if file_id is not None and not isinstance(file_id, str):
+        raise ProjectError("Choose a project file")
+    row = select_file(db, project["id"], file_id) if file_id else None
+    if row and (type(data.get("revision")) is not int or data["revision"] != row["revision"]):
+        raise ProjectError("This file changed. Refresh the project and try again.", 409)
+    if action == "delete":
+        if not row or not project["folder"]:
+            raise ProjectError("Choose a file or folder inside the project")
+        path = row["path"]
+        matches = (project["id"], path, len(path) + 1, path + "/")
+        deleted = [f["id"] for f in db.execute(
+            "SELECT id FROM files WHERE project=? AND (path=? OR substr(path,1,?)=?)", matches)]
+        db.execute("DELETE FROM files WHERE project=? AND (path=? OR substr(path,1,?)=?)", matches)
+        for removed in deleted:
+            revoke_project_watches(eagle, db, project["id"], file_id=removed)
+    else:
+        path = safe_path(eagle, data.get("path"))
+        parent = str(PurePosixPath(path).parent)
+        if parent != "." and not db.execute("SELECT 1 FROM files WHERE project=? AND path=? AND folder=1",
+                                            (project["id"], parent)).fetchone():
+            raise ProjectError("Choose an existing parent folder")
+        if action == "rename":
+            if not row or not project["folder"] or path.startswith(row["path"] + "/"):
+                raise ProjectError("Choose a destination outside the folder being moved")
+            if not row["folder"] and Path(path).suffix.lower() != Path(row["path"]).suffix.lower():
+                raise ProjectError("Keep the file extension when moving a shared file")
+            old = row["path"]
+            items = db.execute("SELECT id,path FROM files WHERE project=? AND (path=? OR substr(path,1,?)=?)",
+                               (project["id"], old, len(old) + 1, old + "/")).fetchall()
+            for item in items:
+                destination = safe_path(eagle, path + item["path"][len(old):])
+                db.execute("UPDATE files SET path=? WHERE id=?", (destination, item["id"]))
+        elif action in ("new", "mkdir", "upload", "replace"):
+            if not project["folder"] and action != "replace":
+                raise ProjectError("Share a folder to work with multiple files")
+            blob = b""
+            if action in ("upload", "replace"):
+                upload = request.files.get("file")
+                if not upload:
+                    raise ProjectError("Select a file to upload")
+                blob = upload.stream.read(MAX_FILE_BYTES + 1)
+                if len(blob) > MAX_FILE_BYTES:
+                    raise ProjectError("The file exceeds the 10 MiB upload limit", 413)
+            normalized = text_file(eagle, path, blob)
+            if normalized is not None:
+                blob = normalized.encode("utf-8")
+            if action == "replace":
+                if not row or row["folder"] or path != row["path"]:
+                    raise ProjectError("Select an existing project file")
+                original = select_file(db, project["id"], file_id, content=True)
+                if text_file(eagle, path, original["content"]) is not None:
+                    raise ProjectError("Edit shared text in the editor")
+                check_quota(db, project["id"], project["class_id"], 0, 0, len(blob) - row["size"])
+                if blob != original["content"]:
+                    author = member_info(member)
+                    authors = [p for p in json.loads(original["authors"]) if p["id"] != author["id"]] + [author]
+                    spans = [[0, text_ops.length(normalized), author["id"]]] if normalized else []
+                    db.execute("UPDATE files SET content=?,size=?,revision=revision+1,authors=?,spans=? WHERE id=?",
+                               (blob, len(blob), json.dumps(authors), json.dumps(spans), file_id))
+            else:
+                check_quota(db, project["id"], project["class_id"], int(action != "mkdir"), 1, len(blob))
+                file_id = insert_file(db, project["id"], path, action == "mkdir", blob)
+                if action == "upload":
+                    author = member_info(member)
+                    spans = [[0, text_ops.length(normalized), author["id"]]] if normalized else []
+                    db.execute("UPDATE files SET authors=?,spans=? WHERE id=?",
+                               (json.dumps([author]), json.dumps(spans), file_id))
+        else:
+            raise ProjectError("Unknown project action")
+    bump(db, project["id"])
+    return file_id
+
+
+def attachment(data, name):
+    response = send_file(BytesIO(data), mimetype="application/octet-stream", as_attachment=True,
+                         download_name=name, conditional=False)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+def teacher_class(eagle, class_id):
+    actor = eagle._require_teacher(request)
+    cls = eagle._find_class_by_id(class_id)
+    if not actor or not cls or identity(actor) != cls.get("teacher_email"):
+        raise ProjectError("Only the class owner can manage group projects", 403)
+    return cls
+
+
+def register(app, eagle):
+    def student():
+        user = eagle._require_user(request)
+        if not user:
+            raise ProjectError("Student login required", 401)
+        return user
+
+    def json_body():
+        if request.is_json and (request.content_length or 0) > 512 * 1024:
+            raise ProjectError("This group edit is too large", 413)
+        data = request.get_json(silent=True) if not request.files else request.form.to_dict()
+        if not isinstance(data, dict):
+            raise ProjectError("Invalid group project request")
+        if request.files and "revision" in data:
+            try:
+                data["revision"] = int(data["revision"])
+            except ValueError as exc:
+                raise ProjectError("Invalid file revision") from exc
+        return data
+
+    @app.errorhandler(ProjectError)
+    def group_error(error):
+        return jsonify(ok=False, error=str(error)), error.status
+
+    @app.get("/api/group-projects")
+    def list_group_projects():
+        email = identity(student())
+        cls = student_class(eagle, request.args.get("classId"), email)
+        allowed, reason = class_open(cls)
+        with database(eagle) as db:
+            return jsonify(ok=True, allowed=allowed, reason=reason, projects=projects_for(db, cls, email))
+
+    @app.get("/api/group-projects/roster")
+    def group_roster():
+        user = student()
+        cls = student_class(eagle, request.args.get("classId"), identity(user))
+        must_open(cls)
+        enrolled = set(cls.get("students", [])) - {identity(user)}
+        students = [{"email": record["email"].lower(), "name": name_of(record)}
+                    for record in eagle._load_users(require_available=True).get("users", [])
+                    if record["email"].lower() in enrolled and record.get("enabled", True)
+                    and record.get("role", "student") == "student"]
+        return jsonify(ok=True, students=students)
+
+    @app.post("/api/group-projects")
+    def create_group_project():
+        data = json_body()
+        user = student()
+        email = identity(user)
+        class_id = data.get("classId")
+        must_open(student_class(eagle, class_id, email))
+        invites = data.get("invitees", [])
+        if (not isinstance(invites, list) or len(invites) >= MAX_MEMBERS or
+                any(not isinstance(value, str) or value == email for value in invites) or len(set(invites)) != len(invites)):
+            raise ProjectError("Choose up to three classmates")
+        safe_path(eagle, data.get("path"))
+        if not _project_creation.admit(email):
+            raise ProjectError("Several projects were created recently. Try again in a minute.", 429)
+        with eagle._assignment_lock, file_provenance.lock(eagle._get_user_dir(email)):
+            name, folder, items = import_workspace(eagle, user, data.get("path"))
+        with database(eagle) as db:
+            cls = student_class(eagle, class_id, email)
+            must_open(cls)
+            invitees = [roster_student(eagle, cls, person) for person in invites]
+            if not all(invitees):
+                raise ProjectError("Choose current classmates", 403)
+            prune(db)
+            if db.execute("SELECT COUNT(*) FROM projects WHERE class_id=? AND status='active'", (class_id,)).fetchone()[0] >= MAX_PROJECTS:
+                raise ProjectError("This class has reached its active project limit", 413)
+            if db.execute("SELECT COUNT(*) FROM projects WHERE class_id=?", (class_id,)).fetchone()[0] >= MAX_PROJECTS * 3:
+                raise ProjectError("This class has too many saved recovery copies. Try again after older copies expire.", 413)
+            project_id = uuid4().hex
+            db.execute("INSERT INTO projects(id,class_id,name,folder,owner,status,changed) VALUES (?,?,?,?,?,'active',?)",
+                       (project_id, class_id, name, int(folder), email, int(time())))
+            check_quota(db, project_id, class_id, sum(not row[1] for row in items), len(items), sum(len(row[2]) for row in items))
+            add_member(db, project_id, user, "active")
+            for person in invitees:
+                add_member(db, project_id, person, "pending")
+            try:
+                for path, is_folder, blob, paste in items:
+                    insert_file(db, project_id, path, is_folder, blob, paste)
+            except sqlite3.IntegrityError as exc:
+                raise ProjectError("The folder contains names that differ only in capitalization") from exc
+            return jsonify(ok=True, project=summary(db, project_record(db, project_id), email=email, tree=True))
+
+    @app.get("/api/group-projects/<project_id>")
+    def get_group_project(project_id):
+        email = identity(student())
+        with database(eagle) as db:
+            project, _ = checked_project(eagle, db, project_id, request.args.get("classId"), email)
+            cls = student_class(eagle, project["class_id"], email)
+            return jsonify(ok=True, project=summary(db, project, email=email, tree=True, cls=cls))
+
+    @app.post("/api/group-projects/<project_id>")
+    def change_group_project(project_id):
+        data = json_body()
+        user = student()
+        email = identity(user)
+        action = data.get("action")
+        with database(eagle) as db:
+            project = project_record(db, project_id)
+            cls = student_class(eagle, data.get("classId"), email)
+            if project["class_id"] != cls["id"] or project["status"] != "active":
+                raise ProjectError("This group project is unavailable", 403)
+            if action not in ("decline", "leave"):
+                must_open(cls)
+            if action in ("accept", "decline"):
+                require_member(db, project, email, states=("pending",))
+                db.execute("UPDATE members SET state=?,joined=? WHERE project=? AND email=?",
+                           ("active" if action == "accept" else "left", time_ns(), project_id, email))
+            else:
+                member = require_member(db, project, email)
+                if action == "leave":
+                    remove_member(db, project, member, "left")
+                    revoke_project_watches(eagle, db, project_id, email)
+                    return jsonify(ok=True)
+                if action in ("invite", "cancelInvite"):
+                    if project["owner"] != email:
+                        raise ProjectError("Only the group organizer can manage invitations", 403)
+                    if action == "cancelInvite":
+                        cancel = db.execute("UPDATE members SET state='left' WHERE project=? AND author=? AND state='pending'",
+                                            (project_id, data.get("memberId")))
+                        if not cancel.rowcount:
+                            raise ProjectError("This invitation is no longer pending", 409)
+                    else:
+                        invitee = data.get("email")
+                        person = roster_student(eagle, cls, invitee) if isinstance(invitee, str) else None
+                        if not person:
+                            raise ProjectError("Choose a current classmate", 403)
+                        add_member(db, project_id, person, "pending")
+                else:
+                    try:
+                        file_id = mutate_tree(eagle, db, project, member, data)
+                    except sqlite3.IntegrityError as exc:
+                        raise ProjectError("That file or folder name is already in use", 409) from exc
+                    return jsonify(ok=True, fileId=file_id)
+            bump(db, project_id)
+            return jsonify(ok=True)
+
+    @app.get("/api/group-projects/<project_id>/files/<file_id>")
+    def get_group_file(project_id, file_id):
+        email = identity(student())
+        with database(eagle) as db:
+            checked_project(eagle, db, project_id, request.args.get("classId"), email)
+            since = request.args.get("since", type=int)
+            row = select_file(db, project_id, file_id, content=True)
+            if row["folder"]:
+                raise ProjectError("Open a project file")
+            result = file_payload(eagle, db, row, since)
+            viewers = live_viewers(eagle, db, project_id, file_id)
+            return jsonify(ok=True, file=result, viewers=list(dict.fromkeys(w["author"] for w in viewers.values())))
+
+    @app.post("/api/group-projects/<project_id>/files/<file_id>")
+    def save_group_file(project_id, file_id):
+        email = identity(student())
+        data = json_body()
+        with database(eagle) as db:
+            project, member = checked_project(eagle, db, project_id, data.get("classId"), email)
+            row = select_file(db, project_id, file_id, content=True)
+            update = apply_edit(eagle, db, project, member, row, data)
+            db.commit()
+            if update:
+                deliver_edit(eagle, db, project, row, update)
+            return jsonify(ok=True, file=edit_receipt(eagle, db, row, data["revision"]))
+
+    @app.get("/api/group-projects/<project_id>/download")
+    def download_group_project(project_id):
+        email = identity(student())
+        cls = student_class(eagle, request.args.get("classId"), email)
+        if not _download_slots.acquire(blocking=False):
+            raise ProjectError("Project downloads are busy. Try again shortly.", 503)
+        try:
+            with database(eagle) as db:
+                project = project_record(db, project_id)
+                if project["class_id"] != cls["id"]:
+                    raise ProjectError("Choose the project's class", 403)
+                require_member(db, project, email)
+                if project["status"] == "canceled":
+                    if project["changed"] < int(time()) - RECOVERY_SECONDS:
+                        raise ProjectError("This project recovery copy has expired", 404)
+                else:
+                    must_open(cls)
+                file_id = request.args.get("fileId")
+                if file_id:
+                    file = select_file(db, project_id, file_id, content=True)
+                    if file["folder"]:
+                        raise ProjectError("Select a file to download")
+                    return attachment(file["content"], Path(file["path"]).name)
+                rows = db.execute("SELECT path,folder,content FROM files WHERE project=? ORDER BY path", (project_id,)).fetchall()
+            if not project["folder"] and rows:
+                return attachment(rows[0]["content"], Path(rows[0]["path"]).name)
+            output = BytesIO()
+            with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
+                for row in rows:
+                    archive.writestr(row["path"] + ("/" if row["folder"] else ""), row["content"])
+            return attachment(output.getvalue(), project["name"] + ".zip")
+        finally:
+            _download_slots.release()
+
+    @app.get("/api/teacher/group-projects")
+    def list_teacher_group_projects():
+        cls = teacher_class(eagle, request.args.get("classId"))
+        with database(eagle) as db:
+            projects = projects_for(db, cls, teacher=True)
+            for project in projects:
+                project["openFiles"] = []
+                for file_id in {w["fileId"] for w in _watchers.values() if w["projectId"] == project["id"]}:
+                    try:
+                        row = select_file(db, project["id"], file_id)
+                        viewers = live_viewers(eagle, db, project["id"], file_id)
+                        if viewers:
+                            project["openFiles"].append({"path": row["path"], "viewers": list(dict.fromkeys(w["author"] for w in viewers.values()))})
+                    except ProjectError:
+                        continue
+            return jsonify(ok=True, projects=projects)
+
+    @app.route("/api/teacher/group-projects/<project_id>", methods=["GET", "POST"])
+    def teacher_group_project(project_id):
+        cls = teacher_class(eagle, request.args.get("classId"))
+        with database(eagle) as db:
+            project = project_record(db, project_id)
+            if project["class_id"] != cls["id"] or project["status"] != "active":
+                raise ProjectError("This project is unavailable", 404)
+            if request.method == "POST":
+                data = json_body()
+                member_id = data.get("memberId")
+                if not isinstance(member_id, str):
+                    raise ProjectError("Choose a project member")
+                member = db.execute("SELECT * FROM members WHERE project=? AND author=?",
+                                    (project_id, member_id)).fetchone()
+                if not member:
+                    raise ProjectError("Member not found", 404)
+                if data.get("action") == "remove" and member["state"] in ("active", "pending"):
+                    remove_member(db, project, member, "removed")
+                    revoke_project_watches(eagle, db, project_id, member["email"])
+                elif data.get("action") == "reinstate" and member["state"] == "removed":
+                    db.execute("UPDATE members SET state='left' WHERE project=? AND author=?", (project_id, member["author"]))
+                else:
+                    raise ProjectError("This membership has already changed", 409)
+                return jsonify(ok=True)
+            file_id = request.args.get("fileId")
+            if file_id:
+                row = select_file(db, project_id, file_id, content=True)
+                if row["folder"]:
+                    raise ProjectError("Choose a file to preview")
+                if request.args.get("download") == "1":
+                    return attachment(row["content"], Path(row["path"]).name)
+                return jsonify(ok=True, file=file_payload(eagle, db, row))
+            return jsonify(ok=True, project=summary(db, project, teacher=True, tree=True, cls=cls))
+
+    def socket_access(db, payload):
+        if not isinstance(payload, dict):
+            raise ProjectError("Invalid project subscription")
+        sid = request.sid
+        info = eagle._socket_sid_info.get(sid) or {}
+        token = info.get("token")
+        class_id = payload.get("classId")
+        if (info.get("role") != "student" or not token or not isinstance(class_id, str) or
+                class_id not in eagle._socket_sid_rooms.get(sid, ()) or not eagle._student_tokens.active(token)):
+            raise ProjectError("Open this project's class to connect", 403)
+        project_id, file_id = payload.get("projectId"), payload.get("fileId")
+        if not isinstance(project_id, str) or not isinstance(file_id, str):
+            raise ProjectError("Select a project file")
+        project, member = checked_project(eagle, db, project_id, class_id, info["email"])
+        return sid, info, project, member, file_id
+
+    @eagle.socketio.on("group_project_watch")
+    def watch_group_project(payload):
+        try:
+            with database(eagle) as db:
+                sid, info, project, member, file_id = socket_access(db, payload)
+                row = select_file(db, project["id"], file_id)
+                if row["folder"]:
+                    raise ProjectError("Choose a project file")
+                old = _watchers.get(sid)
+                matching = old and old["projectId"] == project["id"] and old["fileId"] == file_id
+                if old and not matching:
+                    close_watch(eagle, sid)
+                _watchers[sid] = {"classId": project["class_id"], "projectId": project["id"], "fileId": file_id,
+                                  "email": info["email"], "token": info["token"], "author": member["author"],
+                                  "expires": monotonic() + LEASE_SECONDS, "cursorAt": old["cursorAt"] if matching else 0}
+                return {"ok": True, "viewers": presence(eagle, db, project["id"], file_id), "revision": row["revision"]}
+        except ProjectError as error:
+            return {"ok": False, "error": str(error), "status": error.status}
+
+    @eagle.socketio.on("group_project_unwatch")
+    def unwatch_group_project():
+        close_watch(eagle, request.sid)
+
+    @eagle.socketio.on("group_project_change")
+    def edit_group_project(payload):
+        try:
+            with database(eagle) as db:
+                sid, _info, project, member, file_id = socket_access(db, payload)
+                watch = _watchers.get(sid)
+                if not watch or watch["fileId"] != file_id or watch["expires"] <= monotonic():
+                    raise ProjectError("Reconnect to the group editor", 409)
+                row = select_file(db, project["id"], file_id, content=True)
+                update = apply_edit(eagle, db, project, member, row, payload)
+                db.commit()
+                if update:
+                    deliver_edit(eagle, db, project, row, update)
+                return {"ok": True, "file": edit_receipt(eagle, db, row, payload["revision"])}
+        except ProjectError as error:
+            return {"ok": False, "error": str(error), "status": error.status}
+
+    @eagle.socketio.on("group_project_cursor")
+    def cursor_group_project(payload):
+        sid = request.sid
+        with _lock:
+            watch = _watchers.get(sid)
+            now = monotonic()
+            if not watch or not isinstance(payload, dict) or now - watch["cursorAt"] < .095:
+                return
+            watch["cursorAt"] = now
+            position, revision = payload.get("position"), payload.get("revision")
+            if type(position) is not int or not 0 <= position <= text_ops.MAX_TEXT_BYTES or type(revision) is not int:
+                return
+            with database(eagle) as db:
+                try:
+                    row = select_file(db, watch["projectId"], watch["fileId"])
+                    if revision != row["revision"]:
+                        return
+                    viewers = live_viewers(eagle, db, watch["projectId"], watch["fileId"])
+                except ProjectError:
+                    return
+                if sid not in viewers or len({w["email"] for w in viewers.values()}) < 2:
+                    return
+                event = {"projectId": watch["projectId"], "fileId": watch["fileId"],
+                         "position": position, "revision": revision, "author": watch["author"]}
+                for other_sid in viewers:
+                    if other_sid != sid:
+                        eagle.socketio.emit("group_project_cursor", event, to=other_sid)
+
+
+def revoke_project_watches(eagle, db, project_id, email="", file_id=""):
+    affected = set()
+    for sid, watch in list(_watchers.items()):
+        if (watch["projectId"] == project_id and (not email or watch["email"] == email) and
+                (not file_id or watch["fileId"] == file_id)):
+            _watchers.pop(sid, None)
+            eagle.socketio.emit("group_project_access_changed", {"projectId": project_id}, to=sid)
+
+def run_access(eagle, email, target):
+    if (not isinstance(target, dict) or any(not isinstance(target.get(key), str)
+            for key in ("classId", "projectId", "fileId")) or type(target.get("revision")) is not int):
+        raise ProjectError("Open a saved group project file")
+    with database(eagle) as db:
+        project, _ = checked_project(eagle, db, target["projectId"], target["classId"], email)
+        row = select_file(db, project["id"], target["fileId"])
+        if row["folder"]:
+            raise ProjectError("Choose a project file")
+        return row["path"]
+
+
+def run_snapshot(eagle, email, target, directory):
+    """Materialize a checked revision in disposable runner/preview storage."""
+    with database(eagle) as db:
+        project, _ = checked_project(eagle, db, target["projectId"], target["classId"], email)
+        row = select_file(db, project["id"], target["fileId"], content=True)
+        if row["folder"] or row["revision"] != target["revision"]:
+            raise ProjectError("The project file changed. Sync and run again.", 409)
+        source = text_file(eagle, row["path"], row["content"])
+        if source is None:
+            raise ProjectError("This project asset cannot be run")
+        files = db.execute("SELECT path,folder,content FROM files WHERE project=? ORDER BY path", (project["id"],)).fetchall()
+    for file in files:
+        destination = directory.joinpath(*safe_path(eagle, file["path"]).split("/"))
+        destination.resolve().relative_to(directory.resolve())
+        if file["folder"]:
+            destination.mkdir(parents=True, exist_ok=True)
+        else:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(file["content"])
+    return directory.joinpath(*row["path"].split("/")), source

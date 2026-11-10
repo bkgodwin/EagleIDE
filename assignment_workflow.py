@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from flask import jsonify, request, send_file
 import file_provenance
+import group_projects
 import sqlite3
 
 MAX_FILES = 20
@@ -262,7 +263,9 @@ def files_for(submission):
 
 
 def public_files(submission):
-    return [{key: f.get(key) for key in ("id", "name", "size")} for f in files_for(submission)]
+    return [{**{key: f.get(key) for key in ("id", "name", "size")},
+             **({"contributors": f["contributors"], "projectPath": f.get("projectPath", f["name"])}
+                if "contributors" in f else {})} for f in files_for(submission)]
 
 
 def teacher_payload(eagle, assignment):
@@ -472,6 +475,8 @@ def prune_history(eagle, assignment, previous):
             if target and target.is_file():
                 try:
                     target.unlink()
+                    if "contributors" in f:
+                        _contribution_file(target).unlink(missing_ok=True)
                 except OSError:
                     eagle.app.logger.warning("Could not remove an expired submission snapshot")
                     continue
@@ -500,6 +505,10 @@ def submit(eagle):
     key = data.get("submissionKey")
     if key is not None and (not isinstance(key, str) or not re.fullmatch(r"[a-zA-Z0-9-]{8,80}", key)):
         return jsonify(ok=False, error="Invalid submission retry key"), 400
+    if "groupSelection" in data:
+        if uploads or data.get("filePaths") or data.get("filePath") or not key:
+            return jsonify(ok=False, error="Choose a group project and a submission retry key"), 400
+        return submit_project(eagle, user, data, key)
     reference, class_hint = eagle._assignment_request_reference(data)
     email = user["email"].lower()
 
@@ -563,14 +572,7 @@ def submit(eagle):
                         eagle, assignment, email, bundle["revisionId"], bundle["files"], sources, submitted=snapshot_time)
                 except (OSError, ValueError, eagle.workspace_history.Capacity):
                     intent = None
-                sub = {"name": user.get("name") or email, "email": email, **bundle,
-                       "history": archive(previous), "fileSubmissionCount": previous.get("fileSubmissionCount", 0) + 1,
-                       "adminFilePath": "", "codeScore": None, "totalScore": previous.get("quizScore"),
-                       "quizResponses": previous.get("quizResponses", []), "quizScore": previous.get("quizScore"),
-                       "quizSubmissionCount": previous.get("quizSubmissionCount", 0),
-                       "quizLastSubmittedByClose": previous.get("quizLastSubmittedByClose", False),
-                       "aiSuggestedScore": None, "aiFeedback": "", "teacherFeedback": "", "aiGradingStatus": "",
-                       "aiGradingError": "", "manualScoreOverride": False, "withdrawn": False}
+                sub = _file_submission(user, bundle, previous)
                 if key:
                     sub["fileSubmissionKey"] = key
                 assignment["submissions"] = [s for s in assignment.get("submissions", []) if s.get("email", "").lower() != email] + [sub]
@@ -596,9 +598,135 @@ def submit(eagle):
     return _submission_receipt(sub)
 
 
+def _file_submission(user, bundle, previous):
+    return {"name": user.get("name") or user["email"], "email": user["email"].lower(), **bundle,
+           "history": archive(previous), "fileSubmissionCount": previous.get("fileSubmissionCount", 0) + 1,
+           "adminFilePath": "", "codeScore": None, "totalScore": previous.get("quizScore"),
+           "quizResponses": previous.get("quizResponses", []), "quizScore": previous.get("quizScore"),
+           "quizSubmissionCount": previous.get("quizSubmissionCount", 0),
+           "quizLastSubmittedByClose": previous.get("quizLastSubmittedByClose", False),
+           "aiSuggestedScore": None, "aiFeedback": "", "teacherFeedback": "", "aiGradingStatus": "",
+           "aiGradingError": "", "manualScoreOverride": False, "withdrawn": False}
+
+
+def _contribution_file(target):
+    return target.with_name(f".{target.name}.contributors.json")
+
+
+def _project_bundle(eagle, assignment, staging, records):
+    files = []
+    for index, row in enumerate(records):
+        name = Path(row["path"]).name
+        content = row["content"]
+        if Path(name).suffix.lower() in CODE_EXTENSIONS:
+            if len(content) > MAX_PREVIEW_BYTES:
+                raise ValueError("Each Python or JavaScript file must be at most 2 MB")
+            content.decode("utf-8")
+        target = staging / f"{index + 1:02d}.file"
+        target.write_bytes(content)
+        authors = json.loads(row["authors"])
+        _contribution_file(target).write_text(row["spans"], encoding="utf-8")
+        files.append({"id": uuid.uuid4().hex, "name": name, "size": len(content),
+                      "sourceFilePath": "", "path": target.name, "projectPath": row["path"],
+                      "pasteRanges": json.loads(row["paste"]), "contributors": authors})
+    bundle = {"revisionId": uuid.uuid4().hex, "files": files, "submittedAt": eagle._current_timestamp(),
+              "submittedAtIso": iso(datetime.now(timezone.utc)), "submittedFileName": files[0]["name"], "sourceFilePath": ""}
+    bundle["code"] = grading_code(eagle, assignment, bundle, staging=staging)
+    return bundle
+
+
+def submit_project(eagle, user, data, key):
+    reference, class_hint = eagle._assignment_request_reference(data)
+    email = user["email"].lower()
+    selection = data["groupSelection"]
+    if not _bundle_slots.acquire(timeout=8):
+        return jsonify(ok=False, error="Several files are turning in. Try again in a moment."), 503
+    destination = None
+    committed = False
+    try:
+        with eagle._assignment_lock, group_projects.database(eagle) as db:
+            if not eagle._require_user(request):
+                return jsonify(ok=False, error="Student login required"), 401
+            assignment = eagle._load_assignment(reference, class_hint)
+            if not assignment:
+                return jsonify(ok=False, error="Assignment not found"), 404
+            group_projects.student_class(eagle, assignment["targetClassId"], email)
+            if class_hint != assignment["targetClassId"]:
+                raise group_projects.ProjectError("Open the assignment's class to submit", 403)
+            previous_rows = {sub["email"].lower(): sub for sub in assignment.get("submissions", [])}
+            prior = previous_rows.get(email, {})
+            retry = next((row for row in [prior, *prior.get("history", [])]
+                          if row.get("fileSubmissionKey") == key and row.get("groupSubmittedBy") == email), None)
+            if retry:
+                return _submission_receipt(retry)
+            project, records, users = group_projects.snapshot_for_submission(eagle, db, user, assignment, selection)
+            if not assignment.get("allowFileSubmission", True):
+                raise group_projects.ProjectError("This assignment uses questions only")
+            if len(records) > 1 and not assignment.get("allowMultiFileSubmission"):
+                raise group_projects.ProjectError("This assignment accepts one file")
+            mode = selection["mode"]
+            recipients = [person["email"].lower() for person in users]
+            for person in users:
+                member_email = person["email"].lower()
+                previous = previous_rows.get(member_email, {})
+                label = group_projects.name_of(person)
+                error = submission_error(eagle, assignment, person)
+                if error:
+                    raise group_projects.ProjectError(f"{label}: {error}", 409)
+                limit = attempt_limit(eagle, assignment, member_email, "file")
+                if limit and previous.get("fileSubmissionCount", 0) >= limit:
+                    raise group_projects.ProjectError(f"{label} has reached the file attempt limit", 409)
+                if mode == "group" and not previous.get("withdrawn") and files_for(previous):
+                    repeat = (previous.get("groupProjectId") == project["id"] and
+                              previous.get("groupMode") == "group" and
+                              set(previous.get("groupRecipientEmails", [])) == set(recipients))
+                    if (not repeat or previous.get("codeScore") is not None or
+                            previous.get("teacherFeedbackEdited") or previous.get("aiGradingStatus") in {"queued", "running"}):
+                        raise group_projects.ProjectError(f"{label} already has submitted or reviewed work", 409)
+            root = eagle.ASSIGNMENT_SUBMISSIONS_DIR
+            root.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix=".turn-in-", dir=root) as temporary:
+                staging = Path(temporary) / "bundle"
+                staging.mkdir()
+                bundle = _project_bundle(eagle, assignment, staging, records)
+                # The protected bundle is immutable and shared by the individual
+                # grading records. History pruning already checks all references.
+                destination = eagle._assignment_submission_directory(assignment) / f"group--{bundle['revisionId']}"
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                staging.replace(destination)
+            revision_dir = destination.relative_to(root.resolve()).as_posix()
+            for file in bundle["files"]:
+                file["path"] = f"{revision_dir}/{file['path']}"
+            bundle.update(revisionDirectory=revision_dir, submissionPath=bundle["files"][0]["path"],
+                          groupProjectId=project["id"], groupMode=mode, groupSubmittedBy=email,
+                          groupSubmittedByName=group_projects.name_of(user),
+                          groupRecipients=[group_projects.name_of(person) for person in users],
+                          groupRecipientEmails=recipients, fileSubmissionKey=key)
+            new_rows = [_file_submission(person, copy.deepcopy(bundle), previous_rows.get(person["email"].lower(), {}))
+                        for person in users]
+            assignment["submissions"] = [sub for sub in previous_rows.values() if sub["email"].lower() not in recipients] + new_rows
+            if not eagle._save_assignment(assignment):
+                return jsonify(ok=False, error="Could not save the group submission"), 500
+            committed = True
+            for member in recipients:
+                prune_history(eagle, assignment, previous_rows.get(member, {}))
+    except (ValueError, UnicodeError) as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    except (OSError, sqlite3.Error):
+        return jsonify(ok=False, error="Could not store project submission files"), 500
+    finally:
+        if destination is not None and not committed:
+            shutil.rmtree(destination, ignore_errors=True)
+        _bundle_slots.release()
+    eagle.socketio.emit("assignment_workflow_updated", {"classId": assignment["targetClassId"], "assignmentId": assignment["id"]},
+                        to=f"class_{assignment['targetClassId']}")
+    return _submission_receipt(next(sub for sub in new_rows if sub["email"] == email))
+
+
 def _submission_receipt(sub):
     private = {"history", "aiFeedback", "teacherFeedback", "aiGradingStatus", "aiGradingError",
-               "aiSuggestedScore", "manualScoreOverride", "fileSubmissionKey"}
+               "aiSuggestedScore", "manualScoreOverride", "fileSubmissionKey",
+               "groupRecipientEmails", "groupSubmittedBy", "groupProjectId"}
     visible = {k: v for k, v in sub.items() if k not in private}
     visible["files"] = public_files(sub)
     if len(visible["files"]) > 1:
@@ -624,9 +752,12 @@ def clone_revision(eagle, assignment, previous):
             source = eagle._assignment_submission_path(assignment, record.get("path") or "")
             if not source or not source.is_file():
                 raise ValueError("A previous submission file is unavailable")
-            target = destination / f"{index + 1:02d}-{record['name']}"
+            stored_name = f"{index + 1:02d}.file" if "contributors" in record else f"{index + 1:02d}-{record['name']}"
+            target = destination / stored_name
             target.resolve().relative_to(destination.resolve())
             shutil.copyfile(source, target)
+            if "contributors" in record and _contribution_file(source).is_file():
+                shutil.copyfile(_contribution_file(source), _contribution_file(target))
             copied.append({**record, "path": target.relative_to(eagle.ASSIGNMENT_SUBMISSIONS_DIR.resolve()).as_posix()})
         return {"revisionId": destination.name, "files": copied, "submissionPath": copied[0]["path"],
                 "revisionDirectory": destination.relative_to(eagle.ASSIGNMENT_SUBMISSIONS_DIR.resolve()).as_posix()}
@@ -835,6 +966,7 @@ def register(app, eagle):
         latest = next(s for s in assignment["submissions"] if str(s.get("email") or "").lower() == str(sub.get("email") or "").lower())
         history = [{"revisionId": s.get("revisionId"), "submittedAt": s.get("submittedAt"), "files": public_files(s)} for s in latest.get("history", [])] if actor else []
         return jsonify(ok=True, files=public_files(sub), revisionId=sub.get("revisionId"), submittedAt=sub.get("submittedAt"), history=history,
+                       groupRecipients=sub.get("groupRecipients", []), groupSubmittedByName=sub.get("groupSubmittedByName", ""),
                        latestRevisionId=latest.get("revisionId"), quizResponses=sub.get("quizResponses", []) if actor else [{"questionId": r.get("questionId"), "answer": r.get("answer")} for r in sub.get("quizResponses", [])])
 
     @app.get("/api/assignments/submission-file")
@@ -853,8 +985,17 @@ def register(app, eagle):
             response.headers["X-Content-Type-Options"] = "nosniff"
             response.headers["Cache-Control"] = "no-store"
             return response
+        contributor_data = {"contributors": record.get("contributors", [])}
+        if actor and "contributors" in record:
+            contributor_data["contribution"] = {"authors": record["contributors"], "spans": []}
+            try:
+                with _contribution_file(target).open(encoding="utf-8") as handle:
+                    spans = json.loads(handle.read(1024 * 1024))
+                contributor_data["contribution"]["spans"] = spans if isinstance(spans, list) else []
+            except (OSError, ValueError):
+                pass
         try:
-            if suffix == ".csv":
+            if suffix == ".csv" and not (actor and "contributors" in record):
                 from workspace_data import records, PAGE_ROWS, PAGE_COLUMNS
                 cursor = int(request.args.get("cursor", 0))
                 with target.open("r", encoding="utf-8-sig", newline="") as handle:
@@ -880,14 +1021,14 @@ def register(app, eagle):
                     image.verify()
                 if width > 16384 or height > 16384 or width * height > 25000000:
                     raise ValueError("Image exceeds the preview dimensions")
-                return jsonify(ok=True, kind="image")
+                return jsonify(ok=True, kind="image", **contributor_data)
             if target.stat().st_size <= MAX_PREVIEW_BYTES:
                 content = target.read_text(encoding="utf-8")
                 if "\x00" not in content:
-                    return jsonify(ok=True, kind="text", content=content, **({"pasteRanges": record.get("pasteRanges", [])} if actor else {}))
+                    return jsonify(ok=True, kind="text", content=content, **contributor_data, **({"pasteRanges": record.get("pasteRanges", [])} if actor else {}))
         except (UnicodeError, ValueError, OSError, csv.Error):
             pass
-        return jsonify(ok=True, kind="download", message="Download this attachment to open it. The browser preview supports text, CSV, and images.")
+        return jsonify(ok=True, kind="download", **contributor_data, message="Download this attachment to open it. The browser preview supports text, CSV, and images.")
 
     @app.post("/api/assignments/feedback")
     def feedback():
@@ -934,7 +1075,8 @@ def register(app, eagle):
                 return jsonify(ok=False, error="A newer submission arrived. Refresh before un-submitting."), 409
             sub["withdrawn"] = True
             sub["fileSubmissionCount"] = max(0, int(sub.get("fileSubmissionCount", 1)) - 1)
-            sub["quizSubmissionCount"] = max(0, int(sub.get("quizSubmissionCount", 0)) - 1)
+            if not sub.get("groupMode"):
+                sub["quizSubmissionCount"] = max(0, int(sub.get("quizSubmissionCount", 0)) - 1)
             sub["aiGradingStatus"] = "canceled"
             if not eagle._save_assignment(assignment):
                 return jsonify(ok=False, error="Could not un-submit work"), 500

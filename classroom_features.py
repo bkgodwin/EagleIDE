@@ -31,6 +31,7 @@ DEFAULT_CLASSROOM_SETTINGS: dict[str, bool] = {
     "raise_hand_enabled": True,
     "student_send_to_teacher_enabled": True,
     "student_peer_sharing_enabled": False,
+    "group_projects_enabled": False,
     "teacher_file_send_enabled": True,
 }
 

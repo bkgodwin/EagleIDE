@@ -1425,3 +1425,29 @@ it with instance backups. Paths in its permanent admin-only log may contain
 personal information; deleted file/record contents are not copied into the log.
 See static/docs/data-cleanup.html for defaults, exact scope, failure handling,
 deleted-account limitations, deployment and operator instructions.
+
+GROUP PROJECTS
+
+In Teacher Dashboard > Classes, open Group Projects to enable collaboration
+for the selected class. Use Only during class to set meeting days, hours and
+a time zone. The same panel shows linked projects and open files. Select a
+project to browse its files and manage membership. Turning group projects off
+cancels the groups and gives members 30 days to download their last saved copy.
+
+Students can open the action menu for a file or folder in Files, choose Share
+as group project and invite up to three classmates. Invitees join from the
+Group Projects section in Files. Open a shared file to see its member icons.
+A green ring shows who has that file open. Hover or focus a colored cursor
+to see its name. Show contributions adds color to the text each member entered.
+
+Shared text files up to 2 MiB support live editing. Other assets sync as saved
+files and can be downloaded or replaced from the project browser. Choose
+Unlink and leave group to stop access. Download a personal copy before leaving
+if you want to keep the saved files.
+
+For assignments where group credit is appropriate, select Allow group
+submissions in the assignment editor. Students choose group files during turn-in
+and can submit for themselves or for the current group. The teacher sees the
+contributors for each submitted file. In its preview, use Highlight
+contributions to see who entered the surviving text. File credit, individual
+questions and grades appear on each student's assignment record.

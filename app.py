@@ -48,6 +48,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from classroom_features import merge_class_settings, register as register_classroom_features
 import assignment_workflow
 import file_provenance
+import group_projects
 import assignment_development
 import assignment_organization
 import workspace_history
@@ -88,6 +89,7 @@ ASSIGNMENTS_DIR = BASE_DIR / "assignments"
 ASSIGNMENT_SUBMISSIONS_DIR = Path(
     os.environ.get("EAGLEIDE_ASSIGNMENT_SUBMISSIONS_DIR", str(BASE_DIR / "assignment_submissions"))
 ).expanduser().resolve()
+GROUP_PROJECTS_DIR = Path(os.environ.get("EAGLEIDE_GROUP_PROJECTS_DIR", str(BASE_DIR / "group_projects"))).expanduser().resolve()
 NOTEBOOKS_DIR = BASE_DIR / "notebooks"
 WIKI_DATA_DIR = Path(os.environ.get("EAGLEIDE_WIKI_DATA_DIR", str(BASE_DIR / "wiki_data"))).expanduser().resolve()
 WIKI_BACKUP_DIR = Path(os.environ.get("EAGLEIDE_WIKI_BACKUP_DIR", str(BASE_DIR / "wiki_backups"))).expanduser().resolve()
@@ -462,7 +464,7 @@ def _add_security_headers(response):
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Cache-Control"] = "private, no-store"
     if request.path in {"/api/assignments", "/api/admin/workspace-history"} or request.path.startswith((
-        "/api/assignments/", "/api/quiz/",
+        "/api/assignments/", "/api/quiz/", "/api/group-projects", "/api/teacher/group-projects",
     )):
         response.headers["Cache-Control"] = "private, no-store"
     if request.path.startswith("/static/"):
@@ -4793,6 +4795,7 @@ def _delete_user_by_email(email: str) -> bool:
         file_provenance.clear(sys.modules[__name__], user_dir)
         if deleted_user.get("role") == "student":
             workspace_history.clear_workspace(sys.modules[__name__], user_dir)
+            group_projects.forget_account(sys.modules[__name__], email)
         if deleted_user.get("tool_storage_id"):
             _external_tools.storage.delete_account(deleted_user["tool_storage_id"])
     except (OSError, ValueError, sqlite3.Error) as exc:
@@ -5393,6 +5396,11 @@ def teacher_create_class():
 
 @app.post("/api/teacher/classes/settings")
 def teacher_update_class_settings():
+    with group_projects.policy_lock():
+        return _update_class_settings()
+
+
+def _update_class_settings():
     teacher = _require_teacher(request)
     if not teacher:
         return jsonify(ok=False, error="Teacher token required"), 401
@@ -5401,6 +5409,9 @@ def teacher_update_class_settings():
     settings = data.get("settings") or {}
     if not isinstance(settings, dict) or ("editor_clipboard" in settings and (not isinstance(settings["editor_clipboard"], str) or settings["editor_clipboard"] not in {"allow", "block", "outstanding"})):
         return jsonify(ok=False, error="Choose a valid editor clipboard setting"), 400
+    if "group_projects_enabled" in settings and type(settings["group_projects_enabled"]) is not bool:
+        return jsonify(ok=False, error="Choose whether to enable group projects"), 400
+    group_schedule = group_projects.schedule(settings["group_project_schedule"]) if "group_project_schedule" in settings else None
     cfg = _load_config()
     ai_master_enabled = bool(cfg.get("ai_explainer_enabled", False))
     classes_data = _load_classes()
@@ -5409,6 +5420,13 @@ def teacher_update_class_settings():
     for c in classes_data.get("classes", []):
         if c.get("id") == class_id and (c.get("teacher_email") or "").lower() == teacher_email:
             current = c.setdefault("settings", {})
+            if "group_projects_enabled" in settings:
+                if settings["group_projects_enabled"] and not current.get("group_projects_enabled"):
+                    # Reconcile a disable interrupted between settings and project commits.
+                    group_projects.class_changed(sys.modules[__name__], class_id, disabled=True)
+                current["group_projects_enabled"] = settings["group_projects_enabled"]
+            if group_schedule is not None:
+                current["group_project_schedule"] = group_schedule
             if "editor_clipboard" in settings:
                 current["editor_clipboard"] = settings["editor_clipboard"]
             if ai_master_enabled and "ai_enabled" in settings:
@@ -5447,6 +5465,9 @@ def teacher_update_class_settings():
         return jsonify(ok=False, error="Class not found"), 404
     _save_classes(classes_data)
     merged_settings = merge_class_settings(target.get("settings", {}))
+    if {"group_projects_enabled", "group_project_schedule", "student_ide_access_enabled"} & settings.keys():
+        group_projects.class_changed(sys.modules[__name__], class_id,
+                                     disabled=settings.get("group_projects_enabled") is False)
     target["settings"] = merged_settings
     socketio.emit(
         "classroom_settings_updated",
@@ -5525,6 +5546,11 @@ def teacher_reset_class_home_background(class_id: str):
 
 @app.post("/api/teacher/classes/remove-student")
 def teacher_remove_student():
+    with group_projects.policy_lock():
+        return _teacher_remove_student_locked()
+
+
+def _teacher_remove_student_locked():
     teacher = _require_teacher(request)
     if not teacher:
         return jsonify(ok=False, error="Teacher token required"), 401
@@ -5556,12 +5582,13 @@ def teacher_remove_student():
             next_class_ids = [cid for cid in _get_user_class_ids(info) if cid != class_id]
             _set_user_classes(info, next_class_ids)
     _revoke_student_class_rooms(student_email, class_id)
+    group_projects.class_changed(sys.modules[__name__], class_id, removed=student_email)
     return jsonify(ok=True)
 
 
 @app.post("/api/teacher/classes/delete")
 def teacher_delete_class():
-    with _assignment_lock:
+    with _assignment_lock, group_projects.policy_lock():
         return _teacher_delete_class_locked()
 
 
@@ -5600,6 +5627,7 @@ def _teacher_delete_class_locked():
                 if assignment.get("targetClassId") == class_id:
                     _delete_assignment_storage_locked(assignment, forget_folder=False)
             assignment_organization.delete_class(sys.modules[__name__], class_id)
+            group_projects.class_changed(sys.modules[__name__], class_id, deleted=True)
         except (OSError, ValueError, sqlite3.Error):
             return jsonify(ok=False, error="Assignment cleanup failed. The class was not deleted; retry deletion."), 503
     class_background_asset = str((target_class.get("settings") or {}).get("home_background_asset") or "")
@@ -7338,21 +7366,32 @@ def start_html_runtime():
     if not user:
         return jsonify(ok=False, error="Authentication required"), 401
 
-    data = request.get_json(silent=True) or {}
-    file_path = (data.get("file_path") or "").strip()
-    if not file_path:
-        return jsonify(ok=False, error="file_path is required"), 400
-
-    user_dir = _get_user_dir(user["email"])
-    target = _validate_user_path(user_dir, file_path)
-    if not target or not target.exists() or not target.is_file():
-        return jsonify(ok=False, error="HTML file not found"), 404
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(ok=False, error="Choose an HTML file"), 400
+    project = data.get("groupProject")
+    project_token = ""
+    if project is not None:
+        student = _require_user(request)
+        if not student:
+            return jsonify(ok=False, error="Student login required"), 403
+        user = student
+        project_token = request.headers.get("X-User-Token", "").strip()
+        entry_path = group_projects.run_access(sys.modules[__name__], user["email"], project)
+        target = Path(entry_path)
+    else:
+        file_path = str(data.get("file_path") or "").strip()
+        if not file_path:
+            return jsonify(ok=False, error="file_path is required"), 400
+        source_root = _get_user_dir(user["email"]).resolve()
+        target = _validate_user_path(source_root, file_path)
+        if not target or not target.exists() or not target.is_file():
+            return jsonify(ok=False, error="HTML file not found"), 404
+        entry_path = target.resolve().relative_to(source_root).as_posix()
     if not _is_html_file(target):
         return jsonify(ok=False, error="Only .html files can use HTML runtime"), 400
 
     runtime_id = uuid.uuid4().hex
-    source_root = user_dir.resolve()
-    entry_path = str(target.resolve().relative_to(source_root)).replace("\\", "/")
 
     timeout_seconds = _cfg_int(cfg, "html_runtime_timeout_seconds", HTML_RUNTIME_DEFAULT_TIMEOUT, 1, 600)
     session_ttl_seconds = timeout_seconds + 120
@@ -7370,7 +7409,18 @@ def start_html_runtime():
             return jsonify(ok=False, error="HTML runtime capacity is busy; close a preview and try again"), 503
         if owner_sessions >= MAX_HTML_RUNTIME_SESSIONS_PER_USER:
             return jsonify(ok=False, error=f"Close an existing HTML preview before starting another (limit {MAX_HTML_RUNTIME_SESSIONS_PER_USER})"), 429
+        project_session = {}
+        if project is not None:
+            source_root = _prepare_runner_sandbox("groupide", runtime_id).resolve()
+            try:
+                target, _ = group_projects.run_snapshot(sys.modules[__name__], owner_email, project, source_root)
+                entry_path = target.relative_to(source_root).as_posix()
+            except Exception:
+                _delete_runner_sandbox_quietly(source_root)
+                raise
+            project_session = {"runtime_dir": str(source_root), "group_project": project, "group_token": project_token}
         _html_runtime_sessions[runtime_id] = {
+            **project_session,
             "runtime_root": str(source_root),
             "entry_file": entry_path,
             "owner_email": owner_email,
@@ -7417,6 +7467,14 @@ def view_html_runtime_asset(runtime_id: str, asset_path: str):
     if not session:
         return jsonify(ok=False, error="Runtime session not found or expired"), 404
 
+    if session.get("group_project") is not None:
+        try:
+            if not _student_tokens.active(session["group_token"]):
+                raise group_projects.ProjectError("Preview session ended")
+            group_projects.run_access(sys.modules[__name__], session["owner_email"], session["group_project"])
+        except group_projects.ProjectError:
+            _remove_html_runtime_session(runtime_id)
+            return jsonify(ok=False, error="Group project preview session ended"), 404
     runtime_root = Path(session.get("runtime_root") or session.get("runtime_dir", ""))
     target = _validate_workspace_path(runtime_root, asset_path)
     if not target or not target.exists() or not target.is_file():
@@ -7717,7 +7775,7 @@ def _delete_runner_sandbox_quietly(path: Optional[Path]) -> None:
         sandbox_root = SANDBOX_DIR.resolve()
         if os.path.commonpath([str(resolved), str(sandbox_root)]) != str(sandbox_root):
             return
-        if not resolved.name.startswith(("pyide_", "jside_")):
+        if not resolved.name.startswith(("pyide_", "jside_", "groupide_")):
             return
         shutil.rmtree(resolved, ignore_errors=True)
     except Exception:
@@ -8834,6 +8892,7 @@ def _release_execution_slot(sid: str) -> None:
         _run_metrics["duration_ms_max"] = max(_run_metrics["duration_ms_max"], duration_ms)
         released = True
     if released:
+        _delete_runner_sandbox_quietly((record.get("entry") or {}).get("project_snapshot"))
         _drain_execution_queue()
 
 
@@ -8962,6 +9021,18 @@ def _start_execution_request(entry: dict) -> None:
         if not _execution_entry_is_active(entry):
             return
         try:
+            project = (entry.get("payload") or {}).get("groupProject")
+            if project is not None:
+                if context.get("role") != "student":
+                    raise group_projects.ProjectError("Student login required for a group project")
+                group_projects.run_access(sys.modules[__name__], context["email"], project)
+                project_root = _prepare_runner_sandbox("groupide", sid).resolve()
+                entry["project_snapshot"] = project_root
+                target, code = group_projects.run_snapshot(sys.modules[__name__], context["email"], project, project_root)
+                if len(code) > MAX_RUN_CODE_CHARS or len(code.encode("utf-8")) > MAX_RUN_CODE_BYTES:
+                    raise group_projects.ProjectError("This project file exceeds the run code limit")
+                file_path = target.name
+                context = {**context, "allowed_root": project_root, "run_dir": target.parent}
             if entry.get("kind") == "trace":
                 runner = _get_trace_runner(sid)
                 runner.start(
@@ -8985,6 +9056,8 @@ def _start_execution_request(entry: dict) -> None:
                     disabled_modules=disabled_module_roots(runtime_settings.get("python_module_access")),
                     source_name=Path(file_path).name if file_path else "untitled.py",
                 )
+        except group_projects.ProjectError as error:
+            _finish_rejected_execution(entry, str(error))
         except Exception as exc:
             _pop_runner(sid)
             _release_execution_slot(sid)
@@ -9053,6 +9126,7 @@ def on_connect():
 
 @socketio.on("disconnect")
 def on_disconnect():
+    group_projects.close_watch(sys.modules[__name__], request.sid)
     departed_class_ids = list(_socket_sid_rooms.get(request.sid, set()))
     _cancel_queued_execution(sid=request.sid)
     _stop_active_execution(request.sid)
@@ -9681,6 +9755,7 @@ def _normalize_assignment_schema(assignment: dict) -> dict:
     normalized["fileControl"] = bool(normalized.get("fileControl", False))
     normalized["fileControlExtension"] = normalized.get("fileControlExtension") if normalized.get("fileControlExtension") in assignment_development.EXTENSIONS else ".py"
     normalized["gradingCompletedAt"] = str(normalized.get("gradingCompletedAt") or "")
+    normalized["allowGroupSubmission"] = normalized.get("allowGroupSubmission") is True and not normalized["fileControl"] and normalized.get("assignmentType") != "lab_report"
     normalized["allowMultiFileSubmission"] = bool(normalized.get("allowMultiFileSubmission", False))
     normalized["allowSubmissionAnyTime"] = bool(normalized.get("allowSubmissionAnyTime", False))
     try:
@@ -10358,7 +10433,7 @@ def _create_assignment_locked():
         assignment_workflow.validate_submission_access(submission_access, teacher_class)
         if file_control["fileControl"]:
             raise ValueError("New assignments use the standard file picker")
-        for key in ("allowMultiFileSubmission", "allowSubmissionAnyTime"):
+        for key in ("allowMultiFileSubmission", "allowSubmissionAnyTime", "allowGroupSubmission"):
             if key in data and not isinstance(data[key], bool):
                 raise ValueError("Submission options must be enabled or disabled")
         attempts = data.get("maxFileSubmissions", 0)
@@ -10376,6 +10451,7 @@ def _create_assignment_locked():
         "assignmentType": assignment_type,
         "maxScore": max_score,
         "allowFileSubmission": False if assignment_type == "lab_report" else bool(data.get("allowFileSubmission", True)),
+        "allowGroupSubmission": assignment_type != "lab_report" and data.get("allowGroupSubmission") is True,
         "allowMultiFileSubmission": False if assignment_type == "lab_report" else bool(data.get("allowMultiFileSubmission", False)),
         "allowSubmissionAnyTime": bool(data.get("allowSubmissionAnyTime", False)),
         **({"submissionAccess": submission_access} if submission_access is not None else {}),
@@ -10459,7 +10535,7 @@ def _update_assignment_locked():
         assignment["maxScore"] = data["maxScore"]
     if "allowFileSubmission" in data:
         assignment["allowFileSubmission"] = False if assignment.get("assignmentType") == "lab_report" else bool(data.get("allowFileSubmission"))
-    for key in ("allowMultiFileSubmission", "allowSubmissionAnyTime"):
+    for key in ("allowMultiFileSubmission", "allowSubmissionAnyTime", "allowGroupSubmission"):
         if key in data:
             if not isinstance(data[key], bool):
                 return jsonify(ok=False, error="Submission options must be enabled or disabled"), 400
@@ -10626,6 +10702,7 @@ def _copy_assignment_to_class_locked():
         "maxScore": source.get("maxScore", 100),
         "allowFileSubmission": bool(source.get("allowFileSubmission", True)),
         "allowMultiFileSubmission": bool(source.get("allowMultiFileSubmission", False)),
+        "allowGroupSubmission": bool(source.get("allowGroupSubmission", False)),
         "allowSubmissionAnyTime": bool(source.get("allowSubmissionAnyTime", False)),
         "maxFileSubmissions": source.get("maxFileSubmissions", 0),
         "fileControl": False,
@@ -13698,6 +13775,7 @@ _eagle_lab_store = register_eagle_lab_features(
 )
 _lab_report_drafts = register_lab_reports(app, sys.modules[__name__], base_dir=LAB_REPORT_DATA_DIR)
 register_classroom_features(app, socketio)
+group_projects.register(app, sys.modules[__name__])
 from external_tools import register as register_external_tools
 from tool_store import ToolError as ExternalToolError
 def _external_tool_account_id(record):
@@ -13747,6 +13825,7 @@ if __name__ == "__main__":
             except (OSError, sqlite3.Error):
                 _append_server_log("Legacy assignment history cleanup could not be scheduled.", level="WARN")
     workspace_history.start_maintenance(sys.modules[__name__])
+    group_projects.start_maintenance(sys.modules[__name__])
     try:
         signal.signal(signal.SIGTERM, _handle_server_termination)
     except (AttributeError, OSError, ValueError):
