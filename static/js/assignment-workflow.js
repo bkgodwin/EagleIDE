@@ -253,11 +253,11 @@
     return loadSubmissionFiles(a, studentEmail, fileId, m);
   }
 
-  function mountReviewFiles(root, a, submission, fileId = '') {
+  function mountReviewFiles(root, a, submission, fileId, canPlay) {
     root.hidden = false;
     root.innerHTML = submissionFilesMarkup;
     const cleanups = [];
-    loadSubmissionFiles(a, submission.email, fileId, {root, cleanups}, submission.revisionId || '');
+    loadSubmissionFiles(a, submission.email, fileId, {root, cleanups, canPlay}, submission.revisionId || '');
     return () => {
       cleanups.forEach(cleanup => cleanup());
       root.hidden = true;
@@ -283,12 +283,13 @@
       link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
     async function show(f, cursor = 0) {
+      if (m.canPlay) disposeEditorDevelopment();
       const request = ++sequence;
       release(); preview.textContent = 'Loading file…';
       try {
         const result = await json(`/api/assignments/submission-file?${params({fileId:f.id, cursor:String(cursor)})}`, {headers});
         if (request !== sequence || !valid()) return;
-        preview.innerHTML = `<div class="assignment-file-preview-header"><strong>${esc(f.name)}</strong><div class="assignment-preview-actions">${teacher && !a.gradingCompletedAt ? '<button type="button" class="btn secondary attachment-history">Edit history</button>' : ''}<button type="button" class="btn secondary attachment-download">Download</button></div></div>`;
+        preview.innerHTML = `<div class="assignment-file-preview-header"><strong>${esc(f.name)}</strong><div class="assignment-preview-actions">${teacher && !m.canPlay && !a.gradingCompletedAt ? '<button type="button" class="btn secondary attachment-history">Edit history</button>' : ''}<button type="button" class="btn secondary attachment-download">Download</button></div></div>`;
         preview.querySelector('.attachment-download').onclick = () => download(f).catch(error => alert(error.message));
         const historyButton = preview.querySelector('.attachment-history');
         if (historyButton) historyButton.onclick = () => openDevelopment(a, studentEmail, revision, f.id);
@@ -310,6 +311,25 @@
           objectUrl = URL.createObjectURL(blob); const img = document.createElement('img'); img.src = objectUrl; img.alt = f.name; preview.append(img);
         } else {const p = document.createElement('p'); p.textContent = result.message; preview.append(p);}
         m.root.querySelectorAll('[data-submitted-file]').forEach(button => button.classList.toggle('active',button.dataset.submittedFile === f.id));
+        if (revision && m.canPlay?.()) {
+          const clip = {revision, attachment:f.id, legacyFallback:!!a.fileControl};
+          const source = document.createElement('pre');
+          source.className = 'assignment-file-source assignment-history-frame';
+          attachEditorDevelopment(a, studentEmail, {
+            clip: () => clip,
+            valid: file => request === sequence && valid() && m.canPlay(file),
+            render(content, frame, follow) {
+              source.innerHTML = highlightSource(content, frame.pasteRanges);
+              if (!source.isConnected) preview.append(source);
+              preview.classList.add('is-history');
+              if (follow) followSource(source, content, frame.from + frame.insert.length);
+            },
+            restore() {
+              source.remove();
+              preview.classList.remove('is-history');
+            },
+          });
+        }
       } catch (error) {if (request === sequence && valid()) preview.textContent = error.message;}
     }
     async function load(version = '') {
@@ -434,13 +454,19 @@
       catch(error) {alert(error.message); button.disabled = false;}
     });
   }
-  function developmentControls() {
-    return `<p class="development-summary" role="status">Loading history…</p>
-      <div class="development-controls"><button type="button" class="btn run development-play" disabled>Play</button><button type="button" class="btn secondary development-previous" aria-label="Previous change" disabled>←</button><button type="button" class="btn secondary development-next" aria-label="Next change" disabled>→</button><label>Speed<select class="development-speed"><option value="1">1×</option><option value="5">5×</option><option value="20">20×</option></select></label><label><input type="checkbox" class="development-skip" checked> Skip idle gaps over 5 seconds</label><label><input type="checkbox" class="development-follow" checked> Follow edits</label></div>
-      <label class="development-seek-label">Development timeline<input type="range" class="development-seek" min="1" max="1" value="1" step="1" disabled></label>
-      <div class="development-time-legend" aria-label="Timeline colors"><span class="development-in-class">In class</span><span class="development-outside-class">Outside class</span><span>Schedule unavailable</span></div>
-      <div class="development-position" aria-live="polite"></div>
-      <small class="development-note">Playback shows sampled edits and saved checkpoints. Highlighted text was pasted in the editor. The timeline can include gaps.</small>`;
+  function developmentControls(compact = false) {
+    const summary = '<p class="development-summary" role="status">Loading history…</p>';
+    const options = '<label>Speed<select class="development-speed"><option value="1">1×</option><option value="5">5×</option><option value="20">20×</option></select></label><label><input type="checkbox" class="development-skip" checked> Skip idle gaps over 5 seconds</label><label><input type="checkbox" class="development-follow" checked> Follow edits</label>';
+    const note = '<small class="development-note">Playback shows sampled edits and saved checkpoints. Highlighted text was pasted in the editor. The timeline can include gaps.</small>';
+    return `${compact ? '' : summary}
+      <div class="development-controls"><button type="button" class="btn run development-play" disabled>Play</button><button type="button" class="btn secondary development-previous" aria-label="Previous change" disabled>←</button><button type="button" class="btn secondary development-next" aria-label="Next change" disabled>→</button>${compact ? '' : options}</div>
+      <label class="development-seek-label"><span class="${compact ? 'sr-only' : ''}">Edit timeline</span><input type="range" class="development-seek" min="1" max="1" value="1" step="1" disabled></label>
+      ${compact ? `<button type="button" class="btn secondary development-submitted">Show submitted</button><details class="development-options"><summary>Playback options</summary><div>${options}<button type="button" class="btn secondary development-refresh">Refresh history</button>${summary}${note}</div></details>` : ''}
+      <div class="development-caption">
+        <div class="development-time-legend" aria-label="Timeline colors"><span class="development-in-class">In class</span><span class="development-outside-class">Outside class</span><span>Schedule unavailable</span></div>
+        <div class="development-position" aria-live="polite"></div>
+      </div>
+      ${compact ? '' : note}`;
   }
   function completionHint(first, last) {
     const minutes = Math.max(0, (Date.parse(last) - Date.parse(first)) / 60000);
@@ -558,6 +584,7 @@
       pause();
       if(valid()) options.restore?.();
       current=total || 1; seek.value=String(current);
+      seek.setAttribute('aria-valuetext','Showing submitted file');
       position.textContent='Showing submitted code. Play or seek to inspect read-only history.';
     }
     async function load() {
@@ -565,6 +592,7 @@
       pause(); if(valid()) options.restore?.();
       const request=++sequence; selected=select ? select.value : options.email; cache.clear(); position.textContent='';
       clip=options.clip?.();
+      options.onAvailability?.(false);
       colorTimeline(seek, [], 1);
       seek.disabled=true; play.disabled=true; previous.disabled=true; nextButton.disabled=true; total=0;
       if(!selected || (options.clip && !clip)) {summary.textContent='Choose a submitted file to view its history.'; return;}
@@ -580,7 +608,9 @@
         if(!total) {summary.textContent=result.gradingCompletedAt ? 'Grading finalized. Edit history is closed.' : 'No edit history is available for this submitted version.'; return;}
         summary.textContent=`${result.path} · ${total.toLocaleString()} changes · ${completionHint(result.firstAt,result.lastAt)} · First edit ${classDate(result.firstAt, result.marks?.[0]?.timeZone)} · Last edit ${classDate(result.lastAt, result.marks?.at(-1)?.timeZone)}${result.partial ? ' · Partial history. See the submitted file for the final version.' : ''}`;
         colorTimeline(seek, result.marks, total);
+        if (result.marks?.length < total) summary.textContent += ' · Timeline colors are sampled.';
         seek.max=String(total); seek.disabled=false; play.disabled=false; previous.disabled=false; nextButton.disabled=false;
+        options.onAvailability?.(true);
         if(options.restore) restore(); else await show(1);
       } catch(error) {if(valid() && request===sequence) summary.textContent=error.message;}
     }
@@ -600,9 +630,6 @@
     if(editorPlayer.valid()) editorPlayer.restore();
     editorPlayer.player.dispose(); editorPlayer=null;
     const root=document.getElementById('submissionDevelopmentPanel'); root.hidden=true; root.replaceChildren();
-    document.getElementById('editorContentStack').classList.remove('has-development-player');
-    document.getElementById('submissionDevelopmentBtn')?.setAttribute('aria-expanded', 'false');
-    window.eagleEditor?.refresh();
   }
   function syncEditorDevelopment(file) {
     if(editorPlayer && !editorPlayer.valid(file)) disposeEditorDevelopment();
@@ -612,12 +639,12 @@
     disposeEditorDevelopment();
     if(!a.fileControl && !adapter.clip?.()) return;
     const root=document.getElementById('submissionDevelopmentPanel');
-    root.innerHTML=`<div class="development-toolbar"><strong>Development history</strong><button type="button" class="btn secondary development-refresh">Refresh history</button><button type="button" class="btn secondary development-submitted">Show submitted code</button></div>${developmentControls()}`;
-    root.hidden=false;
-    document.getElementById('editorContentStack').classList.add('has-development-player');
-    document.getElementById('submissionDevelopmentBtn')?.setAttribute('aria-expanded', 'true');
-    const player=mountDevelopmentPlayer(root,a,{...adapter,email});
-    editorPlayer={player,valid:adapter.valid,restore:adapter.restore}; window.eagleEditor?.refresh();
+    root.innerHTML=developmentControls(true);
+    const player=mountDevelopmentPlayer(root,a,{...adapter,email,onAvailability: available => {
+      root.hidden = !available;
+      window.eagleEditor?.refresh();
+    }});
+    editorPlayer={player,valid:adapter.valid,restore:adapter.restore};
     return player.ready;
   }
   async function openDevelopment(a, email = '', revisionId = '', fileId = '') {
