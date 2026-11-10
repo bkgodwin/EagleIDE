@@ -47,6 +47,7 @@
         cm.refresh();
         if (Number.isFinite(scroll?.left) && Number.isFinite(scroll?.top)) cm.scrollTo?.(scroll.left, scroll.top);
       });
+      window.centerTeacherStream?.();
     });
   }
 

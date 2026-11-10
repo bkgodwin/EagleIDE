@@ -323,16 +323,21 @@ All Ollama generation goes through the shared in-memory AI dispatcher in `app.py
 Group projects are opt-in per class and separate from file-copy sharing. The
 class owner can schedule access in the class time zone, browse active projects,
 remove members and cancel all groups. Each project has up to four places,
-including pending invitations. Membership and canonical files live under
+including pending invitations. The class owner can also open and edit shared
+text through the dashboard. Their project-specific contributor identity is
+separate from the student roster and never counts toward capacity or turn-in.
+Membership and canonical files live under
 `group_projects/` (override `EAGLEIDE_GROUP_PROJECTS_DIR`) in private SQLite.
 Cancellation revokes live access and retains a bounded 30-day download for
 members. Class deletion removes project storage. Account deletion revokes
 membership before the address can be reused.
 
 The server orders UTF-16 edits by revision, keeps a bounded operation journal,
-and acknowledges committed updates. Only two or more distinct students on the
+and acknowledges committed updates. Two or more distinct participants on the
 same file trigger live edit and cursor delivery. Recipient checks use current
-class policy, session lifetime and membership. A single viewer saves over HTTP.
+class policy, session lifetime and student membership or current class ownership.
+The teacher cursor is shown while their group editor has focus. A single viewer
+saves over HTTP. Imported text starts with one UTF-16 span for its sharer.
 Device drafts are scoped to account, project and file. A stale draft is offered
 for recovery when the revision journal cannot reconcile it. CodeMirror marks
 are viewport-bounded. Server-authenticated contributors and surviving ranges
@@ -708,7 +713,7 @@ Network simulator definitions are source data in `network_content.py`; assignmen
 - `lesson_plan_pdf.py` uses pinned ReportLab and Matplotlib's bundled DejaVu fonts to export the selected published week for every currently authorized teacher/CoTeacher class, including separate sections sharing a plan source. It never fetches remote media. Keep two global/one per-account export admission, class/text/image/output/page/time limits, fresh access checks, landscape pagination, and repeated class/day headings. `tests/test_lesson_plan_pdf.py` checks pagination and limits. Agenda images use a keyboard-accessible dismissible popout in the shared renderer.
 - Wiki contents load from the public catalog independently of personalized home metadata. Deduplicate in-flight reads, retain the catalog across account/class changes, abort superseded metadata, and bound network timeouts/retries. `/api/wiki/home?include_tree=0` omits the duplicate tree; private metadata must use `Cache-Control: private, no-store`. Empty, loading, and failed contents have distinct UI states with explicit retry. Extra-large article/reference text is 28px; migrate saved 20px preferences. `tests/wiki_loading_ui.test.js` and optional `tests/wiki_account_browser_checks.js` (same isolated agenda fixture) cover initial-load races, retry, and account layouts.
 - Shared account cards and responsive grids live in `features/account-settings.css`. Teacher/student/admin Account panes contain external tool storage controls; keep the storage dialog above its parent settings modal and preserve existing profile/password handlers and account-scoped editor previews.
-- Editor initialization or teacher stream editor: `editor-init.js`; predictable Enter indentation and folding: `editor-behavior.js`; most run/open/save behavior remains in `app-core.js`. CodeMirror folding uses the pinned CDN fold addons loaded by `index.html`. Teacher stream snapshots include a validated cursor line and remain scoped to the selected class and session in the viewer. Apply snapshots without moving the student's scroll position.
+- Editor initialization or teacher stream editor: `editor-init.js`; predictable Enter indentation and folding: `editor-behavior.js`; most run/open/save behavior remains in `app-core.js`. CodeMirror folding uses the pinned CDN fold addons loaded by `index.html`. Teacher stream snapshots include a validated cursor line and remain scoped to the selected class and session in the viewer. Preserve independent scrolling unless the student enables Follow teacher. Stop the broadcast before opening a private group file from the teacher dashboard.
 - The Edit dropdown lives in `editor-edit-menu.js` and `features/editor.css`. Find locks editor input while keeping scrolling available. Programmatic clipboard actions honor classroom policy, and menu paste uses the same provenance path as keyboard paste. The editor's duplicate request sends a snapshot of the current buffer and paste ranges to the existing workspace duplicate route. It allocates a separate `-copy` file in the same folder.
 - Workspace orientation and viewport sizing: `layout.js`; pointer/keyboard splitters and per-orientation sizes: `app-core.js`. Vertical (side-by-side) is the default; horizontal puts the editor above Shell/Resources and uses a right-hand file-action rail. Orientation and each layout's sizes persist in localStorage. Keep collapse/view controls and splitter ARIA axes working in both orientations.
 - Editor occurrences, local lexical diagnostics, delimiter shading, block guides, and caret-line visuals: `editor-feedback.js` and `features/editor.css`. Feedback is bounded, debounced, and browser-local; no student code is sent or executed. Undefined-name hints are advisory Python/JavaScript checks, not full scope analysis. The removed indent-guide toggle must not be restored; guides follow actual blocks. Insert overwrite is disabled in the editable editor (including its textarea fallback), while Shift+Insert keeps paste.

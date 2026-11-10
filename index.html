@@ -340,7 +340,6 @@
     <div class="wiki-popover-heading"><strong>Search results</strong><button class="wiki-icon-btn" id="wikiSearchCloseBtn" type="button" aria-label="Close search">×</button></div>
     <div id="wikiSearchResults"></div>
   </section>
-  <button class="teacher-pane-toggle" id="teacherPaneToggleBtn" title="Show teacher code stream" aria-label="Show teacher code stream" aria-expanded="false">▲</button>
 
   <main class="network-view" id="networkView" aria-label="Network Simulator">
     <section class="network-library" id="networkLibrary">
@@ -536,6 +535,9 @@
           <button type="button" data-edit="paste">Paste<kbd></kbd></button>
         </div>
         <div class="student-editor-wrap" id="studentEditorWrap">
+          <button class="workspace-switch-btn teacher-pane-toggle" id="teacherPaneToggleBtn" type="button" title="Show teacher code stream" aria-label="Show teacher code stream" aria-controls="teacherStreamPane" aria-expanded="false">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>
+          </button>
           <textarea id="editor" style="display:none; resize:none;"></textarea>
           <form class="editor-find editor-edit-glass" id="editorFind" aria-label="Find and replace" hidden>
             <header><strong>Find and replace</strong><button type="button" data-find="close" aria-label="Close find and replace" title="Close (Esc)">×</button></header>
@@ -593,7 +595,11 @@
         <div class="editor-stream-splitter" id="editorStreamSplitter" role="separator" aria-orientation="horizontal" title="Drag to resize teacher stream"></div>
         <section class="teacher-stream-pane" id="teacherStreamPane" aria-label="Teacher code stream">
           <div id="teacherStreamCursor" class="teacher-stream-cursor">Teacher stream</div>
-          <textarea id="teacherStreamEditor" style="display:none; resize:none;"></textarea>
+          <button class="workspace-switch-btn teacher-stream-follow" id="teacherStreamFollowBtn" type="button" aria-pressed="false" title="Lock view to the teacher's cursor">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path class="stream-lock-open" d="M8 11V7a4 4 0 0 1 8 0"/><path class="stream-lock-closed" d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+            <span>Follow teacher</span>
+          </button>
+          <textarea id="teacherStreamEditor" wrap="off" style="display:none; resize:none;"></textarea>
         </section>
         <section class="embedded-file-browser" id="fileBrowserTabPane" aria-label="File browser tab">
           <div id="fileConnectionWarning" class="connection-warning file-connection-warning" role="status" hidden>File operations paused. Check your network connection and keep this tab open. Your editor is still available.</div>

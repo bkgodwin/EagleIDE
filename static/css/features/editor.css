@@ -563,6 +563,7 @@
       display:flex;
       flex-direction:column;
       min-height:0;
+      position:relative;
       overflow:hidden;
       border-top:1px solid var(--theme-border-mid);
     }
@@ -572,40 +573,44 @@
     #teacherStreamEditor { background:color-mix(in srgb,var(--editor-background,var(--theme-cm-bg)) 92%,black); }
     #teacherStreamPane .CodeMirror,
     #teacherStreamEditor { flex:1 1 0; height:auto; min-height:0; }
-    #teacherStreamEditor { color:var(--theme-text); }
-    .teacher-stream-cursor { flex:none; padding:4px 10px; border-bottom:1px solid var(--theme-border); background:var(--theme-panel-hdr); color:var(--theme-text-dim); font-size:12px; font-weight:600; }
+    #teacherStreamPane .CodeMirror-lines { padding-block:var(--stream-follow-padding,4px); }
+    #teacherStreamEditor { color:var(--theme-text); line-height:1.4; padding:var(--stream-follow-padding,8px) 8px; }
+    .teacher-stream-cursor { flex:none; box-sizing:border-box; min-height:36px; padding:9px 145px 7px 10px; border-bottom:1px solid var(--theme-border); background:var(--theme-panel-hdr); color:var(--theme-text-dim); font-size:12px; font-weight:600; overflow-wrap:anywhere; }
     .teacher-stream-cursor-line { background:color-mix(in srgb,var(--editor-foreground,var(--theme-text)) 12%,transparent); box-shadow:inset 3px 0 var(--editor-foreground,var(--theme-text)); }
     .teacher-pane-toggle{
-      position:fixed;
-      left:50%;
-      bottom:6px;
-      transform:translateX(-50%);
-      z-index:260;
-      width:52px;
-      height:42px;
-      border-radius:13px;
-      border:2px solid rgba(255,255,255,.55);
-      background:#234d70;
-      color:#fff;
+      position:absolute;
+      left:4px;
+      bottom:5px;
+      z-index:25;
       display:none;
       align-items:center;
       justify-content:center;
-      cursor:pointer;
-      font-size:20px;
-      font-weight:900;
-      line-height:1;
-      box-shadow:0 4px 14px rgba(4,20,36,.42);
-      backdrop-filter:blur(6px);
-      transition:background .2s ease, border-color .2s ease, color .2s ease, box-shadow .2s ease;
+      min-width:28px;
+      min-height:28px;
+      padding:4px;
     }
-    .teacher-pane-toggle:hover{ background:#173a57; border-color:#fff; }
-    body.light-mode .teacher-pane-toggle{ background:#315f86; border-color:#173a57; color:#fff; }
+    .teacher-stream-enabled .teacher-pane-toggle{ display:flex; }
+    .teacher-pane-toggle[aria-expanded="true"] svg{ transform:rotate(180deg); }
     .teacher-pane-toggle.live{
-      background:rgba(198,40,40,0.18);
-      border-color:rgba(198,40,40,0.9);
+      border-color:currentColor;
       color:#ff8c8c;
-      box-shadow:0 0 12px rgba(198,40,40,0.35);
     }
+    body.light-mode .teacher-pane-toggle.live{ color:#a91d26; }
+    .teacher-stream-follow{
+      position:absolute;
+      top:3px;
+      right:8px;
+      z-index:6;
+      display:flex;
+      align-items:center;
+      gap:5px;
+      min-width:0;
+      min-height:28px;
+      padding:3px 7px;
+    }
+    .teacher-stream-follow[aria-pressed="true"]{ border-color:var(--columbia-blue); background:var(--theme-btn-hover); }
+    .teacher-stream-follow[aria-pressed="true"] .stream-lock-open,
+    .teacher-stream-follow[aria-pressed="false"] .stream-lock-closed{ display:none; }
 
     #classSelectorWrap{
       display:none;

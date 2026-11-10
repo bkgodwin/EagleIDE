@@ -1347,7 +1347,10 @@ for review, alongside the student's work and classroom context.
 
 The IDE reference pane shows today's agenda for the active class. Wiki links open
 in that pane, and Wiki contents stays at the top. Collapse the agenda for more
-reading space. The student's teacher-stream pane uses a lighter background.
+reading space. Students can show or hide the teacher stream with the arrow over
+the editor's line numbers. It turns red when the teacher is live. Use Follow
+teacher to keep the teacher's current line centered, or turn it off to scroll
+independently.
 
 Clipboard controls and recorded assignment files
 -----------------------------------------------
@@ -1431,14 +1434,19 @@ GROUP PROJECTS
 In Teacher Dashboard > Classes, open Group Projects to enable collaboration
 for the selected class. Use Only during class to set meeting days, hours and
 a time zone. The same panel shows linked projects and open files. Select a
-project to browse its files and manage membership. Turning group projects off
-cancels the groups and gives members 30 days to download their last saved copy.
+project to browse its files and manage membership. Select a shared text file
+and choose Edit in IDE to make changes alongside the students. The teacher's
+cursor is visible while their editor has focus and their changes appear in
+contribution highlights. The teacher stays off the group roster. Opening a
+group file stops any active teacher stream. Turning group projects off cancels
+the groups and gives members 30 days to download their last saved copy.
 
 Students can open the action menu for a file or folder in Files, choose Share
 as group project and invite up to three classmates. Invitees join from the
 Group Projects section in Files. Open a shared file to see its member icons.
 A green ring shows who has that file open. Hover or focus a colored cursor
-to see its name. Show contributions adds color to the text each member entered.
+to see its name. Show contributions adds color to the text each member entered,
+including existing text credited to the student who first shared the file.
 
 Shared text files up to 2 MiB support live editing. Other assets sync as saved
 files and can be downloaded or replaced from the project browser. Choose

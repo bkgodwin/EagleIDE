@@ -3,7 +3,7 @@
   const ops = window.GroupProjectText;
   const baseUrl = '/api/group-projects';
   const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-  const classColor = value => 'group-color-' + (Number.isInteger(value) && value >= 0 && value < 12 ? value : 0);
+  const classColor = value => 'group-color-' + (Number.isInteger(value) && value >= 0 && value <= 12 ? value : 0);
   const id = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join('');
   let bridge, socket, active, list = [], allowed = false, reason = '', account = '', listRequest, openSequence = 0;
   let saveTimer, cursorTimer, refreshTimer, watchTimer, draftTimer;
@@ -21,12 +21,17 @@
   const lost = () => !!window.EagleIDE?.connection?.isLost?.();
   const draftKey = s => 'eagleide-group-draft:' + JSON.stringify([s.email, s.project.id, s.file.id]);
   const storage = () => window.localStorage;
-  const route = (projectId = '', fileId = '') => baseUrl + (projectId ? '/' + encodeURIComponent(projectId) : '') +
+  const route = (projectId = '', fileId = '', teacher = false) => (teacher ? '/api/teacher/group-projects' : baseUrl) +
+    (projectId ? '/' + encodeURIComponent(projectId) : '') +
     (fileId ? '/files/' + encodeURIComponent(fileId) : '');
   const currentProject = () => active && valid(active) ? active.project : null;
   const busy = s => !!(s.pending.length || s.sending);
   const marker = s => ({classId:s.project.classId, projectId:s.project.id, fileId:s.file.id});
-  const syncKey = () => student() ? JSON.stringify([token(), classId()]) : '';
+  const syncKey = () => context().TEACHER_TOKEN ? JSON.stringify(['teacher', context().TEACHER_TOKEN, context().currentTeacherClassId]) :
+    student() ? JSON.stringify(['student', token(), classId()]) : '';
+  const fileRequest = (project, file, teacher, options = {}) => request(route(project.id, file.id, teacher), {
+    ...options, teacher, params:{classId:project.classId, ...options.params},
+  });
 
   async function request(url, {teacher = false, method = 'GET', data, params = {}, blob = false, timeout = 10000} = {}) {
     const c = context();
@@ -294,7 +299,7 @@
   async function poll(s) {
     if (!valid(s) || s.conflict || s.polling || lost()) return;
     const epoch = s.accessEpoch;
-    const task = request(route(s.project.id, s.file.id), {params:{since:String(s.revision)}});
+    const task = fileRequest(s.project, s.file, s.teacher, {params:{since:String(s.revision)}});
     s.polling = task;
     try {
       const result = await task;
@@ -333,7 +338,9 @@
       mark.clear();
       s.cursors.delete(id);
     }
-    if (!wasLive && viewers.length >= 2 && valid(s)) poll(s).catch(error => handleError(s,error));
+    if (!wasLive && viewers.length >= 2 && valid(s)) {
+      poll(s).then(() => {if (s.teacher) scheduleCursor(s);}).catch(error => handleError(s,error));
+    }
     if (s.pending.length) scheduleSave(s);
     renderToolbar();
   }
@@ -346,6 +353,7 @@
       if (!valid(s)) return;
       setViewers(s, data.viewers || []);
       if (data.revision > s.revision) await poll(s);
+      if (s.teacher) scheduleCursor(s);
     } finally { s.watching = false; }
   }
 
@@ -392,7 +400,7 @@
           if (error.status === 429) throw error;
         }
       }
-      return request(route(s.project.id, s.file.id), {method:'POST', data:entry.sent});
+      return fileRequest(s.project, s.file, s.teacher, {method:'POST', data:entry.sent});
     })();
     s.sending = task;
     try {
@@ -430,23 +438,26 @@
     return valid(s) && ((!s.pending.length && !s.paused) || (navigation && persistDraft(s)));
   }
 
-  async function open(project, file) {
+  async function open(project, file, {teacher = false, canOpen = () => true} = {}) {
     const sequence = ++openSequence;
     const scope = account;
+    if (teacher && project.classId !== context().currentTeacherClassId) throw new Error('Select this class before opening the file.');
     if (!await bridge.save() && bridge.currentFile()?.groupFileId !== file.id) throw new Error('Save or download the current draft before switching files.');
+    if (sequence !== openSequence || scope !== account || !canOpen()) return false;
     const previous = bridge.currentFile(), previousText = bridge.content();
-    const data = await request(route(project.id, file.id));
-    if (sequence !== openSequence || scope !== account || bridge.currentFile() !== previous || bridge.content() !== previousText) return;
+    const data = await fileRequest(project, file, teacher);
+    if (sequence !== openSequence || scope !== account || !canOpen() || bridge.currentFile() !== previous || bridge.content() !== previousText) return false;
     dispose();
     const saved = data.file;
     const s = {
-      account, email:context().currentUser?.email || '', project, file:saved, revision:saved.revision,
+      account, teacher, email:(teacher ? context().currentTeacher : context().currentUser)?.email || '',
+      project:teacher ? {...project, own:data.own} : project, file:saved, revision:saved.revision,
       source:saved.content || '', local:saved.content || '', byteLength:new TextEncoder().encode(saved.content || '').length, pending:[], incoming:new Map(), undo:[], redo:[],
       spans:saved.contribution?.spans || [], authors:new Map((saved.contribution?.authors || []).map(author => [author.id, author])),
       marks:[], cursors:new Map(), viewers:data.viewers || [], message:'', accessEpoch:0, paused:false, conflict:false,
     };
     active = s;
-    bridge.open(project, saved);
+    bridge.open(s.project, saved, teacher);
     if (saved.kind === 'text' && cm()) {
       s.keyMap = {
         'Ctrl-Z': () => undo(s, false), 'Cmd-Z': () => undo(s, false),
@@ -459,6 +470,7 @@
     schedulePaint(s);
     renderToolbar();
     watch(s).catch(error => handleError(s,error));
+    return true;
   }
 
   function bindSocket(value) {
@@ -472,9 +484,15 @@
     });
     value.on('group_project_cursor', msg => {
       const s = active;
-      if (!matches(s, msg) || !valid(s) || s.paused || s.revision !== msg.revision || msg.author === s.project.own?.id) return;
-      const person = s.project.members.find(member => member.id === msg.author);
-      if (!person || !cm() || s.viewers.length < 2) return;
+      if (!matches(s, msg) || !valid(s) || s.paused || msg.author === s.project.own?.id) return;
+      if (msg.position === null) {
+        s.cursors.get(msg.author)?.clear();
+        s.cursors.delete(msg.author);
+        return;
+      }
+      if (s.revision !== msg.revision || !cm() || s.viewers.length < 2 || !s.viewers.includes(msg.author)) return;
+      const person = msg.person || s.project.members.find(member => member.id === msg.author);
+      if (!person) return;
       let position = msg.position;
       for (const edit of s.pending) position = ops.mapPosition(position, edit.parts);
       const cursor = document.createElement('span');
@@ -509,17 +527,18 @@
   }
 
   function scheduleCursor(s) {
-    if (cursorTimer || s.viewers.length < 2) return;
+    if (cursorTimer || s.viewers.length < 2 || (s.teacher && !cm()?.hasFocus())) return;
     cursorTimer = setTimeout(() => {
       cursorTimer = null;
-      if (!valid(s) || s.paused || !socket?.connected || !cm() || s.viewers.length < 2) return;
+      if (!valid(s) || s.paused || !socket?.connected || !cm() || s.viewers.length < 2 ||
+          (s.teacher && !cm().hasFocus())) return;
       let position = cm().indexFromPos(cm().getCursor());
       if (s.pending.length) {
         let combined = s.pending[0].parts;
         for (const item of s.pending.slice(1)) combined = ops.compose(combined, item.parts);
         position = ops.mapPosition(position, ops.inverse(s.source, combined));
       }
-      socket.volatile.emit('group_project_cursor', {position, revision:s.revision});
+      socket.volatile.emit('group_project_cursor', {...marker(s), position, revision:s.revision});
     }, 100);
   }
 
@@ -568,7 +587,7 @@
     const state = s.file.kind === 'asset' ? 'Shared asset' : !cm() ? 'Reload to enable the shared editor' :
       busy(s) ? 'Saving…' : live ? 'Live editing' : 'Shared · saved';
     const description = s.recoveryWarning || s.message || state;
-    const members = s.project.members.map(p => {
+    const members = s.project.members.filter(p => !s.teacher || p.state === 'active' && p.available).map(p => {
       const viewing = s.viewers.includes(p.id);
       const initials = p.name.trim().split(/\s+/).slice(0,2).map(word => Array.from(word)[0]).join('').toUpperCase();
       return `<span class="group-member-icon ${classColor(p.color)} ${viewing ? 'is-viewing' : ''}" tabindex="0"
@@ -597,7 +616,7 @@
     bar.querySelector('[data-group-copy]')?.addEventListener('click', () => saveBlob(new Blob([s.local]), s.file.path.split('/').at(-1)));
     bar.querySelector('[data-group-reload]')?.addEventListener('click', () => {
       persistDraft(s);
-      open(s.project, s.file).catch(error => {s.message = error.message; renderToolbar();});
+      open(s.project, s.file, {teacher:s.teacher}).catch(error => {s.message = error.message; renderToolbar();});
     });
     bar.querySelector('[data-group-draft]')?.addEventListener('click', () => {
       const draft = s.draft;
@@ -611,11 +630,14 @@
       } else saveBlob(new Blob([draft.text]), draft.path.split('/').at(-1));
     });
     bar.querySelector('[data-group-download]')?.addEventListener('click', () =>
-      download(s.project, s.file).catch(error => {s.message = error.message; renderToolbar();}));
+      download(s.project, s.file, s.teacher).catch(error => {s.message = error.message; renderToolbar();}));
   }
 
-  function download(project, file) {
-    return request(route(project.id) + '/download', {params:file ? {fileId:file.id} : {}, blob:true, timeout:25000})
+  function download(project, file, teacher = false) {
+    return request(route(project.id, '', teacher) + (teacher ? '' : '/download'), {
+      teacher, params:{classId:project.classId, ...(file ? {fileId:file.id} : {}), ...(teacher ? {download:'1'} : {})},
+      blob:true, timeout:25000,
+    })
       .then(blob => saveBlob(blob, file ? file.path.split('/').at(-1) : project.name + (project.folder ? '.zip' : '')));
   }
 
@@ -651,6 +673,14 @@
       localChange(s, parts, {pasted});
     });
     editor?.on('cursorActivity', () => {if (active) scheduleCursor(active);});
+    editor?.on('focus', () => {if (active?.teacher) scheduleCursor(active);});
+    editor?.on('blur', () => {
+      const s = active;
+      if (!s?.teacher || !socket?.connected) return;
+      clearTimeout(cursorTimer);
+      cursorTimer = null;
+      socket.emit('group_project_cursor', {...marker(s), position:null, revision:s.revision});
+    });
     editor?.on('viewportChange', () => {if (active && showColors) schedulePaint(active);});
     editor?.getInputField().addEventListener('compositionstart', () => {composing = true;});
     editor?.getInputField().addEventListener('compositionend', () => {
@@ -703,7 +733,7 @@
     subscribe: view => views.add(view),
     list: () => list, available: () => ({allowed, reason}), context, currentProject,
     unsaved: () => !!active?.pending.length,
-    runTarget: () => active && valid(active) && !active.paused ?
+    runTarget: () => active && valid(active) && !active.paused && !active.teacher ?
       {...marker(active), revision:active.revision} : null,
   };
 })();

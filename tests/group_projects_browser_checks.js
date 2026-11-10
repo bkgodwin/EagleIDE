@@ -45,6 +45,50 @@ async function main() {
     const [alice,ben,carmen,devon,teacher] = await Promise.all([
       account('Alice'), account('Ben'), account('Carmen'), account('Devon',{width:420,height:850}), account('Teacher'),
     ]);
+    assert.deepEqual(await (await alice.request.get(server.url + '/health')).json(), {ok:true});
+    await teacher.evaluate(() => {
+      window.eagleEditor.setValue(Array.from({length:140}, (_,i) => '# Line ' + (i + 1)).join('\n'));
+      window.eagleEditor.setCursor({line:70,ch:0});
+    });
+    await teacher.locator('#streamingToggleBtn').click();
+    const stream = page => page.locator('#teacherStreamPane');
+    const follow = page => page.getByRole('button', {name:'Follow teacher'});
+    for (const page of [alice,devon]) {
+      await page.locator('#teacherPaneToggleBtn.live').waitFor();
+      assert.ok(await page.evaluate(() => {
+        const arrow = document.getElementById('teacherPaneToggleBtn').getBoundingClientRect();
+        const gutter = document.querySelector('#studentEditorWrap .CodeMirror-linenumbers').getBoundingClientRect();
+        return arrow.left >= gutter.left && arrow.right <= gutter.right + 2;
+      }));
+      await page.locator('#teacherStreamCursor').filter({hasText:'Line 71'}).waitFor();
+      assert.equal(await follow(page).getAttribute('aria-pressed'), 'false');
+      await follow(page).click();
+    }
+    const centered = (page, line) => page.waitForFunction(line => {
+      const cm = document.querySelector('#teacherStreamPane .CodeMirror')?.CodeMirror;
+      if (!cm || !document.getElementById('teacherStreamCursor').textContent.endsWith('Line ' + (line + 1))) return false;
+      const coords = cm.charCoords({line,ch:0}, 'local');
+      const scroll = cm.getScrollInfo();
+      return Math.abs((coords.top + coords.bottom - scroll.clientHeight) / 2 - scroll.top) < 3;
+    }, line);
+    for (const line of [70, 0, 139, 85]) {
+      await teacher.evaluate(line => window.eagleEditor.setCursor({line,ch:0}), line);
+      for (const page of [alice,devon]) await centered(page, line);
+    }
+    await alice.evaluate(() => document.querySelector('#teacherStreamPane .CodeMirror').CodeMirror.scrollTo(0, 150));
+    await centered(alice, 85);
+    await alice.locator('#teacherPaneToggleBtn').click();
+    await stream(alice).waitFor({state:'hidden'});
+    await alice.locator('#teacherPaneToggleBtn').click();
+    await centered(alice, 85);
+    await devon.locator('#themeToggleBtn').click();
+    await centered(devon, 85);
+    await follow(alice).click();
+    await alice.evaluate(() => document.querySelector('#teacherStreamPane .CodeMirror').CodeMirror.scrollTo(0, 150));
+    await teacher.evaluate(() => window.eagleEditor.setCursor({line:35,ch:0}));
+    await centered(devon, 35);
+    await alice.locator('#teacherStreamCursor').filter({hasText:'Line 36'}).waitFor();
+    assert.equal(await alice.evaluate(() => document.querySelector('#teacherStreamPane .CodeMirror').CodeMirror.getScrollInfo().top),150);
     const files = async page => {
       const switcher = page.locator('#workspaceSwitchBtn');
       if (await switcher.getAttribute('aria-pressed') !== 'true') await switcher.click();
@@ -57,6 +101,8 @@ async function main() {
     for (const name of ['Ben','Carmen','Devon']) await alice.getByLabel(name,{exact:true}).check();
     await alice.getByRole('button',{name:'Create group project',exact:true}).click();
     await alice.getByRole('button',{name:'main.py',exact:true}).click();
+    await alice.getByLabel('Show contributions',{exact:true}).check();
+    await alice.locator('.CodeMirror .group-contribution[title="Alice"]').filter({hasText:'print'}).waitFor();
     for (const [page, filename] of [[ben,'main.py'],[carmen,'message.txt'],[devon,'message.txt']]) {
       await files(page);
       await page.locator('[data-group-browse]').filter({hasText:'Lab files'}).click();
@@ -72,7 +118,6 @@ async function main() {
       return code.includes('# Alice 😀') && code.includes('# Ben') && !window.GroupProjects.unsaved();
     }, null, {timeout:5000});
     assert.equal(await text(alice),await text(ben));
-    await alice.getByLabel('Show contributions',{exact:true}).check();
     await alice.locator('.CodeMirror .group-contribution').first().waitFor();
     await ben.evaluate(() => {window.eagleEditor.focus(); window.eagleEditor.setCursor({line:1,ch:1});});
     const remote = alice.locator('.group-remote-cursor[title="Ben"]');
@@ -84,6 +129,24 @@ async function main() {
     await alice.waitForFunction(() => !window.eagleEditor.getValue().includes('# Ben') && window.eagleEditor.getValue().includes('# Alice'));
     await ben.keyboard.press('Control+Shift+z');
     await alice.waitForFunction(() => window.eagleEditor.getValue().includes('# Ben'));
+    const browseTeacher = async () => {
+      await teacher.evaluate(() => openTeacherDashboard('dash-classes'));
+      await teacher.locator('.cls-group-projects').click();
+      await teacher.locator('[data-group-teacher]').filter({hasText:'Lab files'}).click();
+    };
+    await browseTeacher();
+    await teacher.getByRole('button',{name:'main.py',exact:true}).click();
+    await teacher.getByRole('button',{name:'Edit in IDE',exact:true}).click();
+    await teacher.getByLabel('Show contributions',{exact:true}).waitFor();
+    await alice.locator('#teacherPaneToggleBtn:not(.live)').waitFor();
+    const teacherCursor = alice.locator('.group-remote-cursor[title="Teacher Example"]');
+    await teacherCursor.waitFor();
+    await teacher.getByLabel('Show contributions',{exact:true}).focus();
+    await teacherCursor.waitFor({state:'detached'});
+    await insert(teacher, '# Teacher help\n');
+    await alice.waitForFunction(() => window.eagleEditor.getValue().startsWith('# Teacher help'));
+    await alice.locator('.CodeMirror .group-contribution[title="Teacher Example"]').first().waitFor();
+    assert.equal(await alice.locator('#groupMemberIcons [title^="Teacher"]').count(), 0);
     await carmen.context().setOffline(true);
     await insert(carmen,'Carmen offline · ');
     await carmen.waitForFunction(() => window.GroupProjects.unsaved());
@@ -110,17 +173,17 @@ async function main() {
     const toggle = teacher.getByLabel('Highlight contributions',{exact:true});
     await toggle.check();
     const colors = teacher.locator('.assignment-file-source .group-contribution');
-    assert.equal(await colors.count(),2);
+    const contributed = await colors.count();
+    assert.ok(contributed >= 3);
+    await teacher.locator('.assignment-file-source .group-contribution[title="Teacher Example"]').waitFor();
     await toggle.uncheck();
     assert.equal(await colors.count(),0);
     await toggle.check();
     if (screenshots) await teacher.screenshot({path:path.join(screenshots,'teacher-contributions.png')});
     await teacher.locator('#themeToggleBtn').click();
-    assert.equal(await colors.count(),2);
+    assert.equal(await colors.count(),contributed);
     if (screenshots) await teacher.screenshot({path:path.join(screenshots,'teacher-contributions-light.png')});
-    await teacher.evaluate(() => openTeacherDashboard('dash-classes'));
-    await teacher.locator('.cls-group-projects').click();
-    await teacher.locator('[data-group-teacher]').filter({hasText:'Lab files'}).click();
+    await browseTeacher();
     const row = teacher.locator('.group-teacher-members > div').filter({hasText:'Ben'});
     await row.getByRole('button',{name:'Remove',exact:true}).click();
     await ben.waitForFunction(() => window.eagleEditor.getValue() === '' && window.eagleEditor.getOption('readOnly'));
