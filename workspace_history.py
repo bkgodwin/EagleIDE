@@ -36,6 +36,7 @@ MAX_ROLLING = 1024 ** 3
 MAX_ACCOUNT = 64 * 1024 ** 2
 MAX_FILE = 16 * 1024 ** 2
 MIN_FREE = 256 * 1024 ** 2
+SAFE_WAL = sqlite3.sqlite_version_info >= (3, 51, 3)
 HEX = re.compile(r"[a-f0-9]{32}")
 KINDS = {".py", ".js", ".html", ".css", ".txt", ".md", ".json", ".csv"}
 _initialized = set()
@@ -102,7 +103,9 @@ def database(eagle, *, write=False, create=True):
         if path not in _initialized:
             with _schema_lock:
                 db.execute("PRAGMA auto_vacuum=INCREMENTAL")
-                db.execute("PRAGMA journal_mode=WAL")
+                # Older runtime builds may include SQLite's WAL-reset race.
+                # The history store remains available with rollback journaling.
+                db.execute("PRAGMA journal_mode=WAL" if SAFE_WAL else "PRAGMA journal_mode=DELETE")
                 db.executescript("""
                     CREATE TABLE IF NOT EXISTS files (
                       id TEXT PRIMARY KEY, owner TEXT NOT NULL, path TEXT, fingerprint TEXT,
@@ -588,7 +591,8 @@ def maintenance(eagle, now=None, *, rolling=True):
                 break
     with database(eagle) as db:
         db.execute("PRAGMA incremental_vacuum(256)")
-        db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        if SAFE_WAL:
+            db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
 
 def start_maintenance(eagle):
@@ -603,7 +607,7 @@ def start_maintenance(eagle):
         while True:
             try:
                 path = root(eagle) / "history.sqlite3"
-                if anchor is None and path in _initialized and path.is_file():
+                if SAFE_WAL and anchor is None and path in _initialized and path.is_file():
                     # Keep the journal open across short-lived batch connections.
                     # Closing the last connection would checkpoint on each batch.
                     anchor = sqlite3.connect(path, timeout=.25)

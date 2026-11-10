@@ -536,6 +536,7 @@ finalization and distinguish partial recordings. Administrator Trash cleanup
 shows rolling/pinned usage. Enforce a 2 GiB total budget, a 1 GiB rolling budget,
 64 MiB per workspace, 16 MiB per file, and a free disk floor. Apply the same
 retention policy to any operator-managed backups of this private store.
+Use rollback journaling on SQLite versions older than 3.51.3.
 `EAGLE_WORKSPACE_HISTORY_ENABLED=0` pauses new
 capture while preserving replay and scheduled cleanup.
 
