@@ -14,6 +14,7 @@ import zipfile
 
 from flask import jsonify, request, send_file
 
+import editor_annotations as annotations
 import file_provenance
 import group_project_text as text_ops
 from security_controls import AttemptLimiter
@@ -106,6 +107,17 @@ def database(eagle):
                         PRIMARY KEY(project, email)
                     );
                     PRAGMA user_version = 2;
+                    COMMIT;
+                """)
+            if version < 3:
+                db.executescript("""
+                    BEGIN;
+                    CREATE TABLE IF NOT EXISTS annotations(
+                        file TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                        id TEXT NOT NULL, start INTEGER NOT NULL, end INTEGER NOT NULL,
+                        discussion TEXT NOT NULL, PRIMARY KEY(file,id)
+                    );
+                    PRAGMA user_version = 3;
                     COMMIT;
                 """)
             yield db
@@ -447,6 +459,7 @@ def apply_edit(eagle, db, project, member, row, data):
     encoded = source.encode("utf-8")
     if len(encoded) > text_ops.MAX_TEXT_BYTES:
         raise ProjectError("Shared text files can be at most 2 MiB", 413)
+    annotations_closed = annotations.group_move(db, row["id"], parts)
     if source == content:
         parts = [text_ops.length(content)] if content else []
         spans = json.loads(row["spans"])
@@ -473,7 +486,8 @@ def apply_edit(eagle, db, project, member, row, data):
             db.execute("DELETE FROM edits WHERE file=? AND revision<=?", (row["id"], edit[0]))
             break
     bump(db, project["id"])
-    return {"revision": revision, "opId": op_id, "parts": parts, "author": author}
+    return {"revision": revision, "opId": op_id, "parts": parts, "author": author,
+            "annotationsClosed": annotations_closed}
 
 
 def edit_receipt(eagle, db, row, base):
@@ -667,6 +681,13 @@ def deliver_edit(eagle, db, project, row, update):
         event.update(projectId=project["id"], fileId=row["id"])
         for sid in viewers:
             eagle.socketio.emit("group_project_edit", event, to=sid)
+    if update["annotationsClosed"]:
+        deliver_annotations(eagle, project["id"], row["id"], viewers)
+
+
+def deliver_annotations(eagle, project_id, file_id, viewers):
+    for sid in viewers:
+        eagle.socketio.emit("group_project_annotations_changed", {"projectId": project_id, "fileId": file_id}, to=sid)
 
 
 def checked_project(eagle, db, project_id, class_id, email):
@@ -1032,6 +1053,40 @@ def register(app, eagle):
             if request.method == "POST":
                 return save_file(db, project, member, file_id, json_body())
             return read_file(db, project_id, file_id, own=member_info(member))
+
+    def file_annotations(db, project, member, file_id):
+        row = select_file(db, project["id"], file_id, content=request.method == "POST")
+        if row["folder"] or row["size"] > text_ops.MAX_TEXT_BYTES or Path(row["path"]).suffix.lower() not in eagle.TEXT_EXTENSIONS:
+            raise annotations.AnnotationError("Open a shared text file", 415)
+        threads = annotations.group_read(db, file_id)
+        revision = row["revision"]
+        if request.method == "GET":
+            return annotations.response(threads, revision=revision)
+        data = annotations.request_data()
+        if data.get("action") == "add" and (type(data.get("revision")) is not int or data["revision"] != revision):
+            raise annotations.AnnotationError("The shared file changed. Sync before annotating.", 409)
+        source = text_file(eagle, row["path"], row["content"])
+        if source is None:
+            raise annotations.AnnotationError("Open a shared text file", 415)
+        thread_id = annotations.mutate(threads, data, member_info(member), member["email"], source)
+        annotations.group_write(db, file_id, threads, thread_id)
+        db.commit()
+        deliver_annotations(eagle, project["id"], file_id, live_viewers(eagle, db, project["id"], file_id))
+        return annotations.response(threads, revision=revision, threadId=thread_id)
+
+    @app.route("/api/group-projects/<project_id>/files/<file_id>/annotations", methods=["GET", "POST"])
+    def student_file_annotations(project_id, file_id):
+        email = identity(student())
+        with database(eagle) as db:
+            project, member = checked_project(eagle, db, project_id, request.args.get("classId"), email)
+            return file_annotations(db, project, member, file_id)
+
+    @app.route("/api/teacher/group-projects/<project_id>/files/<file_id>/annotations", methods=["GET", "POST"])
+    def teacher_file_annotations(project_id, file_id):
+        cls, actor = teacher_class(eagle, request.args.get("classId"))
+        with database(eagle) as db:
+            project = checked_teacher_project(db, project_id, cls)
+            return file_annotations(db, project, teacher_member(db, project, actor), file_id)
 
     def socket_access(db, payload):
         if not isinstance(payload, dict):

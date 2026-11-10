@@ -323,18 +323,21 @@
 
   async function viewAuditFile(path) {
     const c = ctx();
+    const classId = auditClassId, studentEmail = auditStudentEmail, token = c.TEACHER_TOKEN;
     const res = await fileRequest('/api/teacher/students/files/read', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Teacher-Token': c.TEACHER_TOKEN },
       body: JSON.stringify({
-        classId: auditClassId,
-        studentEmail: auditStudentEmail,
+        classId,
+        studentEmail,
         path,
       }),
     });
     const j = await res.json().catch(() => ({}));
+    if (classId !== auditClassId || studentEmail !== auditStudentEmail || token !== ctx().TEACHER_TOKEN ||
+        document.getElementById('classroomAuditModal').style.display === 'none') return;
     if (!j?.ok) return alert(j?.error || 'Could not read file');
-    c.openAuditPreview?.(path, j.content, auditStudentEmail);
+    c.openAuditPreview?.(path, j.content, studentEmail, classId, j.annotationDigest);
     document.getElementById('classroomAuditModal').style.display = 'none';
   }
 

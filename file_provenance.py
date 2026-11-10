@@ -51,14 +51,19 @@ def digest(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def record(eagle, user_dir, target):
+    path, _ = location(eagle, user_dir, target)
+    value = eagle._read_json_file(path, {})
+    return value if isinstance(value, dict) else {}
+
+
 def read(eagle, user_dir, target, content):
     with lock(user_dir):
-        path, _ = location(eagle, user_dir, target)
-        record = eagle._read_json_file(path, {})
-        if not isinstance(record, dict) or not record.get("sha256") or record["sha256"] != digest(content):
+        value = record(eagle, user_dir, target)
+        if not value.get("sha256") or value["sha256"] != digest(content):
             return []
         try:
-            return normalize(record.get("ranges", []), content)
+            return normalize(value.get("ranges", []), content)
         except ValueError:
             return []
 
@@ -90,14 +95,15 @@ def remap(ranges, old, new):
     return normalize(result, new)
 
 
-def write(eagle, user_dir, target, content, ranges):
+def write(eagle, user_dir, target, content, ranges, *, annotations=()):
     with lock(user_dir):
         path, key = location(eagle, user_dir, target)
-        if not ranges:
+        if not ranges and not annotations:
             path.unlink(missing_ok=True)
             return
         path.parent.mkdir(parents=True, exist_ok=True)
-        eagle._write_json_file_atomic(path, {"path": key, "sha256": digest(content), "ranges": ranges})
+        eagle._write_json_file_atomic(path, {"path": key, "sha256": digest(content), "ranges": ranges,
+                                             **({"annotations": annotations} if annotations else {})})
 
 
 def move(eagle, user_dir, source, destination, *, keep_source=False):
@@ -116,6 +122,10 @@ def move(eagle, user_dir, source, destination, *, keep_source=False):
                 continue
             key = record.get("path", "")
             if key == old or key.startswith(old + "/"):
+                if keep_source:
+                    record.pop("annotations", None)
+                    if not record.get("ranges"):
+                        continue
                 record["path"] = new + key[len(old):]
                 target = root / (hashlib.sha256(record["path"].encode()).hexdigest() + ".json")
                 eagle._write_json_file_atomic(target, record)

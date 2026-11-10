@@ -1351,7 +1351,22 @@ reading space. Students can show or hide the teacher stream with the arrow over
 the editor's line numbers. It turns red when the teacher is live. Use Follow
 teacher to keep the teacher's current line centered, or turn it off to scroll
 independently. The stream shows the teacher's caret and highlights the text
-they select to point out parts of the code.
+they select to point out parts of the code. It only takes space when a file is
+open in the editor. You can keep browsing Files while the teacher is live.
+
+Select text in a personal or group file, then choose Edit > Add Annotation.
+Hover over a highlight to read it, or click it to reply. Close a single message
+to check off an item, or close the annotation to remove the whole thread.
+View Annotations in the Edit menu also opens threads with the keyboard.
+Annotations follow their text through edits and close when the selection is
+deleted. Teachers can annotate during a group visit or from read-only audit.
+
+Open a .md file to read its formatted notes, or choose Edit Markdown to write.
+The toolbar includes headings, formatting, lists, checklists, and Python code
+blocks. Try Examples/markdown.md for a sample. While a Markdown file and a
+notebook notes tab are open, use Notes → Markdown to insert the notebook
+selection (or page) into the file, or Markdown → Notes to insert a formatted
+copy into the notebook.
 
 Clipboard controls and recorded assignment files
 -----------------------------------------------

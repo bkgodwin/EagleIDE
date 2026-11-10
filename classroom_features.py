@@ -428,6 +428,8 @@ def register(app, socketio) -> None:
         if target.suffix.lower() not in M.ALLOWED_EXTENSIONS:
             return jsonify(ok=False, error="File type not allowed"), 400
         try:
+            if target.stat().st_size > M.MAX_EDITOR_FILE_BYTES:
+                return jsonify(ok=False, error="The file exceeds the editor limit"), 413
             content = target.read_text(encoding="utf-8")
         except Exception:
             return jsonify(ok=False, error="Could not read file"), 500
@@ -438,7 +440,7 @@ def register(app, socketio) -> None:
             "teacher",
             {"student_email": student_email, "path": path_str},
         )
-        return jsonify(ok=True, content=content, path=path_str)
+        return jsonify(ok=True, content=content, path=path_str, annotationDigest=M.file_provenance.digest(content))
 
     @app.delete("/api/teacher/students/files/delete")
     def teacher_student_files_delete():

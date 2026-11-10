@@ -29,6 +29,7 @@ Required runtime components:
 |-- workspace_history.py         Bounded editor recording, submission clips, and retention jobs
 |-- assignment_organization.py   Owner-managed class folders, atomic assignment membership, and folder authorization
 |-- file_provenance.py           Bounded paste ranges outside workspaces; submission snapshots use UTF-16 offsets
+|-- editor_annotations.py        Bounded private discussion threads and UTF-16 anchor mapping
 |-- notebook_practice.py         Bounded practice feedback, revision guards, and protected notebook checks
 |-- notebook_media.py            Quota-counted photo uploads, protected previews, and shared-tab copies
 |-- workspace_data.py            Bounded CSV pages and version-checked streaming workspace edits
@@ -101,6 +102,8 @@ Required runtime components:
 |       |-- editor-feedback.js   Local occurrences, delimiters, diagnostics, block guides, and caret visibility
 |       |-- editor-behavior.js   Predictable Python Enter indentation and CodeMirror block folding
 |       |-- editor-edit-menu.js  Main editor commands, find/replace overlay, and guarded clipboard actions
+|       |-- editor-annotations.js Private workspace, audit, and group annotation UI
+|       |-- workspace-markdown.js Markdown reading, source tools, and notebook transfers
 |       |-- autocomplete.js      Bounded code analysis, catalog-backed suggestions, and completion UI
 |       |-- layout.js            Responsive panels and layout controls
 |       |-- lazy-libs.js         Lazy browser dependency helpers
@@ -338,6 +341,12 @@ same file trigger live edit and cursor delivery. Recipient checks use current
 class policy, session lifetime and student membership or current class ownership.
 The teacher cursor is shown while their group editor has focus. A single viewer
 saves over HTTP. Imported text starts with one UTF-16 span for its sharer.
+Group annotation threads use the same file identity and transaction as the edit
+journal; rebase their UTF-16 anchors through committed edits and drop an anchor
+when no original text remains. Send annotation invalidations only to authorized
+file viewers. Personal and teacher audit annotations share the private
+provenance sidecar and follow renames, Trash, and permanent file cleanup.
+Validate new anchors against the saved digest or group revision.
 Device drafts are scoped to account, project and file. A stale draft is offered
 for recovery when the revision journal cannot reconcile it. CodeMirror marks
 are viewport-bounded. Server-authenticated contributors and surviving ranges
@@ -715,6 +724,11 @@ Network simulator definitions are source data in `network_content.py`; assignmen
 - Shared account cards and responsive grids live in `features/account-settings.css`. Teacher/student/admin Account panes contain external tool storage controls; keep the storage dialog above its parent settings modal and preserve existing profile/password handlers and account-scoped editor previews.
 - Editor initialization or teacher stream editor: `editor-init.js`; predictable Enter indentation and folding: `editor-behavior.js`; most run/open/save behavior remains in `app-core.js`. CodeMirror folding uses the pinned CDN fold addons loaded by `index.html`. Validate the caret and selection anchor against the same stream snapshot using UTF-16 columns. The viewer remains scoped to the selected class and session; draw selection without taking focus and preserve independent scrolling unless the student enables Follow teacher. Stop the broadcast before opening a private group file from the teacher dashboard.
 - The Edit dropdown lives in `editor-edit-menu.js` and `features/editor.css`. Find locks editor input while keeping scrolling available. Programmatic clipboard actions honor classroom policy, and menu paste uses the same provenance path as keyboard paste. The editor's duplicate request sends a snapshot of the current buffer and paste ranges to the existing workspace duplicate route. It allocates a separate `-copy` file in the same folder.
+- Workspace Markdown uses the same source editor and save path in personal and
+  group files. The reading view renders bounded, sanitized HTML without remote
+  images or embedded content. Notebook transfers are explicit copies and must
+  preserve editing locks and class/account boundaries. Keep the stream out of
+  the Files layout and hide it until an editor file is open.
 - Workspace orientation and viewport sizing: `layout.js`; pointer/keyboard splitters and per-orientation sizes: `app-core.js`. Vertical (side-by-side) is the default; horizontal puts the editor above Shell/Resources and uses a right-hand file-action rail. Orientation and each layout's sizes persist in localStorage. Keep collapse/view controls and splitter ARIA axes working in both orientations.
 - Editor occurrences, local lexical diagnostics, delimiter shading, block guides, and caret-line visuals: `editor-feedback.js` and `features/editor.css`. Feedback is bounded, debounced, and browser-local; no student code is sent or executed. Undefined-name hints are advisory Python/JavaScript checks, not full scope analysis. The removed indent-guide toggle must not be restored; guides follow actual blocks. Insert overwrite is disabled in the editable editor (including its textarea fallback), while Shift+Insert keeps paste.
 - Autocomplete analysis, popup lifecycle, import/from-module suggestions, and user-symbol inference: `autocomplete.js`; editable Python member help belongs in `autocomplete_metadata.csv`, while the effective import-module list comes from `sandbox_policy.py` through the read-only catalog API in `app.py`.

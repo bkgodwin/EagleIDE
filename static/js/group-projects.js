@@ -479,6 +479,9 @@
     value.on('group_project_edit', msg => {
       if (matches(active, msg)) receive(active, [msg]);
     });
+    value.on('group_project_annotations_changed', msg => {
+      if (matches(active, msg)) window.dispatchEvent(new CustomEvent('eagle-group-annotations-changed', {detail:msg}));
+    });
     value.on('group_project_presence', msg => {
       if (matches(active, msg)) setViewers(active, msg.viewers);
     });
@@ -733,6 +736,8 @@
     subscribe: view => views.add(view),
     list: () => list, available: () => ({allowed, reason}), context, currentProject,
     unsaved: () => !!active?.pending.length,
+    annotationTarget: fileId => active && valid(active) && active.file.id === fileId && !active.paused && !busy(active) ?
+      {...marker(active), revision:active.revision, teacher:active.teacher} : null,
     runTarget: () => active && valid(active) && !active.paused && !active.teacher ?
       {...marker(active), revision:active.revision} : null,
   };

@@ -271,6 +271,69 @@ class GroupProjectTests(unittest.TestCase):
         self.assertEqual(self.get(ROOT).json["projects"][0]["status"],"canceled")
         self.assertNotEqual(self.create()["id"],project["id"])
 
+    def test_annotation_threads_follow_group_revisions_and_close_with_deleted_text(self):
+        project = self.create(self.others[:1])
+        file = self.file(project, "data/note.txt")
+        url = self.file_url(project, file) + "/annotations"
+        teacher_url = "/api/teacher" + url.removeprefix("/api")
+        scope = {"classId": self.class_one}
+        add = {"action": "add", "revision": 0, "start": 3, "end": 7, "body": "Check the team name"}
+        self.assertEqual(self.get(url, self.missing_email).status_code, 403)
+        self.assertEqual(self.client.post(teacher_url, headers=self.teacher_headers,
+                         query_string={"classId":self.class_two}, json=add).status_code, 404)
+        self.accept(project, self.missing_email)
+        result = self.client.post(teacher_url, headers=self.teacher_headers, query_string=scope, json=add)
+        self.assertEqual(result.status_code, 200, result.json)
+        thread = result.json["annotations"][0]
+        self.assertEqual(thread["author"]["name"], "Teacher")
+        reply = self.client.post(url, headers=self.student(self.missing_email), query_string=scope,
+                                 json={"action":"reply", "threadId":thread["id"], "body":"I checked it"})
+        self.assertEqual(reply.json["annotations"][0]["messages"][-1]["author"]["name"], "Student Two")
+        close = self.client.post(url, headers=self.student_headers, query_string=scope, json={
+            "action":"closeMessage", "threadId":thread["id"], "messageId":thread["messages"][0]["id"],
+        })
+        self.assertEqual([message["body"] for message in close.json["annotations"][0]["messages"]], ["I checked it"])
+        self.assertEqual(self.edit(project, file, ["😀", 7]).status_code, 200)
+        self.assertEqual(self.client.post(teacher_url, headers=self.teacher_headers, query_string=scope, json=add).status_code, 409)
+        shifted = self.get(url).json["annotations"][0]
+        self.assertEqual((shifted["start"], shifted["end"]), (5, 9))
+        self.assertEqual(self.edit(project, file, [5, -4, "club"], revision=1).status_code, 200)
+        self.assertEqual(self.get(url).json["annotations"], [])
+
+    def test_audit_annotations_share_the_workspace_file_without_changing_its_source(self):
+        path = "Demo/data/note.txt"
+        url = "/api/files/annotations"
+        audit = "/api/teacher/students/files/annotations"
+        scope = {"classId":self.class_one, "studentEmail":self.student_email, "path":path}
+        read = self.client.get("/api/files/read", headers=self.student_headers, query_string={"path":path}).json
+        add = {"action":"add", "digest":read["annotationDigest"], "start":3, "end":7, "body":"Explain team"}
+        self.assertEqual(self.client.post(audit, headers=self.student_headers, query_string=scope, json=add).status_code, 401)
+        self.assertEqual(self.client.post(audit, headers=self.teacher_headers,
+                         query_string={**scope,"classId":self.class_two}, json=add).status_code, 403)
+        response = self.client.post(audit, headers=self.teacher_headers, query_string=scope, json=add)
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertEqual((self.workspace / path).read_text(encoding="utf-8"), "😀 team")
+        thread = self.client.get(url, headers=self.student_headers, query_string={"path":path}).json["annotations"][0]
+        self.assertEqual(thread["messages"][0]["body"], "Explain team")
+        save = self.client.post("/api/files/write", headers=self.student_headers, json={
+            "path":path, "content":"A😀 team!", "annotationBase":read["annotationDigest"],
+            "annotationEdits":[[0,0,1],[8,8,1]],
+        })
+        self.assertEqual(save.status_code, 200, save.json)
+        moved = self.client.get(url, headers=self.student_headers, query_string={"path":path}).json["annotations"][0]
+        self.assertEqual((moved["start"], moved["end"]), (4, 8))
+        self.assertEqual(self.client.post("/api/files/rename", headers=self.student_headers,
+                         json={"old_path":path, "new_name":"renamed.txt"}).status_code, 200)
+        path = "Demo/data/renamed.txt"
+        self.assertEqual(self.client.get(url, headers=self.student_headers,
+                         query_string={"path":path}).json["annotations"][0]["id"], thread["id"])
+        save = self.client.post("/api/files/write", headers=self.student_headers, json={
+            "path":path, "content":"A😀 club!", "annotationBase":save.json["annotationDigest"],
+            "annotationEdits":[[4,8,4]],
+        })
+        self.assertEqual(save.status_code, 200, save.json)
+        self.assertEqual(self.client.get(url, headers=self.student_headers, query_string={"path":path}).json["annotations"], [])
+
     def test_schedule_uses_class_local_days_and_rejects_bad_configuration(self):
         cls = eagle._find_class_by_id(self.class_one)
         cls["settings"]["group_project_schedule"] = groups.schedule(

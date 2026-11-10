@@ -16,7 +16,8 @@ test('switching teacher classes stops the old stream and cancels its pending flu
     startTeacherBroadcast(){throw new Error('Must not start another class stream');},
     scheduleTeacherBroadcastFlush(){throw new Error('Must not send code to the next class');}};
   vm.runInNewContext(`let TEACHER_TOKEN='fixture',teacherClasses=[{id:'one'},{id:'two'}],currentTeacherClassId='one',
-    activeAssignmentsClassId='one',currentAdminAssignmentName='old',teacherStreamingEnabled=true,teacherBroadcastActive=true,teacherBroadcastFlushTimer=42;
+    activeAssignmentsClassId='one',currentAdminAssignmentName='old',teacherStreamingEnabled=true,teacherBroadcastActive=true,teacherBroadcastFlushTimer=42,
+    auditPreviewActive=false;
     const socket={emit:(...args)=>events.push(args)},getCurrentClassContext=()=>({id:currentTeacherClassId});
     ${functions}
     globalThis.select=selectTeacherClass;
