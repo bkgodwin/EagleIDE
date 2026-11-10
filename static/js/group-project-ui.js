@@ -329,7 +329,7 @@
           <strong>${esc(project.name)}</strong><span>${esc(project.members.filter(p => p.state === 'active').map(p => p.name).join(', '))}</span>
           <small>${project.openFiles.length ? esc(project.openFiles.map(file => `${file.path} (${file.viewers.length} open)`).join(' · ')) : 'Idle'}</small>
         </button>`).join('') : '<p class="group-muted">No active group projects in this class.</p>';
-        list.querySelectorAll('button').forEach(control => control.onclick = () => browseTeacher(cls, control.dataset.groupTeacher, load));
+        list.querySelectorAll('button').forEach(control => control.onclick = () => browseTeacher(cls, control.dataset.groupTeacher, load, m));
       } catch (error) {if (m.root.isConnected) {signature = ''; list.textContent = error.message;}}
       finally {loading = false;}
     }
@@ -356,7 +356,7 @@
     load();
   }
 
-  function browseTeacher(cls, projectId, reload) {
+  function browseTeacher(cls, projectId, reload, parent) {
     const url = '/api/teacher/group-projects/' + encodeURIComponent(projectId);
     const options = {teacher:true,params:{classId:cls.id}};
     const m = studentModal('Browse group project', '<div data-group-body>Loading files…</div>' + statusMarkup, 'group-browser-modal');
@@ -378,10 +378,23 @@
           try {
             const {file} = await request(url,{...options,params:{...options.params,fileId}});
             if (!m.root.isConnected || current !== sequence || !preview.isConnected) return;
-            preview.innerHTML = `<div class="group-project-heading"><strong>${esc(file.path)}</strong><button class="btn secondary" type="button">Download</button></div>`;
-            preview.querySelector('button').onclick = () => request(url,{...options,params:{...options.params,fileId,download:'1'},blob:true})
+            preview.innerHTML = `<div class="group-project-heading"><strong>${esc(file.path)}</strong><div class="group-actions">
+              ${file.kind === 'text' ? button('edit','Edit in IDE',true) : ''}${button('download','Download')}
+              </div></div>`;
+            preview.querySelector('[data-group-download]').onclick = () => request(url,{...options,params:{...options.params,fileId,download:'1'},blob:true})
               .then(blob => core.saveBlob(blob,file.path.split('/').at(-1))).catch(error => status(m,error.message));
             if (file.kind === 'text') {
+              preview.querySelector('[data-group-edit]').onclick = event => run(m,event.currentTarget,async () => {
+                const opened = await core.open(project, file, {
+                  teacher:true, canOpen:() => m.root.isConnected && current === sequence && preview.isConnected,
+                });
+                if (!opened) return;
+                m.close();
+                parent.close();
+                document.getElementById('teacherDashCloseBtn')?.click();
+                window.WikiReader?.showIDE(true);
+                window.eagleEditor?.focus();
+              });
               const code = document.createElement('pre');
               code.className = 'assignment-file-source';
               code.textContent = file.content;

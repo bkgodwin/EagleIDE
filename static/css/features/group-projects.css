@@ -10,6 +10,7 @@
 .group-color-9 { --group-color:#5474aa; }
 .group-color-10 { --group-color:#a0674d; }
 .group-color-11 { --group-color:#608b59; }
+.group-color-12 { --group-color:#b24820; }
 
 .group-member-icons { display:flex; align-items:center; flex:0 0 auto; gap:5px; }
 .group-member-icons[hidden], .group-editor-tools[hidden], .group-projects-panel[hidden] { display:none; }

@@ -340,7 +340,7 @@ body.workspace-resizing iframe { pointer-events: none; }
 .vsplitter { grid-row: 2 / 3; grid-column: 1; }
 .hsplitter { grid-column: 2 / 3; grid-row: 1 / 2; }
 
-.edge-toggle, .teacher-pane-toggle {
+.edge-toggle {
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }

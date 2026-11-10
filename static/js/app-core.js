@@ -825,6 +825,59 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
     window.ensureEditorTabForTeacherStream = ensureEditorTabForTeacherStream;
 
+    function centerTeacherStream(cursorLine = pendingTeacherSnapshot?.cursorLine) {
+      if (!teacherStreamFollowing || !teacherPaneOpen || document.hidden || cursorLine == null) return;
+      const pane = document.getElementById('teacherStreamPane');
+      const cm = teacherEditor;
+      if (cm) {
+        if (!cm.getWrapperElement().clientHeight) return;
+        let scroll = cm.getScrollInfo();
+        // Extra space lets the first and last lines reach the viewport center.
+        const padding = Math.max(4, Math.ceil((scroll.clientHeight - cm.defaultTextHeight()) / 2));
+        if (pane.style.getPropertyValue('--stream-follow-padding') !== `${padding}px`) {
+          pane.style.setProperty('--stream-follow-padding', `${padding}px`);
+          cm.refresh();
+          scroll = cm.getScrollInfo();
+        }
+        const coords = cm.charCoords({line:cursorLine, ch:0}, 'local');
+        const top = Math.max(0, Math.min(scroll.height - scroll.clientHeight,
+          (coords.top + coords.bottom - scroll.clientHeight) / 2));
+        if (Math.abs(scroll.top - top) >= 1) cm.scrollTo(scroll.left, top);
+      } else {
+        const textarea = document.getElementById('teacherStreamEditor');
+        if (!textarea?.clientHeight) return;
+        const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight);
+        const padding = Math.max(8, Math.ceil((textarea.clientHeight - lineHeight) / 2));
+        pane.style.setProperty('--stream-follow-padding', `${padding}px`);
+        textarea.scrollTop = padding + (cursorLine + .5) * lineHeight - textarea.clientHeight / 2;
+      }
+    }
+    window.centerTeacherStream = centerTeacherStream;
+
+    function setTeacherStreamFollowing(follow) {
+      teacherStreamFollowing = follow;
+      const button = document.getElementById('teacherStreamFollowBtn');
+      button.setAttribute('aria-pressed', String(follow));
+      button.title = follow ? 'Unlock view to scroll independently' : 'Lock view to the teacher’s cursor';
+      if (follow) {
+        flushPendingTeacherStream();
+      } else {
+        const pane = document.getElementById('teacherStreamPane');
+        const padding = parseFloat(pane.style.getPropertyValue('--stream-follow-padding'));
+        if (!padding) return;
+        const scroll = teacherEditor?.getScrollInfo();
+        const textarea = document.getElementById('teacherStreamEditor');
+        const top = textarea.scrollTop;
+        pane.style.removeProperty('--stream-follow-padding');
+        if (scroll) {
+          teacherEditor.refresh();
+          teacherEditor.scrollTo(scroll.left, scroll.top - padding + 4);
+        } else {
+          textarea.scrollTop = top - padding + 8;
+        }
+      }
+    }
+
     function applyTeacherCodeToViewer({ code, language, cursorLine }) {
       const cm = initTeacherViewer();
       const indicator = document.getElementById('teacherStreamCursor');
@@ -839,17 +892,20 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             cm.setValue(code);
             cm.clearHistory();
           }
+          if (teacherStreamFollowing && cursorLine != null) window.EagleEditorBehavior?.unfoldLine(cm, cursorLine);
           teacherCursorMarker = cursorLine == null ? null : cm.addLineClass(cursorLine, 'background', 'teacher-stream-cursor-line');
           cm.scrollTo(scroll.left, scroll.top);
         });
       } else {
         const textarea = document.getElementById('teacherStreamEditor');
-        if (textarea.value === code) return;
-        const { scrollTop, scrollLeft } = textarea;
-        textarea.value = code;
-        textarea.scrollTop = scrollTop;
-        textarea.scrollLeft = scrollLeft;
+        if (textarea.value !== code) {
+          const { scrollTop, scrollLeft } = textarea;
+          textarea.value = code;
+          textarea.scrollTop = scrollTop;
+          textarea.scrollLeft = scrollLeft;
+        }
       }
+      if (teacherStreamFollowing) centerTeacherStream(cursorLine);
     }
 
     function flushPendingTeacherStream() {
@@ -900,6 +956,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         btn.classList.toggle('live', isLive);
         const action = teacherPaneOpen ? 'Hide' : 'Show';
         btn.title = isLive ? `${action} live teacher code stream` : `${action} teacher code stream`;
+        btn.setAttribute('aria-label', btn.title);
       }
       const liveIndicator = document.getElementById('editorLiveIndicator');
       const showLiveChip = !!isLive && (
@@ -1308,6 +1365,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (scope !== teacherStreamScope) {
         teacherStreamScope = scope;
         pendingTeacherSnapshot = null;
+        setTeacherStreamFollowing(false);
         if (teacherEditor) {
           if (teacherCursorMarker) teacherEditor.removeLineClass(teacherCursorMarker, 'background', 'teacher-stream-cursor-line');
           teacherEditor.setValue('');
@@ -2144,6 +2202,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     });
 
     async function groupRunTarget(fileId) {
+      if (currentOpenFile?.groupTeacher) {
+        appendOut('[Download the shared file to run it from your workspace.]\n');
+        return null;
+      }
       const saved = await window.GroupProjects?.flush();
       const project = window.GroupProjects?.runTarget();
       if (!saved || project?.fileId !== fileId) {
@@ -2191,6 +2253,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         return;
       }
       const groupFile = currentOpenFile?.groupFileId;
+      if (currentOpenFile?.groupTeacher) {
+        appendOut('[Download the shared file to run it from your workspace.]\n');
+        return;
+      }
       if (isHtmlRuntimeFile(currentOpenFile?.name || '')) {
         if (!groupFile && !currentOpenFile?.path) {
           appendOut('[HTML Runtime] Open an HTML file first.\n');
@@ -2731,6 +2797,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         if (!teacherPaneEnabled) return;
         setTeacherPaneOpen(!teacherPaneOpen);
       });
+      document.getElementById('teacherStreamFollowBtn')?.addEventListener('click', () => {
+        setTeacherStreamFollowing(!teacherStreamFollowing);
+      });
+      document.getElementById('teacherStreamEditor')?.addEventListener('scroll', () => centerTeacherStream());
 
       function attachPointerDrag(element, canStart, onMove) {
         if (!element) return;
@@ -3496,7 +3566,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     // Teacher Code Broadcasting
     function flushTeacherBroadcast(force = false) {
-      if (!teacherStreamingEnabled || !teacherBroadcastActive || document.hidden) return;
+      if (!teacherStreamingEnabled || !teacherBroadcastActive || document.hidden || currentOpenFile?.groupTeacher) return;
       const token = TEACHER_TOKEN;
       const role = TEACHER_TOKEN ? 'teacher' : '';
       const activeClassId = getCurrentClassContext()?.id;
@@ -3585,7 +3655,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     });
 
     function setTeacherStreamingEnabled(enabled) {
-      const next = !!enabled && !!TEACHER_TOKEN;
+      const next = !!enabled && !!TEACHER_TOKEN && !currentOpenFile?.groupTeacher;
       teacherStreamingEnabled = next;
       if (next) {
         startTeacherBroadcast();
@@ -6263,15 +6333,16 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       content: () => editor.getValue(), currentFile: () => currentOpenFile,
       visible: () => !document.hidden && !document.body.matches('.wiki-mode, .network-mode, .external-tool-mode, .eagle-lab-mode')
         && !document.getElementById('editorContentStack')?.classList.contains('file-browser-active'),
-      open(project, file) {
+      open(project, file, teacher) {
         fileOpenRequestId++;
+        if (teacher && teacherStreamingEnabled) setTeacherStreamingEnabled(false);
         closeAuditPreview();
         clearFileArtifactPreview();
         setCsvMode(false);
         window.WorkspaceData?.jsonMode(false);
         currentOpenFile = {
           path: '', name:file.path.split('/').at(-1), kind:file.kind === 'text' ? 'text' : 'group-asset',
-          groupProjectId:project.id, groupFileId:file.id, readOnly:file.kind !== 'text' || !window.eagleEditor,
+          groupProjectId:project.id, groupFileId:file.id, groupTeacher:teacher, readOnly:file.kind !== 'text' || !window.eagleEditor,
         };
         editor.setValue(file.kind === 'text' ? file.content : 'Use Download file to open this shared asset.');
         currentBufferDirty = false;

@@ -67,7 +67,7 @@ test('stream snapshots preserve scroll and cursor-only updates keep the document
   };
   const indicator = {};
   const context = {
-    document:{getElementById:() => indicator}, initTeacherViewer:() => cm, teacherCursorMarker:null,
+    document:{getElementById:() => indicator}, initTeacherViewer:() => cm, teacherCursorMarker:null, teacherStreamFollowing:false,
     getLanguageInfoForKey:() => ({mode:'python'}),
   };
   vm.runInNewContext(extract(app,'applyTeacherCodeToViewer'), context);

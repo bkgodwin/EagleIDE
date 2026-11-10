@@ -99,6 +99,7 @@ function eagleFoldRange(cm, pos) {
     const STUDENT_CLASS_SELECTION_KEY = 'eagleide-student-class-id';
     let teacherPaneEnabled = false;
     let teacherPaneOpen = false;
+    let teacherStreamFollowing = false;
     let teacherStreamingEnabled = false;
 
     function setTeacherPaneSize(percent, persist = true) {
@@ -120,7 +121,6 @@ function eagleFoldRange(cm, pos) {
         ta.style.height = '100%';
         ta.style.border = '0';
         ta.style.outline = 'none';
-        ta.style.padding = '8px';
         ta.readOnly = true;
         return null;
       }
@@ -144,6 +144,7 @@ function eagleFoldRange(cm, pos) {
         viewportMargin: 20,
         readOnly: 'nocursor'
       });
+      teacherEditor.on('scroll', () => window.centerTeacherStream?.());
       return teacherEditor;
     }
 
@@ -152,12 +153,7 @@ function eagleFoldRange(cm, pos) {
       const stack = document.getElementById('editorContentStack');
       const btn = document.getElementById('teacherPaneToggleBtn');
       if (stack) stack.classList.toggle('teacher-stream-open', teacherPaneOpen);
-      if (btn) {
-        btn.textContent = teacherPaneOpen ? '▼' : '▲';
-        btn.title = teacherPaneOpen ? 'Hide teacher code stream' : 'Show teacher code stream';
-        btn.setAttribute('aria-label', btn.title);
-        btn.setAttribute('aria-expanded', teacherPaneOpen ? 'true' : 'false');
-      }
+      btn?.setAttribute('aria-expanded', String(teacherPaneOpen));
       updateTeacherStreamToggleState();
       if (persist) {
         try { localStorage.setItem(TEACHER_PANE_OPEN_KEY, teacherPaneOpen ? '1' : '0'); } catch {}
@@ -176,9 +172,7 @@ function eagleFoldRange(cm, pos) {
       if (nextEnabled === teacherPaneEnabled) return;
       teacherPaneEnabled = nextEnabled;
       const stack = document.getElementById('editorContentStack');
-      const btn = document.getElementById('teacherPaneToggleBtn');
       if (stack) stack.classList.toggle('teacher-stream-enabled', teacherPaneEnabled);
-      if (btn) btn.style.display = teacherPaneEnabled ? 'flex' : 'none';
       if (!teacherPaneEnabled) {
         setTeacherPaneOpen(false, false);
       } else {

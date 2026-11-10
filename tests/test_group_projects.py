@@ -44,7 +44,7 @@ class GroupProjectTests(unittest.TestCase):
             eagle._student_tokens[token] = eagle._find_user(email)
             self.addCleanup(eagle._student_tokens.pop, token, None)
         groups._project_creation.clear()
-        groups._edits_per_student.clear()
+        groups._edits_per_member.clear()
         self.settings(True)
         workspace = self.workspace = eagle._get_user_dir(self.student_email)
         (workspace / "Demo" / "data").mkdir(parents=True)
@@ -143,6 +143,8 @@ class GroupProjectTests(unittest.TestCase):
         self.accept(project,self.missing_email)
         file = self.file(project,"data/note.txt")
         url = self.file_url(project,file)
+        initial = self.get(url, self.missing_email).json["file"]["contribution"]
+        self.assertEqual(initial, {"authors":[project["own"]], "spans":[[0, 7, project["own"]["id"]]]})
         payloads = [([2, " A", 5], self.student_email), ([2, " B", 5], self.missing_email)]
         barrier = threading.Barrier(2)
         responses = []
@@ -162,7 +164,11 @@ class GroupProjectTests(unittest.TestCase):
         source = self.get(url).json["file"]
         self.assertIn(source["content"], ("😀 A B team", "😀 B A team"))
         self.assertEqual(source["revision"],2)
-        self.assertEqual(len(source["contribution"]["spans"]),2)
+        owner = project["own"]["id"]
+        spans = source["contribution"]["spans"]
+        self.assertEqual(sum(end - start for start, end, author in spans if author == owner), 9)
+        self.assertEqual(sum(end - start for start, end, author in spans if author != owner), 2)
+        self.assertEqual(sum(end - start for start, end, _ in spans), 11)
         self.assertEqual({a["name"] for a in source["contribution"]["authors"]},{"Student One","Student Two"})
         self.assertEqual(len(self.get(url,since=0).json["file"]["updates"]),2)
         with patch.object(groups, "monotonic", return_value=100000000):
@@ -192,6 +198,63 @@ class GroupProjectTests(unittest.TestCase):
         self.settings(False)
         self.assertIn("group_project_access_changed",[event["name"] for event in two.get_received()])
         self.assertFalse(two.emit("group_project_watch",marker,callback=True)["ok"])
+
+    def test_teacher_edits_and_cursor_are_class_scoped_and_teacher_stays_off_roster(self):
+        project = self.create(self.others[:3])
+        self.accept(project, *self.others[:3])
+        file = self.file(project, "main.py")
+        file_url = self.file_url(project, file)
+        teacher_url = "/api/teacher" + file_url.removeprefix("/api")
+        scope = {"classId":self.class_one}
+        payload = {"revision":0, "opId":uuid4().hex, "parts":["# teacher\n", 15]}
+        self.assertEqual(self.get(teacher_url).status_code, 403)
+        self.assertEqual(self.client.get(teacher_url, headers=self.teacher_headers,
+                         query_string={"classId":self.class_two}).status_code, 404)
+        open_file = self.client.get(teacher_url, headers=self.teacher_headers, query_string=scope)
+        self.assertEqual(open_file.status_code, 200)
+        teacher = open_file.json["own"]
+        self.assertEqual(teacher["name"], "Teacher")
+        members = self.get(f"{ROOT}/{project['id']}").json["project"]["members"]
+        self.assertEqual(len(members), 4)
+        self.assertNotIn(teacher["id"], {member["id"] for member in members})
+        self.assertEqual(self.client.post(teacher_url, headers=self.student_headers,
+                         query_string=scope, json=payload).status_code, 403)
+        receipt = self.client.post(teacher_url, headers=self.teacher_headers, query_string=scope, json=payload)
+        self.assertEqual(receipt.status_code, 200, receipt.json)
+        self.assertEqual(receipt.json["file"]["updates"][0]["author"], teacher)
+
+        def socket(role, token, class_id=self.class_one):
+            client = eagle.socketio.test_client(eagle.app)
+            self.addCleanup(lambda: client.disconnect() if client.is_connected() else None)
+            client.emit("join_class_room", {"role":role, "token":token, "class_id":class_id})
+            return client
+
+        student = socket("student", self.student_token)
+        mentor = socket("teacher", self.teacher_token)
+        elsewhere = socket("teacher", self.teacher_token, self.class_two)
+        marker = {**scope, "projectId":project["id"], "fileId":file["id"]}
+        self.assertFalse(elsewhere.emit("group_project_watch", marker, callback=True)["ok"])
+        self.assertTrue(student.emit("group_project_watch", marker, callback=True)["ok"])
+        self.assertIn(teacher["id"], mentor.emit("group_project_watch", marker, callback=True)["viewers"])
+        mentor.emit("group_project_cursor", {**marker, "position":3, "revision":1})
+        cursor = next(event["args"][0] for event in student.get_received() if event["name"] == "group_project_cursor")
+        self.assertEqual(cursor["person"], teacher)
+        self.assertEqual(cursor["position"], 3)
+        mentor.emit("group_project_cursor", {**marker, "position":None, "revision":1})
+        self.assertTrue(any(event["name"] == "group_project_cursor" and event["args"][0]["position"] is None
+                            for event in student.get_received()))
+        update = mentor.emit("group_project_change", {**marker, "revision":1, "opId":uuid4().hex,
+                             "parts":[25, "# live\n"]}, callback=True)
+        self.assertTrue(update["ok"], update)
+        self.assertTrue(any(event["name"] == "group_project_edit" and event["args"][0]["author"] == teacher
+                            for event in student.get_received()))
+        saved = self.get(file_url).json["file"]
+        self.assertEqual(saved["content"], "# teacher\nprint('start')\n# live\n")
+        self.assertEqual(saved["contribution"]["spans"], [[0, 10, teacher["id"]], [10, 25, project["own"]["id"]],
+                                                          [25, 32, teacher["id"]]])
+        self.settings(False)
+        self.assertEqual(self.client.post(teacher_url, headers=self.teacher_headers, query_string=scope, json=payload).status_code, 404)
+        self.assertFalse(mentor.emit("group_project_watch", marker, callback=True)["ok"])
 
     def test_disable_freezes_recovery_and_reenable_creates_new_groups(self):
         project = self.create(self.others[:2])
@@ -248,7 +311,7 @@ class GroupProjectTests(unittest.TestCase):
         review = self.client.get(path,headers=self.teacher_headers,query_string={**args,"studentEmail":self.missing_email})
         self.assertEqual(review.status_code,200,review.json)
         self.assertEqual(review.json["content"],"# added\nprint('start')\n")
-        self.assertEqual(review.json["contribution"]["spans"][0][:2],[0,8])
+        self.assertEqual(review.json["contribution"]["spans"][0][:2],[0,23])
         self.assertEqual(review.json["contributors"][0]["name"],"Student One")
         self.assertNotIn("contribution",self.client.get(path,headers=self.student_headers,query_string=args).json)
         self.settings(False)
