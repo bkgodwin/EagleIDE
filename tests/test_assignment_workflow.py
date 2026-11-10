@@ -264,8 +264,51 @@ class AssignmentSubmissionTestCase(unittest.TestCase):
         sub = self.bundle(a)
         r = self.client.post('/api/assignments/submission',headers=self.teacher_headers,
                             json={'assignmentId':a['id'],'studentEmail':self.student_email,'content':'oops'})
-        self.assertEqual(r.status_code,400)
+        self.assertEqual(r.status_code,405)
         self.assertIn('print("one")',(self.submissions_dir/sub['files'][0]['path']).read_text())
+
+    def test_submission_retry_keeps_the_original_receipt_and_attempt(self):
+        a = self.update(self.create_assignment(active=True), maxFileSubmissions=1)
+        path = eagle._get_user_dir(self.student_email) / "retry.py"
+        path.write_text("print(1)", encoding="utf-8")
+        payload = {"assignmentId": a["id"], "filePaths": [path.name], "submissionKey": "turn-in-retry-1"}
+        first = self.client.post("/api/assignments/submit", headers=self.student_headers, json=payload)
+        self.assertEqual(first.status_code, 200)
+        path.write_text("print(2)", encoding="utf-8")
+        retry = self.client.post("/api/assignments/submit", headers=self.student_headers, json=payload)
+        self.assertEqual(retry.json["receipt"], first.json["receipt"])
+        self.assertEqual(eagle._load_assignment(a["id"])["submissions"][0]["fileSubmissionCount"], 1)
+
+    def test_submission_rechecks_lock_after_staging_outside_global_lock(self):
+        a = self.create_assignment(active=True)
+        path = eagle._get_user_dir(self.student_email) / "race.py"
+        path.write_text("print(1)", encoding="utf-8")
+        entered, resume = threading.Event(), threading.Event()
+        store = workflow.store_bundle
+
+        def paused_store(*args):
+            entered.set()
+            if not resume.wait(5):
+                raise RuntimeError("test did not release staging")
+            return store(*args)
+
+        with patch.object(workflow, "store_bundle", side_effect=paused_store):
+            results = []
+            def submit():
+                with eagle.app.test_client() as client:
+                    results.append(client.post("/api/assignments/submit", headers=self.student_headers,
+                                               json={"assignmentId": a["id"], "filePaths": [path.name]}))
+            worker = threading.Thread(target=submit)
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(3))
+                self.update(a, active=False)
+            finally:
+                resume.set()
+                worker.join(5)
+        self.assertEqual(results[0].status_code, 403)
+        self.assertEqual(eagle._load_assignment(a["id"])["submissions"], [])
+        self.assertEqual(list(self.submissions_dir.glob(".turn-in-*")), [])
 
     def test_attachment_only_is_not_ai_gradeable(self):
         a = self.create_assignment(active=True)

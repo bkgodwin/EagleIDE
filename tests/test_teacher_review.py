@@ -89,6 +89,23 @@ class TeacherReviewTestCase(unittest.TestCase):
         saved = eagle._load_assignment(a['id'])
         self.assertEqual(eagle._student_assignment_payload(saved, self.student_email)['studentSubmissionSummary']['aiFeedback'], '')
 
+    def test_integrity_notes_are_absent_from_student_api_responses(self):
+        a = self.update(self.create_assignment(active=True), shareAiFeedback=True)
+        self.bundle(a, {"answer.py": "print(1)"})
+        saved = eagle._load_assignment(a["id"])
+        saved["submissions"][0]["aiFeedback"] = (
+            "Academic integrity note\nTeacher-only evidence\n\nWhat worked\nGood use of a loop."
+        )
+        self.assertTrue(eagle._save_assignment(saved))
+        for path in (f"/api/assignments?assignmentId={a['id']}", f"/api/quiz/report/{a['id']}"):
+            response = self.client.get(path, headers=self.student_headers)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers["Cache-Control"], "private, no-store")
+            self.assertNotIn("Teacher-only evidence", response.get_data(as_text=True))
+            self.assertIn("Good use of a loop.", response.get_data(as_text=True))
+        teacher = self.client.get(f"/api/assignments?assignmentId={a['id']}", headers=self.teacher_headers)
+        self.assertIn("Teacher-only evidence", teacher.get_data(as_text=True))
+
     def test_makeup_reopens_only_selected_student_and_expires(self):
         a = self.update(self.create_assignment(active=True), active=False, dueAt='2000-01-01T00:00:00Z')
         self.configure_class(window={'enabled':True,'start':'01:00','end':'01:01','timeZone':'UTC'})

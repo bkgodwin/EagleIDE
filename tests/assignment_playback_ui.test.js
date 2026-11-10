@@ -216,7 +216,7 @@ test('controlled Python, JavaScript, HTML and CSS submissions open in the editor
     vm.createContext(context);vm.runInContext(extract('openAssignmentSubmission'),context);
     await context.openAssignmentSubmission('a','student');
     assert.equal(value,'submitted source');assert.equal(attached,1);assert.equal(ideOpened,1);
-    assert.equal(readOnly,['html','css'].includes(extension));assert.equal(context.currentOpenFile.submission,true);
+    assert.equal(readOnly,true);assert.equal(context.currentOpenFile.submission,true);
     assert.deepEqual(Array.from(context.currentOpenFile.pasteRanges[0]),[0,3]);
   }
 });

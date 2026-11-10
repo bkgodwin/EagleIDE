@@ -100,6 +100,47 @@ class WorkspaceHistoryTests(unittest.TestCase):
         self.assertTrue((root / "renamed.py").exists())
         self.assertTrue(eagle._load_assignment(assignment["id"])["submissions"])
 
+    def test_finalize_removes_recent_exclusive_frames_but_preserves_shared_history(self):
+        a = self.create_assignment(active=True)
+        other = self.create_assignment(active=True, name="Shared follow-up")
+        root, file_id = self.open_file("shared.py", "x = 0")
+        now = time.time()
+        for assignment, release in [(a, now - 120), (other, now - 45)]:
+            stored = eagle._load_assignment(assignment["id"])
+            stored["releasedAt"] = workflow.iso(datetime.fromtimestamp(release, timezone.utc))
+            self.assertTrue(eagle._save_assignment(stored))
+        owner = history._owner(root)
+        version = history._record(eagle, owner, file_id, self.record(file_id, "x = 0", "x = 1", now - 90), now - 90)
+        version = history._record(eagle, owner, file_id, self.record(file_id, "x = 1", "x = 2", now - 30, version), now - 30)
+        (root / "shared.py").write_text("x = 2", encoding="utf-8")
+        self.submit(a, "shared.py")
+        shared = self.submit(other, "shared.py")
+        history.maintenance(eagle)
+        self.assertEqual(self.client.post("/api/assignments/grading-complete", headers=self.teacher_headers,
+                                         json={"assignmentId": a["id"]}).status_code, 200)
+        history.maintenance(eagle)
+        with history.database(eagle) as db:
+            self.assertEqual([r["seq"] for r in db.execute("SELECT seq FROM frames WHERE file=?", (file_id,))], [version])
+        remaining = self.playback(other, shared).json
+        self.assertEqual(remaining["total"], 1)
+        self.assertEqual(remaining["frames"][0]["insert"], "x = 2")
+
+    def test_turn_in_captures_latest_saved_text_when_editor_samples_are_behind(self):
+        assignment = self.create_assignment(active=True)
+        root, file_id = self.open_file("late.py", "x = 0")
+        stamp = time.time()
+        history._record(eagle, history._owner(root), file_id, self.record(file_id, "x = 0", "x = 1", stamp), stamp)
+        (root / "late.py").write_text("x = 2", encoding="utf-8")
+        submitted = self.submit(assignment, "late.py")
+        history.maintenance(eagle)
+        index = self.playback(assignment, submitted, index=1).json
+        self.assertTrue(index["partial"])
+        page = self.playback(assignment, submitted).json
+        content = page["base"]
+        for frame in page["frames"]:
+            content = legacy.apply_patch(content, frame)
+        self.assertEqual(content, "x = 2")
+
     def test_record_route_checks_revision_capacity_and_keeps_saves_available(self):
         root, file_id = self.open_file("work.txt", "starter")
         data = self.record(file_id, "starter", "worked", time.time())

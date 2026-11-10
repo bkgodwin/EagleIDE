@@ -7,7 +7,10 @@ import assignment_development
 import assignment_workflow
 import classroom_features
 import file_provenance
+import workspace_history
 from cleanup_files import checked_path, children, read_json
+
+ASSIGNMENT_ACCOUNT_FIELDS = ("studentExtensions", "sameDayExtensions", "studentAccess", "extensionRequests")
 
 
 def assignment_files(eagle):
@@ -25,8 +28,11 @@ def discover_emails(eagle):
     with eagle._assignment_lock:
         for _, assignment in assignment_files(eagle):
             result.update(str(row.get("email") or "").strip().lower() for row in assignment.get("submissions", []) if isinstance(row, dict))
-            for field in ("studentExtensions", "studentAccess"):
+            for field in ASSIGNMENT_ACCOUNT_FIELDS:
                 if isinstance(assignment.get(field), dict): result.update(assignment[field])
+        with workspace_history.database(eagle, create=False) as db:
+            if db is not None:
+                result.update(row[0] for row in db.execute("SELECT DISTINCT student FROM clips"))
         directory = assignment_development._directory(eagle)
         for path in children(directory):
             if re.fullmatch(r"[a-f0-9]{32}\.sqlite3", path.name):
@@ -79,6 +85,10 @@ def purge_account(run, email):
     # Deletion and registration are serialized for this identity/workspace by
     # the manager's busy guard, without holding the global users lock on disk IO.
     run.delete(kind, eagle.USER_FILES_DIR, eagle._get_user_dir(email))
+    history_path = workspace_history.root(eagle) / "history.sqlite3"
+    if history_path.is_file():
+        run.change(kind, history_path, "remove_deleted_account_history",
+                   lambda: workspace_history.purge_workspace(eagle, eagle._get_user_dir(email)))
     provenance_root = eagle.USER_FILES_DIR.parent / "file_provenance"
     with file_provenance.lock(eagle._get_user_dir(email)):
         run.delete(kind, provenance_root, provenance_root / key)
@@ -97,7 +107,7 @@ def purge_account(run, email):
     with eagle._assignment_lock:
         for path, assignment in assignment_files(eagle):
             removed = [row for row in assignment.get("submissions", []) if str(row.get("email") or "").lower() == email]
-            access = any(isinstance(assignment.get(field), dict) and email in assignment[field] for field in ("studentExtensions", "studentAccess"))
+            access = any(isinstance(assignment.get(field), dict) and email in assignment[field] for field in ASSIGNMENT_ACCOUNT_FIELDS)
             if not removed and not access: continue
             identity = assignment.get("id", "")
             with eagle._assignment_ai_queue_lock:
@@ -132,7 +142,7 @@ def purge_account(run, email):
             if not shared_bundle: run.delete(kind, eagle.ASSIGNMENT_SUBMISSIONS_DIR, bundle)
             for row in removed:
                 assignment["submissions"].remove(row)
-            for field in ("studentExtensions", "studentAccess"):
+            for field in ASSIGNMENT_ACCOUNT_FIELDS:
                 if isinstance(assignment.get(field), dict): assignment[field].pop(email, None)
             run.json(kind, eagle.ASSIGNMENTS_DIR, path, assignment, len(removed))
         development = assignment_development._directory(eagle)
