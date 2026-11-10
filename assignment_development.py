@@ -554,10 +554,11 @@ def register(app, eagle):
                     return {"classTime": "unknown" if window is None else ("inside" if workflow.class_clock(window, value) else "outside"),
                             "timeZone": window["timeZone"] if window else "UTC"}
                 if request.args.get("index") == "1":
-                    # Sparse seek index: at most 834 entries for the frame cap.
+                    # Keep short recordings exact and bound the seek index for large histories.
+                    step = max(1, (total + 199) // 200)
                     marks = [{**dict(r), **clock(r["at"])} for r in db.execute(
-                        "SELECT seq,at FROM frames WHERE email=? AND seq<=? AND (seq=1 OR seq%?=0 OR seq=?) ORDER BY seq",
-                        (email, total, CHECKPOINT_EVERY, total))]
+                        "SELECT seq,at FROM frames WHERE email=? AND seq<=? AND ((seq-1)%?=0 OR seq=?) ORDER BY seq",
+                        (email, total, step, total))]
                     return jsonify(ok=True, total=total, firstAt=row["first_at"], lastAt=marks[-1]["at"] if marks else None, marks=marks, path=bound["path"])
                 cursor = min(cursor, max(1, total))
                 checkpoint = db.execute("SELECT seq,checkpoint FROM frames WHERE email=? AND seq<? AND checkpoint IS NOT NULL ORDER BY seq DESC LIMIT 1", (email, cursor)).fetchone()

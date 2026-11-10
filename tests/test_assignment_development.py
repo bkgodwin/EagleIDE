@@ -151,6 +151,24 @@ class DevelopmentTests(unittest.TestCase):
         self.assertEqual(conflict.status_code,409)
         self.assertEqual(conflict.get_json()['content'],values[-1])
 
+    def test_short_timeline_preserves_an_outside_class_edit_between_class_edits(self):
+        fixtures.AssignmentSubmissionTestCase.configure_class(self, window={
+            "enabled": False, "start": "08:00", "end": "11:00", "timeZone": "UTC",
+            "meetingDays": list(range(7)),
+        })
+        assignment, _ = self.create()
+        first = (datetime.now(timezone.utc) - timedelta(days=2)).replace(
+            hour=9, minute=0, second=0, microsecond=0)
+        frames = [
+            self.frame("", "a", first.isoformat()),
+            self.frame("a", "ab", (first + timedelta(hours=8)).isoformat()),
+            self.frame("ab", "abc", (first + timedelta(days=1)).isoformat()),
+        ]
+        self.assertEqual(self.record(assignment, frames).status_code, 200)
+        marks = self.playback(assignment, index=1).json["marks"]
+        self.assertEqual([(mark["seq"], mark["classTime"]) for mark in marks],
+                         [(1, "inside"), (2, "outside"), (3, "inside")])
+
     def test_checkpoint_seek_storage_and_bad_batch_rollback(self):
         a,_=self.create()
         content='x'*20000; version=0

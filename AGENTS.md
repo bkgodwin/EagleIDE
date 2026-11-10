@@ -397,7 +397,7 @@ installed Chromium browser, and `EAGLE_TOOL_SCREENSHOT_DIR` to a scratch folder.
 
 The Flask IDE document revalidates and fingerprints local scripts and stylesheet imports from their content. Versioned assets retain their immutable cache policy.
 
-Opening a submission from a roster row or its filename closes the dashboard. The grading row below the topbar returns to the same assignment's Submissions section. Its navigation follows the assignment roster order for all submitted work, including attachments and quiz responses. Reuse the protected file viewer for attachments and keep development playback collapsed until requested. Score and feedback edits use the reviewed revision. Clearing the code score removes the AI suggestion and preserves quiz credit and feedback.
+Opening a submission from a roster row or its filename closes the dashboard. The grading row below the topbar returns to the same assignment's Submissions section. Its navigation follows the assignment roster order for all submitted work, including attachments and quiz responses. Show the selected file's playback controls in the grading bar once its protected history index confirms recorded edits. Fetch edit frames only on playback or seeking. Score and feedback edits use the reviewed revision. Clearing the code score removes the AI suggestion and preserves quiz credit and feedback.
 
 ### Execution Flows
 

@@ -3913,6 +3913,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     function openTeacherDashboard(view, preserveAssignmentVisit = false) {
       const modal = document.getElementById('teacherDashboardModal');
       if (!modal) return;
+      window.AssignmentWorkflow?.pauseEditorDevelopment?.();
       const minimizedBar = document.getElementById('teacherDashMinimizedBar');
       if (minimizedBar) minimizedBar.hidden = true;
       modal.style.display = 'flex';
@@ -9470,18 +9471,24 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         return;
       }
       populateSubmissionScoringPanel(assignment, submission, currentOpenFile.revisionId ?? null);
+      const review = activeSubmissionContext, reviewedFile = currentOpenFile;
+      const canPlay = file => currentOpenFile === reviewedFile && (!file || file === reviewedFile)
+        && activeSubmissionContext === review && !review.stale && !review.historyClosed;
       if (!useEditor) {
-        activeSubmissionContext.disposeFiles = window.AssignmentWorkflow.mountReviewFiles(
-          document.getElementById('submissionAttachmentPreview'), assignment, submission, fileId);
+        review.disposeFiles = window.AssignmentWorkflow.mountReviewFiles(
+          document.getElementById('submissionAttachmentPreview'), assignment, submission, fileId, canPlay);
+      } else if (canPlay() && reviewedFile.revisionId && submission.files?.length === 1) {
+        attachSubmissionDevelopment(assignment, submission, canPlay);
       }
       minimizeTeacherDashboardForSubmission(assignment, submission);
       if (activeSubmissionContext?.stale) loadAssignments();
     }
 
-    function attachSubmissionDevelopment(assignment, submission) {
+    function attachSubmissionDevelopment(assignment, submission, canPlay) {
       const reviewedFile = currentOpenFile, auth = JSON.stringify(assignmentManagerHeaders());
       let submittedContent = editor.getValue(), preparing = null;
-      const valid = file => currentOpenFile === reviewedFile && (!file || file === reviewedFile) && auth === JSON.stringify(assignmentManagerHeaders());
+      const valid = file => currentOpenFile === reviewedFile && (!file || file === reviewedFile)
+        && auth === JSON.stringify(assignmentManagerHeaders()) && (!canPlay || canPlay(file));
       window.AssignmentWorkflow.attachEditorDevelopment(assignment, submission.email, {
         clip: () => {
           const file = submission.files?.[0];
@@ -9662,7 +9669,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const review = activeSubmissionContext;
       if (!review) return;
       panel.hidden = false;
-      review.stale = review.revisionId !== (submission.revisionId ?? null);
+      const stale = review.revisionId !== (submission.revisionId ?? null);
+      if (stale || assignment.gradingCompletedAt) window.AssignmentWorkflow.disposeEditorDevelopment();
+      review.stale = stale;
+      review.historyClosed = !!assignment.gradingCompletedAt;
       if (!review.stale && !review.saving && input.value === review.savedScore && !input.validity.badInput) {
         input.value = review.savedScore = serverScore;
       }
@@ -9690,8 +9700,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       aiBtn.textContent = submission.aiGradingStatus === 'running' ? 'AI grading…' : (busy ? 'AI queued' : 'AI Grade');
       document.getElementById('submissionQuizGradeBtn').hidden = !submission.quizResponses?.length;
       document.getElementById('submissionFilesBtn').hidden = !submission.files?.length && !submission.history?.length;
-      document.getElementById('submissionDevelopmentBtn').hidden = !!assignment.gradingCompletedAt
-        || (!submission.files?.length && !submission.history?.length && !assignment.fileControl);
       panel.querySelector('.submission-more').hidden = [...panel.querySelectorAll('.submission-more-actions button')].every(button => button.hidden);
 
       const submitted = assignmentReviewSubmissions(assignment);
@@ -9775,15 +9783,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     for (const [id, open] of [
       ['submissionQuizGradeBtn', (a, s) => openQuizGradingModal(a.id || a.name, s.email)],
       ['submissionFilesBtn', (a, s) => window.AssignmentWorkflow.openFiles(a.id || a.name, s.email)],
-      ['submissionDevelopmentBtn', (a, s) => {
-        if (currentOpenFile?.kind !== 'text' || s.files?.length !== 1 || activeSubmissionContext.stale) {
-          window.AssignmentWorkflow.openDevelopment(a, s.email, activeSubmissionContext.revisionId);
-        } else if (document.getElementById('submissionDevelopmentBtn').getAttribute('aria-expanded') === 'true') {
-          window.AssignmentWorkflow.disposeEditorDevelopment();
-        } else {
-          attachSubmissionDevelopment(a, s);
-        }
-      }],
     ]) {
       document.getElementById(id).addEventListener('click', event => {
         const review = activeSubmissionContext;

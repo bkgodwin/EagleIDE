@@ -61,6 +61,8 @@ test('submission return controls occupy their own row outside the dashboard moda
   assert.ok(bar > html.indexOf('</header>') && bar < html.indexOf('<main'));
   assert.ok(bar < html.indexOf('id="teacherDashboardModal"'));
   assert.match(html, /<button id="teacherDashRestoreBtn"[^>]*type="button"/);
+  assert.ok(html.indexOf('id="submissionDevelopmentPanel"') > bar);
+  assert.ok(html.indexOf('id="submissionDevelopmentPanel"') < html.indexOf('<main'));
 });
 
 test('submission review updates the context and clears on leaving the submission', () => {
