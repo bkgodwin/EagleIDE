@@ -9270,7 +9270,12 @@ def on_teacher_code_update(payload):
         return
     actor_key = f"teacher:{(teacher.get('email') or '').strip().lower()}:{class_id}"
     code = payload.get("code", "")
-    if not isinstance(code, str) or len(code.encode("utf-8")) > MAX_TEACHER_STREAM_CODE_BYTES:
+    if not isinstance(code, str):
+        return
+    try:
+        if len(code.encode("utf-8")) > MAX_TEACHER_STREAM_CODE_BYTES:
+            return
+    except UnicodeEncodeError:
         return
     now = time.monotonic()
     last_emit = _teacher_stream_last_emit.get(actor_key, 0.0)
@@ -9280,11 +9285,28 @@ def on_teacher_code_update(payload):
     language = str((payload or {}).get("language") or "").strip().lower()
     if language not in {"python", "javascript", "html", "css", "xml"}:
         language = ""
+    lines = code.split("\n")
     cursor_line = payload.get("cursorLine")
-    if type(cursor_line) is not int or not 0 <= cursor_line <= code.count("\n"):
+    if type(cursor_line) is not int or not 0 <= cursor_line < len(lines):
         cursor_line = None
+
+    def valid_position(line, ch):
+        # CodeMirror and the textarea report UTF-16 columns, including after emoji.
+        return (type(line) is int and 0 <= line < len(lines) and type(ch) is int and
+                0 <= ch <= len(lines[line].encode("utf-16-le")) // 2)
+
+    cursor_ch = payload.get("cursorCh")
+    if not valid_position(cursor_line, cursor_ch):
+        cursor_ch = None
+    anchor = payload.get("selectionAnchor")
+    selection_anchor = None
+    if cursor_ch is not None and isinstance(anchor, dict):
+        line, ch = anchor.get("line"), anchor.get("ch")
+        if valid_position(line, ch) and (line, ch) != (cursor_line, cursor_ch):
+            selection_anchor = {"line": line, "ch": ch}
     outbound = {
         "code": code, "class_id": class_id, "cursorLine": cursor_line,
+        "cursorCh": cursor_ch, "selectionAnchor": selection_anchor,
         "language": language or _teacher_code_snapshots.get(class_id, {}).get("language", ""),
     }
     _teacher_code_snapshots[class_id] = outbound

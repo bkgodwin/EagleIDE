@@ -116,12 +116,7 @@ function eagleFoldRange(cm, pos) {
       const ta = document.getElementById('teacherStreamEditor');
       if (!ta) return null;
       if (!window.CodeMirror) {
-        ta.style.display = 'block';
-        ta.style.width = '100%';
-        ta.style.height = '100%';
-        ta.style.border = '0';
-        ta.style.outline = 'none';
-        ta.readOnly = true;
+        document.getElementById('teacherStreamFallback').hidden = false;
         return null;
       }
       if (teacherEditor) return teacherEditor;
@@ -142,6 +137,9 @@ function eagleFoldRange(cm, pos) {
         autoCloseBrackets: true,
         matchBrackets: true,
         viewportMargin: 20,
+        // Render the remote selection in CodeMirror's overlay, even on touch devices.
+        inputStyle: 'textarea',
+        showCursorWhenSelecting: true,
         readOnly: 'nocursor'
       });
       teacherEditor.on('scroll', () => window.centerTeacherStream?.());

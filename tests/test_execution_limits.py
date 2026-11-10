@@ -1299,6 +1299,7 @@ class ExecutionLimitTestCase(unittest.TestCase):
         })
         self.assertEqual(eagle._teacher_code_snapshots["owned-class"], {
             "code": "x = 1\ny", "class_id": "owned-class", "language": "python", "cursorLine": 1,
+            "cursorCh": None, "selectionAnchor": None,
         })
         eagle._teacher_stream_last_emit.clear()
         client.emit("teacher_code_update", {
@@ -1306,6 +1307,26 @@ class ExecutionLimitTestCase(unittest.TestCase):
             "code": "x = 1\ny", "cursorLine": 100,
         })
         self.assertIsNone(eagle._teacher_code_snapshots["owned-class"]["cursorLine"])
+
+    def test_teacher_stream_checks_caret_and_selection_against_the_snapshot(self):
+        teacher = self._socket()
+        payload = {
+            "token": self.teacher_token, "role": "teacher", "class_id": "owned-class",
+            "code": "a😀b\nz", "cursorLine": 0, "cursorCh": 3,
+            "selectionAnchor": {"line": 1, "ch": 1, "ignored": True},
+        }
+        teacher.emit("teacher_code_update", payload)
+        snapshot = eagle._teacher_code_snapshots["owned-class"]
+        self.assertEqual((snapshot["cursorLine"], snapshot["cursorCh"]), (0, 3))
+        self.assertEqual(snapshot["selectionAnchor"], {"line": 1, "ch": 1})
+        for invalid in ({"cursorCh": 5}, {"cursorLine": True}, {"selectionAnchor": {"line": 1, "ch": 2}},
+                        {"selectionAnchor": {"line": 0, "ch": 3}}, {"selectionAnchor": [0, 1]}):
+            with self.subTest(invalid=invalid):
+                eagle._teacher_stream_last_emit.clear()
+                teacher.emit("teacher_code_update", {**payload, **invalid})
+                snapshot = eagle._teacher_code_snapshots["owned-class"]
+                self.assertIsNone(snapshot["selectionAnchor"])
+                self.assertEqual(snapshot["cursorCh"], None if ("cursorCh" in invalid or "cursorLine" in invalid) else 3)
 
 
 if __name__ == "__main__":

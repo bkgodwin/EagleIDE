@@ -23,9 +23,10 @@ async function main() {
     const screenshots = process.env.EAGLE_GROUP_SCREENSHOTS;
     if (screenshots) fs.mkdirSync(screenshots,{recursive:true});
     const errors = [];
-    async function account(name, viewport = {width:1365,height:900}) {
+    async function account(name, viewport = {width:1365,height:900}, codeMirror = true) {
       const teacher = name === 'Teacher';
       const context = await browser.newContext({viewport,ignoreHTTPSErrors:true});
+      if (!codeMirror) await context.route('**/ajax/libs/codemirror/**', route => route.abort());
       const profile = {email:name.toLowerCase()+'@example.test',name,role:teacher?'teacher':'student',
                        class_id:server.classId,class_ids:[server.classId]};
       await context.addInitScript(value => sessionStorage.setItem('eagle-auth-session-v1',JSON.stringify(value)),
@@ -34,7 +35,8 @@ async function main() {
       page.on('pageerror',error => errors.push(name + ': ' + error.message));
       page.on('dialog',dialog => dialog.accept());
       await page.goto(server.url,{waitUntil:'domcontentloaded',timeout:60000});
-      await page.waitForFunction(() => window.eagleEditor && window.EagleIDE?.getContext?.().canAccessIDE);
+      await page.waitForFunction(codeMirror => !!window.eagleEditor === codeMirror &&
+        window.EagleIDE?.getContext?.().canAccessIDE, codeMirror);
       await page.waitForFunction(isTeacher => {
         const c = window.EagleIDE.getContext();
         return isTeacher ? c.teacherClasses?.length : c.currentStudentClassId && c.studentClassData;
@@ -66,11 +68,40 @@ async function main() {
     }
     const centered = (page, line) => page.waitForFunction(line => {
       const cm = document.querySelector('#teacherStreamPane .CodeMirror')?.CodeMirror;
-      if (!cm || !document.getElementById('teacherStreamCursor').textContent.endsWith('Line ' + (line + 1))) return false;
+      if (!cm || !document.getElementById('teacherStreamCursor').textContent.split(',')[0].endsWith('Line ' + (line + 1))) return false;
       const coords = cm.charCoords({line,ch:0}, 'local');
       const scroll = cm.getScrollInfo();
       return Math.abs((coords.top + coords.bottom - scroll.clientHeight) / 2 - scroll.top) < 3;
     }, line);
+    const pointing = (page, ch, selection) => page.waitForFunction(({ch,selection}) => {
+      const pane = document.getElementById('teacherStreamPane');
+      const cm = pane.querySelector('.CodeMirror')?.CodeMirror;
+      const caret = pane.querySelector('.CodeMirror-cursor');
+      if (!cm || !caret || getComputedStyle(caret).visibility !== 'visible' ||
+          cm.getCursor('head').line !== 70 || cm.getCursor('head').ch !== ch || cm.getSelection() !== selection) return false;
+      const expected = cm.cursorCoords({line:70,ch}, 'window');
+      const shown = caret.getBoundingClientRect();
+      return Math.abs(expected.left - shown.left) < 2 && Math.abs(expected.top - shown.top) < 2 &&
+        !!pane.querySelector('.CodeMirror-selected') === !!selection;
+    }, {ch,selection});
+    await alice.evaluate(() => window.eagleEditor.focus());
+    const fallback = await account('Devon',{width:420,height:850},false);
+    await follow(fallback).click();
+    await teacher.evaluate(() => window.eagleEditor.setSelection({line:70,ch:2}, {line:70,ch:7}));
+    for (const page of [alice,devon]) await pointing(page,7,'Line ');
+    assert.equal(await fallback.locator('#teacherStreamFallback mark').textContent(), 'Line ');
+    await fallback.locator('#teacherStreamFallback .teacher-stream-fallback-caret').waitFor({state:'attached'});
+    await teacher.evaluate(() => window.eagleEditor.setSelection({line:70,ch:4}, {line:70,ch:7}));
+    await pointing(alice,7,'ne ');
+    await teacher.evaluate(() => window.eagleEditor.setSelection({line:71,ch:3}, {line:70,ch:7}));
+    for (const page of [alice,devon]) await pointing(page,7,'71\n# L');
+    assert.equal(await fallback.locator('#teacherStreamFallback mark').textContent(), '71\n# L');
+    await teacher.evaluate(() => window.eagleEditor.setCursor({line:70,ch:7}));
+    await pointing(alice,7,'');
+    await teacher.evaluate(() => window.eagleEditor.setCursor({line:70,ch:9}));
+    await pointing(alice,9,'');
+    assert.equal(await alice.evaluate(() => window.eagleEditor.hasFocus()), true);
+    await fallback.context().close();
     for (const line of [70, 0, 139, 85]) {
       await teacher.evaluate(line => window.eagleEditor.setCursor({line,ch:0}), line);
       for (const page of [alice,devon]) await centered(page, line);
@@ -89,6 +120,12 @@ async function main() {
     await centered(devon, 35);
     await alice.locator('#teacherStreamCursor').filter({hasText:'Line 36'}).waitFor();
     assert.equal(await alice.evaluate(() => document.querySelector('#teacherStreamPane .CodeMirror').CodeMirror.getScrollInfo().top),150);
+    await teacher.evaluate(() => window.eagleEditor.setSelection({line:35,ch:1},{line:35,ch:3}));
+    await devon.locator('#teacherStreamPane .CodeMirror-selected').first().waitFor();
+    await teacher.locator('#streamingToggleBtn').click();
+    await devon.locator('#teacherStreamPane .CodeMirror-selected').first().waitFor({state:'detached'});
+    await devon.locator('#teacherStreamPane .teacher-stream-pointing').waitFor({state:'detached'});
+    await teacher.locator('#streamingToggleBtn').click();
     const files = async page => {
       const switcher = page.locator('#workspaceSwitchBtn');
       if (await switcher.getAttribute('aria-pressed') !== 'true') await switcher.click();

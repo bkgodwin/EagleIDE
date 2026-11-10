@@ -844,12 +844,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           (coords.top + coords.bottom - scroll.clientHeight) / 2));
         if (Math.abs(scroll.top - top) >= 1) cm.scrollTo(scroll.left, top);
       } else {
-        const textarea = document.getElementById('teacherStreamEditor');
-        if (!textarea?.clientHeight) return;
-        const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight);
-        const padding = Math.max(8, Math.ceil((textarea.clientHeight - lineHeight) / 2));
+        const view = document.getElementById('teacherStreamFallback');
+        if (!view?.clientHeight) return;
+        const lineHeight = parseFloat(getComputedStyle(view).lineHeight);
+        const padding = Math.max(8, Math.ceil((view.clientHeight - lineHeight) / 2));
         pane.style.setProperty('--stream-follow-padding', `${padding}px`);
-        textarea.scrollTop = padding + (cursorLine + .5) * lineHeight - textarea.clientHeight / 2;
+        view.scrollTop = padding + (cursorLine + .5) * lineHeight - view.clientHeight / 2;
       }
     }
     window.centerTeacherStream = centerTeacherStream;
@@ -866,22 +866,57 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const padding = parseFloat(pane.style.getPropertyValue('--stream-follow-padding'));
         if (!padding) return;
         const scroll = teacherEditor?.getScrollInfo();
-        const textarea = document.getElementById('teacherStreamEditor');
-        const top = textarea.scrollTop;
+        const view = document.getElementById('teacherStreamFallback');
+        const top = view.scrollTop;
         pane.style.removeProperty('--stream-follow-padding');
         if (scroll) {
           teacherEditor.refresh();
           teacherEditor.scrollTo(scroll.left, scroll.top - padding + 4);
         } else {
-          textarea.scrollTop = top - padding + 8;
+          view.scrollTop = top - padding + 8;
         }
       }
     }
 
-    function applyTeacherCodeToViewer({ code, language, cursorLine }) {
+    function renderTeacherStreamFallback(code, head, anchor) {
+      const view = document.getElementById('teacherStreamFallback');
+      const {scrollLeft, scrollTop} = view;
+      if (!head) {
+        view.textContent = code;
+      } else {
+        const offset = ({line, ch}) => {
+          let start = 0;
+          for (let i = 0; i < line; i++) start = code.indexOf('\n', start) + 1;
+          return start + ch;
+        };
+        const cursor = offset(head);
+        const other = anchor ? offset(anchor) : cursor;
+        const start = Math.min(cursor, other), end = Math.max(cursor, other);
+        const caret = document.createElement('span');
+        caret.className = 'teacher-stream-fallback-caret';
+        caret.setAttribute('aria-hidden', 'true');
+        view.replaceChildren(code.slice(0, start));
+        if (cursor === start) view.append(caret);
+        if (start !== end) {
+          const selection = document.createElement('mark');
+          selection.className = 'teacher-stream-fallback-selection';
+          selection.textContent = code.slice(start, end);
+          view.append(selection);
+        }
+        if (cursor !== start) view.append(caret);
+        view.append(code.slice(end));
+      }
+      view.scrollLeft = scrollLeft;
+      view.scrollTop = scrollTop;
+    }
+
+    function applyTeacherCodeToViewer({ code, language, cursorLine, cursorCh = null, selectionAnchor = null }) {
       const cm = initTeacherViewer();
       const indicator = document.getElementById('teacherStreamCursor');
-      indicator.textContent = cursorLine == null ? 'Teacher stream' : `Teacher cursor · Line ${cursorLine + 1}`;
+      const head = cursorLine != null && cursorCh != null ? {line:cursorLine, ch:cursorCh} : null;
+      const anchor = head && selectionAnchor;
+      indicator.textContent = cursorLine == null ? 'Teacher stream' :
+        `Teacher cursor · Line ${cursorLine + 1}${head ? `, column ${head.ch + 1}` : ''}`;
       if (cm) {
         const scroll = cm.getScrollInfo();
         const mode = getLanguageInfoForKey(language).mode;
@@ -894,16 +929,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           }
           if (teacherStreamFollowing && cursorLine != null) window.EagleEditorBehavior?.unfoldLine(cm, cursorLine);
           teacherCursorMarker = cursorLine == null ? null : cm.addLineClass(cursorLine, 'background', 'teacher-stream-cursor-line');
+          const position = head || {line:0, ch:0};
+          cm.setSelection(anchor || position, position, {scroll:false});
+          cm.getWrapperElement().classList.toggle('teacher-stream-pointing', !!head);
           cm.scrollTo(scroll.left, scroll.top);
         });
       } else {
-        const textarea = document.getElementById('teacherStreamEditor');
-        if (textarea.value !== code) {
-          const { scrollTop, scrollLeft } = textarea;
-          textarea.value = code;
-          textarea.scrollTop = scrollTop;
-          textarea.scrollLeft = scrollLeft;
-        }
+        renderTeacherStreamFallback(code, head, anchor);
       }
       if (teacherStreamFollowing) centerTeacherStream(cursorLine);
     }
@@ -943,7 +975,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       teacherStreamLiveClasses[msg.class_id] = isLive;
       const selectedClassId = getCurrentClassContext()?.id;
       if (selectedClassId !== msg.class_id) return;
-      if (!isLive && pendingTeacherSnapshot) queueTeacherStreamCode({ ...pendingTeacherSnapshot, cursorLine: null });
+      if (!isLive && pendingTeacherSnapshot) queueTeacherStreamCode({
+        ...pendingTeacherSnapshot, cursorLine: null, cursorCh: null, selectionAnchor: null,
+      });
       if (isStudentViewer() && isLive && !wasLive) presentTeacherStreamForStudent(true);
       updateTeacherStreamToggleState();
     }
@@ -1370,9 +1404,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           if (teacherCursorMarker) teacherEditor.removeLineClass(teacherCursorMarker, 'background', 'teacher-stream-cursor-line');
           teacherEditor.setValue('');
           teacherEditor.clearHistory();
+          teacherEditor.getWrapperElement().classList.remove('teacher-stream-pointing');
         }
-        const textarea = document.getElementById('teacherStreamEditor');
-        if (textarea) textarea.value = '';
+        document.getElementById('teacherStreamFallback').textContent = '';
         const indicator = document.getElementById('teacherStreamCursor');
         if (indicator) indicator.textContent = 'Teacher stream';
         teacherCursorMarker = null;
@@ -2800,7 +2834,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       document.getElementById('teacherStreamFollowBtn')?.addEventListener('click', () => {
         setTeacherStreamFollowing(!teacherStreamFollowing);
       });
-      document.getElementById('teacherStreamEditor')?.addEventListener('scroll', () => centerTeacherStream());
+      document.getElementById('teacherStreamFallback')?.addEventListener('scroll', () => centerTeacherStream());
 
       function attachPointerDrag(element, canStart, onMove) {
         if (!element) return;
@@ -3565,6 +3599,27 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     })();
 
     // Teacher Code Broadcasting
+    function teacherBroadcastSelection(code) {
+      const cm = window.eagleEditor;
+      let head, anchor;
+      if (cm) {
+        head = cm.getCursor('head');
+        anchor = cm.getCursor('anchor');
+      } else {
+        const textarea = document.getElementById('editor');
+        const position = offset => {
+          const before = code.slice(0, offset);
+          return {line:(before.match(/\n/g) || []).length, ch:before.length - before.lastIndexOf('\n') - 1};
+        };
+        const start = position(textarea.selectionStart), end = position(textarea.selectionEnd);
+        [head, anchor] = textarea.selectionDirection === 'backward' ? [start, end] : [end, start];
+      }
+      return {
+        cursorLine:head.line, cursorCh:head.ch,
+        selectionAnchor:head.line === anchor.line && head.ch === anchor.ch ? null : {line:anchor.line, ch:anchor.ch},
+      };
+    }
+
     function flushTeacherBroadcast(force = false) {
       if (!teacherStreamingEnabled || !teacherBroadcastActive || document.hidden || currentOpenFile?.groupTeacher) return;
       const token = TEACHER_TOKEN;
@@ -3574,19 +3629,21 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const currentCode = editor.getValue();
       const langInfo = getActiveLanguageInfo();
       const language = langInfo?.highlight || 'python';
-      const cursorLine = window.eagleEditor?.getCursor().line
-        ?? (currentCode.slice(0, document.getElementById('editor').selectionEnd).match(/\n/g) || []).length;
+      const selection = teacherBroadcastSelection(currentCode);
+      const {cursorLine, cursorCh, selectionAnchor} = selection;
       const last = lastTeacherBroadcast;
-      if (!force && last?.code === currentCode && last.language === language && last.cursorLine === cursorLine && last.classId === activeClassId) return;
+      if (!force && last?.code === currentCode && last.language === language && last.classId === activeClassId &&
+          last.cursorLine === cursorLine && last.cursorCh === cursorCh &&
+          last.selectionAnchor?.line === selectionAnchor?.line && last.selectionAnchor?.ch === selectionAnchor?.ch) return;
       socket.emit('teacher_code_update', {
         token,
         role,
         class_id: activeClassId,
         code: currentCode,
         language,
-        cursorLine
+        ...selection,
       });
-      lastTeacherBroadcast = { code: currentCode, language, cursorLine, classId: activeClassId };
+      lastTeacherBroadcast = { code: currentCode, language, classId: activeClassId, ...selection };
     }
 
     function scheduleTeacherBroadcastFlush(force = false) {
@@ -3643,7 +3700,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       window.eagleEditor.on('change', () => scheduleTeacherBroadcastFlush(false));
       window.eagleEditor.on('cursorActivity', () => scheduleTeacherBroadcastFlush(false));
     } else {
-      for (const event of ['input', 'keyup', 'pointerup']) {
+      for (const event of ['input', 'keyup', 'pointerup', 'selectionchange']) {
         document.getElementById('editor')?.addEventListener(event, () => scheduleTeacherBroadcastFlush(false));
       }
     }
