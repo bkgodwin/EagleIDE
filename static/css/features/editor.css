@@ -570,11 +570,29 @@
     #teacherStreamPane { background:var(--theme-cm-bg); }
     #teacherStreamPane .CodeMirror,
     #teacherStreamPane .CodeMirror-gutters,
-    #teacherStreamEditor { background:color-mix(in srgb,var(--editor-background,var(--theme-cm-bg)) 92%,black); }
+    #teacherStreamFallback { background:color-mix(in srgb,var(--editor-background,var(--theme-cm-bg)) 92%,black); }
     #teacherStreamPane .CodeMirror,
-    #teacherStreamEditor { flex:1 1 0; height:auto; min-height:0; }
+    #teacherStreamFallback { flex:1 1 0; height:auto; min-height:0; }
     #teacherStreamPane .CodeMirror-lines { padding-block:var(--stream-follow-padding,4px); }
-    #teacherStreamEditor { color:var(--theme-text); line-height:1.4; padding:var(--stream-follow-padding,8px) 8px; }
+    #teacherStreamFallback {
+      margin:0;
+      overflow:auto;
+      color:var(--editor-foreground,var(--theme-text));
+      font:var(--cm-font-size)/1.4 monospace;
+      white-space:pre;
+      tab-size:4;
+      padding:var(--stream-follow-padding,8px) 8px;
+    }
+    #teacherStreamPane .teacher-stream-pointing .CodeMirror-cursors { visibility:visible; pointer-events:none; }
+    #teacherStreamPane .CodeMirror-cursor,
+    .teacher-stream-fallback-caret::before { border-left:2px solid var(--editor-foreground,var(--theme-text)); }
+    #teacherStreamPane .CodeMirror-selected,
+    .teacher-stream-fallback-selection {
+      background:color-mix(in srgb,var(--editor-definition,var(--theme-text)) 38%,transparent);
+      color:inherit;
+    }
+    .teacher-stream-fallback-caret { position:relative; pointer-events:none; }
+    .teacher-stream-fallback-caret::before { content:""; position:absolute; height:1.25em; left:0; top:0; }
     .teacher-stream-cursor { flex:none; box-sizing:border-box; min-height:36px; padding:9px 145px 7px 10px; border-bottom:1px solid var(--theme-border); background:var(--theme-panel-hdr); color:var(--theme-text-dim); font-size:12px; font-weight:600; overflow-wrap:anywhere; }
     .teacher-stream-cursor-line { background:color-mix(in srgb,var(--editor-foreground,var(--theme-text)) 12%,transparent); box-shadow:inset 3px 0 var(--editor-foreground,var(--theme-text)); }
     .teacher-pane-toggle{

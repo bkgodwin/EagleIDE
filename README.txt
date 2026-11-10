@@ -1350,7 +1350,8 @@ in that pane, and Wiki contents stays at the top. Collapse the agenda for more
 reading space. Students can show or hide the teacher stream with the arrow over
 the editor's line numbers. It turns red when the teacher is live. Use Follow
 teacher to keep the teacher's current line centered, or turn it off to scroll
-independently.
+independently. The stream shows the teacher's caret and highlights the text
+they select to point out parts of the code.
 
 Clipboard controls and recorded assignment files
 -----------------------------------------------

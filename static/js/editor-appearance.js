@@ -231,10 +231,10 @@
       panel.style.setProperty('--columbia-blue',workspace.accent);
       Object.entries(syntax).forEach(([key,value]) => { if (key !== 'mode') panel.style.setProperty(`--workspace-code-${key}`,value); });
     }
-    for (const id of ['editor', 'teacherStreamEditor']) {
+    for (const id of ['editor', 'teacherStreamFallback']) {
       const ta = document.getElementById(id);
       if (ta) {
-        ta.style.background = id === 'teacherStreamEditor' ? mix(p.background, '#000000', .08) : p.background;
+        ta.style.background = id === 'teacherStreamFallback' ? mix(p.background, '#000000', .08) : p.background;
         ta.style.color = p.foreground;
       }
     }

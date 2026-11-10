@@ -55,8 +55,9 @@ test('return waits for the score and restores the reviewed assignment by ID and 
   assert.equal(context.fileOpenRequestId, 5);
 });
 
-test('stream snapshots preserve scroll and cursor-only updates keep the document intact', () => {
+test('stream snapshots preserve scroll and selection-only updates keep the document intact', () => {
   let code = 'a\nb', scroll = {left:50, top:160}, marker = null, replacements = 0;
+  let selection, visible;
   const cm = {
     getScrollInfo:() => scroll, operation:update => update(),
     scrollTo:(left, top) => {scroll = {left, top};},
@@ -64,6 +65,11 @@ test('stream snapshots preserve scroll and cursor-only updates keep the document
     setValue:value => {code = value; scroll = {left:0, top:0}; replacements++;},
     clearHistory(){}, removeLineClass:line => {assert.equal(line, marker); marker = null;},
     addLineClass:line => {marker = {line}; return marker;},
+    getWrapperElement:() => ({classList:{toggle:(_className, value) => {visible = value;}}}),
+    setSelection:(anchor, head, {scroll}) => {
+      assert.equal(scroll, false);
+      selection = [anchor.line, anchor.ch, head.line, head.ch];
+    },
   };
   const indicator = {};
   const context = {
@@ -74,10 +80,17 @@ test('stream snapshots preserve scroll and cursor-only updates keep the document
   context.applyTeacherCodeToViewer({code:'a\nb\nc', language:'python', cursorLine:2});
   assert.deepEqual(scroll, {left:50, top:160});
   assert.equal(marker.line, 2);
-  context.applyTeacherCodeToViewer({code, language:'python', cursorLine:0});
+  context.applyTeacherCodeToViewer({code, language:'python', cursorLine:0, cursorCh:1, selectionAnchor:{line:2,ch:0}});
   assert.equal(replacements, 1);
   assert.equal(marker.line, 0);
-  assert.match(indicator.textContent, /Line 1$/);
+  assert.deepEqual(selection, [2, 0, 0, 1]);
+  assert.deepEqual(scroll, {left:50, top:160});
+  assert.equal(visible, true);
+  assert.match(indicator.textContent, /Line 1, column 2$/);
+  context.applyTeacherCodeToViewer({code, language:'python', cursorLine:null});
+  assert.equal(marker, null);
+  assert.equal(visible, false);
+  assert.deepEqual(selection, [0, 0, 0, 0]);
 });
 
 test('late submission opens cannot overwrite edits or a changed teacher account',async()=>{
