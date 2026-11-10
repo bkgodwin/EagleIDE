@@ -755,7 +755,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     function emitJoinClassRoom(role, token, classId) {
       if (!socket || !role || !token || !classId) return;
       socket.emit('join_class_room', { role: isCoTeacher() ? 'student' : role, token, class_id: classId });
-      if (role === 'student' || isCoTeacher()) socket.emit('workspace_file_opened', {name: currentOpenFile && !currentOpenFile.audit && !currentOpenFile.submission ? currentOpenFile.name : ''});
+      if (role === 'student' || isCoTeacher()) socket.emit('workspace_file_opened', {name: currentOpenFile && !currentOpenFile.audit && !currentOpenFile.submission && !currentOpenFile.groupFileId ? currentOpenFile.name : ''});
     }
 
     function emitLeaveClassRoom(classId) {
@@ -1045,6 +1045,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       applyClassTabVisibility();
       updateSendFileButtonVisibility();
       window.ClassroomSignals?.onAuthChanged?.();
+      window.GroupProjects?.refresh();
       const teacherDash = document.getElementById('teacherDashboardModal');
       if (TEACHER_TOKEN && teacherDash && teacherDash.style.display !== 'none') {
         renderTeacherClassManagement();
@@ -1192,7 +1193,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     async function startStepTrace(snapshot = null) {
       if (isProgramRunning || !canExecuteCode()) return false;
-      const source = snapshot || getEditorSnapshot();
+      const groupFile = currentOpenFile?.groupFileId;
+      const project = groupFile ? await groupRunTarget(groupFile) : null;
+      if (groupFile && !project) return false;
+      const source = groupFile ? getEditorSnapshot() : (snapshot || getEditorSnapshot());
       const language = String(source?.language || '').toLowerCase();
       if (!language.includes('python')) return false;
       clearShellOutput();
@@ -1217,6 +1221,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         admin_token: ADMIN_TOKEN || '',
         class_id: getCurrentClassContext()?.id || '',
         file_path: source.filePath || '',
+        ...(project ? {groupProject:project} : {}),
       });
       return true;
     }
@@ -2138,6 +2143,16 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       appendOut(`[HTML ${lvl}] ${msg}\n`);
     });
 
+    async function groupRunTarget(fileId) {
+      const saved = await window.GroupProjects?.flush();
+      const project = window.GroupProjects?.runTarget();
+      if (!saved || project?.fileId !== fileId) {
+        appendOut('[Sync the group file before running.]\n');
+        return null;
+      }
+      return project;
+    }
+
     document.getElementById('runBtn').addEventListener('click', async () => {
       if (!canExecuteCode()) return;
       window.StepMode?.exit?.();
@@ -2175,8 +2190,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         appendOut('[Run skipped: images and database files are workspace artifacts, not executable code.]\n');
         return;
       }
+      const groupFile = currentOpenFile?.groupFileId;
       if (isHtmlRuntimeFile(currentOpenFile?.name || '')) {
-        if (!currentOpenFile?.path) {
+        if (!groupFile && !currentOpenFile?.path) {
           appendOut('[HTML Runtime] Open an HTML file first.\n');
           return;
         }
@@ -2195,10 +2211,16 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           }
         }
         try {
+          const project = groupFile ? window.GroupProjects?.runTarget() : null;
+          if (groupFile && project?.fileId !== groupFile) {
+            notifyHtmlRuntimePopup({type:'error', message:'Reopen the group file before starting a preview.'});
+            setRunButtonState(false);
+            return;
+          }
           const res = await fetch('/api/html-runtime/start', {
             method: 'POST',
             headers: fileJsonHeaders(),
-            body: JSON.stringify({ file_path: currentOpenFile.path })
+            body: JSON.stringify({file_path:currentOpenFile.path, ...(project ? {groupProject:project} : {})})
           });
           const j = await res.json().catch(() => ({}));
           if (!j?.ok) {
@@ -2215,8 +2237,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         }
         return;
       }
+      const project = groupFile ? await groupRunTarget(groupFile) : null;
+      if (groupFile && !project) return;
       // Save current file before running Python or JavaScript.
-      if (currentOpenFile && (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN || WIKI_MANAGER_TOKEN)) {
+      if (!groupFile && currentOpenFile && (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN || WIKI_MANAGER_TOKEN)) {
         // The runner receives the current editor buffer directly, so a slow
         // classroom network must not block Run while the same buffer autosaves.
         saveCurrentFile().then(ok => {
@@ -2237,7 +2261,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           wiki_manager_token: WIKI_MANAGER_TOKEN || '',
         admin_token: ADMIN_TOKEN || '',
           class_id: getCurrentClassContext()?.id || '',
-          file_path: currentOpenFile ? currentOpenFile.path : ''
+          file_path: groupFile ? currentOpenFile.name : (currentOpenFile?.path || ''),
+          ...(project ? {groupProject:project} : {})
         });
       } else {
         appendOut('[Error: Cannot run code - Socket.IO not available]\n');
@@ -4834,6 +4859,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
                 <option value="outstanding" ${activeClass.settings?.editor_clipboard === 'outstanding' ? 'selected' : ''}>Block while an outstanding assignment accepts submissions</option>
               </select>
             </label><p class="option-help">Applies to student code editors, including cut and text dropping. An outstanding assignment has files or questions still to submit. Restrictions follow enrolled students across class switches; teacher views are exempt.</p>
+            <button class="btn secondary cls-group-projects" type="button">Group Projects <span class="group-settings-state">${activeClass.settings?.group_projects_enabled ? 'On' : 'Off'}</span></button>
             <button class="btn secondary save-class-settings-btn" data-class="${escapeHtml(activeClass.id)}" style="font-size:12px; margin-bottom:10px;">Save classroom settings</button>
           </div>
           <div style="margin-bottom:10px;">
@@ -4875,6 +4901,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       wrap.querySelectorAll('.cls-notebook-check').forEach(button => button.addEventListener('click', () => window.StudentNotebook?.openStudentNotebook(activeClass.id, button.dataset.email)));
       if (activeClass && activeClass.canManageClass !== false) window.AssignmentWorkflow.bindClass(wrap, activeClass);
       if (activeClass && activeClass.canManageClass !== false) window.ExternalTools?.bindClass?.(wrap, activeClass);
+      wrap.querySelector('.cls-group-projects')?.addEventListener('click', () => {
+        window.GroupProjectUI?.teacherDashboard(activeClass, cls => applyClassSettingsPatch(cls.id, cls.settings));
+      });
       wrap.querySelectorAll('.cls-coteacher-btn').forEach(btn => btn.onclick = async () => {
         const res = await fetch('/api/teacher/classes/coteacher', {method:'POST', headers:{'Content-Type':'application/json', 'X-Teacher-Token':TEACHER_TOKEN}, body:JSON.stringify({classId:activeClass.id, email:btn.dataset.email, enabled:btn.dataset.enabled !== 'true'})});
         const data = await res.json();
@@ -5896,6 +5925,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (_workspaceTab === WORKSPACE_TAB_FILES) {
         window.AssignmentWorkflow?.pauseEditorDevelopment?.();
         if (auditPreviewActive) closeAuditPreview();
+        window.GroupProjects?.refresh();
         loadFileTree();
       } else {
         requestAnimationFrame(() => {
@@ -6228,6 +6258,56 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       reloadClasses: async () => {await loadTeacherClasses(); renderTeacherClassManagement();},
       openPath: async path => {await loadFileTree(); await openFile({path, name:path.split('/').pop(), type:'file'});},
     });
+    window.GroupProjects?.configure({
+      context: () => window.EagleIDE.getContext(), request: fetchWithDeadline, save: saveCurrentFile,
+      content: () => editor.getValue(), currentFile: () => currentOpenFile,
+      visible: () => !document.hidden && !document.body.matches('.wiki-mode, .network-mode, .external-tool-mode, .eagle-lab-mode')
+        && !document.getElementById('editorContentStack')?.classList.contains('file-browser-active'),
+      open(project, file) {
+        fileOpenRequestId++;
+        closeAuditPreview();
+        clearFileArtifactPreview();
+        setCsvMode(false);
+        window.WorkspaceData?.jsonMode(false);
+        currentOpenFile = {
+          path: '', name:file.path.split('/').at(-1), kind:file.kind === 'text' ? 'text' : 'group-asset',
+          groupProjectId:project.id, groupFileId:file.id, readOnly:file.kind !== 'text' || !window.eagleEditor,
+        };
+        editor.setValue(file.kind === 'text' ? file.content : 'Use Download file to open this shared asset.');
+        currentBufferDirty = false;
+        updateActiveFileName();
+        updateEditorOverlay();
+        setWorkspaceTab('editor');
+        updateSendFileButtonVisibility();
+      },
+      close(id) {
+        if (currentOpenFile?.groupFileId !== id) return;
+        currentOpenFile = null;
+        editor.setValue('');
+        currentBufferDirty = false;
+        updateActiveFileName();
+        updateEditorOverlay();
+      },
+      readOnly(id, value) {
+        if (currentOpenFile?.groupFileId !== id) return;
+        const next = value || !window.eagleEditor;
+        if (currentOpenFile.readOnly === next) return;
+        currentOpenFile.readOnly = next;
+        updateEditorOverlay();
+      },
+      conceal(id) {
+        if (currentOpenFile?.groupFileId === id) editor.setValue('');
+      },
+      restore(id, content) {
+        if (currentOpenFile?.groupFileId === id) editor.setValue(content);
+      },
+      rename(id, path) {
+        if (currentOpenFile?.groupFileId !== id) return;
+        currentOpenFile.name = path.split('/').at(-1);
+        updateActiveFileName();
+      },
+    });
+    window.GroupProjects?.bindSocket(socket);
     document.getElementById('editor')?.addEventListener('input', () => window.WorkspaceData.changed());
 
     const FILE_TREE_VIRTUAL_LIMIT = 100;
@@ -6648,6 +6728,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     // Save the currently open file (if any).
     // Returns true on success (or if nothing to save), false on error.
     async function saveCurrentFile() {
+      if (currentOpenFile?.groupFileId) return window.GroupProjects.flush({navigation:true});
       window.WorkspaceHistory?.sample();
       if (currentOpenFile?.development?.recording) window.AssignmentDevelopment?.flush();
       // Serialize writes so an older slow request cannot overwrite a newer save.
@@ -6702,13 +6783,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     // Update the editor header to show the active filename
     function updateActiveFileName() {
+      window.GroupProjects?.guard();
       window.EagleEditorEditMenu?.reset?.();
       window.WorkspaceHistory?.opened();
       window.AssignmentWorkflow?.syncEditorDevelopment?.(currentOpenFile);
       const el = document.getElementById('activeFileName');
       if (el) el.textContent = currentOpenFile ? currentOpenFile.name : '';
       if (activeSubmissionContext && !currentOpenFile?.submission) hideSubmissionScoringPanel();
-      if (typeof socket !== 'undefined' && socket.connected) socket.emit('workspace_file_opened', {name: currentOpenFile && !currentOpenFile.audit && !currentOpenFile.submission ? currentOpenFile.name : ''});
+      if (typeof socket !== 'undefined' && socket.connected) socket.emit('workspace_file_opened', {name: currentOpenFile && !currentOpenFile.audit && !currentOpenFile.submission && !currentOpenFile.groupFileId ? currentOpenFile.name : ''});
       if (!currentOpenFile || !currentOpenFile.name?.toLowerCase().endsWith('.json')) window.WorkspaceData?.jsonMode(false);
       const saveDraftBtn = document.getElementById('saveDraftBtn');
       if (saveDraftBtn) saveDraftBtn.style.display = currentOpenFile?.draft && isAuthenticated() ? '' : 'none';
@@ -6804,7 +6886,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     function scheduleAutosave() {
       if (window.EagleIDE?.connection?.isLost()) return;
       if (csvEditorActive) return;
-      if (currentOpenFile?.notebook) return;
+      if (currentOpenFile?.notebook || currentOpenFile?.groupFileId) return;
       if (currentOpenFile?.draft) return;
       if (!currentOpenFile || (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && !WIKI_MANAGER_TOKEN)) return;
       if (_autosaveTimer) clearTimeout(_autosaveTimer);
@@ -6824,6 +6906,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     // so it is always defined by the time this block executes.
     if (window.eagleEditor) {
       window.eagleEditor.on('change', () => {
+        if (currentOpenFile?.groupFileId) return;
         currentBufferDirty = true;
         scheduleAutosave();
       });
@@ -6836,7 +6919,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     window.addEventListener('beforeunload', (event) => {
-      if (!currentBufferDirty && !window.StudentNotebook?.hasUnsavedChanges?.()) return;
+      if (!currentBufferDirty && !window.GroupProjects?.unsaved() && !window.StudentNotebook?.hasUnsavedChanges?.()) return;
       event.preventDefault();
       event.returnValue = '';
     });
@@ -7107,6 +7190,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           _ctxMenu.appendChild(sendBtn);
         }
       }
+      window.GroupProjectUI?.addCtxMenu(_ctxMenu, item, () => { _ctxMenu?.remove(); _ctxMenu = null; });
       if (item.system === 'trash') {
         const openTrashBtn = document.createElement('button');
         openTrashBtn.textContent = '🗑️ Open Trash';
@@ -8697,6 +8781,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           <input type="number" id="modalAssignmentMaxScore" value="${existingAssignment?.maxScore || 100}" min="1" />
           <label style="margin-bottom:2px;">Assignment Options</label>
           <label class="choice-item"><input type="checkbox" id="modalAssignmentMultiFile" ${existingAssignment?.allowMultiFileSubmission ? 'checked' : ''}> Allow multiple files</label>
+          ${existingAssignment?.fileControl ? '' : `<label class="choice-item"><input type="checkbox" id="modalAssignmentGroupSubmission" ${existingAssignment?.allowGroupSubmission ? 'checked' : ''}> Allow group submissions</label>`}
           <label for="modalAssignmentSubmissionAccess">When students can turn in work</label>
           <select id="modalAssignmentSubmissionAccess">
             ${existingAssignment && !existingAssignment.submissionAccess ? '<option value="" selected>Keep current rules</option>' : ''}
@@ -8844,6 +8929,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           maxScore,
           allowFileSubmission,
           allowMultiFileSubmission: !!document.getElementById('modalAssignmentMultiFile')?.checked,
+          allowGroupSubmission: !!document.getElementById('modalAssignmentGroupSubmission')?.checked,
           submissionAccess: document.getElementById('modalAssignmentSubmissionAccess').value || undefined,
           maxFileSubmissions: Number(document.getElementById('modalAssignmentFileAttempts')?.value || 0),
           classId,
@@ -9463,7 +9549,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const selectedFile = submission.files?.find(file => file.id === fileId);
       const sourceName = selectedFile?.name || submission.submittedFileName || submission.files?.[0]?.name
         || (submission.hasGradableFiles || submission.code ? 'submission.py' : '');
-      const useEditor = assignment.allowFileSubmission !== false && (submission.files || []).length <= 1
+      const useEditor = !submission.groupMode && assignment.allowFileSubmission !== false && (submission.files || []).length <= 1
         && (assignment.fileControl ? /\.(py|js|html|css)$/i : /\.(py|js)$/i).test(sourceName);
       try {
         let result = { ok: true, fileName: sourceName || 'Submitted work', revisionId: submission.revisionId };

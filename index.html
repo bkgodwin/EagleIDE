@@ -131,6 +131,7 @@
       </label>
       <button class="btn exception-help-btn ide-only" id="exceptionHelpBtn" title="Troubleshooting Assistant" aria-label="Open troubleshooting assistant">🛠️ Help</button>
       <span class="file-chip ide-only" id="activeFileChip"><span id="activeFileName"></span></span>
+      <div class="group-member-icons ide-only" id="groupMemberIcons" aria-label="Group members" hidden></div>
       <span id="workspaceHistoryStatus" class="workspace-history-status ide-only" role="status"></span>
       <button class="btn secondary ide-only" id="saveDraftBtn" type="button" style="display:none;">Save Draft</button>
       <span id="editorLiveIndicator" class="live-indicator chip chip--live ide-only">Live</span>
@@ -513,6 +514,7 @@
         <span id="classroomAuditBannerText">Viewing student file (read-only)</span>
         <button type="button" class="btn secondary" id="classroomAuditCloseBannerBtn" style="font-size:12px;padding:4px 10px;">Exit audit view</button>
       </div>
+      <div class="group-editor-tools" id="groupEditorTools" aria-label="Group project tools" hidden></div>
       <div class="content editor-content-stack" id="editorContentStack">
         <div class="workspace-floating-controls" aria-label="Editor workspace controls">
           <button class="btn secondary" id="clearErrorsBtn" type="button" hidden>Clear Errors</button>
@@ -598,7 +600,10 @@
           <div class="file-sidebar-breadcrumb" id="fileBreadcrumb">
             <span class="crumb" data-path="">🏠 Home</span>
           </div>
-          <div class="file-tree" id="fileTree"></div>
+          <div class="file-browser-tree-stack">
+            <section id="groupProjectsPanel" class="group-projects-panel" aria-label="Group Projects" hidden></section>
+            <div class="file-tree" id="fileTree"></div>
+          </div>
           <div class="file-sidebar-actions">
             <div class="file-sidebar-actions-left">
               <button class="file-action-btn" id="newFileBtn" title="Create a new file">📄 New File</button>
@@ -2132,6 +2137,9 @@
   <script src="/static/js/server-performance.js?v=20261011-files-5"></script>
   <script src="/static/js/workspace-data.js?v=20261011-files-5"></script>
   <script src="/static/js/file-provenance.js?v=20261015-assignment-folders-1"></script>
+  <script src="/static/js/group-project-text.js"></script>
+  <script src="/static/js/group-projects.js"></script>
+  <script src="/static/js/group-project-ui.js"></script>
   <script src="/static/js/assignment-workflow.js?v=20261109-history"></script>
   <script src="/static/js/assignment-development.js?v=20261109-history"></script>
   <script src="/static/js/workspace-history.js?v=20261109-history"></script>

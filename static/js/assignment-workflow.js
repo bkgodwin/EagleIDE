@@ -220,8 +220,13 @@
       <label class="assignment-upload-label">${multi ? 'Add attachments' : 'Or upload a file'}<input type="file" id="assignmentUploadFiles" ${multi ? 'multiple' : ''}></label>
       <small>${multi ? 'Up to 20 files and 25 MB total. ' : ''}Uploads may total up to 15 MB.</small>
       ${a.quiz?.questions?.length ? `<p class="meta">Questions answered ${a.studentSubmissionSummary?.quizAnsweredCount || 0} of ${a.quiz.questions.length}. ${a.studentSubmissionSummary?.quizComplete ? 'Answers are saved.' : 'You can finish the questions after turning in your files.'}</p>` : ''}
-      <p class="assignment-selected-files" aria-live="polite"></p><p class="assignment-dialog-status" role="status"></p><div class="modal-actions"><button type="button" class="btn run assignment-submit-selected">Turn in</button></div></div><div class="assignment-submission-receipt" hidden></div>`, 'assignment-submit-dialog');
+      <p class="assignment-selected-files" aria-live="polite"></p><p class="assignment-dialog-status" role="status"></p><div class="modal-actions">${window.GroupProjectUI?.canSubmit(a) ? '<button type="button" class="btn secondary assignment-submit-group">Choose group files</button>' : ''}<button type="button" class="btn run assignment-submit-selected">Turn in</button></div></div><div class="assignment-submission-receipt" hidden></div>`, 'assignment-submit-dialog');
     const status = m.root.querySelector('[role="status"]'), button = m.root.querySelector('.assignment-submit-selected');
+    const groupButton = m.root.querySelector('.assignment-submit-group');
+    if (groupButton && window.GroupProjectUI) groupButton.onclick = () => {
+      m.close();
+      window.GroupProjectUI.assignmentDialog(a, () => bridge.reloadAssignments([a.id]));
+    };
     if (!multi) {
       const select = m.root.querySelector('#assignmentFileSelect'), upload = m.root.querySelector('#assignmentUploadFiles');
       select.onchange = () => {if (select.value) upload.value = '';};
@@ -340,14 +345,22 @@
       try {
         const result = await json(`/api/assignments/submission-file?${params({fileId:f.id, cursor:String(cursor)})}`, {headers});
         if (request !== sequence || !valid()) return;
-        preview.innerHTML = `<div class="assignment-file-preview-header"><strong>${esc(f.name)}</strong><div class="assignment-preview-actions">${teacher && !m.canPlay && !a.gradingCompletedAt ? '<button type="button" class="btn secondary attachment-history">Edit history</button>' : ''}<button type="button" class="btn secondary attachment-download">Download</button></div></div>`;
+        preview.innerHTML = `<div class="assignment-file-preview-header"><strong>${esc(f.name)}</strong><div class="assignment-preview-actions">${teacher && !m.canPlay && !a.gradingCompletedAt && !f.projectPath ? '<button type="button" class="btn secondary attachment-history">Edit history</button>' : ''}<button type="button" class="btn secondary attachment-download">Download</button></div></div>`;
+        preview.classList.toggle('group-submission-preview', !!f.projectPath);
         preview.querySelector('.attachment-download').onclick = () => download(f).catch(error => alert(error.message));
         const historyButton = preview.querySelector('.attachment-history');
         if (historyButton) historyButton.onclick = () => openDevelopment(a, studentEmail, revision, f.id);
+        const contributions = window.GroupProjectUI;
         if (result.kind === 'text') {
           let content = result.content || '';
-          if (!result.pasteRanges?.length && f.name.toLowerCase().endsWith('.json')) {try {content = JSON.stringify(JSON.parse(content), null, 2);} catch {}}
-          const pre = document.createElement('pre'); pre.className = 'assignment-file-source'; pre.innerHTML = highlightSource(content,teacher ? result.pasteRanges : []); preview.append(pre);
+          if (!result.pasteRanges?.length && !result.contribution?.spans?.length && f.name.toLowerCase().endsWith('.json')) {try {content = JSON.stringify(JSON.parse(content), null, 2);} catch {}}
+          const pre = document.createElement('pre');
+          pre.className = 'assignment-file-source';
+          pre.innerHTML = highlightSource(content, teacher ? result.pasteRanges : []);
+          contributions?.contributionControls(preview, result.contribution, enabled => {
+            pre.innerHTML = contributions.highlight(content, enabled ? result.contribution : null, result.pasteRanges);
+          }, teacher, f.contributors || []);
+          preview.append(pre);
         } else if (result.kind === 'csv') {
           const wrap = document.createElement('div'); wrap.className = 'assignment-csv-preview';
           wrap.innerHTML = `<table><thead><tr>${result.header.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${result.rows.map(row => `<tr>${row.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
@@ -361,8 +374,9 @@
           const blob = await response.blob(); if (request !== sequence || !valid()) return;
           objectUrl = URL.createObjectURL(blob); const img = document.createElement('img'); img.src = objectUrl; img.alt = f.name; preview.append(img);
         } else {const p = document.createElement('p'); p.textContent = result.message; preview.append(p);}
+        if (result.kind !== 'text') contributions?.contributionControls(preview, null, null, teacher, f.contributors || []);
         m.root.querySelectorAll('[data-submitted-file]').forEach(button => button.classList.toggle('active',button.dataset.submittedFile === f.id));
-        if (revision && m.canPlay?.()) {
+        if (revision && m.canPlay?.() && !f.projectPath) {
           const clip = {revision, attachment:f.id, legacyFallback:!!a.fileControl};
           const source = document.createElement('pre');
           source.className = 'assignment-file-source assignment-history-frame';
@@ -394,8 +408,15 @@
           control.innerHTML = teacher ? `<label>Submission version<select aria-label="Submission version"><option value="${esc(data.latestRevisionId || '')}">Latest submission</option>${data.history.map((h,i) => `<option value="${esc(h.revisionId)}">Previous ${i+1} · ${esc(h.submittedAt || 'Unknown time')}</option>`).join('')}</select></label>` : `<p>Submitted ${esc(data.submittedAt || '—')} · Read-only copy</p>`;
         }
         const select = control.querySelector('select'); if (select) {select.value = revision; select.onchange = () => load(select.value);}
+        if (data.groupRecipients?.length) {
+          const credit = document.createElement('p');
+          credit.className = 'group-submission-credit';
+          credit.textContent = `Turned in by ${data.groupSubmittedByName || 'a group member'} · Credit for ${data.groupRecipients.join(', ')}`;
+          control.querySelector('.group-submission-credit')?.remove();
+          control.append(credit);
+        }
         const files = m.root.querySelector('.assignment-submission-files');
-        files.innerHTML = data.files.map(f => `<button type="button" class="assignment-submitted-file" data-submitted-file="${esc(f.id)}"><span>${esc(f.name)}</span><small>${size(f.size)}</small></button>`).join('');
+        files.innerHTML = data.files.map(f => `<button type="button" class="assignment-submitted-file" data-submitted-file="${esc(f.id)}"><span>${esc(f.projectPath || f.name)}</span><small>${size(f.size)}</small></button>`).join('');
         files.hidden = !data.files.length;
         files.querySelectorAll('button').forEach(button => button.onclick = () => show(data.files.find(f => f.id === button.dataset.submittedFile)));
         const answers = m.root.querySelector('.assignment-submitted-answers');
@@ -862,7 +883,7 @@
       };
     });
   }
-  window.AssignmentWorkflow = {configure(value) {bridge = value; try {highlights=localStorage.getItem('eagleide-paste-highlights') !== '0';} catch {} if(document.body) setHighlights(highlights); window.eagleEditor?.on?.('beforeChange', (_cm,change) => {if(change.origin === 'setValue') clearEditorHighlights();});}, teacherToolbar, highlightSource, highlightEditor, card, bindStudent, submitDialog, openFiles, teacherFiles, bindTeacher, present, windowForm, bindClass, accommodationLabel,
+  window.AssignmentWorkflow = {modal, configure(value) {bridge = value; try {highlights=localStorage.getItem('eagleide-paste-highlights') !== '0';} catch {} if(document.body) setHighlights(highlights); window.eagleEditor?.on?.('beforeChange', (_cm,change) => {if(change.origin === 'setValue') clearEditorHighlights();});}, teacherToolbar, highlightSource, highlightEditor, card, bindStudent, submitDialog, openFiles, teacherFiles, bindTeacher, present, windowForm, bindClass, accommodationLabel,
     attachEditorDevelopment, syncEditorDevelopment, disposeEditorDevelopment, pauseEditorDevelopment, renderEditorFrame, mountReviewFiles, editFeedback, openDevelopment,
     focusStudentAssignment(assignment, email) {if(email!==account) {account=email;expanded.clear();} tab=(assignment.isPast ?? !assignment.active) ? 'past' : 'current'; expanded.add(assignment.id);},
     studentTab(email) {if (email !== account) {account=email; tab='current'; expanded.clear();} return tab;}};
