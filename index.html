@@ -175,11 +175,11 @@
           <button class="btn secondary" id="submissionAiGradeBtn" type="button" hidden>AI Grade</button>
           <button class="btn secondary" id="submissionQuizGradeBtn" type="button" hidden>Grade quiz</button>
           <button class="btn secondary" id="submissionFilesBtn" type="button" hidden>Files &amp; history</button>
-          <button class="btn secondary" id="submissionDevelopmentBtn" type="button" aria-expanded="false" aria-controls="submissionDevelopmentPanel" hidden>Development history</button>
         </div>
       </details>
     </div>
     <span id="submissionScoreSaveStatus" class="submission-save-status" role="status"></span>
+    <section id="submissionDevelopmentPanel" class="submission-development-panel" aria-label="Submission edit history" hidden></section>
   </section>
   <main class="wiki-view" id="wikiView" aria-label="EagleIDE coding wiki">
     <button class="wiki-drawer-scrim" id="wikiDrawerScrim" type="button" aria-label="Close topic navigation"></button>
@@ -515,7 +515,6 @@
           <button class="btn secondary" id="clearErrorsBtn" type="button" hidden>Clear Errors</button>
           <button class="workspace-switch-btn" id="workspaceSwitchBtn" type="button" aria-controls="fileBrowserTabPane" aria-pressed="false" title="Open file browser"><span aria-hidden="true">📁</span><span id="workspaceSwitchLabel">Files</span></button>
         </div>
-        <section id="submissionDevelopmentPanel" class="submission-development-panel" aria-label="Submission development history" hidden></section>
         <div class="student-editor-wrap" id="studentEditorWrap">
           <textarea id="editor" style="display:none; resize:none;"></textarea>
           <section id="submissionAttachmentPreview" class="submission-attachment-preview" aria-label="Submitted work" hidden></section>

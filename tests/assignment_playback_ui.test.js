@@ -12,6 +12,7 @@ function extract(name) {
 function element() {
   const children = new Map(), classes = new Set();
   return {isConnected:true, hidden:false, textContent:'', value:'', checked:true, disabled:false,
+    style:{setProperty(key,value){this[key]=value;},removeProperty(key){delete this[key];}},
     scrollTop:0, scrollLeft:0, clientHeight:100, clientWidth:200, listeners:{},
     classList:{add:x=>classes.add(x), remove:x=>classes.delete(x), contains:x=>classes.has(x), toggle(){}},
     set innerHTML(html) {
@@ -30,7 +31,7 @@ function element() {
   };
 }
 async function setup({count=3, fallback=false, request:customRequest, prepare}={}) {
-  const panel=element(), stack=element(), textarea=element(), timers=new Map(), requests=[], rendered=[], scrolls=[];
+  const panel=element(), textarea=element(), timers=new Map(), requests=[], rendered=[], scrolls=[];
   let source='submitted code', token='teacher', nextTimer=0, restores=0, modal;
   const frames=Array.from({length:count}, (_,i)=>({seq:i+1,from:i,delete:0,insert:String(i%10),
     kind:'editor',at:new Date(Date.UTC(2026,0,1,0,i*3)).toISOString(),receivedAt:'2026-01-02T00:00:00Z'}));
@@ -39,7 +40,7 @@ async function setup({count=3, fallback=false, request:customRequest, prepare}={
     posFromIndex:i=>i,clearHistory(){},scrollTo:(left,top)=>scrolls.push({left,top}),
     scrollIntoView:(position,margin)=>scrolls.push({position,margin}),refresh(){},markText:()=>({clear(){}})};
   const context={window:{eagleEditor:fallback?null:cm},document:{body:{classList:{toggle(){}},append(root){modal=root;}},
-    getElementById:id=>({submissionDevelopmentPanel:panel,editorContentStack:stack,editor:textarea})[id],
+    getElementById:id=>({submissionDevelopmentPanel:panel,editor:textarea})[id],
     createElement:tag=>tag==='canvas'?{getContext:()=>({measureText:text=>({width:text.length*8})})}:element()},
     getComputedStyle:()=>({lineHeight:'20px',fontSize:'14px',font:'14px monospace',tabSize:'4',paddingTop:'0',paddingLeft:'0'}),
     URLSearchParams,AbortController,Date,Intl,Map,Promise,
@@ -58,7 +59,7 @@ async function setup({count=3, fallback=false, request:customRequest, prepare}={
   const adapter={email:'student',valid:()=>valid,prepare,render(content,frame,follow){rendered.push({content,frame,follow});api.renderEditorFrame(content,frame,follow);},restore(){restores++;}};
   await api.attachEditorDevelopment({id:'a',fileControl:true},'student',adapter);
   const settled=()=>new Promise(resolve=>setImmediate(resolve));
-  return {api,context,panel,stack,textarea,timers,requests,rendered,scrolls,frames,adapter,
+  return {api,context,panel,textarea,timers,requests,rendered,scrolls,frames,adapter,
     node:cls=>panel.querySelector('.development-'+cls),source:()=>fallback?textarea.value:source,
     token(value){token=value;},invalidate(){valid=false;},restores:()=>restores,modal:()=>modal,
     async tick(){const [id,timer]=timers.entries().next().value || [];if(timer){timers.delete(id);timer.fn();await settled();}},settled};
@@ -71,7 +72,7 @@ test('editor opens on submitted code and shares controls, minute hint and origin
   assert.match(s.node('summary').textContent,/First edit .*Last edit/);
   assert.match(s.node('position').textContent,/Showing submitted code/);
   assert.equal(s.node('seek').value,'3');assert.equal(s.node('follow').checked,true);
-  assert.ok(s.stack.classList.contains('has-development-player'));
+  assert.equal(s.panel.hidden, false);
   assert.equal(s.requests.length,1,'initial editor view only fetches the small history index');
   const brief=await setup({request:url=>url.includes('index=')?{ok:true,json:async()=>({ok:true,total:1,path:'Short.py',firstAt:'2026-01-01T00:00:00Z',lastAt:'2026-01-01T00:00:01Z'})}:null});
   assert.match(brief.node('summary').textContent,/Completion time hint: 0.02 min/,'brief work is not rounded down to zero minutes');
@@ -144,7 +145,18 @@ test('empty or purged recordings disable all playback controls',async()=>{
     for(const control of ['play','seek','previous','next']) assert.equal(s.node(control).disabled,true);
     assert.match(s.node('summary').textContent,purged?/Grading finalized/:/No edit history/);
     assert.equal(s.source(),'submitted code');
+    assert.equal(s.panel.hidden,true);
   }
+});
+
+test('the grading seek bar shows both class-time colors before fetching any frame',async()=>{
+  const s=await setup({request:url=>url.includes('index=') ? {ok:true,json:async()=>({
+    ok:true,total:3,path:'Project.py',firstAt:'2026-01-01T09:00:00Z',lastAt:'2026-01-02T09:00:00Z',
+    marks:[{seq:1,classTime:'inside'},{seq:2,classTime:'outside'},{seq:3,classTime:'inside'}],
+  })} : null});
+  assert.equal(s.panel.hidden,false);
+  assert.match(s.node('seek').style['--history-bands'], /--history-in-class.*--history-outside-class.*--history-in-class/);
+  assert.equal(s.requests.length,1);
 });
 
 test('modal history uses the same controls, time hint and follow-edits behavior',async()=>{
@@ -193,17 +205,17 @@ test('teacher edits made while a save is pending prevent playback from discardin
 test('controlled Python, JavaScript, HTML and CSS submissions open in the editor including textarea fallback',async()=>{
   for(const extension of ['py','js','html','css']) {
     let value='old source',attached=0,ideOpened=0,readOnly;
-    const context={getSubmissionForAssignment:()=>({assignment:{id:'a',fileControl:true},submission:{email:'student',submittedFileName:'Project.'+extension}}),
+    const context={getSubmissionForAssignment:()=>({assignment:{id:'a',fileControl:true},submission:{email:'student',files:[{id:'file'}],submittedFileName:'Project.'+extension}}),
       currentAdminAssignmentName:null,activeSubmissionContext:null,saveCurrentFile:async()=>true,fileOpenRequestId:0,currentOpenFile:{name:'old.py'},
       assignmentManagerHeaders:()=>({teacher:'one'}),editor:{getValue:()=>value,setValue:next=>{value=next;}},
       fetch:async()=>({json:async()=>({ok:true,content:'submitted source',fileName:'Project.'+extension,revisionId:'one',pasteRanges:[[0,3]]})}),
       window:{eagleEditor:null,AssignmentWorkflow:{highlightEditor(){}},WikiReader:{showIDE(){ideOpened++;}}},URLSearchParams,
       clearFileArtifactPreview(){},setCsvMode(){},syncEditorLanguage(){},setMainEditorReadOnly:next=>{readOnly=next;},isCoTeacher:()=>false,
-      updateActiveFileName(){},updateEditorOverlay(){},setWorkspaceTab(){},populateSubmissionScoringPanel(){},
+      updateActiveFileName(){},updateEditorOverlay(){},setWorkspaceTab(){},populateSubmissionScoringPanel(){context.activeSubmissionContext={};},
       attachSubmissionDevelopment(){attached++;},renderAdminAssignments(){},minimizeTeacherDashboardForSubmission(){}};
     vm.createContext(context);vm.runInContext(extract('openAssignmentSubmission'),context);
     await context.openAssignmentSubmission('a','student');
-    assert.equal(value,'submitted source');assert.equal(attached,0);assert.equal(ideOpened,1);
+    assert.equal(value,'submitted source');assert.equal(attached,1);assert.equal(ideOpened,1);
     assert.equal(readOnly,['html','css'].includes(extension));assert.equal(context.currentOpenFile.submission,true);
     assert.deepEqual(Array.from(context.currentOpenFile.pasteRanges[0]),[0,3]);
   }

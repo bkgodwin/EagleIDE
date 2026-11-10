@@ -652,7 +652,7 @@ def _clip_page(db, clip, cls, cursor, index):
     file_id, first, last = clip["file"], clip["first"], clip["last"]
     total = last - first + 1
     if index:
-        # At most 200 color buckets, mixed buckets are marked explicitly.
+        # Keep short recordings exact and sample the start of each bucket for larger ones.
         step = max(1, (total + 199) // 200)
         stamps = db.execute("""SELECT seq,edited,received FROM frames WHERE file=? AND seq BETWEEN ? AND ?
                             AND ((seq-?)%?=0 OR seq=?) ORDER BY seq""", (file_id, first, last, first, step, last)).fetchall()
