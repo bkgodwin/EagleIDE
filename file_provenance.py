@@ -103,6 +103,8 @@ def write(eagle, user_dir, target, content, ranges):
 def move(eagle, user_dir, source, destination, *, keep_source=False):
     """Follow folder/file moves, including Trash and restore."""
     with lock(user_dir):
+        if not keep_source and hasattr(eagle, "workspace_history"):
+            eagle.workspace_history.move(eagle, user_dir, source, destination)
         root = directory(eagle, user_dir)
         if not root.exists():
             return
@@ -123,6 +125,8 @@ def move(eagle, user_dir, source, destination, *, keep_source=False):
 
 def remove(eagle, user_dir, target):
     with lock(user_dir):
+        if hasattr(eagle, "workspace_history"):
+            eagle.workspace_history.move(eagle, user_dir, target)
         root = directory(eagle, user_dir)
         if not root.exists():
             return

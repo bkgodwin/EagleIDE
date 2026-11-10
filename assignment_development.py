@@ -167,8 +167,8 @@ def validate_options(data, assignment=None):
         raise ValueError("Choose a supported file-control language")
     if assignment and (enabled != assignment.get("fileControl", False) or extension != assignment.get("fileControlExtension", ".py")):
         raise ValueError("File control and its language are fixed when an assignment is created")
-    if enabled and (data.get("allowFileSubmission", (assignment or {}).get("allowFileSubmission", True)) is False
-                    or data.get("allowMultiFileSubmission", (assignment or {}).get("allowMultiFileSubmission", False))):
+    if not assignment and enabled and (data.get("allowFileSubmission", True) is False
+                                      or data.get("allowMultiFileSubmission", False)):
         raise ValueError("File control requires a single-file code assignment")
     return {"fileControl": enabled, "fileControlExtension": extension}
 
@@ -341,6 +341,26 @@ def purge(eagle, assignment_id, *, remove_binding=False):
             db.execute("DELETE FROM bindings WHERE assignment=?", (assignment_id,))
 
 
+def expire_unsubmitted(eagle, cutoff):
+    """Retire inactive pre-upgrade streams without affecting retained submissions."""
+    for path in _directory(eagle).glob("*.sqlite3"):
+        if not re.fullmatch(r"[a-f0-9]{32}", path.stem):
+            continue
+        with eagle._assignment_lock:
+            assignment = eagle._load_assignment(path.stem)
+            if not assignment or assignment.get("gradingCompletedAt"):
+                continue
+            submitted = {row.get("email") for row in assignment.get("submissions", [])
+                         if any(workflow.files_for(version) for version in (row, *row.get("history", [])))}
+            with _history(eagle, path.stem) as db:
+                db.execute("PRAGMA secure_delete=ON")
+                expired = [(row["email"],) for row in db.execute("SELECT email FROM streams WHERE last_received<?", (cutoff,))
+                           if row["email"] not in submitted]
+                db.executemany("DELETE FROM frames WHERE email=?", expired)
+                db.executemany("DELETE FROM batches WHERE email=?", expired)
+                db.executemany("DELETE FROM streams WHERE email=?", expired)
+
+
 def _teacher_assignment(eagle, data, *, owner=False):
     actor = eagle._assignment_actor(request)
     if not actor:
@@ -504,30 +524,55 @@ def register(app, eagle):
             bound = binding(eagle, assignment["id"], email)
             if assignment.get("gradingCompletedAt") or not bound or not _path(eagle, assignment["id"]).exists():
                 return jsonify(ok=True, total=0, frames=[], gradingCompletedAt=assignment.get("gradingCompletedAt", ""))
+            cutoff = ""
+            if request.args.get("revisionId") or request.args.get("fileId"):
+                submission = next((s for s in assignment.get("submissions", []) if s.get("email") == email), {})
+                revision = next((s for s in (submission, *submission.get("history", []))
+                                 if s.get("revisionId") == request.args.get("revisionId")), {})
+                attachment = next((f for f in workflow.files_for(revision) if f.get("id") == request.args.get("fileId")), {})
+                if attachment.get("sourceFilePath") != bound["path"]:
+                    return jsonify(ok=True, total=0, frames=[])
+                try:
+                    submitted = datetime.fromisoformat(revision["submittedAt"].replace("Z", "+00:00"))
+                    # Legacy snapshot timestamps have only one-second precision.
+                    cutoff = workflow.iso(submitted.astimezone(timezone.utc).replace(microsecond=999999))
+                except (KeyError, ValueError):
+                    return jsonify(ok=True, total=0, frames=[])
             try:
                 cursor = max(1, int(request.args.get("cursor", 1)))
             except ValueError:
                 return jsonify(ok=False, error="Invalid history position"), 400
             with _history(eagle, assignment["id"]) as db:
                 row = _stream(db, email)
+                total = row["version"]
+                if cutoff:
+                    total = db.execute("SELECT COALESCE(MAX(seq),0) FROM frames WHERE email=? AND received<=?", (email, cutoff)).fetchone()[0]
+                cls = eagle._find_class_by_id(assignment.get("targetClassId")) or {}
+                def clock(at):
+                    value = datetime.fromisoformat(at)
+                    window = workflow.schedule_at(cls, value)
+                    return {"classTime": "unknown" if window is None else ("inside" if workflow.class_clock(window, value) else "outside"),
+                            "timeZone": window["timeZone"] if window else "UTC"}
                 if request.args.get("index") == "1":
                     # Sparse seek index: at most 834 entries for the frame cap.
-                    marks = [dict(r) for r in db.execute("SELECT seq,at FROM frames WHERE email=? AND (seq=1 OR seq%?=0 OR seq=?) ORDER BY seq", (email, CHECKPOINT_EVERY, row["version"]))]
-                    return jsonify(ok=True, total=row["version"], firstAt=row["first_at"], lastAt=row["last_at"], marks=marks, path=bound["path"])
-                cursor = min(cursor, max(1, row["version"]))
+                    marks = [{**dict(r), **clock(r["at"])} for r in db.execute(
+                        "SELECT seq,at FROM frames WHERE email=? AND seq<=? AND (seq=1 OR seq%?=0 OR seq=?) ORDER BY seq",
+                        (email, total, CHECKPOINT_EVERY, total))]
+                    return jsonify(ok=True, total=total, firstAt=row["first_at"], lastAt=marks[-1]["at"] if marks else None, marks=marks, path=bound["path"])
+                cursor = min(cursor, max(1, total))
                 checkpoint = db.execute("SELECT seq,checkpoint FROM frames WHERE email=? AND seq<? AND checkpoint IS NOT NULL ORDER BY seq DESC LIMIT 1", (email, cursor)).fetchone()
                 base, start = (_unpack(checkpoint["checkpoint"]), checkpoint["seq"]) if checkpoint else ("", 0)
                 for f in db.execute("SELECT patch FROM frames WHERE email=? AND seq>? AND seq<? ORDER BY seq", (email, start, cursor)):
                     base = apply_patch(base, json.loads(_unpack(f["patch"])))
                 frames, size = [], 0
-                for f in db.execute("SELECT * FROM frames WHERE email=? AND seq>=? ORDER BY seq LIMIT ?", (email, cursor, PAGE_SIZE)):
+                for f in db.execute("SELECT * FROM frames WHERE email=? AND seq BETWEEN ? AND ? ORDER BY seq LIMIT ?", (email, cursor, total, PAGE_SIZE)):
                     patch = json.loads(_unpack(f["patch"]))
                     size += len(patch["insert"].encode("utf-8")) + 200
                     if frames and size > MAX_BATCH_BYTES:
                         break
-                    frames.append({"seq": f["seq"], "at": f["at"], "receivedAt": f["received"], "kind": f["kind"], **patch})
-                return jsonify(ok=True, total=row["version"], base=base, frames=frames,
-                               nextCursor=frames[-1]["seq"] + 1 if frames and frames[-1]["seq"] < row["version"] else None)
+                    frames.append({"seq": f["seq"], "at": f["at"], "receivedAt": f["received"], "kind": f["kind"], **clock(f["at"]), **patch})
+                return jsonify(ok=True, total=total, base=base, frames=frames,
+                               nextCursor=frames[-1]["seq"] + 1 if frames and frames[-1]["seq"] < total else None)
 
     @app.post("/api/assignments/grading-complete")
     def complete():
@@ -544,11 +589,12 @@ def register(app, eagle):
                 assignment["gradingCompletedAt"] = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
                 assignment["active"] = False
                 assignment["dueLockOverride"] = False
+                try:
+                    eagle.workspace_history.schedule_cleanup(eagle, assignment["id"], assignment["gradingCompletedAt"])
+                except (OSError, sqlite3.Error):
+                    return jsonify(ok=False, error="Could not schedule history cleanup. Retry finalizing grading."), 503
                 if not eagle._save_assignment(assignment):
                     return jsonify(ok=False, error="Could not mark grading complete"), 500
-            try:
-                purge(eagle, assignment["id"], remove_binding=True)
-            except (OSError, sqlite3.Error):
-                return jsonify(ok=False, error="Grading is complete, but recording cleanup failed. Retry this action."), 503
         eagle.socketio.emit("assignment_workflow_updated", {"classId": assignment.get("targetClassId")}, to=f"class_{assignment.get('targetClassId')}")
-        return jsonify(ok=True, gradingCompletedAt=assignment["gradingCompletedAt"])
+        return jsonify(ok=True, gradingCompletedAt=assignment["gradingCompletedAt"],
+                       historyCleanup=eagle.workspace_history.cleanup_status(eagle, assignment))

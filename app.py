@@ -50,6 +50,7 @@ import assignment_workflow
 import file_provenance
 import assignment_development
 import assignment_organization
+import workspace_history
 from lesson_plan_features import register as register_lesson_plan_features
 from eagle_lab_features import register as register_eagle_lab_features
 from lab_reports import register as register_lab_reports
@@ -458,6 +459,11 @@ def _add_security_headers(response):
     if any(request.path.startswith(prefix) for prefix in (
         "/lesson-plans/", "/api/lesson-plans/public/", "/api/lesson-plans/current/", "/api/lesson-plans/print/")):
         response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Cache-Control"] = "private, no-store"
+    if request.path in {
+        "/api/assignments", "/api/assignments/past", "/api/assignments/workspace-history",
+        "/api/assignments/development", "/api/assignments/extension-requests", "/api/admin/workspace-history",
+    }:
         response.headers["Cache-Control"] = "private, no-store"
     if request.path.startswith("/static/"):
         # Flask's default static response is ``no-cache``. Override it so a classroom
@@ -3720,7 +3726,12 @@ def files_read():
             development = assignment_development.read_info(sys.modules[__name__], user, target)
         except (OSError, sqlite3.Error):
             development = {"recording": False, "error": "Development history is unavailable. You can edit and save; tell your teacher."}
+        try:
+            history = workspace_history.open_file(sys.modules[__name__], user, user_dir, target, len(content.encode("utf-8")))
+        except (OSError, sqlite3.Error):
+            history = None
         return jsonify(ok=True, kind="text", content=content, path=path_str, development=development,
+                       workspaceHistory=history,
                        pasteRanges=file_provenance.read(sys.modules[__name__], user_dir, target, content))
     except Exception:
         return jsonify(ok=False, error="Could not read file"), 500
@@ -3790,10 +3801,13 @@ def _files_write_locked(user):
             with target.open("w", encoding="utf-8", newline="") as handle:
                 handle.write(content)
         file_provenance.write(sys.modules[__name__], user_dir, target, content, ranges)
+        if data.get("workspaceHistorySampled") is not True:
+            workspace_history.capture_checkpoint(sys.modules[__name__], user, user_dir, target, content, ranges)
         recording_warning = ""
         development_version = None
         try:
-            development_version = assignment_development.capture_save(sys.modules[__name__], user, target, content)
+            if data.get("workspaceHistorySampled") is not True:
+                development_version = assignment_development.capture_save(sys.modules[__name__], user, target, content)
         except (ValueError, OSError, sqlite3.Error):
             # A full recording must never prevent saving the student's work.
             recording_warning = "Development history could not be updated. Tell your teacher."
@@ -4741,6 +4755,8 @@ def _delete_user_by_email(email: str) -> bool:
         if user_dir.exists():
             shutil.rmtree(user_dir)
         file_provenance.clear(sys.modules[__name__], user_dir)
+        if deleted_user.get("role") == "student":
+            workspace_history.clear_workspace(sys.modules[__name__], user_dir)
         if deleted_user.get("tool_storage_id"):
             _external_tools.storage.delete_account(deleted_user["tool_storage_id"])
     except (OSError, ValueError, sqlite3.Error) as exc:
@@ -9618,6 +9634,9 @@ def _normalize_assignment_schema(assignment: dict) -> dict:
     assignment_type = str(normalized.get("assignmentType") or "standard").strip().lower()
     normalized["assignmentType"] = assignment_type if assignment_type in {"standard", "lab_report"} else "standard"
     normalized["studentExtensions"] = assignment_workflow.normalize_extensions(sys.modules[__name__], normalized.get("studentExtensions"))
+    normalized["sameDayExtensions"] = assignment_workflow.normalize_extensions(sys.modules[__name__], normalized.get("sameDayExtensions"))
+    if normalized.get("submissionAccess") not in ("class", "any"):
+        normalized.pop("submissionAccess", None)
     normalized["id"] = str(normalized.get("id") or "").strip().lower()
     normalized["allowFileSubmission"] = bool(normalized.get("allowFileSubmission", True))
     normalized["fileControl"] = bool(normalized.get("fileControl", False))
@@ -10078,6 +10097,7 @@ def _assignment_request_reference(data: dict) -> tuple[str, Optional[str]]:
 def _student_assignment_payload(assignment: dict, student_email: str, *, include_submission: bool = False) -> dict:
     payload = _assignment_effective_payload(assignment)
     payload.update(assignment_workflow.student_state(sys.modules[__name__], assignment, student_email))
+    payload["extensionRequest"] = (payload.pop("extensionRequests", {}) or {}).get(student_email.lower())
     if assignment.get("fileControl"):
         payload["fileControlRecording"] = assignment_development.recording_open(sys.modules[__name__], assignment, student_email)
         try:
@@ -10089,6 +10109,7 @@ def _student_assignment_payload(assignment: dict, student_email: str, *, include
     payload.pop("submissions", None)
     for teacher_only_field in (
         "studentExtensions",
+        "sameDayExtensions",
         "aiGradingInstructions",
         "aiGradingRigor",
         "aiGradingMode",
@@ -10237,6 +10258,7 @@ def _create_assignment_locked():
     
     target_class_id = (data.get("classId") or "").strip() or None
     target_class_name = None
+    teacher_class = None
     if actor.get("role") == "teacher":
         if not target_class_id:
             return jsonify(ok=False, error="Teachers must select a class"), 400
@@ -10281,6 +10303,10 @@ def _create_assignment_locked():
         if assignment_type == "lab_report" and data.get("fileControl"):
             raise ValueError("Lab reports cannot use file control")
         file_control = assignment_development.validate_options(data)
+        submission_access = data.get("submissionAccess")
+        assignment_workflow.validate_submission_access(submission_access, teacher_class)
+        if file_control["fileControl"]:
+            raise ValueError("New assignments use the standard file picker")
         for key in ("allowMultiFileSubmission", "allowSubmissionAnyTime"):
             if key in data and not isinstance(data[key], bool):
                 raise ValueError("Submission options must be enabled or disabled")
@@ -10301,6 +10327,7 @@ def _create_assignment_locked():
         "allowFileSubmission": False if assignment_type == "lab_report" else bool(data.get("allowFileSubmission", True)),
         "allowMultiFileSubmission": False if assignment_type == "lab_report" else bool(data.get("allowMultiFileSubmission", False)),
         "allowSubmissionAnyTime": bool(data.get("allowSubmissionAnyTime", False)),
+        **({"submissionAccess": submission_access} if submission_access is not None else {}),
         "maxFileSubmissions": int(attempts),
         **file_control,
         "active": False,
@@ -10386,6 +10413,13 @@ def _update_assignment_locked():
             if not isinstance(data[key], bool):
                 return jsonify(ok=False, error="Submission options must be enabled or disabled"), 400
             assignment[key] = bool(data[key])
+    if "submissionAccess" in data:
+        try:
+            assignment_workflow.validate_submission_access(data["submissionAccess"],
+                _find_class_by_id(data.get("classId") or assignment.get("targetClassId")))
+        except ValueError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+        assignment["submissionAccess"] = data["submissionAccess"]
     if "maxFileSubmissions" in data:
         try:
             attempts = int(data["maxFileSubmissions"])
@@ -10403,6 +10437,11 @@ def _update_assignment_locked():
             assignment["dueLockOverride"] = False
         assignment["dueAt"] = new_due_at
     if "active" in data:
+        if data["active"] and assignment.get("submissionAccess") == "class":
+            try:
+                assignment_workflow.validate_submission_access("class", _find_class_by_id(data.get("classId") or assignment.get("targetClassId")))
+            except ValueError as exc:
+                return jsonify(ok=False, error=str(exc)), 400
         assignment["active"] = bool(data["active"])
         assignment["dueLockOverride"] = bool(assignment["active"] and _assignment_due_has_passed(assignment))
         if assignment["active"] and not assignment.get("releasedAt"):
@@ -10538,8 +10577,8 @@ def _copy_assignment_to_class_locked():
         "allowMultiFileSubmission": bool(source.get("allowMultiFileSubmission", False)),
         "allowSubmissionAnyTime": bool(source.get("allowSubmissionAnyTime", False)),
         "maxFileSubmissions": source.get("maxFileSubmissions", 0),
-        "fileControl": source.get("fileControl", False),
-        "fileControlExtension": source.get("fileControlExtension", ".py"),
+        "fileControl": False,
+        **({"submissionAccess": source["submissionAccess"]} if source.get("submissionAccess") else {}),
         "active": False,
         "dueAt": source.get("dueAt") or "",
         "dueLockOverride": False,
@@ -10570,6 +10609,7 @@ def _delete_assignment_storage_locked(assignment, *, forget_folder=True):
     if forget_folder:
         assignment_organization.forget_assignment(sys.modules[__name__], assignment)
     assignment_development.purge(sys.modules[__name__], assignment["id"], remove_binding=True)
+    workspace_history.delete_assignment(sys.modules[__name__], assignment["id"])
     drafts = globals().get("_lab_report_drafts")
     if drafts is not None:
         drafts.clear_assignment(assignment["id"])
@@ -13706,6 +13746,7 @@ register_workspace_data(app, sys.modules[__name__])
 assignment_workflow.register(app, sys.modules[__name__])
 assignment_development.register(app, sys.modules[__name__])
 assignment_organization.register(app, sys.modules[__name__])
+workspace_history.register(app, sys.modules[__name__])
 from notebook_practice import register_notebook_practice
 register_notebook_practice(sys.modules[__name__])
 from notebook_media import register_notebook_media
@@ -13720,7 +13761,13 @@ if __name__ == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", str(SERVER_PORT)))
     _record_server_startup_event()
-    _list_assignments()
+    for assignment in _list_assignments():
+        if assignment.get("gradingCompletedAt") and assignment_development._path(sys.modules[__name__], assignment["id"]).exists():
+            try:
+                workspace_history.schedule_cleanup(sys.modules[__name__], assignment["id"], assignment["gradingCompletedAt"])
+            except (OSError, sqlite3.Error):
+                _append_server_log("Legacy assignment history cleanup could not be scheduled.", level="WARN")
+    workspace_history.start_maintenance(sys.modules[__name__])
     try:
         signal.signal(signal.SIGTERM, _handle_server_termination)
     except (AttributeError, OSError, ValueError):

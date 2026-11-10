@@ -17,7 +17,8 @@ MAX_RECORD_CHARS = 256 * 1024
 
 def version(path):
     stat = path.stat()
-    return f"{stat.st_mtime_ns}:{stat.st_size}"
+    # An atomic replacement can keep the same byte length and timestamp.
+    return f"{stat.st_dev}:{stat.st_ino}:{stat.st_mtime_ns}:{stat.st_size}"
 
 
 def records(handle):
@@ -53,14 +54,14 @@ def register(app, eagle):
         target = eagle._validate_workspace_path(root, str(data.get("path") or ""))
         if not target or not target.is_file() or target.suffix.lower() != ".csv":
             return None, (jsonify(ok=False, error="CSV file not found"), 404)
-        return (root, target), None
+        return (root, target, user), None
 
     @app.get("/api/files/csv-page")
     def csv_page():
         resolved, error = target_for_request(request.args)
         if error:
             return error
-        _, target = resolved
+        _, target, _ = resolved
         try:
             cursor = int(request.args.get("cursor", 0))
             column = int(request.args.get("column", 0))
@@ -104,7 +105,7 @@ def register(app, eagle):
         resolved, error = target_for_request(data)
         if error:
             return error
-        root, target = resolved
+        root, target, user = resolved
         changes = data.get("changes", [])
         append = data.get("appendRow", False)
         if type(append) is not bool:
@@ -181,8 +182,10 @@ def register(app, eagle):
                     return jsonify(ok=False, error="Workspace storage limit exceeded"), 413
                 if data.get("version") != version(target):
                     return jsonify(ok=False, error="CSV changed while saving. Reopen it before saving."), 409
+                previous_identity = eagle.workspace_history._fingerprint(target)
                 os.replace(temporary, target)
                 temporary = None
+                eagle.workspace_history.capture_checkpoint(eagle, user, root, target, replaced=previous_identity)
                 eagle._invalidate_workspace_tree_cache(root)
                 return jsonify(ok=True, version=version(target), offsets=offsets,
                                appendOffset=append_offset, appendRowNumber=row_count, size=size)

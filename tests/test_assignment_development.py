@@ -22,10 +22,11 @@ class DevelopmentTests(unittest.TestCase):
     def create(self, **options):
         response = self.client.post('/api/assignments/create', headers=self.teacher_headers, json={
             'name':'Loop project', 'task':'Write a loop', 'classId':self.class_one,
-            'fileControl':True, 'fileControlExtension':'.py', **options})
+            **options})
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         assignment = response.get_json()['assignment']
-        assignment.update(active=True, releasedAt='2026-01-01 00:00:00', createdAt='2026-01-01T00:00:00+00:00')
+        assignment.update(fileControl=True, fileControlExtension='.py', active=True,
+                          releasedAt='2026-01-01 00:00:00', createdAt='2026-01-01T00:00:00+00:00')
         eagle._save_assignment(assignment)
         result = self.client.get('/api/assignments', headers=self.student_headers).get_json()
         visible = next(a for a in result['assignments'] if a['id'] == assignment['id'])
@@ -56,17 +57,17 @@ class DevelopmentTests(unittest.TestCase):
         self.assertFalse((root/path).exists())
 
     def test_options_strict_and_fixed_and_copy_gets_new_recording_identity(self):
-        for value in ['true', 1, [], None]:
+        for value in [True, 'true', 1, [], None]:
             r = self.client.post('/api/assignments/create', headers=self.teacher_headers,
                                  json={'name':'Bad', 'classId':self.class_one,'fileControl':value})
             self.assertEqual(r.status_code, 400)
         a, path = self.create()
-        for change in [{'fileControl':False}, {'fileControlExtension':'.js'}, {'allowMultiFileSubmission':True}, {'allowFileSubmission':False}, {'classId':self.class_two}]:
+        for change in [{'fileControl':False}, {'fileControlExtension':'.js'}, {'classId':self.class_two}]:
             r = self.client.post('/api/assignments/update', headers=self.teacher_headers, json={'assignmentId':a['id'], **change})
             self.assertIn(r.status_code, (400,409), change)
         copied = self.client.post('/api/assignments/copy-to-class', headers=self.teacher_headers,
                                  json={'assignmentId':a['id'], 'targetClassId':self.class_two}).get_json()['assignment']
-        self.assertTrue(copied['fileControl'])
+        self.assertFalse(copied['fileControl'])
         self.assertNotEqual(copied['id'], a['id'])
         self.assertIsNone(development.binding(eagle, copied['id'], self.student_email))
 
@@ -108,11 +109,13 @@ class DevelopmentTests(unittest.TestCase):
         self.assertEqual(response.get_json()['version'],1)
         self.assertFalse(response.get_json()['stopped'])
 
-    def test_only_bound_file_is_submittable_and_uploads_rejected(self):
+    def test_existing_controlled_assignment_accepts_any_single_file(self):
         a,path=self.create()
         root=eagle._get_user_dir(self.student_email)
         (root/'other.py').write_text('print(1)',encoding='utf-8')
-        for paths in [['other.py'],[path,'other.py'],['../'+path]]:
+        self.assertEqual(self.client.post('/api/assignments/submit',headers=self.student_headers,
+                                         json={'assignmentId':a['id'],'filePaths':['other.py']}).status_code,200)
+        for paths in [[path,'other.py'],['../'+path]]:
             r=self.client.post('/api/assignments/submit',headers=self.student_headers,json={'assignmentId':a['id'],'filePaths':paths})
             self.assertEqual(r.status_code,400)
         r=self.client.post('/api/assignments/submit',headers=self.student_headers,
@@ -185,6 +188,7 @@ class DevelopmentTests(unittest.TestCase):
         self.assertEqual(self.client.post('/api/assignments/grading-complete',headers=self.student_headers,json={'assignmentId':a['id']}).status_code,401)
         r=self.client.post('/api/assignments/grading-complete',headers=self.teacher_headers,json={'assignmentId':a['id']})
         self.assertEqual(r.status_code,200,r.get_data(as_text=True))
+        eagle.workspace_history.maintenance(eagle)
         self.assertFalse(development._path(eagle,a['id']).exists())
         self.assertEqual(self.playback(a).get_json()['total'],0)
         self.assertEqual(self.client.post('/api/assignments/submit',headers=self.student_headers,json={'assignmentId':a['id'],'filePath':path}).status_code,403)

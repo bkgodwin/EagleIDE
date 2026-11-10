@@ -43,7 +43,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js" integrity="sha384-44q2s9jxk8W5N9gAB0yn7UYLi9E2oVw8eHyaTZLkDS3WuZM/AttkAiVj6JoZuGS4" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js" integrity="sha384-jgkY4GMNWfQcLLIoP1vg3FWXflDrRhcSXGBW6ONIWC2SOIv5H1Pa57sXs+aomCuZ" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js" integrity="sha384-EO/jSdjpPTVnKfaKudbmOTZBYv471ACLOeLdy0zhCEJrQAtjgUSCbn/Cc+9QWjIx" crossorigin="anonymous"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261103-lab-polish">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261109-history">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -130,6 +130,7 @@
       </label>
       <button class="btn exception-help-btn ide-only" id="exceptionHelpBtn" title="Troubleshooting Assistant" aria-label="Open troubleshooting assistant">🛠️ Help</button>
       <span class="file-chip ide-only" id="activeFileChip"><span id="activeFileName"></span></span>
+      <span id="workspaceHistoryStatus" class="workspace-history-status ide-only" role="status"></span>
       <button class="btn secondary ide-only" id="saveDraftBtn" type="button" style="display:none;">Save Draft</button>
       <span id="editorLiveIndicator" class="live-indicator chip chip--live ide-only">Live</span>
       <span class="guest-badge chip" id="guestBadge">Guest</span>
@@ -1978,6 +1979,7 @@
             <p class="cleanup-help">Active accounts (including disabled accounts), active user files, current wiki content, and the cleanup ledger are protected. Existing storage quotas and short-lived execution/upload limits still apply.</p>
             <div class="cleanup-actions"><button type="button" class="btn run" id="cleanupRunNow" disabled>Clean now</button><button type="button" class="btn secondary" id="cleanupRefresh">Refresh</button><a href="/static/docs/data-cleanup.html" target="_blank" rel="noopener">Cleanup guide</a></div>
             <p id="cleanupStatus" role="status" aria-live="polite">Open this section to load saved cleanup rules.</p>
+            <details class="cleanup-help"><summary>Assignment edit history storage</summary><p>Unsubmitted edits expire after 14 days. Submitted timelines stay available until grading is finalized.</p><button type="button" class="btn secondary" id="loadWorkspaceHistoryUsage">Check history usage</button><div id="workspaceHistoryUsage" role="status"></div></details>
             <h5>Recent cleanup runs</h5><div id="cleanupRuns" class="cleanup-run-list"></div>
             <h5>Permanent deletion log</h5><p class="cleanup-help">This administrator-only log retains file names and paths indefinitely, which can include personal information. It stores no file contents and is never removed by cleanup. Planned or failed entries do not confirm deletion.</p>
             <div class="cleanup-log-scroll" tabindex="0" aria-label="Cleanup deletion log"><table class="cleanup-log-table"><thead><tr><th>Time</th><th>Data type / action</th><th>Name and path</th><th>Result</th></tr></thead><tbody id="cleanupLog"></tbody></table></div>
@@ -2080,7 +2082,7 @@
 
   <script src="/static/js/app.js"></script>
   <script src="/static/js/connection.js?v=20261011-files-5"></script>
-  <script src="/static/js/feature-loader.js?v=20261103-lab-polish"></script>
+  <script src="/static/js/feature-loader.js?v=20261109-history"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20261021-security-1"></script>
   <script src="/static/js/layout.js?v=20261011-files-5"></script>
@@ -2094,17 +2096,18 @@
   <script src="/static/js/server-performance.js?v=20261011-files-5"></script>
   <script src="/static/js/workspace-data.js?v=20261011-files-5"></script>
   <script src="/static/js/file-provenance.js?v=20261015-assignment-folders-1"></script>
-  <script src="/static/js/assignment-workflow.js?v=20261103-lab-polish"></script>
-  <script src="/static/js/assignment-development.js?v=20261015-assignment-folders-1"></script>
-  <script src="/static/js/teacher-assignments.js?v=20261015-assignment-folders-1"></script>
-  <script src="/static/js/app-core.js?v=20261103-lab-polish"></script>
+  <script src="/static/js/assignment-workflow.js?v=20261109-history"></script>
+  <script src="/static/js/assignment-development.js?v=20261109-history"></script>
+  <script src="/static/js/workspace-history.js?v=20261109-history"></script>
+  <script src="/static/js/teacher-assignments.js?v=20261109-history"></script>
+  <script src="/static/js/app-core.js?v=20261109-history"></script>
   <script src="/static/js/eagle-lab-access.js?v=20261103-lab-polish"></script>
   <script src="/static/js/step-mode.js?v=20261011-files-5"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20261021-security-1"></script>
-  <script src="/static/js/wiki-reader.js?v=20261103-lab-polish"></script>
+  <script src="/static/js/wiki-reader.js?v=20261109-history"></script>
   <script src="/static/js/external-tools.js?v=20261022-wiki-manager-1"></script>
   <script src="/static/js/lesson-plans.js?v=20261021-security-1"></script>
-  <script src="/static/js/wiki-admin.js?v=20261103-lab-polish"></script>
+  <script src="/static/js/wiki-admin.js?v=20261109-history"></script>
   <script src="/static/js/classroom-signals.js?v=20260918-10"></script>
   <script src="/static/js/classroom-files.js?v=20261011-files-5"></script>
   <script src="/static/js/notebook-sync.js?v=20261011-notebook-topics-1"></script>

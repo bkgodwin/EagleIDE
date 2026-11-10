@@ -16,11 +16,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from flask import jsonify, request, send_file
 import file_provenance
+import sqlite3
 
 MAX_FILES = 20
 MAX_BUNDLE_BYTES = 25 * 1024 * 1024
 MAX_PREVIEW_BYTES = 2 * 1024 * 1024
 HISTORY_LIMIT = 3
+WEEKDAYS = (0, 1, 2, 3, 4)
+DAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 CODE_EXTENSIONS = {".py", ".js"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
@@ -62,7 +65,53 @@ def window_settings(value, *, strict=False):
         zone = "UTC"
     if strict and not isinstance(value.get("enabled", False), bool):
         raise ValueError("Submission window must be enabled or disabled")
-    return {"enabled": bool(value.get("enabled", False)), "start": start, "end": end, "timeZone": zone}
+    result = {"enabled": bool(value.get("enabled", False)), "start": start, "end": end, "timeZone": zone}
+    for key in ("meetingDays", "schoolDays"):
+        if key not in value:
+            continue
+        days = value[key]
+        if not isinstance(days, list) or not 1 <= len(days) <= 7 or any(type(day) is not int or not 0 <= day <= 6 for day in days):
+            if strict:
+                raise ValueError("Choose at least one valid day for the class and school schedules")
+            continue
+        result[key] = sorted(set(days))
+    if "dismissal" in value:
+        dismissal = value["dismissal"]
+        if not isinstance(dismissal, str) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", dismissal):
+            if strict:
+                raise ValueError("Choose a valid school dismissal time")
+        else:
+            result["dismissal"] = dismissal
+    return result
+
+
+def class_clock(window, timestamp):
+    local = timestamp.astimezone(ZoneInfo(window["timeZone"]))
+    return local.weekday() in window.get("meetingDays", WEEKDAYS) and window["start"] <= local.strftime("%H:%M") < window["end"]
+
+
+def validate_submission_access(value, cls):
+    if value is not None and value not in ("class", "any"):
+        raise ValueError("Choose In class only or Any time")
+    if value == "class" and not isinstance(((cls or {}).get("settings") or {}).get("assignment_submission_window"), dict):
+        raise ValueError("Set the class meeting schedule before choosing In class only")
+
+
+def schedule_at(cls, timestamp):
+    settings = cls.get("settings") or {}
+    current = settings.get("assignment_submission_window")
+    if not isinstance(current, dict):
+        return None
+    versions = settings.get("assignment_schedule_versions") or []
+    if not versions:
+        return window_settings(current)
+    stamp = iso(timestamp)
+    return next((row["window"] for row in reversed(versions) if row["from"] <= stamp), None)
+
+
+def local_boundary(local, clock):
+    hour, minute = map(int, clock.split(":"))
+    return local.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
 
 def iso(value):
@@ -81,14 +130,16 @@ def normalize_extensions(eagle, value):
         if not until:
             continue
         result[email.strip().lower()] = {"until": until, "grantedAt": str(record.get("grantedAt") or "")[:80],
-            **{key: max(0, record[key]) for key in ("fileAttemptLimit", "quizAttemptLimit") if type(record.get(key)) is int}}
+            **{key: max(0, record[key]) for key in ("fileAttemptLimit", "quizAttemptLimit") if type(record.get(key)) is int},
+            **({"respectClassHours": record["respectClassHours"]} if type(record.get("respectClassHours")) is bool else {})}
     return result
 
 
 def student_state(eagle, assignment, email, *, now=None):
     cls = eagle._find_class_by_id(assignment.get("targetClassId")) or {}
     support = accommodation((cls.get("accommodations") or {}).get(str(email).lower()))
-    window = window_settings((cls.get("settings") or {}).get("assignment_submission_window"))
+    configured_window = (cls.get("settings") or {}).get("assignment_submission_window")
+    window = window_settings(configured_window)
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     due = str(assignment.get("dueAt") or "")
     note = ""
@@ -111,41 +162,80 @@ def student_state(eagle, assignment, email, *, now=None):
         past = not eagle._assignment_is_active(assignment, now=current)
         due = ""
         note = "No deadline provided per accommodation"
-    extension = (assignment.get("studentExtensions") or {}).get(str(email).lower()) or {}
+    regular = (assignment.get("studentExtensions") or {}).get(str(email).lower()) or {}
+    extension = regular
+    same_day = (assignment.get("sameDayExtensions") or {}).get(str(email).lower()) or {}
+    if same_day.get("until") and not eagle._assignment_due_has_passed({"dueAt": same_day["until"]}, now=current):
+        extension = same_day
     until = extension.get("until", "")
     reopened = bool(until and not eagle._assignment_due_has_passed({"dueAt": until}, now=current))
     if reopened:
-        due, expired, past, deadline_allowed = until, False, False, True
+        due = max(due, until, regular.get("until", "")) if extension is same_day else until
+        expired, past, deadline_allowed = False, False, True
         note = "Make-up / retest deadline"
     if assignment.get("gradingCompletedAt"):
         past, deadline_allowed = True, False
     window_allowed, next_change = True, ""
     message = ""
-    if window["enabled"] and not assignment.get("allowSubmissionAnyTime", False) and not reopened:
+    class_only = assignment.get("submissionAccess") == "class"
+    if "submissionAccess" not in assignment:
+        class_only = window["enabled"] and not assignment.get("allowSubmissionAnyTime", False)
+    bypass = reopened and not extension.get("respectClassHours")
+    if class_only and not bypass and not isinstance(configured_window, dict):
+        window_allowed = False
+        message = "Your teacher needs to set the class meeting schedule."
+    elif class_only and not bypass:
         local = current.astimezone(ZoneInfo(window["timeZone"]))
-        clock = local.strftime("%H:%M")
-        window_allowed = local.weekday() < 5 and window["start"] <= clock < window["end"]
-        next_local = local.replace(hour=int(window["end" if window_allowed else "start"][:2]), minute=int(window["end" if window_allowed else "start"][3:]), second=0, microsecond=0)
+        days = window.get("meetingDays", WEEKDAYS)
+        window_allowed = class_clock(window, current)
+        next_local = local_boundary(local, window["end"] if window_allowed else window["start"])
         if not window_allowed:
             if next_local <= local:
                 next_local += timedelta(days=1)
-            while next_local.weekday() >= 5:
+            while next_local.weekday() not in days:
                 next_local += timedelta(days=1)
         next_change = iso(next_local)
-        message = f"Submissions open weekdays {window['start']}–{window['end']} ({window['timeZone']})."
+        day_label = "weekdays" if tuple(days) == WEEKDAYS else ", ".join(DAY_NAMES[day][:3] for day in days)
+        message = f"Submissions open {day_label} {window['start']}–{window['end']} ({window['timeZone']})."
     return {"dueAt": due, "accommodationNote": note, "isPast": past,
             "active": not past, "dueExpired": expired, "canSubmit": bool(deadline_allowed and window_allowed),
             "deadlineOpen": bool(deadline_allowed),
             "submissionWindowOpen": window_allowed, "submissionWindowMessage": message,
-            "nextWindowChangeAt": next_change}
+            "nextWindowChangeAt": min(filter(None, (next_change, until if reopened else "")), default=""),
+            "timeZone": window["timeZone"]}
 
 
 def attempt_limit(eagle, assignment, email, kind):
     maximum = assignment.get("maxFileSubmissions", 0) if kind == "file" else (assignment.get("quizSettings") or {}).get("maxSubmissions", 0)
-    extension = (assignment.get("studentExtensions") or {}).get(str(email).lower()) or {}
-    if maximum and extension.get("until") and not eagle._assignment_due_has_passed({"dueAt": extension["until"]}):
-        maximum = max(maximum, extension.get(f"{kind}AttemptLimit", maximum))
+    for key in ("studentExtensions", "sameDayExtensions"):
+        extension = (assignment.get(key) or {}).get(str(email).lower()) or {}
+        if maximum and extension.get("until") and not eagle._assignment_due_has_passed({"dueAt": extension["until"]}):
+            maximum = max(maximum, extension.get(f"{kind}AttemptLimit", maximum))
     return maximum
+
+
+def extension_grant(eagle, assignment, email, days, now):
+    cls = eagle._find_class_by_id(assignment.get("targetClassId")) or {}
+    window = window_settings((cls.get("settings") or {}).get("assignment_submission_window"))
+    zone = ZoneInfo(window["timeZone"])
+    local = now.astimezone(zone)
+    dismissal = window.get("dismissal", window["end"])
+    school_days = window.get("schoolDays", WEEKDAYS)
+    if not days and (local.weekday() not in school_days or local >= local_boundary(local, dismissal)):
+        raise ValueError("Today's school day has ended or school is closed. Choose at least one day.")
+    if days:
+        due = student_state(eagle, assignment, email, now=now)["dueAt"]
+        if due:
+            local = max(local, datetime.fromisoformat(due.replace("Z", "+00:00")).astimezone(zone))
+        while days:
+            local += timedelta(days=1)
+            if local.weekday() in school_days:
+                days -= 1
+    sub = next((row for row in assignment.get("submissions", []) if row.get("email", "").lower() == email), {})
+    return {"until": iso(local_boundary(local, dismissal)), "grantedAt": iso(now),
+            "respectClassHours": local.date() != now.astimezone(zone).date(),
+            "fileAttemptLimit": int(sub.get("fileSubmissionCount", 0)) + 1,
+            "quizAttemptLimit": int(sub.get("quizSubmissionCount", 0)) + 1}
 
 
 def submission_error(eagle, assignment, user):
@@ -173,6 +263,10 @@ def public_files(submission):
 
 def teacher_payload(eagle, assignment):
     payload = eagle._assignment_effective_payload(assignment)
+    payload["pendingExtensionRequests"] = sum(row.get("status") == "pending"
+        for row in (payload.pop("extensionRequests", {}) or {}).values() if isinstance(row, dict))
+    payload.pop("sameDayExtensions", None)
+    payload["historyCleanup"] = eagle.workspace_history.cleanup_status(eagle, assignment)
     for submission in payload.get("submissions", []):
         submission["hasGradableFiles"] = bool(submission.get("code")) and not submission.get("withdrawn") and has_gradable_files(submission)
         submission["hasPastedText"] = any(f.get("pasteRanges") for f in files_for(submission))
@@ -263,13 +357,6 @@ def _store_bundle(eagle, assignment, user, data, uploads=()):
     if not isinstance(paths, list) or any(not isinstance(p, str) for p in paths) or len(set(paths)) != len(paths):
         raise ValueError("Select distinct workspace files")
     uploads = list(uploads)
-    if assignment.get("fileControl"):
-        import assignment_development as development
-        controlled = development.binding(eagle, assignment["id"], user["email"])
-        expected = eagle._validate_workspace_path(eagle._get_user_dir(user["email"]), controlled["path"]) if controlled else None
-        selected = eagle._validate_workspace_path(eagle._get_user_dir(user["email"]), paths[0]) if len(paths) == 1 else None
-        if uploads or not expected or selected != expected:
-            raise ValueError("Submit only the dedicated assignment file from Home. Attachments and other files are not accepted.")
     count = len(paths) + len(uploads)
     if not 1 <= count <= MAX_FILES:
         raise ValueError(f"Select from 1 to {MAX_FILES} files")
@@ -318,14 +405,22 @@ def _store_bundle(eagle, assignment, user, data, uploads=()):
     try:
         staging.mkdir()
         records = []
+        history_sources = {}
         for index, (name, content, source) in enumerate(sources):
             stored_name = f"{index + 1:02d}-{name}"
+            file_id = uuid.uuid4().hex
             ranges = []
             if source and Path(name).suffix.lower() in eagle.TEXT_EXTENSIONS:
                 try:
                     text = content.decode("utf-8")
                     canonical = text.replace("\r\n", "\n").replace("\r", "\n")
                     target = eagle._validate_workspace_path(root, source)
+                    try:
+                        history_source = eagle.workspace_history.submission_source(eagle, root, target, content) if target else None
+                        if history_source:
+                            history_sources[file_id] = history_source
+                    except (OSError, sqlite3.Error):
+                        pass
                     ranges = file_provenance.read(eagle, root, target, canonical)
                     if canonical != text:
                         ranges = file_provenance.remap(ranges, canonical, text)
@@ -337,7 +432,7 @@ def _store_bundle(eagle, assignment, user, data, uploads=()):
                 ranges = file_provenance.remap(ranges, text, stamped)
                 content = stamped.encode("utf-8")
             (staging / stored_name).write_bytes(content)
-            records.append({"id": uuid.uuid4().hex, "name": name, "size": len(content), "sourceFilePath": source,
+            records.append({"id": file_id, "name": name, "size": len(content), "sourceFilePath": source,
                             "path": (destination / stored_name).relative_to(eagle.ASSIGNMENT_SUBMISSIONS_DIR.resolve()).as_posix(), "pasteRanges": ranges})
         staging.replace(destination)
         result = {"revisionId": revision, "files": records, "submittedAt": submitted_at,
@@ -345,6 +440,11 @@ def _store_bundle(eagle, assignment, user, data, uploads=()):
                   "submissionPath": records[0]["path"], "submittedFileName": records[0]["name"],
                   "sourceFilePath": records[0]["sourceFilePath"]}
         result["code"] = grading_code(eagle, assignment, result)
+        try:
+            result["_historyIntent"] = eagle.workspace_history.prepare_submission(eagle, assignment, user["email"].lower(),
+                                                                                  revision, records, history_sources)
+        except (OSError, ValueError, eagle.workspace_history.Capacity):
+            result["_historyIntent"] = None
         return result
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
@@ -412,6 +512,7 @@ def submit(eagle):
             return jsonify(ok=False, error=str(exc)), 400
         except OSError:
             return jsonify(ok=False, error="Could not store submission files"), 500
+        history_intent = bundle.pop("_historyIntent", None)
         sub = {"name": user.get("name") or email, "email": email, **bundle,
                "history": archive(previous), "fileSubmissionCount": count + 1,
                "adminFilePath": "", "codeScore": None, "totalScore": previous.get("quizScore"),
@@ -425,8 +526,14 @@ def submit(eagle):
             path = eagle._assignment_submission_path(assignment, bundle["submissionPath"])
             if path:
                 shutil.rmtree(path.parent, ignore_errors=True)
+            if history_intent:
+                try:
+                    eagle.workspace_history.discard_intent(history_intent)
+                except OSError:
+                    pass  # Maintenance verifies that the revision was accepted.
             return jsonify(ok=False, error="Could not save submission metadata"), 500
         prune_history(eagle, assignment, previous)
+    eagle.workspace_history.pin_after_commit(eagle, history_intent)
     eagle.socketio.emit("assignment_workflow_updated", {"classId": assignment.get("targetClassId")}, to=f"class_{assignment.get('targetClassId')}")
     visible = {k: v for k, v in sub.items() if k not in {"history", "aiFeedback", "teacherFeedback", "aiGradingStatus", "aiGradingError", "aiSuggestedScore", "manualScoreOverride"}}
     visible["files"] = public_files(sub)
@@ -503,6 +610,65 @@ def override_score(eagle):
 
 
 def register(app, eagle):
+    def extension_context(data, actor, email):
+        assignment = eagle._load_assignment(str(data.get("assignmentId") or ""))
+        if not assignment:
+            return None, (jsonify(ok=False, error="Assignment not found"), 404)
+        if actor is not None and not eagle._assignment_access(actor, assignment, owner_only=True):
+            return None, (jsonify(ok=False, error="Only the class owner may manage extensions"), 403)
+        cls = eagle._find_class_by_id(assignment.get("targetClassId")) or {}
+        if email and email not in cls.get("students", []):
+            return None, (jsonify(ok=False, error="Student is not in this class"), 404 if actor else 403)
+        return assignment, None
+
+    def extension_update(assignment):
+        class_id = assignment.get("targetClassId")
+        eagle.socketio.emit("assignment_workflow_updated", {"classId": class_id}, to=f"class_{class_id}")
+
+    @app.route("/api/assignments/extension-requests", methods=["GET", "POST"])
+    def extension_requests():
+        if request.method == "GET":
+            actor = eagle._assignment_actor(request)
+            if not actor:
+                return jsonify(ok=False, error="Teacher authentication required"), 401
+            assignment, error = extension_context(request.args, actor, "")
+            if error:
+                return error
+            cls = eagle._find_class_by_id(assignment.get("targetClassId")) or {}
+            roster = set(cls.get("students", []))
+            users = {u["email"]: u.get("name") or u["email"] for u in eagle._load_users().get("users", []) if u["email"] in roster}
+            rows = [{**row, "studentEmail": email, "name": users.get(email, email)}
+                    for email, row in (assignment.get("extensionRequests") or {}).items()
+                    if email in roster and isinstance(row, dict)]
+            return jsonify(ok=True, requests=sorted(rows, key=lambda row: (row["status"] != "pending", row["requestedAt"])))
+
+        student = eagle._require_user(request)
+        if not student:
+            return jsonify(ok=False, error="Student authentication required"), 401
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify(ok=False, error="Invalid extension request"), 400
+        days, reason = data.get("days"), data.get("reason")
+        if type(days) is not int or not 0 <= days <= 365 or not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 500:
+            return jsonify(ok=False, error="Choose 0–365 days and enter a reason of up to 500 characters"), 400
+        email = student["email"].lower()
+        with eagle._assignment_lock:
+            assignment, error = extension_context(data, None, email)
+            if error:
+                return error
+            if assignment.get("gradingCompletedAt") or not assignment.get("releasedAt"):
+                return jsonify(ok=False, error="This assignment is unavailable for extension requests"), 409
+            rows = assignment.setdefault("extensionRequests", {})
+            if (rows.get(email) or {}).get("status") == "pending":
+                return jsonify(ok=False, error="Your request is already pending"), 409
+            row = {"id": uuid.uuid4().hex, "days": days, "reason": reason.strip(),
+                   "status": "pending", "requestedAt": iso(datetime.now(timezone.utc))}
+            rows[email] = row
+            if not eagle._save_assignment(assignment):
+                return jsonify(ok=False, error="Could not save extension request"), 500
+        extension_update(assignment)
+        return jsonify(ok=True, request=row)
+
     @app.post("/api/assignments/extend-student")
     def extend_student():
         actor = eagle._assignment_actor(request)
@@ -511,34 +677,57 @@ def register(app, eagle):
         data = request.get_json(silent=True)
         if not isinstance(data, dict):
             return jsonify(ok=False, error="Invalid extension request"), 400
-        days = data.get("days")
-        if isinstance(days, bool) or not isinstance(days, int) or not 0 <= days <= 365:
-            return jsonify(ok=False, error="Choose a whole number from 1 to 365 days, or 0 to remove the extension"), 400
+        days, action = data.get("days"), data.get("action")
+        if action is None:
+            action = "legacy"
+        if action not in ("grant", "revoke", "approve", "deny", "preview", "legacy"):
+            return jsonify(ok=False, error="Invalid extension action"), 400
+        if action not in ("deny", "revoke") and (type(days) is not int or not 0 <= days <= 365):
+            return jsonify(ok=False, error="Choose a whole number from 0 to 365 days"), 400
         email = str(data.get("studentEmail") or "").strip().lower()
+        if not email:
+            return jsonify(ok=False, error="Choose a student"), 400
         with eagle._assignment_lock:
-            assignment = eagle._load_assignment(data.get("assignmentId") or "")
-            if not assignment or not eagle._assignment_access(actor, assignment, owner_only=True):
-                return jsonify(ok=False, error="Only the class owner may extend assignments"), 403
+            assignment, error = extension_context(data, actor, email)
+            if error:
+                return error
             if assignment.get("gradingCompletedAt"):
                 return jsonify(ok=False, error="Grading is finalized. Copy this assignment to start a new assignment."), 409
-            cls = eagle._find_class_by_id(assignment.get("targetClassId")) or {}
-            if email not in cls.get("students", []):
-                return jsonify(ok=False, error="Student is not in this class"), 404
             if not assignment.get("releasedAt"):
                 return jsonify(ok=False, error="Release this assignment before granting make-up time"), 409
-            extensions = assignment.setdefault("studentExtensions", {})
-            if days:
-                now = datetime.now(timezone.utc)
-                sub = next((s for s in assignment.get("submissions", []) if s.get("email", "").lower() == email), {})
-                extensions[email] = {"until": iso(now + timedelta(days=days)), "grantedAt": iso(now),
-                                     "fileAttemptLimit": int(sub.get("fileSubmissionCount", 0)) + 1,
-                                     "quizAttemptLimit": int(sub.get("quizSubmissionCount", 0)) + 1}
-            else:
-                extensions.pop(email, None)
+            now = datetime.now(timezone.utc)
+            row = (assignment.get("extensionRequests") or {}).get(email)
+            if action in ("approve", "deny"):
+                if not row or row["id"] != data.get("requestId"):
+                    return jsonify(ok=False, error="The extension request changed. Refresh and try again."), 409
+                if row["status"] != "pending":
+                    if row["status"] == ("approved" if action == "approve" else "denied"):
+                        return jsonify(ok=True, request=row)
+                    return jsonify(ok=False, error="This request was already decided"), 409
+            grant = None
+            if action == "revoke" or (action == "legacy" and not days):
+                for key in ("studentExtensions", "sameDayExtensions"):
+                    assignment.setdefault(key, {}).pop(email, None)
+            elif action != "deny":
+                try:
+                    grant = extension_grant(eagle, assignment, email, days, now)
+                except ValueError as exc:
+                    return jsonify(ok=False, error=str(exc)), 400
+                if action == "legacy":
+                    grant["respectClassHours"] = False
+                key = "studentExtensions" if days else "sameDayExtensions"
+                assignment.setdefault(key, {})[email] = grant
+                if action == "preview":
+                    state = student_state(eagle, assignment, email, now=now)
+                    return jsonify(ok=True, extension=grant, timeZone=state["timeZone"], submissionWindowMessage=state["submissionWindowMessage"])
+            if action in ("approve", "deny"):
+                row.update(status="approved" if action == "approve" else "denied", decidedAt=iso(now))
+                if grant:
+                    row.update(approvedDays=days, until=grant["until"])
             if not eagle._save_assignment(assignment):
                 return jsonify(ok=False, error="Could not save extension"), 500
-        eagle.socketio.emit("assignment_workflow_updated", {"classId": assignment.get("targetClassId")}, to=f"class_{assignment.get('targetClassId')}")
-        return jsonify(ok=True, extension=extensions.get(email))
+        extension_update(assignment)
+        return jsonify(ok=True, extension=grant, request=row if action in ("approve", "deny") else None)
 
     @app.post("/api/quiz/score-question")
     def score_question():
@@ -712,7 +901,15 @@ def register(app, eagle):
                     settings = cls.setdefault("settings", {})
                     settings["assignment_submission_window"] = {**window_settings(settings.get("assignment_submission_window")), "timeZone": zone}
             else:
-                cls.setdefault("settings", {})["assignment_submission_window"] = value
+                settings = cls.setdefault("settings", {})
+                previous = settings.get("assignment_submission_window")
+                versions = settings.get("assignment_schedule_versions") or []
+                if isinstance(previous, dict) and not versions:
+                    versions = [{"from": "", "window": window_settings(previous)}]
+                if not versions or versions[-1]["window"] != value:
+                    versions.append({"from": iso(datetime.now(timezone.utc)), "window": value})
+                settings["assignment_schedule_versions"] = versions[-256:]
+                settings["assignment_submission_window"] = value
             eagle._save_classes(catalog)
         eagle.socketio.emit("assignment_workflow_updated", {"classId": class_id}, to=f"class_{class_id}")
         return jsonify(ok=True)

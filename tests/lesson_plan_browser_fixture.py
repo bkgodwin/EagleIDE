@@ -90,7 +90,9 @@ def main():
         with eagle.app.test_client() as client:
             assignment = client.post('/api/assignments/create', headers={'X-Teacher-Token': 'agenda-teacher'},
                 json={'classId': 'agenda-class', 'name': 'Loop lab', 'task': 'Print the numbers 1 through 5.',
-                      'maxScore': 10, 'fileControl': True, 'fileControlExtension': '.py'}).json['assignment']
+                      'maxScore': 10}).json['assignment']
+            assignment.update(fileControl=True, fileControlExtension='.py')
+            eagle._save_assignment(assignment)
             due = datetime.combine(date.fromisoformat(week), datetime.min.time(), tzinfo=timezone.utc) + timedelta(days=2, hours=20)
             client.post('/api/assignments/update', headers={'X-Teacher-Token': 'agenda-teacher'},
                 json={'assignmentId': assignment['id'], 'active': True, 'dueAt': due.isoformat()})

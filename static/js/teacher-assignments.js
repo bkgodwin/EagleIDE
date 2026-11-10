@@ -4,7 +4,7 @@
   let scope = '', classId = null;
   const drafts = new Map(), views = new Map();
   let folderContext = '', folderRequest = 0, folders = [], folderAssignments = {}, canOrganize = false, folderBusy = false, editingFolder = null;
-  const collapsedFolders = new Map();
+  const openedFolders = new Set();
   const DRAG_TYPE = 'application/x-eagle-assignment';
   const byId = id => document.getElementById(id);
   const fingerprint = a => JSON.stringify([a.task, a.maxScore, a.aiGradingMode, a.aiGradingCriteria,
@@ -16,7 +16,7 @@
     scope = next;
     drafts.clear(); views.clear(); classId = null;
     folders = []; folderAssignments = {}; canOrganize = false; folderBusy = false; folderContext = ''; folderRequest++;
-    collapsedFolders.clear();
+    openedFolders.clear();
     updateFolderChooser();
     const workspace = byId('assignmentWorkspace');
     if (workspace) workspace.innerHTML = emptyWorkspace;
@@ -42,6 +42,7 @@
     setScope(nextScope);
     if (classId !== nextClass) {
       classId = nextClass;
+      openedFolders.clear();
       if (byId('assignmentLibrarySearch')) byId('assignmentLibrarySearch').value = '';
       if (byId('assignmentLibraryFilter')) byId('assignmentLibraryFilter').value = 'all';
       if (byId('assignmentLibrarySort')) byId('assignmentLibrarySort').value = 'newest';
@@ -124,9 +125,7 @@
   }
 
   function groupLibrary(list, cards, filtering) {
-    let collapsed = collapsedFolders.get(classId);
-    if (!collapsed) { collapsed = new Set(); collapsedFolders.set(classId,collapsed); }
-    const groups = [...folders].sort((a,b)=>a.name.localeCompare(b.name)).concat([{id:'',name:'Unfiled'}]);
+    const groups = [{id:'',name:'Unfiled'}, ...[...folders].sort((a,b)=>a.name.localeCompare(b.name))];
     list.replaceChildren();
     groups.forEach(folder=>{
       const children = cards.filter(card=>(folderAssignments[card.querySelector('.assignment-title-row').dataset.id] || '') === folder.id);
@@ -135,12 +134,13 @@
       section.hidden = filtering && !visible;
       const header = document.createElement('div'); header.className = 'assignment-folder-header';
       const toggle = document.createElement('button'); toggle.className = 'assignment-folder-toggle'; toggle.type = 'button';
-      const expanded = filtering || !collapsed.has(folder.id);
+      const expanded = !folder.id || filtering || openedFolders.has(folder.id);
       toggle.setAttribute('aria-expanded',String(expanded));
       const label = document.createElement('span'); label.textContent = `${expanded ? '▾' : '▸'} ${folder.id ? '📁' : '▤'} ${folder.name}`;
       const count = document.createElement('small'); count.textContent = String(visible); toggle.append(label,count); header.append(toggle);
       const body = document.createElement('div'); body.className = 'assignment-folder-cards'; body.hidden = !expanded;
-      toggle.onclick = ()=>{ if (collapsed.has(folder.id)) collapsed.delete(folder.id); else collapsed.add(folder.id); filterLibrary(); list.querySelector(`[data-folder-id="${folder.id}"] .assignment-folder-toggle`)?.focus(); };
+      if (folder.id) toggle.onclick = ()=>{ if (openedFolders.has(folder.id)) openedFolders.delete(folder.id); else openedFolders.add(folder.id); filterLibrary(); list.querySelector(`[data-folder-id="${folder.id}"] .assignment-folder-toggle`)?.focus(); };
+      else toggle.disabled = true;
       if (folder.id && canOrganize) {
         const rename = document.createElement('button'); rename.className = 'assignment-folder-tool'; rename.type = 'button'; rename.textContent = 'Rename'; rename.disabled = folderBusy;
         rename.setAttribute('aria-label',`Rename ${folder.name}`); rename.onclick = ()=>editFolder(folder);
@@ -424,5 +424,12 @@
       mutateFolder({action:editingFolder ? 'rename' : 'create',folderId:editingFolder || '',name:byId('assignmentFolderName').value});
     });
   });
-  window.TeacherAssignments = { prepare, setScope, clear, decorate, enhanceComposer };
+  function beginVisit() {
+    openedFolders.clear();
+    if (byId('assignmentLibrarySort')) byId('assignmentLibrarySort').value = 'newest';
+    if (byId('assignmentLibrarySearch')) byId('assignmentLibrarySearch').value = '';
+    if (byId('assignmentLibraryFilter')) byId('assignmentLibraryFilter').value = 'all';
+    filterLibrary();
+  }
+  window.TeacherAssignments = { prepare, setScope, clear, decorate, enhanceComposer, beginVisit };
 })();

@@ -3,7 +3,7 @@
   'use strict';
 
   const definitions = {
-    adminCleanup: ['/static/js/admin-cleanup.js?v=20261023-cleanup-1'],
+    adminCleanup: ['/static/js/admin-cleanup.js?v=20261109-history'],
     externalToolsAdmin: ['/static/js/external-tools-admin.js?v=20261020-storage-1'],
     eagleLab: ['/static/js/lab-report-content.js?v=20261103', '/static/js/eagle-lab.js?v=20261103', '/static/js/lab-manual.js?v=20261103', '/static/js/lab-report-editor.js?v=20261103'],
     network: [

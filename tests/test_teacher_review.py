@@ -96,7 +96,9 @@ class TeacherReviewTestCase(unittest.TestCase):
         a = eagle._load_assignment(a['id'])
         now = datetime.now(timezone.utc)
         until = datetime.fromisoformat(a['studentExtensions'][self.student_email]['until'].replace('Z','+00:00'))
-        self.assertAlmostEqual((until-now).total_seconds(),3*86400,delta=3)
+        self.assertEqual((until.hour, until.minute), (1, 1))
+        self.assertEqual(sum((now + timedelta(days=offset)).weekday() < 5
+                             for offset in range(1, (until.date() - now.date()).days + 1)), 3)
         selected = workflow.student_state(eagle,a,self.student_email,now=now)
         other = workflow.student_state(eagle,a,self.missing_email,now=now)
         self.assertTrue(selected['canSubmit'])

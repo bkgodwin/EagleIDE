@@ -25,6 +25,7 @@ Required runtime components:
 |-- app.py                       Main Flask/Socket.IO app, APIs, auth, persistence, and runners
 |-- assignment_workflow.py       Private deadlines/windows, submission bundles/history, and previews
 |-- assignment_development.py    Controlled assignment files, clipboard policy, and private delta timelines
+|-- workspace_history.py         Bounded editor recording, submission clips, and retention jobs
 |-- assignment_organization.py   Owner-managed class folders, atomic assignment membership, and folder authorization
 |-- file_provenance.py           Bounded paste ranges outside workspaces; submission snapshots use UTF-16 offsets
 |-- notebook_practice.py         Bounded practice feedback, revision guards, and protected notebook checks
@@ -86,6 +87,7 @@ Required runtime components:
 |       |-- teacher-assignments.js Teacher assignment library, section navigation, draft retention, and composer presentation
 |       |-- assignment-workflow.js Collapsed assignment cards, attachments, feedback, and presentation
 |       |-- assignment-development.js Clipboard guards, one-second changed-code sampling, and bounded retry journal
+|       |-- workspace-history.js Changed-only workspace recording and bounded IndexedDB retry
 |       |-- file-provenance.js     Silent editor paste ranges, edit remapping, and bounded undo/redo recovery
 |       |-- workspace-data.js    Paged editable CSV grid and lazy JSON tree/source controls
 |       |-- server-performance.js On-demand admin CPU graphs; browser history only
@@ -154,6 +156,7 @@ Required runtime components:
 |   |-- assignment_workflow_ui.test.js Current/past cards, submission state, and attachment rendering
 |   |-- test_assignment_development.py Controlled file identity, timeline persistence, playback auth, and cleanup
 |   |-- assignment_development_ui.test.js Changed-only sampling, Unicode deltas, retries, and clipboard guards
+|   |-- test_workspace_history.py Workspace history, stable file identities, retention, and extensions
 |   |-- test_teacher_review.py    Individual make-up access, score races/validation, and paste snapshots
 |   |-- file_provenance_ui.test.js Paste range edits, undo/redo, and escaped teacher highlights
 |   |-- wiki_reference_ui.test.js Class-local agenda dates and stale reference response guards
@@ -460,9 +463,9 @@ Assignment AI grading uses a durable background queue sorted by student name for
 The default legacy grader categorizes deductions as core, objective, execution, or incidental; the saved 1–10 rigor level controls which categories count, caps incidental deductions at two points, and limits no-effort scores. The per-assignment `rubric_beta` mode instead uses only teacher-selected criteria and an explicitly accepted rubric. The `external` mode reuses the selected criteria and validated point rubric but disables the built-in queue. Its owner-only package route exports a system prompt, assignment/rubric, and code keyed only by normalized student email; it excludes stored student names, class/teacher identity, filenames, timestamps, and EagleIDE's generated submission header. Its multipart CSV import requires the exact `student_email,score,feedback` schema and a complete, unique current submission set, then atomically saves scores and feedback. `ASSIGNMENT_GRADING_CRITERIA` in `app.py` supplies the checklist catalog. Rubric generation uses the shared dispatcher and returns an unsaved draft plus a context hash. Accepted plain-text headings use exact criterion labels followed by `(N points)` and a final `Total: N points` line; server validation enforces total/per-criterion budgets and complete selected-criterion evaluation. Description, maximum-score, or checklist changes invalidate acceptance. Queued/running grading settings are fingerprinted so stale results cannot overwrite scores. Browser assignment refreshes preserve unsaved grader drafts. Legacy rigor and automatic deductions never apply to beta or external results.
 Each assignment has a stable `createdAt` value for chronological teacher views; legacy records receive a timestamp from their metadata file on first load. The Teacher Dashboard uses a searchable, filterable assignment library beside a workspace with Submissions, Overview, Grading setup, and Manage sections. `teacher-assignments.js` moves the existing bound controls into these sections and groups the create/edit form; mutation handlers remain in `app-core.js` and `assignment-workflow.js`. Grading drafts stay in memory across assignment switches, are scoped to the current authentication context, and are restored only while the saved grading context matches. The dashboard styles live in `features/teacher-assignments.css`. The right-side teacher Assignment tab presents only unlocked assignments from the selected class.
 
-The assignment library and workspace scroll independently. Library cards default to newest first within each folder; open assignments have a distinct highlight. `assignment_organization.py` stores named, flat class folders and assignment memberships atomically under `assignments/.organization/`, using hashed class filenames and the assignment lock. Only the class owner may organize folders; current CoTeachers may read them. Folder deletion moves work to Unfiled without deleting assignments. Drag-and-drop and the Manage section's folder selector use the same protected endpoint, and stale class/account responses must never repaint the current library.
+The assignment library and workspace scroll independently. Fresh visits show Unfiled first, collapse named folders, and sort cards newest first within each group. Returning from a submission retains the visit. `assignment_organization.py` stores named, flat class folders and assignment memberships atomically under `assignments/.organization/`, using hashed class filenames and the assignment lock. Only the class owner may organize folders; current CoTeachers may read them. Folder deletion moves work to Unfiled without deleting assignments. Drag-and-drop and the Manage section's folder selector use the same protected endpoint, and stale class/account responses must never repaint the current library.
 
-Finalize grading applies to every assignment, not only controlled files. It closes submissions, prevents reactivation/extensions, and purges development databases and obsolete recording bindings. Pending AI grading must finish or be canceled first. Keep all retained submission versions, quiz answers, scores, feedback, and student workspace files. Assignment deletion or class deletion removes the corresponding private submission copies and recording storage; class deletion must not remove another class's data or student workspace files. Creation, copying, class deletion, folder mutations, and finalization share the assignment lock.
+Finalize grading closes submissions and playback and durably schedules removal of the assignment's history clips and legacy development store within 72 hours. Pending AI grading must finish or be canceled first. Keep submitted versions, quiz answers, scores, feedback, and workspace files. Shared clips stay pinned by other unfinished assignments. Assignment or class deletion releases the associated pins. Creation, copying, class deletion, folder mutations, and finalization share the assignment lock.
 
 `assignment_workflow.py` is registered against the loaded app module and owns assignment file submissions, protected read-only attachment previews, teacher feedback editing, un-submit, and roster accommodation/window routes. Student Resources has collapsed Current/Past cards with personalized deadlines. Private per-class `accommodations[email]` never appear in student class summaries; only that student's effective deadline/note are returned. Extended deadlines skip Saturday/Sunday in the class IANA time zone; `tzdata` supplies zones on hosts without an OS catalog. No-deadline work moves to Past on the ordinary deadline but remains submittable while explicitly unlocked. Weekday submission windows gate files and quizzes equally; an assignment may bypass its class window. Only the class owner manages accommodations/windows/un-submit; class co-teachers may view attachments/history and edit feedback under existing assignment-access checks.
 
@@ -475,10 +478,12 @@ cache, invalidated by assignment saves. The browser guards code editors, textare
 cut, paste, copy, and dropping text; teacher/admin views remain exempt. This is a
 browser deterrent, never an authorship guarantee.
 
-Assignment `fileControl` and `fileControlExtension` are fixed at creation and
-require single-file submissions. Provision the collision-safe title-based Home
-file once when a released assignment is loaded by its student; never overwrite
-or recreate a binding. Submission validation uses that exact workspace identity.
+New standard assignments use a single Turn in picker for workspace files or
+uploads. Teachers select one or multiple files and In class only or Any time.
+Existing quiz-only assignments and Lab Reports retain their rules. Legacy
+controlled assignments use the same picker and can still expose the original
+Home file and retained recordings. Preserve existing bindings and never
+overwrite or recreate the original file.
 Move/rename/delete/upload guards and Python worker write guards protect the file
 through the student's effective deadline (including accommodations/make-ups and
 manual reopen), or indefinitely without a deadline until grading completion.
@@ -505,19 +510,34 @@ Limits: 2 MB source, 30 frames /
 and a 512 MB server recording budget checked at most every 30 seconds. Limit or
 network failures must remain visible and never prevent saving source. Device
 times are untrusted; accept bounded delayed uploads up to seven days old.
-Owner-only grading completion closes submissions permanently, stops recording,
-releases file protection, and deletes the recording database while retaining
-bindings, immutable submissions, feedback, and scores. Copy the assignment for a
-new recorded attempt. Serialize history access/purge with `_assignment_lock` and
-take it before the workspace provenance lock; never recreate a purged recording.
+Legacy history access and cleanup share `_assignment_lock`; take it before
+the workspace provenance lock. Inactive unsubmitted legacy streams expire
+after 14 days. Keep legacy submitted recordings until finalization.
 
-Owner-only `/api/assignments/extend-student` grants/removes an individual make-up
-window for a previously released assignment, including locked/past work. Days
-mean calendar days from the grant (1–365; 0 removes). During that window only the
-selected currently enrolled student bypasses ordinary locks, deadlines, and school
-hours, with at least one additional file/quiz attempt if limits were exhausted.
-Keep counts, scores, and submission evidence; never globally unlock the assignment
-or expose its private `studentExtensions` map to students.
+Students request an extension for released work with a private reason of up to
+500 characters. Only the class owner sees requests and approves, denies, or
+changes the requested days. Grants use configured school days and local dismissal.
+Positive grants retain the assignment's submission hours. An explicit zero-day
+grant bypasses the class window through today's dismissal and preserves a later
+deadline. Legacy zero-day requests still revoke a grant. Keep per-student
+extension data and reasons out of class-wide payloads.
+
+`workspace_history.py` stores rolling compressed edit frames and immutable
+submission clips under `assignments/.workspace-history/`, outside workspaces.
+Record changed editor text every two seconds, batch with jitter around 15
+seconds, and bound browser retry to 2 MiB. Capture supports text up to 256 KiB.
+A bounded writer commits batches independently of workspace saves. Server
+timestamps bound the released-assignment clip and retention, while device times
+and recorded class schedules supply the playback clock. Rename, move, Trash and
+restore retain file identity. Require a current teacher or CoTeacher and the
+specific assignment, student, revision and attachment before returning source.
+Discard rolling data after 14 days. Preserve pinned submitted ranges until
+finalization and distinguish partial recordings. Administrator Trash cleanup
+shows rolling/pinned usage. Enforce a 2 GiB total budget, a 1 GiB rolling budget,
+64 MiB per workspace, 16 MiB per file, and a free disk floor. Apply the same
+retention policy to any operator-managed backups of this private store.
+`EAGLE_WORKSPACE_HISTORY_ENABLED=0` pauses new
+capture while preserving replay and scheduled cleanup.
 
 `file-provenance.js` tracks paste events in the student's text editor without
 student-facing indicators. `file_provenance.py` stores bounded UTF-16 ranges and

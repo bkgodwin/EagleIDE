@@ -15,6 +15,7 @@ function element() {
     scrollTop:0, scrollLeft:0, clientHeight:100, clientWidth:200, listeners:{},
     classList:{add:x=>classes.add(x), remove:x=>classes.delete(x), contains:x=>classes.has(x), toggle(){}},
     set innerHTML(html) {
+      this.rawHTML = html;
       children.clear();
       for (const match of html.matchAll(/class="([^"]+)"/g)) {
         const child = element();
@@ -22,6 +23,7 @@ function element() {
       }
       if (children.has('.development-speed')) children.get('.development-speed').value = '1';
     },
+    get innerHTML() {return this.rawHTML;},
     querySelector:s=>children.get(s) || null, querySelectorAll:()=>[],
     setAttribute(key,value){this[key]=value;}, addEventListener(key,fn){this.listeners[key]=fn;},
     replaceChildren(){children.clear();}, focus(){}, remove(){this.isConnected=false;},
@@ -140,7 +142,7 @@ test('empty or purged recordings disable all playback controls',async()=>{
   for(const purged of [false,true]) {
     const s=await setup({count:0,request:url=>url.includes('index=')?{ok:true,json:async()=>({ok:true,total:0,gradingCompletedAt:purged?'date':null})}:null});
     for(const control of ['play','seek','previous','next']) assert.equal(s.node(control).disabled,true);
-    assert.match(s.node('summary').textContent,purged?/timelines deleted/:/No code changes/);
+    assert.match(s.node('summary').textContent,purged?/Grading finalized/:/No edit history/);
     assert.equal(s.source(),'submitted code');
   }
 });
@@ -148,13 +150,14 @@ test('empty or purged recordings disable all playback controls',async()=>{
 test('modal history uses the same controls, time hint and follow-edits behavior',async()=>{
   const s=await setup();const root=element(), button=element();
   button.dataset={email:'student'};root.querySelectorAll=selector=>selector==='.assignment-development-open'?[button]:[];
-  s.api.bindTeacher(root,{id:'a',name:'Project',targetClassId:'class',submissions:[]},false);
+  s.api.bindTeacher(root,{id:'a',name:'Project',targetClassId:'class',
+    submissions:[{email:'student',revisionId:'revision',files:[{id:'attachment',name:'Project.py'}]}]},false);
   await button.onclick();const modal=s.modal();
   assert.match(modal.querySelector('.development-summary').textContent,/Completion time hint: 6.0 min/);
-  assert.equal(modal.querySelector('.development-source').textContent,'0');
+  assert.equal(modal.querySelector('.development-source').innerHTML,'0');
   modal.querySelector('.development-follow').checked=false;
   await modal.querySelector('.development-next').onclick();
-  assert.equal(modal.querySelector('.development-source').textContent,'01');
+  assert.equal(modal.querySelector('.development-source').innerHTML,'01');
   modal.querySelector('.assignment-modal-close').onclick();assert.equal(modal.isConnected,false);
 });
 

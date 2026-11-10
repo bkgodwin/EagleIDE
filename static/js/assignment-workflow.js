@@ -31,21 +31,96 @@
     cm?.operation(() => (ranges || []).forEach(([start,end]) => editorMarks.push(cm.markText(cm.posFromIndex(start),cm.posFromIndex(end),{className:'assignment-pasted-text'}))));
   }
   function teacherToolbar(a, owner) {
-    return `<div class="assignment-review-tools">${owner ? '<button type="button" class="btn secondary assignment-extend">Extend for a student…</button>' : ''}${a.quiz?.questions?.some(q => ['written','written_code'].includes(q.type)) ? '<button type="button" class="btn secondary assignment-grade-question">Grade written responses by question</button>' : ''}<label><input type="checkbox" class="assignment-paste-toggle" ${highlights ? 'checked' : ''}> Highlight pasted text</label><span class="meta">A paste event does not identify its source.</span></div>`;
+    return `<div class="assignment-review-tools">${owner ? `<button type="button" class="btn secondary assignment-extension-requests">Extension requests${a.pendingExtensionRequests ? ` <span class="assignment-request-count">${a.pendingExtensionRequests}</span>` : ''}</button><button type="button" class="btn secondary assignment-extend">Grant extension</button>` : ''}${a.quiz?.questions?.some(q => ['written','written_code'].includes(q.type)) ? '<button type="button" class="btn secondary assignment-grade-question">Grade written responses by question</button>' : ''}<label><input type="checkbox" class="assignment-paste-toggle" ${highlights ? 'checked' : ''}> Highlight pasted text</label></div>`;
   }
   function extendStudent(a, email = '') {
     const roster = bridge.roster(a.targetClassId);
-    const m = modal('Make-up / retest extension', `<p>Reopen this assignment for one student for the selected number of calendar days, starting now. Includes one additional file and question attempt if needed, at any time of day. Previous submissions and grades are kept.</p><label>Student<select class="extension-student">${roster.map(s => `<option value="${esc(s.email)}" ${email === s.email ? 'selected' : ''}>${esc([s.first_name ?? s.name,s.last_name].filter(Boolean).join(' ') || s.email)}</option>`).join('')}</select></label><label>Days from now<input class="extension-days" type="number" min="1" max="365" step="1" value="3"></label><p class="extension-current"></p><p role="status"></p><div class="modal-actions"><button type="button" class="btn secondary extension-remove">Remove extension</button><button type="button" class="btn run extension-save">Reopen for student</button></div>`);
+    const m = modal('Grant extension', `<p>Enter school days. Use 0 to reopen submissions through today’s dismissal.</p><label>Student<select class="extension-student">${roster.map(s => `<option value="${esc(s.email)}" ${email === s.email ? 'selected' : ''}>${esc([s.first_name ?? s.name,s.last_name].filter(Boolean).join(' ') || s.email)}</option>`).join('')}</select></label><label>School days<input class="extension-days" type="number" min="0" max="365" step="1" value="1" required></label><p class="extension-current"></p><p role="status"></p><div class="modal-actions"><button type="button" class="btn secondary extension-remove">Revoke extension</button><button type="button" class="btn run extension-save">Preview deadline</button></div>`);
     const student = m.root.querySelector('.extension-student');
     const update = () => {const until=a.studentExtensions?.[student.value]?.until; m.root.querySelector('.extension-current').textContent = until ? `Current make-up deadline: ${date(until)}` : 'No individual make-up deadline.';};
     student.onchange = update; update();
-    const save = async days => {
+    const save = async (action, days) => {
       const buttons = m.root.querySelectorAll('.modal-actions button'); buttons.forEach(b => b.disabled=true);
-      try {await mutate('/api/assignments/extend-student',{assignmentId:a.id,studentEmail:student.value,days}); m.close(); await bridge.reloadAssignments();}
-      catch(error) {m.root.querySelector('[role="status"]').textContent=error.message; buttons.forEach(b => b.disabled=false);}
+      try {
+        const payload = {assignmentId:a.id, studentEmail:student.value, days};
+        if (action === 'grant' && !await confirmExtension(payload)) return;
+        await mutate('/api/assignments/extend-student',{...payload, action}); m.close(); await bridge.reloadAssignments();
+      } catch(error) {m.root.querySelector('[role="status"]').textContent=error.message;}
+      finally {buttons.forEach(b => b.disabled=false);}
     };
-    m.root.querySelector('.extension-save').onclick = () => {const input=m.root.querySelector('.extension-days'); if(input.reportValidity()) save(Number(input.value));};
-    m.root.querySelector('.extension-remove').onclick = () => save(0);
+    m.root.querySelector('.extension-save').onclick = () => {const input=m.root.querySelector('.extension-days'); if(input.reportValidity()) save('grant', Number(input.value));};
+    m.root.querySelector('.extension-remove').onclick = () => save('revoke');
+  }
+
+  function classDate(value, zone) {
+    if (!value) return 'No due date';
+    return new Intl.DateTimeFormat(undefined, {dateStyle:'medium', timeStyle:'short', ...(zone ? {timeZone:zone} : {})}).format(new Date(value));
+  }
+
+  async function confirmExtension(payload) {
+    const preview = await mutate('/api/assignments/extend-student', {...payload, action:'preview'});
+    const zone = preview.timeZone;
+    return confirm(`Reopen through ${classDate(preview.extension.until, zone)}${zone ? ` (${zone})` : ''}?\n${preview.submissionWindowMessage || 'Submission is available through this deadline.'}`);
+  }
+
+  function requestExtension(a) {
+    if (!a) return;
+    const m = modal(`Request extension · ${a.name}`, '<form class="assignment-extension-form"><label>School days<input name="days" type="number" min="0" max="365" step="1" value="1" required></label><p>Use 0 to request the rest of today’s school day.</p><label>Reason<textarea name="reason" rows="4" maxlength="500" required></textarea></label><p role="status"></p><div class="modal-actions"><button class="btn run" type="submit">Send request</button></div></form>');
+    const form = m.root.querySelector('form');
+    const auth = JSON.stringify(bridge.studentHeaders());
+    form.onsubmit = async event => {
+      event.preventDefault();
+      if (auth !== JSON.stringify(bridge.studentHeaders())) return m.close();
+      const button = form.querySelector('button');
+      button.disabled = true;
+      try {
+        await mutate('/api/assignments/extension-requests', {assignmentId:a.id, days:Number(form.elements.days.value), reason:form.elements.reason.value}, true);
+        m.close();
+        if (auth === JSON.stringify(bridge.studentHeaders())) await bridge.reloadAssignments();
+      } catch (error) {
+        form.querySelector('[role="status"]').textContent = error.message;
+        button.disabled = false;
+      }
+    };
+  }
+
+  async function reviewExtensions(a) {
+    const m = modal(`Extension requests · ${a.name}`, '<div class="assignment-request-list" aria-live="polite">Loading requests…</div>');
+    const host = m.root.querySelector('.assignment-request-list');
+    const headers = bridge.managerHeaders(), auth = JSON.stringify(headers);
+    const valid = () => m.root.isConnected && auth === JSON.stringify(bridge.managerHeaders());
+    try {
+      const {requests} = await json(`/api/assignments/extension-requests?${new URLSearchParams({assignmentId:a.id})}`, {headers});
+      if (!valid()) return;
+      host.innerHTML = requests.map((row, index) => `<article class="assignment-request"><div><strong>${esc(row.name)}</strong><span>${esc(row.status)} · ${esc(date(row.requestedAt))}</span></div><p>${esc(row.reason)}</p>${row.status === 'pending' && !a.gradingCompletedAt
+        ? `<form data-request="${index}"><label>School days<input name="days" type="number" min="0" max="365" step="1" value="${row.days}" required></label><button type="submit" class="btn run">Approve</button><button type="button" class="btn secondary assignment-request-deny">Deny</button><span role="status"></span></form>`
+        : `<small>${row.status === 'approved' ? `Approved for ${row.approvedDays} school days · ${esc(date(row.until))}` : `${row.days} school days requested`}</small>`}</article>`).join('') || '<p>No extension requests yet.</p>';
+      host.querySelectorAll('form').forEach(form => {
+        const row = requests[Number(form.dataset.request)];
+        const decide = async action => {
+          if (!valid()) return;
+          const buttons = form.querySelectorAll('button');
+          buttons.forEach(button => button.disabled = true);
+          const payload = {assignmentId:a.id, studentEmail:row.studentEmail, requestId:row.id, days:Number(form.elements.days.value)};
+          try {
+            if (action === 'approve' && !await confirmExtension(payload)) return;
+            if (!valid()) return;
+            await mutate('/api/assignments/extend-student', {...payload, action});
+            if (!valid()) return;
+            form.replaceWith(Object.assign(document.createElement('p'), {textContent:action === 'approve' ? 'Extension approved' : 'Extension denied'}));
+            await bridge.reloadAssignments();
+          } catch(error) {
+            if (valid()) form.querySelector('[role="status"]').textContent = error.message;
+          } finally {
+            buttons.forEach(button => button.disabled = false);
+          }
+        };
+        form.onsubmit = event => { event.preventDefault(); decide('approve'); };
+        form.querySelector('.assignment-request-deny').onclick = () => decide('deny');
+      });
+    } catch(error) {
+      if (valid()) host.textContent = error.message;
+    }
   }
 
   async function json(url, options = {}) {
@@ -83,10 +158,10 @@
     const mayAttempt = !past || a.deadlineOpen;
     const total = s?.totalScore ?? s?.codeScore;
     return `<details class="assignment-card student-assignment-card ${past ? 'is-past' : ''}" data-assignment-id="${esc(id)}" ${expanded.has(id) ? 'open' : ''}>
-      <summary><span class="assignment-title-copy"><strong>${submitted(a) ? '<span class="assignment-submitted-check" aria-label="Submitted">✓</span> ' : ''}${esc(a.name)}</strong><span class="assignment-title-due">${a.dueAt ? `Due ${esc(date(a.dueAt))}` : 'No due date'}</span></span>${s ? `<span class="assignment-card-state">${s.withdrawn ? 'Un-submitted by teacher' : total != null ? `${esc(total)} / ${bridge.maxScore(a)}` : 'Submitted'}</span>` : ''}</summary>
+      <summary><span class="assignment-title-copy"><strong>${submitted(a) ? '<span class="assignment-submitted-check" aria-label="Submitted">✓</span> ' : ''}${esc(a.name)}</strong><span class="assignment-title-due">${a.dueAt ? `Due ${esc(classDate(a.dueAt, a.timeZone))}` : 'No due date'}</span></span>${s ? `<span class="assignment-card-state">${s.withdrawn ? 'Un-submitted by teacher' : total != null ? `${esc(total)} / ${bridge.maxScore(a)}` : 'Submitted'}</span>` : ''}</summary>
       <div class="assignment-card-body">
         ${a.accommodationNote ? `<p class="assignment-accommodation-note">${esc(a.accommodationNote)}</p>` : ''}
-        ${a.fileControl ? `<p class="assignment-window-note">${a.controlledFilePath ? `Work in <strong>${esc(a.controlledFilePath)}</strong>. Only this file can be submitted. ${a.gradingCompletedAt ? 'Development recording is complete.' : 'Changed code is recorded for teacher review.'}` : esc(a.fileControlError || 'The assignment file will appear when this assignment is open.')}</p>${a.controlledFilePath ? `<button type="button" class="btn secondary assignment-open-controlled" data-path="${esc(a.controlledFilePath)}">Open assignment file</button>` : ''}` : ''}
+        ${a.controlledFilePath ? `<button type="button" class="btn secondary assignment-open-controlled" data-path="${esc(a.controlledFilePath)}">Open original assignment file</button>` : ''}
         <div class="task assignment-markdown" data-assignment-markdown="${esc(id)}">${esc(a.task || '(No task description)')}</div>
         <div class="meta">Maximum score: ${bridge.maxScore(a)}${a.maxFileSubmissions ? ` · File attempts: ${s?.fileSubmissionCount || 0} / ${a.maxFileSubmissions}` : ''}</div>
         ${a.quiz?.questions?.length ? `<div class="meta">Questions: ${s?.quizAnsweredCount || 0} / ${a.quiz.questions.length} answered${a.quizSettings?.maxSubmissions ? ` · ${a.quizSettings.maxSubmissions} quiz attempt(s)` : ''}</div>` : ''}
@@ -95,9 +170,11 @@
         ${s?.aiFeedback ? `<details class="assignment-feedback-details"><summary>View teacher feedback</summary>${bridge.feedback(s.aiFeedback, {audience:'student'})}</details>` : ''}
         <div class="assignment-actions">
           ${s ? `<button type="button" class="btn secondary view-student-submission-btn" data-id="${esc(id)}">View submission</button><button type="button" class="btn secondary view-score-report-btn" data-id="${esc(id)}">Score report</button>` : ''}
-          ${mayAttempt && a.allowFileSubmission !== false ? `<button type="button" class="btn run submit-assignment-btn" data-id="${esc(id)}" ${canSubmit && a.canSubmitFiles !== false ? '' : 'disabled'}>${submitted(a) ? 'Resubmit' : 'Submit files'}</button>` : ''}
+          ${mayAttempt && a.allowFileSubmission !== false ? `<button type="button" class="btn run submit-assignment-btn" data-id="${esc(id)}" ${canSubmit && a.canSubmitFiles !== false ? '' : 'disabled'}>${submitted(a) ? 'Turn in again' : 'Turn in'}</button>` : ''}
           ${mayAttempt && a.quiz?.questions?.length ? `<button type="button" class="btn secondary open-questions-btn" data-id="${esc(id)}" ${canSubmit && a.canSubmit !== false ? '' : 'disabled'}>${a.assignmentType === 'lab_report' ? 'Open lab report' : `Questions (${a.quiz.questions.length})`}</button>` : ''}
+          ${!a.gradingCompletedAt && a.releasedAt && a.extensionRequest?.status !== 'pending' ? `<button type="button" class="btn secondary assignment-request-extension" data-id="${esc(id)}">Request extension</button>` : ''}
         </div>
+        ${a.extensionRequest ? `<p class="assignment-extension-state" role="status">Extension request ${esc(a.extensionRequest.status)}${a.extensionRequest.status === 'approved' ? ` · through ${esc(date(a.extensionRequest.until))}` : ''}</p>` : ''}
       </div></details>`;
   }
 
@@ -105,6 +182,7 @@
     root.querySelectorAll('.assignment-open-controlled').forEach(button => button.onclick = () => bridge.openPath(button.dataset.path));
     root.querySelectorAll('.student-assignment-card').forEach(detail => detail.addEventListener('toggle', () => {if (detail.open) expanded.add(detail.dataset.assignmentId); else expanded.delete(detail.dataset.assignmentId);}));
     root.querySelectorAll('.submit-assignment-btn').forEach(button => button.onclick = () => submitDialog(button.dataset.id));
+    root.querySelectorAll('.assignment-request-extension').forEach(button => button.onclick = () => requestExtension(bridge.assignment(button.dataset.id)));
     root.querySelectorAll('.view-student-submission-btn').forEach(button => button.onclick = () => openFiles(button.dataset.id));
     root.querySelectorAll('.open-questions-btn').forEach(button => button.onclick = () => bridge.questions(button.dataset.id));
     root.querySelectorAll('.view-score-report-btn').forEach(button => button.onclick = () => bridge.scoreReport(button.dataset.id));
@@ -127,23 +205,32 @@
     const a = bridge.assignment(reference);
     if (!a || !bridge.studentHeaders()['X-User-Token']) return;
     if (a.allowFileSubmission === false || a.canSubmitFiles === false) return alert(a.submissionWindowMessage || 'Submissions are currently unavailable.');
-    const files = a.fileControl ? (a.controlledFilePath ? [{path:a.controlledFilePath,size:0}] : []) : bridge.files().filter(f => !f.in_trash && !String(f.path).startsWith('Trash/'));
+    const files = bridge.files().filter(f => !f.in_trash && !String(f.path).startsWith('Trash/'));
     const open = bridge.openFile();
     const selected = files.some(f => f.path === open?.path) ? open.path : files[0]?.path;
-    const multi = !!a.allowMultiFileSubmission && !a.fileControl;
-    const m = modal(`Submit: ${a.name}`, `<p>Choose ${multi ? 'the files' : 'one file'} to submit. Your currently open file is selected by default.</p>
-      ${multi ? `<div class="assignment-file-choices">${files.map(f => `<label><input type="checkbox" name="workspaceFile" value="${esc(f.path)}" ${f.path === selected ? 'checked' : ''}><span>${esc(f.path)}</span><small>${size(f.size)}</small></label>`).join('') || '<p>No workspace files yet. You can upload attachments below.</p>'}</div><label class="assignment-upload-label">Add attachments of any type<input type="file" id="assignmentUploadFiles" multiple></label><small>Up to 20 files and 25 MB total. Uploaded attachments may total up to 15 MB.</small>` : `<label for="assignmentFileSelect">File to submit</label><select id="assignmentFileSelect">${files.map(f => `<option value="${esc(f.path)}" ${f.path === selected ? 'selected' : ''}>${esc(f.path)}</option>`).join('')}</select>`}
-      <p class="assignment-dialog-status" role="status"></p><div class="modal-actions"><button type="button" class="btn run assignment-submit-selected">Submit ${multi ? 'files' : 'file'}</button></div>`, 'assignment-submit-dialog');
+    const multi = !!a.allowMultiFileSubmission;
+    const m = modal(`Turn in · ${a.name}`, `<p>Choose ${multi ? 'the files' : 'one file'} to turn in. Available edit history and pasted-text marks travel with submitted workspace files.</p>
+      ${multi ? `<div class="assignment-file-choices">${files.map(f => `<label><input type="checkbox" name="workspaceFile" value="${esc(f.path)}" ${f.path === selected ? 'checked' : ''}><span>${esc(f.path)}</span><small>${size(f.size)}</small></label>`).join('') || '<p>No workspace files yet. You can upload attachments below.</p>'}</div>` : `<label for="assignmentFileSelect">Workspace file</label><select id="assignmentFileSelect"><option value="">Choose a file or upload below</option>${files.map(f => `<option value="${esc(f.path)}" ${f.path === selected ? 'selected' : ''}>${esc(f.path)}</option>`).join('')}</select>`}
+      <label class="assignment-upload-label">${multi ? 'Add attachments' : 'Or upload a file'}<input type="file" id="assignmentUploadFiles" ${multi ? 'multiple' : ''}></label>
+      <small>${multi ? 'Up to 20 files and 25 MB total. ' : ''}Uploads may total up to 15 MB.</small>
+      ${a.quiz?.questions?.length ? `<p class="meta">Questions answered ${a.studentSubmissionSummary?.quizAnsweredCount || 0} of ${a.quiz.questions.length}. ${a.studentSubmissionSummary?.quizComplete ? 'Answers are saved.' : 'You can finish the questions after turning in your files.'}</p>` : ''}
+      <p class="assignment-dialog-status" role="status"></p><div class="modal-actions"><button type="button" class="btn run assignment-submit-selected">Turn in</button></div>`, 'assignment-submit-dialog');
     const status = m.root.querySelector('[role="status"]'), button = m.root.querySelector('.assignment-submit-selected');
+    if (!multi) {
+      const select = m.root.querySelector('#assignmentFileSelect'), upload = m.root.querySelector('#assignmentUploadFiles');
+      select.onchange = () => {if (select.value) upload.value = '';};
+      upload.onchange = () => {if (upload.files.length) select.value = '';};
+    }
     const auth = JSON.stringify(bridge.studentHeaders());
     button.onclick = async () => {
-      const paths = multi ? [...m.root.querySelectorAll('[name="workspaceFile"]:checked')].map(input => input.value) : [m.root.querySelector('#assignmentFileSelect')?.value].filter(Boolean);
       const uploads = [...(m.root.querySelector('#assignmentUploadFiles')?.files || [])];
+      const paths = multi ? [...m.root.querySelectorAll('[name="workspaceFile"]:checked')].map(input => input.value) : uploads.length ? [] : [m.root.querySelector('#assignmentFileSelect')?.value].filter(Boolean);
       if (!paths.length && !uploads.length) {status.textContent = 'Choose at least one file.'; return;}
       if (paths.length + uploads.length > 20 || uploads.reduce((sum, f) => sum + f.size, 0) > 15 * 1024 * 1024) {status.textContent = 'Choose at most 20 files, with uploaded attachments totaling at most 15 MB.'; return;}
       button.disabled = true; status.textContent = 'Saving and submitting…';
       try {
         if (auth !== JSON.stringify(bridge.studentHeaders())) throw new Error('Your account changed. Reopen the submission menu.');
+        window.WorkspaceHistory?.flush();
         if (paths.includes(bridge.openFile()?.path) && !await bridge.save()) throw new Error('Your current file could not be saved. Save your edits before submitting.');
         if (auth !== JSON.stringify(bridge.studentHeaders())) throw new Error('Your account changed. Reopen the submission menu.');
         const payload = {assignmentId:a.id, classId:a.targetClassId, filePaths:paths};
@@ -201,8 +288,10 @@
       try {
         const result = await json(`/api/assignments/submission-file?${params({fileId:f.id, cursor:String(cursor)})}`, {headers});
         if (request !== sequence || !valid()) return;
-        preview.innerHTML = `<div class="assignment-file-preview-header"><strong>${esc(f.name)}</strong><button type="button" class="btn secondary attachment-download">Download</button></div>`;
+        preview.innerHTML = `<div class="assignment-file-preview-header"><strong>${esc(f.name)}</strong><div class="assignment-preview-actions">${teacher && !a.gradingCompletedAt ? '<button type="button" class="btn secondary attachment-history">Edit history</button>' : ''}<button type="button" class="btn secondary attachment-download">Download</button></div></div>`;
         preview.querySelector('.attachment-download').onclick = () => download(f).catch(error => alert(error.message));
+        const historyButton = preview.querySelector('.attachment-history');
+        if (historyButton) historyButton.onclick = () => openDevelopment(a, studentEmail, revision, f.id);
         if (result.kind === 'text') {
           let content = result.content || '';
           if (!result.pasteRanges?.length && f.name.toLowerCase().endsWith('.json')) {try {content = JSON.stringify(JSON.parse(content), null, 2);} catch {}}
@@ -324,12 +413,13 @@
   function bindTeacher(root, a, owner) {
     root.querySelectorAll('.assignment-development-open').forEach(button => button.onclick = () => openDevelopment(a, button.dataset.email || ''));
     root.querySelector('.assignment-grading-complete')?.addEventListener('click', async event => {
-      if (!owner || !confirm('Finalize grading? This closes submissions and permanently deletes development timelines and obsolete recording bindings. All submitted files, retained submission versions, quiz answers, scores, feedback, and student workspace files are kept. Copy the assignment if you need to reopen submissions.')) return;
+      if (!owner || !confirm('Finalize grading? Submissions close now and edit history is scheduled for deletion within three days. Submitted work, grades and feedback stay available.')) return;
       event.target.disabled = true;
       try {await mutate('/api/assignments/grading-complete', {assignmentId:a.id}); root.dataset.forceRefresh='true'; await bridge.reloadAssignments();}
       catch(error) {alert(error.message); event.target.disabled=false;}
     });
     root.querySelector('.assignment-extend')?.addEventListener('click', () => extendStudent(a));
+    root.querySelector('.assignment-extension-requests')?.addEventListener('click', () => reviewExtensions(a));
     root.querySelectorAll('.assignment-extend-student').forEach(button => button.onclick = () => extendStudent(a,button.dataset.email));
     root.querySelector('.assignment-grade-question')?.addEventListener('click', () => gradeByQuestion(a));
     root.querySelector('.assignment-paste-toggle')?.addEventListener('change', event => setHighlights(event.target.checked));
@@ -348,8 +438,9 @@
     return `<p class="development-summary" role="status">Loading history…</p>
       <div class="development-controls"><button type="button" class="btn run development-play" disabled>Play</button><button type="button" class="btn secondary development-previous" aria-label="Previous change" disabled>←</button><button type="button" class="btn secondary development-next" aria-label="Next change" disabled>→</button><label>Speed<select class="development-speed"><option value="1">1×</option><option value="5">5×</option><option value="20">20×</option></select></label><label><input type="checkbox" class="development-skip" checked> Skip idle gaps over 5 seconds</label><label><input type="checkbox" class="development-follow" checked> Follow edits</label></div>
       <label class="development-seek-label">Development timeline<input type="range" class="development-seek" min="1" max="1" value="1" step="1" disabled></label>
+      <div class="development-time-legend" aria-label="Timeline colors"><span class="development-in-class">In class</span><span class="development-outside-class">Outside class</span><span>Schedule unavailable</span></div>
       <div class="development-position" aria-live="polite"></div>
-      <small class="development-note">Changed code is sampled at one-second resolution. Completion time is a hint from the first to last recorded edit, including idle time, not active typing time. Device sample and server receipt times are shown; history supports review and is not proof of authorship.</small>`;
+      <small class="development-note">Playback shows sampled edits and saved checkpoints. Highlighted text was pasted in the editor. The timeline can include gaps.</small>`;
   }
   function completionHint(first, last) {
     const minutes = Math.max(0, (Date.parse(last) - Date.parse(first)) / 60000);
@@ -391,27 +482,46 @@
       source.value = content; source.scrollTop = top; source.scrollLeft = left;
       if (follow) followSource(source, content, offset);
     }
+    if (frame.pasteRanges?.length) highlightEditor(frame.pasteRanges);
+  }
+
+  const timeLabel = frame => frame.classTime === 'inside' ? 'In class' : frame.classTime === 'outside' ? 'Outside class' : 'Schedule unavailable';
+  function colorTimeline(seek, marks, total) {
+    if (!seek.style) return;
+    const colors = {inside:'var(--history-in-class)', outside:'var(--history-outside-class)', unknown:'var(--history-unknown)'};
+    const bands = (marks || []).map((mark, index) => {
+      const start = 100 * (mark.seq - 1) / total;
+      const end = 100 * ((marks[index + 1]?.seq || total + 1) - 1) / total;
+      return `${colors[mark.classTime] || colors.unknown} ${start}% ${end}%`;
+    });
+    if (bands.length) seek.style.setProperty('--history-bands', `linear-gradient(to right,${bands.join(',')})`);
+    else seek.style.removeProperty('--history-bands');
   }
   function mountDevelopmentPlayer(root, a, options) {
     const select=root.querySelector('.development-student'), seek=root.querySelector('.development-seek'), play=root.querySelector('.development-play');
     const summary=root.querySelector('.development-summary'), position=root.querySelector('.development-position');
     const previous=root.querySelector('.development-previous'), nextButton=root.querySelector('.development-next');
     const headers=bridge.managerHeaders(), auth=JSON.stringify(headers), cache=new Map(), abort=new AbortController();
-    let total=0, current=1, sequence=0, playing=false, timeout=null, selected='', disposed=false, seekTimer;
+    let total=0, current=1, sequence=0, playing=false, timeout=null, selected='', disposed=false, seekTimer, clip;
     const valid=()=>!disposed && root.isConnected && auth===JSON.stringify(bridge.managerHeaders()) && (!options.valid || options.valid());
     const params=extra=>new URLSearchParams({assignmentId:a.id,studentEmail:selected,...extra});
+    function requestPage(extra) {
+      const endpoint = clip && !clip.legacy ? 'workspace-history' : 'development';
+      const attachment = clip ? {revisionId:clip.revision, fileId:clip.attachment} : {};
+      return json(`/api/assignments/${endpoint}?${params({...attachment,...extra})}`, {headers,signal:abort.signal});
+    }
     const stop=()=>{playing=false; clearTimeout(timeout); play.textContent='Play';};
     const pause=()=>{stop(); sequence++; clearTimeout(seekTimer);};
     async function page(seq) {
       if(!valid()) throw new Error('Review context changed');
-      const pageStudent=selected;
+      const pageStudent=selected, pageClip=clip;
       for(const entry of cache.values()) if(entry.frames.some(f=>f.seq===seq)) return entry;
       const start=Math.floor((seq-1)/120)*120+1;
-      let data=await json(`/api/assignments/development?${params({cursor:String(start)})}`, {headers,signal:abort.signal});
-      if(!valid() || pageStudent!==selected) throw new Error('Review student changed');
+      let data=await requestPage({cursor:String(start)});
+      if(!valid() || pageStudent!==selected || pageClip!==clip) throw new Error('Review file changed');
       // Large replacements can shorten a page; fetch the requested position directly.
-      if(!data.frames.some(f=>f.seq===seq)) data=await json(`/api/assignments/development?${params({cursor:String(seq)})}`, {headers,signal:abort.signal});
-      if(!valid() || pageStudent!==selected) throw new Error('Review student changed');
+      if(!data.frames.some(f=>f.seq===seq)) data=await requestPage({cursor:String(seq)});
+      if(!valid() || pageStudent!==selected || pageClip!==clip) throw new Error('Review file changed');
       cache.set(data.frames[0]?.seq || seq,data);
       while(cache.size>3) cache.delete(cache.keys().next().value);
       return data;
@@ -429,8 +539,9 @@
         if(!valid() || request!==sequence) return;
         options.render(content,frame,root.querySelector('.development-follow').checked);
         current=seq; seek.value=String(seq);
-        seek.setAttribute('aria-valuetext',`Change ${seq} of ${total}, ${date(frame.at)}`);
-        position.textContent=`Change ${seq} / ${total} · ${date(frame.at)} · ${frame.kind==='editor' ? 'Editor sample' : frame.kind==='resync' ? 'Resynchronized — earlier changes may be missing' : 'File save'} · Received ${date(frame.receivedAt)}${options.restore ? ' · Read-only history' : ''}`;
+        const stamp = classDate(frame.at, frame.timeZone);
+        seek.setAttribute('aria-valuetext',`Change ${seq} of ${total}, ${stamp}, ${timeLabel(frame)}`);
+        position.textContent=`Change ${seq} / ${total} · ${stamp}${frame.timeZone ? ` (${frame.timeZone})` : ''} · ${timeLabel(frame)} · ${frame.kind==='offline' ? 'Offline edit · device time' : frame.kind==='editor' ? 'Editor sample' : frame.kind==='resync' ? 'Checkpoint after a gap' : 'File checkpoint'} · Received ${classDate(frame.receivedAt, frame.timeZone)}${options.restore ? ' · Read-only history' : ''}`;
         if(schedule && playing) {
           if(seq>=total) return stop();
           const nextData=await page(seq+1);
@@ -453,15 +564,22 @@
       if(!valid()) return;
       pause(); if(valid()) options.restore?.();
       const request=++sequence; selected=select ? select.value : options.email; cache.clear(); position.textContent='';
+      clip=options.clip?.();
+      colorTimeline(seek, [], 1);
       seek.disabled=true; play.disabled=true; previous.disabled=true; nextButton.disabled=true; total=0;
-      if(!selected) {summary.textContent='No students enrolled.'; return;}
+      if(!selected || (options.clip && !clip)) {summary.textContent='Choose a submitted file to view its history.'; return;}
       summary.textContent='Loading history…'; options.clear?.();
       try {
-        const result=await json(`/api/assignments/development?${params({index:'1'})}`,{headers,signal:abort.signal});
+        let result=await requestPage({index:'1'});
+        if(!result.total && clip?.legacyFallback && valid() && request===sequence) {
+          clip={...clip,legacy:true};
+          result=await requestPage({index:'1'});
+        }
         if(!valid() || request!==sequence) return;
         total=result.total;
-        if(!total) {summary.textContent=result.gradingCompletedAt ? 'Grading complete · development timelines deleted.' : 'No code changes recorded yet. History appears after the student opens and edits the assignment file.'; return;}
-        summary.textContent=`${result.path} · ${total.toLocaleString()} changes · ${completionHint(result.firstAt,result.lastAt)} · First edit ${date(result.firstAt)} · Last edit ${date(result.lastAt)}`;
+        if(!total) {summary.textContent=result.gradingCompletedAt ? 'Grading finalized. Edit history is closed.' : 'No edit history is available for this submitted version.'; return;}
+        summary.textContent=`${result.path} · ${total.toLocaleString()} changes · ${completionHint(result.firstAt,result.lastAt)} · First edit ${classDate(result.firstAt, result.marks?.[0]?.timeZone)} · Last edit ${classDate(result.lastAt, result.marks?.at(-1)?.timeZone)}${result.partial ? ' · Partial history. See the submitted file for the final version.' : ''}`;
+        colorTimeline(seek, result.marks, total);
         seek.max=String(total); seek.disabled=false; play.disabled=false; previous.disabled=false; nextButton.disabled=false;
         if(options.restore) restore(); else await show(1);
       } catch(error) {if(valid() && request===sequence) summary.textContent=error.message;}
@@ -474,7 +592,7 @@
     nextButton.onclick=()=>{pause(); if(total) return show(Math.min(total,current+1));};
     root.querySelector('.development-speed').onchange=()=>{if(playing) {clearTimeout(timeout); show(current,true);}};
     root.querySelector('.development-submitted')?.addEventListener('click',restore);
-    return {ready:load(), pause, dispose(){pause(); disposed=true; cache.clear(); abort.abort();}};
+    return {ready:load(), reload:load, pause, dispose(){pause(); disposed=true; cache.clear(); abort.abort();}};
   }
   let editorPlayer=null;
   function disposeEditorDevelopment() {
@@ -492,7 +610,7 @@
   function pauseEditorDevelopment() {editorPlayer?.player.pause();}
   function attachEditorDevelopment(a, email, adapter) {
     disposeEditorDevelopment();
-    if(!a.fileControl) return;
+    if(!a.fileControl && !adapter.clip?.()) return;
     const root=document.getElementById('submissionDevelopmentPanel');
     root.innerHTML=`<div class="development-toolbar"><strong>Development history</strong><button type="button" class="btn secondary development-refresh">Refresh history</button><button type="button" class="btn secondary development-submitted">Show submitted code</button></div>${developmentControls()}`;
     root.hidden=false;
@@ -502,20 +620,64 @@
     editorPlayer={player,valid:adapter.valid,restore:adapter.restore}; window.eagleEditor?.refresh();
     return player.ready;
   }
-  async function openDevelopment(a, email = '') {
+  async function openDevelopment(a, email = '', revisionId = '', fileId = '') {
     const roster = [...bridge.roster(a.targetClassId)];
     for (const s of a.submissions || []) if (!roster.some(r => r.email === s.email)) roster.push(s);
     roster.sort((x,y) => String(x.last_name || '').localeCompare(String(y.last_name || '')) || String(x.first_name || x.name || x.email).localeCompare(String(y.first_name || y.name || y.email)));
-    const m = modal(`${a.name} · Development history`, `<div class="development-toolbar"><label>Student<select class="development-student">${roster.map(s => `<option value="${esc(s.email)}">${esc(s.name || s.email)}</option>`).join('')}</select></label><button type="button" class="btn secondary development-refresh">Refresh history</button></div>
+    const m = modal(`${a.name} · Edit history`, `<div class="development-toolbar"><label>Student<select class="development-student">${roster.map(s => `<option value="${esc(s.email)}">${esc(s.name || s.email)}</option>`).join('')}</select></label><label>Submitted file<select class="development-file"></select></label><button type="button" class="btn secondary development-more" hidden>Older timelines</button><button type="button" class="btn secondary development-refresh">Refresh history</button></div>
       ${developmentControls()}<pre class="assignment-file-source development-source" tabindex="0" aria-label="Recorded code"></pre>`, 'development-dialog');
-    const select=m.root.querySelector('.development-student'), source=m.root.querySelector('.development-source');
+    const select=m.root.querySelector('.development-student'), fileSelect=m.root.querySelector('.development-file');
+    const source=m.root.querySelector('.development-source'), more=m.root.querySelector('.development-more');
     if(email) select.value=email;
-    const player=mountDevelopmentPlayer(m.root,a,{clear(){source.textContent='';},render(content,frame,follow){
+    let clips=[], request=0, nextOffset=0;
+    const headers=bridge.managerHeaders(), auth=JSON.stringify(headers), abort=new AbortController();
+    const valid=()=>m.root.isConnected && auth===JSON.stringify(bridge.managerHeaders());
+    const player=mountDevelopmentPlayer(m.root,a,{valid,clip:()=>clips[Number(fileSelect.value)],clear(){source.textContent='';},render(content,frame,follow){
       const top=source.scrollTop, left=source.scrollLeft;
-      source.textContent=content; source.scrollTop=top; source.scrollLeft=left;
+      source.innerHTML=highlightSource(content,frame.pasteRanges); source.scrollTop=top; source.scrollLeft=left;
       if(follow) followSource(source,content,Math.min(content.length,frame.from+frame.insert.length));
     }});
-    m.cleanups.push(player.dispose); await player.ready;
+    async function load(offset=0) {
+      const ticket=++request, student=select.value;
+      if (!offset) {
+        const sub=(a.submissions || []).find(row => row.email === student);
+        clips=[sub,...(sub?.history || [])].filter(Boolean).flatMap(row => (row.files || []).map(f => ({
+          revision:row.revisionId, attachment:f.id, name:f.name, submitted:row.submittedAt,
+          legacyFallback:!!a.fileControl,
+        })));
+        if (revisionId && fileId && !clips.some(row => row.revision === revisionId && row.attachment === fileId)) {
+          clips.unshift({revision:revisionId, attachment:fileId, name:'Selected submitted file', legacyFallback:!!a.fileControl});
+        }
+      }
+      const params=new URLSearchParams({assignmentId:a.id, studentEmail:student, offset});
+      try {
+        const result=await json(`/api/assignments/workspace-history?${params}`,{headers,signal:abort.signal});
+        if (!valid() || ticket!==request) return;
+        for (const row of result.clips || []) {
+          if (!clips.some(existing => existing.revision===row.revision && existing.attachment===row.attachment)) {
+            clips.push({...row, submitted:row.submitted*1000});
+          }
+        }
+        nextOffset=result.nextOffset;
+        more.hidden=nextOffset==null;
+        const previous=offset ? fileSelect.value : '';
+        fileSelect.innerHTML=clips.map((row,index)=>`<option value="${index}">${esc(row.name)}${row.submitted ? ` · ${esc(date(row.submitted))}` : ''}</option>`).join('');
+        if (previous) fileSelect.value=previous;
+        else {
+          const target=clips.findIndex(row=>row.revision===revisionId && (!fileId || row.attachment===fileId));
+          if (target>=0) fileSelect.value=String(target);
+        }
+        await player.reload();
+      } catch(error) {
+        if (valid() && ticket===request) m.root.querySelector('.development-summary').textContent=error.message;
+      }
+    }
+    select.onchange=()=>{ revisionId=fileId=''; player.pause(); load(); };
+    fileSelect.onchange=player.reload;
+    more.onclick=()=>load(nextOffset);
+    m.root.querySelector('.development-refresh').onclick=()=>load();
+    m.cleanups.push(player.dispose,()=>abort.abort());
+    await load();
   }
   function editFeedback(a, email, sub = a.submissions.find(s => s.email === email)) {
     if (!sub) return;
@@ -550,7 +712,12 @@
   }
   function windowForm(cls) {
     const value = cls.settings?.assignment_submission_window || {start:'08:00',end:'15:00',timeZone:localZone()};
-    return `<section class="assignment-window-settings"><h4>Assignment submission window</h4><label><input type="checkbox" class="assignment-window-enabled" ${value.enabled ? 'checked' : ''}> Limit submissions to school hours on weekdays</label><div class="assignment-window-fields"><label>Start<input type="time" class="assignment-window-start" value="${esc(value.start)}"></label><label>End<input type="time" class="assignment-window-end" value="${esc(value.end)}"></label><label>Class time zone<input type="text" class="assignment-window-zone" value="${esc(value.timeZone)}" placeholder="America/Chicago"></label></div><p>Applies to files and questions. An assignment can allow submissions at any time.</p><button type="button" class="btn secondary assignment-save-window">Save submission window</button><span class="assignment-window-status" role="status"></span></section>`;
+    const weekdays = [0,1,2,3,4];
+    const days = (name, selected) => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((day,i) => `<label><input type="checkbox" name="${name}" value="${i}" ${selected.includes(i) ? 'checked' : ''}>${day}</label>`).join('');
+    return `<section class="assignment-window-settings"><h4>Class schedule</h4><p>Meeting hours control in-class submissions and color the edit timeline. School dismissal determines extension deadlines.</p>
+      <div class="assignment-window-fields"><label>Class starts<input type="time" class="assignment-window-start" value="${esc(value.start)}"></label><label>Class ends<input type="time" class="assignment-window-end" value="${esc(value.end)}"></label><label>School dismissal<input type="time" class="assignment-window-dismissal" value="${esc(value.dismissal || value.end)}"></label><label>Class time zone<input type="text" class="assignment-window-zone" value="${esc(value.timeZone)}" placeholder="America/Chicago"></label></div>
+      <fieldset class="assignment-schedule-days"><legend>Class meets</legend>${days('meetingDays', value.meetingDays || weekdays)}</fieldset><fieldset class="assignment-schedule-days"><legend>School days</legend>${days('schoolDays', value.schoolDays || weekdays)}</fieldset>
+      <label><input type="checkbox" class="assignment-window-enabled" ${value.enabled ? 'checked' : ''}> Apply class hours to older assignments that inherit the class setting</label><button type="button" class="btn secondary assignment-save-window">Save schedule</button><span class="assignment-window-status" role="status"></span></section>`;
   }
   function accommodationLabel(student) {
     const a = student.accommodations || {};
@@ -559,7 +726,8 @@
   function bindClass(root, cls) {
     root.querySelector('.assignment-save-window')?.addEventListener('click', async event => {
       const status = root.querySelector('.assignment-window-status'); event.target.disabled = true;
-      try {await mutate(`/api/teacher/classes/${encodeURIComponent(cls.id)}/submission-window`,{window:{enabled:root.querySelector('.assignment-window-enabled').checked,start:root.querySelector('.assignment-window-start').value,end:root.querySelector('.assignment-window-end').value,timeZone:root.querySelector('.assignment-window-zone').value}}); await bridge.reloadClasses();}
+      const selected = name => [...root.querySelectorAll(`[name="${name}"]:checked`)].map(input => Number(input.value));
+      try {await mutate(`/api/teacher/classes/${encodeURIComponent(cls.id)}/submission-window`,{window:{enabled:root.querySelector('.assignment-window-enabled').checked,start:root.querySelector('.assignment-window-start').value,end:root.querySelector('.assignment-window-end').value,dismissal:root.querySelector('.assignment-window-dismissal').value,timeZone:root.querySelector('.assignment-window-zone').value,meetingDays:selected('meetingDays'),schoolDays:selected('schoolDays')}}); await bridge.reloadClasses();}
       catch(error) {status.textContent = error.message; event.target.disabled = false;}
     });
     root.querySelectorAll('.assignment-accommodation-edit').forEach(button => button.onclick = () => {
@@ -573,7 +741,7 @@
     });
   }
   window.AssignmentWorkflow = {configure(value) {bridge = value; try {highlights=localStorage.getItem('eagleide-paste-highlights') !== '0';} catch {} if(document.body) setHighlights(highlights); window.eagleEditor?.on?.('beforeChange', (_cm,change) => {if(change.origin === 'setValue') clearEditorHighlights();});}, teacherToolbar, highlightSource, highlightEditor, card, bindStudent, submitDialog, openFiles, teacherFiles, bindTeacher, present, windowForm, bindClass, accommodationLabel,
-    attachEditorDevelopment, syncEditorDevelopment, disposeEditorDevelopment, pauseEditorDevelopment, renderEditorFrame, mountReviewFiles, editFeedback,
+    attachEditorDevelopment, syncEditorDevelopment, disposeEditorDevelopment, pauseEditorDevelopment, renderEditorFrame, mountReviewFiles, editFeedback, openDevelopment,
     focusStudentAssignment(assignment, email) {if(email!==account) {account=email;expanded.clear();} tab=(assignment.isPast ?? !assignment.active) ? 'past' : 'current'; expanded.add(assignment.id);},
     studentTab(email) {if (email !== account) {account=email; tab='current'; expanded.clear();} return tab;}};
 })();
