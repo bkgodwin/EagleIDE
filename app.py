@@ -46,6 +46,7 @@ from collections import defaultdict, deque
 from cryptography.fernet import Fernet, InvalidToken
 
 from classroom_features import merge_class_settings, register as register_classroom_features
+import editor_annotations
 import assignment_workflow
 import file_provenance
 import group_projects
@@ -265,6 +266,14 @@ EXAMPLE_FILES: dict[str, str] = {
         "plt.show()\n"
     ),
     "notes.txt": "Welcome to EagleIDE!\n\n- Open a file from Examples.\n- Edit the code.\n- Click Run.\n",
+    "markdown.md": (
+        "# Project notes\n\n"
+        "Use **Edit Markdown** to write your own notes. Then choose **Read Markdown** to see the formatted page.\n\n"
+        "## Team checklist\n\n- [x] Pick a project idea\n- [ ] Test the first version\n- [ ] Share what you learned\n\n"
+        "## Try a code snippet\n\n"
+        "```python\nfor task in ['plan', 'build', 'test']:\n    print(task.title())\n```\n\n"
+        "You can use *italics*, **bold**, and <u>underlining</u> to make important details easier to find.\n"
+    ),
     "index.html": '<!doctype html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1">\n  <title>EagleIDE Example</title>\n  <link rel="stylesheet" href="styles.css">\n</head>\n<body>\n  <main class="card">\n    <h1>EagleIDE HTML Example</h1>\n    <p>Edit this file and <strong>Run</strong> it to see live changes.</p>\n  </main>\n</body>\n</html>\n',
     "styles.css": "body {\n  font-family: Arial, sans-serif;\n  background: #f2f6ff;\n  color: #102a43;\n  margin: 0;\n  min-height: 100vh;\n  display: grid;\n  place-items: center;\n}\n\n.card {\n  background: white;\n  border: 2px solid #7fb2eb;\n  border-radius: 12px;\n  padding: 20px;\n  max-width: 420px;\n  box-shadow: 0 8px 24px rgba(16, 42, 67, 0.12);\n}\n",
 }
@@ -2472,6 +2481,28 @@ def _seed_example_files(email: str) -> None:
     except Exception:
         pass
 
+
+def _seed_markdown_example_once(user_dir: Path) -> None:
+    """Give existing workspaces the new example without restoring a later deletion."""
+    metadata = user_dir / ".eagleide"
+    marker = metadata / "markdown-example-v1"
+    target = user_dir / EXAMPLES_DIR_NAME / "markdown.md"
+    try:
+        if marker.exists() or metadata.is_symlink() or target.parent.is_symlink():
+            return
+        with file_provenance.lock(user_dir):
+            if marker.exists():
+                return
+            try:
+                with target.open("x", encoding="utf-8") as handle:
+                    handle.write(EXAMPLE_FILES["markdown.md"])
+            except FileExistsError:
+                pass
+            metadata.mkdir(exist_ok=True)
+            marker.touch(exist_ok=True)
+    except OSError:
+        pass
+
 def _require_user(req) -> Optional[dict]:
     token = req.headers.get("X-User-Token", "").strip()
     return _current_session_user(_student_tokens, token, "student")
@@ -3454,6 +3485,7 @@ def files_list():
     cached = _get_cached_workspace_tree(user_dir)
     if cached is not None:
         return jsonify(ok=True, **cached)
+    _seed_markdown_example_once(user_dir)
     trash_metadata = _load_trash_metadata(user_dir)
     
     def build_tree(directory: Path, base: Path) -> tuple[list, int]:
@@ -3734,6 +3766,7 @@ def files_read():
             history = None
         return jsonify(ok=True, kind="text", content=content, path=path_str, development=development,
                        workspaceHistory=history,
+                       annotationDigest=file_provenance.digest(content),
                        pasteRanges=file_provenance.read(sys.modules[__name__], user_dir, target, content))
     except Exception:
         return jsonify(ok=False, error="Could not read file"), 500
@@ -3792,6 +3825,7 @@ def _files_write_locked(user):
     except (ValueError, UnicodeError):
         return jsonify(ok=False, error="Invalid editor ranges"), 400
     try:
+        annotations = editor_annotations.workspace_save(sys.modules[__name__], user_dir, target, content, data)
         if data.get("require_existing"):
             # Opening without O_CREAT also closes the delete/autosave race:
             # a deleted file or parent must never be recreated by autosave.
@@ -3802,7 +3836,7 @@ def _files_write_locked(user):
             target.parent.mkdir(parents=True, exist_ok=True)
             with target.open("w", encoding="utf-8", newline="") as handle:
                 handle.write(content)
-        file_provenance.write(sys.modules[__name__], user_dir, target, content, ranges)
+        file_provenance.write(sys.modules[__name__], user_dir, target, content, ranges, annotations=annotations)
         if data.get("workspaceHistorySampled") is not True:
             workspace_history.capture_checkpoint(sys.modules[__name__], user, user_dir, target, content, ranges)
         recording_warning = ""
@@ -3814,7 +3848,8 @@ def _files_write_locked(user):
             # A full recording must never prevent saving the student's work.
             recording_warning = "Development history could not be updated. Tell your teacher."
         _invalidate_workspace_tree_cache(user_dir)
-        return jsonify(ok=True, **({"recordingWarning": recording_warning} if recording_warning else {}),
+        return jsonify(ok=True, annotationDigest=file_provenance.digest(content),
+                       **({"recordingWarning": recording_warning} if recording_warning else {}),
                        **({"developmentVersion": development_version} if development_version is not None else {}))
     except FileNotFoundError:
         return jsonify(ok=False, error="This file was moved or deleted. Refresh the file browser before saving."), 404
@@ -9283,7 +9318,7 @@ def on_teacher_code_update(payload):
         return
     _teacher_stream_last_emit[actor_key] = now
     language = str((payload or {}).get("language") or "").strip().lower()
-    if language not in {"python", "javascript", "html", "css", "xml"}:
+    if language not in {"python", "javascript", "html", "css", "xml", "markdown"}:
         language = ""
     lines = code.split("\n")
     cursor_line = payload.get("cursorLine")
@@ -13797,6 +13832,7 @@ _eagle_lab_store = register_eagle_lab_features(
 )
 _lab_report_drafts = register_lab_reports(app, sys.modules[__name__], base_dir=LAB_REPORT_DATA_DIR)
 register_classroom_features(app, socketio)
+editor_annotations.register(app, sys.modules[__name__])
 group_projects.register(app, sys.modules[__name__])
 from external_tools import register as register_external_tools
 from tool_store import ToolError as ExternalToolError

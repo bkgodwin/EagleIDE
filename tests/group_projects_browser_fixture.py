@@ -49,10 +49,14 @@ def main():
         eagle._teacher_tokens["group-teacher"] = teacher
         for student in students:
             eagle._student_tokens["group-" + student["name"].lower()] = student
+            workspace = eagle._get_user_dir(student["email"])
+            workspace.mkdir(parents=True, exist_ok=True)
+            (workspace / "stream.py").write_text("# workspace note\nprint('hello')\n", encoding="utf-8")
         folder = eagle._get_user_dir(students[0]["email"]) / "Lab files"
         folder.mkdir(parents=True)
         (folder / "main.py").write_text("print(open('message.txt').read())\n", encoding="utf-8")
         (folder / "message.txt").write_text("Hello from the shared folder", encoding="utf-8")
+        (folder / "notes.md").write_text("# Shared notes\n\nPlan the next step.\n", encoding="utf-8")
         with eagle.app.test_client() as client:
             headers = {"X-Teacher-Token":"group-teacher"}
             a = client.post("/api/assignments/create", headers=headers, json={

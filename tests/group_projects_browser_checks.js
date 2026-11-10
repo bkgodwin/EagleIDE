@@ -47,7 +47,40 @@ async function main() {
     const [alice,ben,carmen,devon,teacher] = await Promise.all([
       account('Alice'), account('Ben'), account('Carmen'), account('Devon',{width:420,height:850}), account('Teacher'),
     ]);
+    const files = async page => {
+      const switcher = page.locator('#workspaceSwitchBtn');
+      if (await switcher.getAttribute('aria-pressed') !== 'true') await switcher.click();
+      await page.locator('#fileTree').waitFor();
+    };
+    const openFile = async (page, name) => {
+      await files(page);
+      await page.locator('.file-tree-item').filter({hasText:name}).first().click();
+      await page.waitForFunction(name => document.getElementById('activeFileName').textContent === name &&
+        document.getElementById('workspaceSwitchBtn').getAttribute('aria-pressed') === 'false', name);
+    };
+    const card = page => page.locator('#editorAnnotationCard');
+    const marks = page => page.locator('#studentEditorWrap [data-annotation-id]');
+    const addAnnotation = async (page, from, to, message) => {
+      await page.evaluate(([from,to]) => {
+        const cm = window.eagleEditor;
+        cm.setSelection(cm.posFromIndex(from), cm.posFromIndex(to));
+      }, [from,to]);
+      await page.getByRole('button',{name:'Edit',exact:true}).click();
+      await page.getByRole('button',{name:'Add Annotation',exact:true}).click();
+      await card(page).getByRole('textbox').fill(message);
+      await card(page).getByRole('button',{name:'Add annotation',exact:true}).click();
+      await card(page).getByText(message,{exact:true}).waitFor();
+    };
+    const reply = async (page, message) => {
+      await card(page).getByRole('button',{name:'Reply',exact:true}).click();
+      await card(page).getByRole('textbox').fill(message);
+      await card(page).getByRole('button',{name:'Reply',exact:true}).last().click();
+      await card(page).getByText(message,{exact:true}).waitFor();
+    };
     assert.deepEqual(await (await alice.request.get(server.url + '/health')).json(), {ok:true});
+    await files(alice);
+    const fileBrowser = alice.locator('#fileBrowserTabPane');
+    const browserHeight = (await fileBrowser.boundingBox()).height;
     await teacher.evaluate(() => {
       window.eagleEditor.setValue(Array.from({length:140}, (_,i) => '# Line ' + (i + 1)).join('\n'));
       window.eagleEditor.setCursor({line:70,ch:0});
@@ -55,6 +88,11 @@ async function main() {
     await teacher.locator('#streamingToggleBtn').click();
     const stream = page => page.locator('#teacherStreamPane');
     const follow = page => page.getByRole('button', {name:'Follow teacher'});
+    await alice.locator('#teacherPaneToggleBtn.live').waitFor({state:'attached'});
+    assert.equal(await alice.locator('#workspaceSwitchBtn').getAttribute('aria-pressed'), 'true');
+    assert.equal((await fileBrowser.boundingBox()).height,browserHeight);
+    await stream(alice).waitFor({state:'hidden'});
+    await Promise.all([openFile(alice,'stream.py'),openFile(devon,'stream.py')]);
     for (const page of [alice,devon]) {
       await page.locator('#teacherPaneToggleBtn.live').waitFor();
       assert.ok(await page.evaluate(() => {
@@ -86,6 +124,7 @@ async function main() {
     }, {ch,selection});
     await alice.evaluate(() => window.eagleEditor.focus());
     const fallback = await account('Devon',{width:420,height:850},false);
+    await openFile(fallback,'stream.py');
     await follow(fallback).click();
     await teacher.evaluate(() => window.eagleEditor.setSelection({line:70,ch:2}, {line:70,ch:7}));
     for (const page of [alice,devon]) await pointing(page,7,'Line ');
@@ -106,6 +145,11 @@ async function main() {
       await teacher.evaluate(line => window.eagleEditor.setCursor({line,ch:0}), line);
       for (const page of [alice,devon]) await centered(page, line);
     }
+    await files(alice);
+    assert.equal((await fileBrowser.boundingBox()).height,browserHeight);
+    await stream(alice).waitFor({state:'hidden'});
+    await alice.locator('#workspaceSwitchBtn').click();
+    await centered(alice, 85);
     await alice.evaluate(() => document.querySelector('#teacherStreamPane .CodeMirror').CodeMirror.scrollTo(0, 150));
     await centered(alice, 85);
     await alice.locator('#teacherPaneToggleBtn').click();
@@ -126,12 +170,74 @@ async function main() {
     await devon.locator('#teacherStreamPane .CodeMirror-selected').first().waitFor({state:'detached'});
     await devon.locator('#teacherStreamPane .teacher-stream-pointing').waitFor({state:'detached'});
     await teacher.locator('#streamingToggleBtn').click();
-    const files = async page => {
-      const switcher = page.locator('#workspaceSwitchBtn');
-      if (await switcher.getAttribute('aria-pressed') !== 'true') await switcher.click();
-      await page.locator('#fileTree').waitFor();
-    };
+
+    // Personal notes share one thread with the teacher's read-only audit.
+    await addAnnotation(alice,2,11,'Review this workspace text');
+    await reply(alice,'An item I can close');
+    await card(alice).getByRole('button',{name:'Close message by Alice'}).last().click();
+    await card(alice).getByText('An item I can close',{exact:true}).waitFor({state:'detached'});
+    await card(alice).getByRole('button',{name:'Dismiss annotation card'}).click();
+    await marks(alice).first().hover();
+    await card(alice).getByText('Review this workspace text',{exact:true}).waitFor();
+    await teacher.evaluate(classId => window.ClassroomFiles.openAuditModal(classId,'alice@example.test','Alice'), server.classId);
+    await teacher.locator('.audit-view-btn[data-path="stream.py"]').click();
+    await teacher.locator('#classroomAuditBanner').waitFor();
+    await marks(teacher).first().waitFor();
+    await addAnnotation(teacher,17,22,'From the audit view');
+    assert.equal(await teacher.evaluate(() => window.eagleEditor.getOption('readOnly')), true);
+    await teacher.locator('#classroomAuditCloseBannerBtn').click();
+    await teacher.locator('#streamingToggleBtn').click();
+    await alice.evaluate(() => {
+      const cm = window.eagleEditor;
+      cm.operation(() => {
+        cm.replaceRange('# moved\n',{line:0,ch:0});
+        cm.replaceRange('! ',{line:2,ch:0});
+      });
+    });
+    await openFile(alice,'stream.py');
+    await marks(alice).filter({hasText:'workspace'}).waitFor();
+    await marks(alice).filter({hasText:'workspace'}).click();
+    await card(alice).getByText('Review this workspace text',{exact:true}).waitFor();
+    await card(alice).getByRole('button',{name:'Dismiss annotation card'}).click();
+    await alice.evaluate(() => window.eagleEditor.replaceRange('',{line:1,ch:2},{line:1,ch:11}));
+    await openFile(alice,'stream.py');
+    assert.equal(await marks(alice).filter({hasText:'workspace'}).count(), 0);
+
+    // Markdown opens rendered, then formatting and notebook transfer use the same file.
     await files(alice);
+    await alice.locator('.file-tree-item').filter({hasText:'Examples'}).first().click();
+    await openFile(alice,'markdown.md');
+    const markdown = alice.locator('#workspaceMarkdownView');
+    await markdown.getByRole('heading',{name:'Project notes'}).waitFor();
+    await markdown.locator('pre[data-language="python"]').waitFor();
+    await alice.getByRole('button',{name:'Edit Markdown',exact:true}).click();
+    await alice.evaluate(() => {
+      const cm = window.eagleEditor;
+      cm.replaceRange('\n\nUse a variable',cm.posFromIndex(cm.getValue().length));
+      cm.setSelection(cm.posFromIndex(cm.getValue().length - 14),cm.posFromIndex(cm.getValue().length));
+    });
+    await alice.locator('[data-workspace-md="bold"]').click();
+    await alice.evaluate(() => {
+      const cm = window.eagleEditor;
+      cm.replaceRange('\n\n',cm.posFromIndex(cm.getValue().length));
+      cm.setCursor(cm.posFromIndex(cm.getValue().length));
+    });
+    await alice.locator('[data-workspace-md="code"]').click();
+    await alice.evaluate(() => window.eagleEditor.replaceSelection('print(42)'));
+    await alice.getByRole('button',{name:'Read Markdown',exact:true}).click();
+    await markdown.locator('strong').filter({hasText:'Use a variable'}).waitFor();
+    await markdown.locator('pre[data-language="python"]').filter({hasText:'print(42)'}).waitFor();
+    await alice.locator('#notebookOpenBtn').click();
+    const notes = alice.locator('#studentNotebookEditor');
+    await notes.fill('A note from the notebook');
+    await alice.locator('#studentNotebookToMarkdown').click();
+    await alice.waitForFunction(() => window.eagleEditor.getValue().includes('A note from the notebook'));
+    await alice.locator('#studentNotebookFromMarkdown').click();
+    await notes.getByRole('heading',{name:'Project notes'}).waitFor();
+    await alice.locator('#studentNotebookCloseBtn').click();
+
+    await files(alice);
+    await alice.locator('#fileBreadcrumb [data-path=""]').click();
     const folder = alice.locator('.file-tree-item').filter({hasText:'Lab files'}).first();
     await folder.click({button:'right'});
     await alice.getByRole('menuitem',{name:'Share as group project…',exact:true}).click();
@@ -147,6 +253,14 @@ async function main() {
       await page.getByRole('button',{name:filename,exact:true}).click();
     }
     await alice.waitForFunction(() => document.querySelectorAll('#groupMemberIcons .is-viewing').length === 2);
+    await addAnnotation(alice,0,5,'Check the output call');
+    await marks(ben).filter({hasText:'print'}).click();
+    await card(ben).getByText('Check the output call',{exact:true}).waitFor();
+    await reply(ben,'Verified');
+    await card(alice).getByText('Verified',{exact:true}).waitFor();
+    await card(alice).getByRole('button',{name:'Close message by Ben'}).click();
+    await card(ben).getByText('Verified',{exact:true}).waitFor({state:'detached'});
+    await card(alice).getByRole('button',{name:'Dismiss annotation card'}).click();
     const text = page => page.evaluate(() => window.eagleEditor.getValue());
     const insert = (page,value) => page.evaluate(value => window.eagleEditor.replaceRange(value,{line:0,ch:0}),value);
     await Promise.all([insert(alice,'# Alice 😀\n'),insert(ben,'# Ben\n')]);
@@ -176,6 +290,7 @@ async function main() {
     await teacher.getByRole('button',{name:'Edit in IDE',exact:true}).click();
     await teacher.getByLabel('Show contributions',{exact:true}).waitFor();
     await alice.locator('#teacherPaneToggleBtn:not(.live)').waitFor();
+    await marks(teacher).filter({hasText:'print'}).waitFor();
     const teacherCursor = alice.locator('.group-remote-cursor[title="Teacher Example"]');
     await teacherCursor.waitFor();
     await teacher.getByLabel('Show contributions',{exact:true}).focus();
@@ -184,6 +299,10 @@ async function main() {
     await alice.waitForFunction(() => window.eagleEditor.getValue().startsWith('# Teacher help'));
     await alice.locator('.CodeMirror .group-contribution[title="Teacher Example"]').first().waitFor();
     assert.equal(await alice.locator('#groupMemberIcons [title^="Teacher"]').count(), 0);
+    await addAnnotation(teacher,2,14,'Teacher note on the shared code');
+    await marks(alice).filter({hasText:'Teacher help'}).click();
+    await card(alice).getByText('Teacher note on the shared code',{exact:true}).waitFor();
+    await card(alice).getByRole('button',{name:'Dismiss annotation card'}).click();
     await carmen.context().setOffline(true);
     await insert(carmen,'Carmen offline · ');
     await carmen.waitForFunction(() => window.GroupProjects.unsaved());
@@ -197,6 +316,22 @@ async function main() {
     assert.equal(await text(carmen),await text(devon));
     await alice.locator('#runBtn').click();
     await alice.waitForFunction(() => document.getElementById('output').textContent.includes('Hello from the shared folder'));
+    const sharedFile = async (page, filename) => {
+      await files(page);
+      await page.locator('[data-group-browse]').filter({hasText:'Lab files'}).click();
+      await page.getByRole('button',{name:filename,exact:true}).click();
+      await page.waitForFunction(name => document.getElementById('activeFileName').textContent === name,filename);
+    };
+    await Promise.all([alice,ben,devon].map(page => sharedFile(page,'notes.md')));
+    for (const page of [alice,ben,devon]) {
+      await page.locator('#workspaceMarkdownView').getByRole('heading',{name:'Shared notes'}).waitFor();
+    }
+    await alice.getByRole('button',{name:'Edit Markdown',exact:true}).click();
+    await insert(alice,'## Group update\n\n');
+    for (const page of [ben,devon]) {
+      await page.locator('#workspaceMarkdownView').getByRole('heading',{name:'Group update'}).waitFor();
+    }
+    await Promise.all([alice,ben].map(page => sharedFile(page,'main.py')));
     await alice.evaluate(({assignment,classId}) => window.EagleIDE.getContext().openAgendaAssignment(assignment,classId),server);
     await alice.locator(`.student-assignment-card[data-assignment-id="${server.assignment}"] .submit-assignment-btn`).click();
     await alice.getByRole('button',{name:'Choose group files',exact:true}).click();

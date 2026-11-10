@@ -1,0 +1,88 @@
+.workspace-markdown-tools[hidden], .workspace-markdown-toggle[hidden],
+.workspace-markdown-view[hidden], .editor-annotation-card[hidden],
+#studentNotebookToMarkdown[hidden], #studentNotebookFromMarkdown[hidden],
+#studentNotebookInsertCodeBtn[hidden] { display:none !important; }
+.workspace-markdown-tools {
+  display:flex; flex-wrap:wrap; gap:4px; padding:6px 8px; flex:none;
+  border-bottom:1px solid var(--theme-border); background:var(--theme-panel-hdr);
+}
+.workspace-markdown-tools button, .editor-annotation-card button {
+  font:inherit; font-size:12px; font-weight:650; color:var(--theme-text);
+  background:var(--theme-btn,var(--theme-panel-hdr)); border:1px solid var(--theme-border-mid);
+  border-radius:6px; min-height:28px; padding:4px 8px; cursor:pointer;
+}
+.workspace-markdown-tools button:hover, .editor-annotation-card button:hover {
+  background:var(--theme-btn-hover);
+}
+.workspace-markdown-tools button:focus-visible, .editor-annotation-card :focus-visible {
+  outline:2px solid var(--columbia-blue); outline-offset:2px;
+}
+.workspace-markdown-toggle { min-width:0; padding-inline:9px; }
+.editor-content-stack:has(.markdown-reading) #editorEditBtn,
+.markdown-reading > .CodeMirror, .markdown-reading > #editor { display:none !important; }
+.workspace-markdown-view {
+  box-sizing:border-box; height:100%; overflow:auto; padding:55px clamp(18px,4vw,54px) 42px;
+  color:var(--workspace-foreground,var(--theme-text)); background:var(--theme-panel);
+  font-size:15px; line-height:1.65; overflow-wrap:anywhere;
+}
+.workspace-markdown-view > :first-child { margin-top:0; }
+.workspace-markdown-view :is(h1,h2,h3,h4) { line-height:1.25; margin:1.25em 0 .5em; }
+.workspace-markdown-view :is(p,ul,ol,blockquote,pre,table) { margin:0 0 1em; }
+.workspace-markdown-view :is(ul,ol) { padding-left:1.6em; }
+.workspace-markdown-view a { color:var(--workspace-link,var(--columbia-blue)); }
+.workspace-markdown-view blockquote {
+  border-inline-start:3px solid var(--columbia-blue); padding-inline:12px;
+  color:var(--workspace-muted,var(--theme-text-dim));
+}
+.workspace-markdown-view :not(pre) > code {
+  background:var(--theme-input-bg); border-radius:4px; padding:1px 4px;
+}
+.workspace-markdown-view pre {
+  position:relative; overflow:auto; border:1px solid var(--theme-border-mid); border-radius:10px;
+  padding:34px 14px 13px; background:var(--theme-output-bg); white-space:pre;
+}
+.workspace-markdown-view pre > code.hljs { background:none; padding:0; }
+.workspace-markdown-view pre[data-language]::before {
+  content:attr(data-language); position:absolute; top:8px; left:14px;
+  color:var(--workspace-muted,var(--theme-text-dim)); font:600 11px/1.4 system-ui;
+}
+.workspace-markdown-view pre .copy-btn { top:5px; right:7px; }
+.workspace-markdown-view th, .workspace-markdown-view td { border:1px solid var(--theme-border); padding:5px 8px; }
+.workspace-markdown-view .task-list-item { list-style:none; }
+.workspace-markdown-view .markdown-view-status { color:var(--theme-text-dim); }
+.eagle-annotation-highlight {
+  background:color-mix(in srgb, color-mix(in srgb,var(--group-color,#ffe58a) 65%,white) 36%,transparent);
+  box-shadow:inset 0 -1px color-mix(in srgb,var(--group-color,#ddae39) 68%,transparent);
+  cursor:pointer;
+}
+.editor-annotation-card {
+  position:fixed; z-index:285; box-sizing:border-box; width:min(354px,calc(100vw - 20px));
+  max-height:min(440px,70dvh); overflow:auto; padding:10px; border-radius:11px;
+  border:1px solid var(--theme-border); background:var(--theme-panel-hdr); color:var(--theme-text);
+  box-shadow:0 8px 28px #0006; font:13px/1.4 system-ui,sans-serif;
+}
+.annotation-heading, .annotation-message-top, .annotation-actions {
+  display:flex; justify-content:space-between; align-items:center; gap:6px;
+}
+.annotation-heading { margin-bottom:8px; }
+.annotation-heading button { font-size:16px; min-width:28px; padding:0; }
+.annotation-messages, .annotation-list { display:grid; gap:6px; }
+.annotation-message {
+  border-radius:7px; padding:6px 8px;
+  border-inline-start:3px solid var(--group-color,#ddae39);
+  background:color-mix(in srgb,var(--group-color,#ffe58a) 18%,var(--theme-panel));
+}
+.annotation-message.annotation-mentor { --group-color:#5398de; }
+.annotation-message-top button { font-size:11px; min-height:22px; padding:1px 5px; }
+.annotation-message p { margin:2px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.annotation-actions { margin-top:8px; justify-content:flex-start; }
+.annotation-compose { display:grid; gap:6px; margin-top:8px; }
+.annotation-compose textarea {
+  box-sizing:border-box; width:100%; min-height:64px; resize:vertical;
+  border:1px solid var(--theme-border); background:var(--theme-input-bg);
+  color:var(--theme-text); border-radius:6px; padding:6px 8px; font:inherit;
+}
+.annotation-compose button { justify-self:end; }
+.annotation-status { color:var(--theme-text-dim); margin:6px 0 0; }
+.annotation-status:empty { display:none; }
+.annotation-list button { text-align:left; overflow-wrap:anywhere; }

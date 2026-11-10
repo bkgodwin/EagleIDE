@@ -559,6 +559,49 @@
     toolbar.querySelectorAll('button').forEach(button => button.disabled = tabIsReadOnly());
     const photo = document.getElementById('studentNotebookInsertPhotoBtn');
     if (photo) photo.disabled = tabIsReadOnly() || tab?.id === ASSIGNMENTS_TAB_ID || photoUploadPending;
+    updateNotebookMarkdownTools();
+  }
+
+  function updateNotebookMarkdownTools() {
+    const markdown = window.EagleWorkspaceMarkdown;
+    const to = document.getElementById('studentNotebookToMarkdown');
+    const from = document.getElementById('studentNotebookFromMarkdown');
+    if (!to || !from) return;
+    const active = drawerOpen && !readOnlyCheck && !!markdown?.present();
+    to.hidden = from.hidden = !active;
+    document.getElementById('studentNotebookInsertCodeBtn')?.toggleAttribute('hidden', active);
+    const tab = activeTab();
+    const notes = tab && tab.id !== ASSIGNMENTS_TAB_ID;
+    to.disabled = !notes || !markdown?.writable();
+    from.disabled = !notes || tabIsReadOnly();
+  }
+
+  function transferNotebookMarkdown(toMarkdown) {
+    const markdown = window.EagleWorkspaceMarkdown;
+    const page = document.getElementById('studentNotebookEditor');
+    if (!drawerOpen || readOnlyCheck || !page || !markdown?.present()) return;
+    try {
+      const selection = window.getSelection();
+      const range = selection?.rangeCount && selection.getRangeAt(0);
+      const inPage = range && page.contains(range.commonAncestorContainer);
+      if (toMarkdown) {
+        const source = inPage && !range.collapsed ? range.cloneContents() : page;
+        markdown.insertNotes(markdown.notesMarkdown(source, getCodeBlockText));
+        setStatus('Notes inserted into Markdown');
+      } else {
+        if (tabIsReadOnly()) return;
+        const html = sanitizeHtml(markdown.notebookHtml());
+        page.focus();
+        const insertion = inPage ? range : document.createRange();
+        if (!inPage) {insertion.selectNodeContents(page); insertion.collapse(false);}
+        else insertion.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(insertion);
+        document.execCommand('insertHTML', false, html + '<p><br></p>');
+        scheduleSave();
+        setStatus('Markdown inserted into notes');
+      }
+    } catch (error) {setStatus(error.message, 'error');}
   }
 
   function hydrateNotebookPhotos() {
@@ -1313,6 +1356,7 @@
       return;
     }
     drawerOpen = true;
+    updateNotebookMarkdownTools();
     syncDrawerViewport();
     document.body.classList.add('notebook-drawer-open');
     document.getElementById('studentNotebookDrawer')?.classList.add('open');
@@ -1350,6 +1394,7 @@
     clearTimeout(feedbackTimer); feedbackTimer = null;
     hideAllCodeBlockShells({ stop: true });
     drawerOpen = false;
+    updateNotebookMarkdownTools();
     const toggle = document.getElementById('notebookOpenBtn');
     if (toggle) {
       toggle.textContent = '📓 Notebook';
@@ -2077,6 +2122,12 @@
     document.getElementById('studentNotebookLockBtn')?.addEventListener('click', toggleTabLock);
     document.getElementById('studentNotebookDraftExportBtn')?.addEventListener('click', exportLocalDraft);
     document.getElementById('studentNotebookInsertCodeBtn')?.addEventListener('click', insertEditorCode);
+    for (const [id,toMarkdown] of [['studentNotebookToMarkdown',true],['studentNotebookFromMarkdown',false]]) {
+      const control = document.getElementById(id);
+      control?.addEventListener('pointerdown', event => event.preventDefault());
+      control?.addEventListener('click', () => transferNotebookMarkdown(toMarkdown));
+    }
+    window.addEventListener('eagle-markdown-context', updateNotebookMarkdownTools);
     document.getElementById('studentNotebookInsertPhotoBtn')?.addEventListener('click', chooseNotebookPhoto);
     document.getElementById('studentNotebookPhotoInput')?.addEventListener('change', event => { const file = event.target.files?.[0]; event.target.value = ''; insertNotebookPhoto(file); });
     document.getElementById('studentNotebookWikiLinkBtn')?.addEventListener('click', openWikiLinkPicker);

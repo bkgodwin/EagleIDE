@@ -94,6 +94,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       python: { mode: 'python', label: 'Python', highlight: 'python' },
       javascript: { mode: 'javascript', label: 'JavaScript', highlight: 'javascript' },
       html: { mode: 'htmlmixed', label: 'HTML', highlight: 'xml' },
+      markdown: { mode: 'markdown', label: 'Markdown', highlight: 'markdown' },
       json: { mode: {name:'javascript', json:true}, label:'JSON', highlight:'json' },
       css: { mode: 'css', label: 'CSS', highlight: 'css' }
     };
@@ -101,6 +102,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     function getLanguageInfoForFileName(fileName) {
       const lower = String(fileName || '').trim().toLowerCase();
       if (lower.endsWith('.json')) return LANGUAGE_INFO.json;
+      if (lower.endsWith('.md')) return LANGUAGE_INFO.markdown;
       if (lower.endsWith('.js')) return LANGUAGE_INFO.javascript;
       if (lower.endsWith('.html') || lower.endsWith('.htm')) return LANGUAGE_INFO.html;
       if (lower.endsWith('.css')) return LANGUAGE_INFO.css;
@@ -112,6 +114,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (normalized === 'javascript' || normalized === 'js') return LANGUAGE_INFO.javascript;
       if (normalized === 'html' || normalized === 'htmlmixed' || normalized === 'xml') return LANGUAGE_INFO.html;
       if (normalized === 'css') return LANGUAGE_INFO.css;
+      if (normalized === 'markdown' || normalized === 'md') return LANGUAGE_INFO.markdown;
       return LANGUAGE_INFO.python;
     }
 
@@ -817,14 +820,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       return !!(USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN);
     }
 
-    function ensureEditorTabForTeacherStream() {
-      const stack = document.getElementById('editorContentStack');
-      if (typeof setWorkspaceTab === 'function' && stack?.classList.contains('file-browser-active')) {
-        setWorkspaceTab('editor');
-      }
-    }
-    window.ensureEditorTabForTeacherStream = ensureEditorTabForTeacherStream;
-
     function centerTeacherStream(cursorLine = pendingTeacherSnapshot?.cursorLine) {
       if (!teacherStreamFollowing || !teacherPaneOpen || document.hidden || cursorLine == null) return;
       const pane = document.getElementById('teacherStreamPane');
@@ -942,14 +937,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     function flushPendingTeacherStream() {
       _teacherCodeFlushRaf = null;
-      if (!teacherPaneOpen || document.hidden || _workspaceTab === WORKSPACE_TAB_FILES) return;
+      if (!teacherPaneOpen || !currentOpenFile || document.hidden || _workspaceTab === WORKSPACE_TAB_FILES) return;
       applyTeacherCodeToViewer(pendingTeacherSnapshot || { code: '', language: 'python', cursorLine: null });
     }
     window.applyPendingTeacherStream = flushPendingTeacherStream;
 
     function queueTeacherStreamCode(snapshot) {
       pendingTeacherSnapshot = snapshot;
-      if (!teacherPaneOpen || document.hidden || _workspaceTab === WORKSPACE_TAB_FILES) return;
+      if (!teacherPaneOpen || !currentOpenFile || document.hidden || _workspaceTab === WORKSPACE_TAB_FILES) return;
       if (!_teacherCodeFlushRaf) {
         _teacherCodeFlushRaf = requestAnimationFrame(flushPendingTeacherStream);
       }
@@ -960,10 +955,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const classId = getCurrentClassContext()?.id;
       if (!classId || !teacherStreamLiveClasses[classId]) return;
       if (!teacherPaneEnabled) updateTeacherStreamPaneVisibility();
-      if (forceOpen) {
-        ensureEditorTabForTeacherStream();
-        if (!teacherPaneOpen) setTeacherPaneOpen(true);
-      }
+      if (forceOpen && !teacherPaneOpen) setTeacherPaneOpen(true);
       if (teacherPaneOpen) flushPendingTeacherStream();
       updateTeacherStreamToggleState();
     }
@@ -1509,6 +1501,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const previousId = currentTeacherClassId;
       const changed = !!previousId && previousId !== nextId;
       if (changed) {
+        if (auditPreviewActive) closeAuditPreview();
         // Stop and cancel pending sends while the previous class is still
         // current. Never carry a broadcast into another class implicitly.
         setTeacherStreamingEnabled(false);
@@ -2278,6 +2271,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       lastRunExceptionEntry = null;
       hideExceptionHelpButton();
       closeExceptionHelpModal();
+      if (currentOpenFile?.name?.toLowerCase().endsWith('.md')) {
+        appendOut('[Markdown is a notes file. Use Read Markdown to see the formatted document.]\n');
+        return;
+      }
       if (csvEditorActive || currentOpenFile?.name?.toLowerCase().endsWith('.json')) {
         appendOut('[Run skipped: data files are edited in the viewer.]\n');
         return;
@@ -3621,7 +3618,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     function flushTeacherBroadcast(force = false) {
-      if (!teacherStreamingEnabled || !teacherBroadcastActive || document.hidden || currentOpenFile?.groupTeacher) return;
+      if (!teacherStreamingEnabled || !teacherBroadcastActive || document.hidden || currentOpenFile?.groupTeacher || auditPreviewActive) return;
       const token = TEACHER_TOKEN;
       const role = TEACHER_TOKEN ? 'teacher' : '';
       const activeClassId = getCurrentClassContext()?.id;
@@ -3712,7 +3709,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     });
 
     function setTeacherStreamingEnabled(enabled) {
-      const next = !!enabled && !!TEACHER_TOKEN && !currentOpenFile?.groupTeacher;
+      const next = !!enabled && !!TEACHER_TOKEN && !currentOpenFile?.groupTeacher && !auditPreviewActive;
       teacherStreamingEnabled = next;
       if (next) {
         startTeacherBroadcast();
@@ -6034,6 +6031,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let _selectedFileItems = new Set();
     function setWorkspaceTab(tabName) {
       window.EagleEditorEditMenu?.reset?.();
+      window.EagleEditorAnnotations?.close();
       const switchBtn = document.getElementById('workspaceSwitchBtn');
       const switchLabel = document.getElementById('workspaceSwitchLabel');
       const editorContentStack = document.getElementById('editorContentStack');
@@ -6059,8 +6057,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           try { window.eagleEditor?.refresh?.(); } catch {}
           try { teacherEditor?.refresh?.(); } catch {}
           if (teacherPaneOpen) flushPendingTeacherStream();
+          window.EagleEditorAnnotations?.refresh();
         });
       }
+      window.EagleWorkspaceMarkdown?.sync();
     }
 
     document.getElementById('workspaceSwitchBtn')?.addEventListener('click', () => {
@@ -6362,6 +6362,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       duplicate: duplicateEditorFile,
       language: () => (getManualLanguageInfo() || getLanguageInfoForFileName(currentOpenFile?.name)).mode,
     });
+    const workspaceSourceVisible = () => _workspaceTab === WORKSPACE_TAB_EDITOR &&
+      !document.body.matches('.wiki-mode, .network-mode, .external-tool-mode, .eagle-lab-mode');
+    window.EagleWorkspaceMarkdown?.configure({file:() => currentOpenFile, visible:workspaceSourceVisible});
+    window.EagleEditorAnnotations?.configure({
+      file:() => currentOpenFile, scope:() => JSON.stringify([fileAuthHeaders(), currentTeacherClassId]), headers:fileAuthHeaders,
+      account:() => JSON.stringify([USER_TOKEN, TEACHER_TOKEN, ADMIN_TOKEN, WIKI_MANAGER_TOKEN]),
+      request:fetchWithDeadline, save:saveCurrentFile, visible:workspaceSourceVisible,
+      excluded:file => _isTrashTreePath(file.path || ''),
+    });
     window.WorkspaceHistory.configure({
       request: fetchWithDeadline, headers: fileAuthHeaders, file: () => currentOpenFile,
       account: () => USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN ? currentUser?.email : '',
@@ -6422,12 +6431,22 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         if (currentOpenFile.readOnly === next) return;
         currentOpenFile.readOnly = next;
         updateEditorOverlay();
+        window.EagleWorkspaceMarkdown?.sync();
+        if (!next) window.EagleEditorAnnotations?.refresh();
       },
       conceal(id) {
-        if (currentOpenFile?.groupFileId === id) editor.setValue('');
+        if (currentOpenFile?.groupFileId === id) {
+          window.EagleEditorAnnotations?.clear();
+          editor.setValue('');
+          window.EagleWorkspaceMarkdown?.refresh();
+        }
       },
       restore(id, content) {
-        if (currentOpenFile?.groupFileId === id) editor.setValue(content);
+        if (currentOpenFile?.groupFileId === id) {
+          editor.setValue(content);
+          window.EagleEditorAnnotations?.opened();
+          window.EagleWorkspaceMarkdown?.refresh();
+        }
       },
       rename(id, path) {
         if (currentOpenFile?.groupFileId !== id) return;
@@ -6889,16 +6908,18 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const content = csvEditorActive ? csvBufferContent() : editor.getValue();
       const savedFile = currentOpenFile;
       const savedContext = JSON.stringify(fileAuthHeaders());
+      const annotationSave = window.EagleEditorAnnotations?.saveInfo(savedFile);
       try {
         const res = await fetchWithDeadline('/api/files/write', {
           method: 'POST',
           headers: fileJsonHeaders(),
-          body: JSON.stringify({ path: savedFile.path, content, require_existing: true,
+          body: JSON.stringify({ path: savedFile.path, content, require_existing: true, ...annotationSave?.payload,
             ...(USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN ? {pasteRanges:savedFile.pasteRanges || [],
               workspaceHistorySampled:window.WorkspaceHistory?.tracking(savedFile)} : {}) })
         }, 10000);
         if (!res.ok) return false;
         const j = await res.json().catch(() => ({}));
+        if (j.ok) window.EagleEditorAnnotations?.saved(savedFile, annotationSave, j.annotationDigest);
         if (j.recordingWarning && document.getElementById('developmentRecordingStatus')) document.getElementById('developmentRecordingStatus').textContent = j.recordingWarning;
         if (j.ok && Number.isInteger(j.developmentVersion)) window.AssignmentDevelopment?.saved(savedFile,content,j.developmentVersion);
         if (j.ok && currentOpenFile === savedFile && savedContext === JSON.stringify(fileAuthHeaders())
@@ -6913,6 +6934,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     function updateActiveFileName() {
       window.GroupProjects?.guard();
       window.EagleEditorEditMenu?.reset?.();
+      document.getElementById('editorContentStack')?.classList?.toggle('stream-no-file', !currentOpenFile);
+      window.EagleWorkspaceMarkdown?.opened();
+      window.EagleEditorAnnotations?.opened();
       window.WorkspaceHistory?.opened();
       window.AssignmentWorkflow?.syncEditorDevelopment?.(currentOpenFile);
       const el = document.getElementById('activeFileName');
@@ -7109,11 +7133,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       updateEditorOverlay();
     }
 
-    async function openAuditPreview(path, content, studentEmail) {
+    async function openAuditPreview(path, content, studentEmail, auditClassId, annotationDigest) {
       if (!TEACHER_TOKEN) return;
       syncEditorBridge();
       if (!auditPreviewActive) {
-        if (!await saveCurrentFile()) return;
+        const scope = JSON.stringify([TEACHER_TOKEN, currentTeacherClassId]);
+        if (!await saveCurrentFile() || scope !== JSON.stringify([TEACHER_TOKEN, currentTeacherClassId])) return;
         auditEditorBackup = {
           currentOpenFile: currentOpenFile ? { ...currentOpenFile } : null,
           editorContent: editor.getValue(),
@@ -7121,10 +7146,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           csvContent: csvEditorActive ? window.WorkspaceData.snapshot() : null,
         };
       }
+      if (teacherStreamingEnabled) setTeacherStreamingEnabled(false);
       auditPreviewActive = true;
       auditPreviewMeta = { path, studentEmail };
       const name = String(path || '').split('/').pop() || 'file';
-      currentOpenFile = { path, name, audit: true };
+      currentOpenFile = { path, name, audit: true, studentEmail, auditClassId, annotationDigest };
       setCsvMode(false);
       editor.setValue(content || '');
       setMainEditorReadOnly(true);
@@ -7227,7 +7253,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (!res.ok || !j.ok) { alert(j.error || 'Cannot open file'); return; }
       const kind = j.kind || item.kind || 'text';
       currentOpenFile = { path: item.path, name: item.name, kind, development:j.development,
-        workspaceHistory:j.workspaceHistory, pasteRanges:j.pasteRanges || [] };
+        workspaceHistory:j.workspaceHistory, pasteRanges:j.pasteRanges || [], annotationDigest:j.annotationDigest };
       setMainEditorReadOnly(false);
       clearFileArtifactPreview();
       if (kind === 'image' || kind === 'database') {
@@ -7514,7 +7540,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       showFileNameDialog({
         title: type === 'folder' ? 'New Folder' : 'New File',
         submitLabel: 'Create',
-        hint: `Location: ${parent || 'Home'}. ` + (type === 'file' ? 'Examples: main.py, script.js, index.html, styles.css, data.csv, data.json. No extension adds .py.' : ''),
+        hint: `Location: ${parent || 'Home'}. ` + (type === 'file' ? 'Examples: main.py, script.js, index.html, styles.css, data.csv, data.json, notes.md. No extension adds .py.' : ''),
         onSubmit: async name => {
           if (type === 'file' && !name.includes('.')) name += '.py';
           const res = await fetchWithDeadline('/api/files/create', {

@@ -87,6 +87,19 @@ class FileBrowserTests(unittest.TestCase):
         self.assertIsNone(eagle._get_cached_workspace_tree(self.workspace))
         self.assertNotIn("cached.py", {item["path"] for item in self.list_files()})
 
+    def test_existing_workspaces_get_markdown_example_once(self):
+        examples = self.workspace / "Examples"
+        examples.mkdir(parents=True)
+        (examples / "notes.txt").write_text("my notes", encoding="utf-8")
+        path = "Examples/markdown.md"
+        self.list_files()
+        read = self.client.get("/api/files/read", headers=self.headers, query_string={"path":path})
+        self.assertIn("```python", read.json["content"])
+        self.assertEqual((examples / "notes.txt").read_text(encoding="utf-8"), "my notes")
+        self.assertEqual(self.delete(path).status_code, 200)
+        self.list_files()
+        self.assertFalse((examples / "markdown.md").exists())
+
     def test_duplicate_create_returns_conflict_without_overwriting(self):
         self.post("create", {"name": "main.py"})
         (self.workspace / "main.py").write_text("keep me", encoding="utf-8")

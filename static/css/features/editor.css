@@ -527,7 +527,7 @@
     .student-editor-wrap{ min-height:0; overflow:hidden; }
     .editor-stream-splitter,
     .teacher-stream-pane{ display:none; }
-    .editor-content-stack.teacher-stream-enabled.teacher-stream-open{
+    .editor-content-stack.teacher-stream-enabled.teacher-stream-open:not(.file-browser-active):not(.stream-no-file){
       grid-template-rows: minmax(0, 1fr) var(--splitter-size) minmax(0, var(--teacher-pane-size));
     }
     .editor-content-stack.teacher-stream-enabled.teacher-stream-open .editor-stream-splitter{
@@ -608,6 +608,9 @@
       padding:4px;
     }
     .teacher-stream-enabled .teacher-pane-toggle{ display:flex; }
+    .editor-content-stack.stream-no-file .teacher-pane-toggle,
+    .editor-content-stack.stream-no-file .editor-stream-splitter,
+    .editor-content-stack.stream-no-file .teacher-stream-pane{ display:none !important; }
     .teacher-pane-toggle[aria-expanded="true"] svg{ transform:rotate(180deg); }
     .teacher-pane-toggle.live{
       border-color:currentColor;

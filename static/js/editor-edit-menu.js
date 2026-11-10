@@ -78,6 +78,9 @@
     function canAct(action) {
       if (!visible()) return false;
       if (action === 'find') return true;
+      if (action === 'annotate' || action === 'annotations') {
+        return !!window.EagleEditorAnnotations?.enabled() && (action === 'annotations' || !!selected());
+      }
       if (action === 'copy') return !clipboardBlocked() && !!selected();
       if (!writable()) return false;
       if (action === 'duplicate') return !duplicating && bridge.canDuplicate();
@@ -268,6 +271,8 @@
     async function run(action) {
       if (!canAct(action)) return;
       if (action === 'find') { openFind(); return; }
+      if (action === 'annotate') { window.EagleEditorAnnotations.add(); return; }
+      if (action === 'annotations') { window.EagleEditorAnnotations.showList(trigger); return; }
       if (action === 'copy' || action === 'cut' || action === 'paste') { await clipboard(action); return; }
       focusEditor();
       if (action === 'duplicate') {

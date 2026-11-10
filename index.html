@@ -18,6 +18,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js" integrity="sha384-g0o+WW9mdIxA7LaaCKTkRm0M5TVT+Bb4s9eocxPsI2G0Xm0POG9iD6G6qP1IIsfS" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/css/css.min.js" integrity="sha384-fpeIC2FZuPmw7mIsTvgB5BNc8QVxQC/nWg2W+CgPYOAiBiYVuHe2E8HiTWHBMIJQ" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/xml/xml.min.js" integrity="sha384-xPpkMo5nDgD98fIcuRVYhxkZV6/9Y4L8s3p0J5c4MxgJkyKJ8BJr+xfRkq7kn6Tw" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/markdown/markdown.min.js" integrity="sha384-nPWqI+4+e+SwcpI6LVYBpaQd+zIZIQgC6lN7Gep8MJQr5DdmMGtWV8qJQgcyODcF" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/htmlmixed/htmlmixed.min.js" integrity="sha384-xYIbc5F55vPi7pb/lUnFj3wu24HlpAMZdtBHkNrb2YhPzJV3pX7+eqXT2PXSNMrw" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js" integrity="sha384-69mJoUoPPF/C7qPs6lLjvXvrt6w225+rmxWqGO3a1glVjITdnnwPQOtG9FRTd2Ni" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js" integrity="sha384-LjCI3E8qhhxXZvu7+FCvqx9eZYSowFvuJ7z54KsgI/BDPGKEuysqCg/vYiKHvC4Y" crossorigin="anonymous"></script>
@@ -514,12 +515,24 @@
         <button type="button" class="btn secondary" id="classroomAuditCloseBannerBtn" style="font-size:12px;padding:4px 10px;">Exit audit view</button>
       </div>
       <div class="group-editor-tools" id="groupEditorTools" aria-label="Group project tools" hidden></div>
-      <div class="content editor-content-stack" id="editorContentStack">
+      <div id="workspaceMarkdownToolbar" class="workspace-markdown-tools" role="group" aria-label="Markdown formatting" hidden>
+        <button type="button" data-workspace-md="heading" title="Insert a heading">Heading</button>
+        <button type="button" data-workspace-md="bold" title="Bold" aria-label="Bold"><strong>B</strong></button>
+        <button type="button" data-workspace-md="italic" title="Italic" aria-label="Italic"><em>I</em></button>
+        <button type="button" data-workspace-md="underline" title="Underline" aria-label="Underline"><u>U</u></button>
+        <button type="button" data-workspace-md="bullets">Bullets</button>
+        <button type="button" data-workspace-md="numbered">Numbered list</button>
+        <button type="button" data-workspace-md="checklist">Checklist</button>
+        <button type="button" data-workspace-md="inlineCode">Inline code</button>
+        <button type="button" data-workspace-md="code">Code block</button>
+      </div>
+      <div class="content editor-content-stack stream-no-file" id="editorContentStack">
         <div class="workspace-floating-controls" aria-label="Editor workspace controls">
           <button class="btn secondary" id="clearErrorsBtn" type="button" hidden>Clear Errors</button>
           <button class="workspace-switch-btn editor-edit-toggle" id="editorEditBtn" type="button" aria-label="Edit" aria-controls="editorEditMenu" aria-expanded="false" title="Edit">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14 5 5 5M4 20l5-1L21 7l-5-5L4 14z"/></svg><span aria-hidden="true">▾</span>
           </button>
+          <button class="workspace-switch-btn workspace-markdown-toggle" id="workspaceMarkdownToggle" type="button" aria-controls="workspaceMarkdownView" hidden>Edit Markdown</button>
           <button class="workspace-switch-btn" id="workspaceSwitchBtn" type="button" aria-controls="fileBrowserTabPane" aria-pressed="false" title="Open file browser"><span aria-hidden="true">📁</span><span id="workspaceSwitchLabel">Files</span></button>
         </div>
         <div class="editor-edit-menu editor-edit-glass" id="editorEditMenu" aria-label="Edit actions" role="group" hidden>
@@ -527,6 +540,8 @@
           <button type="button" data-edit="undo">Undo<kbd></kbd></button>
           <button type="button" data-edit="redo">Redo<kbd></kbd></button>
           <button type="button" data-edit="comment">Comment / uncomment<kbd></kbd></button>
+          <button type="button" data-edit="annotate">Add Annotation<kbd></kbd></button>
+          <button type="button" data-edit="annotations">View Annotations<kbd></kbd></button>
           <button type="button" data-edit="indent">Indent<kbd></kbd></button>
           <button type="button" data-edit="unindent">Un-indent<kbd></kbd></button>
           <button type="button" data-edit="duplicate">Create Duplicate File<kbd></kbd></button>
@@ -539,6 +554,7 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>
           </button>
           <textarea id="editor" style="display:none; resize:none;"></textarea>
+          <section class="workspace-markdown-view" id="workspaceMarkdownView" aria-label="Markdown reading view" tabindex="0" hidden></section>
           <form class="editor-find editor-edit-glass" id="editorFind" aria-label="Find and replace" hidden>
             <header><strong>Find and replace</strong><button type="button" data-find="close" aria-label="Close find and replace" title="Close (Esc)">×</button></header>
             <label>Find<input name="query" type="text" maxlength="256" autocomplete="off" spellcheck="false"></label>
@@ -592,6 +608,7 @@
             </div>
           </section>
         </div>
+        <section id="editorAnnotationCard" class="editor-annotation-card" role="dialog" aria-label="File annotations" hidden></section>
         <div class="editor-stream-splitter" id="editorStreamSplitter" role="separator" aria-orientation="horizontal" title="Drag to resize teacher stream"></div>
         <section class="teacher-stream-pane" id="teacherStreamPane" aria-label="Teacher code stream">
           <div id="teacherStreamCursor" class="teacher-stream-cursor">Teacher stream</div>
@@ -1311,6 +1328,8 @@
         <button type="button" class="notebook-tool" data-notebook-command="insertUnorderedList" title="Bulleted list">• List</button>
         <button type="button" class="notebook-tool" data-notebook-command="insertOrderedList" title="Numbered list">1. List</button>
         <button type="button" class="notebook-tool" id="studentNotebookInsertCodeBtn" title="Insert code from editor">Insert Code</button>
+        <button type="button" class="notebook-tool" id="studentNotebookToMarkdown" hidden>Notes → Markdown</button>
+        <button type="button" class="notebook-tool" id="studentNotebookFromMarkdown" hidden>Markdown → Notes</button>
         <button type="button" class="notebook-tool" id="studentNotebookInsertPhotoBtn" title="Add a photo from your device or camera">Insert Photo</button>
         <input id="studentNotebookPhotoInput" type="file" accept="image/*" hidden aria-label="Choose a notebook photo">
         <button type="button" class="notebook-tool" id="studentNotebookWikiLinkBtn" title="Link selected text to a wiki page">Link Wiki Page</button>
@@ -2147,6 +2166,8 @@
   <script src="/static/js/group-project-text.js"></script>
   <script src="/static/js/group-projects.js"></script>
   <script src="/static/js/group-project-ui.js"></script>
+  <script src="/static/js/editor-annotations.js"></script>
+  <script src="/static/js/workspace-markdown.js"></script>
   <script src="/static/js/assignment-workflow.js?v=20261109-history"></script>
   <script src="/static/js/assignment-development.js?v=20261109-history"></script>
   <script src="/static/js/workspace-history.js?v=20261109-history"></script>

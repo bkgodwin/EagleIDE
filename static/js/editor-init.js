@@ -157,8 +157,6 @@ function eagleFoldRange(cm, pos) {
         try { localStorage.setItem(TEACHER_PANE_OPEN_KEY, teacherPaneOpen ? '1' : '0'); } catch {}
       }
       if (teacherPaneOpen) {
-        window.ensureEditorTabForTeacherStream?.();
-        initTeacherViewer();
         window.applyPendingTeacherStream?.();
       }
       // Closing/stopping a stream also changes the student's editor height.
@@ -174,7 +172,6 @@ function eagleFoldRange(cm, pos) {
       if (!teacherPaneEnabled) {
         setTeacherPaneOpen(false, false);
       } else {
-        initTeacherViewer();
         let shouldOpen = false;
         try { shouldOpen = localStorage.getItem(TEACHER_PANE_OPEN_KEY) === '1'; } catch {}
         setTeacherPaneOpen(shouldOpen, false);
