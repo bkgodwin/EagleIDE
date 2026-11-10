@@ -21,6 +21,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/htmlmixed/htmlmixed.min.js" integrity="sha384-xYIbc5F55vPi7pb/lUnFj3wu24HlpAMZdtBHkNrb2YhPzJV3pX7+eqXT2PXSNMrw" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js" integrity="sha384-69mJoUoPPF/C7qPs6lLjvXvrt6w225+rmxWqGO3a1glVjITdnnwPQOtG9FRTd2Ni" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js" integrity="sha384-LjCI3E8qhhxXZvu7+FCvqx9eZYSowFvuJ7z54KsgI/BDPGKEuysqCg/vYiKHvC4Y" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/comment/comment.min.js" integrity="sha384-B6Af6BES5glvxvAPc9Vrl9t1lHx1k3iL8AcT1XmsmlEVZudSW8E+8CA1TxVbdQbj" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/fold/foldcode.min.js" integrity="sha384-W02BpSarmulrXSlX8vGo+pIMmj77J5/466I8FNZUadgZnzCRDW0voXoe9lVELNx6" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/fold/foldgutter.min.js" integrity="sha384-Ac/3zEI5dlnDOqcbGRHTFqD6PaE02DrexbwN3Gkp05zzHS/Lml381fYFxc/Ltg8T" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/fold/indent-fold.min.js" integrity="sha384-vTym2xwDbWIw505FzcJD3iIDNFlAKnjLLnRiA70oHaZzR5fCJU+tV9WhIcr4Frw8" crossorigin="anonymous"></script>
@@ -515,10 +516,44 @@
       <div class="content editor-content-stack" id="editorContentStack">
         <div class="workspace-floating-controls" aria-label="Editor workspace controls">
           <button class="btn secondary" id="clearErrorsBtn" type="button" hidden>Clear Errors</button>
+          <button class="workspace-switch-btn editor-edit-toggle" id="editorEditBtn" type="button" aria-label="Edit" aria-controls="editorEditMenu" aria-expanded="false" title="Edit">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14 5 5 5M4 20l5-1L21 7l-5-5L4 14z"/></svg><span aria-hidden="true">▾</span>
+          </button>
           <button class="workspace-switch-btn" id="workspaceSwitchBtn" type="button" aria-controls="fileBrowserTabPane" aria-pressed="false" title="Open file browser"><span aria-hidden="true">📁</span><span id="workspaceSwitchLabel">Files</span></button>
+        </div>
+        <div class="editor-edit-menu editor-edit-glass" id="editorEditMenu" aria-label="Edit actions" role="group" hidden>
+          <button type="button" data-edit="find">Find and replace<kbd></kbd></button>
+          <button type="button" data-edit="undo">Undo<kbd></kbd></button>
+          <button type="button" data-edit="redo">Redo<kbd></kbd></button>
+          <button type="button" data-edit="comment">Comment / uncomment<kbd></kbd></button>
+          <button type="button" data-edit="indent">Indent<kbd></kbd></button>
+          <button type="button" data-edit="unindent">Un-indent<kbd></kbd></button>
+          <button type="button" data-edit="duplicate">Create Duplicate File<kbd></kbd></button>
+          <button type="button" data-edit="copy">Copy<kbd></kbd></button>
+          <button type="button" data-edit="cut">Cut<kbd></kbd></button>
+          <button type="button" data-edit="paste">Paste<kbd></kbd></button>
         </div>
         <div class="student-editor-wrap" id="studentEditorWrap">
           <textarea id="editor" style="display:none; resize:none;"></textarea>
+          <form class="editor-find editor-edit-glass" id="editorFind" aria-label="Find and replace" hidden>
+            <header><strong>Find and replace</strong><button type="button" data-find="close" aria-label="Close find and replace" title="Close (Esc)">×</button></header>
+            <label>Find<input name="query" type="text" maxlength="256" autocomplete="off" spellcheck="false"></label>
+            <div class="editor-find-options">
+              <label><input name="caseSensitive" type="checkbox"> Case sensitive</label>
+              <label title="Match text inside a longer word"><input name="withinWord" type="checkbox"> Contains</label>
+            </div>
+            <div class="editor-find-navigation">
+              <span id="editorFindCount" role="status"></span>
+              <button type="button" data-find="previous" aria-label="Previous match" title="Previous match (Shift+Enter)">↑</button>
+              <button type="submit" data-find="next" aria-label="Next match" title="Next match (Enter)">↓</button>
+            </div>
+            <label>Replace with<input name="replacement" type="text" autocomplete="off" spellcheck="false"></label>
+            <div class="editor-find-actions">
+              <button type="button" data-find="replace">Replace</button>
+              <button type="button" data-find="replaceAll">Replace all</button>
+            </div>
+          </form>
+          <output class="editor-edit-status editor-edit-glass" id="editorEditStatus" aria-live="polite" hidden></output>
           <section id="submissionAttachmentPreview" class="submission-attachment-preview" aria-label="Submitted work" hidden></section>
           <div id="jsonToolbar" class="data-viewer-toolbar" hidden><strong>JSON</strong><button class="btn secondary" id="jsonFormatBtn" type="button">Format JSON</button><button class="btn secondary" id="jsonTreeBtn" type="button">View tree</button><span id="jsonStatus" role="status"></span></div>
           <div id="jsonTree" class="json-tree" hidden></div>
@@ -2101,6 +2136,7 @@
   <script src="/static/js/assignment-development.js?v=20261109-history"></script>
   <script src="/static/js/workspace-history.js?v=20261109-history"></script>
   <script src="/static/js/teacher-assignments.js?v=20261109-history"></script>
+  <script src="/static/js/editor-edit-menu.js?v=1"></script>
   <script src="/static/js/app-core.js?v=20261109-history"></script>
   <script src="/static/js/eagle-lab-access.js?v=20261103-lab-polish"></script>
   <script src="/static/js/step-mode.js?v=20261011-files-5"></script>

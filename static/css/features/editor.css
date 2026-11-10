@@ -257,6 +257,107 @@
       backdrop-filter:blur(8px);
     }
     .workspace-switch-btn:hover,.workspace-switch-btn:focus-visible{ background:var(--theme-btn-hover); outline:2px solid var(--columbia-blue); outline-offset:1px; }
+    .editor-edit-toggle{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:3px;
+      min-width:36px;
+      padding:4px 6px;
+    }
+    .editor-edit-glass{
+      position:absolute;
+      z-index:26;
+      box-sizing:border-box;
+      overflow:auto;
+      background:var(--workspace-popup, var(--theme-panel-hdr));
+      background:color-mix(in srgb, var(--workspace-popup, var(--theme-panel-hdr)) 90%, transparent);
+      color:var(--workspace-foreground, var(--theme-text));
+      border:1px solid var(--glass-border);
+      box-shadow:var(--glass-shadow);
+      -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(var(--glass-saturate));
+      backdrop-filter:blur(var(--glass-blur)) saturate(var(--glass-saturate));
+      font-size:13px;
+    }
+    .editor-edit-menu{
+      top:47px;
+      right:24px;
+      width:min(288px, calc(100% - 32px));
+      max-height:calc(100% - 51px);
+      padding:4px;
+    }
+    .editor-edit-glass button{
+      min-height:30px;
+      border:1px solid var(--theme-border);
+      background:transparent;
+      color:inherit;
+      font:inherit;
+      cursor:pointer;
+    }
+    .editor-edit-glass button:disabled{ opacity:.48; cursor:default; }
+    .editor-edit-glass button:not(:disabled):hover,
+    .editor-edit-glass :focus-visible{
+      outline:2px solid var(--workspace-accent, var(--columbia-blue));
+      outline-offset:-2px;
+    }
+    .editor-edit-menu button{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:8px;
+      width:100%;
+      border-color:transparent;
+      padding:5px 8px;
+      text-align:left;
+    }
+    .editor-edit-menu kbd{ font:inherit; font-size:11px; white-space:nowrap; }
+    .editor-find{
+      top:47px;
+      right:24px;
+      width:min(350px, calc(100% - 32px));
+      max-height:calc(100% - 51px);
+      padding:10px;
+      display:grid;
+      gap:8px;
+    }
+    .editor-find header,.editor-find-navigation,.editor-find-actions,.editor-find-options{
+      display:flex;
+      align-items:center;
+      gap:6px;
+      flex-wrap:wrap;
+    }
+    .editor-find header,.editor-find-options{ justify-content:space-between; }
+    .editor-find-navigation span{ flex:1; }
+    .editor-find-actions{ justify-content:flex-end; }
+    .editor-find button{ min-width:30px; padding:3px 8px; }
+    .editor-find input[type="text"]{
+      display:block;
+      box-sizing:border-box;
+      width:100%;
+      min-height:32px;
+      margin-top:4px;
+      padding:4px 6px;
+      border:1px solid var(--theme-border-mid);
+      background:var(--workspace-input, var(--theme-input-bg));
+      color:inherit;
+      font:inherit;
+    }
+    .editor-edit-status{
+      bottom:8px;
+      right:12px;
+      max-width:calc(100% - 24px);
+      padding:6px 10px;
+      pointer-events:none;
+    }
+    .editor-edit-glass[hidden], .editor-edit-toggle[hidden]{ display:none !important; }
+    .cm-eagle-find-match{
+      background:rgba(255, 184, 40, .29);
+      box-shadow:inset 0 -1px #a87100;
+    }
+    .cm-eagle-find-match-current{
+      background:rgba(255, 158, 0, .50);
+      box-shadow:inset 0 -2px #a85900;
+    }
     #clearErrorsBtn{ min-height:34px; padding:6px 10px; font-size:12px; }
     #clearErrorsBtn[hidden]{ display:none !important; }
     .editor-content-stack.file-browser-active #clearErrorsBtn{ display:none !important; }

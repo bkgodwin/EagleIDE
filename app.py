@@ -4415,6 +4415,11 @@ def files_duplicate():
         return jsonify(ok=False, error="src path required"), 400
 
     user_dir = _get_user_dir(user["email"])
+    with file_provenance.lock(user_dir):
+        return _duplicate_workspace_item(user_dir, src_path, data)
+
+
+def _duplicate_workspace_item(user_dir, src_path, data):
     src = _validate_workspace_path(user_dir, src_path)
     if not src or not src.exists():
         return jsonify(ok=False, error="Source not found"), 404
@@ -4424,9 +4429,28 @@ def files_duplicate():
     parent_dir = src.parent
     stem = src.stem if src.is_file() else src.name
     suffix = src.suffix if src.is_file() else ""
+    editor_copy = "content" in data
+    if editor_copy:
+        content = data["content"]
+        if not isinstance(content, str) or not src.is_file() or suffix.lower() not in TEXT_EXTENSIONS:
+            return jsonify(ok=False, error="An editor copy requires a text file and text content"), 400
+        try:
+            encoded = content.encode("utf-8")
+            if len(encoded) > MAX_EDITOR_FILE_BYTES:
+                return jsonify(ok=False, error="File exceeds the editor size limit"), 413
+            ranges = file_provenance.normalize(data.get("pasteRanges", []), content)
+        except (ValueError, UnicodeError):
+            return jsonify(ok=False, error="Invalid editor content or paste ranges"), 400
+
     duplicate_target = None
     for idx in range(1, MAX_DUPLICATE_NAME_ATTEMPTS + 1):
-        candidate_name = f"{stem}{idx}{suffix}"
+        marker = ("-copy" if idx == 1 else f"-copy-{idx}") if editor_copy else str(idx)
+        ending = marker + suffix
+        candidate_stem = stem
+        if editor_copy:
+            max_stem_bytes = 255 - len(ending.encode("utf-8"))
+            candidate_stem = stem.encode("utf-8")[:max_stem_bytes].decode("utf-8", "ignore")
+        candidate_name = candidate_stem + ending
         candidate = parent_dir / candidate_name
         if not candidate.exists():
             duplicate_target = candidate
@@ -4454,19 +4478,31 @@ def files_duplicate():
 
     limit_bytes = USER_STORAGE_LIMIT_MB * 1024 * 1024
     used = _get_user_storage_used(user_dir)
-    duplicate_bytes = _sum_file_sizes(src)
+    duplicate_bytes = len(encoded) if editor_copy else _sum_file_sizes(src)
     if used + duplicate_bytes > limit_bytes:
         return jsonify(ok=False, error=f"Storage limit of {USER_STORAGE_LIMIT_MB}MB exceeded"), 413
 
+    created_editor_copy = False
     try:
-        if src.is_dir():
+        if editor_copy:
+            with duplicate_validated.open("xb") as handle:
+                created_editor_copy = True
+                handle.write(encoded)
+            file_provenance.write(sys.modules[__name__], user_dir, duplicate_validated, content, ranges)
+        elif src.is_dir():
             shutil.copytree(src, duplicate_validated)
         else:
             shutil.copy2(src, duplicate_validated)
-        file_provenance.move(sys.modules[__name__], user_dir, src, duplicate_validated, keep_source=True)
+        if not editor_copy:
+            file_provenance.move(sys.modules[__name__], user_dir, src, duplicate_validated, keep_source=True)
         _invalidate_workspace_tree_cache(user_dir)
         return jsonify(ok=True, new_path=duplicate_validated.relative_to(user_dir.resolve()).as_posix())
-    except Exception:
+    except Exception as error:
+        if created_editor_copy:
+            duplicate_validated.unlink(missing_ok=True)
+            _invalidate_workspace_tree_cache(user_dir)
+        elif editor_copy and isinstance(error, FileExistsError):
+            return jsonify(ok=False, error="The duplicate name is already in use. Try again."), 409
         return jsonify(ok=False, error="Could not duplicate item"), 500
 
 # -------------------------
