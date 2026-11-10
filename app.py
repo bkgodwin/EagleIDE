@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 from urllib.parse import quote, urlsplit
 
-from flask import Flask, has_request_context, send_from_directory, send_file, request, jsonify
+from flask import Flask, has_request_context, send_file, request, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
 import requests
 import bcrypt
@@ -64,6 +64,7 @@ from sandbox_policy import (
     public_module_catalog,
 )
 from wiki_features import register as register_wiki_features
+import spa_assets
 
 _native_threading = threading
 _native_time = time
@@ -7049,13 +7050,9 @@ def assistant_chat():
     return jsonify(ok=True, reply=(res.get("text") or "").strip(), cooldown=ASSISTANT_COOLDOWN)
 
 # -------------------------
-# Minimal static index.html
+# IDE document and its fingerprinted stylesheet imports
 # -------------------------
 @app.get("/")
-def root():
-    return send_from_directory(BASE_DIR, "index.html")
-
-
 @app.get("/ide")
 @app.get("/network")
 @app.get("/lab")
@@ -7063,7 +7060,14 @@ def root():
 @app.get("/wiki")
 @app.get("/wiki/<path:wiki_path>")
 def spa_route(wiki_path: str = ""):
-    return send_from_directory(BASE_DIR, "index.html")
+    content = spa_assets.render_document(BASE_DIR / "index.html", Path(app.static_folder))
+    return send_file(BytesIO(content), mimetype="text/html", etag=spa_assets.fingerprint(content))
+
+
+@app.get("/static/css/main.css")
+def spa_stylesheet():
+    content = spa_assets.render_stylesheet(Path(app.static_folder))
+    return send_file(BytesIO(content), mimetype="text/css", etag=spa_assets.fingerprint(content))
 
 
 def _html_runtime_popup_shell(channel_id: str) -> str:

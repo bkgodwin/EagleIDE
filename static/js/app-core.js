@@ -3913,7 +3913,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     function openTeacherDashboard(view, preserveAssignmentVisit = false) {
       const modal = document.getElementById('teacherDashboardModal');
       if (!modal) return;
-      modal.classList.remove('is-minimized');
       const minimizedBar = document.getElementById('teacherDashMinimizedBar');
       if (minimizedBar) minimizedBar.hidden = true;
       modal.style.display = 'flex';
@@ -3922,7 +3921,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
         const closeTeacherDashboard = () => {
           modal.style.display = 'none';
-          modal.classList.remove('is-minimized');
           const minimizedBar = document.getElementById('teacherDashMinimizedBar');
           if (minimizedBar) minimizedBar.hidden = !activeSubmissionContext;
           stopTeacherDashboardRosterPolling();
@@ -4220,9 +4218,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     document.getElementById('teacherDashboardBtn')?.addEventListener('click', () => {
       openTeacherDashboard('dash-reports');
     });
-    document.getElementById('teacherDashRestoreBtn')?.addEventListener('click', async () => {
-      if (await saveReviewedScore()) openTeacherDashboard('dash-assignments', true);
-    });
+    document.getElementById('teacherDashRestoreBtn')?.addEventListener('click', returnToSubmissionDashboard);
 
 
     document.getElementById('settingsSaveBtn').addEventListener('click', async () => {
@@ -6211,6 +6207,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         return openQuestions(assignmentReference);
       }, scoreReport: openStudentScoreReport,
       roster: classId => teacherClasses.find(c => c.id === classId)?.students || [],
+      reviewSubmission: openAssignmentSubmission,
       maxScore: assignmentTotalMaxScore, feedback: renderAssignmentAiFeedback, markdown: renderMarkdownTo,
       reloadClasses: async () => {await loadTeacherClasses(); renderTeacherClassManagement();},
       openPath: async path => {await loadFileTree(); await openFile({path, name:path.split('/').pop(), type:'file'});},
@@ -7969,7 +7966,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
       const dashboard = document.getElementById('teacherDashboardModal');
       const pending = TEACHER_TOKEN && (currentAssignments || []).some(a => (a.submissions || []).some(s => ['queued', 'running'].includes(s.aiGradingStatus)));
-      if (!pending || !dashboard || dashboard.style.display === 'none') return;
+      if (!pending || (!activeSubmissionContext && dashboard?.style.display !== 'flex')) return;
       assignmentAiPollTimer = setInterval(() => loadAssignments(), 3000);
     }
 
@@ -9382,34 +9379,55 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
     }
 
+    async function returnToSubmissionDashboard() {
+      const review = activeSubmissionContext;
+      if (!review || !await saveReviewedScore() || activeSubmissionContext !== review) return;
+      ++fileOpenRequestId;
+      const assignment = getAssignmentByName(review.assignmentId);
+      if (assignment) {
+        activeAssignmentsClassId = assignment.targetClassId || activeAssignmentsClassId;
+        currentAdminAssignmentName = assignment.id || assignment.name;
+      }
+      syncTeacherDashboardClassSelectors();
+      openTeacherDashboard('dash-assignments', true);
+      renderAdminAssignments();
+      const tab = document.getElementById('assignment-tab-submissions');
+      tab?.click();
+      tab?.focus({ preventScroll: true });
+    }
+
     function minimizeTeacherDashboardForSubmission(assignment, submission) {
       const modal = document.getElementById('teacherDashboardModal');
       const bar = document.getElementById('teacherDashMinimizedBar');
       const label = document.getElementById('teacherDashMinimizedLabel');
       if (!modal || !bar) return;
-      modal.style.display = 'flex';
-      modal.classList.add('is-minimized');
+      const wasOpen = modal.style.display === 'flex';
+      modal.style.display = 'none';
       stopTeacherDashboardRosterPolling();
       bar.hidden = false;
       if (label) {
         label.textContent = `${submission.name || submission.email} · ${assignment.name}`;
         label.title = label.textContent;
       }
+      if (wasOpen) document.getElementById('teacherDashRestoreBtn')?.focus({ preventScroll: true });
+      syncAssignmentAiPolling();
     }
 
-    async function openAssignmentSubmission(assignmentReference, email) {
+    async function openAssignmentSubmission(assignmentReference, email, fileId = '') {
       const { assignment, submission } = getSubmissionForAssignment(assignmentReference, email);
       if (!assignment || !submission) return;
-      currentAdminAssignmentName = assignment.id || assignment.name;
+      const requestId = ++fileOpenRequestId;
+      const requestContext = JSON.stringify(assignmentManagerHeaders());
       window.AssignmentWorkflow?.pauseEditorDevelopment?.();
-      if (!await saveCurrentFile()) {
+      const saved = await saveCurrentFile();
+      if (requestId !== fileOpenRequestId || requestContext !== JSON.stringify(assignmentManagerHeaders())) return;
+      if (!saved) {
         alert('Your current file could not be saved before opening the submission.');
         return;
       }
-      const requestId = ++fileOpenRequestId;
-      const requestContext = JSON.stringify(assignmentManagerHeaders());
       const previousFile = currentOpenFile, previousContent = editor.getValue();
-      const sourceName = submission.submittedFileName || submission.files?.[0]?.name
+      const selectedFile = submission.files?.find(file => file.id === fileId);
+      const sourceName = selectedFile?.name || submission.submittedFileName || submission.files?.[0]?.name
         || (submission.hasGradableFiles || submission.code ? 'submission.py' : '');
       const useEditor = assignment.allowFileSubmission !== false && (submission.files || []).length <= 1
         && (assignment.fileControl ? /\.(py|js|html|css)$/i : /\.(py|js)$/i).test(sourceName);
@@ -9454,9 +9472,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       populateSubmissionScoringPanel(assignment, submission, currentOpenFile.revisionId ?? null);
       if (!useEditor) {
         activeSubmissionContext.disposeFiles = window.AssignmentWorkflow.mountReviewFiles(
-          document.getElementById('submissionAttachmentPreview'), assignment, submission);
+          document.getElementById('submissionAttachmentPreview'), assignment, submission, fileId);
       }
-      renderAdminAssignments();
       minimizeTeacherDashboardForSubmission(assignment, submission);
       if (activeSubmissionContext?.stale) loadAssignments();
     }

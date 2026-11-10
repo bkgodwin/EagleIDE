@@ -65,7 +65,7 @@ test('submission return controls occupy their own row outside the dashboard moda
 
 test('submission review updates the context and clears on leaving the submission', () => {
   const nodes = {
-    teacherDashboardModal: { style: {}, classList: { add(value) { this.value = value; } } },
+    teacherDashboardModal: { style: { display: 'flex' } },
     teacherDashMinimizedBar: { hidden: true },
     teacherDashMinimizedLabel: {}, activeFileName: {}, saveDraftBtn: { style: {} },
     submissionScoringPanel: { style: {} }, submissionScoreInput: {}, submissionScoreSaveStatus: {},
@@ -75,7 +75,7 @@ test('submission review updates the context and clears on leaving the submission
     document: { getElementById: id => nodes[id] },
     window: {}, currentOpenFile: { name: 'submission.py', submission: true },
     csvEditorActive: false, fileArtifactPreviewActive: false, activeSubmissionContext: {}, submissionSaveTimer: null,
-    stopTeacherDashboardRosterPolling() { pollingStopped = true; }, syncEditorLanguage() {},
+    stopTeacherDashboardRosterPolling() { pollingStopped = true; }, syncEditorLanguage() {}, syncAssignmentAiPolling() {},
   };
   function extract(name) {
     const start = source.indexOf(`    function ${name}(`);
@@ -86,7 +86,7 @@ test('submission review updates the context and clears on leaving the submission
     'minimizeTeacherDashboardForSubmission({name:"Functions"}, {name:"Student One"});',
   ].join('\n'), context);
   assert.equal(nodes.teacherDashMinimizedBar.hidden, false);
-  assert.equal(nodes.teacherDashboardModal.classList.value, 'is-minimized');
+  assert.equal(nodes.teacherDashboardModal.style.display, 'none');
   assert.equal(nodes.teacherDashMinimizedLabel.textContent, 'Student One · Functions');
   assert.equal(pollingStopped, true);
   vm.runInNewContext('updateActiveFileName()', context);
