@@ -233,7 +233,10 @@
     }
     for (const id of ['editor', 'teacherStreamEditor']) {
       const ta = document.getElementById(id);
-      if (ta) { ta.style.background = p.background; ta.style.color = p.foreground; }
+      if (ta) {
+        ta.style.background = id === 'teacherStreamEditor' ? mix(p.background, '#000000', .08) : p.background;
+        ta.style.color = p.foreground;
+      }
     }
     syncPanels();
   }

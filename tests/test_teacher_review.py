@@ -36,6 +36,59 @@ class TeacherReviewTestCase(unittest.TestCase):
         return self.client.post('/api/quiz/submit', headers=self.student_headers,
                                 json={'assignmentId':a['id'], 'quizResponses':[{'questionId':'one','answer':'It repeats'}, {'questionId':'two','answer':'2'}]})
 
+    def test_clear_code_grade_preserves_quiz_and_feedback_and_checks_revision(self):
+        a = self.create_assignment(active=True)
+        self.bundle(a, {'answer.py': 'print(1)'})
+        saved = eagle._load_assignment(a['id'])
+        sub = saved['submissions'][0]
+        sub.update(score=8, codeScore=8, quizScore=2, totalScore=10, aiSuggestedScore=8,
+                   aiGradingStatus='completed', aiFeedback='AI feedback', teacherFeedback='Teacher feedback',
+                   teacherFeedbackEdited=True)
+        self.assertTrue(eagle._save_assignment(saved))
+        body = {'assignmentId': a['id'], 'studentEmail': self.student_email, 'revisionId': sub['revisionId']}
+        def score(**changes):
+            return self.client.post('/api/assignments/score', headers=self.teacher_headers, json={**body, **changes})
+
+        self.assertEqual(score().status_code, 400)
+        self.assertEqual(score(score='nan').status_code, 400)
+        self.assertEqual(score(score=None, revisionId=None).status_code, 409)
+        result = score(score=None)
+        self.assertEqual(result.status_code, 200)
+        self.assertIsNone(result.json['score'])
+        self.assertEqual(result.json['totalScore'], 2)
+        cleared = eagle._load_assignment(a['id'])['submissions'][0]
+        self.assertNotIn('score', cleared)
+        self.assertIsNone(cleared['codeScore'])
+        self.assertIsNone(cleared['aiSuggestedScore'])
+        self.assertEqual(cleared['aiGradingStatus'], '')
+        self.assertEqual(cleared['aiFeedback'], 'AI feedback')
+        self.assertEqual(cleared['teacherFeedback'], 'Teacher feedback')
+        self.assertEqual(score(score=0).json['score'], 0)
+
+    def test_feedback_override_keeps_teacher_text_and_checks_revision(self):
+        a = self.update(self.create_assignment(active=True), shareAiFeedback=True)
+        self.bundle(a, {'answer.py': 'print(1)'})
+        saved = eagle._load_assignment(a['id'])
+        sub = saved['submissions'][0]
+        sub['aiFeedback'] = 'AI feedback'
+        self.assertTrue(eagle._save_assignment(saved))
+        body = {'assignmentId': a['id'], 'studentEmail': self.student_email}
+        value = 'ValueError: check the input\n  Example: try an empty string'
+        def feedback(revision, text):
+            return self.client.post('/api/assignments/feedback', headers=self.teacher_headers,
+                                    json={**body, 'revisionId': revision, 'feedback': text})
+
+        self.assertEqual(feedback(None, value).status_code, 409)
+        self.assertEqual(feedback(sub['revisionId'], value).status_code, 200)
+        saved = eagle._load_assignment(a['id'])
+        sub = saved['submissions'][0]
+        self.assertEqual(sub['teacherFeedback'], value)
+        self.assertEqual(sub['aiFeedback'], 'AI feedback')
+        self.assertEqual(eagle._student_assignment_payload(saved, self.student_email)['studentSubmissionSummary']['aiFeedback'], value)
+        self.assertEqual(feedback(sub['revisionId'], '').status_code, 200)
+        saved = eagle._load_assignment(a['id'])
+        self.assertEqual(eagle._student_assignment_payload(saved, self.student_email)['studentSubmissionSummary']['aiFeedback'], '')
+
     def test_makeup_reopens_only_selected_student_and_expires(self):
         a = self.update(self.create_assignment(active=True), active=False, dueAt='2000-01-01T00:00:00Z')
         self.configure_class(window={'enabled':True,'start':'01:00','end':'01:01','timeZone':'UTC'})

@@ -459,17 +459,21 @@
       pointer-events:none;
     }
     .editor-content-stack.teacher-stream-enabled.teacher-stream-open .teacher-stream-pane{
-      display:block;
+      display:flex;
+      flex-direction:column;
       min-height:0;
-      overflow-y:auto;
-      overflow-x:hidden;
+      overflow:hidden;
       border-top:1px solid var(--theme-border-mid);
     }
-    .teacher-stream-pane .CodeMirror{ height:100%; }
-    #teacherStreamPane { --stream-bg:color-mix(in srgb,var(--theme-bg) 88%,white); background:var(--stream-bg); }
-    .light-mode #teacherStreamPane { --stream-bg:#fff; }
-    #teacherStreamPane .CodeMirror:not(.cm-s-eagle), #teacherStreamPane .CodeMirror:not(.cm-s-eagle) .CodeMirror-gutters { background:var(--stream-bg); }
-    .teacher-stream-pane .CodeMirror-scroll{ overflow:auto !important; }
+    #teacherStreamPane { background:var(--theme-cm-bg); }
+    #teacherStreamPane .CodeMirror,
+    #teacherStreamPane .CodeMirror-gutters,
+    #teacherStreamEditor { background:color-mix(in srgb,var(--editor-background,var(--theme-cm-bg)) 92%,black); }
+    #teacherStreamPane .CodeMirror,
+    #teacherStreamEditor { flex:1 1 0; height:auto; min-height:0; }
+    #teacherStreamEditor { color:var(--theme-text); }
+    .teacher-stream-cursor { flex:none; padding:4px 10px; border-bottom:1px solid var(--theme-border); background:var(--theme-panel-hdr); color:var(--theme-text-dim); font-size:12px; font-weight:600; }
+    .teacher-stream-cursor-line { background:color-mix(in srgb,var(--editor-foreground,var(--theme-text)) 12%,transparent); box-shadow:inset 3px 0 var(--editor-foreground,var(--theme-text)); }
     .teacher-pane-toggle{
       position:fixed;
       left:50%;

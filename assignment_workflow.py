@@ -652,9 +652,9 @@ def register(app, eagle):
             sub = next((s for s in assignment.get("submissions", []) if s.get("email") == str(data.get("studentEmail") or "").lower()), None)
             if not sub:
                 return jsonify(ok=False, error="Submission not found"), 404
-            if data.get("revisionId") and data["revisionId"] != sub.get("revisionId"):
+            if "revisionId" in data and (data["revisionId"] or None) != (sub.get("revisionId") or None):
                 return jsonify(ok=False, error="The student submitted a newer version. Reopen feedback before saving."), 409
-            sub["teacherFeedback"] = eagle._sanitize_ai_feedback_text(value)
+            sub["teacherFeedback"] = value.strip()
             sub["teacherFeedbackEdited"] = True
             if not eagle._save_assignment(assignment):
                 return jsonify(ok=False, error="Could not save feedback"), 500

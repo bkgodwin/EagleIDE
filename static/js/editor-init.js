@@ -94,7 +94,6 @@ function eagleFoldRange(cm, pos) {
 
     // Teacher code streaming state
     let teacherEditor = null;
-    const TEACHER_CODE_KEY = 'eagleide-teacher-code';
     const TEACHER_PANE_OPEN_KEY = 'eagleide-teacher-pane-open';
     const TEACHER_PANE_SIZE_KEY = 'eagleide-teacher-pane-size';
     const STUDENT_CLASS_SELECTION_KEY = 'eagleide-student-class-id';
@@ -119,16 +118,10 @@ function eagleFoldRange(cm, pos) {
         ta.style.display = 'block';
         ta.style.width = '100%';
         ta.style.height = '100%';
-        ta.style.background = 'var(--theme-cm-bg)';
-        ta.style.color = 'var(--text-light)';
         ta.style.border = '0';
         ta.style.outline = 'none';
         ta.style.padding = '8px';
         ta.readOnly = true;
-        try {
-          const saved = localStorage.getItem(TEACHER_CODE_KEY);
-          if (saved !== null) ta.value = saved;
-        } catch {}
         return null;
       }
       if (teacherEditor) return teacherEditor;
@@ -151,10 +144,6 @@ function eagleFoldRange(cm, pos) {
         viewportMargin: 20,
         readOnly: 'nocursor'
       });
-      try {
-        const saved = localStorage.getItem(TEACHER_CODE_KEY);
-        if (saved !== null) teacherEditor.setValue(saved);
-      } catch {}
       return teacherEditor;
     }
 

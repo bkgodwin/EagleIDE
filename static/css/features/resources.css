@@ -172,7 +172,6 @@
     .assignment-ai-status.queued,.assignment-ai-status.running{ color:#90caf9; border:1px solid #1976d2; }
     .assignment-ai-status.failed{ color:#ef5350; border:1px solid #c62828; }
     .assignment-ai-status.completed{ color:#66bb6a; border:1px solid #2e7d32; }
-    .submission-navigation{ display:flex; gap:8px; }
     .submission-ai-feedback{ padding:12px 14px; border-left:3px solid var(--columbia-blue); border-radius:0 8px 8px 0; background:var(--theme-input-bg); color:var(--theme-text); font-size:13px; line-height:1.5; white-space:normal; overflow-wrap:anywhere; }
     .account-notice{ background:var(--theme-input-bg); border:1px solid var(--theme-border-mid); border-radius:10px; padding:14px; margin-bottom:18px; color:var(--theme-text-dim); }
     .skill-tags{ display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }

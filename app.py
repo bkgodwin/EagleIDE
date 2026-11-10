@@ -11,6 +11,7 @@ import hmac
 from io import BytesIO
 import ipaddress
 import json
+import math
 import copy
 from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime, timezone
@@ -885,8 +886,7 @@ _users_lock = threading.RLock()
 _student_tokens: Dict[str, dict] = SessionTokens()  # token -> user info dict
 _teacher_tokens: Dict[str, dict] = SessionTokens()  # token -> teacher info dict
 _wiki_manager_tokens: Dict[str, dict] = SessionTokens()
-_teacher_code_snapshots: Dict[str, str] = {}
-_teacher_code_languages: Dict[str, str] = {}
+_teacher_code_snapshots: Dict[str, dict] = {}
 _teacher_stream_last_emit: Dict[str, float] = {}
 _live_teacher_stream_sids_by_class: Dict[str, set[str]] = {}
 _socket_live_class_ids: Dict[str, set[str]] = {}
@@ -9151,10 +9151,14 @@ def on_teacher_code_update(payload):
     language = str((payload or {}).get("language") or "").strip().lower()
     if language not in {"python", "javascript", "html", "css", "xml"}:
         language = ""
-    _teacher_code_snapshots[class_id] = code
-    if language:
-        _teacher_code_languages[class_id] = language
-    outbound = {"code": code, "class_id": class_id, "language": _teacher_code_languages.get(class_id, language)}
+    cursor_line = payload.get("cursorLine")
+    if type(cursor_line) is not int or not 0 <= cursor_line <= code.count("\n"):
+        cursor_line = None
+    outbound = {
+        "code": code, "class_id": class_id, "cursorLine": cursor_line,
+        "language": language or _teacher_code_snapshots.get(class_id, {}).get("language", ""),
+    }
+    _teacher_code_snapshots[class_id] = outbound
     socketio.emit("teacher_code", outbound, to=f"class_{class_id}_students")
 
 
@@ -9224,13 +9228,9 @@ def on_join_class_room(payload):
         join_room(f"class_{class_id}_teachers")
     _socket_sid_rooms.setdefault(request.sid, set()).add(class_id)
     _emit_teacher_stream_status(class_id, sid=request.sid)
-    cached_code = _teacher_code_snapshots.get(class_id)
-    if role == "student" and _teacher_stream_active_for_class(class_id) and cached_code is not None:
-        socketio.emit(
-            "teacher_code",
-            {"code": cached_code, "class_id": class_id, "language": _teacher_code_languages.get(class_id, "")},
-            to=request.sid,
-        )
+    snapshot = _teacher_code_snapshots.get(class_id)
+    if role == "student" and _teacher_stream_active_for_class(class_id) and snapshot is not None:
+        socketio.emit("teacher_code", snapshot, to=request.sid)
     _emit_class_presence(class_id)
 
 
@@ -9710,7 +9710,7 @@ def _normalize_assignment_schema(assignment: dict) -> dict:
             continue
         sub_n = dict(sub)
         sub_n["history"] = [s for s in (sub_n.get("history") if isinstance(sub_n.get("history"), list) else []) if isinstance(s, dict)][:assignment_workflow.HISTORY_LIMIT]
-        sub_n["teacherFeedback"] = _sanitize_ai_feedback_text(sub_n.get("teacherFeedback") or "")[:MAX_ASSIGNMENT_RUBRIC_CHARS]
+        sub_n["teacherFeedback"] = str(sub_n.get("teacherFeedback") or "").strip()[:MAX_ASSIGNMENT_RUBRIC_CHARS]
         try:
             sub_n["fileSubmissionCount"] = max(0, int(sub_n.get("fileSubmissionCount", 1 if sub_n.get("submissionPath") or sub_n.get("code") else 0)))
         except (TypeError, ValueError):
@@ -10623,54 +10623,60 @@ def submit_assignment():
 
 @app.post("/api/assignments/score")
 def score_submission():
-    """Set or clear a manual score override for a student submission."""
+    """Set or clear the code grade while preserving quiz scores and feedback."""
     actor = _assignment_actor(request)
     if not actor:
         return jsonify(ok=False, error="Teacher token required"), 401
 
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or "score" not in data:
+        return jsonify(ok=False, error="Score is required (use null to clear it)"), 400
     reference, class_hint = _assignment_request_reference(data)
-    student_email = (data.get("studentEmail") or "").strip()
+    student_email = str(data.get("studentEmail") or "").strip().lower()
     raw_score = data.get("score")
     if not reference or not student_email:
         return jsonify(ok=False, error="Assignment and email required"), 400
-    assignment = _load_assignment(reference, class_hint)
-    if not assignment:
-        return jsonify(ok=False, error="Assignment not found"), 404
-    if not _assignment_access(actor, assignment):
-        return jsonify(ok=False, error="You can only score your own assignments"), 403
-    if not assignment.get("allowFileSubmission", True):
-        return jsonify(ok=False, error="Code scoring is disabled for this assignment"), 400
-
-    max_score = max(0, int(assignment.get("maxScore") or 0))
-    if raw_score is None or raw_score == "":
-        score = None
-    else:
-        try:
-            score = float(raw_score)
-        except (TypeError, ValueError):
-            return jsonify(ok=False, error="Score must be a number"), 400
-        if score < 0 or score > max_score:
-            return jsonify(ok=False, error=f"Score must be between 0 and {max_score}"), 400
-        score = int(score) if score.is_integer() else round(score, 2)
-
     with _assignment_lock:
-        assignment = _load_assignment(assignment.get("id")) or assignment
+        assignment = _load_assignment(reference, class_hint)
+        if not assignment:
+            return jsonify(ok=False, error="Assignment not found"), 404
+        if not _assignment_access(actor, assignment):
+            return jsonify(ok=False, error="You can only score your own assignments"), 403
+        if not assignment.get("allowFileSubmission", True):
+            return jsonify(ok=False, error="Code scoring is disabled for this assignment"), 400
         target = next(
-            (sub for sub in assignment.get("submissions", []) if sub.get("email", "").lower() == student_email.lower()),
+            (sub for sub in assignment.get("submissions", []) if sub.get("email", "").lower() == student_email),
             None,
         )
         if not target:
             return jsonify(ok=False, error="Submission not found"), 404
+        if "revisionId" in data and (data["revisionId"] or None) != (target.get("revisionId") or None):
+            return jsonify(ok=False, error="A newer submission arrived. Reopen grading before saving."), 409
+        if target.get("aiGradingStatus") in {"queued", "running"}:
+            return jsonify(ok=False, error="Wait for AI grading to finish or cancel it before changing the score."), 409
+        score = None
+        if raw_score is not None and raw_score != "":
+            max_score = max(0, int(assignment.get("maxScore") or 0))
+            try:
+                score = float(raw_score)
+            except (TypeError, ValueError, OverflowError):
+                return jsonify(ok=False, error="Score must be a number"), 400
+            if isinstance(raw_score, bool) or not math.isfinite(score) or not 0 <= score <= max_score:
+                return jsonify(ok=False, error=f"Score must be between 0 and {max_score}"), 400
+            score = int(score) if score.is_integer() else round(score, 2)
+
         target["manualScoreOverride"] = score is not None
         target["manualScore"] = score
-        target["codeScore"] = score if score is not None else target.get("aiSuggestedScore")
+        target["codeScore"] = score
         target.pop("score", None)
-        code_score = target.get("codeScore") or 0
-        quiz_score = target.get("quizScore") or 0
-        target["totalScore"] = code_score + quiz_score if (target.get("codeScore") is not None or target.get("quizScore") is not None) else None
+        if score is None:
+            target.update(aiSuggestedScore=None, aiGradingStatus="", aiGradingError="", gradingSource="")
+            for field in ("aiGradedAt", "aiQueuedAt", "aiGradingSettingsHash"):
+                target.pop(field, None)
+        quiz_score = target.get("quizScore")
+        target["totalScore"] = quiz_score if score is None else score + (quiz_score or 0)
         if _save_assignment(assignment):
-            return jsonify(ok=True, score=target.get("codeScore"), manualOverride=target.get("manualScoreOverride"))
+            return jsonify(ok=True, score=score, totalScore=target["totalScore"], manualOverride=score is not None)
     return jsonify(ok=False, error="Failed to save score"), 500
 
 
