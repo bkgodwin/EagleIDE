@@ -93,6 +93,49 @@ class FileBrowserTests(unittest.TestCase):
         self.assertEqual(self.post("create", {"name": "main.py"}).status_code, 409)
         self.assertEqual((self.workspace / "main.py").read_text(), "keep me")
 
+    def test_editor_duplicate_preserves_the_buffer_and_paste_ranges_without_overwriting(self):
+        self.post("create", {"name": "lesson", "type": "folder"})
+        self.post("create", {"name": "main.py", "parent": "lesson"})
+        src = "lesson/main.py"
+        self.post("write", {"path": src, "content": "saved"})
+        self.post("create", {"name": "main-copy.py", "parent": "lesson"})
+        self.post("write", {"path": "lesson/main-copy.py", "content": "keep me"})
+        payload = {"src": src, "content": "# 🌟 unsaved", "pasteRanges": [[2, 4]]}
+
+        def duplicate(_):
+            with eagle.app.test_client() as client:
+                response = client.post("/api/files/duplicate", json=payload, headers=self.headers)
+                self.assertEqual(response.status_code, 200)
+                return response.json["new_path"]
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            paths = list(pool.map(duplicate, range(4)))
+        self.assertEqual(set(paths), {f"lesson/main-copy-{number}.py" for number in range(2, 6)})
+        for path in paths:
+            read = self.client.get("/api/files/read", query_string={"path": path}, headers=self.headers).json
+            self.assertEqual(read["content"], payload["content"])
+            self.assertEqual(read["pasteRanges"], payload["pasteRanges"])
+        self.assertEqual((self.workspace / src).read_text(), "saved")
+        self.assertEqual((self.workspace / "lesson/main-copy.py").read_text(), "keep me")
+        legacy = self.post("duplicate", {"src": src})
+        self.assertEqual(legacy.json["new_path"], "lesson/main1.py")
+
+    def test_editor_duplicate_checks_source_access_and_limits(self):
+        self.post("create", {"name": "main.py"})
+        payload = {"src": "main.py", "content": "unsaved"}
+        self.assertEqual(self.post("duplicate", {**payload, "pasteRanges": [[0, 50]]}).status_code, 400)
+        with patch.object(eagle, "MAX_EDITOR_FILE_BYTES", 2):
+            self.assertEqual(self.post("duplicate", payload).status_code, 413)
+        with patch.object(eagle, "MAX_FILES_PER_FOLDER", 1):
+            self.assertEqual(self.post("duplicate", payload).status_code, 400)
+        other = self.client.post("/api/files/duplicate", json=payload, headers={"X-User-Token": self.other})
+        self.assertEqual(other.status_code, 404)
+        self.assertFalse((self.workspace / "main-copy.py").exists())
+        with patch.object(eagle.file_provenance, "write", side_effect=OSError("unavailable")):
+            self.assertEqual(self.post("duplicate", payload).status_code, 500)
+        self.assertFalse((self.workspace / "main-copy.py").exists())
+        self.assertEqual(self.post("duplicate", payload).json["new_path"], "main-copy.py")
+
     def test_concurrent_creation_reports_exactly_one_success(self):
         def create(_):
             with eagle.app.test_client() as client:

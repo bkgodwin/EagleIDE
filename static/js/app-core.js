@@ -2,6 +2,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     var editor = window.eagleEditorApi || null;
 
     function setMainEditorReadOnly(readOnly) {
+      window.EagleEditorEditMenu?.reset?.();
       try { window.eagleEditor?.setOption('readOnly', !!readOnly); } catch {}
       const textarea = document.getElementById('editor');
       if (textarea) textarea.readOnly = !!readOnly;
@@ -5876,6 +5877,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let _allFileTree = [];       // full flat tree from server
     let _selectedFileItems = new Set();
     function setWorkspaceTab(tabName) {
+      window.EagleEditorEditMenu?.reset?.();
       const switchBtn = document.getElementById('workspaceSwitchBtn');
       const switchLabel = document.getElementById('workspaceSwitchLabel');
       const editorContentStack = document.getElementById('editorContentStack');
@@ -6197,6 +6199,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       student: () => USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN ? currentUser : null,
       classes: () => studentClasses || [], file: () => currentOpenFile,
       content: () => {syncEditorBridge(); return editor.getValue();},
+    });
+    window.EagleEditorEditMenu?.configure({
+      canDuplicate: canDuplicateEditorFile,
+      duplicate: duplicateEditorFile,
+      language: () => (getManualLanguageInfo() || getLanguageInfoForFileName(currentOpenFile?.name)).mode,
     });
     window.WorkspaceHistory.configure({
       request: fetchWithDeadline, headers: fileAuthHeaders, file: () => currentOpenFile,
@@ -6695,6 +6702,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     // Update the editor header to show the active filename
     function updateActiveFileName() {
+      window.EagleEditorEditMenu?.reset?.();
       window.WorkspaceHistory?.opened();
       window.AssignmentWorkflow?.syncEditorDevelopment?.(currentOpenFile);
       const el = document.getElementById('activeFileName');
@@ -6705,6 +6713,36 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const saveDraftBtn = document.getElementById('saveDraftBtn');
       if (saveDraftBtn) saveDraftBtn.style.display = currentOpenFile?.draft && isAuthenticated() ? '' : 'none';
       if (!csvEditorActive && !fileArtifactPreviewActive) syncEditorLanguage();
+    }
+
+    function canDuplicateEditorFile() {
+      const file = currentOpenFile;
+      return isAuthenticated() && file?.path && !file.audit && !file.submission &&
+        !file.notebook && !file.draft && !file.readOnly && !file.historyPlayback &&
+        !csvEditorActive && !fileArtifactPreviewActive && (!file.kind || file.kind === 'text') &&
+        !/^trash(?:\/|$)/i.test(file.path) && !window.EagleIDE?.connection?.isLost();
+    }
+
+    async function duplicateEditorFile() {
+      if (!canDuplicateEditorFile()) return null;
+      const file = currentOpenFile;
+      const headers = fileJsonHeaders();
+      const stillCurrent = () => currentOpenFile === file && JSON.stringify(headers) === JSON.stringify(fileJsonHeaders());
+      syncEditorBridge();
+      try {
+        const res = await fetchWithDeadline('/api/files/duplicate', {
+          method: 'POST', headers,
+          body: JSON.stringify({ src: file.path, content: editor.getValue(), pasteRanges: file.pasteRanges || [] }),
+        });
+        const result = await res.json().catch(() => ({}));
+        if (!stillCurrent()) return null;
+        if (!res.ok || !result.ok) throw new Error(result.error || 'Could not duplicate the file.');
+        await loadFileTree();
+        return stillCurrent() ? result.new_path : null;
+      } catch (error) {
+        if (stillCurrent()) throw error;
+        return null;
+      }
     }
 
     async function saveDraftAsFile() {
