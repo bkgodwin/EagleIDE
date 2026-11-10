@@ -23,6 +23,7 @@ Required runtime components:
 ```text
 .
 |-- app.py                       Main Flask/Socket.IO app, APIs, auth, persistence, and runners
+|-- spa_assets.py                Content versions for IDE scripts and stylesheet imports
 |-- assignment_workflow.py       Private deadlines/windows, submission bundles/history, and previews
 |-- assignment_development.py    Controlled assignment files, clipboard policy, and private delta timelines
 |-- assignment_organization.py   Owner-managed class folders, atomic assignment membership, and folder authorization
@@ -391,7 +392,9 @@ installed Chromium browser, and `EAGLE_TOOL_SCREENSHOT_DIR` to a scratch folder.
 
 `static/css/main.css` is the only local stylesheet entry point. It imports tokens, foundations, feature styles, and finally `legacy.css`. Prefer the closest feature file for new rules and preserve the import order. Check desktop, tablet, mobile, light, and dark appearances after layout or token changes.
 
-The minimized teacher dashboard uses a compact grading row below the topbar. Its navigation follows the assignment roster order for all submitted work, including attachments and quiz responses. Reuse the protected file viewer for attachments and keep development playback collapsed until requested. Score and feedback edits use the reviewed revision. Clearing the code score removes the AI suggestion and preserves quiz credit and feedback.
+The Flask IDE document revalidates and fingerprints local scripts and stylesheet imports from their content. Versioned assets retain their immutable cache policy.
+
+Opening a submission from a roster row or its filename closes the dashboard. The grading row below the topbar returns to the same assignment's Submissions section. Its navigation follows the assignment roster order for all submitted work, including attachments and quiz responses. Reuse the protected file viewer for attachments and keep development playback collapsed until requested. Score and feedback edits use the reviewed revision. Clearing the code score removes the AI suggestion and preserves quiz credit and feedback.
 
 ### Execution Flows
 

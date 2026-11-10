@@ -222,7 +222,6 @@
     .submission-more summary { padding:7px 4px; cursor:pointer; }
     .submission-more-actions { position:absolute; right:0; top:100%; display:grid; gap:4px; min-width:max-content; padding:6px; border:1px solid var(--theme-border-mid); border-radius:8px; background:var(--theme-panel-hdr); box-shadow:0 6px 16px rgba(0,0,0,.2); }
     .submission-more-actions button { text-align:left; }
-    .teacher-dash-modal.is-minimized { display:none !important; }
     @media (max-width: 600px) {
       .teacher-dash-minimized-bar { flex-wrap:wrap; gap:6px 10px; padding:6px 8px; }
       .teacher-dash-minimized-copy { flex-basis:0; }

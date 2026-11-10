@@ -1,9 +1,12 @@
 import re
+import tempfile
 import unittest
 from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlsplit
+
+import spa_assets
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -80,33 +83,48 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn(".shell-warning { color: #ffd54f; }", shell_css)
         self.assertIn("WARNING_LINE_PATTERN", app_core)
 
-    def test_wiki_asset_cache_versions_stay_in_sync(self):
-        main_css = (BASE_DIR / "static" / "css" / "main.css").read_text(encoding="utf-8")
-        page_version = re.search(r'/static/css/main\.css\?v=([^"]+)', self.raw)
-        import_version = re.search(r'features/wiki\.css\?v=([^"]+)', main_css)
-        reader_version = re.search(r'/static/js/wiki-reader\.js\?v=([^"]+)', self.raw)
-        admin_version = re.search(r'/static/js/wiki-admin\.js\?v=([^"]+)', self.raw)
-        self.assertIsNotNone(page_version)
-        self.assertIsNotNone(import_version)
-        self.assertIsNotNone(reader_version)
-        self.assertIsNotNone(admin_version)
-        self.assertEqual(page_version.group(1), import_version.group(1))
-        self.assertEqual(page_version.group(1), reader_version.group(1))
-        self.assertEqual(page_version.group(1), admin_version.group(1))
+    def test_document_fingerprints_every_direct_script_and_stylesheet_import(self):
+        static = BASE_DIR / "static"
+        document = spa_assets.render_document(BASE_DIR / "index.html", static).decode()
+        css = spa_assets.render_stylesheet(static)
+        self.assertIn(f'/static/css/main.css?v={spa_assets.fingerprint(css)}', document)
+        for asset in self.parser.local_assets:
+            if asset.endswith(".js"):
+                version = spa_assets.fingerprint((BASE_DIR / asset.lstrip("/")).read_bytes())
+                self.assertIn(f'{asset}?v={version}"', document)
+        imports = re.findall(rb'@import url\("([^"]+)\.css\?v=([0-9a-f]{20})"\)', css)
+        self.assertEqual(len(imports), (static / "css/main.css").read_bytes().count(b"@import"))
+        for path, version in imports:
+            content = (static / "css" / (path.decode() + ".css")).read_bytes()
+            self.assertEqual(version.decode(), spa_assets.fingerprint(content))
 
-    def test_ide_artifact_asset_cache_versions_stay_in_sync(self):
-        main_css = (BASE_DIR / "static" / "css" / "main.css").read_text(encoding="utf-8")
-        page_version = re.search(r'/static/css/main\.css\?v=([^"]+)', self.raw)
-        editor_version = re.search(r'features/editor\.css\?v=([^"]+)', main_css)
-        admin_version = re.search(r'features/admin\.css\?v=([^"]+)', main_css)
-        app_core_version = re.search(r'/static/js/app-core\.js\?v=([^"]+)', self.raw)
-        self.assertIsNotNone(page_version)
-        self.assertIsNotNone(editor_version)
-        self.assertIsNotNone(admin_version)
-        self.assertIsNotNone(app_core_version)
-        self.assertEqual(page_version.group(1), editor_version.group(1))
-        self.assertEqual(page_version.group(1), admin_version.group(1))
-        self.assertEqual(page_version.group(1), app_core_version.group(1))
+    def test_changed_review_assets_get_new_urls_without_editing_html_or_main_css(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "js").mkdir()
+            (root / "css/features").mkdir(parents=True)
+            index = root / "index.html"
+            index.write_text('<link href="/static/css/main.css?v=old">'
+                             '<script src="/static/js/app-core.js?v=old"></script>'
+                             '<script src="https://cdn.example.org/lib.js?v=pinned"></script>')
+            (root / "css/main.css").write_text('@import url("features/teacher-dashboard.css?v=old");')
+            script = root / "js/app-core.js"
+            script.write_text('oldReview()')
+            dashboard = root / "css/features/teacher-dashboard.css"
+            dashboard.write_text('.dashboard {}')
+            before_css = spa_assets.render_stylesheet(root)
+            before = spa_assets.render_document(index, root)
+
+            script.write_text('openNewReview()')
+            after_script = spa_assets.render_document(index, root)
+            self.assertIn(f'/static/css/main.css?v={spa_assets.fingerprint(before_css)}'.encode(), after_script)
+            self.assertNotEqual(before, after_script)
+            self.assertIn(b'https://cdn.example.org/lib.js?v=pinned', after_script)
+
+            dashboard.write_text('.dashboard { display: grid; }')
+            after_css = spa_assets.render_stylesheet(root)
+            self.assertNotEqual(before_css, after_css)
+            self.assertNotEqual(after_script, spa_assets.render_document(index, root))
 
     def test_teacher_skill_dashboard_has_bulk_selection_controls(self):
         ids = set(self.parser.ids)
