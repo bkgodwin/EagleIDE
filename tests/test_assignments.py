@@ -467,26 +467,23 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         self.assertEqual(expected.read_text(encoding="utf-8"), "print('recovered')")
         self.assertEqual(migrated["submissions"][0]["submissionPath"], expected.relative_to(self.submissions_dir).as_posix())
 
-    def test_teacher_can_edit_submission_in_protected_store(self):
+    def test_teacher_cannot_overwrite_protected_submission(self):
         assignment = self.create_assignment(active=True)
         submission = self.submit_code(assignment)
-        changed = "for value in range(5):\n    print(value)\n"
-
+        source = self.submissions_dir / submission["submissionPath"]
+        original = source.read_text(encoding="utf-8")
         response = self.client.post(
-            "/api/assignments/submission",
-            headers=self.teacher_headers,
-            json={"assignmentId": assignment["id"], "studentEmail": self.student_email, "content": changed},
+            "/api/assignments/submission", headers=self.teacher_headers,
+            json={"assignmentId": assignment["id"], "studentEmail": self.student_email, "content": "print(0)"},
         )
-
-        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
-        self.assertEqual((self.submissions_dir / submission["submissionPath"]).read_text(encoding="utf-8"), changed)
-        loaded = eagle._load_assignment(assignment["id"])
-        self.assertEqual(loaded["submissions"][0]["code"], changed)
+        self.assertEqual(response.status_code, 405)
+        self.assertEqual(source.read_text(encoding="utf-8"), original)
         opened = self.client.get(
             f"/api/assignments/submission?assignmentId={assignment['id']}&studentEmail={self.student_email}",
             headers=self.teacher_headers,
         )
-        self.assertEqual(opened.get_json()["content"], changed)
+        self.assertEqual(opened.json["content"], original)
+        self.assertEqual(opened.headers["Cache-Control"], "private, no-store")
 
     def test_background_ai_regrade_replaces_feedback_and_manual_override(self):
         assignment = self.create_assignment(active=True)
@@ -1556,7 +1553,7 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
             headers=self.teacher_headers,
         )
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
-        self.assertEqual(response.headers.get("Cache-Control"), "no-store")
+        self.assertEqual(response.headers.get("Cache-Control"), "private, no-store")
         package = response.get_data(as_text=True)
         self.assertIn("SYSTEM PROMPT — EXTERNAL ASSIGNMENT GRADER", package)
         self.assertIn("student_email,score,feedback", package)

@@ -31,7 +31,7 @@
 
   function queued() {
     return [...states.values()].filter(s => s.frames.length).map(s => ({
-      fileId:s.fileId, version:s.version, head:s.head, headRanges:s.headRanges, last:s.last, lastRanges:s.lastRanges,
+      fileId:s.fileId, path:s.path, version:s.version, head:s.head, headRanges:s.headRanges, last:s.last, lastRanges:s.lastRanges,
       frames:s.frames, reset:s.reset, batch:s.batch,
     }));
   }
@@ -105,6 +105,7 @@
       const head = bridge.content(), ranges = cloneRanges(active);
       states.set(fileId, {fileId, version, head, headRanges:ranges, last:head, lastRanges:ranges, frames:[], reset:true, batch:null});
     }
+    states.get(fileId).path = active.path;
     for (const [key, state] of states) {
       if (key !== fileId && !state.frames.length) states.delete(key);
     }
@@ -148,10 +149,10 @@
     return batch;
   }
 
-  async function flush() {
+  async function flush(paths) {
     sample();
     if (!account || busy || Date.now() < retryAt) return;
-    const s = [...states.values()].find(state => state.frames.length);
+    const s = [...states.values()].find(state => state.frames.length && (!paths || paths.has(state.path)));
     if (!s) return;
     const owner = account, token = authKey();
     if (!s.batch) { s.batch = makeBatch(s); persistSoon(); }
@@ -201,6 +202,22 @@
     }
   }
 
+  async function flushForSubmission(files) {
+    const paths = new Set(files);
+    const started = Date.now(), owner = account;
+    sample();
+    while (owner === account && Date.now() - started < 1200 && retryAt <= Date.now()
+        && [...states.values()].some(state => state.frames.length && paths.has(state.path))) {
+      let timer;
+      try {
+        await Promise.race([busy ? Promise.resolve() : flush(paths), new Promise(resolve => {
+          timer = setTimeout(resolve, Math.max(0, 1200 - (Date.now() - started)));
+        })]);
+      } finally { clearTimeout(timer); }
+      if (busy && Date.now() - started < 1200) await new Promise(resolve => setTimeout(resolve, 60));
+    }
+  }
+
   function configure(value) {
     bridge = value;
     const change = (_editor, edit) => {
@@ -217,7 +234,7 @@
     window.addEventListener('pagehide', () => { sample(); persist(); });
   }
 
-  window.WorkspaceHistory = {configure, opened, sample, flush,
+  window.WorkspaceHistory = {configure, opened, sample, flush, flushForSubmission,
     tracking(file) { return !!(account && file?.workspaceHistory && states.has(file.workspaceHistory.id)); },
   };
 })();

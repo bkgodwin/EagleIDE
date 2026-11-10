@@ -81,7 +81,20 @@
 .question-grading-dialog .question-score-options input { width:100px; }
 .question-score-options [aria-pressed="true"] { outline:2px solid var(--columbia-blue); outline-offset:1px; }
 .question-score-options [role="status"] { font-size:12px; flex:1 1 100%; }
-.assignment-feedback-editor { min-height:240px; font:inherit; resize:vertical; }
+.assignment-feedback-dialog .modal-content { width:min(1400px,96vw); max-width:none; height:min(820px,calc(var(--app-height,100dvh) - 24px)); max-height:none; display:grid; grid-template-rows:auto auto minmax(0,1fr) auto; gap:12px; }
+.assignment-feedback-dialog .assignment-modal-header, .assignment-feedback-sharing, .assignment-feedback-footer p { margin:0; }
+.assignment-feedback-sharing, .assignment-feedback-footer p { color:var(--theme-text-dim); font-size:13px; }
+.assignment-feedback-workspace { min-height:0; display:grid; grid-template-rows:minmax(0,1fr); gap:16px; }
+.assignment-feedback-workspace.has-original { grid-template-columns:minmax(0, 2fr) minmax(0, 1fr); }
+.assignment-feedback-dialog .modal-content .assignment-feedback-workspace label { display:flex; flex-direction:column; gap:8px; margin:0; min-height:0; }
+.assignment-feedback-dialog .modal-content .assignment-feedback-editor { flex:1 1 0; min-height:0; font:inherit; line-height:1.5; resize:none; }
+.assignment-feedback-workspace .assignment-feedback-details { min-width:0; overflow:auto; margin:0; padding:10px; border:1px solid var(--theme-border); border-radius:8px; }
+.assignment-feedback-footer { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; }
+.assignment-feedback-footer .modal-actions { margin:0 0 0 auto; flex-wrap:wrap; }
+@media (max-width:849px) {
+  .assignment-feedback-workspace.has-original { grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(0,1fr) auto; gap:8px; }
+  .assignment-feedback-workspace .assignment-feedback-details { max-height:25vh; }
+}
 .assignment-window-settings { margin:18px 0; padding:16px; border:1px solid var(--theme-border); border-radius:12px; }
 .assignment-window-settings h4 { margin:0 0 12px; }
 .assignment-window-settings p { font-size:12px; color:var(--theme-text-dim); }
@@ -121,12 +134,16 @@
 .development-note { display:block; color:var(--theme-text-dim); font-size:11px; line-height:1.5; }
 .submission-development-panel { flex:1 0 100%; min-width:0; display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; padding-top:5px; border-top:1px solid var(--theme-border-mid); }
 .submission-development-panel[hidden], body:has(#editorContentStack.file-browser-active) .submission-development-panel { display:none; }
+.submission-history-status { display:flex; flex:1 0 100%; align-items:center; gap:8px; color:var(--theme-text-dim); font-size:12px; }
+.submission-history-status[hidden], body:has(#editorContentStack.file-browser-active) .submission-history-status { display:none; }
 .submission-development-panel .development-controls { gap:4px; }
 .submission-development-panel .development-seek-label { flex:1 1 130px; min-width:0; margin:0; }
 .submission-development-panel .development-caption { flex:1 0 100%; min-width:0; display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 16px; }
 .development-options { font-size:12px; }
 .development-options summary { cursor:pointer; }
-.development-options > div { position:absolute; z-index:1; top:100%; right:12px; width:min(250px,78vw); padding:10px; display:grid; gap:8px; border:1px solid var(--theme-border-mid); border-radius:6px; background:var(--theme-panel-bg); }
+.development-options > div { position:absolute; z-index:1; top:100%; right:12px; width:min(270px,78vw); padding:10px; display:grid; gap:8px; border:1px solid var(--theme-border); border-radius:6px; background:var(--theme-bg); box-shadow:0 6px 20px #0005; }
+.development-options select, .assignment-workflow-modal .modal-content select { background:var(--theme-bg); color:var(--theme-text); }
+.development-options select:focus-visible, #dash-assignments select:focus-visible, .assignment-workflow-modal select:focus-visible { outline:2px solid var(--columbia-blue); outline-offset:2px; }
 .development-options .development-summary { margin:0; }
 .assignment-submission-preview.is-history > :not(.assignment-file-preview-header, .assignment-history-frame) { display:none; }
 .submission-attachment-preview { height:100%; overflow:auto; padding:48px 12px 12px; color:var(--theme-text); }

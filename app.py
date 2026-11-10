@@ -461,10 +461,9 @@ def _add_security_headers(response):
         "/lesson-plans/", "/api/lesson-plans/public/", "/api/lesson-plans/current/", "/api/lesson-plans/print/")):
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Cache-Control"] = "private, no-store"
-    if request.path in {
-        "/api/assignments", "/api/assignments/past", "/api/assignments/workspace-history",
-        "/api/assignments/development", "/api/assignments/extension-requests", "/api/admin/workspace-history",
-    }:
+    if request.path in {"/api/assignments", "/api/admin/workspace-history"} or request.path.startswith((
+        "/api/assignments/", "/api/quiz/",
+    )):
         response.headers["Cache-Control"] = "private, no-store"
     if request.path.startswith("/static/"):
         # Flask's default static response is ``no-cache``. Override it so a classroom
@@ -10142,7 +10141,8 @@ def _student_assignment_payload(assignment: dict, student_email: str, *, include
             "withdrawn": bool(submission.get("withdrawn")),
             "files": assignment_workflow.public_files(submission),
             "fileSubmissionCount": submission.get("fileSubmissionCount", 0),
-            "teacherFeedback": submission.get("teacherFeedback") if assignment.get("shareAiFeedback") else "",
+            "quizSubmissionCount": submission.get("quizSubmissionCount", 0),
+            "teacherFeedback": assignment_workflow.shareable_feedback(submission.get("teacherFeedback")) if assignment.get("shareAiFeedback") else "",
             "codeScore": submission.get("codeScore"),
             "quizScore": submission.get("quizScore"),
             "totalScore": submission.get("totalScore"),
@@ -10169,6 +10169,9 @@ def _student_assignment_payload(assignment: dict, student_email: str, *, include
         payload["studentSubmission"] = None
     maximum = assignment_workflow.attempt_limit(sys.modules[__name__], assignment, student_email, "file")
     payload["maxFileSubmissions"] = maximum
+    if payload.get("quizSettings"):
+        payload["quizSettings"] = {**payload["quizSettings"], "maxSubmissions": assignment_workflow.attempt_limit(
+            sys.modules[__name__], assignment, student_email, "quiz")}
     payload["canSubmitFiles"] = bool(payload["canSubmit"] and (not maximum or (submission or {}).get("fileSubmissionCount", 0) < maximum))
     return payload
 
@@ -10179,8 +10182,19 @@ def get_assignments():
         return jsonify(ok=False, error="Admins cannot access assignments"), 403
     actor = _assignment_actor(request)
     is_teacher = bool(actor and actor.get("role") == "teacher")
-    teacher_email = (actor or {}).get("email", "")
-    all_assignments = _list_assignments()
+    user = None if is_teacher else _require_user(request)
+    if not is_teacher and not user:
+        return jsonify(ok=True, assignments=[], isAdmin=False, isTeacher=False, canManage=False)
+    requested = list(dict.fromkeys(request.args.getlist("assignmentId")))
+    if requested:
+        if len(requested) > 40 or any(not re.fullmatch(r"[a-f0-9]{32}", value) for value in requested):
+            return jsonify(ok=False, error="Invalid assignment selection"), 400
+        with _assignment_lock:
+            all_assignments = [assignment for value in requested
+                               if (path := _get_assignment_path(value)).is_file()
+                               and (assignment := _load_assignment_file(path))]
+    else:
+        all_assignments = _list_assignments()
     
     if is_teacher:
         teacher_assignments = [a for a in all_assignments if _assignment_access(actor, a)]
@@ -10193,9 +10207,6 @@ def get_assignments():
             canManage=True,
         )
 
-    user = _require_user(request)
-    if not user:
-        return jsonify(ok=True, assignments=[], isAdmin=False, isTeacher=False, canManage=False)
     user_obj = _find_user(user.get("email", "")) or user
     class_ids = _get_user_class_ids(user_obj)
     if not class_ids:
@@ -12317,81 +12328,6 @@ def get_assignment_submission_file():
     return jsonify(ok=True, content=content, fileName=submission.get("submittedFileName") or "submission.py", pasteRanges=(assignment_workflow.files_for(submission) or [{}])[0].get("pasteRanges", []), revisionId=submission.get("revisionId"))
 
 
-@app.post("/api/assignments/submission")
-def update_assignment_submission_file():
-    """Save teacher edits to a protected assignment submission copy."""
-    actor = _assignment_actor(request)
-    if actor and actor.get("is_coteacher"):
-        return jsonify(ok=False, error="Class owner required for this action"), 403
-    if not actor:
-        return jsonify(ok=False, error="Teacher token required"), 401
-    data = request.get_json(silent=True) or {}
-    reference = str(data.get("assignmentId") or data.get("assignmentName") or "").strip()
-    student_email = str(data.get("studentEmail") or "").strip().lower()
-    content = data.get("content")
-    if not reference or not student_email or not isinstance(content, str):
-        return jsonify(ok=False, error="Assignment, student email, and file content are required"), 400
-    if len(content.encode("utf-8")) > MAX_EDITOR_FILE_BYTES:
-        return jsonify(ok=False, error=f"File exceeds the {MAX_EDITOR_FILE_BYTES // (1024 * 1024)}MB editor limit"), 413
-
-    with _assignment_lock:
-        assignment = _load_assignment(reference)
-        if not assignment:
-            return jsonify(ok=False, error="Assignment not found"), 404
-        if not _assignment_access(actor, assignment):
-            return jsonify(ok=False, error="You can only edit your own assignment submissions"), 403
-        submission = next(
-            (row for row in assignment.get("submissions", []) if (row.get("email") or "").lower() == student_email),
-            None,
-        )
-        if not submission:
-            return jsonify(ok=False, error="Submission not found"), 404
-        if data.get("revisionId") and data["revisionId"] != submission.get("revisionId"):
-            return jsonify(ok=False, error="A newer submission arrived. Reopen the file before saving."), 409
-        if not assignment.get("allowFileSubmission", True):
-            return jsonify(ok=False, error="This assignment does not accept file submissions"), 400
-        if len(assignment_workflow.files_for(submission)) > 1 or not assignment_workflow.has_gradable_files(submission):
-            return jsonify(ok=False, error="Open attachments using the read-only submission viewer"), 400
-
-        stored_path = _assignment_submission_path(assignment, submission.get("submissionPath") or "")
-        try:
-            if not stored_path:
-                relative = _write_assignment_submission_copy(
-                    assignment,
-                    str(submission.get("name") or submission.get("email") or "Student"),
-                    student_email,
-                    str(submission.get("submittedFileName") or "submission.py"),
-                    content,
-                )
-                submission["submissionPath"] = relative
-            else:
-                stored_path.parent.mkdir(parents=True, exist_ok=True)
-                temporary = stored_path.with_name(f".{stored_path.name}.{uuid.uuid4().hex}.tmp")
-                try:
-                    temporary.write_text(content, encoding="utf-8")
-                    temporary.replace(stored_path)
-                finally:
-                    if temporary.exists():
-                        temporary.unlink()
-        except Exception as exc:
-            print(f"Error saving teacher-edited submission for {assignment.get('name')}: {exc}")
-            return jsonify(ok=False, error="Could not save submission"), 500
-
-        old_content = str(submission.get("code") or "")
-        submission["code"] = content
-        if submission.get("files"):
-            record = submission["files"][0]
-            record["pasteRanges"] = file_provenance.remap(record.get("pasteRanges", []), old_content, content)
-            record["size"] = len(content.encode("utf-8"))
-        submission["teacherEditedAt"] = _current_timestamp()
-        submission["aiGradingStatus"] = ""
-        submission["aiGradingError"] = ""
-        submission["aiFeedback"] = ""
-        submission["aiSuggestedScore"] = None
-        if not _save_assignment(assignment):
-            return jsonify(ok=False, error="Could not save assignment metadata"), 500
-    return jsonify(ok=True, savedAt=submission["teacherEditedAt"])
-
 @app.get("/api/assignments/<assignment_reference>/csv")
 def download_assignment_csv(assignment_reference: str):
     """Download CSV of student scores (assignment owner teacher only)."""
@@ -12911,6 +12847,9 @@ def _submit_quiz_locked():
             if drafts is not None:
                 drafts.delete(assignment["id"], student_email)
         assignment_workflow.prune_history(sys.modules[__name__], assignment, previous)
+        class_id = assignment.get("targetClassId")
+        socketio.emit("assignment_workflow_updated", {"classId": class_id, "assignmentId": assignment["id"]},
+                      to=f"class_{class_id}_teachers")
         next_count = (current_count + 1) if max_submissions > 0 else None
         remaining = None if max_submissions <= 0 else max(0, max_submissions - (current_count + 1))
         return jsonify(

@@ -17,6 +17,7 @@ body.light-mode #dash-assignments { --assignment-accent: #235f9f; }
 #dash-assignments .teacher-dash-view-actions { gap:12px; }
 .assignment-class-picker { display:grid !important; gap:5px; margin:0 !important; color:var(--theme-text-dim); font-size:11px; }
 #dash-assignments select, #dash-assignments input[type=search] { min-width:0; min-height:36px; padding:8px 10px; border:1px solid var(--theme-border-mid); border-radius:8px; color:var(--theme-text); background:var(--theme-input-bg); font:inherit; font-size:12px; }
+#dash-assignments select { background:var(--theme-bg); }
 #teacherAssignmentsClassSelect { max-width:240px; }
 #dash-assignments #newAssignmentBtn { align-self:end; min-height:38px; }
 #assignmentStatus:empty { display:none; }

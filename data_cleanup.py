@@ -311,6 +311,13 @@ class CleanupManager:
 
     def _temporary(self, run):
         e, kind = self.eagle, "temporary_files"
+        for path in children(e.ASSIGNMENT_SUBMISSIONS_DIR):
+            if not re.fullmatch(r"\.turn-in-[a-z0-9_]+", path.name):
+                continue
+            checked_path(e.ASSIGNMENT_SUBMISSIONS_DIR, path)
+            stamp = path.stat()
+            if stamp.st_ctime < e.SERVER_START_EPOCH and stamp.st_mtime <= run.cutoff(kind):
+                run.delete(kind, e.ASSIGNMENT_SUBMISSIONS_DIR, path)
         with e._wiki_store._write_lock:
             for path in children(e._wiki_store.staging_dir):
                 checked_path(e._wiki_store.staging_dir, path)

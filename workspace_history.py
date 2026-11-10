@@ -200,6 +200,22 @@ def clear_workspace(eagle, workspace):
             db.execute("UPDATE files SET path=NULL WHERE owner=?", (_owner(workspace),))
 
 
+def purge_workspace(eagle, workspace):
+    """Remove a deleted account's history, including pins and retry records."""
+    with database(eagle, write=True, create=False) as db:
+        if db is None:
+            return
+        owner = _owner(workspace)
+        stored = db.execute("SELECT COALESCE(SUM(used),0) FROM files WHERE owner=?", (owner,)).fetchone()[0]
+        pinned = db.execute("""SELECT COALESCE(SUM(f.size),0) FROM frames f JOIN files w ON w.id=f.file
+            WHERE w.owner=? AND EXISTS(SELECT 1 FROM clips c WHERE c.file=f.file AND f.seq BETWEEN c.first AND c.last)""",
+                            (owner,)).fetchone()[0]
+        for table in ("frames", "batches", "clips"):
+            db.execute(f"DELETE FROM {table} WHERE file IN (SELECT id FROM files WHERE owner=?)", (owner,))
+        db.execute("DELETE FROM files WHERE owner=?", (owner,))
+        db.execute("UPDATE storage SET bytes=bytes-?,pinned=pinned-? WHERE id=1", (stored, pinned))
+
+
 def _reserve(eagle, db, row, size):
     stored, pinned = db.execute("SELECT bytes,pinned FROM storage WHERE id=1").fetchone()
     account = db.execute("SELECT COALESCE(SUM(used),0) FROM files WHERE owner=?", (row["owner"],)).fetchone()[0]
@@ -363,15 +379,27 @@ def capture_checkpoint(eagle, user, workspace, target, content=None, ranges=(), 
         pass
 
 
-def submission_source(eagle, workspace, target, content):
+def submission_source(eagle, workspace, target, content, ranges=()):
     if target.suffix.lower() not in KINDS or len(content) > MAX_TEXT:
         return None
     with database(eagle, create=False) as db:
         if db is None:
             return None
-        row = db.execute("SELECT id FROM files WHERE owner=? AND path=? AND fingerprint=?",
-                         (_owner(workspace), target.relative_to(workspace.resolve()).as_posix(), _fingerprint(target))).fetchone()
-        return {"file": row["id"], "digest": _hash(_canonical(content.decode("utf-8"))).hex()} if row else None
+        owner = _owner(workspace)
+        row = db.execute("SELECT id,version,digest FROM files WHERE owner=? AND path=? AND fingerprint=?",
+                         (owner, target.relative_to(workspace.resolve()).as_posix(), _fingerprint(target))).fetchone()
+    if row is None:
+        return None
+    final = _canonical(content.decode("utf-8"))
+    digest = _hash(final)
+    partial = digest != row["digest"]
+    if partial:
+        try:
+            _record(eagle, owner, row["id"], {"version": row["version"], "base": final, "baseRanges": ranges,
+                    "batchId": uuid.uuid4().hex, "frames": []}, time.time(), workspace)
+        except (Conflict, Capacity, ValueError, sqlite3.Error, OSError):
+            pass  # The submitted snapshot still succeeds and supplies the final file.
+    return {"file": row["id"], "digest": digest.hex(), "partial": partial}
 
 
 def _intent_path(eagle, assignment_id, revision):
@@ -380,10 +408,10 @@ def _intent_path(eagle, assignment_id, revision):
     return root(eagle) / "pending" / (assignment_id + "-" + revision + ".json")
 
 
-def prepare_submission(eagle, assignment, student, revision, files, sources):
+def prepare_submission(eagle, assignment, student, revision, files, sources, *, submitted=None):
     if not sources:
         return None
-    submitted = time.time()
+    submitted = time.time() if submitted is None else submitted
     release = assignment.get("releasedAt", "")
     try:
         released = datetime.fromisoformat(release.replace("Z", "+00:00"))
@@ -481,18 +509,24 @@ def _pin(eagle, path):
                     key = (assignment_id, revision, f["attachment"])
                     if db.execute("SELECT 1 FROM clips WHERE assignment=? AND revision=? AND attachment=?", key).fetchone():
                         continue
-                    bounds = db.execute("SELECT MIN(seq) first,MAX(seq) last FROM frames WHERE file=? AND received BETWEEN ? AND ?",
+                    bounds = db.execute("SELECT MIN(seq) first,MAX(seq) last,COUNT(*) count FROM frames WHERE file=? AND received BETWEEN ? AND ?",
                                         (f["file"], intent["first"], intent["submitted"])).fetchone()
                     if bounds["first"] is None:
                         continue
                     exact = db.execute("SELECT MAX(seq) FROM frames WHERE file=? AND digest=? AND seq BETWEEN ? AND ?",
                                        (f["file"], bytes.fromhex(f["digest"]), bounds["first"], bounds["last"])).fetchone()[0]
                     first, last = bounds["first"], exact or bounds["last"]
+                    has_gap = bounds["count"] != bounds["last"] - first + 1
+                    if has_gap:
+                        boundary = db.execute("""SELECT MAX(f.seq) FROM frames f WHERE f.file=? AND f.seq BETWEEN ? AND ?
+                            AND NOT EXISTS(SELECT 1 FROM frames p WHERE p.file=f.file AND p.seq=f.seq-1)""",
+                                              (f["file"], first, last)).fetchone()[0]
+                        first = max(first, boundary or first)
                     _promote_checkpoint(db, f["file"], first)
                     size = _unshared_bytes(db, f["file"], first, last)
                     db.execute("INSERT INTO clips VALUES(?,?,?,?,?,?,?,?,?,?)",
                                (assignment_id, intent["student"], revision, f["attachment"], f["name"],
-                                f["file"], first, last, intent["submitted"], int(exact is None)))
+                                f["file"], first, last, intent["submitted"], int(has_gap or exact is None or f.get("partial", False))))
                     db.execute("UPDATE storage SET pinned=pinned+? WHERE id=1", (size,))
     discard_intent(path)
 
@@ -521,8 +555,8 @@ def schedule_cleanup(eagle, assignment_id, finalized_at):
 def delete_assignment(eagle, assignment_id):
     with database(eagle, write=True, create=False) as db:
         if db is not None:
-            _release_clips(db, assignment_id)
-            db.execute("INSERT OR REPLACE INTO cleanup VALUES(?,?,?)", (assignment_id, time.time(), time.time()))
+            db.execute("INSERT OR REPLACE INTO cleanup VALUES(?,?,NULL)", (assignment_id, time.time()))
+    _maintenance_ready.set()
 
 
 def _discard_frames(db, rows):
@@ -532,6 +566,31 @@ def _discard_frames(db, rows):
     db.executemany("DELETE FROM frames WHERE file=? AND seq=?", ((row["file"], row["seq"]) for row in rows))
     db.executemany("UPDATE files SET used=used-? WHERE id=?", ((size, file_id) for file_id, size in totals.items()))
     db.execute("UPDATE storage SET bytes=bytes-? WHERE id=1", (sum(totals.values()),))
+
+
+def _purge_assignment_frames(db, assignment_id):
+    rows = db.execute("""SELECT DISTINCT f.file,f.seq,f.size FROM clips target
+        JOIN frames f ON f.file=target.file AND f.seq BETWEEN target.first AND target.last
+        WHERE target.assignment=? AND NOT EXISTS(
+            SELECT 1 FROM clips other WHERE other.file=f.file AND f.seq BETWEEN other.first AND other.last
+            AND other.assignment<>?)
+        ORDER BY f.file,f.seq LIMIT 1500""", (assignment_id, assignment_id)).fetchall()
+    removed = {(row["file"], row["seq"]) for row in rows}
+    latest = {}
+    for row in rows:
+        file_id, seq = row["file"], row["seq"]
+        latest[file_id] = seq
+        if (file_id, seq + 1) not in removed:
+            _promote_checkpoint(db, file_id, seq + 1)
+    for file_id, seq in latest.items():
+        head = db.execute("SELECT length(head)+COALESCE(length(ranges),0) FROM files WHERE id=? AND version=?",
+                          (file_id, seq)).fetchone()
+        if head and head[0]:
+            db.execute("UPDATE files SET head=NULL,ranges=NULL,digest=NULL,used=used-? WHERE id=?", (head[0], file_id))
+            db.execute("UPDATE storage SET bytes=bytes-? WHERE id=1", (head[0],))
+    _discard_frames(db, rows)
+    db.execute("UPDATE storage SET pinned=pinned-? WHERE id=1", (sum(row["size"] for row in rows),))
+    return len(rows) < 1500
 
 
 def _rolling_cleanup(db, cutoff):
@@ -564,6 +623,8 @@ def maintenance(eagle, now=None, *, rolling=True):
             backlog = True
             break
         _pin(eagle, path)
+    if backlog:
+        return
     with database(eagle, create=False) as db:
         if db is None:
             return
@@ -578,12 +639,14 @@ def maintenance(eagle, now=None, *, rolling=True):
                 continue
             legacy.purge(eagle, assignment_id, remove_binding=True)
         with database(eagle, write=True) as db:
+            if not _purge_assignment_frames(db, assignment_id):
+                continue
             _release_clips(db, assignment_id)
             db.execute("UPDATE cleanup SET completed=? WHERE assignment=?", (now, assignment_id))
         if assignment:
-            eagle.socketio.emit("assignment_workflow_updated", {"classId": assignment.get("targetClassId")},
+            eagle.socketio.emit("assignment_workflow_updated", {"classId": assignment.get("targetClassId"), "assignmentId": assignment_id},
                                 to=f"class_{assignment.get('targetClassId')}")
-    if backlog or (not rolling and not jobs):
+    if not rolling and not jobs:
         return
     for _ in range(8):
         with database(eagle, write=True) as db:
@@ -778,6 +841,7 @@ def register(app, eagle):
                     clip = db.execute("SELECT * FROM clips WHERE assignment=? AND student=? AND attachment=? LIMIT 1",
                                       (assignment["id"], email, attachment)).fetchone()
             if clip is None:
-                return jsonify(ok=True, total=0, frames=[])
+                pending = bool(HEX.fullmatch(revision or "") and _intent_path(eagle, assignment["id"], revision).is_file())
+                return jsonify(ok=True, total=0, frames=[], historyPending=pending)
             cls = eagle._find_class_by_id(assignment.get("targetClassId")) or {}
             return jsonify(ok=True, **_clip_page(db, clip, cls, cursor, request.args.get("index") == "1"))

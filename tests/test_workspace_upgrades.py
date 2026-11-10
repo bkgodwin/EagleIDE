@@ -63,7 +63,8 @@ class ClassroomUpgradeTests(unittest.TestCase):
         self.assertFalse(classes[0]['canManageClass'])
         assignment = self.fixture.create_assignment(active=True)
         self.fixture.submit_code(assignment)
-        listed = self.client.get('/api/assignments', headers=self.co_headers).get_json()['assignments']
+        scoped = f"/api/assignments?assignmentId={assignment['id']}"
+        listed = self.client.get(scoped, headers=self.co_headers).get_json()['assignments']
         self.assertEqual(listed[0]['id'], assignment['id'])
         score = self.client.post('/api/assignments/score', headers=self.co_headers,
                                  json={"assignmentId": assignment['id'], "studentEmail": self.email, "score": 7})
@@ -82,6 +83,7 @@ class ClassroomUpgradeTests(unittest.TestCase):
             self.assertIn(self.client.post(route, headers=self.co_headers, json=payload).status_code, (401, 403))
         self.client.post('/api/teacher/classes/coteacher', headers=self.teacher_headers,
                          json={"classId": self.fixture.class_one, "email": self.email, "enabled": False})
+        self.assertEqual(self.client.get(scoped, headers=self.co_headers).get_json()['assignments'], [])
         self.assertEqual(self.client.get('/api/assignments', headers=self.co_headers).get_json()['assignments'], [])
         self.assertEqual(self.client.post('/api/assignments/score', headers=self.co_headers,
                                          json={"assignmentId": assignment['id'], "studentEmail": self.email, "score": 1}).status_code, 401)
