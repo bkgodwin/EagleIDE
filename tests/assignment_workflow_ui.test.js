@@ -71,6 +71,19 @@ test('attachment names and student identity are escaped and histories accessible
   assert.doesNotMatch(api.card({...assignment,name:'<script>alert(1)</script>'},true),/<script>/);
 });
 
+test('a teacher filename opens grading on the selected file',()=>{
+  const {api}=setup();
+  const calls=[];
+  api.configure({reviewSubmission:(...args)=>calls.push(args)});
+  const button={dataset:{email:'student@example.test',file:'second-file'}};
+  api.bindTeacher({
+    querySelector:()=>null,
+    querySelectorAll:selector=>selector==='.assignment-view-file' ? [button] : [],
+  },assignment,true);
+  button.onclick();
+  assert.deepEqual(calls,[['one','student@example.test','second-file']]);
+});
+
 function submissionSetup(save) {
   let token='student-one', root, sent;
   const button={focus(){}}, status={};

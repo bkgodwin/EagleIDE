@@ -32,6 +32,29 @@ test('review navigation uses the roster and includes every submitted format', as
   assert.deepEqual(opened, [second.email, third.email, second.email, first.email]);
 });
 
+test('return waits for the score and restores the reviewed assignment by ID and class', async () => {
+  const save = deferred();
+  const actions = [];
+  const tab = {click: () => actions.push('submissions'), focus: () => actions.push('focus')};
+  const context = {
+    activeSubmissionContext: {assignmentId:'reviewed'}, currentAdminAssignmentName:'other',
+    activeAssignmentsClassId:'other-class', fileOpenRequestId:4,
+    saveReviewedScore: () => save.promise,
+    getAssignmentByName: id => ({id, targetClassId:'reviewed-class'}),
+    syncTeacherDashboardClassSelectors: () => actions.push(context.activeAssignmentsClassId),
+    openTeacherDashboard: view => actions.push(view),
+    renderAdminAssignments: () => actions.push(context.currentAdminAssignmentName),
+    document: {getElementById: id => id === 'assignment-tab-submissions' ? tab : null},
+  };
+  vm.runInNewContext(extract(app,'returnToSubmissionDashboard'), context);
+  const pending = context.returnToSubmissionDashboard();
+  assert.deepEqual(actions, []);
+  save.resolve(true);
+  await pending;
+  assert.deepEqual(actions, ['reviewed-class', 'dash-assignments', 'reviewed', 'submissions', 'focus']);
+  assert.equal(context.fileOpenRequestId, 5);
+});
+
 test('stream snapshots preserve scroll and cursor-only updates keep the document intact', () => {
   let code = 'a\nb', scroll = {left:50, top:160}, marker = null, replacements = 0;
   const cm = {

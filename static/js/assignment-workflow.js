@@ -166,11 +166,11 @@
     return loadSubmissionFiles(a, studentEmail, fileId, m);
   }
 
-  function mountReviewFiles(root, a, submission) {
+  function mountReviewFiles(root, a, submission, fileId = '') {
     root.hidden = false;
     root.innerHTML = submissionFilesMarkup;
     const cleanups = [];
-    loadSubmissionFiles(a, submission.email, '', {root, cleanups}, submission.revisionId || '');
+    loadSubmissionFiles(a, submission.email, fileId, {root, cleanups}, submission.revisionId || '');
     return () => {
       cleanups.forEach(cleanup => cleanup());
       root.hidden = true;
@@ -333,7 +333,7 @@
     root.querySelectorAll('.assignment-extend-student').forEach(button => button.onclick = () => extendStudent(a,button.dataset.email));
     root.querySelector('.assignment-grade-question')?.addEventListener('click', () => gradeByQuestion(a));
     root.querySelector('.assignment-paste-toggle')?.addEventListener('change', event => setHighlights(event.target.checked));
-    root.querySelectorAll('.assignment-view-file').forEach(button => button.onclick = () => openFiles(a.id,button.dataset.email,button.dataset.file));
+    root.querySelectorAll('.assignment-view-file').forEach(button => button.onclick = () => bridge.reviewSubmission(a.id || a.name, button.dataset.email, button.dataset.file));
     root.querySelectorAll('.assignment-view-history').forEach(button => button.onclick = () => openFiles(a.id,button.dataset.email));
     root.querySelectorAll('.assignment-edit-feedback').forEach(button => button.onclick = () => editFeedback(a,button.dataset.email));
     root.querySelectorAll('.assignment-unsubmit').forEach(button => button.onclick = async () => {
