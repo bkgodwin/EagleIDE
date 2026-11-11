@@ -924,6 +924,9 @@ application Python interpreter and optionally set `EAGLE_GROUP_BROWSER` and
 `EAGLE_GROUP_SCREENSHOTS`. Run `node tests/group_projects_browser_checks.js`.
 It starts a temporary loopback fixture with synthetic accounts.
 
+Run `node tests/group_editor_browser_checks.js` with the same fixture settings
+to check shared gutters, cursors, and phrase replacement on desktop and in an
+iPad viewport. Set `EAGLE_GROUP_ENGINE=webkit` to run with Playwright WebKit.
 
 Run the automated suite from the repository root:
 

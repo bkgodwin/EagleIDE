@@ -2,12 +2,15 @@
   'use strict';
   const ops = window.GroupProjectText;
   const baseUrl = '/api/group-projects';
+  const editByteLimit = 96 * 1024;
+  const batchPartLimit = 1500;
+  const contributionBlockLines = 32;
   const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   const classColor = value => 'group-color-' + (Number.isInteger(value) && value >= 0 && value <= 12 ? value : 0);
   const id = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join('');
   let bridge, socket, active, list = [], allowed = false, reason = '', account = '', listRequest, openSequence = 0;
   let saveTimer, cursorTimer, refreshTimer, watchTimer, draftTimer;
-  let applyEditorChange = false, beforeEdit, composing = false, showColors = false;
+  let applyEditorChange = false, beforeEdits = [], composing = false, showColors = false;
   const views = new Set();
   const cm = () => window.eagleEditor;
   const context = () => bridge?.context() || {};
@@ -120,11 +123,14 @@
     clearTimeout(cursorTimer);
     clearTimeout(draftTimer);
     saveTimer = cursorTimer = draftTimer = null;
-    active?.marks.forEach(mark => mark.clear());
-    active?.cursors.forEach(mark => mark.clear());
-    if (active?.keyMap) cm()?.removeKeyMap(active.keyMap);
+    const editor = cm();
+    if (active && editor) editor.operation(() => {
+      active.marks.forEach(({mark}) => mark.clear());
+      active.cursors.forEach(mark => mark.clear());
+      if (active.keyMap) editor.removeKeyMap(active.keyMap);
+    });
     active = null;
-    beforeEdit = null;
+    beforeEdits = [];
     composing = false;
   }
 
@@ -161,7 +167,7 @@
   function enqueue(s, parts, pasted = false) {
     const last = s.pending.at(-1);
     const insertSize = parts.reduce((n, part) => n + (typeof part === 'string' ? part.length : 0), 0);
-    if (!pasted && last && !last.sent && !last.pasted && last.insertSize + insertSize < 15000 && last.parts.length + parts.length < 1500) {
+    if (!pasted && last && !last.sent && !last.pasted && last.insertSize + insertSize < 15000 && last.parts.length + parts.length < batchPartLimit) {
       last.parts = ops.compose(last.parts, parts);
       last.insertSize += insertSize;
     } else s.pending.push({parts, opId:id(), pasted, insertSize});
@@ -196,6 +202,28 @@
     s.local = next;
     if (!history || pasted) s.byteLength = new TextEncoder().encode(s.local).length;
     enqueue(s, parts, pasted);
+  }
+
+  function recordLocalEdits(s, edits) {
+    let parts = [], inserted = 0, pasted = false;
+    let textLength = s.local.length, byteLength = s.byteLength;
+    const commit = () => {
+      s.byteLength = byteLength;
+      localChange(s, parts, {pasted});
+      parts = [];
+      inserted = 0;
+    };
+    for (const edit of edits) {
+      const step = ops.splice(textLength, edit.start, edit.end, edit.text);
+      if (parts.length && (parts.length + step.length > batchPartLimit ||
+          inserted + edit.inserted > editByteLimit || pasted !== edit.pasted)) commit();
+      parts = parts.length ? ops.compose(parts, step) : step;
+      textLength += edit.text.length - (edit.end - edit.start);
+      byteLength += edit.inserted - edit.removed;
+      inserted += edit.inserted;
+      pasted = edit.pasted;
+    }
+    if (parts.length) commit();
   }
 
   function undo(s, redo) {
@@ -498,6 +526,13 @@
       if (!person) return;
       let position = msg.position;
       for (const edit of s.pending) position = ops.mapPosition(position, edit.parts);
+      const editor = cm();
+      const pos = editor.posFromIndex(position);
+      const previous = s.cursors.get(person.id);
+      const current = previous?.find();
+      if (current?.line === pos.line && current.ch === pos.ch) return;
+      const anchor = document.createElement('span');
+      anchor.className = 'group-cursor-anchor';
       const cursor = document.createElement('span');
       cursor.className = 'group-remote-cursor ' + classColor(person.color);
       cursor.tabIndex = 0;
@@ -506,8 +541,11 @@
       const name = document.createElement('span');
       name.textContent = person.name;
       cursor.append(name);
-      s.cursors.get(person.id)?.clear();
-      s.cursors.set(person.id, cm().setBookmark(cm().posFromIndex(position), {widget:cursor, insertLeft:true}));
+      anchor.append(cursor);
+      editor.operation(() => {
+        previous?.clear();
+        s.cursors.set(person.id, editor.setBookmark(pos, {widget:anchor, insertLeft:true}));
+      });
     });
     value.on('group_project_access_changed', msg => {
       const s = active;
@@ -550,23 +588,54 @@
     s.painting = true;
     requestAnimationFrame(() => {
       s.painting = false;
-      if (!valid(s) || !cm()) return;
-      cm().operation(() => {
-        s.marks.splice(0).forEach(mark => mark.clear());
-        if (!showColors || s.paused) return;
-        let spans = s.spans;
-        for (const change of s.pending) spans = ops.mapSpans(spans, change.parts, s.project.own?.id);
-        const viewport = cm().getViewport();
-        const start = cm().indexFromPos({line:Math.max(0, viewport.from - 15), ch:0});
-        const stop = cm().indexFromPos({line:viewport.to + 15, ch:0});
-        for (const [from,to,author] of spans) {
-          if (to <= start || from >= stop) continue;
-          const person = s.authors.get(author) || (s.project.own?.id === author ? s.project.own : null);
-          if (person) s.marks.push(cm().markText(cm().posFromIndex(from), cm().posFromIndex(to),
-            {className:'group-contribution ' + classColor(person.color), title:person.name}));
-        }
-      });
+      const editor = cm();
+      if (valid(s) && editor) editor.operation(() => paintContributions(s, editor));
     });
+  }
+
+  function paintContributions(s, editor) {
+    const key = (from, to, author) => `${from.line}:${from.ch}:${to.line}:${to.ch}:${author}`;
+    const existing = new Map();
+    for (const item of s.marks) {
+      const range = item.mark.find();
+      if (range) existing.set(key(range.from, range.to, item.author), item);
+    }
+    s.marks = [];
+    if (showColors && !s.paused) {
+      let spans = s.spans;
+      for (const change of s.pending) spans = ops.mapSpans(spans, change.parts, s.project.own?.id);
+      const {from, to} = editor.getViewport();
+      const blockSize = contributionBlockLines;
+      const firstLine = Math.max(0, Math.floor(from / blockSize) * blockSize - blockSize);
+      const endLine = Math.min(editor.lineCount(), Math.ceil(to / blockSize) * blockSize + blockSize);
+      const start = editor.indexFromPos({line:firstLine,ch:0});
+      const stop = editor.indexFromPos({line:endLine,ch:0});
+      for (const [left,right,author] of spans) {
+        if (right <= start) continue;
+        if (left >= stop) break;
+        const person = s.authors.get(author) || (s.project.own?.id === author ? s.project.own : null);
+        if (!person) continue;
+        // Keep stable blocks around the viewport. Recreating marks for rows
+        // already on screen makes CodeMirror rebuild those rows and their gutters.
+        const end = editor.posFromIndex(Math.min(stop, right));
+        let begin = editor.posFromIndex(Math.max(start, left));
+        for (;;) {
+          const nextBlock = (Math.floor(begin.line / blockSize) + 1) * blockSize;
+          const lastBlock = nextBlock > end.line || (nextBlock === end.line && end.ch === 0);
+          const finish = lastBlock ? end : {line:nextBlock,ch:0};
+          const id = key(begin, finish, author);
+          const old = existing.get(id);
+          existing.delete(id);
+          const mark = old?.mark || editor.markText(begin, finish, {
+            className:'group-contribution ' + classColor(person.color), title:person.name,
+          });
+          s.marks.push({author, mark});
+          if (lastBlock) break;
+          begin = finish;
+        }
+      }
+    }
+    for (const {mark} of existing.values()) mark.clear();
   }
 
   function saveBlob(blob, name) {
@@ -648,16 +717,17 @@
     bridge = value;
     const editor = cm();
     editor?.on('beforeChange', (_instance, change) => {
-      beforeEdit = null;
       const s = active;
-      if (!s || !valid(s) || applyEditorChange || change.origin === 'setValue') return;
+      if (!s || !valid(s) || applyEditorChange || change.canceled || change.origin === 'setValue') return;
       if (s.paused) {change.cancel(); return;}
       const text = change.text.join('\n');
+      const start = editor.indexFromPos(change.from), end = editor.indexFromPos(change.to);
+      if (!text && start === end) return;
       const encoder = new TextEncoder();
       const inserted = encoder.encode(text).length;
       const removed = encoder.encode(editor.getRange(change.from, change.to)).length;
-      const length = s.byteLength + inserted - removed;
-      if (inserted > 96 * 1024 || length > 2 * 1024 * 1024 || s.pending.length >= 256) {
+      const length = (beforeEdits.at(-1)?.length ?? s.byteLength) + inserted - removed;
+      if (inserted > editByteLimit || length > 2 * 1024 * 1024 || s.pending.length >= 256) {
         change.cancel();
         s.message = s.pending.length >= 256 ? 'The recovery queue is full. Reconnect to continue editing.' :
           length > 2 * 1024 * 1024 ? 'Shared text files can be at most 2 MiB.' :
@@ -665,15 +735,14 @@
         setTimeout(renderToolbar, 0);
         return;
       }
-      beforeEdit = {s, length, parts:ops.splice(s.local.length, editor.indexFromPos(change.from), editor.indexFromPos(change.to), text), pasted:change.origin === 'paste'};
+      beforeEdits.push({s, length, start, end, text, inserted, removed, pasted:change.origin === 'paste'});
     });
-    editor?.on('change', () => {
-      if (!beforeEdit) return;
-      const {s, parts, pasted, length} = beforeEdit;
-      beforeEdit = null;
-      if (!valid(s)) return;
-      s.byteLength = length;
-      localChange(s, parts, {pasted});
+    editor?.on('changes', () => {
+      if (!beforeEdits.length) return;
+      const edits = beforeEdits;
+      beforeEdits = [];
+      const {s} = edits[0];
+      if (valid(s)) recordLocalEdits(s, edits);
     });
     editor?.on('cursorActivity', () => {if (active) scheduleCursor(active);});
     editor?.on('focus', () => {if (active?.teacher) scheduleCursor(active);});

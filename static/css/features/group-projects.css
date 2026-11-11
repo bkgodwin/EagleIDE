@@ -29,11 +29,17 @@
 .group-editor-tools .btn, .group-file-options { min-height:30px; padding:4px 8px; font-size:12px; }
 .group-status { font-weight:650; overflow-wrap:anywhere; }
 .group-status.is-paused { color:var(--theme-text-dim); }
-.group-remote-cursor {
-  display:inline-block; position:relative; width:2px; margin-right:-2px; height:1.15em; vertical-align:text-bottom;
-  z-index:2; color:var(--group-color); cursor:default;
+.group-cursor-anchor {
+  display:inline-block; position:relative; width:0; height:0; vertical-align:baseline;
 }
-.group-remote-cursor::before { content:""; position:absolute; top:0; left:-1px; width:2px; height:100%; background:currentColor; }
+.group-remote-cursor {
+  position:absolute; left:-2px; bottom:-.24em; z-index:2; width:4px; height:1.4em;
+  border-radius:1px; background:var(--group-color); cursor:default;
+}
+.group-remote-cursor::before {
+  content:""; position:absolute; top:0; left:-2px; width:8px; height:4px;
+  border-radius:2px; background:inherit;
+}
 .group-remote-cursor > span {
   display:none; position:absolute; top:100%; left:-1px; z-index:3; width:max-content; max-width:16ch;
   overflow:hidden; text-overflow:ellipsis; padding:2px 5px; border-radius:0 4px 4px 4px;

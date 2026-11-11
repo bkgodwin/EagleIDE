@@ -557,7 +557,7 @@
           <section class="workspace-markdown-view" id="workspaceMarkdownView" aria-label="Markdown reading view" tabindex="0" hidden></section>
           <form class="editor-find editor-edit-glass" id="editorFind" aria-label="Find and replace" hidden>
             <header><strong>Find and replace</strong><button type="button" data-find="close" aria-label="Close find and replace" title="Close (Esc)">×</button></header>
-            <label>Find<input name="query" type="text" maxlength="256" autocomplete="off" spellcheck="false"></label>
+            <label>Find<input name="query" type="text" maxlength="256" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
             <div class="editor-find-options">
               <label><input name="caseSensitive" type="checkbox"> Case sensitive</label>
               <label title="Match text inside a longer word"><input name="withinWord" type="checkbox"> Contains</label>
@@ -567,7 +567,7 @@
               <button type="button" data-find="previous" aria-label="Previous match" title="Previous match (Shift+Enter)">↑</button>
               <button type="submit" data-find="next" aria-label="Next match" title="Next match (Enter)">↓</button>
             </div>
-            <label>Replace with<input name="replacement" type="text" autocomplete="off" spellcheck="false"></label>
+            <label>Replace with<input name="replacement" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
             <div class="editor-find-actions">
               <button type="button" data-find="replace">Replace</button>
               <button type="button" data-find="replaceAll">Replace all</button>

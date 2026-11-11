@@ -4,18 +4,32 @@
 
   const MATCH_LIMIT = 2000;
   const WORD = '[\\p{L}\\p{M}\\p{N}_$]';
+  const wordAtStart = new RegExp('^' + WORD, 'u');
+  const wordAtEnd = new RegExp(WORD + '$', 'u');
+  const horizontalSpace = '[ \\t\\u00a0\\u202f]';
+  const spaceRuns = new RegExp('(' + horizontalSpace + '+)', 'u');
 
   function findMatches(source, query, caseSensitive, contains) {
     if (!query) return [];
-    const literal = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const startsWord = new RegExp('^' + WORD, 'u').test(query);
-    const endsWord = new RegExp(WORD + '$', 'u').test(query);
-    const left = !contains && startsWord ? `(?<!${WORD})` : '';
-    const right = !contains && endsWord ? `(?!${WORD})` : '';
-    const pattern = new RegExp(left + literal + right, caseSensitive ? 'gu' : 'giu');
+    const pieces = query.split(spaceRuns);
+    const phrase = pieces.map((part, index) => {
+      if (index % 2 && pieces[index - 1] && pieces[index + 1]) return horizontalSpace + '+';
+      return part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }).join('');
+    const wholeStart = !contains && wordAtStart.test(query);
+    const wholeEnd = !contains && wordAtEnd.test(query);
+    const pattern = new RegExp(phrase, caseSensitive ? 'gu' : 'giu');
     const matches = [];
-    for (const match of source.matchAll(pattern)) {
-      matches.push([match.index, match.index + match[0].length]);
+    for (let match; (match = pattern.exec(source));) {
+      const start = match.index;
+      const end = start + match[0].length;
+      // Check the surrounding Unicode characters without regexp lookbehind.
+      if ((wholeStart && wordAtEnd.test(source.slice(Math.max(0, start - 2), start))) ||
+          (wholeEnd && wordAtStart.test(source.slice(end, end + 2)))) {
+        pattern.lastIndex = start + (source.codePointAt(start) > 0xFFFF ? 2 : 1);
+        continue;
+      }
+      matches.push([start, end]);
       if (matches.length > MATCH_LIMIT) break;
     }
     return matches;
