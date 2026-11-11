@@ -2874,6 +2874,7 @@ def _set_teacher_stream_state_for_sid(sid: str, class_id: str, active: bool) -> 
         sid_classes.discard(cid)
         if not class_sids:
             _live_teacher_stream_sids_by_class.pop(cid, None)
+            _teacher_code_snapshots.pop(cid, None)
         if not sid_classes:
             _socket_live_class_ids.pop(sid, None)
     _emit_teacher_stream_status(cid)
@@ -7412,7 +7413,7 @@ def start_html_runtime():
             return jsonify(ok=False, error="Student login required"), 403
         user = student
         project_token = request.headers.get("X-User-Token", "").strip()
-        entry_path = group_projects.run_access(sys.modules[__name__], user["email"], project)
+        entry_path, group_version = group_projects.prepare_run(sys.modules[__name__], user["email"], project)
         target = Path(entry_path)
     else:
         file_path = str(data.get("file_path") or "").strip()
@@ -7448,7 +7449,7 @@ def start_html_runtime():
         if project is not None:
             source_root = _prepare_runner_sandbox("groupide", runtime_id).resolve()
             try:
-                target, _ = group_projects.run_snapshot(sys.modules[__name__], owner_email, project, source_root)
+                target, _ = group_projects.run_snapshot(sys.modules[__name__], owner_email, project, source_root, group_version)
                 entry_path = target.relative_to(source_root).as_posix()
             except Exception:
                 _delete_runner_sandbox_quietly(source_root)
@@ -8945,6 +8946,12 @@ def _stdin_event_allowed(sid: str) -> bool:
 
 def _build_execution_entry(payload: dict, context: dict, kind: str, code: str, runtime_settings: dict) -> dict:
     file_path = str(payload.get("file_path") or "")
+    group_version = None
+    if payload.get("groupProject") is not None:
+        if context.get("role") != "student":
+            raise group_projects.ProjectError("Student login required for a group project")
+        file_path, group_version = group_projects.prepare_run(
+            sys.modules[__name__], context["email"], payload["groupProject"])
     language_hint = _normalize_language_hint(payload.get("language"), file_path)
     is_javascript = kind == "run" and (
         language_hint == "javascript" or (Path(file_path).suffix.lower() == ".js" if file_path else False)
@@ -8964,6 +8971,7 @@ def _build_execution_entry(payload: dict, context: dict, kind: str, code: str, r
         "language": "javascript" if is_javascript else "python",
         "is_javascript": is_javascript,
         "file_path": file_path,
+        "group_version": group_version,
     }
 
 
@@ -9060,10 +9068,10 @@ def _start_execution_request(entry: dict) -> None:
             if project is not None:
                 if context.get("role") != "student":
                     raise group_projects.ProjectError("Student login required for a group project")
-                group_projects.run_access(sys.modules[__name__], context["email"], project)
                 project_root = _prepare_runner_sandbox("groupide", sid).resolve()
                 entry["project_snapshot"] = project_root
-                target, code = group_projects.run_snapshot(sys.modules[__name__], context["email"], project, project_root)
+                target, code = group_projects.run_snapshot(
+                    sys.modules[__name__], context["email"], project, project_root, entry["group_version"])
                 if len(code) > MAX_RUN_CODE_CHARS or len(code.encode("utf-8")) > MAX_RUN_CODE_BYTES:
                     raise group_projects.ProjectError("This project file exceeds the run code limit")
                 file_path = target.name
@@ -9197,7 +9205,12 @@ def on_run_code(payload):
         return
 
     runtime_settings = _normalized_python_runtime_settings()
-    entry = _build_execution_entry(payload, context, "run", code, runtime_settings)
+    try:
+        entry = _build_execution_entry(payload, context, "run", code, runtime_settings)
+    except group_projects.ProjectError as exc:
+        emit("output", {"data": f"[Run rejected: {exc}]\n"})
+        emit("finished", {})
+        return
     disposition, admission_error = _submit_execution_request(entry, context)
     if disposition == "rejected":
         emit("output", {"data": f"[Run rejected: {admission_error}]\n"})
@@ -9237,7 +9250,11 @@ def on_trace_code(payload):
         return
 
     runtime_settings = _normalized_python_runtime_settings()
-    entry = _build_execution_entry(payload, context, "trace", code, runtime_settings)
+    try:
+        entry = _build_execution_entry(payload, context, "trace", code, runtime_settings)
+    except group_projects.ProjectError as exc:
+        reject(str(exc))
+        return
     disposition, admission_error = _submit_execution_request(entry, context)
     if disposition == "rejected":
         reject(f"Step Mode could not start: {admission_error}")
@@ -9304,12 +9321,22 @@ def on_teacher_code_update(payload):
     if not teacher or (cls.get("teacher_email") or "").strip().lower() != (teacher.get("email") or "").strip().lower():
         return
     actor_key = f"teacher:{(teacher.get('email') or '').strip().lower()}:{class_id}"
-    code = payload.get("code", "")
+    previous = _teacher_code_snapshots.get(class_id, {})
+    snapshot_id = payload.get("snapshotId")
+    cursor_only = "code" not in payload and type(snapshot_id) is int
+    if cursor_only and (previous.get("_sender") != request.sid or previous.get("snapshotId") != snapshot_id):
+        return {"ok": False}
+    code = previous["code"] if cursor_only else payload.get("code", "")
     if not isinstance(code, str):
         return
     try:
-        if len(code.encode("utf-8")) > MAX_TEACHER_STREAM_CODE_BYTES:
-            return
+        if not cursor_only and len(code.encode("utf-8")) > MAX_TEACHER_STREAM_CODE_BYTES:
+            warning = f"This file exceeds the {MAX_TEACHER_STREAM_CODE_BYTES // 1000} KB teacher stream limit."
+            if _teacher_stream_active_for_class(class_id):
+                outbound = {"code": "", "class_id": class_id, "message": warning}
+                _teacher_code_snapshots[class_id] = outbound
+                socketio.emit("teacher_code", outbound, to=f"class_{class_id}_students")
+            return {"ok": False, "warning": warning}
     except UnicodeEncodeError:
         return
     now = time.monotonic()
@@ -9339,13 +9366,17 @@ def on_teacher_code_update(payload):
         line, ch = anchor.get("line"), anchor.get("ch")
         if valid_position(line, ch) and (line, ch) != (cursor_line, cursor_ch):
             selection_anchor = {"line": line, "ch": ch}
-    outbound = {
-        "code": code, "class_id": class_id, "cursorLine": cursor_line,
+    position = {
+        "class_id": class_id, "cursorLine": cursor_line,
         "cursorCh": cursor_ch, "selectionAnchor": selection_anchor,
-        "language": language or _teacher_code_snapshots.get(class_id, {}).get("language", ""),
     }
-    _teacher_code_snapshots[class_id] = outbound
-    socketio.emit("teacher_code", outbound, to=f"class_{class_id}_students")
+    if type(snapshot_id) is int:
+        position["snapshotId"] = snapshot_id
+    outbound = {**position, "code": code, "language": language or previous.get("language", "")}
+    _teacher_code_snapshots[class_id] = {**outbound, "_sender": request.sid} if type(snapshot_id) is int else outbound
+    socketio.emit("teacher_cursor" if cursor_only else "teacher_code", position if cursor_only else outbound,
+                  to=f"class_{class_id}_students")
+    return {"ok": True}
 
 
 @socketio.on("teacher_stream_status")
@@ -9416,7 +9447,7 @@ def on_join_class_room(payload):
     _emit_teacher_stream_status(class_id, sid=request.sid)
     snapshot = _teacher_code_snapshots.get(class_id)
     if role == "student" and _teacher_stream_active_for_class(class_id) and snapshot is not None:
-        socketio.emit("teacher_code", snapshot, to=request.sid)
+        socketio.emit("teacher_code", {key: value for key, value in snapshot.items() if key != "_sender"}, to=request.sid)
     _emit_class_presence(class_id)
 
 

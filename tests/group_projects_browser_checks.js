@@ -166,6 +166,18 @@ async function main() {
     assert.equal(await alice.evaluate(() => document.querySelector('#teacherStreamPane .CodeMirror').CodeMirror.getScrollInfo().top),150);
     await teacher.evaluate(() => window.eagleEditor.setSelection({line:35,ch:1},{line:35,ch:3}));
     await devon.locator('#teacherStreamPane .CodeMirror-selected').first().waitFor();
+    await teacher.evaluate(() => {
+      const cm = window.eagleEditor;
+      cm.replaceRange(' long'.repeat(120), {line:139,ch:10});
+      cm.setCursor({line:139,ch:610});
+    });
+    await centered(devon, 139);
+    await devon.waitForFunction(() => {
+      const cm = document.querySelector('#teacherStreamPane .CodeMirror').CodeMirror;
+      const viewport = cm.getScrollInfo();
+      const caret = cm.charCoords({line:139,ch:610}, 'local');
+      return viewport.left > 0 && caret.right <= viewport.left + viewport.clientWidth;
+    });
     await teacher.locator('#streamingToggleBtn').click();
     await devon.locator('#teacherStreamPane .CodeMirror-selected').first().waitFor({state:'detached'});
     await devon.locator('#teacherStreamPane .teacher-stream-pointing').waitFor({state:'detached'});
@@ -243,6 +255,14 @@ async function main() {
     await alice.getByRole('menuitem',{name:'Share as group project…',exact:true}).click();
     for (const name of ['Ben','Carmen','Devon']) await alice.getByLabel(name,{exact:true}).check();
     await alice.getByRole('button',{name:'Create group project',exact:true}).click();
+    const projectBrowser = alice.getByRole('dialog',{name:'Group project',exact:true});
+    await projectBrowser.getByRole('button',{name:'Options for message.txt',exact:true}).click();
+    await alice.getByRole('button',{name:'Move to group Trash',exact:true}).click();
+    await alice.getByRole('button',{name:'Move to Trash',exact:true}).click();
+    await projectBrowser.getByText('Group Trash (1)',{exact:true}).click();
+    await projectBrowser.getByRole('button',{name:'Restore',exact:true}).click();
+    await alice.getByRole('dialog',{name:'Restore from group Trash',exact:true}).getByRole('button',{name:'Restore',exact:true}).click();
+    await projectBrowser.getByRole('button',{name:'message.txt',exact:true}).waitFor();
     await alice.getByRole('button',{name:'main.py',exact:true}).click();
     await alice.getByLabel('Show contributions',{exact:true}).check();
     await alice.locator('.CodeMirror .group-contribution[title="Alice"]').filter({hasText:'print'}).waitFor();

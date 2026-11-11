@@ -22,6 +22,15 @@
     const control = m.root.querySelector('[data-group-' + name + ']');
     if (control) control.onclick = () => fn(control);
   };
+  function watchTree(m, projectId, load) {
+    const changed = event => {if (event.detail.projectId === projectId) load();};
+    window.addEventListener('eagle-group-tree-changed', changed);
+    const timer = setInterval(() => {if (!document.hidden) load();}, 12000);
+    m.cleanups.push(() => {
+      clearInterval(timer);
+      window.removeEventListener('eagle-group-tree-changed', changed);
+    });
+  }
   async function run(m, control, action) {
     control.disabled = true;
     status(m, '');
@@ -42,7 +51,8 @@
 
   async function share(item) {
     const m = studentModal('Share as group project', `<p>Create a shared working copy of <strong>${esc(item.name)}</strong>.
-      Invite up to three classmates now, or invite them from the project later.</p>
+      Open it from Files → Group Projects to edit or rename it with classmates. Changes to your original in Files stay personal.</p>
+      <p>Invite up to three classmates now, or invite them from the project later.</p>
       <div data-group-roster>Loading classmates…</div>${statusMarkup}${actions(button('create','Create group project',true))}`);
     const create = m.root.querySelector('[data-group-create]');
     create.disabled = true;
@@ -85,10 +95,11 @@
     const root = document.getElementById('groupProjectsPanel');
     if (!root) return;
     const projects = core.list();
+    const drafts = core.recoveryDrafts();
     const {allowed, reason} = core.available();
-    root.hidden = !core.canShare() && !projects.length;
+    root.hidden = !core.canShare() && !projects.length && !drafts.length;
     if (root.hidden) {root.replaceChildren(); panelSignature = ''; return;}
-    const signature = JSON.stringify([projects, allowed, reason]);
+    const signature = JSON.stringify([projects, allowed, reason, drafts]);
     if (signature === panelSignature) return;
     panelSignature = signature;
     const pending = projects.filter(p => p.membership === 'pending');
@@ -97,7 +108,11 @@
       ${projects.length ? projects.map(project => `<button class="group-file-row" type="button" data-group-browse="${esc(project.id)}" ${!allowed && project.status === 'active' && project.membership !== 'pending' ? 'disabled' : ''}>
           <span class="group-file-glyph" aria-hidden="true">${project.folder ? '▰' : '▤'}</span><span class="group-file-title">${esc(project.name)}</span>
           <span class="group-file-meta">${project.status === 'canceled' ? 'Recovery copy' : project.membership === 'pending' ? 'Invitation' : `${project.members.length}/4`}</span></button>`).join('') :
-        '<p class="group-muted">Open a file or folder’s menu to share it.</p>'}`;
+        '<p class="group-muted">Open a file or folder’s menu to share it.</p>'}
+      ${drafts.length ? `<details><summary>Recovery drafts on this tab</summary>${drafts.map((draft,index) =>
+        `<button type="button" class="btn secondary" data-group-recovery="${index}">Download ${esc(draft.path)}</button>`).join('')}</details>` : ''}`;
+    root.querySelectorAll('[data-group-recovery]').forEach(control => control.onclick = () =>
+      core.downloadRecoveryDraft(drafts[Number(control.dataset.groupRecovery)].key));
     root.querySelectorAll('[data-group-browse]').forEach(control => control.onclick = () => {
       const project = projects.find(p => p.id === control.dataset.groupBrowse);
       if (project.status === 'canceled') {
@@ -142,12 +157,13 @@
   function browseStudent(projectId) {
     const m = studentModal('Group project', '<div data-group-body>Loading project…</div>' + statusMarkup, 'group-browser-modal');
     const body = m.root.querySelector('[data-group-body]');
-    let signature = '';
+    let signature = '', sequence = 0;
     async function load() {
+      const current = ++sequence;
       try {
         const {project} = await request(route(projectId));
-        if (!m.root.isConnected) return;
-        const next = JSON.stringify([project.members,project.files.map(f => [f.id,f.path,f.folder]),project.canInvite]);
+        if (!m.root.isConnected || current !== sequence) return;
+        const next = JSON.stringify([project.treeRevision,project.members,project.canInvite,project.trash]);
         if (signature === next) {
           // Keep controls stable while revisions change in the background.
           Object.assign(body.project, project);
@@ -157,22 +173,26 @@
         body.project = project;
         body.innerHTML = `<div class="group-project-heading"><div><h4>${esc(project.name)}</h4>${memberChips(project.members)}</div>
           <div class="group-actions">${project.canInvite ? button('invite','Invite classmates') : ''}${button('download-all','Download copy')}${button('leave','Unlink and leave group')}</div></div>
-          ${project.folder ? '<div class="group-actions group-tree-actions">' + button('new','New file') + button('mkdir','New folder') + button('upload','Upload file') + '</div>' : ''}
-          <div class="group-file-list" aria-label="Shared project files">${fileRows(project.files)}</div>`;
+          ${project.folder ? '<div class="group-actions group-tree-actions">' + button('new','New file') + button('mkdir','New folder') + button('upload','Upload file') + button('renameProject','Rename project') + '</div>' : ''}
+          <div class="group-file-list" aria-label="Shared project files">${fileRows(project.files)}</div>
+          ${project.trash.length ? `<details><summary>Group Trash (${project.trash.length})</summary><div class="group-file-list">${project.trash.map(file =>
+            `<div class="group-file-row"><span class="group-file-title">${esc(file.path)}</span>
+              <button type="button" class="btn secondary" data-group-restore="${esc(file.id)}">Restore</button></div>`).join('')}</div></details>` : ''}`;
         const find = id => project.files.find(file => file.id === id);
         body.querySelectorAll('[data-group-open]').forEach(control => control.onclick = () => run(m,control,async () => {
           await core.open(project, find(control.dataset.groupOpen));
           m.close();
         }));
         body.querySelectorAll('[data-group-options]').forEach(control => control.onclick = () => fileOptions(project, find(control.dataset.groupOptions), load, m));
-        for (const action of ['new','mkdir','upload']) bind(m,action,() => editTree(project,action,null,load));
+        for (const action of ['new','mkdir','upload','renameProject']) bind(m,action,() => editTree(project,action,null,load));
+        body.querySelectorAll('[data-group-restore]').forEach(control => control.onclick = () =>
+          editTree(project,'restore',project.trash.find(file => file.id === control.dataset.groupRestore),load));
         bind(m,'invite',() => invite(project,load));
         bind(m,'download-all',control => run(m,control,() => core.download(project)));
         bind(m,'leave',() => leave(project,m));
-      } catch (error) {status(m,error.message);}
+      } catch (error) {if (current === sequence) status(m,error.message);}
     }
-    const timer = setInterval(() => {if (!document.hidden) load();},12000);
-    m.cleanups.push(() => clearInterval(timer));
+    watchTree(m, projectId, load);
     load();
   }
 
@@ -219,7 +239,8 @@
   function fileOptions(project, file, reload, parent) {
     const m = studentModal('Project file options', `<p><strong>${esc(file.path)}</strong></p>${statusMarkup}
       ${actions(...(!file.folder ? [button('file-download','Download'),button('replace','Replace asset')] : []),
-        ...(project.folder ? [button('rename','Rename or move'),button('delete','Delete from project')] : []),
+        button('rename',project.folder ? 'Rename or move' : 'Rename file'),
+        ...(project.folder ? [button('delete','Move to group Trash')] : []),
         button('unlink','Unlink and leave group'))}`);
     bind(m,'unlink',() => {m.close(); leave(project,parent);});
     bind(m,'file-download',control => run(m,control,async () => {await core.download(project,file); m.close();}));
@@ -227,18 +248,38 @@
   }
 
   function editTree(project, action, file, reload) {
-    const titles = {new:'New project file', mkdir:'New project folder', upload:'Upload to project', rename:'Rename or move', replace:'Replace project asset', delete:'Delete from project'};
+    const titles = {new:'New project file', mkdir:'New project folder', upload:'Upload to project', rename:'Rename or move',
+      renameProject:'Rename project', replace:'Replace project asset', delete:'Move to group Trash', restore:'Restore from group Trash'};
     const upload = ['upload','replace'].includes(action), deleting = action === 'delete';
-    const folders = project.files.filter(f => f.folder && (!file || f.path !== file.path && !f.path.startsWith(file.path + '/')));
+    const chooseLocation = project.folder && !deleting && action !== 'replace' && action !== 'renameProject';
+    const parentPath = item => item?.path.split('/').slice(0,-1).join('/') || '';
+    const descendants = () => file?.folder ? project.files.filter(f => f.path.startsWith(file.path + '/')) : [];
     const m = studentModal(titles[action], `<form class="group-form">
-      ${deleting ? `<p>Delete <strong>${esc(file.path)}</strong> and its contents for everyone in this project?</p>` : ''}
-      ${!deleting && action !== 'replace' ? `<label>Location<select data-group-parent><option value="">Project root</option>${folders.map(f => `<option value="${esc(f.path)}">${esc(f.path)}</option>`).join('')}</select></label>` : ''}
+      ${deleting ? `<p>Move <strong data-group-target>${esc(file.path)}</strong> and its contents to group Trash? The group can restore it for 30 days.</p>` : ''}
+      ${deleting && file.folder ? '<details><summary data-group-descendant-count></summary><ul data-group-descendants></ul></details>' : ''}
+      ${deleting || action === 'rename' ? '<p class="group-muted">Check imports and links that refer to this path.</p>' : ''}
+      ${chooseLocation ? '<label>Location<select data-group-parent></select></label>' : ''}
       ${upload ? '<label>File<input type="file" data-group-upload required></label>' : ''}
-      ${!upload && !deleting ? `<label>Name<input type="text" data-group-path value="${esc(file?.path.split('/').at(-1) || '')}" maxlength="120" required></label>` : ''}
-      ${statusMarkup}<div class="modal-actions"><button class="btn run" type="submit">${deleting ? 'Delete' : 'Save'}</button></div></form>`);
+      ${!upload && !deleting ? `<label>Name<input type="text" data-group-path value="${esc(file?.path.split('/').at(-1) || (action === 'renameProject' ? project.name : ''))}" maxlength="255" required></label>` : ''}
+      ${statusMarkup}<div class="modal-actions"><button class="btn run" type="submit">${deleting ? 'Move to Trash' : action === 'restore' ? 'Restore' : 'Save'}</button></div></form>`);
     const form = m.root.querySelector('form');
     const parent = form.querySelector('[data-group-parent]');
-    if (parent && file) parent.value = file.path.split('/').slice(0,-1).join('/');
+    const fillFolders = selected => {
+      if (!parent) return;
+      const folders = project.files.filter(f => f.folder && (action === 'restore' || !file ||
+        f.path !== file.path && !f.path.startsWith(file.path + '/')));
+      parent.replaceChildren(new Option('Project root',''), ...folders.map(f => new Option(f.path,f.path)));
+      if (folders.some(f => f.path === selected)) parent.value = selected;
+    };
+    const fillDeletePreview = () => {
+      const list = form.querySelector('[data-group-descendants]');
+      if (!list) return;
+      const items = descendants();
+      form.querySelector('[data-group-descendant-count]').textContent = `Contents (${items.length})`;
+      list.innerHTML = items.map(item => `<li>${esc(item.path)}</li>`).join('');
+    };
+    fillFolders(parentPath(file));
+    fillDeletePreview();
     form.onsubmit = event => {
       event.preventDefault();
       run(m,form.querySelector('button[type=submit]'),async () => {
@@ -246,14 +287,36 @@
         const name = blob?.name || form.querySelector('[data-group-path]')?.value.trim() || '';
         if (name.includes('/') || name.includes('\\')) throw new Error('Enter a name and choose its folder.');
         const path = action === 'replace' ? file.path : [parent?.value, name].filter(Boolean).join('/');
-        let data = {action,path, ...(file ? {fileId:file.id, revision:file.revision} : {})};
+        let data = {action,path,treeRevision:project.treeRevision, ...(file ? {fileId:file.id, revision:file.revision} : {})};
+        if (deleting && file.folder) {
+          data.descendants = descendants().map(f => [f.id,f.revision]).sort((a,b) => a[0].localeCompare(b[0]));
+        }
         if (upload) {
           const multipart = new FormData();
           Object.entries({...data,classId:project.classId}).forEach(([key,value]) => multipart.append(key,value));
           multipart.append('file',blob);
           data = multipart;
         }
-        await request(route(project.id), {method:'POST',data});
+        try {
+          await request(route(project.id), {method:'POST',data});
+        } catch (error) {
+          if (![404,409].includes(error.status)) throw error;
+          const latest = (await request(route(project.id))).project;
+          const current = file && (action === 'restore' ? latest.trash : latest.files).find(item => item.id === file.id);
+          if (file && !current) {
+            reload();
+            throw new Error('This item is no longer available. Close this dialog to see the current files.');
+          }
+          const location = parent?.value;
+          project = latest;
+          file = current;
+          fillFolders(location);
+          fillDeletePreview();
+          const target = form.querySelector('[data-group-target]');
+          if (target) target.textContent = file.path;
+          reload();
+          throw error;
+        }
         m.close(); reload(); core.refresh();
       });
     };
@@ -307,7 +370,7 @@
         <label>End<input type="time" name="end" value="${esc(current.end)}" required></label>
         <label>Time zone<input name="zone" value="${esc(current.timeZone)}" required maxlength="80"></label></div></fieldset>
       <div class="group-actions"><button type="submit" class="btn run">Save group settings</button></div>${statusMarkup}</form>
-      <div class="group-project-heading"><div><h4>Active projects</h4><p class="group-muted">Includes projects with nobody currently editing.</p></div>
+      <div class="group-project-heading"><div><h4>Projects</h4><p class="group-muted">Includes active projects and recovery copies.</p></div>
       ${button('refresh','Refresh')}</div><div class="group-teacher-list" data-group-teacher-list>Loading projects…</div>`, 'group-browser-modal');
     const options = {teacher:true,params:{classId:cls.id}};
     const list = m.root.querySelector('[data-group-teacher-list]');
@@ -322,13 +385,13 @@
       try {
         const {projects} = await request('/api/teacher/group-projects', options);
         if (!m.root.isConnected) return;
-        const next = JSON.stringify(projects.map(p => [p.id,p.name,p.members,p.openFiles]));
+        const next = JSON.stringify(projects.map(p => [p.id,p.name,p.status,p.members,p.openFiles]));
         if (next === signature) return;
         signature = next;
         list.innerHTML = projects.length ? projects.map(project => `<button class="group-teacher-project" type="button" data-group-teacher="${esc(project.id)}">
           <strong>${esc(project.name)}</strong><span>${esc(project.members.filter(p => p.state === 'active').map(p => p.name).join(', '))}</span>
-          <small>${project.openFiles.length ? esc(project.openFiles.map(file => `${file.path} (${file.viewers.length} open)`).join(' · ')) : 'Idle'}</small>
-        </button>`).join('') : '<p class="group-muted">No active group projects in this class.</p>';
+          <small>${project.status === 'canceled' ? 'Recovery copy' : project.openFiles.length ? esc(project.openFiles.map(file => `${file.path} (${file.viewers.length} open)`).join(' · ')) : 'Idle'}</small>
+        </button>`).join('') : '<p class="group-muted">No group projects in this class.</p>';
         list.querySelectorAll('button').forEach(control => control.onclick = () => browseTeacher(cls, control.dataset.groupTeacher, load, m));
       } catch (error) {if (m.root.isConnected) {signature = ''; list.textContent = error.message;}}
       finally {loading = false;}
@@ -361,30 +424,40 @@
     const options = {teacher:true,params:{classId:cls.id}};
     const m = studentModal('Browse group project', '<div data-group-body>Loading files…</div>' + statusMarkup, 'group-browser-modal');
     const body = m.root.querySelector('[data-group-body]');
-    let sequence = 0;
+    let sequence = 0, loadSequence = 0, signature = '', selectedFile = '';
     async function load() {
+      const currentLoad = ++loadSequence;
       try {
         const {project} = await request(url, options);
-        if (!m.root.isConnected) return;
-        body.innerHTML = `<h4>${esc(project.name)}</h4><div class="group-teacher-members">${project.members.map(p =>
+        if (!m.root.isConnected || currentLoad !== loadSequence) return;
+        const next = JSON.stringify([project.treeRevision, project.status, project.members]);
+        if (next === signature) return;
+        signature = next;
+        sequence++;
+        body.innerHTML = `<div class="group-project-heading"><h4>${esc(project.name)}</h4>${button('download-all','Download copy')}</div>
+          ${project.recoverUntil ? `<p class="group-muted">Recovery copy available through ${esc(new Date(project.recoverUntil * 1000).toLocaleDateString())}.</p>` : ''}
+          <div class="group-teacher-members">${project.members.map(p =>
           `<div><span>${esc(p.name)}${p.state === 'active' ? (p.owner ? ' · Organizer' : '') : ' · ' + esc(p.state)}</span>
-          <button type="button" class="btn secondary" data-group-member="${esc(p.id)}" data-group-state="${esc(p.state)}">${p.state === 'removed' ? 'Allow reinvite' : 'Remove'}</button></div>`).join('')}</div>
+          ${project.status === 'active' ? `<button type="button" class="btn secondary" data-group-member="${esc(p.id)}" data-group-state="${esc(p.state)}">${p.state === 'removed' ? 'Allow reinvite' : 'Remove'}</button>` : ''}</div>`).join('')}</div>
           <div class="group-teacher-browser"><div class="group-file-list">${fileRows(project.files,true)}</div>
           <section class="group-teacher-preview" data-group-preview aria-live="polite">Select a file to preview.</section></div>`;
+        bind(m,'download-all',control => run(m,control,() => core.download(project,null,true)));
         const preview = body.querySelector('[data-group-preview]');
         body.querySelectorAll('[data-group-open]').forEach(control => control.onclick = async () => {
           const fileId = control.dataset.groupOpen, current = ++sequence;
+          selectedFile = fileId;
           preview.textContent = 'Loading file…';
           try {
             const {file} = await request(url,{...options,params:{...options.params,fileId}});
             if (!m.root.isConnected || current !== sequence || !preview.isConnected) return;
             preview.innerHTML = `<div class="group-project-heading"><strong>${esc(file.path)}</strong><div class="group-actions">
-              ${file.kind === 'text' ? button('edit','Edit in IDE',true) : ''}${button('download','Download')}
+              ${file.kind === 'text' && project.status === 'active' ? button('edit','Edit in IDE',true) : ''}${button('download','Download')}
               </div></div>`;
             preview.querySelector('[data-group-download]').onclick = () => request(url,{...options,params:{...options.params,fileId,download:'1'},blob:true})
               .then(blob => core.saveBlob(blob,file.path.split('/').at(-1))).catch(error => status(m,error.message));
             if (file.kind === 'text') {
-              preview.querySelector('[data-group-edit]').onclick = event => run(m,event.currentTarget,async () => {
+              const edit = preview.querySelector('[data-group-edit]');
+              if (edit) edit.onclick = event => run(m,event.currentTarget,async () => {
                 const opened = await core.open(project, file, {
                   teacher:true, canOpen:() => m.root.isConnected && current === sequence && preview.isConnected,
                 });
@@ -411,8 +484,10 @@
             reload(); load();
           });
         });
-      } catch (error) {body.textContent = error.message;}
+        [...body.querySelectorAll('[data-group-open]')].find(control => control.dataset.groupOpen === selectedFile)?.onclick();
+      } catch (error) {if (currentLoad === loadSequence) {signature = ''; body.textContent = error.message;}}
     }
+    watchTree(m, projectId, load);
     load();
   }
 
@@ -437,8 +512,8 @@
       files.textContent = 'Loading project files…';
       try {
         if (!select.value) {files.textContent = 'Choose a project.'; return;}
-        if (core.currentProject()?.id === select.value && !await core.flush()) throw new Error('Save the current shared draft before submitting.');
-        const data = await request(route(select.value));
+        if (core.currentProject()?.id === select.value && core.unsaved() && !await core.flush()) throw new Error('Save the current shared draft before submitting.');
+        const data = await request(route(select.value), {params:{assignmentId:assignment.id}});
         if (current !== sequence || !m.root.isConnected) return;
         project = data.project;
         const selectable = project.files.filter(file => !file.folder);
@@ -470,21 +545,24 @@
       const disabled = fields.map(field => field.disabled);
       fields.forEach(field => {field.disabled = true;});
       try {
+        if (core.currentProject()?.id === project.id && core.unsaved() && !await core.flush()) {
+          throw new Error('Save the current shared draft before submitting.');
+        }
         const data = await request('/api/assignments/submit', {method:'POST', data:{
           assignmentId:assignment.id, classId:assignment.targetClassId, submissionKey,
           groupSelection:{projectId:project.id,mode,recipients:project.members.map(p => p.id).sort(),
-            files:project.files.filter(f => selected.includes(f.id)).map(f => ({id:f.id,revision:f.revision}))},
+            files:project.files.filter(f => selected.includes(f.id)).map(f => ({id:f.id,revision:f.revision,path:f.path}))},
         }});
         if (!m.root.isConnected) return;
         submitting = false;
         select.closest('label').hidden = true;
         files.innerHTML = `<h4>Files turned in</h4><p>${esc((data.submission.groupRecipients || []).join(', '))}</p>
-          <ul>${data.receipt.files.map(f => `<li>${esc(f.name)}</li>`).join('')}</ul>`;
+          <ul>${data.receipt.files.map(f => `<li>${esc(f.projectPath || f.name)}</li>`).join('')}</ul>`;
         status(m, ''); turnIn.textContent = 'Done'; turnIn.onclick = m.close;
         await reload();
       } catch (error) {
         status(m,error.message);
-        if (error.status === 409 && /changed/.test(error.message)) await load(selected);
+        if (error.status === 404 || error.status === 409 && /changed/.test(error.message)) await load(selected);
       } finally {
         submitting = false;
         turnIn.disabled = !project;

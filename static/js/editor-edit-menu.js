@@ -99,7 +99,9 @@
       if (!writable()) return false;
       if (action === 'duplicate') return !duplicating && bridge.canDuplicate();
       if (action === 'paste' || action === 'cut') return !clipboardBlocked() && (action === 'paste' || !!selected());
-      if (action === 'undo' || action === 'redo') return !cm || cm.historySize()[action] > 0;
+      if (action === 'undo' || action === 'redo') {
+        return !cm || (window.GroupProjects?.historySize(action) ?? cm.historySize()[action]) > 0;
+      }
       return true;
     }
 
@@ -128,16 +130,18 @@
       showStatus('');
     }
 
-    function selectMatch(index) {
+    function selectMatch(index, scroll = true) {
       const { matches, limited } = search;
       search.index = matches.length ? (index + matches.length) % matches.length : -1;
       const match = matches[search.index];
       search.activeMark?.clear();
       if (match && cm) {
         const [from, to] = match.map(offset => cm.posFromIndex(offset));
-        window.EagleEditorBehavior?.unfoldLine(cm, from.line);
         search.activeMark = cm.markText(from, to, { className: 'cm-eagle-find-match-current' });
-        cm.scrollIntoView({ from, to }, 55);
+        if (scroll) {
+          window.EagleEditorBehavior?.unfoldLine(cm, from.line);
+          cm.scrollIntoView({ from, to }, 55);
+        }
       } else if (match) {
         textarea.setSelectionRange(...match);
         const linesBefore = search.source.slice(0, match[0]).split('\n').length - 1;
@@ -152,7 +156,7 @@
       findButton('replaceAll').title = limited ? 'Narrow your search to replace all' : '';
     }
 
-    function updateMatches() {
+    function updateMatches(index = 0, scroll = true) {
       if (!search) return;
       const { caseSensitive, withinWord } = find.elements;
       const matches = findMatches(search.source, query.value, caseSensitive.checked, withinWord.checked);
@@ -163,7 +167,7 @@
         search.marks = cm ? search.matches.map(([start, end]) => cm.markText(
           cm.posFromIndex(start), cm.posFromIndex(end), { className: 'cm-eagle-find-match' }
         )) : [];
-        selectMatch(0);
+        selectMatch(Math.max(0, Math.min(index, search.matches.length - 1)), scroll);
       });
     }
 
@@ -200,12 +204,20 @@
       const replacement = find.elements.replacement.value;
       const targets = all ? matches : [matches[index]];
       closeFind(true);
+      let replaced = targets.length;
       if (cm) {
-        cm.operation(() => {
-          for (const [start, end] of targets.slice().reverse()) {
-            cm.replaceRange(replacement, cm.posFromIndex(start), cm.posFromIndex(end), 'eagleReplace');
-          }
-        });
+        replaced = 0;
+        const countReplacements = (_editor, changes) => {
+          replaced += changes.filter(change => change.origin === 'eagleReplace').length;
+        };
+        cm.on('changes', countReplacements);
+        try {
+          cm.operation(() => {
+            for (const [start, end] of targets.slice().reverse()) {
+              cm.replaceRange(replacement, cm.posFromIndex(start), cm.posFromIndex(end), 'eagleReplace');
+            }
+          });
+        } finally {cm.off('changes', countReplacements);}
       } else {
         const start = targets[0][0];
         const end = targets.at(-1)[1];
@@ -216,8 +228,10 @@
           return unchanged + replacement;
         }).join('');
         replaceTextarea(start, end, updated);
+        if (value() !== source.slice(0,start) + updated + source.slice(end)) replaced = 0;
       }
-      showStatus(`Replaced ${targets.length} ${targets.length === 1 ? 'match' : 'matches'}.`);
+      showStatus(replaced === targets.length ? `Replaced ${replaced} ${replaced === 1 ? 'match' : 'matches'}.` :
+        `Replaced ${replaced} of ${targets.length} matches. The editor rejected the remaining changes.`);
     }
 
     function textareaLineEdit(action) {
@@ -300,6 +314,7 @@
       } else if (cm) {
         const command = { indent: 'indentMore', unindent: 'indentLess' }[action] || action;
         if (action === 'comment') cm.operation(() => cm.toggleComment?.({ indent: true, commentBlankLines: true }));
+        else if (['undo','redo'].includes(action) && window.GroupProjects?.historySize(action) != null) window.GroupProjects.editHistory(action);
         else cm.execCommand(command);
       } else if (action === 'undo' || action === 'redo') {
         document.execCommand(action);
@@ -374,8 +389,15 @@
       run(action);
     }, true);
 
-    const changed = () => { revision++; if (search) closeFind(); };
-    if (cm) cm.on('change', changed);
+    const changed = (_editor, changes) => {
+      revision++;
+      if (!search) return;
+      if (changes?.every(change => change.origin === 'groupRemote')) {
+        search.source = value();
+        updateMatches(search.index, false);
+      } else closeFind();
+    };
+    if (cm) cm.on('changes', changed);
     else textarea.addEventListener('input', changed);
     window.addEventListener('eagle-context-updated', reset);
     new ResizeObserver(() => {

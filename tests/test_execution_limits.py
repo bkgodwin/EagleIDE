@@ -1328,6 +1328,18 @@ class ExecutionLimitTestCase(unittest.TestCase):
                 self.assertIsNone(snapshot["selectionAnchor"])
                 self.assertEqual(snapshot["cursorCh"], None if ("cursorCh" in invalid or "cursorLine" in invalid) else 3)
 
+    def test_teacher_stream_accepts_a_caret_update_for_the_current_snapshot(self):
+        teacher = self._socket()
+        stream = {"token":self.teacher_token, "role":"teacher", "class_id":"owned-class", "snapshotId":1}
+        self.assertEqual(teacher.emit("teacher_code_update", {**stream, "code":"a😀b"}, callback=True), {"ok":True})
+        eagle._teacher_stream_last_emit.clear()
+        self.assertEqual(teacher.emit("teacher_code_update", {
+            **stream, "cursorLine":0, "cursorCh":3,
+        }, callback=True), {"ok":True})
+        snapshot = eagle._teacher_code_snapshots["owned-class"]
+        self.assertEqual((snapshot["code"], snapshot["cursorCh"]), ("a😀b", 3))
+        self.assertEqual(teacher.emit("teacher_code_update", {**stream, "snapshotId":2}, callback=True), {"ok":False})
+
 
 if __name__ == "__main__":
     unittest.main()

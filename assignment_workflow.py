@@ -644,7 +644,7 @@ def submit_project(eagle, user, data, key):
     destination = None
     committed = False
     try:
-        with eagle._assignment_lock, group_projects.database(eagle) as db:
+        with eagle._assignment_lock:
             if not eagle._require_user(request):
                 return jsonify(ok=False, error="Student login required"), 401
             assignment = eagle._load_assignment(reference, class_hint)
@@ -659,7 +659,8 @@ def submit_project(eagle, user, data, key):
                           if row.get("fileSubmissionKey") == key and row.get("groupSubmittedBy") == email), None)
             if retry:
                 return _submission_receipt(retry)
-            project, records, users = group_projects.snapshot_for_submission(eagle, db, user, assignment, selection)
+            with group_projects.database(eagle) as db:
+                project, records, users = group_projects.snapshot_for_submission(eagle, db, user, assignment, selection)
             if not assignment.get("allowFileSubmission", True):
                 raise group_projects.ProjectError("This assignment uses questions only")
             if len(records) > 1 and not assignment.get("allowMultiFileSubmission"):
@@ -677,9 +678,7 @@ def submit_project(eagle, user, data, key):
                 if limit and previous.get("fileSubmissionCount", 0) >= limit:
                     raise group_projects.ProjectError(f"{label} has reached the file attempt limit", 409)
                 if mode == "group" and not previous.get("withdrawn") and files_for(previous):
-                    repeat = (previous.get("groupProjectId") == project["id"] and
-                              previous.get("groupMode") == "group" and
-                              set(previous.get("groupRecipientEmails", [])) == set(recipients))
+                    repeat = previous.get("groupProjectId") == project["id"] and previous.get("groupMode") == "group"
                     if (not repeat or previous.get("codeScore") is not None or
                             previous.get("teacherFeedbackEdited") or previous.get("aiGradingStatus") in {"queued", "running"}):
                         raise group_projects.ProjectError(f"{label} already has submitted or reviewed work", 409)
@@ -705,9 +704,11 @@ def submit_project(eagle, user, data, key):
             new_rows = [_file_submission(person, copy.deepcopy(bundle), previous_rows.get(person["email"].lower(), {}))
                         for person in users]
             assignment["submissions"] = [sub for sub in previous_rows.values() if sub["email"].lower() not in recipients] + new_rows
-            if not eagle._save_assignment(assignment):
-                return jsonify(ok=False, error="Could not save the group submission"), 500
-            committed = True
+            with group_projects.database(eagle) as db:
+                group_projects.snapshot_for_submission(eagle, db, user, assignment, selection, content=False)
+                if not eagle._save_assignment(assignment):
+                    return jsonify(ok=False, error="Could not save the group submission"), 500
+                committed = True
             for member in recipients:
                 prune_history(eagle, assignment, previous_rows.get(member, {}))
     except (ValueError, UnicodeError) as exc:

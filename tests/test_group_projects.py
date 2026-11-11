@@ -76,6 +76,14 @@ class GroupProjectTests(unittest.TestCase):
         return result.json["project"]
 
     def change(self, project, action, email=None, **data):
+        if action in ("rename", "renameProject", "new", "mkdir", "upload", "replace", "delete", "restore"):
+            current = self.get(f"{ROOT}/{project['id']}", email).json["project"]
+            data.setdefault("treeRevision", current["treeRevision"])
+            if action == "delete":
+                target = next((file for file in current["files"] if file["id"] == data.get("fileId")), None)
+                if target and target["folder"]:
+                    data.setdefault("descendants", sorted([[file["id"], file["revision"]] for file in current["files"]
+                                                           if file["path"].startswith(target["path"] + "/")]))
         return self.post(f"{ROOT}/{project['id']}", {"action":action, **data}, email)
 
     def accept(self, project, *members):
@@ -137,6 +145,57 @@ class GroupProjectTests(unittest.TestCase):
         self.assertEqual(self.change(project,"delete",fileId=node["id"],revision=0).status_code,200)
         self.assertTrue((self.workspace / "Demo" / "data" / "note.txt").is_file())
         self.assertEqual(self.get(self.file_url(project,self.file(project,"data/note.txt"))).status_code,404)
+        trashed = self.get(f"{ROOT}/{project['id']}").json["project"]["trash"]
+        self.assertEqual([(item["id"], item["path"]) for item in trashed], [(node["id"], "resources")])
+        self.assertEqual(self.change(project, "restore", fileId=node["id"], path="recovered").status_code, 200)
+        restored = self.get(f"{ROOT}/{project['id']}").json["project"]
+        self.assertEqual(self.file(restored, "recovered/note.txt")["id"], self.file(project, "data/note.txt")["id"])
+        self.assertEqual(restored["trash"], [])
+
+    def test_single_file_rename_updates_project_label_without_changing_source(self):
+        project = self.create(path="Demo/main.py")
+        file = self.file(project, "main.py")
+        self.assertEqual(self.change(project, "rename", fileId=file["id"], path="app.py").status_code, 200)
+        current = self.get(f"{ROOT}/{project['id']}").json["project"]
+        self.assertEqual(current["name"], "app.py")
+        self.assertEqual(self.file(current, "app.py")["id"], file["id"])
+        self.assertEqual(self.get(self.file_url(project, file), since=0).json["file"], {
+            "id":file["id"], "path":"app.py", "folder":0, "size":file["size"],
+            "kind":"text", "revision":0, "treeRevision":1, "updates":[],
+        })
+        self.assertTrue((self.workspace / "Demo" / "main.py").is_file())
+
+    def test_stale_tree_and_folder_delete_are_rejected(self):
+        project = self.create()
+        node = self.file(project, "data")
+        stale_tree = project["treeRevision"]
+        self.assertEqual(self.change(project, "rename", fileId=node["id"], path="resources").status_code, 200)
+        self.assertEqual(self.change(project, "rename", fileId=node["id"], path="old", treeRevision=stale_tree).status_code, 409)
+        current = self.get(f"{ROOT}/{project['id']}").json["project"]
+        descendants = sorted([[f["id"], f["revision"]] for f in current["files"] if f["path"].startswith("resources/")])
+        note = self.file(current, "resources/note.txt")
+        self.assertEqual(self.edit(project, note, ["New ", 7]).status_code, 200)
+        self.assertEqual(self.change(project, "delete", fileId=node["id"], revision=0, descendants=descendants).status_code, 409)
+        self.assertEqual(self.get(self.file_url(project, note)).json["file"]["content"], "New 😀 team")
+
+    def test_pending_member_can_join_after_last_active_member_leaves(self):
+        project = self.create(self.others[:1])
+        self.assertEqual(self.change(project, "leave").status_code, 200)
+        self.accept(project, self.missing_email)
+        current = self.get(f"{ROOT}/{project['id']}", self.missing_email).json["project"]
+        self.assertTrue(current["members"][0]["owner"])
+        self.assertEqual(self.file(current, "main.py")["id"], self.file(project, "main.py")["id"])
+        self.assertEqual(self.change(project, "leave", self.missing_email).status_code, 200)
+        archive = self.client.get(f"/api/teacher/group-projects/{project['id']}/download",
+                                  headers=self.teacher_headers, query_string={"classId":self.class_one})
+        self.assertEqual(archive.status_code, 200)
+        archive.close()
+
+    def test_shared_names_reject_unicode_case_and_normalization_collisions(self):
+        project = self.create()
+        self.assertEqual(self.change(project, "new", path="Résumé.py").status_code, 200)
+        self.assertEqual(self.change(project, "new", path="RÉSUMÉ.py").status_code, 409)
+        self.assertEqual(self.change(project, "new", path="Re\u0301sume\u0301.py").status_code, 409)
 
     def test_concurrent_edits_rebase_unicode_with_attribution_and_receipts(self):
         project = self.create(self.others[:1])
@@ -356,7 +415,7 @@ class GroupProjectTests(unittest.TestCase):
         self.assertEqual(updated.status_code,200,updated.json)
         group = self.get(f"{ROOT}/{project['id']}").json["project"]
         selected = {"mode":"group","projectId":project["id"],"recipients":sorted(p["id"] for p in group["members"]),
-                    "files":[{"id":file["id"],"revision":1}]}
+                    "files":[{"id":file["id"],"revision":1,"path":"main.py"}]}
         payload = {"assignmentId":a["id"],"submissionKey":"group-attempt-1","groupSelection":selected}
         self.assertEqual(self.post("/api/assignments/submit",{**payload,"groupSelection":{**selected,"recipients":[]}}).status_code,409)
         with patch.object(eagle,"_save_assignment",return_value=False):
@@ -365,6 +424,10 @@ class GroupProjectTests(unittest.TestCase):
         result = self.post("/api/assignments/submit",payload)
         self.assertEqual(result.status_code,200,result.json)
         self.assertEqual(self.post("/api/assignments/submit",payload).json["receipt"],result.json["receipt"])
+        self.assertEqual(self.change(project, "rename", fileId=file["id"], path="renamed.py").status_code, 200)
+        stale = self.post("/api/assignments/submit", {**payload, "submissionKey":"stale-path"})
+        self.assertEqual(stale.status_code, 409, stale.json)
+        self.assertIn("changed", stale.json["error"])
         submitted = eagle._load_assignment(a["id"])["submissions"]
         self.assertEqual(sorted(row["email"] for row in submitted),sorted([self.student_email,self.missing_email]))
         self.assertTrue(all(row["fileSubmissionCount"] == 1 for row in submitted))
@@ -395,12 +458,59 @@ class GroupProjectTests(unittest.TestCase):
         group = self.get(f"{ROOT}/{project['id']}").json["project"]
         payload = {"assignmentId":a["id"],"submissionKey":"group-attempt-2","groupSelection":{
             "projectId":project["id"],"mode":"group","recipients":sorted(p["id"] for p in group["members"]),
-            "files":[{"id":self.file(project,"main.py")["id"],"revision":0}]}}
+            "files":[{"id":self.file(project,"main.py")["id"],"revision":0,"path":"main.py"}]}}
         result = self.post("/api/assignments/submit",payload)
         self.assertEqual(result.status_code,409,result.json)
         self.assertEqual([s["email"] for s in eagle._load_assignment(a["id"])["submissions"]],[self.missing_email])
         payload["groupSelection"]["mode"] = "self"
         self.assertEqual(self.post("/api/assignments/submit",payload).status_code,200)
+
+    def test_saved_group_files_can_be_submitted_outside_collaboration_hours(self):
+        project = self.create()
+        assignment = self.create_assignment(active=True)
+        day = (datetime.now(timezone.utc).weekday() + 1) % 7
+        self.settings(True, group_project_schedule={
+            "enabled":True, "days":[day], "start":"08:00", "end":"16:00", "timeZone":"UTC",
+        })
+        url = f"{ROOT}/{project['id']}"
+        self.assertEqual(self.get(url).status_code, 403)
+        picker = self.get(url, assignmentId=assignment["id"])
+        self.assertEqual(picker.status_code, 200, picker.json)
+        file = self.file(picker.json["project"], "main.py")
+        self.assertEqual(self.get(self.file_url(project, file)).status_code, 403)
+        result = self.post("/api/assignments/submit", {
+            "assignmentId":assignment["id"], "submissionKey":"outside-collaboration-hours",
+            "groupSelection":{"mode":"self", "projectId":project["id"], "files":[file]},
+        })
+        self.assertEqual(result.status_code, 200, result.json)
+
+    def test_ungraded_group_can_resubmit_after_a_new_member_joins(self):
+        project = self.create(self.others[:2])
+        assignment = self.create_assignment(active=True)
+        self.client.post("/api/assignments/update", headers=self.teacher_headers,
+                         json={"assignmentId":assignment["id"], "allowGroupSubmission":True})
+
+        for attempt, email in enumerate(self.others[:2], start=1):
+            self.accept(project, email)
+            current = self.get(f"{ROOT}/{project['id']}").json["project"]
+            result = self.post("/api/assignments/submit", {
+                "assignmentId":assignment["id"], "submissionKey":f"group-roster-attempt-{attempt}",
+                "groupSelection":{"mode":"group", "projectId":project["id"],
+                                  "recipients":sorted(person["id"] for person in current["members"]),
+                                  "files":[self.file(current, "main.py")]},
+            })
+            self.assertEqual(result.status_code, 200, result.json)
+            self.assertEqual(len(result.json["submission"]["groupRecipients"]), attempt + 1)
+
+    def test_queued_run_detects_dependency_edit(self):
+        project = self.create()
+        main = self.file(project, "main.py")
+        target = {"classId":self.class_one, "projectId":project["id"], "fileId":main["id"],
+                  "revision":main["revision"], "treeRevision":project["treeRevision"]}
+        _, snapshot = groups.prepare_run(eagle, self.student_email, target)
+        self.assertEqual(self.edit(project, self.file(project, "data/note.txt"), ["New ", 7]).status_code, 200)
+        with self.assertRaisesRegex(groups.ProjectError, "changed before it could run"):
+            groups.run_snapshot(eagle, self.student_email, target, self.workspace / "unused-run", snapshot)
 
     def test_html_preview_reads_sibling_assets_and_revokes_after_disable(self):
         project = self.create()

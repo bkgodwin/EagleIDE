@@ -138,6 +138,35 @@ async function main() {
       headers:aliceHeaders, params:{classId:server.classId},
     });
     assert.equal((await saved.json()).file.content, expected);
+
+    await ben.getByRole('button', {name:'Edit', exact:true}).click();
+    await ben.locator('#editorEditMenu [data-edit="find"]').click();
+    await query.fill('def NewName');
+    const added = '\n# A collaborator edited while Find was open';
+    await alice.evaluate(text => {
+      const editor = window.eagleEditor;
+      editor.replaceRange(text, editor.posFromIndex(editor.getValue().length), null, '+input');
+    }, added);
+    await ben.waitForFunction(text => window.eagleEditor.getValue() === text, expected + added);
+    assert.equal(await query.inputValue(), 'def NewName');
+    assert.equal(await find.locator('#editorFindCount').innerText(), '1 of 3');
+    await query.press('Escape');
+
+    await ben.getByRole('button', {name:'Edit', exact:true}).click();
+    await ben.locator('#editorEditMenu [data-edit="undo"]').click();
+    await alice.waitForFunction(text => window.eagleEditor.getValue() === text, source + added);
+    await ben.getByRole('button', {name:'Edit', exact:true}).click();
+    await ben.locator('#editorEditMenu [data-edit="redo"]').click();
+    await alice.waitForFunction(text => window.eagleEditor.getValue() === text, expected + added);
+
+    await ben.locator('#workspaceSwitchBtn').click();
+    await ben.locator('#groupProjectsPanel [data-group-browse]').filter({hasText:fileName}).click();
+    await ben.getByRole('button', {name:'Options for ' + fileName}).click();
+    await ben.getByRole('button', {name:'Rename file', exact:true}).click();
+    await ben.getByRole('textbox', {name:'Name', exact:true}).fill('renamed.py');
+    await ben.getByRole('button', {name:'Save', exact:true}).click();
+    await alice.waitForFunction(() => document.getElementById('activeFileName').textContent === 'renamed.py');
+    assert.equal(await alice.evaluate(() => window.eagleEditor.getValue()), expected + added);
     assert.deepEqual(errors, []);
     console.log(`Shared editor browser checks passed in ${engine.name()}.`);
   } finally {
