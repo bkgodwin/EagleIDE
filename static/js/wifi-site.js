@@ -15,7 +15,9 @@
     $('wifiCoverageStatus').hidden = !updating;
   });
   const endpoint = '/api/network/wifi-sites';
-  const kinds = ['walls', 'access_points', 'labels'];
+  const wireKinds = window.WifiSiteCabling.kinds;
+  const kinds = ['walls', 'access_points', 'labels', ...wireKinds];
+  const wireTools = new Set(['equipment', 'cable', 'pass']);
   const drawTools = new Set(['room', 'wall', 'measure']);
   const toolHints = {
     select: 'Select an object to edit it. Drag to move it, or drag a selected wall’s end to resize it.',
@@ -26,6 +28,9 @@
     label: 'Click or tap to place a note, then edit its text in Objects.',
     measure: 'Choose two points to measure the distance.',
     probe: 'Click or tap a spot to see the strongest access point and the walls in its path.',
+    equipment: 'Choose a device and place it on the plan. Keystone jacks and ISP demarcations snap to walls.',
+    cable: 'Choose Ethernet or fiber, then select the source device.',
+    pass: 'Click a concrete wall to add a pass-through. Each holds 10 cables and needs 20 feet of spacing.',
   };
 
   let options;
@@ -34,6 +39,7 @@
   let session;
   let tool = 'select';
   let selected = '';
+  let previewAp = '';
   let anchor;
   let hover;
   let drag;
@@ -49,6 +55,7 @@
   let drawnWalls;
   let drawnWallSelection;
   let drawnAccessPoints;
+  let drawnWiredAps;
   let drawnLabels;
   let drawnMarkerSelection;
   let listedObjects = [];
@@ -73,11 +80,17 @@
   const siteUrl = siteId => `${endpoint}/${encodeURIComponent(siteId)}`;
   const display = meters => model.displayDistance(meters, current().units);
   const fmt = meters => `${display(meters).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${current().units}`;
+  const wires = window.WifiSiteCabling.create({
+    catalog: () => options.catalog, limits: () => options.limits, getPlan: current, selected: () => selected, apNames: model.MOUNTS,
+    select: selectObject, changeTool, add: addObjects, replace: replaceObject, draw: drawObjects, frame: scheduleScene,
+    hint, escape, id, fmt, display, tidy: cleanText, toMeters: value => model.metersFrom(value, current().units),
+    scale: () => camera.scale, snap: drawingPoint, line: lineSvg, dot, pointFields,
+  });
 
   function blankPlan() {
     return {
-      schema_version: 2, title: 'Untitled Wi-Fi Site',
-      units: 'm', band: '5', walls: [], access_points: [], labels: [],
+      schema_version: 3, title: 'Untitled Wi-Fi Site',
+      units: 'm', band: '5', walls: [], access_points: [], labels: [], equipment: [], pass_throughs: [], cables: [],
     };
   }
 
@@ -99,10 +112,31 @@
       line({ x: 20, y: 4 }, { x: 20, y: 24 }, 'drywall'),
     ];
     plan.access_points = [{ id: id('ap'), x: 11, y: 14, mount: 'ceiling', angle: 0, power_db: 0, name: 'Classroom AP' }];
+    plan.equipment = [{ id: id('device'), kind: 'access_switch', name: 'Classroom switch', x: 8, y: 16 }];
+    plan.cables = [{
+      id: id('wire'), media: 'ethernet', color: '#0879b3', label: '',
+      source: { device_id: plan.equipment[0].id, port: 'ETH1' },
+      target: { device_id: plan.access_points[0].id, port: 'ETH1' }, waypoints: [],
+    }];
     plan.labels = [
       { id: id('label'), x: 8, y: 7, text: 'Room 1' },
       { id: id('label'), x: 25, y: 7, text: 'Room 2' },
     ];
+    return plan;
+  }
+
+  function wiringSample() {
+    const plan = samplePlan();
+    plan.title = 'Classroom Cabling Activity';
+    plan.walls[4].material = 'concrete';
+    plan.access_points[0].x = 29;
+    plan.equipment = [
+      { id: id('device'), kind: 'router', name: 'Edge router', x: 10, y: 9 },
+      { id: id('device'), kind: 'core_switch', name: 'Core switch', x: 10, y: 17 },
+      { id: id('device'), kind: 'keystone', name: 'Classroom jack', wall_id: plan.walls[1].id, t: 0.65 },
+    ];
+    plan.pass_throughs = [{ id: id('pass'), wall_id: plan.walls[4].id, t: 0.55 }];
+    plan.cables = [];
     return plan;
   }
 
@@ -129,28 +163,32 @@
     });
     $('wifiMaterialField').hidden = !['wall', 'room'].includes(value);
     $('wifiMountField').hidden = value !== 'ap';
-    $('wifiOrthogonalField').hidden = value !== 'wall';
+    $('wifiOrthogonalField').hidden = value !== 'wall' && value !== 'cable';
     hint();
+    wires.setTool(value);
     if (current()) scheduleScene();
   }
 
-  function startProject(plan, { activity = false } = {}) {
+  function startProject(plan, { activity = false, wiring = false } = {}) {
     const { id: siteId, revision, updated_at, ...layout } = plan;
     session = {
-      id: siteId || id('site'), revision: revision || 0, plan: layout, account,
+      id: siteId || id('site'), revision: revision || 0, plan: { ...blankPlan(), ...layout, schema_version: 3 }, account,
       sequence: 0, savedSequence: 0, undo: [], redo: [],
     };
-    selected = '';
+    selected = previewAp = '';
+    wires.reset();
     anchor = hover = drag = measure = probe = keyboardPoint = null;
     library.hidden = true;
     workspace.hidden = false;
     $('wifiActivity').hidden = !activity;
     $('wifiActivity').open = activity;
+    $('wifiWiringGuide').hidden = !wiring;
+    $('wifiWiringGuide').open = wiring;
     $('wifiSaveSite').hidden = $('wifiCopySite').hidden = !options.canSave;
-    $('wifiCoverage').checked = $('wifiSnap').checked = true;
+    $('wifiCoverage').checked = $('wifiSnap').checked = $('wifiShowCables').checked = true;
     $('wifiOrthogonal').checked = false;
     status(options.canSave ? (revision ? 'Saved' : 'New project') : 'Guest preview');
-    changeTool(activity ? 'probe' : 'select');
+    changeTool(activity ? 'probe' : wiring ? 'cable' : 'select');
     fit();
     render();
     viewport.focus({ preventScroll: true });
@@ -227,7 +265,8 @@
     if (session) clearTimeout(session.timer);
     workspace.hidden = library.hidden = true;
     session = null;
-    selected = '';
+    selected = previewAp = '';
+    wires.reset();
     drag = null;
     anchor = hover = measure = probe = keyboardPoint = pinch = null;
     touches.clear();
@@ -236,8 +275,8 @@
     coverage.clear();
     $('wifiSavedSites').replaceChildren();
     $('wifiProperties').replaceChildren();
-    for (const name of ['wifiWalls', 'wifiMarkers', 'wifiOverlay']) $(name).replaceChildren();
-    wallSource = drawnWalls = drawnAccessPoints = drawnLabels = null;
+    for (const name of ['wifiWalls', 'wifiMarkers', 'wifiOverlay', 'wifiWireLayer', 'wifiEquipmentLayer']) $(name).replaceChildren();
+    wallSource = drawnWalls = drawnAccessPoints = drawnWiredAps = drawnLabels = null;
     indexedPlan = null;
     objectIndex.clear();
     listedObjects = [];
@@ -313,22 +352,28 @@
   }
 
   function objectName(kind, item, index) {
+    if (wireKinds.includes(kind)) return wires.name(kind, item, index);
     if (kind === 'walls') return `${model.MATERIALS[item.material].name} wall ${index + 1}`;
     if (kind === 'labels') return item.text;
     return item.name || model.MOUNTS[item.mount];
   }
 
   function selectObject(objectId) {
+    if (selected !== objectId) previewAp = '';
     selected = objectId;
     renderInspector();
     drawObjects();
+    refreshCoverage();
   }
 
   function update(next, { inspector = true } = {}) {
+    const error = wires.index(next).error;
+    if (error) { hint(error); return false; }
     session.undo.push(session.plan);
     if (session.undo.length > 45) session.undo.shift();
     session.redo = [];
     setPlan(next, inspector);
+    return true;
   }
 
   function setPlan(plan, inspector = true) {
@@ -343,13 +388,14 @@
     const from = backward ? session.undo : session.redo;
     const to = backward ? session.redo : session.undo;
     if (!from.length) return;
+    wires.cancel();
     to.push(session.plan);
     finishWall();
     setPlan(from.pop());
   }
 
   function replaceObject(kind, item, refresh = true) {
-    update({ ...current(), [kind]: current()[kind].map(object => object.id === item.id ? item : object) }, { inspector: refresh });
+    return update({ ...current(), [kind]: current()[kind].map(object => object.id === item.id ? item : object) }, { inspector: refresh });
   }
 
   function addObjects(kind, additions) {
@@ -359,17 +405,19 @@
       hint(`This site can contain up to ${limit} ${kind.replace('_', ' ')}.`);
       return false;
     }
+    const previous = selected;
     selected = additions.at(-1).id;
-    update({ ...current(), [kind]: [...existing, ...additions] });
-    return true;
+    if (update({ ...current(), [kind]: [...existing, ...additions] })) return true;
+    selected = previous;
+    return false;
   }
 
   function removeObject() {
     const match = objectById(selected);
     if (!match) return;
-    const { kind, item } = match;
-    update({ ...current(), [kind]: current()[kind].filter(object => object.id !== item.id) });
-    $('wifiSelection').focus();
+    const { next, attached } = wires.removePlan(match);
+    if (attached && !window.confirm(`Delete this object and ${attached} attached ${attached === 1 ? 'item' : 'items'}? You can undo this change.`)) return;
+    if (update(next)) $('wifiSelection').focus();
   }
 
   function render({ inspector = true } = {}) {
@@ -389,10 +437,9 @@
     $('wifiRedo').disabled = !session.redo.length;
     if (inspector) renderInspector();
     else renderObjectOptions();
-    renderProbe();
     drawObjects();
-    coverage.setPlan(plan);
-    scheduleScene();
+    refreshCoverage();
+    if (tool === 'cable') wires.refreshDraft();
   }
 
   function renderObjectOptions() {
@@ -400,8 +447,11 @@
     const input = $('wifiSelection');
     if (kinds.some((kind, index) => listedObjects[index] !== plan[kind])) {
       listedObjects = kinds.map(kind => plan[kind]);
-      input.innerHTML = '<option value="">None selected</option>' + kinds.map(kind =>
-        plan[kind].map((item, index) => `<option value="${escape(item.id)}">${escape(objectName(kind, item, index))}</option>`).join('')
+      const groups = { walls: 'Walls', access_points: 'Access points', labels: 'Notes', equipment: 'Equipment',
+        pass_throughs: 'Pass-throughs', cables: 'Cables' };
+      input.innerHTML = '<option value="">None selected</option>' + kinds.filter(kind => plan[kind].length).map(kind =>
+        `<optgroup label="${groups[kind]}">${plan[kind].map((item, index) =>
+          `<option value="${escape(item.id)}">${escape(objectName(kind, item, index))}</option>`).join('')}</optgroup>`
       ).join('');
     }
     input.value = selected;
@@ -421,16 +471,23 @@
     const match = objectById(selected);
     const panel = $('wifiProperties');
     if (!match) {
-      panel.innerHTML = '<p>Select a wall, access point, or note to edit it.</p>';
+      panel.innerHTML = '<p>Select an object on the plan or from the list to edit it.</p>';
       return;
     }
     const { kind, item } = match;
     let fields;
-    if (kind === 'walls') {
+    if (wireKinds.includes(kind)) {
+      fields = wires.inspector(kind, item);
+    } else if (kind === 'walls') {
       fields = `<label>Wall material<select data-wifi-field="material">${choiceList(materialEntries(), item.material)}</select></label>
         ${pointFields(item.a, 'a', 'Start ')}${pointFields(item.b, 'b', 'End ')}`;
     } else if (kind === 'access_points') {
-      fields = `<label>Access point label<input data-wifi-field="name" value="${escape(item.name)}" maxlength="60" placeholder="Optional"></label>
+      const data = wires.index();
+      const cable = data.occupancy.get(`${item.id}:ETH1`);
+      const connection = cable ? `<div class="wifi-wire-summary"><strong>Ethernet connected</strong><span>${data.powered.has(cable) ? 'PoE available' : 'No PoE source on this path'}</span></div>`
+        : `<div class="wifi-wire-summary"><strong>Unwired</strong><span>Connect Ethernet to keep coverage on.</span></div>
+          <label class="wifi-estimate-toggle"><input type="checkbox" id="wifiEstimateCoverage"${previewAp === item.id ? ' checked' : ''}> Estimated coverage</label>`;
+      fields = connection + `<label>Access point label<input data-wifi-field="name" value="${escape(item.name)}" maxlength="60" placeholder="Optional"></label>
         <label>Mount<select data-wifi-field="mount">${choiceList(Object.entries(model.MOUNTS), item.mount)}</select></label>
         <label>Transmit power adjustment (dB)<input type="number" min="-12" max="6" step="1" data-wifi-field="power_db" value="${item.power_db}"></label>
         ${pointFields(item)}${item.mount === 'wall' ? `<label>Direction in degrees (0° points right)<input type="number" min="0" max="360" step="1" data-wifi-field="angle" value="${item.angle}"></label>` : ''}`;
@@ -439,7 +496,7 @@
     }
     panel.innerHTML = fields + `<div class="wifi-object-actions">
       <button class="wifi-control" id="wifiLocateObject" type="button">Locate</button>
-      <button class="wifi-control" id="wifiDuplicateObject" type="button">Duplicate</button>
+      ${kind === 'cables' || kind === 'pass_throughs' || (kind === 'equipment' && item.wall_id) ? '' : '<button class="wifi-control" id="wifiDuplicateObject" type="button">Duplicate</button>'}
       <button class="wifi-control" id="wifiDeleteObject" type="button">Delete</button></div>`;
   }
 
@@ -449,7 +506,14 @@
 
   function editObject(input) {
     const match = objectById(selected);
-    if (!match || !input.dataset.wifiField) return;
+    if (!match) return;
+    if (input.id === 'wifiEstimateCoverage' && match.kind === 'access_points') {
+      previewAp = input.checked ? match.item.id : '';
+      refreshCoverage();
+      return;
+    }
+    if (input.dataset.wifiWireField) { wires.edit(match, input); return; }
+    if (!input.dataset.wifiField) return;
     const { kind, item } = match;
     const field = input.dataset.wifiField;
     const next = { ...item };
@@ -476,7 +540,10 @@
       next[field] = cleanText(input.value, field === 'text' ? 'New note' : '');
       input.value = next[field];
     }
-    replaceObject(kind, next, field === 'mount');
+    if (!replaceObject(kind, next, field === 'mount')) {
+      const before = /^[ab][xy]$/.test(field) ? item[field[0]][field[1]] : item[field];
+      input.value = /^[ab]?[xy]$/.test(field) ? Number(display(before).toFixed(3)) : before;
+    }
   }
 
   function coordinate(value) {
@@ -484,7 +551,10 @@
   }
 
   function planExtents(plan) {
-    return view.bounds([...plan.walls.flatMap(wall => [wall.a, wall.b]), ...plan.access_points, ...plan.labels]);
+    const data = wires.index(plan);
+    return view.bounds([...plan.walls.flatMap(wall => [wall.a, wall.b]), ...plan.access_points, ...plan.labels,
+      ...plan.equipment.map(data.location), ...plan.pass_throughs.map(data.location),
+      ...[...data.inspections.values()].flatMap(result => result.points)].filter(Boolean));
   }
 
   function drawGrid() {
@@ -501,6 +571,7 @@
     grid.setAttribute('viewBox', box);
     objects.setAttribute('viewBox', box);
     objects.style.setProperty('--wifi-marker-scale', String(1 / camera.scale));
+    viewport.toggleAttribute('data-wifi-overview', camera.scale < 0.8);
     const spacing = view.gridSpacing(camera.scale, model.gridStep(units));
     if (gridSize !== spacing) {
       gridSize = spacing;
@@ -544,9 +615,11 @@
     const selectedClass = selected === item.id ? ' is-selected' : '';
     let content;
     if (kind === 'access_points') {
+      const connected = wires.index().wired.has(item.id);
       const direction = item.mount === 'wall' ? `<path class="wifi-direction" transform="rotate(${item.angle})" d="M 9 0 L 20 0 M 16 -4 L 20 0 L 16 4"/>` : '';
-      content = `<circle r="11" class="wifi-ap${selectedClass}"/>${direction}
+      content = `<circle r="11" class="wifi-ap${connected ? '' : ' wifi-ap-unwired'}${selectedClass}"/>${direction}
         <path class="wifi-radio" d="M -6 -2 Q 0 -8 6 -2 M -3 1 Q 0 -2 3 1 M 0 4 h .1"/>
+        ${connected ? '<circle class="wifi-ap-connected" cx="8" cy="8" r="3.6"/>' : ''}
         ${item.name ? `<text class="wifi-ap-text" x="14" y="-8">${escape(item.name)}</text>` : ''}`;
     } else {
       const text = item.text.length > 32 ? `${item.text.slice(0, 31)}…` : item.text;
@@ -571,13 +644,16 @@
       drawnWalls = plan.walls;
       drawnWallSelection = wallSelection;
     }
-    if (drawnAccessPoints !== plan.access_points || drawnLabels !== plan.labels || drawnMarkerSelection !== markerSelection) {
+    const wired = wires.index().wired;
+    if (drawnAccessPoints !== plan.access_points || drawnLabels !== plan.labels || drawnMarkerSelection !== markerSelection || drawnWiredAps !== wired) {
       $('wifiMarkers').innerHTML = plan.access_points.map(ap => marker(ap, 'access_points')).join('')
         + plan.labels.map(label => marker(label, 'labels')).join('');
       drawnAccessPoints = plan.access_points;
+      drawnWiredAps = wired;
       drawnLabels = plan.labels;
       drawnMarkerSelection = markerSelection;
     }
+    wires.draw();
     scheduleScene();
   }
 
@@ -591,7 +667,10 @@
       parts.push(dot(wall.a, 6, 'wifi-handle', `${attr} data-wifi-end="a"`),
         dot(wall.b, 6, 'wifi-handle', `${attr} data-wifi-end="b"`));
     }
-    if (ghost) parts.push(ghost.a ? lineSvg(ghost.a, ghost.b, 'class="wifi-preview-line"') : marker(ghost, drag.match.kind, true));
+    if (ghost && !wireKinds.includes(drag.match.kind)) {
+      parts.push(ghost.a ? lineSvg(ghost.a, ghost.b, 'class="wifi-preview-line"') : marker(ghost, drag.match.kind, true));
+    }
+    parts.push(wires.overlay(ghost, drag?.match?.kind));
     if (probe) {
       if (probe.result) parts.push(lineSvg(probe.result.ap, probe.point, 'class="wifi-probe-path"'));
       parts.push(dot(probe.point, 6, 'wifi-probe-point'));
@@ -659,14 +738,15 @@
     const match = objectById(selected);
     if (!match) return;
     const { item } = match;
-    camera = view.fitCamera(view.bounds(item.a ? [item.a, item.b] : [item]), dimensions.width, dimensions.height);
+    const points = wireKinds.includes(match.kind) ? wires.locationPoints(match) : item.a ? [item.a, item.b] : [item];
+    camera = view.fitCamera(view.bounds(points), dimensions.width, dimensions.height);
     scheduleScene();
     viewport.focus({ preventScroll: true });
   }
 
   function duplicateSelected() {
     const match = objectById(selected);
-    if (!match) return;
+    if (!match || match.kind === 'cables' || match.kind === 'pass_throughs' || match.item.wall_id) return;
     const { kind, item } = match;
     const offset = gridSize || model.gridStep(current().units);
     const shift = point => ({ x: coordinate(point.x + offset), y: coordinate(point.y + offset) });
@@ -675,7 +755,21 @@
     if (!item.a || model.distance(copy.a, copy.b) >= 0.05) addObjects(kind, [copy]);
   }
 
-  function renderProbe() {
+  function transmittingAps() {
+    const wired = wires.index().wired;
+    if (previewAp !== selected || wired.has(previewAp)) previewAp = '';
+    return current().access_points.filter(ap => wired.has(ap.id) || ap.id === previewAp);
+  }
+
+  function refreshCoverage() {
+    const plan = current();
+    const access_points = transmittingAps();
+    coverage.setPlan({ ...plan, access_points });
+    renderProbe(access_points);
+    scheduleScene();
+  }
+
+  function renderProbe(accessPoints = transmittingAps()) {
     const readout = $('wifiProbeResult');
     const summary = $('wifiProbeSummary');
     summary.textContent = '';
@@ -684,15 +778,15 @@
       return;
     }
     const plan = current();
-    const estimate = model.coverageModel(plan.walls, plan.access_points, plan.band);
+    const estimate = model.coverageModel(plan.walls, accessPoints, plan.band);
     probe.result = estimate(probe.point, true);
     if (!probe.result) {
-      readout.textContent = 'Place an access point to estimate the signal here.';
+      readout.textContent = 'Connect an access point or select an unwired AP and turn on Estimated coverage.';
       return;
     }
     const { ap, signal, distance, walls, alternate } = probe.result;
     const crossed = walls.map(material => model.MATERIALS[material].name).join(', ');
-    summary.textContent = `${Math.round(signal)} dBm · ${model.signalLevel(signal).label}`;
+    summary.textContent = `${Math.round(signal)} dBm · ${model.signalLevel(signal).label}${ap.id === previewAp ? ' · preview' : ''}`;
     readout.innerHTML = `<strong>${summary.textContent}</strong>
       <p>${escape(ap.name || model.MOUNTS[ap.mount])} · ${fmt(distance)} away</p>
       <p>Walls crossed: ${crossed || 'None'}</p>
@@ -745,7 +839,8 @@
     scheduleScene();
   }
 
-  function useTool(point) {
+  function useTool(point, hit, shift) {
+    if (wireTools.has(tool)) { wires.use(point, hit, shift); return; }
     if (drawTools.has(tool)) {
       if (!anchor) {
         anchor = point;
@@ -776,8 +871,13 @@
     scheduleScene();
   }
 
-  function movedObject(item, end, start, point) {
+  function movedObject(item, end, start, point, bend, shift) {
+    if (item.waypoints) return bend === undefined ? item : wires.moveBend(item, bend, point, shift);
     const dx = point.x - start.x, dy = point.y - start.y;
+    if (item.wall_id) {
+      const location = wires.index().location(item);
+      return wires.pointForEdit(item, { x: location.x + dx, y: location.y + dy });
+    }
     const aim = part => ({ x: part.x + dx, y: part.y + dy });
     if (!item.a) return { ...item, ...drawingPoint(aim(item)).point };
     if (end) {
@@ -796,7 +896,7 @@
   }
 
   function pointerDown(event) {
-    if (event.button !== 0 && event.button !== 1) return;
+    if ((event.button !== 0 && event.button !== 1) || event.target.closest('#wifiCableBundleMenu')) return;
     const screen = screenPoint(event);
     if (event.pointerType === 'touch') {
       if (touches.size >= 2) return;
@@ -816,6 +916,7 @@
     viewport.setPointerCapture(event.pointerId);
     keyboardPoint = null;
     const hit = event.target.closest('[data-wifi-object]');
+    const bundle = event.target.closest('[data-wifi-bundle]');
     const raw = view.screenToWorld(camera, screen);
     const pan = tool === 'pan' || spacePan || event.button === 1;
     const draw = !pan && drawTools.has(tool) && !anchor;
@@ -823,6 +924,9 @@
       id: event.pointerId, screen, camera, raw, pan, draw,
       start: draw ? positionFor(raw, null).point : null,
       match: !pan && tool === 'select' && hit ? objectById(hit.dataset.wifiObject) : null,
+      hit: hit?.dataset.wifiObject,
+      bundle: bundle ? Number(bundle.dataset.wifiBundle) : null,
+      bend: hit?.dataset.wifiBend === undefined ? undefined : Number(hit.dataset.wifiBend),
       end: hit?.dataset.wifiEnd,
     };
     viewport.toggleAttribute('data-panning', pan);
@@ -841,6 +945,10 @@
     }
     const raw = view.screenToWorld(camera, screen);
     if (!drag) {
+      if (wireTools.has(tool) && event.pointerType !== 'touch') {
+        wires.hoverAt(raw, event.shiftKey);
+        scheduleScene();
+      }
       if (event.pointerType !== 'touch' && (anchor || tool === 'wall' || tool === 'room')) {
         const snap = positionFor(raw, anchor, event.shiftKey);
         hover = snap.point;
@@ -857,7 +965,7 @@
     if (drag.pan) {
       camera = { ...drag.camera, x: drag.camera.x - dx / drag.camera.scale, y: drag.camera.y - dy / drag.camera.scale };
     } else if (drag.match) {
-      drag.preview = movedObject(drag.match.item, drag.end, drag.raw, raw);
+      drag.preview = movedObject(drag.match.item, drag.end, drag.raw, raw, drag.bend, event.shiftKey);
     } else if (drag.draw) {
       drag.point = positionFor(raw, drag.start, event.shiftKey).point;
     }
@@ -881,13 +989,16 @@
     } else if (gesture.draw && gesture.moved) {
       drawFrom(gesture.start, positionFor(raw, gesture.start, event.shiftKey).point);
     } else if (!gesture.moved && tool === 'select') {
-      selectObject(gesture.match?.item.id || '');
+      if (gesture.bundle !== null && !gesture.match) wires.pick(gesture.bundle, gesture.screen);
+      else { wires.hideMenu(); selectObject(gesture.match?.item.id || ''); }
     } else if (!gesture.moved) {
-      useTool(positionFor(raw, anchor, event.shiftKey).point);
+      const point = wireTools.has(tool) ? raw : positionFor(raw, anchor, event.shiftKey).point;
+      useTool(point, gesture.hit, event.shiftKey);
     }
   }
 
   function wheel(event) {
+    if (event.target.closest('#wifiCableBundleMenu')) return;
     event.preventDefault();
     const multiplier = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? dimensions.height : 1;
     if (!event.ctrlKey && (event.shiftKey || (!event.deltaY && event.deltaX))) {
@@ -916,7 +1027,9 @@
     } else if (event.key === 'Delete' && !typing && workspace.contains(event.target)) {
       removeObject();
     } else if (event.key === 'Escape') {
+      if (wires.cancel()) return;
       if (anchor) finishWall();
+      else if (tool === 'select' && selected) selectObject('');
       else changeTool('select');
     } else if (event.target === viewport && !event.altKey && !event.ctrlKey && !event.metaKey) {
       keyboardOnPlan(event);
@@ -971,6 +1084,7 @@
       <div class="wifi-legend-labels">${levels.map(level => `<span>${level.label}</span>`).join('')}</div>`;
     $('wifiNewSite').addEventListener('click', () => startProject(blankPlan()));
     $('wifiSampleSite').addEventListener('click', () => startProject(samplePlan(), { activity: true }));
+    $('wifiWiringSample').addEventListener('click', () => startProject(wiringSample(), { wiring: true }));
     $('wifiReloadSites').addEventListener('click', loadSites);
     $('wifiSavedSites').addEventListener('click', event => {
       const button = event.target.closest('button');
@@ -1022,6 +1136,11 @@
       if (event.target.id === 'wifiDeleteObject') removeObject();
       if (event.target.id === 'wifiLocateObject') locateSelected();
       if (event.target.id === 'wifiDuplicateObject') duplicateSelected();
+      const match = objectById(selected);
+      if (match?.kind === 'cables' && event.target.id === 'wifiRerouteCable') wires.reroute(match.item);
+      if (match?.kind === 'cables' && event.target.id === 'wifiRemoveCableBend' && match.item.waypoints.length) {
+        replaceObject('cables', { ...match.item, waypoints: match.item.waypoints.slice(0, -1) });
+      }
     });
     workspace.querySelectorAll('[data-wifi-tool]').forEach(button => {
       button.addEventListener('click', () => changeTool(button.dataset.wifiTool));
@@ -1031,7 +1150,7 @@
     viewport.addEventListener('pointerup', pointerUp);
     viewport.addEventListener('pointercancel', pointerUp);
     viewport.addEventListener('pointerleave', () => {
-      if (!drag) { hover = null; hoverJoined = false; scheduleScene(); }
+      if (!drag) { hover = null; hoverJoined = false; wires.clearHover(); scheduleScene(); }
     });
     viewport.addEventListener('wheel', wheel, { passive: false });
     viewport.addEventListener('auxclick', event => { if (event.button === 1) event.preventDefault(); });
@@ -1051,6 +1170,7 @@
         event.returnValue = '';
       }
     });
+    wires.init();
   }
 
   window.WifiSite = {

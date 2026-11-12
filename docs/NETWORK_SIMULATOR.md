@@ -29,10 +29,20 @@ Open **Network Sim → Design a Wi-Fi Site** and choose **New Site** or **Try th
 1. Choose feet or meters under **Floor plan**. Scroll or pinch to zoom out and reveal more drawing space in every direction. The grid and scale bar adjust as you zoom. Use **Pan** or hold **Space** and drag to move the view, and choose **Fit Site** to return to the whole drawing. Changing units preserves physical size.
 2. Use **Room** to draw a rectangle. With **Wall**, drag a single wall or click successive points for a connected run, then select **Finish Wall** or press **Escape**. **Snap** aligns to the grid or a nearby endpoint. Hold **Shift** or enable **Right angles** to constrain a wall to horizontal or vertical. Choose drywall, concrete, metal, glass, wood, or brick.
 3. Use **Access Point** to place a generic ceiling-mounted or wall-mounted AP. Adjust relative transmit power or rotate a wall-mounted AP. Use **Note** to label a room and **Measure** to check distances. Choose an object in the inspector to **Locate** or **Duplicate** it.
-4. Turn on **Coverage** and compare 2.4 GHz and 5 GHz. Use **Check Signal** to see the strongest access point, the walls crossed, and a second AP reading when available. The smooth heatmap and probe use the same distance, wall loss, power, and direction assumptions. Treat these values as classroom estimates.
+4. Connect an access point by Ethernet to keep its coverage on. To test an unwired AP, select it and turn on **Estimated coverage**. This preview ends when you deselect the AP. Use **Check Signal** to compare 2.4 GHz and 5 GHz, see the strongest AP and walls crossed, and check a second AP when available. Treat these values as classroom estimates.
 5. Signed-in users can name a site and return to it from **Saved Wi-Fi sites**. Changes autosave, and **Save a Copy** creates a separate design. If another tab has saved a newer version, use **Save a Copy** to keep your local changes.
 
 On the keyboard, focus the plan, move the cursor with the arrow keys, and press Enter to use the selected tool. Choose an object from the **Objects** menu to edit its coordinates directly.
+
+### Plan cabling and ISP handoffs
+
+- Use **Equipment** to place a router, 48-port core switch, 24-port switch, or 8-port access switch. The router, core, and 24-port switch have dedicated 10 Gb/s fiber ports. Each Ethernet port supports a single 1 Gb/s LAN connection. The core and 24-port switch supply PoE on Ethernet. The 8-port switch and router are data-only.
+- Place **Keystone Jack** on a wall. Use its **BACK** port for the installed run and **FRONT** for a patch cable. The jack carries PoE through when its other side reaches a source switch.
+- Place **ISP Demarcation** on a wall and choose a fictional provider. Match its fiber or Ethernet handoff to a router WAN port. The provider sets the link speed. Multiple demarcations can use separate WAN ports. CinderSky Satellite provides a 75 Mb/s Ethernet handoff for a remote site.
+- Select **Cable**, choose Ethernet or fiber, and choose a source device and port. Click the plan to add bends and a destination device to choose its port. Hold **Shift** or turn on **Right angles** for horizontal and vertical bends. Select **Connect** to save the route. Select a cable to rename, recolor, drag its bends, or reroute it. Overlapping runs show a bundle count. Click a bundle to pick an individual cable.
+- Concrete walls require a **Pass-through** at the crossing. Place it on the wall, then click it as part of the cable route. Each holds up to 10 cables, and pass-throughs on the same wall need 20 feet (6.096 m) between them. Cables can cross other wall materials anywhere.
+
+Open **Try the Cabling Activity** for a router, switch, concrete partition, jack, and AP to connect. The AP inspector shows whether the link is connected and whether a PoE source reaches it.
 
 ## Build on desktop or iPad
 
@@ -261,7 +271,7 @@ Each objective updates immediately in the browser and is recalculated by the ser
 - All mutable simulator data is under `network_data/`, separate from IDE files, wiki content, and account/class files.
 - `network_data/catalog.json` contains only class access and lab assignments.
 - Personal networks are isolated into per-account files under `network_data/users/`.
-- Personal Wi-Fi projects are isolated into per-account files under `network_data/wifi/`. Each account can save up to 40 sites, with up to 1,200 walls, 128 access points, and 320 notes per site. Version 1 floor plans reopen on the open canvas at their original scale and coordinates.
+- Personal Wi-Fi projects are isolated into per-account files under `network_data/wifi/`. Each account can save up to 40 sites. A site can have 1,200 walls, 128 access points, 320 notes, 256 equipment items, 320 pass-throughs, and 512 cables. Older plans reopen at their original scale and coordinates. Their APs remain available for temporary coverage previews until connected.
 - Lab progress uses per-student atomic files under `network_data/progress/<class>/<lab>/`. Concurrent students therefore do not rewrite a single growing progress file.
 - Topology input is validated for JSON size, identifier format, supported types, valid endpoints, unique port use, media compatibility, configuration depth, and item limits before saving. Schema migrations run before validation.
 - Turning the global switch off hides/blocks the app but does not delete data. Removing `network_features.py`, `network_store.py`, `network_content.py`, the network JS/CSS files, and their small registration/markup hooks removes the feature without changing IDE runners or wiki storage.

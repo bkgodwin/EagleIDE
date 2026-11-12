@@ -499,11 +499,12 @@
         <div>
           <button class="btn secondary" id="wifiNetworkBack" type="button">← Network Simulator</button>
           <h1 id="wifiSiteHeading" tabindex="-1">Wi-Fi Site Simulator</h1>
-          <p>Draw a floor plan, place access points, and see how walls and distance affect coverage.</p>
+          <p>Draw a floor plan, route cables, and see how access points cover the building.</p>
         </div>
         <div class="network-library-actions">
           <button class="btn run" id="wifiNewSite" type="button">New Site</button>
           <button class="btn secondary" id="wifiSampleSite" type="button">Try the Two-Room Activity</button>
+          <button class="btn secondary" id="wifiWiringSample" type="button">Try the Cabling Activity</button>
         </div>
       </header>
       <p class="network-guest-note" id="wifiGuestNotice" hidden>Sign in with a class that has Network Simulator access to save your designs.</p>
@@ -537,6 +538,11 @@
           <button class="wifi-control" type="button" data-wifi-tool="measure">Measure</button>
           <button class="wifi-control" type="button" data-wifi-tool="probe">Check Signal</button>
         </div>
+        <div class="wifi-tool-group wifi-wiring-tools" role="group" aria-label="Cabling tools">
+          <button class="wifi-control" type="button" data-wifi-tool="equipment"><span data-wifi-icon="core_switch" aria-hidden="true"></span>Equipment</button>
+          <button class="wifi-control" type="button" data-wifi-tool="cable"><span data-wifi-icon="cable" aria-hidden="true"></span>Cable</button>
+          <button class="wifi-control" type="button" data-wifi-tool="pass"><span data-wifi-icon="pass" aria-hidden="true"></span>Pass-through</button>
+        </div>
         <div class="wifi-tool-group" role="group" aria-label="Editing and coverage">
           <label id="wifiMaterialField">Material<select id="wifiMaterial"></select></label>
           <label id="wifiMountField" hidden>Mount<select id="wifiMount"></select></label>
@@ -546,7 +552,24 @@
           <button class="wifi-control" id="wifiRedo" type="button">Redo</button>
           <label class="wifi-toggle" title="Snap to the grid or a nearby wall endpoint"><input type="checkbox" id="wifiSnap" checked> Snap</label>
           <label class="wifi-toggle"><input type="checkbox" id="wifiCoverage" checked> Coverage</label>
+          <label class="wifi-toggle"><input type="checkbox" id="wifiShowCables" checked> Cables</label>
           <label>Band<select id="wifiBand"><option value="2.4">2.4 GHz</option><option value="5">5 GHz</option></select></label>
+        </div>
+        <div id="wifiEquipmentControls" class="wifi-cabling-context wifi-tool-group" role="group" aria-label="Place equipment" hidden>
+          <span id="wifiEquipmentIcon" class="wifi-equipment-preview" aria-hidden="true"></span>
+          <label>Device<select id="wifiEquipmentType"></select></label>
+          <label id="wifiEquipmentIspField" hidden>Provider<select id="wifiEquipmentIsp"></select></label>
+          <span id="wifiEquipmentSpecs"></span>
+        </div>
+        <div id="wifiCableControls" class="wifi-cabling-context wifi-tool-group" role="group" aria-label="Route a cable" hidden>
+          <label>Media<select id="wifiCableMedia"><option value="ethernet">Ethernet · 1 Gb/s · PoE</option><option value="fiber">Fiber · 10 Gb/s</option></select></label>
+          <label>From<select id="wifiCableFromDevice" aria-label="Source device"></select></label>
+          <label>Port<select id="wifiCableFromPort" aria-label="Source port"></select></label>
+          <label>To<select id="wifiCableToDevice" aria-label="Destination device"></select></label>
+          <label>Port<select id="wifiCableToPort" aria-label="Destination port"></select></label>
+          <button class="wifi-control" id="wifiCableUndoBend" type="button">Undo Bend</button>
+          <button class="wifi-control" id="wifiCableCancel" type="button">Cancel</button>
+          <button class="btn run" id="wifiCableConnect" type="button">Connect</button>
         </div>
       </div>
       <div class="wifi-editor">
@@ -557,8 +580,13 @@
               <canvas class="wifi-heatmap" id="wifiHeatmap" aria-hidden="true"></canvas>
               <svg class="wifi-grid" id="wifiGrid" aria-hidden="true"></svg>
               <svg class="wifi-objects" id="wifiObjects" aria-hidden="true">
-                <g id="wifiWalls"></g><g id="wifiMarkers"></g><g id="wifiOverlay"></g>
+                <g id="wifiWalls"></g><g id="wifiWireLayer"></g><g id="wifiMarkers"></g><g id="wifiEquipmentLayer"></g><g id="wifiOverlay"></g>
               </svg>
+            </div>
+            <div class="wifi-cable-menu" id="wifiCableBundleMenu" hidden>
+              <label for="wifiCableBundleChoice" id="wifiCableBundleHeading"></label>
+              <select id="wifiCableBundleChoice"></select>
+              <button class="wifi-control" id="wifiCableBundleClose" type="button" aria-label="Close cable bundle">×</button>
             </div>
           </div>
           <footer class="wifi-map-footer">
@@ -580,6 +608,14 @@
               <li>Check the signal in the second room at 5 GHz.</li>
               <li>Select the middle wall and change it from drywall to concrete. Check the same spot again.</li>
               <li>Move the access point or add another one to improve coverage. Add a note explaining what changed.</li>
+            </ol>
+          </details>
+          <details class="wifi-activity" id="wifiWiringGuide" hidden>
+            <summary>Cabling Activity</summary>
+            <ol>
+              <li>Connect the core switch to the router with fiber.</li>
+              <li>Run Ethernet from the core switch to the classroom jack. Click the pass-through to cross the concrete wall.</li>
+              <li>Patch the jack to the classroom AP. Check its coverage and PoE status.</li>
             </ol>
           </details>
           <section class="wifi-panel">

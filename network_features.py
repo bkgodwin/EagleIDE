@@ -13,6 +13,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 
 from network_content import ACRONYM_REFERENCE, COMMAND_REFERENCE, EXAMPLE_TOPOLOGIES, LABS, PORT_REFERENCE, example_summaries, lab_summary
 from network_store import MAX_WIFI_SITE_BYTES, WIFI_LIMITS, NetworkDataError, NetworkStore, WifiRevisionError, grade_lab, validate_topology
+from wifi_cabling import CABLING_CATALOG
 
 
 def register(
@@ -118,6 +119,7 @@ def register(
                 "assigned_labs": assigned,
                 "saved": saved,
                 "wifi_limits": WIFI_LIMITS,
+                "wifi_cabling": CABLING_CATALOG,
                 "command_reference": COMMAND_REFERENCE,
                 "port_reference": PORT_REFERENCE,
                 "acronym_reference": ACRONYM_REFERENCE,
@@ -247,7 +249,7 @@ def register(
                 if site:
                     return jsonify(ok=True, data=site)
         except RequestEntityTooLarge:
-            return jsonify(ok=False, error="Wi-Fi site requests must be 512 KB or smaller"), 413
+            return jsonify(ok=False, error="Wi-Fi site requests must be 1 MB or smaller"), 413
         except RecursionError:
             return jsonify(ok=False, error="Wi-Fi site data is nested too deeply"), 400
         except WifiRevisionError as exc:

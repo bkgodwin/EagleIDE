@@ -378,11 +378,12 @@ class NetworkRouteTests(unittest.TestCase):
 
     def wifi_plan(self):
         return {
-            "schema_version": 2, "title": "Two rooms",
+            "schema_version": 3, "title": "Two rooms",
             "units": "ft", "band": "5",
             "walls": [{"id": "wall-1", "a": {"x": 20, "y": 4}, "b": {"x": 20, "y": 24}, "material": "concrete"}],
             "access_points": [{"id": "ap-1", "x": 11, "y": 14, "mount": "wall", "angle": 90, "name": "Hall AP", "power_db": 0}],
             "labels": [{"id": "note-1", "x": 25, "y": 7, "text": "Check signal here"}],
+            "equipment": [], "pass_throughs": [], "cables": [],
         }
 
     def test_wifi_site_access_and_account_owned_round_trip(self):
@@ -456,6 +457,27 @@ class NetworkRouteTests(unittest.TestCase):
         self.assertEqual(reopened["walls"], opened["walls"])
         self.assertEqual(reopened["access_points"], opened["access_points"])
         self.assertEqual(reopened["revision"], 8)
+
+    def test_wifi_v2_site_reopens_without_cabling_and_preserves_access_points(self):
+        email = "teacher@example.com"
+        plan = self.wifi_plan()
+        legacy = {key: value for key, value in plan.items() if key not in ("equipment", "pass_throughs", "cables")}
+        legacy.update(id="v2-site", revision=3, updated_at=1200, schema_version=2)
+        self.store._write_json(self.store._wifi_path(email), {"sites": {"v2-site": legacy}})
+        url = "/api/network/wifi-sites/v2-site"
+        headers = {"X-Teacher-Token": "teacher-token"}
+        opened = self.client.get(url, headers=headers).json["data"]
+        self.assertEqual({key: opened[key] for key in plan}, plan)
+        opened["equipment"].append({"id": "switch-1", "kind": "access_switch", "name": "Room switch", "x": 12, "y": 13})
+        opened["cables"].append({
+            "id": "cable-1", "media": "ethernet", "color": "#0879b3", "label": "Room AP",
+            "source": {"device_id": "switch-1", "port": "ETH1"},
+            "target": {"device_id": "ap-1", "port": "ETH1"}, "waypoints": [],
+        })
+        saved = self.client.put(url, headers=headers, json={"site": opened, "revision": 3})
+        self.assertEqual(saved.status_code, 200, saved.json)
+        self.assertEqual(self.client.get(url, headers=headers).json["data"]["cables"], opened["cables"])
+        self.assertEqual(self.client.put(url, headers=headers, json={"site": legacy, "revision": 4}).status_code, 409)
 
     def test_mutating_routes_reject_non_object_json(self):
         teacher = {"X-Teacher-Token": "teacher-token"}
