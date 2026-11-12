@@ -129,6 +129,9 @@ Required runtime components:
 |       |-- network-sim.js       Browser topology engine, packet tools, CLI, labs, and teacher UI
 |       |-- network-sim-advanced.js Diagnostics, capture, deterministic traffic, IPv6, routing, and canvas tools
 |       |-- network-sim-worker.js Seeded background-traffic generator running off the UI thread
+|       |-- wifi-site.js         Lazy floor plan editor, coverage controls, and project autosave
+|       |-- wifi-site-model.js   Meter-based coverage estimates and signal probes
+|       |-- wifi-site-worker.js  Wi-Fi heatmap rendering off the UI thread
 |       |-- eagle-lab.js         Native PVE lab section, admin/teacher controls, and report window
 |       |-- eagle-lab-access.js  Lightweight eager class entitlement check for Lab navigation
 |       |-- lab-report-content.js Escaped copy commands, authenticated images, floating windows
@@ -212,7 +215,7 @@ Required runtime components:
 
 `wiki_features.py` is also registered near the end of `app.py`. It adapts the existing in-memory admin, teacher, and student authentication to `WikiStore`. Keep public reads separate from protected mutations, require teacher ownership for every class feature or Lesson Material bookmark, and do not expose drafts through public routes.
 
-`network_features.py` is registered independently near the wiki module and adapts the same auth/class callbacks to `NetworkStore`. The global configuration switch and per-class access both apply to students; guests require only the global switch and cannot save; admins may privately preview while disabled. Built-in topology/lab content belongs in `network_content.py`, while all mutable data stays under `network_data/`.
+`network_features.py` is registered independently near the wiki module and adapts the same auth/class callbacks to `NetworkStore`. The global configuration switch and per-class access both apply to students; guests require only the global switch and cannot save; admins may privately preview while disabled. Built-in topology/lab content belongs in `network_content.py`, while all mutable data stays under `network_data/`. Wi-Fi sites use a separate project schema and revision-checked per-account files under `network_data/wifi/`.
 
 `eagle_lab_features.py` registers the native Eagle Lab section independently of
 the generic external-tool gateway. It accepts RFC1918 IPv4 PVE endpoints only,
@@ -673,7 +676,7 @@ Checked-in seed/reference data is limited to files such as `challenges.csv` and 
 - `lesson_plans/` (weekly plans, class-source mappings, and revocable public-link tokens)
 - `background_assets/` (administrator IDE/home backgrounds and per-class home backgrounds)
 - `wiki_data/` (SQLite catalog, Markdown, media, drafts, and revisions) and `wiki_backups/`
-- `network_data/` (class access, lab assignments/progress, and per-account saved topologies)
+- `network_data/` (class access, lab assignments/progress, and per-account saved topologies and Wi-Fi sites)
 - `lab_data/` (atomic native Eagle Lab catalog plus its local Fernet key) and
   `assignments/.lab-reports/` (hashed-account, revisioned report drafts)
 - `challenge_scores.json` and `leaderboard.csv`
@@ -716,6 +719,7 @@ Network simulator definitions are source data in `network_content.py`; assignmen
 
 - Accounts, classes, files, assignments, quizzes, mastery, admin, AI, or core API behavior: `app.py` plus the matching section of `app-core.js`. Keep the Trash root protected, use the locked metadata helpers for restore records, and preserve the distinction between recoverable active-workspace deletion and permanent deletion inside Trash.
 - Network simulator catalog, permissions, grading, migrations, or storage: `network_features.py`, `network_store.py`, and `network_content.py`. Core browser topology/packet behavior belongs in `network-sim.js`; diagnostics, capture, deterministic traffic, IPv6, dynamic-routing views, and productivity tools belong in `network-sim-advanced.js`; background generation belongs in `network-sim-worker.js`; visuals belong in `features/network-sim.css`. Saved topology schema version 2 supports media-aware ports, parallel links, link properties, IPv6, RSTP, routing protocols, wireless radio settings, stateful policy, and seeded simulation metadata; preserve `migrate_topology()` compatibility when evolving it.
+- Wi-Fi site editing is lazy loaded through `feature-loader.js`. Keep the project schema in `network_store.py` and geometry in meters. The browser probe and worker share `wifi-site-model.js`; site editor styles belong in `features/wifi-site.css`.
 - Native PVE lab enrollment/access: `eagle_lab_features.py` and `eagle_lab_store.py`; continuous report draft validation/storage: `lab_reports.py`; assignment-type normalization/scoring: `app.py`; browser section/report overlay: `eagle-lab.js` and `features/eagle-lab.css`.
 - Raise hand, classroom questions, file sharing, or teacher audit: `classroom_features.py`, `classroom-signals.js`, and/or `classroom-files.js`.
 - Notebook prompts and student notes: notebook helpers/routes in `app.py`, `student-notebook.js`, and `features/student-notebook.css`.

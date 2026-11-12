@@ -347,12 +347,13 @@
       <header class="network-library-hero">
         <div>
           <span class="network-kicker">EagleIDE Network Lab</span>
-          <h1>Build, test, and inspect networks.</h1>
-          <p>Practice addressing, routing, VLANs, wireless, and defensive security in a safe browser simulation.</p>
+          <h1>Network Simulator</h1>
+          <p>Connect devices and trace packets, or design Wi-Fi coverage for a building.</p>
           <div class="network-preview-warning" id="networkPreviewWarning" hidden>Admin preview: the simulator is currently disabled for other users.</div>
         </div>
         <div class="network-library-actions">
-          <button class="btn run" id="networkNewBtn" type="button">＋ New Network</button>
+          <button class="btn run" id="networkNewBtn" type="button" disabled>Build a Network</button>
+          <button class="btn secondary" id="networkWifiBtn" type="button" disabled>Design a Wi-Fi Site</button>
           <label class="btn secondary network-file-button" for="networkImportInput">Import JSON</label>
           <input id="networkImportInput" type="file" accept="application/json,.json" hidden>
           <button class="btn secondary" id="networkCommandRefBtn" type="button">Command Reference</button>
@@ -364,12 +365,20 @@
         <div class="network-card-grid" id="networkAssignedList"></div>
       </section>
       <section class="network-library-section">
-        <div class="network-section-heading"><div><span class="network-kicker">Ready to explore</span><h2>Example topologies</h2></div><span>Open any example as your own editable copy.</span></div>
-        <div class="network-card-grid" id="networkExampleList"></div>
+        <div class="network-library-start">
+          <button class="network-card" id="networkStarterBtn" type="button" disabled>
+            <h3>Start here: Connect two devices</h3><p>Connect two computers, check their addresses, and send your first ping.</p>
+          </button>
+          <button class="network-card" id="networkResumeBtn" type="button" hidden></button>
+        </div>
       </section>
       <section class="network-library-section" id="networkSavedSection" hidden>
         <div class="network-section-heading"><div><span class="network-kicker">Private workspace</span><h2>Saved networks</h2></div></div>
         <div class="network-card-grid" id="networkSavedList"></div>
+      </section>
+      <section class="network-library-section">
+        <div class="network-section-heading"><div><span class="network-kicker">Ready to explore</span><h2>Example topologies</h2></div><span>Open any example as your own editable copy.</span></div>
+        <div class="network-card-grid" id="networkExampleList"></div>
       </section>
       <div class="network-loading" id="networkLoading" role="status">Loading Network Simulator…</div>
     </section>
@@ -381,7 +390,9 @@
         <div class="network-toolbar-group">
           <button class="btn secondary" id="networkUndoBtn" type="button" title="Undo">↶ Undo</button>
           <button class="btn secondary" id="networkRedoBtn" type="button" title="Redo">↷ Redo</button>
-          <button class="btn secondary" id="networkConnectBtn" type="button" aria-pressed="false">Cable</button>
+          <button class="btn secondary" id="networkAddDeviceBtn" type="button">Add Device</button>
+          <button class="btn secondary" id="networkConnectBtn" type="button" aria-pressed="false">Connect</button>
+          <button class="btn secondary" id="networkTestBtn" type="button">Test</button>
           <label class="network-compact-field" title="Cable medium"><span>Medium</span><select id="networkCableMediaSelect"><option value="ethernet">Ethernet</option><option value="fiber">Fiber</option><option value="serial">Serial</option></select></label>
           <button class="btn secondary" id="networkDeleteBtn" type="button">Delete</button>
           <button class="btn secondary" id="networkDuplicateBtn" type="button" title="Duplicate selected devices">Duplicate</button>
@@ -393,6 +404,7 @@
         </div>
       </header>
 
+      <p class="network-mode-hint" id="networkModeHint" role="status" hidden></p>
       <div class="network-editor-grid">
         <aside class="network-palette" aria-label="Device library">
           <div class="network-pane-heading"><strong>Devices</strong><span>Tap or drag onto canvas</span></div>
@@ -480,6 +492,113 @@
           <div class="network-console-panel" data-network-panel-content="lab" id="networkLabGuidePanel"></div>
         </div>
       </section>
+    </section>
+
+    <section class="network-library wifi-site-library" id="wifiSiteLibrary" aria-labelledby="wifiSiteHeading" hidden>
+      <header class="network-library-hero">
+        <div>
+          <button class="btn secondary" id="wifiNetworkBack" type="button">← Network Simulator</button>
+          <h1 id="wifiSiteHeading" tabindex="-1">Wi-Fi Site Simulator</h1>
+          <p>Draw a floor plan, place access points, and see how walls and distance affect coverage.</p>
+        </div>
+        <div class="network-library-actions">
+          <button class="btn run" id="wifiNewSite" type="button">New Site</button>
+          <button class="btn secondary" id="wifiSampleSite" type="button">Try the Two-Room Activity</button>
+        </div>
+      </header>
+      <p class="network-guest-note" id="wifiGuestNotice" hidden>Sign in with a class that has Network Simulator access to save your designs.</p>
+      <section class="network-library-section" id="wifiSavedSection" aria-label="Saved Wi-Fi sites" hidden>
+        <div class="network-section-heading"><h2>Saved Wi-Fi sites</h2></div>
+        <p id="wifiLibraryStatus" role="status"></p>
+        <button class="btn secondary" id="wifiReloadSites" type="button" hidden>Retry</button>
+        <div class="network-card-grid" id="wifiSavedSites"></div>
+      </section>
+    </section>
+
+    <section class="network-workspace wifi-workspace" id="wifiWorkspace" aria-label="Wi-Fi floor plan editor" hidden>
+      <header class="network-toolbar wifi-project-toolbar">
+        <button class="btn secondary" id="wifiSiteBack" type="button">← Wi-Fi Sites</button>
+        <label class="network-title-field"><span>Site name</span><input id="wifiSiteTitle" maxlength="120" value="Untitled Wi-Fi Site"></label>
+        <div class="network-toolbar-group network-toolbar-end">
+          <span class="network-save-state" id="wifiSaveStatus" role="status"></span>
+          <button class="btn secondary" id="wifiDiscardSite" type="button" hidden>Discard Unsaved Edits</button>
+          <button class="btn secondary" id="wifiCopySite" type="button">Save a Copy</button>
+          <button class="btn run" id="wifiSaveSite" type="button">Save</button>
+        </div>
+      </header>
+      <div class="wifi-toolbars">
+        <div class="wifi-tool-group" role="group" aria-label="Floor plan tools">
+          <button class="wifi-control" type="button" data-wifi-tool="select">Select</button>
+          <button class="wifi-control" type="button" data-wifi-tool="pan">Pan</button>
+          <button class="wifi-control" type="button" data-wifi-tool="wall">Wall</button>
+          <button class="wifi-control" type="button" data-wifi-tool="room">Room</button>
+          <button class="wifi-control" type="button" data-wifi-tool="ap">Access Point</button>
+          <button class="wifi-control" type="button" data-wifi-tool="label">Note</button>
+          <button class="wifi-control" type="button" data-wifi-tool="measure">Measure</button>
+          <button class="wifi-control" type="button" data-wifi-tool="probe">Check Signal</button>
+        </div>
+        <div class="wifi-tool-group" role="group" aria-label="Editing and coverage">
+          <label id="wifiMaterialField">Material<select id="wifiMaterial"></select></label>
+          <label id="wifiMountField" hidden>Mount<select id="wifiMount"></select></label>
+          <button class="wifi-control" id="wifiUndo" type="button">Undo</button>
+          <button class="wifi-control" id="wifiRedo" type="button">Redo</button>
+          <label class="wifi-toggle"><input type="checkbox" id="wifiSnap" checked> Snap to grid</label>
+          <label class="wifi-toggle"><input type="checkbox" id="wifiCoverage" checked> Coverage</label>
+          <label>Band<select id="wifiBand"><option value="2.4">2.4 GHz</option><option value="5">5 GHz</option></select></label>
+        </div>
+      </div>
+      <div class="wifi-editor">
+        <div class="wifi-plan">
+          <p class="wifi-tool-hint" id="wifiToolHint" role="status"></p>
+          <div class="wifi-viewport" id="wifiViewport" tabindex="0" aria-label="Floor plan. Use arrow keys to move the cursor and Enter to use the selected tool." aria-describedby="wifiToolHint">
+            <div class="wifi-stage" id="wifiStage">
+              <canvas class="wifi-heatmap" id="wifiHeatmap" aria-hidden="true"></canvas>
+              <svg class="wifi-grid" id="wifiGrid" aria-hidden="true"></svg>
+              <svg class="wifi-objects" id="wifiObjects" aria-hidden="true"></svg>
+            </div>
+          </div>
+          <footer class="wifi-map-footer">
+            <div class="wifi-tool-group" role="group" aria-label="Zoom">
+              <button class="wifi-control" id="wifiZoomOut" type="button" aria-label="Zoom out">−</button>
+              <button class="wifi-control" id="wifiZoomIn" type="button" aria-label="Zoom in">+</button>
+              <button class="wifi-control" id="wifiFit" type="button">Fit</button>
+            </div>
+            <div id="wifiScale" class="wifi-scale" aria-label="Map scale"><span></span><strong></strong></div>
+            <output id="wifiMeasureResult"></output>
+            <output id="wifiProbeSummary" aria-label="Signal at selected point"></output>
+          </footer>
+        </div>
+        <aside class="wifi-inspector" aria-label="Floor plan settings">
+          <details class="wifi-activity" id="wifiActivity" hidden>
+            <summary>Two-Room Activity</summary>
+            <ol>
+              <li>Check the signal in the second room at 5 GHz.</li>
+              <li>Select the middle wall and change it from drywall to concrete. Check the same spot again.</li>
+              <li>Move the access point or add another one to improve coverage. Add a note explaining what changed.</li>
+            </ol>
+          </details>
+          <section class="wifi-panel">
+            <h2>Floor plan</h2>
+            <label>Units<select id="wifiUnits"><option value="m">Meters</option><option value="ft">Feet</option></select></label>
+            <div class="wifi-two-fields">
+              <label>Width <input type="number" id="wifiWidth" step="any" inputmode="decimal"></label>
+              <label>Depth <input type="number" id="wifiHeight" step="any" inputmode="decimal"></label>
+            </div>
+            <p id="wifiGridLabel"></p>
+          </section>
+          <section class="wifi-panel">
+            <h2>Objects</h2>
+            <label>Selected object<select id="wifiSelection"><option value="">None selected</option></select></label>
+            <div id="wifiProperties"></div>
+          </section>
+          <section class="wifi-panel wifi-signal-panel">
+            <h2>Estimated signal</h2>
+            <div id="wifiLegend" class="wifi-legend"></div>
+            <div id="wifiProbeResult" role="status"></div>
+            <details class="wifi-model-info"><summary>About this estimate</summary><p>The map shows the strongest predicted signal at each point. The classroom model uses distance, simplified antenna direction, and an illustrative loss per wall. It estimates signal strength for comparison and does not model speed or interference.</p></details>
+          </section>
+        </aside>
+      </div>
     </section>
   </main>
 

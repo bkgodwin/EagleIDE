@@ -40,6 +40,15 @@
   const LEASE_MINUTES = [30, 60, 120, 240, 480, 720, 1440, 10080];
   const DNS_TTLS = [30, 60, 300, 600, 1800, 3600, 86400];
   const LIMITS = { devices: 100, links: 200 };
+  const PACKET_FIX_FIELDS = {
+    'Default gateway': ['Default gateway', '[data-config="gateway"]'],
+    'Source configuration': ['IPv4 settings', '[data-config="ip"],[data-server-interface-field="ip"]'],
+    'Destination configuration': ['IPv4 settings', '[data-config="ip"],[data-server-interface-field="ip"]'],
+    'Routing table': ['Routing settings', '[data-network-section="routes"] summary,[data-advanced-field="routing_protocol"]'],
+    'VLAN ingress': ['VLAN settings', '[data-port-vlan]'],
+    'VLAN egress': ['VLAN settings', '[data-port-vlan]'],
+    'Access control list': ['Access control rules', '[data-network-section="acl"] summary'],
+  };
   const state = {
     bootstrap: null,
     bootstrapKey: '',
@@ -93,8 +102,8 @@
   }
   function currentAuthKey() {
     const ctx = context();
-    if (ctx.WIKI_MANAGER_TOKEN) return `wiki_manager:${ctx.WIKI_MANAGER_TOKEN}`;
     if (ctx.ADMIN_TOKEN) return `admin:${ctx.ADMIN_TOKEN}`;
+    if (ctx.WIKI_MANAGER_TOKEN) return `wiki_manager:${ctx.WIKI_MANAGER_TOKEN}`;
     if (ctx.TEACHER_TOKEN) return `teacher:${ctx.TEACHER_TOKEN}`;
     if (ctx.USER_TOKEN) return `student:${ctx.USER_TOKEN}`;
     return 'guest';
@@ -128,6 +137,14 @@
     if (!el) return;
     el.textContent = text || '';
     el.dataset.kind = kind;
+    const save = $('networkSaveBtn');
+    save.textContent = kind === 'error' ? 'Retry Save' : 'Save';
+    if (state.mode === 'lab') save.hidden = kind !== 'error';
+  }
+  function setModeHint(text = '') {
+    const hint = $('networkModeHint');
+    hint.textContent = text;
+    hint.hidden = !text;
   }
   function logEvent(message) {
     state.events.unshift({ at: new Date(), message: String(message) });
@@ -274,6 +291,7 @@
   }
   async function show({ push = true } = {}) {
     if (window.ExternalTools?.active?.() && !window.ExternalTools.leave()) return;
+    if (window.WifiSite && !await window.WifiSite.leave()) return;
     showMode({ push });
     showLibrary();
     try {
@@ -297,6 +315,7 @@
     state.connectKind = '';
     closePortPicker();
     stopPacketPlayback();
+    setModeHint();
     $('networkConnectBtn')?.setAttribute('aria-pressed', 'false');
     return pendingSave;
   }
@@ -317,10 +336,13 @@
   }
   async function loadBootstrap({ force = false } = {}) {
     $('networkLoading').hidden = false;
+    $('networkLoading').textContent = 'Loading Network Simulator…';
     const data = await requestBootstrap({ force });
     $('networkLoading').hidden = true;
     $('networkPreviewWarning').hidden = !data.admin_preview;
     $('networkGuestNote').hidden = data.role !== 'guest';
+    $('networkWifiBtn').disabled = !data.wifi_limits;
+    $('networkNewBtn').disabled = $('networkStarterBtn').disabled = false;
     renderLibrary();
     renderCommandReference();
     return data;
@@ -369,7 +391,11 @@
         <h3>${escapeHtml(example.title)}</h3><p>${escapeHtml(example.description)}</p>
         <div class="network-card-actions"><strong>Open editable copy</strong><span>→</span></div>
       </button>`).join('');
-    const saved = data.saved || [];
+    const saved = [...(data.saved || [])].sort((a, b) => Number(b.updated_at) - Number(a.updated_at));
+    const resume = $('networkResumeBtn');
+    resume.hidden = !saved.length;
+    resume.dataset.openSaved = saved[0]?.id || '';
+    resume.innerHTML = saved.length ? `<h3>Resume your latest network</h3><p>${escapeHtml(saved[0].title)}</p>` : '';
     $('networkSavedSection').hidden = !data.can_save;
     $('networkSavedList').innerHTML = saved.length ? saved.map(item => `
       <article class="network-card" tabindex="0" role="button" data-open-saved="${escapeHtml(item.id)}">
@@ -381,6 +407,51 @@
   function formatTimestamp(value) {
     if (!value) return '';
     try { return new Date(Number(value) * 1000).toLocaleDateString(); } catch { return ''; }
+  }
+
+  async function openWifiSite() {
+    const trigger = $('networkWifiBtn');
+    const authKey = currentAuthKey();
+    trigger.disabled = true;
+    try {
+      const access = await requestBootstrap();
+      await window.EagleFeatures.load('wifiSite');
+      if (currentAuthKey() !== authKey || !document.body.classList.contains('network-mode') || $('networkLibrary').hidden) return;
+      $('networkLibrary').hidden = true;
+      await window.WifiSite.open({
+        api, authKey: currentAuthKey, canSave: access.can_save, limits: access.wifi_limits,
+        makeId, escapeHtml, onBack: () => {
+          showLibrary();
+          if (document.body.classList.contains('network-mode')) {
+            loadBootstrap({ force: true }).catch(error => { $('networkLoading').textContent = error.message; });
+            trigger.focus();
+          }
+        },
+      });
+    } catch (error) {
+      showLibrary();
+      $('networkLoading').hidden = false;
+      $('networkLoading').textContent = error.message;
+    } finally {
+      trigger.disabled = false;
+    }
+  }
+
+  function openStarter() {
+    const topology = blankTopology();
+    topology.title = 'Connect Two Devices';
+    topology.metadata.quick_start = true;
+    topology.devices = [1, 2].map(number => ({
+      id: `pc${number}`, type: 'pc', name: `PC ${number}`, x: 130 + (number - 1) * 320, y: 170,
+      config: { ...defaultConfig('pc'), ip: `192.168.10.${10 + number}`, mask: '255.255.255.0', addressing_mode: 'static', dhcp: false },
+    }));
+    topology.objectives = [
+      { id: 'connect-pcs', kind: 'link', source: 'pc1', target: 'pc2', label: 'Connect PC 1 and PC 2 with an Ethernet cable.' },
+      { id: 'ping-pcs', kind: 'packet_test', source: 'pc1', target: 'pc2', protocol: 'icmp', label: 'Send a successful ping from PC 1 to PC 2.' },
+    ];
+    $('networkCableMediaSelect').value = 'ethernet';
+    $('networkPacketProtocol').value = 'icmp';
+    openTopology(topology);
   }
 
   async function openExample(id) {
@@ -408,6 +479,7 @@
   }
   function openTopology(topology, options = {}) {
     flushPendingSave();
+    window.WifiSite?.hide();
     state.topology = clone(topology || blankTopology());
     (state.topology.devices || []).forEach(normalizeDeviceConfig);
     normalizePhysicalLinks();
@@ -438,10 +510,12 @@
     if ($('networkPacketDomain')) $('networkPacketDomain').value = state.topology.metadata?.default_domain || '';
     $('networkSaveBtn').hidden = ['lab', 'demo'].includes(state.mode) || !state.bootstrap?.can_save;
     $('networkLabGuideTab').hidden = !['lab', 'demo'].includes(state.mode);
-    setStatus(state.mode === 'lab' ? 'Auto-save on' : state.mode === 'demo' ? 'Teacher demonstration' : (state.bootstrap?.can_save ? '' : 'Guest—export only'));
+    setModeHint();
+    setStatus(state.mode === 'lab' ? 'Auto-save on' : state.mode === 'demo' ? 'Teacher demonstration' : (state.bootstrap?.can_save ? (state.savedOnce ? 'Saved' : 'Not saved') : 'Guest · export available'));
     autoAssignWanLeases({ render: false, recordHistory: false });
     autoAssignDhcpLeases({ render: false, recordHistory: false });
     renderAll();
+    switchConsole(state.mode === 'lab' ? 'lab' : 'objectives');
     requestAnimationFrame(fitCanvas);
     window.dispatchEvent(new CustomEvent('network-sim:topology-opened', { detail: { topology: state.topology, mode: state.mode } }));
   }
@@ -640,7 +714,7 @@
       state.connectSource = id; state.connectSourcePort = port;
       state.connectKind = selectedCableKind();
       state.selectedId = id; state.selectedLinkId = '';
-      renderCanvas(); setStatus(`${port} selected · choose the second device`);
+      renderCanvas(); setModeHint(`${port} selected. Choose the second device.`);
       return;
     }
     if (state.topology.links.length >= (state.bootstrap?.limits?.links || LIMITS.links)) return alert('This topology has reached its cable limit.');
@@ -656,7 +730,7 @@
       [deviceById(first), deviceById(id)].filter(device => device?.type === 'router' && device.config?.wan_mode === 'static').forEach(router => { router.config.wan_state = portPeer(router.id, 'WAN') && ipNumber(router.config.wan_ip) !== null ? 'connected' : 'disconnected'; });
     }, `Connected ${deviceById(first)?.name} ${firstPort} to ${deviceById(id)?.name} ${port}.`);
     state.connectSource = ''; state.connectSourcePort = ''; state.connectKind = ''; state.connectMode = false;
-    $('networkConnectBtn').setAttribute('aria-pressed', 'false'); setStatus(''); renderCanvas();
+    $('networkConnectBtn').setAttribute('aria-pressed', 'false'); setModeHint(); renderCanvas();
     setTimeout(() => { autoAssignDhcpLeases(); autoAssignWanLeases(); }, 0);
   }
   function deleteSelected() {
@@ -953,7 +1027,7 @@
       window.dispatchEvent(new CustomEvent('network-sim:inspector-rendered', { detail: { link } }));
       return;
     }
-    $('networkInspectorHint').textContent = device ? `${LABELS[device.type]} · ${device.id}` : 'Select a device';
+    $('networkInspectorHint').textContent = device ? LABELS[device.type] : 'Select a device';
     if (!device) {
       $('networkInspector').innerHTML = '<div class="network-empty-inspector">Select a device to configure its name, addressing, services, VLAN, or wireless settings.</div>';
       return;
@@ -966,16 +1040,16 @@
     cfg.addressing_mode = automatic ? 'dhcp' : 'static';
     cfg.dhcp = automatic;
     const leaseExpiry = Number(cfg.dhcp_lease_expires_at) ? new Date(Number(cfg.dhcp_lease_expires_at)).toLocaleString() : '';
-    const sections = [`<form class="network-config-form" id="networkConfigForm" data-inspector-device="${escapeHtml(device.id)}">${renderSuggestionLists(suggestions)}<div class="network-choice-note">Short finite menus update from this topology. IP addresses, gateways, DNS addresses, and pool ranges stay direct-entry fields.</div><h4>Device</h4>
+    const sections = [`<form class="network-config-form" id="networkConfigForm" data-inspector-device="${escapeHtml(device.id)}">${renderSuggestionLists(suggestions)}<h4>Device</h4>
       <label>Name<input data-device-name value="${escapeHtml(device.name)}" maxlength="100"></label>
       <label class="network-switch"><input type="checkbox" data-config="enabled" ${cfg.enabled !== false ? 'checked' : ''}><span>Device powered on</span></label>`];
-    if ((DEVICE_PORTS[device.type] || []).length) sections.push(renderPhysicalPorts(device));
     if (endpoint && clientCapable) sections.push(`<h4>IPv4 Addressing</h4><label>Configuration<select data-addressing-mode><option value="dhcp" ${automatic ? 'selected' : ''}>Automatic (DHCP)</option><option value="static" ${!automatic ? 'selected' : ''}>Manual (Static)</option></select></label>${automatic ? `<div class="network-dhcp-client-status ${cfg.ip ? 'is-bound' : ''}"><strong>${cfg.ip ? `Lease active · ${escapeHtml(cfg.ip)}` : 'Waiting for a DHCP lease'}</strong><span>${cfg.dhcp_server_name ? `Server: ${escapeHtml(cfg.dhcp_server_name)}` : 'Broadcast DHCP Discover to find a server.'}${leaseExpiry ? ` · Expires ${escapeHtml(leaseExpiry)}` : ''}</span><div><button class="btn run" id="networkDhcpRequestBtn" type="button">Request DHCP Lease</button>${cfg.ip ? '<button class="btn secondary" id="networkDhcpReleaseBtn" type="button">Release Lease</button>' : ''}</div></div>` : ''}`);
     if (endpoint) sections.push(`<div class="network-config-grid">
       <label>Address<input data-config="ip" value="${escapeHtml(cfg.ip || '')}" placeholder="${automatic ? 'Assigned by DHCP' : '192.168.1.10'}" ${automatic ? 'disabled' : ''}></label>
       <label>Subnet mask<input data-config="mask" list="networkMasks" value="${escapeHtml(cfg.mask || '255.255.255.0')}" ${automatic ? 'disabled' : ''}></label></div>
       <label>Default gateway<input data-config="gateway" value="${escapeHtml(cfg.gateway || '')}" placeholder="${automatic ? 'Assigned by DHCP' : '192.168.1.1'}" ${automatic ? 'disabled' : ''}></label>
       ${renderResolverInputs(cfg.dns_servers || [], 'dns_servers', automatic)}`);
+    if ((DEVICE_PORTS[device.type] || []).length) sections.push(renderPhysicalPorts(device));
     if (device.type === 'server') sections.push(`<h4>IPv4 Interfaces</h4><div class="network-dns-help">Each server NIC has its own address and subnet mask. The default gateway and DNS resolver list are shared by the server.</div><div class="network-server-interfaces">${renderServerInterfaces(device, suggestions)}</div><label>Default gateway<input data-config="gateway" value="${escapeHtml(cfg.gateway || '')}" placeholder="192.168.1.1"></label>${renderResolverInputs(cfg.dns_servers || [], 'dns_servers')}`);
     if (device.type === 'router') {
       const wanAutomatic = cfg.wan_mode !== 'static', carrier = !!portPeer(device.id, 'WAN');
@@ -1075,7 +1149,7 @@
       const speeds = portSpeedOptions(device, port);
       return `<div class="network-port-row ${settings.enabled === false ? 'is-disabled' : ''}"><div><strong>${escapeHtml(port)}</strong><span>${peer ? `${escapeHtml(peer.device?.name || 'Unknown')} · ${escapeHtml(peer.port)} · ${escapeHtml(peer.link?.kind || 'ethernet')}` : `Available · ${escapeHtml(portMedia(device, port).join('/'))}`}</span></div><label title="Enable or disable this physical port"><input type="checkbox" data-port-name="${escapeHtml(port)}" data-port-setting="enabled" ${settings.enabled !== false ? 'checked' : ''}><span>${settings.enabled !== false ? (peer ? 'Up' : 'On') : 'Off'}</span></label><select data-port-name="${escapeHtml(port)}" data-port-setting="speed" aria-label="${escapeHtml(port)} speed">${speeds.map(speed => `<option ${settings.speed === speed ? 'selected' : ''}>${speed}</option>`).join('')}</select></div>`;
     }).join('');
-    return `<details class="network-config-section" data-network-section="ports" open><summary>Physical ports <span>${usedPorts(device.id).size}/${(DEVICE_PORTS[device.type] || []).length} connected</span></summary><div class="network-port-list">${rows}</div></details>`;
+    return `<details class="network-config-section" data-network-section="ports"><summary>Physical ports <span>${usedPorts(device.id).size}/${(DEVICE_PORTS[device.type] || []).length} connected</span></summary><div class="network-port-list">${rows}</div></details>`;
   }
   function bindInspector(device) {
     const form = $('networkConfigForm');
@@ -1702,7 +1776,11 @@
     const packetSize = Math.max(42, Math.min(9216, Number(size) || (protocol === 'icmp' || protocol === 'icmp6' ? 98 : 128)));
     const sequence = options.ignoreQuality ? 0 : ++state.packetSequence;
     const result = { source, target, protocol, port, size: packetSize, path, allowed: false, reason: '', layers: {}, ...(forwarded ? { port_forward: { device: requestedTarget, external_port: requestedPort, internal_target: target, internal_port: port } } : {}) };
-    if (!path.length) { result.reason = 'No physical or authenticated wireless path exists.'; return result; }
+    if (!path.length) {
+      result.reason = 'The devices have no working connection. Check the cable, port status, or Wi-Fi association.';
+      result.next_action = 'connection';
+      return result;
+    }
     const first = devices[source], last = devices[target];
     const firstConfig = endpointConfigForPath(first, path), lastConfig = endpointConfigForPath(last, path);
     const block = (reason, deviceId, policy = 'Network policy') => {
@@ -1753,7 +1831,8 @@
         const staticReady = routers.every(item => deviceKnowsRoute(item, firstConfig.ip) && deviceKnowsRoute(item, lastConfig.ip));
         if (!dynamicReady && !staticReady) return block('Multiple routing devices need matching RIP/OSPF configuration or static routes for both endpoint networks.', routers.find(item => !deviceKnowsRoute(item, lastConfig.ip))?.id || routers[0].id, 'Routing table');
       }
-      if (ipNumber(firstConfig.gateway) === null || (!natRouter && ipNumber(lastConfig.gateway) === null)) return block('A routed path requires valid default gateways on both endpoints.', source, 'Default gateway');
+      if (ipNumber(firstConfig.gateway) === null) return block(`${first.name} needs a valid default gateway to reach another network.`, source, 'Default gateway');
+      if (!natRouter && ipNumber(lastConfig.gateway) === null) return block(`${last.name} needs a valid default gateway to reply across networks.`, target, 'Default gateway');
       const addresses = routers.flatMap(item => (item.config?.interfaces || []).map(iface => iface.ip).concat((item.config?.svis || []).map(svi => svi.ip), [item.config?.ip, item.config?.wan_ip])).filter(Boolean);
       if (!addresses.includes(firstConfig.gateway)) return block(`${first.name}'s default gateway does not match a routed interface on this path.`, source, 'Default gateway');
       if (!natRouter && !addresses.includes(lastConfig.gateway)) return block(`${last.name}'s default gateway does not match a routed interface on this path.`, target, 'Default gateway');
@@ -1827,7 +1906,12 @@
     });
     const completed = objectives.filter(item => item.complete).length;
     state.grade = { objectives, completed, total: objectives.length, percent: objectives.length ? Math.round(completed / objectives.length * 100) : 100, passed: completed === objectives.length };
-    $('networkObjectivesPanel').innerHTML = `<div class="network-objectives">${objectives.map(item => `<div class="network-objective ${item.complete ? 'complete' : ''}">${escapeHtml(item.label)}</div>`).join('')}</div>`;
+    const guide = state.topology.metadata?.quick_start ? `<div class="network-starter-guide"><strong>Send your first ping</strong><ol>
+      <li>Both PCs already have addresses on the same network. Select either PC to see its address.</li>
+      <li>Choose <b>Connect</b>, select PC 1 and its LAN1 port, then select PC 2 and its LAN1 port.</li>
+      <li>Choose <b>Test</b> and send a ping from PC 1 to PC 2. Try it once before connecting the PCs to see what a failed test looks like.</li>
+      </ol></div>` : '';
+    $('networkObjectivesPanel').innerHTML = guide + `<div class="network-objectives">${objectives.map(item => `<div class="network-objective ${item.complete ? 'complete' : ''}">${escapeHtml(item.label)}</div>`).join('')}</div>`;
     $('networkObjectiveCount').textContent = `${completed}/${objectives.length}`;
   }
   function recordPacketObjective(result, domain = '') {
@@ -1855,7 +1939,9 @@
     target.innerHTML = isDhcp ? '<option value="broadcast">255.255.255.255 — Broadcast</option>' : isWeb ? '<option value="dns">Resolved by DNS</option>' : options;
     if ([...source.options].some(option => option.value === oldSource)) source.value = oldSource;
     if (!isDhcp && [...target.options].some(option => option.value === oldTarget)) target.value = oldTarget;
-    if (!isDhcp && !target.value && target.options.length > 1) target.selectedIndex = 1;
+    if (!isDhcp && !isWeb && (!target.value || target.value === source.value) && target.options.length > 1) {
+      target.value = devices.find(device => device.id !== source.value).id;
+    }
     target.disabled = isDhcp || isWeb;
     $('networkPacketTargetLabel')?.classList.toggle('is-broadcast', isDhcp);
     $('networkPacketPortLabel')?.toggleAttribute('hidden', isDhcp || isWeb || ['icmp', 'icmp6'].includes(protocol));
@@ -1920,6 +2006,39 @@
     $('networkPacketNextBtn')?.addEventListener('click', () => { stopPacketPlayback(); renderPacketStep(state.packetStep + 1); });
     $('networkPacketPlayBtn')?.addEventListener('click', togglePacketPlayback);
   }
+  function packetNextAction(result) {
+    if (result.allowed) return '';
+    if (result.next_action === 'connection') {
+      return '<button class="btn secondary" id="networkPacketFixBtn" type="button">Go to Connect</button>';
+    }
+    const device = deviceById(result.blocked_at);
+    if (!device) return '';
+    const field = PACKET_FIX_FIELDS[result.layers?.policy]?.[0] || 'Configuration';
+    return `<button class="btn secondary" id="networkPacketFixBtn" type="button">Open ${escapeHtml(device.name)} · ${field}</button>`;
+  }
+  function openPacketFix(result) {
+    if (result.next_action === 'connection') {
+      const button = $('networkConnectBtn');
+      if (!state.connectMode) button.click();
+      button.focus();
+      return;
+    }
+    const device = deviceById(result.blocked_at);
+    if (!device) return;
+    state.selectedId = device.id;
+    state.selectedLinkId = '';
+    renderCanvas();
+    renderInspector();
+    const inspector = $('networkInspector');
+    const selector = PACKET_FIX_FIELDS[result.layers?.policy]?.[1];
+    const input = (selector && inspector.querySelector(selector)) || inspector.querySelector('[data-device-name]');
+    for (let parent = input?.parentElement; parent && parent !== inspector; parent = parent.parentElement) {
+      if (parent.matches('details') && input.tagName !== 'SUMMARY') parent.open = true;
+    }
+    if (input?.disabled) {
+      inspector.querySelector('[data-addressing-mode]')?.focus();
+    } else input?.focus();
+  }
   function renderPacketResult(result) {
     if (!result) return;
     const shownPath = result.allowed ? result.path : (result.blocked_path || result.path);
@@ -1931,8 +2050,11 @@
     const heading = result.protocol === 'dhcp' ? (result.allowed ? 'LEASE ASSIGNED' : 'NO DHCP OFFER') : result.protocol === 'web' ? (result.allowed ? 'HTTP 200 OK' : 'REQUEST FAILED') : (result.allowed ? 'DELIVERED' : 'BLOCKED');
     result.animation_steps = packetAnimationSteps(result); state.lastPacket = result; stopPacketPlayback(); state.packetStep = result.animation_steps.length ? 0 : -1;
     const playback = result.animation_steps.length ? `<div class="network-packet-playback"><button class="btn secondary" id="networkPacketPrevBtn" type="button">← Previous</button><span id="networkPacketStepCount"></span><button class="btn secondary" id="networkPacketNextBtn" type="button">Next →</button><button class="btn run" id="networkPacketPlayBtn" type="button" aria-pressed="false" title="Repeat packet hops until stopped">▶ Play loop</button></div>` : '';
-    const blockedNotice = !result.allowed && result.blocked_at ? `<div class="network-blocked-callout"><strong>Transmission stopped at ${escapeHtml(deviceById(result.blocked_at)?.name || result.blocked_at)}</strong><span>${escapeHtml(result.reason)}</span></div>` : '';
+    const stopped = !result.allowed && result.blocked_at ? `<strong>Stopped at ${escapeHtml(deviceById(result.blocked_at)?.name || result.blocked_at)}</strong>` : '';
+    const nextAction = packetNextAction(result);
+    const blockedNotice = stopped || nextAction ? `<div class="network-blocked-callout">${stopped}${nextAction}</div>` : '';
     $('networkPacketResult').innerHTML = `<div class="${result.allowed ? 'allowed' : 'blocked'}">${heading} — ${escapeHtml(result.reason)}</div>${blockedNotice}${playback}${steps ? `<div class="network-dhcp-steps">${steps}</div>` : ''}${transactions ? `<div class="network-transactions">${transactions}</div>` : ''}<div>${hops || (transactions ? '' : 'No path')}</div><div>${layers}</div>`;
+    $('networkPacketFixBtn')?.addEventListener('click', () => openPacketFix(result));
     bindPacketPlayback();
     if (state.packetStep >= 0) renderPacketStep(state.packetStep); else $('networkPacketOverlayLayer').innerHTML = '';
     window.dispatchEvent(new CustomEvent('network-sim:packet', { detail: { result } }));
@@ -2091,8 +2213,7 @@
         logEvent('Network saved.');
       }
     } catch (error) {
-      if (state.topology?.id === topologyId) setStatus('Save failed', 'error');
-      alert(`Could not save ${topology.title}: ${error.message}`);
+      if (state.topology?.id === topologyId) setStatus(`Save failed. ${error.message}`, 'error');
     } finally {
       state.saveInFlight = false;
       const queued = state.saveQueued; state.saveQueued = false;
@@ -2102,6 +2223,7 @@
   function scheduleSave() {
     clearTimeout(state.saveTimer);
     const callback = state.mode === 'lab' ? saveLabProgress : state.savedOnce && state.bootstrap?.can_save ? saveCurrent : null;
+    if (callback) setStatus('Unsaved changes');
     state.saveTimer = callback ? setTimeout(() => { state.saveTimer = 0; callback(); }, state.mode === 'lab' ? 700 : 900) : 0;
   }
   function flushPendingSave() {
@@ -2124,7 +2246,7 @@
         state.grade = progress.grade; setStatus(progress.grade?.passed ? 'Lab complete' : `Saved · ${progress.grade?.percent || 0}%`, 'good');
       }
     } catch (error) {
-      if (state.mode === 'lab' && state.lab?.id === labId && state.labClassId === classId) setStatus('Progress save failed', 'error');
+      if (state.mode === 'lab' && state.lab?.id === labId && state.labClassId === classId) setStatus(`Progress save failed. ${error.message}`, 'error');
     } finally {
       state.labSaveInFlight = false;
       const queued = state.labSaveQueued; state.labSaveQueued = false;
@@ -2312,8 +2434,24 @@
     $('networkViewBtn')?.addEventListener('click', () => show());
     $('wikiHeroNetworkBtn')?.addEventListener('click', () => show());
     $('networkNewBtn')?.addEventListener('click', () => openTopology(blankTopology(), { mode: 'personal', saved: false }));
+    $('networkStarterBtn')?.addEventListener('click', openStarter);
+    $('networkWifiBtn')?.addEventListener('click', openWifiSite);
+    $('networkAddDeviceBtn')?.addEventListener('click', () => {
+      if (state.connectMode) $('networkConnectBtn').click();
+      setModeHint('Choose a device in the Devices panel to place it.');
+      $('networkDevicePalette').querySelector('button')?.focus();
+    });
+    $('networkTestBtn')?.addEventListener('click', () => {
+      switchConsole('packet');
+      $('networkPacketSource').focus();
+    });
     $('networkBackBtn')?.addEventListener('click', async () => { const pendingSave = showLibrary(); await Promise.resolve(pendingSave); await loadBootstrap({ force: true }).catch(error => { $('networkLoading').textContent = error.message; }); });
-    $('networkDevicePalette')?.addEventListener('click', event => { const button = event.target.closest('[data-add-device]'); if (button) addDevice(button.dataset.addDevice); });
+    $('networkDevicePalette')?.addEventListener('click', event => {
+      const button = event.target.closest('[data-add-device]');
+      if (!button) return;
+      if (!state.connectMode) setModeHint();
+      addDevice(button.dataset.addDevice);
+    });
     $('networkCanvas')?.addEventListener('pointerdown', event => {
       if (state.connectMode || event.target.closest?.('[data-device-id],[data-link-select],[data-link-id],#networkPortPicker')) return;
       if (!state.selectedId && !state.selectedLinkId) return;
@@ -2322,11 +2460,11 @@
       renderCanvas();
       renderInspector();
     });
-    $('networkConnectBtn')?.addEventListener('click', () => { state.connectMode = !state.connectMode; state.connectSource = ''; state.connectSourcePort = ''; state.connectKind = ''; closePortPicker(); $('networkConnectBtn').setAttribute('aria-pressed', String(state.connectMode)); setStatus(state.connectMode ? `Select a device, then choose one of its available ${selectedCableKind()} ports` : ''); renderCanvas(); });
+    $('networkConnectBtn')?.addEventListener('click', () => { state.connectMode = !state.connectMode; state.connectSource = ''; state.connectSourcePort = ''; state.connectKind = ''; closePortPicker(); $('networkConnectBtn').setAttribute('aria-pressed', String(state.connectMode)); setModeHint(state.connectMode ? `Select a device, then choose one of its available ${selectedCableKind()} ports.` : ''); renderCanvas(); });
     $('networkDeleteBtn')?.addEventListener('click', deleteSelected);
     $('networkUndoBtn')?.addEventListener('click', undo);
     $('networkRedoBtn')?.addEventListener('click', redo);
-    $('networkSaveBtn')?.addEventListener('click', saveCurrent);
+    $('networkSaveBtn')?.addEventListener('click', () => state.mode === 'lab' ? saveLabProgress() : saveCurrent());
     $('networkExportBtn')?.addEventListener('click', exportCurrent);
     $('networkTitleInput')?.addEventListener('change', () => mutate(() => { state.topology.title = $('networkTitleInput').value.trim() || 'Untitled Network'; }, 'Renamed network.', { inspector: false }));
     $('networkZoomInBtn')?.addEventListener('click', () => zoomBy(.1));
@@ -2334,6 +2472,7 @@
     $('networkZoomFitBtn')?.addEventListener('click', fitCanvas);
     $('networkPacketSendBtn')?.addEventListener('click', sendPacket);
     $('networkPacketProtocol')?.addEventListener('change', renderPacketOptions);
+    $('networkPacketSource')?.addEventListener('change', renderPacketOptions);
     $('networkCliForm')?.addEventListener('submit', event => { event.preventDefault(); runCli($('networkCliInput').value); $('networkCliInput').value = ''; });
     document.querySelectorAll('.network-console-tabs [data-network-panel]').forEach(button => button.addEventListener('click', () => switchConsole(button.dataset.networkPanel)));
     $('networkLibrary')?.addEventListener('click', event => {
@@ -2341,6 +2480,12 @@
       const example = event.target.closest('[data-open-example]'); if (example) return openExample(example.dataset.openExample);
       const remove = event.target.closest('[data-delete-saved]'); if (remove) { event.stopPropagation(); return deleteSaved(remove.dataset.deleteSaved); }
       const saved = event.target.closest('[data-open-saved]'); if (saved) return openSaved(saved.dataset.openSaved);
+    });
+    $('networkSavedList')?.addEventListener('keydown', event => {
+      if (event.target.matches('article[data-open-saved]') && ['Enter', ' '].includes(event.key)) {
+        event.preventDefault();
+        openSaved(event.target.dataset.openSaved);
+      }
     });
     $('networkImportInput')?.addEventListener('change', event => { importTopology(event.target.files?.[0]); event.target.value = ''; });
     $('networkCommandRefBtn')?.addEventListener('click', () => { $('networkCommandModal').style.display = 'flex'; });
@@ -2358,11 +2503,11 @@
     window.addEventListener('eagle-context-updated', refreshAvailability);
     window.addEventListener('pagehide', stopPacketPlayback);
     window.addEventListener('keydown', event => {
-      if (!document.body.classList.contains('network-mode')) return;
+      if (!document.body.classList.contains('network-mode') || $('networkWorkspace').hidden) return;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); if (state.mode === 'lab') saveLabProgress(); else if (state.mode !== 'demo') saveCurrent(); }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); event.shiftKey ? redo() : undo(); }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !event.target.matches('input,textarea,select')) { event.preventDefault(); event.shiftKey ? redo() : undo(); }
       if ((event.key === 'Delete' || event.key === 'Backspace') && !event.target.matches('input,textarea,select')) deleteSelected();
-      if (event.key === 'Escape') { state.connectMode = false; state.connectSource = ''; state.connectSourcePort = ''; state.connectKind = ''; closePortPicker(); $('networkConnectBtn').setAttribute('aria-pressed', 'false'); renderCanvas(); }
+      if (event.key === 'Escape') { state.connectMode = false; state.connectSource = ''; state.connectSourcePort = ''; state.connectKind = ''; closePortPicker(); $('networkConnectBtn').setAttribute('aria-pressed', 'false'); setModeHint(); renderCanvas(); }
     });
   }
 

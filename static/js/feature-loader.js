@@ -7,8 +7,13 @@
     externalToolsAdmin: ['/static/js/external-tools-admin.js?v=20261020-storage-1'],
     eagleLab: ['/static/js/lab-report-content.js?v=20261103', '/static/js/eagle-lab.js?v=20261103', '/static/js/lab-manual.js?v=20261103', '/static/js/lab-report-editor.js?v=20261103'],
     network: [
-      '/static/js/network-sim.js?v=20261022-wiki-manager-1',
-      '/static/js/network-sim-advanced.js?v=20260714-4',
+      '/static/js/network-sim.js?v=20261112-site',
+      '/static/js/network-sim-advanced.js?v=20261112-site',
+    ],
+    wifiSite: [
+      '/static/css/features/wifi-site.css?v=20261112-site',
+      '/static/js/wifi-site-model.js?v=20261112-site',
+      '/static/js/wifi-site.js?v=20261112-site',
     ],
     wikiTools: [
       '/static/css/features/wiki-tools.css?v=20260921-1',
@@ -37,7 +42,10 @@
         script.dataset.loaded = 'true';
         resolve();
       }, { once: true });
-      script.addEventListener('error', () => reject(new Error(`Could not load ${src}`)), { once: true });
+      script.addEventListener('error', () => {
+        script.remove();
+        reject(new Error(`Could not load ${src}`));
+      }, { once: true });
       document.head.appendChild(script);
     });
   }
@@ -62,7 +70,10 @@
         link.dataset.loaded = 'true';
         resolve();
       }, { once: true });
-      link.addEventListener('error', () => reject(new Error(`Could not load ${href}`)), { once: true });
+      link.addEventListener('error', () => {
+        link.remove();
+        reject(new Error(`Could not load ${href}`));
+      }, { once: true });
       document.head.appendChild(link);
     });
   }

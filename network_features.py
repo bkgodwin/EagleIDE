@@ -9,9 +9,10 @@ from __future__ import annotations
 import copy
 
 from flask import jsonify, request
+from werkzeug.exceptions import RequestEntityTooLarge
 
 from network_content import ACRONYM_REFERENCE, COMMAND_REFERENCE, EXAMPLE_TOPOLOGIES, LABS, PORT_REFERENCE, example_summaries, lab_summary
-from network_store import NetworkDataError, NetworkStore, grade_lab, validate_topology
+from network_store import WIFI_LIMITS, NetworkDataError, NetworkStore, WifiRevisionError, grade_lab, validate_topology
 
 
 def register(
@@ -116,6 +117,7 @@ def register(
                 "examples": example_summaries(),
                 "assigned_labs": assigned,
                 "saved": saved,
+                "wifi_limits": WIFI_LIMITS,
                 "command_reference": COMMAND_REFERENCE,
                 "port_reference": PORT_REFERENCE,
                 "acronym_reference": ACRONYM_REFERENCE,
@@ -208,6 +210,51 @@ def register(
         if not deleted:
             return jsonify(ok=False, error="Saved network not found"), 404
         return jsonify(ok=True)
+
+    def wifi_account():
+        current = actor()
+        if current["role"] == "guest":
+            return None, (jsonify(ok=False, error="Sign in to save or open Wi-Fi sites"), 401)
+        if not may_open(current):
+            return None, (jsonify(ok=False, error="Network Simulator is disabled"), 403)
+        return current["email"], None
+
+    @app.get("/api/network/wifi-sites")
+    def wifi_sites_list():
+        email, error = wifi_account()
+        if error:
+            return error
+        return jsonify(ok=True, data=store.list_wifi_sites(email))
+
+    @app.route("/api/network/wifi-sites/<site_id>", methods=["GET", "PUT", "DELETE"])
+    def wifi_site(site_id):
+        email, error = wifi_account()
+        if error:
+            return error
+        try:
+            if request.method == "PUT":
+                request.max_content_length = 96_000
+                payload = json_object()
+                if payload is None:
+                    raise NetworkDataError("A JSON object is required")
+                site = store.save_wifi_site(email, site_id, payload.get("site"), payload.get("revision"))
+                return jsonify(ok=True, data=site)
+            if request.method == "DELETE":
+                if store.delete_wifi_site(email, site_id):
+                    return jsonify(ok=True)
+            else:
+                site = store.get_wifi_site(email, site_id)
+                if site:
+                    return jsonify(ok=True, data=site)
+        except RequestEntityTooLarge:
+            return jsonify(ok=False, error="Wi-Fi site requests must be 96 KB or smaller"), 413
+        except RecursionError:
+            return jsonify(ok=False, error="Wi-Fi site data is nested too deeply"), 400
+        except WifiRevisionError as exc:
+            return jsonify(ok=False, error=str(exc)), 409
+        except NetworkDataError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+        return jsonify(ok=False, error="Saved Wi-Fi site not found"), 404
 
     @app.get("/api/network/student/labs/<class_id>/<lab_id>")
     def network_student_lab_progress_get(class_id, lab_id):

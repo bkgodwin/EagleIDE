@@ -14,13 +14,25 @@ The Network Simulator is an optional EagleIDE app for learning network fundament
 
 Open **Network Sim** in the top bar, then choose one of these paths:
 
-1. **New Network** opens an empty canvas.
+1. **Build a Network** opens an empty canvas. **Start here: Connect two devices** opens two pre-addressed PCs and guides you through connecting their Ethernet ports and sending your first ping.
 2. **Example topologies** opens a writable copy of a complete network. Fourteen examples cover a LAN, routed subnets, DHCP, Layer 2 and Layer 3 switching, VLAN ACLs, hierarchical DNS/HTTP, redundant fiber with RSTP, RIP/OSPF, IPv6 dual stack, PAT and port forwarding, wireless channels/roaming, and a safe cyber traffic-analysis range. Each example includes guided objectives.
 3. **Assigned labs** resumes the student's saved copy and automatic objective grading.
 4. **Saved networks** resumes a signed-in user's private topology.
-5. **Import JSON** opens a topology exported from this simulator.
+5. **Import JSON** opens a topology exported from this simulator. **Resume your latest network** reopens your most recently saved topology.
 
 Use **Export** to keep a portable JSON copy. Export is available to guests and signed-in users.
+
+## Design a Wi-Fi site
+
+Open **Network Sim → Design a Wi-Fi Site** and choose **New Site** or **Try the Two-Room Activity**. The Wi-Fi editor models signal strength on one floor.
+
+1. Choose feet or meters under **Floor plan** and enter your building's width and depth. Grid squares are 5 feet or 1 meter. Changing units preserves the physical size of your design.
+2. Use **Room** to draw a rectangle or **Wall** to draw one segment. Tap two points or drag across the plan. Choose drywall, concrete, metal, or glass. Select a wall to edit its material or drag an endpoint.
+3. Use **Access Point** to place a generic ceiling-mounted or wall-mounted access point. Select a wall-mounted access point to change its facing direction. Use **Note** to label a room or record a design decision, and **Measure** to check distances.
+4. Turn on **Coverage** and compare 2.4 GHz and 5 GHz. Use **Check Signal** to see the estimated dBm, strongest access point, distance, and walls crossed at one location. The heatmap uses the same distance, wall loss, and directional assumptions as the probe. Treat these values as classroom estimates.
+5. Signed-in users can name a site and return to it from **Saved Wi-Fi sites**. Changes autosave, and **Save a Copy** creates a separate design. If another tab has saved a newer version, use **Save a Copy** to keep your local changes.
+
+On the keyboard, focus the plan, move the cursor with the arrow keys, and press Enter to use the selected tool. Choose an object from the **Objects** menu to edit its coordinates directly.
 
 ## Build on desktop or iPad
 
@@ -249,6 +261,7 @@ Each objective updates immediately in the browser and is recalculated by the ser
 - All mutable simulator data is under `network_data/`, separate from IDE files, wiki content, and account/class files.
 - `network_data/catalog.json` contains only class access and lab assignments.
 - Personal networks are isolated into per-account files under `network_data/users/`.
+- Personal Wi-Fi projects are isolated into per-account files under `network_data/wifi/`. Each account can save up to 40 sites, with up to 160 walls, 24 access points, and 80 notes per site.
 - Lab progress uses per-student atomic files under `network_data/progress/<class>/<lab>/`. Concurrent students therefore do not rewrite a single growing progress file.
 - Topology input is validated for JSON size, identifier format, supported types, valid endpoints, unique port use, media compatibility, configuration depth, and item limits before saving. Schema migrations run before validation.
 - Turning the global switch off hides/blocks the app but does not delete data. Removing `network_features.py`, `network_store.py`, `network_content.py`, the network JS/CSS files, and their small registration/markup hooks removes the feature without changing IDE runners or wiki storage.
