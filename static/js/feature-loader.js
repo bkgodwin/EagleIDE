@@ -11,9 +11,11 @@
       '/static/js/network-sim-advanced.js?v=20261112-site',
     ],
     wifiSite: [
-      '/static/css/features/wifi-site.css?v=20261112-site',
-      '/static/js/wifi-site-model.js?v=20261112-site',
-      '/static/js/wifi-site.js?v=20261112-site',
+      '/static/css/features/wifi-site.css?v=20261112-open-canvas',
+      '/static/js/wifi-site-model.js?v=20261112-open-canvas',
+      '/static/js/wifi-site-view.js?v=20261112-open-canvas',
+      '/static/js/wifi-site-heatmap.js?v=20261112-open-canvas',
+      '/static/js/wifi-site.js?v=20261112-open-canvas',
     ],
     wikiTools: [
       '/static/css/features/wiki-tools.css?v=20260921-1',
