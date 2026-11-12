@@ -354,14 +354,13 @@
     return true;
   }
   function evaluatePacket(context) {
-    const { result, path = [], source, target, protocol, port } = context || {};
+    const { path = [], source, target, protocol, port } = context || {};
     const devices = topology()?.devices || [];
     const firewall = devices.find(device => path.includes(device.id) && device.type === 'firewall');
-    if (firewall?.config?.stateful !== false) {
-      const reverse = sessions.find(session => session.device === firewall.id && session.protocol === protocol && session.source === primaryAddress(target) && session.destination === primaryAddress(source) && session.state === 'ESTABLISHED');
-      if (reverse) return { allowed: true, reason: 'Permitted by the state table.' };
+    if (firewall && allowsEstablished(firewall, source, target, protocol, port)) {
+      return { allowed: true, reason: 'Permitted by the state table.' };
     }
-    return result;
+    return null;
   }
   function allowsEstablished(firewall, source, target, protocol, port) {
     if (firewall?.config?.stateful === false) return false;

@@ -22,6 +22,9 @@ MAX_DEVICES = 100
 MAX_LINKS = 200
 MAX_TOPOLOGY_BYTES = 512_000
 MAX_SAVED_TOPOLOGIES = 40
+WIFI_SCHEMA_VERSION = 1
+WIFI_LIMITS = {"walls": 160, "access_points": 24, "labels": 80, "saved": 40}
+WIFI_MATERIALS = {"drywall", "concrete", "metal", "glass"}
 DEVICE_TYPES = {"pc", "laptop", "phone", "server", "switch", "l3switch", "router", "firewall", "wap", "cloud"}
 LINK_TYPES = {"ethernet", "fiber", "serial"}
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
@@ -29,6 +32,76 @@ _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 
 class NetworkDataError(ValueError):
     pass
+
+
+class WifiRevisionError(NetworkDataError):
+    pass
+
+
+def validate_wifi_site(raw):
+    """Normalize a bounded, single-floor plan with all distances in meters."""
+    if not isinstance(raw, dict) or type(raw.get("schema_version")) is not int or raw["schema_version"] != WIFI_SCHEMA_VERSION:
+        raise NetworkDataError("Unsupported Wi-Fi site format")
+
+    def number(value, minimum, maximum, field):
+        if type(value) not in (int, float) or not minimum <= value <= maximum:
+            raise NetworkDataError(f"Invalid {field}")
+        return round(value, 4)
+
+    def label(value, limit, fallback=""):
+        if not isinstance(value, str) or len(value) > limit:
+            raise NetworkDataError(f"Text must be {limit} characters or fewer")
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise NetworkDataError("Text must contain valid Unicode characters") from exc
+        return " ".join(value.split()) or fallback
+
+    width = number(raw.get("width"), 8, 120, "site width")
+    height = number(raw.get("height"), 8, 120, "site height")
+    units, band = raw.get("units"), raw.get("band")
+    if units not in ("ft", "m") or band not in ("2.4", "5"):
+        raise NetworkDataError("Invalid display units or Wi-Fi band")
+
+    def point(value):
+        if not isinstance(value, dict):
+            raise NetworkDataError("Expected a point within the floor plan")
+        return {"x": number(value.get("x"), 0, width, "x coordinate"),
+                "y": number(value.get("y"), 0, height, "y coordinate")}
+
+    plan = {"schema_version": WIFI_SCHEMA_VERSION, "title": label(raw.get("title"), 120, "Untitled Wi-Fi Site"),
+            "width": width, "height": height, "units": units, "band": band}
+    seen = set()
+    for kind in ("walls", "access_points", "labels"):
+        items = raw.get(kind)
+        if not isinstance(items, list) or len(items) > WIFI_LIMITS[kind]:
+            raise NetworkDataError(f"A site supports up to {WIFI_LIMITS[kind]} {kind.replace('_', ' ')}")
+        plan[kind] = []
+        for item in items:
+            if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+                raise NetworkDataError("Invalid floor plan object")
+            item_id = _safe_id(item.get("id"))
+            if item_id in seen:
+                raise NetworkDataError("Floor plan object IDs must be unique")
+            seen.add(item_id)
+            if kind == "walls":
+                material = item.get("material")
+                if not isinstance(material, str) or material not in WIFI_MATERIALS:
+                    raise NetworkDataError("Unknown wall material")
+                a, b = point(item.get("a")), point(item.get("b"))
+                if (a["x"] - b["x"]) ** 2 + (a["y"] - b["y"]) ** 2 < 0.0499 ** 2:
+                    raise NetworkDataError("Wall segments must be at least 5 centimeters long")
+                clean = {"a": a, "b": b, "material": material}
+            elif kind == "access_points":
+                mount = item.get("mount")
+                if mount not in ("wall", "ceiling"):
+                    raise NetworkDataError("Unknown access point mount")
+                clean = {**point(item), "mount": mount, "name": label(item.get("name"), 60),
+                         "angle": number(item.get("angle"), 0, 360, "access point direction") % 360}
+            else:
+                clean = {**point(item), "text": label(item.get("text"), 160, "New note")}
+            plan[kind].append({"id": item_id, **clean})
+    return plan
 
 
 def migrate_topology(raw):
@@ -737,6 +810,7 @@ class NetworkStore:
     def __init__(self, base_dir):
         self.base_dir = Path(base_dir).expanduser().resolve()
         self.users_dir = self.base_dir / "users"
+        self.wifi_dir = self.base_dir / "wifi"
         self.progress_dir = self.base_dir / "progress"
         self.catalog_path = self.base_dir / "catalog.json"
         self._lock = threading.RLock()
@@ -769,6 +843,58 @@ class NetworkStore:
 
     def _user_path(self, email):
         return self.users_dir / f"{self._user_key(email)}.json"
+
+    def _wifi_path(self, email):
+        return self.wifi_dir / f"{self._user_key(email)}.json"
+
+    def _read_wifi_sites(self, path):
+        # A failed read must never be treated as permission to replace saved work.
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))["sites"]
+        except FileNotFoundError:
+            return {}
+
+    def list_wifi_sites(self, email):
+        with self._lock:
+            sites = self._read_wifi_sites(self._wifi_path(email))
+            return [{key: site[key] for key in ("id", "title", "updated_at")}
+                    for site in sorted(sites.values(), key=lambda site: site["updated_at"], reverse=True)]
+
+    def get_wifi_site(self, email, site_id):
+        with self._lock:
+            return self._read_wifi_sites(self._wifi_path(email)).get(_safe_id(site_id))
+
+    def save_wifi_site(self, email, site_id, raw, revision):
+        site_id = _safe_id(site_id)
+        site = validate_wifi_site(raw)
+        if type(revision) is not int or revision < 0:
+            raise NetworkDataError("A valid project revision is required")
+        with self._lock:
+            path = self._wifi_path(email)
+            sites = self._read_wifi_sites(path)
+            existing = sites.get(site_id)
+            current_revision = existing["revision"] if existing else 0
+            if revision != current_revision:
+                # A retry after a lost response may safely acknowledge the same save.
+                if existing and current_revision == revision + 1 and all(existing[key] == value for key, value in site.items()):
+                    return existing
+                raise WifiRevisionError("This project changed in another tab or was deleted. Save a copy to keep your edits.")
+            if existing is None and len(sites) >= WIFI_LIMITS["saved"]:
+                raise NetworkDataError(f"You may save at most {WIFI_LIMITS['saved']} Wi-Fi sites")
+            now = time.time()
+            site.update(id=site_id, revision=revision + 1, updated_at=now)
+            sites[site_id] = site
+            self._write_json(path, {"sites": sites})
+            return site
+
+    def delete_wifi_site(self, email, site_id):
+        with self._lock:
+            path = self._wifi_path(email)
+            sites = self._read_wifi_sites(path)
+            if sites.pop(_safe_id(site_id), None) is None:
+                return False
+            self._write_json(path, {"sites": sites})
+            return True
 
     def _catalog(self):
         return self._read_json(self.catalog_path, {"schema_version": SCHEMA_VERSION, "class_access": {}, "assignments": []})

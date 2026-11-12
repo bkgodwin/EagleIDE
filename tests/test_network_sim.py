@@ -376,6 +376,62 @@ class NetworkRouteTests(unittest.TestCase):
         self.store.set_class_access("class-1", True)
         self.assertEqual(self.client.get("/api/network/topologies/my-lan", headers={"X-User-Token": "student-token"}).status_code, 404)
 
+    def wifi_plan(self):
+        return {
+            "schema_version": 1, "title": "Two rooms", "width": 40, "height": 28,
+            "units": "ft", "band": "5",
+            "walls": [{"id": "wall-1", "a": {"x": 20, "y": 4}, "b": {"x": 20, "y": 24}, "material": "concrete"}],
+            "access_points": [{"id": "ap-1", "x": 11, "y": 14, "mount": "wall", "angle": 90, "name": "Hall AP"}],
+            "labels": [{"id": "note-1", "x": 25, "y": 7, "text": "Check signal here"}],
+        }
+
+    def test_wifi_site_access_and_account_owned_round_trip(self):
+        url = "/api/network/wifi-sites/site-1"
+        headers = {"X-User-Token": "student-token"}
+        teacher = {"X-Teacher-Token": "teacher-token"}
+        plan = self.wifi_plan()
+        payload = {"site": plan, "revision": 0}
+        self.assertEqual(self.client.put(url, json=payload).status_code, 401)
+        self.assertEqual(self.client.put(url, json=payload, headers=headers).status_code, 403)
+        self.store.set_class_access("class-1", True)
+        saved = self.client.put(url, json=payload, headers=headers)
+        self.assertEqual(saved.status_code, 200, saved.json)
+        self.assertEqual(saved.json["data"]["revision"], 1)
+        opened = self.client.get(url, headers=headers).json["data"]
+        self.assertEqual({key: opened[key] for key in plan}, plan)
+        self.assertEqual(self.client.get(url, headers=teacher).status_code, 404)
+        self.assertEqual(self.client.delete(url, headers=teacher).status_code, 404)
+        self.assertEqual(self.client.get("/api/network/wifi-sites", headers=teacher).json["data"], [])
+        self.assertEqual(self.client.get("/api/network/topologies", headers=headers).json["data"], [])
+        self.config_state["network_sim_enabled"] = False
+        self.assertEqual(self.client.get(url, headers=headers).status_code, 403)
+        self.config_state["network_sim_enabled"] = True
+        self.assertEqual(self.client.delete(url, headers=headers).status_code, 200)
+        self.assertEqual(self.client.get(url, headers=headers).status_code, 404)
+
+    def test_wifi_site_validates_objects_and_rejects_stale_autosaves(self):
+        url = "/api/network/wifi-sites/site-1"
+        headers = {"X-Teacher-Token": "teacher-token"}
+        plan = self.wifi_plan()
+        for group, field, bad in (
+            ("walls", "material", []), ("access_points", "angle", float("nan")),
+            ("access_points", "x", 41), ("labels", "id", "../other"),
+            ("labels", "id", "ap-1"), ("labels", "text", "\ud800"),
+        ):
+            invalid = copy.deepcopy(plan)
+            invalid[group][0][field] = bad
+            with self.subTest(group=group, field=field):
+                self.assertEqual(self.client.put(url, headers=headers, json={"site": invalid, "revision": 0}).status_code, 400)
+        payload = {"site": plan, "revision": 0}
+        self.assertEqual(self.client.put(url, headers=headers, json=payload).status_code, 200)
+        self.assertEqual(self.client.put(url, headers=headers, json=payload).json["data"]["revision"], 1)
+        updated = {**plan, "title": "Updated in a second tab"}
+        self.assertEqual(self.client.put(url, headers=headers, json={"site": updated, "revision": 1}).status_code, 200)
+        self.assertEqual(self.client.put(url, headers=headers, json={"site": plan, "revision": 1}).status_code, 409)
+        self.assertEqual(self.client.get(url, headers=headers).json["data"]["title"], updated["title"])
+        self.assertEqual(self.client.delete(url, headers=headers).status_code, 200)
+        self.assertEqual(self.client.put(url, headers=headers, json={"site": plan, "revision": 2}).status_code, 409)
+
     def test_mutating_routes_reject_non_object_json(self):
         teacher = {"X-Teacher-Token": "teacher-token"}
         self.assertEqual(self.client.put("/api/network/topologies/bad", headers=teacher, json=[]).status_code, 400)

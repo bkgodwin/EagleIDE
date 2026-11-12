@@ -47,6 +47,13 @@ body.network-mode .site-nav-link { color: #eef6ff; }
 .network-section-heading h2 { margin: 3px 0 0; color: #fff; font-size: 22px; }
 .network-section-heading > span { color: #8ea8c0; font-size: 12px; }
 .network-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+.network-library-start { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr)); gap: 12px; }
+.network-library-start .network-card { min-height: 82px; }
+.network-mode-hint { margin: 0; padding: 5px 12px; color: var(--network-blue); font-size: 12px; }
+.network-save-state[data-kind="error"] { color: #ffb4a7; }
+.network-save-state[data-kind="good"] { color: #7ee5b2; }
+.network-starter-guide { padding: 10px; color: var(--network-blue); font-size: 13px; line-height: 1.55; }
+.network-starter-guide ol { margin: 6px 0; padding-left: 20px; }
 .network-card { position: relative; min-height: 175px; display: flex; flex-direction: column; gap: 9px; padding: 18px; border: 1px solid var(--network-line); border-top: 3px solid #4879a8; background: rgba(12, 25, 40, .94); color: #edf6ff; text-align: left; cursor: pointer; transition: transform .14s ease, border-color .14s ease, background .14s ease; }
 .network-card:hover, .network-card:focus-visible { transform: translateY(-2px); border-color: rgba(165, 200, 240, .55); background: #12263b; outline: 0; }
 .network-card.is-lab { border-top-color: var(--network-red); }

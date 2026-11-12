@@ -1,0 +1,166 @@
+.wifi-site-library .network-library-hero h1 { margin-top: 16px; }
+.wifi-site-card { min-height: 130px; cursor: default; }
+.wifi-site-card:hover { transform: none; }
+.wifi-site-card h3 button {
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.wifi-site-card > button { align-self: flex-start; }
+#wifiLibraryStatus { margin: 8px 0; color: #c0d3e7; }
+
+.wifi-workspace {
+  --wifi-text: #ecf4ff;
+  --wifi-muted: #aebfd3;
+  --wifi-surface: #0d1a2a;
+  --wifi-raised: #14253a;
+  --wifi-edge: #38516d;
+  --wifi-active: #b5dcff;
+  --wifi-drawing: #f1f5fa;
+  --wifi-drawing-edge: #899eb1;
+  --wifi-matte: #182a3f;
+  --wifi-focus: #94d2ff;
+  color: var(--wifi-text);
+  background: var(--wifi-surface);
+  overflow: auto;
+}
+body.light-mode .wifi-workspace {
+  --wifi-text: #1b3047;
+  --wifi-muted: #405a71;
+  --wifi-surface: #f4f7fb;
+  --wifi-raised: #e7eef7;
+  --wifi-edge: #9aafc4;
+  --wifi-active: #164f82;
+  --wifi-matte: #dbe5ef;
+  --wifi-focus: #1768a5;
+}
+.wifi-project-toolbar {
+  flex: none;
+  flex-wrap: wrap;
+  color: var(--wifi-text);
+  background: var(--wifi-surface);
+  border-color: var(--wifi-edge);
+}
+.wifi-workspace .network-title-field span,
+.wifi-workspace .network-save-state { color: var(--wifi-muted); }
+.wifi-workspace .network-title-field input {
+  color: var(--wifi-text);
+  border-color: var(--wifi-edge);
+}
+.wifi-workspace .network-save-state { max-width: 300px; line-height: 1.35; }
+.wifi-workspace .network-save-state[data-kind="error"] { color: #ffb4a7; }
+body.light-mode .wifi-workspace .network-save-state[data-kind="error"] { color: #a33424; }
+.wifi-workspace :focus-visible { outline: 2px solid var(--wifi-focus); outline-offset: 2px; }
+.wifi-toolbars {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--wifi-edge);
+}
+.wifi-tool-group { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.wifi-tool-group label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.wifi-tool-group .wifi-toggle { min-height: 36px; padding-inline: 3px; }
+.wifi-control, .wifi-workspace select, .wifi-inspector input {
+  min-height: 36px;
+  padding: 5px 9px;
+  border: 1px solid var(--wifi-edge);
+  border-radius: 5px;
+  color: var(--wifi-text);
+  background: var(--wifi-raised);
+  font: inherit;
+  font-size: 13px;
+}
+.wifi-control { cursor: pointer; }
+.wifi-control:hover { border-color: var(--wifi-active); }
+.wifi-control[aria-pressed="true"] { color: var(--wifi-surface); background: var(--wifi-active); border-color: var(--wifi-active); }
+.wifi-control:disabled { opacity: .5; cursor: default; }
+
+.wifi-editor { flex: 1 0 auto; min-height: 440px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(252px, 285px); }
+.wifi-plan { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(320px, 1fr) auto; }
+.wifi-tool-hint { margin: 0; padding: 9px 12px; color: var(--wifi-muted); font-size: 13px; }
+.wifi-viewport {
+  position: relative;
+  min-width: 0;
+  height: clamp(320px, calc(100dvh - 270px), 850px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  touch-action: none;
+  background: var(--wifi-matte);
+}
+.wifi-viewport:focus-visible { outline-offset: -2px; }
+.wifi-viewport[data-tool="pan"] { cursor: grab; }
+.wifi-viewport[data-tool="pan"]:active { cursor: grabbing; }
+.wifi-viewport:not([data-tool="select"], [data-tool="pan"]) .wifi-stage { cursor: crosshair; }
+.wifi-stage {
+  position: relative;
+  margin: 16px auto;
+  outline: 1px solid var(--wifi-drawing-edge);
+  background: var(--wifi-drawing);
+  isolation: isolate;
+  user-select: none;
+}
+.wifi-stage > * { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.wifi-heatmap, .wifi-grid { pointer-events: none; }
+.wifi-heatmap { image-rendering: auto; }
+.wifi-minor-line, .wifi-major-line { fill: none; vector-effect: non-scaling-stroke; }
+.wifi-minor-line { stroke: #263e59; stroke-opacity: .16; stroke-width: 1; }
+.wifi-major-line { stroke: #263e59; stroke-opacity: .34; stroke-width: 1.2; }
+.wifi-wall, .wifi-wall-hit, .wifi-selected-wall, .wifi-preview-line, .wifi-probe-path { vector-effect: non-scaling-stroke; stroke-linecap: round; }
+.wifi-wall { stroke-width: 4; }
+.wifi-wall-hit { stroke: transparent; stroke-width: 18; pointer-events: stroke; }
+.wifi-selected-wall { stroke: #0c52a0; stroke-width: 8; }
+.wifi-handle { fill: #edf6ff; stroke: #0c52a0; stroke-width: 2; vector-effect: non-scaling-stroke; cursor: move; }
+.wifi-ap { fill: #18334c; stroke: #fff; stroke-width: 2; }
+.wifi-ap.is-selected { stroke: #0867cd; stroke-width: 4; }
+.wifi-radio, .wifi-direction { fill: none; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.wifi-radio { stroke: white; }
+.wifi-direction { stroke: #102d4b; paint-order: stroke; filter: drop-shadow(0 0 1px white); }
+.wifi-note-pin { fill: #ffd052; stroke: #253a4e; stroke-width: 1.5; }
+.wifi-note-pin.is-selected { stroke: #0867cd; stroke-width: 3; }
+.wifi-ap-text, .wifi-note-text { fill: #172d43; stroke: #fff; stroke-width: 3; stroke-linejoin: round; paint-order: stroke; font: 700 13px system-ui, sans-serif; }
+.wifi-viewport[data-tool="select"] [data-wifi-object] { cursor: move; }
+.wifi-preview-line, .wifi-probe-path { fill: none; stroke: #155a9c; stroke-width: 2; stroke-dasharray: 5 4; pointer-events: none; }
+.wifi-probe-path { stroke: #1f2d4e; }
+.wifi-cursor, .wifi-probe-point { stroke: #155a9c; fill: #f4f9ff; stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none; }
+.wifi-probe-point { fill: #fff; stroke: #1f2d4e; }
+.wifi-map-footer { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; min-height: 50px; padding: 5px 12px; }
+.wifi-map-footer output, .wifi-scale { color: var(--wifi-text); font-size: 12px; }
+.wifi-scale { display: grid; justify-items: center; gap: 2px; }
+.wifi-scale span { display: block; height: 6px; border: solid currentColor; border-width: 0 1px 2px; }
+
+.wifi-inspector { min-width: 0; align-self: stretch; padding: 12px; border-left: 1px solid var(--wifi-edge); }
+.wifi-panel { padding: 12px 0; border-bottom: 1px solid var(--wifi-edge); }
+.wifi-panel:first-child { padding-top: 0; }
+.wifi-panel h2 { margin: 0 0 9px; color: var(--wifi-text); font-size: 15px; }
+.wifi-panel label { display: grid; gap: 4px; margin-bottom: 8px; font-size: 12px; }
+.wifi-panel label :is(input, select) { width: 100%; min-width: 0; }
+.wifi-panel p, .wifi-model-info, .wifi-activity { margin: 5px 0; color: var(--wifi-muted); font-size: 12px; line-height: 1.5; }
+.wifi-two-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.wifi-model-info summary, .wifi-activity summary { cursor: pointer; color: var(--wifi-text); font-weight: 700; }
+.wifi-activity { padding: 9px; border: 1px solid var(--wifi-edge); border-radius: 5px; }
+.wifi-activity ol { margin: 6px 0 0; padding-left: 20px; }
+.wifi-activity li + li { margin-top: 4px; }
+.wifi-legend { display: flex; flex-wrap: wrap; gap: 4px 9px; margin-bottom: 12px; color: var(--wifi-muted); font-size: 11px; }
+.wifi-legend span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.wifi-legend i { width: 11px; height: 11px; border-radius: 2px; }
+#wifiProbeResult { color: var(--wifi-text); font-size: 13px; line-height: 1.45; }
+
+@media (pointer: coarse) {
+  .wifi-control, .wifi-workspace select, .wifi-inspector input, .wifi-tool-group .wifi-toggle { min-height: 44px; }
+}
+@media (max-width: 850px) {
+  .wifi-editor { grid-template-columns: minmax(0, 1fr); }
+  .wifi-plan { grid-template-rows: auto minmax(280px, 1fr) auto; }
+  .wifi-viewport { height: clamp(280px, 52dvh, 550px); }
+  .wifi-inspector { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); align-items: start; gap: 12px; border: 0; border-top: 1px solid var(--wifi-edge); }
+  .wifi-panel:first-child { padding-top: 12px; }
+}
