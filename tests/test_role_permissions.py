@@ -820,7 +820,8 @@ class RolePermissionTestCase(unittest.TestCase):
 
         self.assertIn("ADMIN_TOKEN || TEACHER_TOKEN || WIKI_MANAGER_TOKEN || aiEnabledForClass", source)
         self.assertIn("streamingToggleBtn.style.display = TEACHER_TOKEN && !isCoTeacher() ? '' : 'none'", source)
-        self.assertIn("const next = !!enabled && !!TEACHER_TOKEN", source)
+        self.assertIn("const next = !!enabled && canBroadcastEditor()", source)
+        self.assertIn("return !!TEACHER_TOKEN && !auditPreviewActive", source)
         self.assertNotIn("role: ADMIN_TOKEN ? 'admin' : 'teacher'", source)
 
 

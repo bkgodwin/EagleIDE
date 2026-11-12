@@ -207,7 +207,9 @@ test('controlled Python, JavaScript, HTML and CSS submissions open in the editor
     let value='old source',attached=0,ideOpened=0,readOnly;
     const context={getSubmissionForAssignment:()=>({assignment:{id:'a',fileControl:true},submission:{email:'student',files:[{id:'file'}],submittedFileName:'Project.'+extension}}),
       currentAdminAssignmentName:null,activeSubmissionContext:null,saveCurrentFile:async()=>true,fileOpenRequestId:0,currentOpenFile:{name:'old.py'},
-      assignmentManagerHeaders:()=>({teacher:'one'}),editor:{getValue:()=>value,setValue:next=>{value=next;}},
+      assignmentManagerHeaders:()=>({teacher:'one'}),teacherStreamingEnabled:true,
+      setTeacherStreamingEnabled(next){context.teacherStreamingEnabled=next;},
+      editor:{getValue:()=>value,setValue:next=>{assert.equal(context.teacherStreamingEnabled,false);value=next;}},
       fetch:async()=>({json:async()=>({ok:true,content:'submitted source',fileName:'Project.'+extension,revisionId:'one',pasteRanges:[[0,3]]})}),
       window:{eagleEditor:null,AssignmentWorkflow:{highlightEditor(){}},WikiReader:{showIDE(){ideOpened++;}}},URLSearchParams,
       clearFileArtifactPreview(){},setCsvMode(){},syncEditorLanguage(){},setMainEditorReadOnly:next=>{readOnly=next;},isCoTeacher:()=>false,

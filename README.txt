@@ -1459,7 +1459,14 @@ the groups and gives members 30 days to download their last saved copy.
 
 Students can open the action menu for a file or folder in Files, choose Share
 as group project and invite up to three classmates. Invitees join from the
-Group Projects section in Files. Open a shared file to see its member icons.
+Group Projects section in Files. Sharing creates a separate working copy.
+Rename the shared copy from Group Projects, including projects made from a
+single file. Use Rename or move for files and subfolders in a folder project.
+Group Trash keeps removed items for 30 days and lets members restore them to an
+available location. The class owner can download the saved project for 30 days
+after its last member leaves and its last invitation closes.
+
+Open a shared file to see its member icons.
 A green ring shows who has that file open. Hover or focus a colored cursor
 to see its name. Show contributions adds color to the text each member entered,
 including existing text credited to the student who first shared the file.
@@ -1467,11 +1474,14 @@ including existing text credited to the student who first shared the file.
 Shared text files up to 2 MiB support live editing. Other assets sync as saved
 files and can be downloaded or replaced from the project browser. Choose
 Unlink and leave group to stop access. Download a personal copy before leaving
-if you want to keep the saved files.
+if you want to keep the saved files. Unsynced recovery drafts are available from
+Files on the same browser tab for up to 24 hours. Signing out clears them.
 
 For assignments where group credit is appropriate, select Allow group
 submissions in the assignment editor. Students choose group files during turn-in
-and can submit for themselves or for the current group. The teacher sees the
+and can submit for themselves or for the current group. Saved project files can
+be submitted outside the collaboration schedule while the assignment accepts
+turn-in. The teacher sees the
 contributors for each submitted file. In its preview, use Highlight
 contributions to see who entered the surviving text. File credit, individual
 questions and grades appear on each student's assignment record.

@@ -347,20 +347,25 @@ when no original text remains. Send annotation invalidations only to authorized
 file viewers. Personal and teacher audit annotations share the private
 provenance sidecar and follow renames, Trash, and permanent file cleanup.
 Validate new anchors against the saved digest or group revision.
-Device drafts are scoped to account, project and file. A stale draft is offered
+Device drafts use tab-scoped storage with an expiration and are scoped to
+account, project and file. A stale draft is offered
 for recovery when the revision journal cannot reconcile it. CodeMirror marks
 are viewport-bounded. Server-authenticated contributors and surviving ranges
 are separate from paste evidence.
 
-Project reads and tree mutations use stable IDs and bounded storage. Never map
+Project reads and tree mutations use stable IDs and bounded storage. Tree
+revisions order path and structure changes independently of text revisions.
+Group Trash preserves file identities and their histories for up to 30 days.
+Never map
 a group file into a personal workspace path. Runner and isolated HTML preview
 sessions receive disposable project snapshots, with current access checked at
 launch and on HTML asset fetches. Keep project data and recovery copies out of
 personal workspace cleanup and worker write paths.
 
 Assignment group credit is opt-in per assignment. Validate each recipient and
-selected file revision under the assignment lock before committing one metadata
-update. The protected bundle is shared by independent grading records. Keep
+selected file revision and path under the assignment lock. Stage the protected
+bundle outside the group database lock, then revalidate before committing one
+metadata update. The protected bundle is shared by independent grading records. Keep
 contribution sidecars with immutable files and copy them when a new quiz revision
 copies the file bundle. Teachers can toggle contributor highlights in the
 attachment preview independently of paste highlights. Maintain lock order from

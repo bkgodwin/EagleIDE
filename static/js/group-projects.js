@@ -5,11 +5,14 @@
   const editByteLimit = 96 * 1024;
   const batchPartLimit = 1500;
   const contributionBlockLines = 32;
+  const draftPrefix = 'eagleide-group-draft:';
+  const draftLifetime = 24 * 60 * 60 * 1000;
   const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   const classColor = value => 'group-color-' + (Number.isInteger(value) && value >= 0 && value <= 12 ? value : 0);
   const id = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join('');
   let bridge, socket, active, list = [], allowed = false, reason = '', account = '', listRequest, openSequence = 0;
   let saveTimer, cursorTimer, refreshTimer, watchTimer, draftTimer;
+  let draftAccount = '';
   let applyEditorChange = false, beforeEdits = [], composing = false, showColors = false;
   const views = new Set();
   const cm = () => window.eagleEditor;
@@ -22,8 +25,8 @@
   const matches = (s, msg) => s && msg.projectId === s.project.id && msg.fileId === s.file.id;
   const valid = s => active === s && s.account === account && bridge.currentFile()?.groupFileId === s.file.id;
   const lost = () => !!window.EagleIDE?.connection?.isLost?.();
-  const draftKey = s => 'eagleide-group-draft:' + JSON.stringify([s.email, s.project.id, s.file.id]);
-  const storage = () => window.localStorage;
+  const draftKey = s => draftPrefix + JSON.stringify([s.email, s.project.id, s.file.id]);
+  const storage = () => window.sessionStorage;
   const route = (projectId = '', fileId = '', teacher = false) => (teacher ? '/api/teacher/group-projects' : baseUrl) +
     (projectId ? '/' + encodeURIComponent(projectId) : '') +
     (fileId ? '/files/' + encodeURIComponent(fileId) : '');
@@ -80,7 +83,9 @@
         if (!project || !allowed) pause(s, reason || 'Your access to this project ended.', true);
         else {
           const reopen = s.paused && !s.conflict;
-          if (JSON.stringify(project.members) !== JSON.stringify(s.project.members)) s.project = {...s.project, ...project};
+          if (project.treeRevision !== s.project.treeRevision || JSON.stringify(project.members) !== JSON.stringify(s.project.members)) {
+            s.project = {...s.project, ...project};
+          }
           if (reopen) {
             s.paused = false;
             poll(s).then(() => watch(s)).catch(error => handleError(s, error));
@@ -100,6 +105,12 @@
       dispose();
       if (s) bridge.close(s.file.id);
       account = next;
+      const email = (context().currentTeacher || context().currentUser)?.email || '';
+      if (email !== draftAccount) {
+        if (draftAccount) removeAccountDrafts(draftAccount);
+        draftAccount = email;
+        if (email) migrateDrafts(email);
+      }
       list = [];
       allowed = false;
       reason = '';
@@ -137,9 +148,12 @@
   function persistDraft(s) {
     if (!s || s.file.kind !== 'text' || !s.pending.length) return true;
     try {
-      const payload = JSON.stringify({revision:s.revision, text:s.local, path:s.file.path});
+      const payload = JSON.stringify({revision:s.revision, text:s.local, path:s.file.path, savedAt:Date.now()});
       if (payload.length > 2 * 1024 * 1024) throw new Error('large draft');
-      storage().setItem(draftKey(s), payload);
+      const key = draftKey(s);
+      const isNew = !storage().getItem(key);
+      storage().setItem(key, payload);
+      if (isNew && valid(s)) notify();
       return true;
     } catch {
       s.recoveryWarning = 'Device storage could not save a recovery draft. Keep this tab open or download your draft.';
@@ -149,12 +163,78 @@
   }
 
   function getDraft(s) {
-    try { return JSON.parse(storage().getItem(draftKey(s)) || 'null'); }
+    try { return readDraft(draftKey(s)); }
     catch { return null; }
   }
 
   function clearDraft(s) {
-    try { storage().removeItem(draftKey(s)); } catch {}
+    try {
+      const key = draftKey(s);
+      if (!storage().getItem(key)) return;
+      storage().removeItem(key);
+      notify();
+    } catch {}
+  }
+
+  function readDraft(key) {
+    const draft = JSON.parse(storage().getItem(key) || 'null');
+    if (typeof draft?.text === 'string' && typeof draft.path === 'string' && Number.isInteger(draft.revision) &&
+        draft.savedAt >= Date.now() - draftLifetime) return draft;
+    storage().removeItem(key);
+    return null;
+  }
+
+  function accountDraftKeys(store, email) {
+    return Object.keys(store).filter(key => key.startsWith(draftPrefix + JSON.stringify([email]).slice(0,-1) + ','));
+  }
+
+  function migrateDrafts(email) {
+    try {
+      const legacy = window.localStorage;
+      for (const key of accountDraftKeys(legacy, email)) {
+        const draft = JSON.parse(legacy.getItem(key));
+        if (typeof draft?.text === 'string' && typeof draft.path === 'string' && Number.isInteger(draft.revision) && !readDraft(key)) {
+          storage().setItem(key, JSON.stringify({...draft, savedAt:Date.now()}));
+        }
+        legacy.removeItem(key);
+      }
+    } catch {}
+  }
+
+  function removeAccountDrafts(email) {
+    try {
+      for (const store of [storage(), window.localStorage]) {
+        for (const key of accountDraftKeys(store, email)) store.removeItem(key);
+      }
+    } catch {}
+  }
+
+  function recoveryDrafts() {
+    if (!draftAccount) return [];
+    try {
+      return accountDraftKeys(storage(), draftAccount).flatMap(key => {
+        const draft = readDraft(key);
+        return draft ? [{key, path:draft.path}] : [];
+      });
+    } catch {return [];}
+  }
+
+  function downloadRecoveryDraft(key) {
+    if (!recoveryDrafts().some(draft => draft.key === key)) return;
+    const draft = readDraft(key);
+    if (draft) saveBlob(new Blob([draft.text]), draft.path.split('/').at(-1));
+  }
+
+  async function prepareSignOut() {
+    const s = active;
+    let downloaded = '';
+    if (s?.pending.length && !await flush()) {
+      if (!confirm('This shared draft could not sync. Download it before signing out? Choose Cancel to stay signed in.')) return false;
+      saveBlob(new Blob([s.local]), s.file.path.split('/').at(-1));
+      downloaded = draftKey(s);
+    }
+    if (!recoveryDrafts().some(draft => draft.key !== downloaded)) return true;
+    return confirm('Signing out clears the recovery drafts on this tab. Choose Cancel to download them from Files first.');
   }
 
   function scheduleSave(s) {
@@ -317,9 +397,12 @@
       s.spans = file.contribution.spans || [];
       s.authors = new Map((file.contribution.authors || []).map(author => [author.id, author]));
     }
-    if (s.file.path !== file.path) {
-      s.file.path = file.path;
-      bridge.rename(s.file.id, file.path);
+    if (file.treeRevision >= s.treeRevision) {
+      s.treeRevision = file.treeRevision;
+      if (s.file.path !== file.path) {
+        s.file.path = file.path;
+        bridge.rename(s.file.id, file.path);
+      }
     }
     schedulePaint(s);
   }
@@ -380,7 +463,7 @@
       const data = await emit('group_project_watch', marker(s));
       if (!valid(s)) return;
       setViewers(s, data.viewers || []);
-      if (data.revision > s.revision) await poll(s);
+      if (data.revision > s.revision || data.treeRevision > s.treeRevision) await poll(s);
       if (s.teacher) scheduleCursor(s);
     } finally { s.watching = false; }
   }
@@ -479,7 +562,7 @@
     const saved = data.file;
     const s = {
       account, teacher, email:(teacher ? context().currentTeacher : context().currentUser)?.email || '',
-      project:teacher ? {...project, own:data.own} : project, file:saved, revision:saved.revision,
+      project:teacher ? {...project, own:data.own} : project, file:saved, revision:saved.revision, treeRevision:saved.treeRevision,
       source:saved.content || '', local:saved.content || '', byteLength:new TextEncoder().encode(saved.content || '').length, pending:[], incoming:new Map(), undo:[], redo:[],
       spans:saved.contribution?.spans || [], authors:new Map((saved.contribution?.authors || []).map(author => [author.id, author])),
       marks:[], cursors:new Map(), viewers:data.viewers || [], message:'', accessEpoch:0, paused:false, conflict:false,
@@ -509,6 +592,14 @@
     });
     value.on('group_project_annotations_changed', msg => {
       if (matches(active, msg)) window.dispatchEvent(new CustomEvent('eagle-group-annotations-changed', {detail:msg}));
+    });
+    value.on('group_project_tree_changed', msg => {
+      const s = active;
+      if (s?.project.id === msg.projectId && msg.treeRevision > s.treeRevision) {
+        Promise.resolve(s.polling).catch(() => {}).then(() => poll(s)).catch(error => handleError(s,error));
+      }
+      window.dispatchEvent(new CustomEvent('eagle-group-tree-changed', {detail:msg}));
+      refresh();
     });
     value.on('group_project_presence', msg => {
       if (matches(active, msg)) setViewers(active, msg.viewers);
@@ -549,7 +640,7 @@
     });
     value.on('group_project_access_changed', msg => {
       const s = active;
-      if (s?.project.id === msg.projectId) {
+      if (s?.project.id === msg.projectId && (!msg.fileId || s.file.id === msg.fileId)) {
         pause(s, 'Checking project access…', true);
         poll(s).then(() => watch(s)).catch(error => handleError(s,error));
       }
@@ -706,7 +797,7 @@
   }
 
   function download(project, file, teacher = false) {
-    return request(route(project.id, '', teacher) + (teacher ? '' : '/download'), {
+    return request(route(project.id, '', teacher) + (teacher && file ? '' : '/download'), {
       teacher, params:{classId:project.classId, ...(file ? {fileId:file.id} : {}), ...(teacher ? {download:'1'} : {})},
       blob:true, timeout:25000,
     })
@@ -777,7 +868,7 @@
       if (editorShowing === visible) return;
       editorShowing = visible;
       const s = active;
-      if (visible && s) watch(s).catch(error => handleError(s,error));
+      if (visible && s) poll(s).then(() => watch(s)).catch(error => handleError(s,error));
       else if (!visible && s) {
         setViewers(s, []);
         if (socket?.connected) socket.emit('group_project_unwatch');
@@ -791,7 +882,7 @@
       if (document.hidden) return;
       refresh();
       const s = active;
-      if (s) poll(s).catch(error => handleError(s,error));
+      if (s && showing()) poll(s).catch(error => handleError(s,error));
     }, 12000);
     watchTimer ||= setInterval(() => {
       const s = active;
@@ -804,10 +895,13 @@
     configure, bindSocket, guard, refresh, canShare, request, route, open, flush, download, saveBlob, esc, classColor,
     subscribe: view => views.add(view),
     list: () => list, available: () => ({allowed, reason}), context, currentProject,
+    historySize: action => active && valid(active) ? active[action].length : null,
+    editHistory: action => {if (active) undo(active, action === 'redo');},
+    recoveryDrafts, downloadRecoveryDraft, prepareSignOut,
     unsaved: () => !!active?.pending.length,
     annotationTarget: fileId => active && valid(active) && active.file.id === fileId && !active.paused && !busy(active) ?
       {...marker(active), revision:active.revision, teacher:active.teacher} : null,
     runTarget: () => active && valid(active) && !active.paused && !active.teacher ?
-      {...marker(active), revision:active.revision} : null,
+      {...marker(active), revision:active.revision, treeRevision:active.treeRevision} : null,
   };
 })();

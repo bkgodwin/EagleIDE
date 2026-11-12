@@ -90,6 +90,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let teacherBroadcastActive = false;
     let teacherBroadcastFlushTimer = null;
     let lastTeacherBroadcast = null;
+    let teacherBroadcastSnapshotId = 0;
     const LANGUAGE_INFO = {
       python: { mode: 'python', label: 'Python', highlight: 'python' },
       javascript: { mode: 'javascript', label: 'JavaScript', highlight: 'javascript' },
@@ -834,10 +835,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           cm.refresh();
           scroll = cm.getScrollInfo();
         }
-        const coords = cm.charCoords({line:cursorLine, ch:0}, 'local');
+        const coords = cm.charCoords({line:cursorLine, ch:pendingTeacherSnapshot?.cursorCh ?? 0}, 'local');
         const top = Math.max(0, Math.min(scroll.height - scroll.clientHeight,
           (coords.top + coords.bottom - scroll.clientHeight) / 2));
-        if (Math.abs(scroll.top - top) >= 1) cm.scrollTo(scroll.left, top);
+        const gutter = cm.getGutterElement().offsetWidth;
+        const left = Math.max(0, Math.min(scroll.width - scroll.clientWidth,
+          coords.left < scroll.left + gutter ? coords.left - gutter - 12 :
+            coords.right > scroll.left + scroll.clientWidth ? coords.right - scroll.clientWidth + 12 : scroll.left));
+        if (Math.abs(scroll.top - top) >= 1 || Math.abs(scroll.left - left) >= 1) cm.scrollTo(left, top);
       } else {
         const view = document.getElementById('teacherStreamFallback');
         if (!view?.clientHeight) return;
@@ -845,6 +850,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         const padding = Math.max(8, Math.ceil((view.clientHeight - lineHeight) / 2));
         pane.style.setProperty('--stream-follow-padding', `${padding}px`);
         view.scrollTop = padding + (cursorLine + .5) * lineHeight - view.clientHeight / 2;
+        const caret = view.querySelector('.teacher-stream-fallback-caret')?.getBoundingClientRect();
+        const bounds = view.getBoundingClientRect();
+        if (caret?.left < bounds.left) view.scrollLeft += caret.left - bounds.left - 12;
+        else if (caret?.right > bounds.right) view.scrollLeft += caret.right - bounds.right + 12;
       }
     }
     window.centerTeacherStream = centerTeacherStream;
@@ -905,13 +914,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       view.scrollTop = scrollTop;
     }
 
-    function applyTeacherCodeToViewer({ code, language, cursorLine, cursorCh = null, selectionAnchor = null }) {
+    function applyTeacherCodeToViewer({ code, language, cursorLine, cursorCh = null, selectionAnchor = null, message }) {
       const cm = initTeacherViewer();
       const indicator = document.getElementById('teacherStreamCursor');
       const head = cursorLine != null && cursorCh != null ? {line:cursorLine, ch:cursorCh} : null;
       const anchor = head && selectionAnchor;
-      indicator.textContent = cursorLine == null ? 'Teacher stream' :
-        `Teacher cursor · Line ${cursorLine + 1}${head ? `, column ${head.ch + 1}` : ''}`;
+      indicator.textContent = message || (cursorLine == null ? 'Teacher stream' :
+        `Teacher cursor · Line ${cursorLine + 1}${head ? `, column ${head.ch + 1}` : ''}`);
       if (cm) {
         const scroll = cm.getScrollInfo();
         const mode = getLanguageInfoForKey(language).mode;
@@ -996,10 +1005,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const btn = document.getElementById('streamingToggleBtn');
       if (!btn) return;
       if (teacherStreamingEnabled) {
-        btn.textContent = '📡 Stream On';
+        btn.textContent = lastTeacherBroadcast?.warning ? '📡 Stream On · file too large' : '📡 Stream On';
+        btn.title = lastTeacherBroadcast?.warning || '';
         btn.classList.remove('stop');
       } else {
         btn.textContent = '📡 Stream Off';
+        btn.title = '';
         btn.classList.add('stop');
       }
     }
@@ -1875,6 +1886,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           if (msg.class_id !== getCurrentClassContext()?.id) return;
           if (!isStudentViewer()) return;
           queueTeacherStreamCode(msg);
+        });
+        socket.on('teacher_cursor', (msg) => {
+          const previous = pendingTeacherSnapshot;
+          if (!isStudentViewer() || !previous || !msg || msg.class_id !== getCurrentClassContext()?.id ||
+              msg.snapshotId !== previous.snapshotId) return;
+          queueTeacherStreamCode({...previous, ...msg});
         });
         socket.on('teacher_stream_status', handleTeacherStreamStatus);
         socket.on('class_presence_updated', (data) => {
@@ -3450,6 +3467,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     document.getElementById('loginBtn').addEventListener('click', () => openLoginModal());
     document.getElementById('signOutBtn')?.addEventListener('click', async () => {
       if (window.ExternalTools?.unsavedStorage?.() && !window.ExternalTools.leave()) return;
+      if (window.GroupProjects && !await window.GroupProjects.prepareSignOut()) return;
       window.ExternalTools?.accountLeaving?.();
       if (!isAuthenticated()) return;
       if (isProgramRunning && socket) socket.emit('stop', {});
@@ -3617,8 +3635,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       };
     }
 
+    function canBroadcastEditor() {
+      return !!TEACHER_TOKEN && !auditPreviewActive && !currentOpenFile?.audit && !currentOpenFile?.groupTeacher &&
+        !currentOpenFile?.submission && !currentOpenFile?.historyPlayback;
+    }
+
     function flushTeacherBroadcast(force = false) {
-      if (!teacherStreamingEnabled || !teacherBroadcastActive || document.hidden || currentOpenFile?.groupTeacher || auditPreviewActive) return;
+      if (!teacherStreamingEnabled || !teacherBroadcastActive || document.hidden || !canBroadcastEditor()) return;
       const token = TEACHER_TOKEN;
       const role = TEACHER_TOKEN ? 'teacher' : '';
       const activeClassId = getCurrentClassContext()?.id;
@@ -3629,18 +3652,28 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const selection = teacherBroadcastSelection(currentCode);
       const {cursorLine, cursorCh, selectionAnchor} = selection;
       const last = lastTeacherBroadcast;
-      if (!force && last?.code === currentCode && last.language === language && last.classId === activeClassId &&
-          last.cursorLine === cursorLine && last.cursorCh === cursorCh &&
-          last.selectionAnchor?.line === selectionAnchor?.line && last.selectionAnchor?.ch === selectionAnchor?.ch) return;
-      socket.emit('teacher_code_update', {
+      const sameSource = !force && last?.code === currentCode && last.language === language && last.classId === activeClassId;
+      if (sameSource && (last.warning || (last.cursorLine === cursorLine && last.cursorCh === cursorCh &&
+          last.selectionAnchor?.line === selectionAnchor?.line && last.selectionAnchor?.ch === selectionAnchor?.ch))) return;
+      const cursorOnly = sameSource && last.accepted;
+      const snapshotId = cursorOnly ? last.snapshotId : ++teacherBroadcastSnapshotId;
+      const next = {code:currentCode, language, classId:activeClassId, snapshotId, ...selection};
+      lastTeacherBroadcast = next;
+      socket.timeout(3500).emit('teacher_code_update', {
         token,
         role,
         class_id: activeClassId,
-        code: currentCode,
+        snapshotId,
+        ...(cursorOnly ? {} : {code:currentCode}),
         language,
         ...selection,
+      }, (error, result) => {
+        if (lastTeacherBroadcast !== next) return;
+        if (!error && result?.ok) next.accepted = true;
+        else if (result?.warning) next.warning = result.warning;
+        else lastTeacherBroadcast = null;
+        updateStreamingToggleButton();
       });
-      lastTeacherBroadcast = { code: currentCode, language, classId: activeClassId, ...selection };
     }
 
     function scheduleTeacherBroadcastFlush(force = false) {
@@ -3675,6 +3708,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
     
     function stopTeacherBroadcast() {
+      lastTeacherBroadcast = null;
       if (teacherBroadcastFlushTimer) {
         clearTimeout(teacherBroadcastFlushTimer);
         teacherBroadcastFlushTimer = null;
@@ -3709,7 +3743,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     });
 
     function setTeacherStreamingEnabled(enabled) {
-      const next = !!enabled && !!TEACHER_TOKEN && !currentOpenFile?.groupTeacher && !auditPreviewActive;
+      const next = !!enabled && canBroadcastEditor();
       teacherStreamingEnabled = next;
       if (next) {
         startTeacherBroadcast();
@@ -9718,6 +9752,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           alert(result.error || 'Could not open submission.');
           return;
         }
+        if (teacherStreamingEnabled) setTeacherStreamingEnabled(false);
         currentOpenFile = {
           name: result.fileName || sourceName,
           submission: true,
