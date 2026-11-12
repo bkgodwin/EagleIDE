@@ -419,7 +419,7 @@
       if (currentAuthKey() !== authKey || !document.body.classList.contains('network-mode') || $('networkLibrary').hidden) return;
       $('networkLibrary').hidden = true;
       await window.WifiSite.open({
-        api, authKey: currentAuthKey, canSave: access.can_save, limits: access.wifi_limits,
+        api, authKey: currentAuthKey, canSave: access.can_save, limits: access.wifi_limits, catalog: access.wifi_cabling,
         makeId, escapeHtml, onBack: () => {
           showLibrary();
           if (document.body.classList.contains('network-mode')) {

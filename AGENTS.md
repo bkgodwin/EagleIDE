@@ -52,6 +52,7 @@ Required runtime components:
 |-- network_features.py          Optional simulator auth, topology, class access, and lab HTTP routes
 |-- network_store.py             Validated simulator persistence, reachability, and lab grading
 |-- network_content.py           Source-controlled example topologies, labs, and CLI reference
+|-- wifi_cabling.py              Site equipment and ISP catalog, port allocation, and wall penetration validation
 |-- eagle_lab_features.py        Native PVE lab auth, class rules, status probes, and routes
 |-- eagle_lab_store.py           Atomic lab catalog and encrypted PVE credentials
 |-- eagle_lab_gateway.py         PIN-gated launch capabilities, live authorization, and gateway lifecycle
@@ -134,6 +135,8 @@ Required runtime components:
 |       |-- wifi-site-view.js    Wi-Fi camera, adaptive grid, and snapping geometry
 |       |-- wifi-site-heatmap.js  Viewport coverage tiles, cache, and worker scheduling
 |       |-- wifi-site-worker.js  Wi-Fi coverage tile rendering off the UI thread
+|       |-- wifi-cabling-model.js Cable geometry, bundles, port occupancy, and PoE paths
+|       |-- wifi-site-cabling.js Equipment placement, route drafting, and cable inspector
 |       |-- eagle-lab.js         Native PVE lab section, admin/teacher controls, and report window
 |       |-- eagle-lab-access.js  Lightweight eager class entitlement check for Lab navigation
 |       |-- lab-report-content.js Escaped copy commands, authenticated images, floating windows
@@ -722,6 +725,7 @@ Network simulator definitions are source data in `network_content.py`; assignmen
 - Accounts, classes, files, assignments, quizzes, mastery, admin, AI, or core API behavior: `app.py` plus the matching section of `app-core.js`. Keep the Trash root protected, use the locked metadata helpers for restore records, and preserve the distinction between recoverable active-workspace deletion and permanent deletion inside Trash.
 - Network simulator catalog, permissions, grading, migrations, or storage: `network_features.py`, `network_store.py`, and `network_content.py`. Core browser topology/packet behavior belongs in `network-sim.js`; diagnostics, capture, deterministic traffic, IPv6, dynamic-routing views, and productivity tools belong in `network-sim-advanced.js`; background generation belongs in `network-sim-worker.js`; visuals belong in `features/network-sim.css`. Saved topology schema version 2 supports media-aware ports, parallel links, link properties, IPv6, RSTP, routing protocols, wireless radio settings, stateful policy, and seeded simulation metadata; preserve `migrate_topology()` compatibility when evolving it.
 - Wi-Fi site editing is lazy loaded through `feature-loader.js`. Keep the project schema in `network_store.py` and geometry in meters. The browser probe and worker share `wifi-site-model.js`. Keep backing canvases sized to the viewport or to a single tile; the camera and grid in `wifi-site-view.js` are independent of site extents. Site editor styles belong in `features/wifi-site.css`.
+- Wi-Fi cabling uses the equipment/ISP catalog from `wifi_cabling.py` through network bootstrap. Browser checks guide routing, while the same port, wall, spacing, and capacity rules are enforced by the server on save. The coverage worker and probe receive wired APs plus at most the currently selected preview AP.
 - Native PVE lab enrollment/access: `eagle_lab_features.py` and `eagle_lab_store.py`; continuous report draft validation/storage: `lab_reports.py`; assignment-type normalization/scoring: `app.py`; browser section/report overlay: `eagle-lab.js` and `features/eagle-lab.css`.
 - Raise hand, classroom questions, file sharing, or teacher audit: `classroom_features.py`, `classroom-signals.js`, and/or `classroom-files.js`.
 - Notebook prompts and student notes: notebook helpers/routes in `app.py`, `student-notebook.js`, and `features/student-notebook.css`.
