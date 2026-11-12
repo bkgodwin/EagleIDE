@@ -12,7 +12,7 @@ from flask import jsonify, request
 from werkzeug.exceptions import RequestEntityTooLarge
 
 from network_content import ACRONYM_REFERENCE, COMMAND_REFERENCE, EXAMPLE_TOPOLOGIES, LABS, PORT_REFERENCE, example_summaries, lab_summary
-from network_store import WIFI_LIMITS, NetworkDataError, NetworkStore, WifiRevisionError, grade_lab, validate_topology
+from network_store import MAX_WIFI_SITE_BYTES, WIFI_LIMITS, NetworkDataError, NetworkStore, WifiRevisionError, grade_lab, validate_topology
 
 
 def register(
@@ -233,7 +233,7 @@ def register(
             return error
         try:
             if request.method == "PUT":
-                request.max_content_length = 96_000
+                request.max_content_length = MAX_WIFI_SITE_BYTES
                 payload = json_object()
                 if payload is None:
                     raise NetworkDataError("A JSON object is required")
@@ -247,7 +247,7 @@ def register(
                 if site:
                     return jsonify(ok=True, data=site)
         except RequestEntityTooLarge:
-            return jsonify(ok=False, error="Wi-Fi site requests must be 96 KB or smaller"), 413
+            return jsonify(ok=False, error="Wi-Fi site requests must be 512 KB or smaller"), 413
         except RecursionError:
             return jsonify(ok=False, error="Wi-Fi site data is nested too deeply"), 400
         except WifiRevisionError as exc:

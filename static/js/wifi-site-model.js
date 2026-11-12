@@ -7,23 +7,22 @@
     concrete: { name: 'Concrete', color: '#a35e36', loss: { '2.4': 12, '5': 17 } },
     metal: { name: 'Metal', color: '#7752a8', loss: { '2.4': 22, '5': 27 } },
     glass: { name: 'Glass', color: '#15848e', loss: { '2.4': 2, '5': 4 } },
+    wood: { name: 'Wood', color: '#966835', loss: { '2.4': 4, '5': 6 } },
+    brick: { name: 'Brick', color: '#b34a4a', loss: { '2.4': 8, '5': 12 } },
   });
   const MOUNTS = Object.freeze({ ceiling: 'Ceiling-mounted access point', wall: 'Wall-mounted access point' });
   const FEET = 0.3048;
   const gridStep = units => units === 'ft' ? 5 * FEET : 1;
   const displayDistance = (meters, units) => meters / (units === 'ft' ? FEET : 1);
   const metersFrom = (value, units) => value * (units === 'ft' ? FEET : 1);
-  const roundPoint = ({ x, y }) => ({ x: roundDistance(x), y: roundDistance(y) });
   const roundDistance = value => Math.round(value * 10000) / 10000;
   const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-
-  function snapPoint(point, width, height, step = 0) {
-    const snap = value => step ? Math.round(value / step) * step : value;
-    return roundPoint({
-      x: Math.max(0, Math.min(width, snap(point.x))),
-      y: Math.max(0, Math.min(height, snap(point.y))),
-    });
-  }
+  const FADE_START = -90;
+  const FADE_END = -100;
+  const SAMPLES = 64;
+  const PADDING = 1;
+  const referenceSignal = (band, ap) => (band === '5' ? -42 : -35) + (ap.power_db || 0);
+  const radius = (band, ap) => 10 ** ((referenceSignal(band, ap) - FADE_END) / 25);
 
   function wallIntersection(ap, dx, dy, wall) {
     const denominator = dx * wall.dy - dy * wall.dx;
@@ -36,37 +35,52 @@
     return across >= -1e-7 && across <= 1 + 1e-7 ? along : -1;
   }
 
-  function coverageModel(walls, accessPoints, band) {
+  function transmittersFor(walls, accessPoints, band, heat = false) {
     const segments = walls.map(wall => ({
       a: wall.a, dx: wall.b.x - wall.a.x, dy: wall.b.y - wall.a.y,
+      left: Math.min(wall.a.x, wall.b.x), right: Math.max(wall.a.x, wall.b.x),
+      top: Math.min(wall.a.y, wall.b.y), bottom: Math.max(wall.a.y, wall.b.y),
       loss: MATERIALS[wall.material].loss[band], material: wall.material,
     }));
-    const transmitters = accessPoints.map(ap => {
+    return accessPoints.map(ap => {
       const radians = ap.angle * Math.PI / 180;
-      return { ap, facingX: Math.cos(radians), facingY: Math.sin(radians) };
+      const range = heat ? radius(band, ap) : Infinity;
+      const nearby = heat ? segments.filter(wall => wall.left <= ap.x + range && wall.right >= ap.x - range
+        && wall.top <= ap.y + range && wall.bottom >= ap.y - range) : segments;
+      return { ap, facingX: Math.cos(radians), facingY: Math.sin(radians), range,
+        walls: nearby, reference: referenceSignal(band, ap) };
     });
-    const reference = band === '5' ? -42 : -35;
+  }
+
+  function estimateWith(transmitters) {
     // Reuse crossing arrays for heatmap samples. The probe copies its winning path.
     const crossings = [];
     const obstacles = [];
     return (point, detailed = false) => {
       let bestSignal = -Infinity;
       let best = null;
-      for (const { ap, facingX, facingY } of transmitters) {
+      let alternate = null;
+      for (const { ap, facingX, facingY, range, walls, reference } of transmitters) {
         const dx = point.x - ap.x;
         const dy = point.y - ap.y;
-        const length = Math.hypot(dx, dy);
+        const squared = dx * dx + dy * dy;
+        if (squared >= range * range) continue;
+        const length = Math.sqrt(squared);
         const directionLoss = ap.mount === 'wall' && length > 0.01
           ? 9 * (1 - (dx * facingX + dy * facingY) / length) : 0;
         let signal = reference - 25 * Math.log10(Math.max(1, length)) - directionLoss;
-        if (signal <= bestSignal) continue;
+        const cutoff = detailed ? (alternate?.signal ?? -Infinity) : bestSignal;
+        if (signal <= cutoff) continue;
         crossings.length = 0;
         obstacles.length = 0;
-        for (const wall of segments) {
+        const left = Math.min(ap.x, point.x), right = Math.max(ap.x, point.x);
+        const top = Math.min(ap.y, point.y), bottom = Math.max(ap.y, point.y);
+        for (const wall of walls) {
+          if (wall.left > right || wall.right < left || wall.top > bottom || wall.bottom < top) continue;
           const crossing = wallIntersection(ap, dx, dy, wall);
           if (crossing < 0) continue;
           // Joined or coincident segments at the same crossing count as one barrier.
-          const previous = crossings.findIndex(value => Math.abs(value - crossing) < 1e-7);
+          const previous = crossings.findIndex(value => Math.abs(value - crossing) * length < 0.0001);
           if (previous < 0) {
             crossings.push(crossing);
             obstacles.push(wall);
@@ -75,17 +89,27 @@
             signal -= wall.loss - obstacles[previous].loss;
             obstacles[previous] = wall;
           }
+          if (signal <= cutoff) break;
         }
-        if (signal <= bestSignal) continue;
+        if (signal <= cutoff) continue;
+        if (signal <= bestSignal) {
+          if (detailed) alternate = { ap, signal };
+          continue;
+        }
         bestSignal = signal;
         if (detailed) {
+          if (best) alternate = { ap: best.ap, signal: best.signal };
           const path = crossings.map((crossing, i) => ({ crossing, wall: obstacles[i] }));
           path.sort((a, b) => a.crossing - b.crossing);
           best = { ap, signal, distance: length, walls: path.map(item => item.wall.material) };
         }
       }
-      return detailed ? best : bestSignal;
+      return detailed && best ? { ...best, alternate } : detailed ? null : bestSignal;
     };
+  }
+
+  function coverageModel(walls, accessPoints, band) {
+    return estimateWith(transmittersFor(walls, accessPoints, band));
   }
 
   const LEVELS = [
@@ -97,25 +121,79 @@
   ];
   const signalLevel = signal => LEVELS.find(level => signal >= level.min) || LEVELS.at(-1);
 
-  function heatmap({ width, height, walls, access_points, band }) {
-    const step = Math.max(0.35, Math.max(width, height) / 144);
-    const columns = Math.min(144, Math.ceil(width / step));
-    const rows = Math.min(144, Math.ceil(height / step));
-    const pixels = new Uint8ClampedArray(columns * rows * 4);
-    const estimate = coverageModel(walls, access_points, band);
-    for (let row = 0; row < rows; row += 1) {
-      for (let column = 0; column < columns; column += 1) {
-        const signal = estimate({ x: (column + 0.5) * width / columns, y: (row + 0.5) * height / rows });
-        if (signal < -96) continue;
-        pixels.set(signalLevel(signal).color, (row * columns + column) * 4);
+  const stops = [
+    { signal: FADE_END, color: [142, 81, 159, 0] },
+    { signal: FADE_START, color: LEVELS[4].color },
+    { signal: -83, color: LEVELS[3].color },
+    { signal: -73, color: LEVELS[2].color },
+    { signal: -65, color: LEVELS[1].color },
+    { signal: -55, color: LEVELS[0].color },
+  ];
+  const ramp = Array.from({ length: 181 }, (_, index) => {
+    const signal = FADE_END + index / 4;
+    const end = stops.findIndex(stop => stop.signal >= signal);
+    if (end <= 0) return stops[0].color;
+    const low = stops[end - 1], high = stops[end];
+    const amount = (signal - low.signal) / (high.signal - low.signal);
+    return low.color.map((channel, i) => Math.round(channel + (high.color[i] - channel) * amount));
+  });
+  const signalColor = signal => ramp[Math.max(0, Math.min(ramp.length - 1, Math.round((signal - FADE_END) * 4)))];
+  const tileStep = level => 2 ** level;
+  const tileSize = level => SAMPLES * tileStep(level);
+  const tileLevel = scale => Math.floor(Math.log2(4 / scale));
+
+  function tileBounds({ x, y, level }, padding = 0) {
+    const size = tileSize(level);
+    const extra = padding * tileStep(level);
+    return { left: x * size - extra, top: y * size - extra, right: (x + 1) * size + extra, bottom: (y + 1) * size + extra };
+  }
+
+  function inRange({ x, y }, range, bounds) {
+    const dx = Math.max(bounds.left - x, 0, x - bounds.right);
+    const dy = Math.max(bounds.top - y, 0, y - bounds.bottom);
+    return dx * dx + dy * dy < range * range;
+  }
+
+  function heatAreas(accessPoints, band) {
+    return accessPoints.map(ap => ({ ap, range: radius(band, ap) }));
+  }
+
+  function tileHasCoverage(areas, tile) {
+    const bounds = tileBounds(tile, PADDING);
+    return areas.some(({ ap, range }) => inRange(ap, range, bounds));
+  }
+
+  function createHeatSource({ walls, access_points, band }) {
+    const transmitters = transmittersFor(walls, access_points, band, true);
+    return tile => {
+      const bounds = tileBounds(tile, PADDING);
+      const local = transmitters.filter(({ ap, range }) => inRange(ap, range, bounds));
+      if (!local.length) return null;
+      const estimate = estimateWith(local);
+      const step = tileStep(tile.level);
+      const size = SAMPLES + PADDING * 2;
+      const pixels = new Uint8ClampedArray(size * size * 4);
+      const point = { x: 0, y: 0 };
+      let visible = false;
+      for (let row = 0; row < size; row += 1) {
+        point.y = bounds.top + (row + 0.5) * step;
+        for (let column = 0; column < size; column += 1) {
+          point.x = bounds.left + (column + 0.5) * step;
+          const signal = estimate(point);
+          if (signal <= FADE_END) continue;
+          const color = signalColor(signal);
+          pixels.set(color, (row * size + column) * 4);
+          visible ||= color[3] > 0;
+        }
       }
-    }
-    return { columns, rows, pixels };
+      return visible ? pixels : null;
+    };
   }
 
   const model = {
     MATERIALS, MOUNTS, LEVELS, gridStep, displayDistance, metersFrom,
-    roundDistance, distance, snapPoint, coverageModel, signalLevel, heatmap,
+    roundDistance, distance, coverageModel, signalLevel, signalColor, SAMPLES, PADDING,
+    tileLevel, tileSize, tileStep, tileBounds, tileHasCoverage, heatAreas, createHeatSource,
   };
   if (typeof module === 'object' && module.exports) module.exports = model;
   else root.WifiSiteModel = model;

@@ -1,9 +1,16 @@
 /* Render classroom coverage off the UI thread. */
 'use strict';
 
-importScripts('/static/js/wifi-site-model.js?v=20261112-site');
+importScripts('/static/js/wifi-site-model.js?v=20261112-open-canvas');
 
+let revision;
+let renderTile;
 self.onmessage = ({ data }) => {
-  const { columns, rows, pixels } = self.WifiSiteModel.heatmap(data.plan);
-  self.postMessage({ id: data.id, columns, rows, pixels }, [pixels.buffer]);
+  if (data.plan) {
+    revision = data.revision;
+    renderTile = self.WifiSiteModel.createHeatSource(data.plan);
+    return;
+  }
+  const pixels = revision === data.revision ? renderTile(data.tile) : null;
+  self.postMessage({ revision: data.revision, tile: data.tile, pixels }, pixels ? [pixels.buffer] : []);
 };

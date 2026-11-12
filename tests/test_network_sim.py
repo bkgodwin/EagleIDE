@@ -378,10 +378,10 @@ class NetworkRouteTests(unittest.TestCase):
 
     def wifi_plan(self):
         return {
-            "schema_version": 1, "title": "Two rooms", "width": 40, "height": 28,
+            "schema_version": 2, "title": "Two rooms",
             "units": "ft", "band": "5",
             "walls": [{"id": "wall-1", "a": {"x": 20, "y": 4}, "b": {"x": 20, "y": 24}, "material": "concrete"}],
-            "access_points": [{"id": "ap-1", "x": 11, "y": 14, "mount": "wall", "angle": 90, "name": "Hall AP"}],
+            "access_points": [{"id": "ap-1", "x": 11, "y": 14, "mount": "wall", "angle": 90, "name": "Hall AP", "power_db": 0}],
             "labels": [{"id": "note-1", "x": 25, "y": 7, "text": "Check signal here"}],
         }
 
@@ -415,7 +415,7 @@ class NetworkRouteTests(unittest.TestCase):
         plan = self.wifi_plan()
         for group, field, bad in (
             ("walls", "material", []), ("access_points", "angle", float("nan")),
-            ("access_points", "x", 41), ("labels", "id", "../other"),
+            ("access_points", "x", 1e20), ("access_points", "power_db", 20), ("labels", "id", "../other"),
             ("labels", "id", "ap-1"), ("labels", "text", "\ud800"),
         ):
             invalid = copy.deepcopy(plan)
@@ -431,6 +431,31 @@ class NetworkRouteTests(unittest.TestCase):
         self.assertEqual(self.client.get(url, headers=headers).json["data"]["title"], updated["title"])
         self.assertEqual(self.client.delete(url, headers=headers).status_code, 200)
         self.assertEqual(self.client.put(url, headers=headers, json={"site": plan, "revision": 2}).status_code, 409)
+
+    def test_wifi_site_opens_legacy_data_and_saves_large_signed_coordinates(self):
+        email = "teacher@example.com"
+        headers = {"X-Teacher-Token": "teacher-token"}
+        url = "/api/network/wifi-sites/legacy-site"
+        original = self.wifi_plan()
+        legacy = {**copy.deepcopy(original), "id": "legacy-site", "revision": 7,
+                  "updated_at": 1200, "schema_version": 1, "width": 40, "height": 28}
+        del legacy["access_points"][0]["power_db"]
+        self.store._write_json(self.store._wifi_path(email), {"sites": {"legacy-site": legacy}})
+        opened = self.client.get(url, headers=headers).json["data"]
+        self.assertEqual(opened["revision"], 7)
+        self.assertEqual({key: opened[key] for key in original}, original)
+        self.assertNotIn("width", opened)
+        opened["walls"] = [
+            {"id": f"campus-{i}", "a": {"x": -2000, "y": i}, "b": {"x": 3250, "y": i}, "material": "brick"}
+            for i in range(1000)
+        ]
+        opened["access_points"][0].update(x=-1500.125, power_db=6)
+        saved = self.client.put(url, headers=headers, json={"site": opened, "revision": 7})
+        self.assertEqual(saved.status_code, 200, saved.json)
+        reopened = self.client.get(url, headers=headers).json["data"]
+        self.assertEqual(reopened["walls"], opened["walls"])
+        self.assertEqual(reopened["access_points"], opened["access_points"])
+        self.assertEqual(reopened["revision"], 8)
 
     def test_mutating_routes_reject_non_object_json(self):
         teacher = {"X-Teacher-Token": "teacher-token"}

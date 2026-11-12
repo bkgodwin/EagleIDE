@@ -540,9 +540,11 @@
         <div class="wifi-tool-group" role="group" aria-label="Editing and coverage">
           <label id="wifiMaterialField">Material<select id="wifiMaterial"></select></label>
           <label id="wifiMountField" hidden>Mount<select id="wifiMount"></select></label>
+          <label class="wifi-toggle" id="wifiOrthogonalField" hidden><input type="checkbox" id="wifiOrthogonal"> Right angles</label>
+          <button class="wifi-control" id="wifiFinishWall" type="button" hidden>Finish Wall</button>
           <button class="wifi-control" id="wifiUndo" type="button">Undo</button>
           <button class="wifi-control" id="wifiRedo" type="button">Redo</button>
-          <label class="wifi-toggle"><input type="checkbox" id="wifiSnap" checked> Snap to grid</label>
+          <label class="wifi-toggle" title="Snap to the grid or a nearby wall endpoint"><input type="checkbox" id="wifiSnap" checked> Snap</label>
           <label class="wifi-toggle"><input type="checkbox" id="wifiCoverage" checked> Coverage</label>
           <label>Band<select id="wifiBand"><option value="2.4">2.4 GHz</option><option value="5">5 GHz</option></select></label>
         </div>
@@ -554,18 +556,21 @@
             <div class="wifi-stage" id="wifiStage">
               <canvas class="wifi-heatmap" id="wifiHeatmap" aria-hidden="true"></canvas>
               <svg class="wifi-grid" id="wifiGrid" aria-hidden="true"></svg>
-              <svg class="wifi-objects" id="wifiObjects" aria-hidden="true"></svg>
+              <svg class="wifi-objects" id="wifiObjects" aria-hidden="true">
+                <g id="wifiWalls"></g><g id="wifiMarkers"></g><g id="wifiOverlay"></g>
+              </svg>
             </div>
           </div>
           <footer class="wifi-map-footer">
             <div class="wifi-tool-group" role="group" aria-label="Zoom">
               <button class="wifi-control" id="wifiZoomOut" type="button" aria-label="Zoom out">−</button>
               <button class="wifi-control" id="wifiZoomIn" type="button" aria-label="Zoom in">+</button>
-              <button class="wifi-control" id="wifiFit" type="button">Fit</button>
+              <button class="wifi-control" id="wifiFit" type="button" title="Fit all objects in the drawing">Fit Site</button>
             </div>
             <div id="wifiScale" class="wifi-scale" aria-label="Map scale"><span></span><strong></strong></div>
             <output id="wifiMeasureResult"></output>
             <output id="wifiProbeSummary" aria-label="Signal at selected point"></output>
+            <span id="wifiCoverageStatus" class="wifi-coverage-status" hidden>Updating coverage…</span>
           </footer>
         </div>
         <aside class="wifi-inspector" aria-label="Floor plan settings">
@@ -580,11 +585,9 @@
           <section class="wifi-panel">
             <h2>Floor plan</h2>
             <label>Units<select id="wifiUnits"><option value="m">Meters</option><option value="ft">Feet</option></select></label>
-            <div class="wifi-two-fields">
-              <label>Width <input type="number" id="wifiWidth" step="any" inputmode="decimal"></label>
-              <label>Depth <input type="number" id="wifiHeight" step="any" inputmode="decimal"></label>
-            </div>
+            <p id="wifiSiteExtents"></p>
             <p id="wifiGridLabel"></p>
+            <p>Scroll or pinch to zoom. Use Pan or hold Space and drag to move the view.</p>
           </section>
           <section class="wifi-panel">
             <h2>Objects</h2>
@@ -595,7 +598,7 @@
             <h2>Estimated signal</h2>
             <div id="wifiLegend" class="wifi-legend"></div>
             <div id="wifiProbeResult" role="status"></div>
-            <details class="wifi-model-info"><summary>About this estimate</summary><p>The map shows the strongest predicted signal at each point. The classroom model uses distance, simplified antenna direction, and an illustrative loss per wall. It estimates signal strength for comparison and does not model speed or interference.</p></details>
+            <details class="wifi-model-info"><summary>About this estimate</summary><p>The map shows the strongest predicted signal at each point. The classroom model uses distance, wall loss, antenna direction, and relative transmit power. Use the second AP reading to compare overlap. These signal estimates do not model speed or interference.</p></details>
           </section>
         </aside>
       </div>

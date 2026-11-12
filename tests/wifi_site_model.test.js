@@ -1,6 +1,9 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { coverageModel, displayDistance, metersFrom, heatmap, gridStep, snapPoint } = require('../static/js/wifi-site-model.js');
+const { coverageModel, displayDistance, metersFrom, gridStep, signalColor,
+  createHeatSource, SAMPLES, PADDING } = require('../static/js/wifi-site-model.js');
+const { bounds, fitCamera, viewportBounds, zoomAt, screenToWorld, gridSpacing,
+  snapConstruction } = require('../static/js/wifi-site-view.js');
 
 const ceiling = { x: 5, y: 10, angle: 0, mount: 'ceiling' };
 const probe = { x: 15, y: 10 };
@@ -29,20 +32,59 @@ test('joined segments count once and the strongest access point wins', () => {
   const winning = coverageModel([barrier], [ceiling, nearby], '5')(probe, true);
   assert.equal(winning.ap, nearby);
   assert.deepEqual(winning.walls, []);
+  assert.equal(winning.alternate.ap, ceiling);
+  assert.equal(winning.alternate.signal, coverageModel([barrier], [ceiling], '5')(probe));
 });
 
-test('wall mount rotation changes its directional estimate and heatmaps are bounded', () => {
+test('wall mount rotation and power change the signal at the probe and on the map', () => {
   const forward = { ...ceiling, mount: 'wall' };
   const reversed = { ...forward, angle: 180 };
   assert.ok(coverageModel([], [forward], '5')(probe) > coverageModel([], [reversed], '5')(probe));
-  const result = heatmap({ width: 120, height: 120, walls: [], access_points: [forward], band: '5' });
-  assert.ok(result.columns <= 144 && result.rows <= 144);
-  assert.equal(result.pixels.length, result.columns * result.rows * 4);
-  assert.ok(result.pixels.some(value => value > 0));
+  const high = { ...forward, power_db: 6 };
+  assert.equal(coverageModel([], [high], '5')(probe) - coverageModel([], [forward], '5')(probe), 6);
+  const tile = { x: 0, y: 0, level: 0 };
+  const base = createHeatSource({ walls: [], access_points: [forward], band: '5' })(tile);
+  const boosted = createHeatSource({ walls: [], access_points: [high], band: '5' })(tile);
+  assert.notDeepEqual(base, boosted);
 });
 
-test('changing display units preserves distances and snap keeps points within the plan', () => {
+test('coverage fades continuously and adjacent tiles share their interpolation samples', () => {
+  assert.equal(signalColor(-100)[3], 0);
+  assert.ok(signalColor(-99)[3] > 0 && signalColor(-99)[3] < signalColor(-94)[3]);
+  assert.notDeepEqual(signalColor(-70), signalColor(-71));
+  const tile = createHeatSource({ walls: [barrier], access_points: [ceiling], band: '5' });
+  const left = tile({ x: -1, y: 0, level: 0 });
+  const right = tile({ x: 0, y: 0, level: 0 });
+  const size = SAMPLES + 2 * PADDING;
+  assert.equal(left.length, size * size * 4);
+  for (let row = 0; row < size; row += 1) {
+    const start = row * size * 4;
+    assert.deepEqual(left.slice(start + SAMPLES * 4, start + size * 4), right.slice(start, start + 2 * PADDING * 4));
+  }
+  assert.equal(tile({ x: 100_000, y: -200_000, level: 0 }), null);
+});
+
+test('grid adapts as the camera zooms and construction can snap to existing endpoints', () => {
   assert.equal(metersFrom(displayDistance(10, 'ft'), 'ft'), 10);
   assert.equal(displayDistance(gridStep('ft'), 'ft'), 5);
-  assert.deepEqual(snapPoint({ x: 9.8, y: -2 }, 10, 12, gridStep('ft')), { x: 9.144, y: 0 });
+  assert.ok(gridSpacing(0.1, 1) > gridSpacing(20, 1));
+  const config = { origin: { x: -20, y: 2.2 }, orthogonal: true, step: 1, tolerance: 0.4,
+    endpoints: [{ x: -12.5, y: 2.2, wallId: 'existing' }, { x: -12.4, y: 2.35 }] };
+  const point = { x: -12.4, y: 2.4 };
+  assert.deepEqual(snapConstruction(point, config), { point: { x: -12.5, y: 2.2 }, joined: true });
+  assert.deepEqual(snapConstruction(point, { ...config, exclude: 'existing' }), { point: { x: -12, y: 2.2 }, joined: false });
+});
+
+test('zoom holds the point under the cursor and fit includes geometry far outside the old floor', () => {
+  const start = { x: -8, y: -12, scale: 14 };
+  const cursor = { x: 210, y: 190 };
+  const zoomed = zoomAt(start, cursor, 0.01);
+  const anchored = screenToWorld(zoomed, cursor);
+  const original = screenToWorld(start, cursor);
+  assert.ok(Math.hypot(anchored.x - original.x, anchored.y - original.y) < 1e-10);
+  const site = bounds([{ x: -1500, y: -800 }, { x: 2400, y: 1600 }]);
+  const fitted = fitCamera(site, 950, 620);
+  const visible = viewportBounds(fitted, 950, 620);
+  assert.ok(visible.left < site.left && visible.top < site.top);
+  assert.ok(visible.right > site.right && visible.bottom > site.bottom);
 });
