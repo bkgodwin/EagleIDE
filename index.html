@@ -45,7 +45,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js" integrity="sha384-44q2s9jxk8W5N9gAB0yn7UYLi9E2oVw8eHyaTZLkDS3WuZM/AttkAiVj6JoZuGS4" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js" integrity="sha384-jgkY4GMNWfQcLLIoP1vg3FWXflDrRhcSXGBW6ONIWC2SOIv5H1Pa57sXs+aomCuZ" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js" integrity="sha384-EO/jSdjpPTVnKfaKudbmOTZBYv471ACLOeLdy0zhCEJrQAtjgUSCbn/Cc+9QWjIx" crossorigin="anonymous"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261109-history">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261113-scenarios">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -396,6 +396,10 @@
               <ul class="network-hub-list" id="wifiSavedSites"></ul>
               <p class="network-hub-empty" id="wifiSavedEmpty" hidden>No saved sites yet.</p>
             </section>
+            <details class="network-hub-group network-hub-folder" id="wifiScenariosFolder" hidden>
+              <summary><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>Scenarios <span id="wifiScenarioCount" aria-hidden="true"></span></summary>
+              <ul class="network-hub-list" id="wifiScenarioList"></ul>
+            </details>
             <section class="network-hub-group">
               <h3>Example Site</h3>
               <ul class="network-hub-list">
@@ -529,6 +533,7 @@
         <label class="network-title-field"><span>Site name</span><input id="wifiSiteTitle" maxlength="120" value="Untitled Wi-Fi Site"></label>
         <div class="network-toolbar-group network-toolbar-end">
           <span class="network-save-state" id="wifiSaveStatus" role="status"></span>
+          <button class="btn secondary wifi-scenario-button" id="wifiScenarioButton" type="button" aria-haspopup="dialog" aria-controls="wifiScenarioDialog" hidden>Scenario</button>
           <button class="btn secondary" id="wifiDiscardSite" type="button" hidden>Discard Unsaved Edits</button>
           <button class="btn secondary" id="wifiCopySite" type="button">Save a Copy</button>
           <button class="btn run" id="wifiSaveSite" type="button">Save</button>
@@ -649,6 +654,21 @@
           </footer>
         </div>
       </div>
+      <dialog class="wifi-scenario-dialog" id="wifiScenarioDialog" aria-labelledby="wifiScenarioTitle" aria-describedby="wifiScenarioBriefing">
+        <form method="dialog">
+          <header>
+            <div><p class="wifi-scenario-kicker">Scenario briefing</p><h2 id="wifiScenarioTitle"></h2></div>
+            <button class="wifi-control" type="submit" aria-label="Close scenario briefing">×</button>
+          </header>
+          <div class="wifi-scenario-body">
+            <p id="wifiScenarioBriefing"></p>
+            <h3>Key traits</h3>
+            <ul id="wifiScenarioTraits"></ul>
+            <p class="wifi-scenario-plan-note" id="wifiScenarioPlanNote"></p>
+          </div>
+          <footer><button class="btn run" id="wifiScenarioContinue" type="submit" autofocus>Open floor plan</button></footer>
+        </form>
+      </dialog>
     </section>
   </main>
 
@@ -1067,7 +1087,7 @@
             <span class="navbtn-icon">📅</span><span>Lesson Plans</span>
           </button>
           <button class="teacher-dash-navbtn" data-view="dash-network">
-            <span class="navbtn-icon">🌐</span><span>Packet Sim</span>
+            <span class="navbtn-icon">🌐</span><span>Network Lab</span>
           </button>
           <button class="teacher-dash-navbtn" data-view="dash-eagle-lab">
             <span class="navbtn-icon">▣</span><span>Eagle Lab</span>
@@ -1245,10 +1265,10 @@
           <div class="teacher-dash-scroll" id="lessonPlanTeacherHost"></div>
         </div>
 
-        <!-- Packet Sim Labs -->
+        <!-- Network Lab class settings -->
         <div class="teacher-dash-view" id="dash-network">
           <div class="teacher-dash-view-hdr">
-            <h2 class="teacher-dash-view-title">Packet Sim Labs</h2>
+            <h2 class="teacher-dash-view-title">Network Lab</h2>
             <div class="teacher-dash-view-actions">
               <label for="networkTeacherClassSelect">Class</label>
               <select id="networkTeacherClassSelect"></select>
@@ -1261,6 +1281,12 @@
               <label class="network-switch"><input id="networkTeacherAccessToggle" type="checkbox"><span>Allow this class</span></label>
             </div>
             <div id="networkTeacherStatus" class="network-teacher-status" role="status"></div>
+            <section class="network-teacher-scenarios" id="networkTeacherScenarios" aria-labelledby="networkTeacherScenarioHeading" hidden>
+              <h3 id="networkTeacherScenarioHeading">Infra Sim Scenarios</h3>
+              <p>Choose which scenarios students can start in this class. Saved student projects stay available.</p>
+              <ul id="networkTeacherScenarioList"></ul>
+            </section>
+            <h3 class="network-teacher-section-heading" id="networkTeacherLabHeading" hidden>Packet Sim Labs</h3>
             <div id="networkTeacherLabList" class="network-teacher-labs"></div>
           </div>
         </div>
@@ -2318,7 +2344,7 @@
 
   <script src="/static/js/app.js"></script>
   <script src="/static/js/connection.js?v=20261011-files-5"></script>
-  <script src="/static/js/feature-loader.js?v=20261109-history"></script>
+  <script src="/static/js/feature-loader.js?v=20261113-scenarios"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20261021-security-1"></script>
   <script src="/static/js/layout.js?v=20261011-files-5"></script>
@@ -2342,7 +2368,7 @@
   <script src="/static/js/workspace-history.js?v=20261109-history"></script>
   <script src="/static/js/teacher-assignments.js?v=20261109-history"></script>
   <script src="/static/js/editor-edit-menu.js?v=2"></script>
-  <script src="/static/js/app-core.js?v=20261113-network-lab"></script>
+  <script src="/static/js/app-core.js?v=20261113-scenarios"></script>
   <script src="/static/js/eagle-lab-access.js?v=20261103-lab-polish"></script>
   <script src="/static/js/step-mode.js?v=20261011-files-5"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20261021-security-1"></script>

@@ -110,6 +110,15 @@ body.light-mode .network-hub {
 .network-hub-group h3, .network-hub-examples summary { margin: 0 0 9px; color: var(--hub-text); font-size: 14px; font-weight: 750; }
 .network-hub-examples summary { cursor: pointer; margin-bottom: 0; }
 .network-hub-examples[open] summary { margin-bottom: 9px; }
+.network-hub-folder summary {
+  display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; font-weight: 750; list-style: none;
+}
+.network-hub-folder summary::-webkit-details-marker { display: none; }
+.network-hub-folder summary::after { content: ''; margin-left: auto; width: 7px; height: 7px; border: solid var(--hub-muted); border-width: 0 1px 1px 0; transform: rotate(45deg); }
+.network-hub-folder[open] summary { margin-bottom: 10px; }
+.network-hub-folder[open] summary::after { transform: rotate(225deg); }
+.network-hub-folder summary svg { width: 19px; height: 19px; color: var(--hub-accent); }
+.network-hub-folder summary span { padding: 2px 7px; border: 1px solid var(--hub-line); border-radius: 10px; color: var(--hub-muted); font-size: 11px; }
 .network-hub-list { list-style: none; margin: 0; padding: 0; border-radius: 7px; overflow: hidden; }
 .network-hub-row { display: flex; align-items: stretch; min-width: 0; background: var(--hub-row); }
 .network-hub-row + .network-hub-row { border-top: 1px solid var(--hub-line); }
@@ -470,6 +479,14 @@ body.light-mode .network-hub {
 .network-student-status.is-completed { border-left-color: #36a878; background: rgba(54,168,120,.1); }
 .network-student-status.is-in_progress { border-left-color: var(--columbia-blue); background: rgba(84,139,196,.1); }
 #networkTeacherClassSelect { min-width: 220px; min-height: 38px; border: 1px solid var(--theme-border-mid); border-radius: 0; background: var(--theme-input-bg); color: var(--theme-text); padding: 7px; }
+.network-teacher-scenarios { padding: 14px; margin: 0 0 18px; border: 1px solid var(--theme-border-mid); }
+.network-teacher-scenarios h3, .network-teacher-section-heading { margin: 0 0 8px; font-size: 16px; }
+.network-teacher-scenarios p { margin: 0 0 8px; color: var(--theme-text-dim); font-size: 13px; }
+.network-teacher-scenarios ul { list-style: none; margin: 0; padding: 0; }
+.network-teacher-scenarios li { padding: 7px 0; border-top: 1px solid var(--theme-border-mid); }
+.network-teacher-scenarios .network-switch { justify-content: flex-start; min-height: 36px; white-space: normal; }
+.network-teacher-scenarios .network-switch span { display: grid; gap: 3px; }
+.network-teacher-scenarios small { color: var(--theme-text-dim); }
 
 @media (max-width: 1180px) {
   .network-editor-grid { grid-template-columns: 160px minmax(360px, 1fr) 12px var(--network-inspector-width); }

@@ -295,7 +295,7 @@
     showMode({ push });
     showLibrary();
     try {
-      await loadBootstrap();
+      await loadBootstrap({ force: true });
     } catch (error) {
       if (error.status === 403) {
         alert(error.message);
@@ -324,7 +324,7 @@
     await Promise.resolve(showLibrary());
     if (!document.body.classList.contains('network-mode')) return;
     await loadBootstrap({ force: true }).catch(libraryError);
-    if (!$('networkLibrary').hidden) (focus?.isConnected ? focus : $('networkHubHeading')).focus();
+    if (!$('networkLibrary').hidden) (focus?.isConnected && !focus.closest('[hidden]') ? focus : $('networkHubHeading')).focus();
   }
   function libraryError(error) {
     $('networkLoading').hidden = false;
@@ -432,6 +432,12 @@
       libraryRow(item.title || 'Untitled Site', '', `data-open-site="${escapeHtml(item.id)}"`,
         { meta: formatTimestamp(item.updated_at), remove: `data-delete-site="${escapeHtml(item.id)}"` })
     ).join('');
+    const scenarios = data.scenarios || [];
+    $('wifiScenariosFolder').hidden = !scenarios.length;
+    $('wifiScenarioCount').textContent = scenarios.length;
+    $('wifiScenarioList').innerHTML = scenarios.map(item =>
+      libraryRow(item.title, item.description, `data-open-scenario="${escapeHtml(item.id)}"`)
+    ).join('');
   }
   function formatTimestamp(value) {
     return value ? new Date(Number(value) * 1000).toLocaleDateString() : '';
@@ -460,18 +466,20 @@
     }
   }
 
-  function openInfra(button, { sample = false, siteId = '' } = {}) {
+  function openInfra(button, { sample = false, siteId = '', scenarioId = '' } = {}) {
     return fromLibrary(button, async valid => {
       const access = await requestBootstrap();
-      const [site] = await Promise.all([
-        siteId ? api(`/api/network/wifi-sites/${encodeURIComponent(siteId)}`) : null,
+      const returnFocus = scenarioId ? $('wifiScenariosFolder').querySelector('summary') : siteId ? null : button;
+      const [project] = await Promise.all([
+        scenarioId ? api(`/api/network/wifi-scenarios/${encodeURIComponent(scenarioId)}`)
+          : siteId ? api(`/api/network/wifi-sites/${encodeURIComponent(siteId)}`) : null,
         window.EagleFeatures.load('wifiSite'),
       ]);
       if (!valid()) return;
       window.WifiSite.open({
         api, authKey: currentAuthKey, canSave: access.can_save, limits: access.wifi_limits, catalog: access.wifi_cabling,
-        makeId, escapeHtml, onBack: () => returnToLibrary(siteId ? null : button),
-      }, { site, sample });
+        makeId, escapeHtml, onBack: () => returnToLibrary(returnFocus),
+      }, { site: scenarioId ? project.site : project, sample, briefing: scenarioId ? project.briefing : null });
     });
   }
 
@@ -2394,12 +2402,22 @@
     if ($('networkReferencePanel')) $('networkReferencePanel').innerHTML = markup;
   }
 
+  let teacherClassRequest = 0;
+
   async function openTeacherPanel() {
     const ctx = context();
     const classes = ctx.teacherClasses || [];
     const select = $('networkTeacherClassSelect');
     select.innerHTML = classes.map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
-    if (!classes.length) { $('networkTeacherLabList').innerHTML = '<div class="network-objectives-empty">Create a class before assigning network labs.</div>'; return; }
+    if (!classes.length) {
+      teacherClassRequest += 1;
+      state.teacherClassId = '';
+      $('networkTeacherAccessToggle').disabled = true;
+      $('networkTeacherScenarios').hidden = $('networkTeacherLabHeading').hidden = true;
+      $('networkTeacherStatus').textContent = '';
+      $('networkTeacherLabList').innerHTML = '<div class="network-objectives-empty">Create a class to manage labs and scenarios.</div>';
+      return;
+    }
     state.teacherClassId = classes.some(item => item.id === state.teacherClassId) ? state.teacherClassId : (ctx.currentTeacherClassId || classes[0].id);
     select.value = state.teacherClassId;
     await loadTeacherClass();
@@ -2407,14 +2425,44 @@
   async function loadTeacherClass() {
     const classId = $('networkTeacherClassSelect').value || state.teacherClassId;
     if (!classId) return;
+    const request = ++teacherClassRequest;
     state.teacherClassId = classId;
-    $('networkTeacherStatus').textContent = 'Loading labs…';
+    $('networkTeacherAccessToggle').disabled = true;
+    $('networkTeacherScenarios').hidden = $('networkTeacherLabHeading').hidden = true;
+    $('networkTeacherLabList').replaceChildren();
+    $('networkTeacherStatus').textContent = 'Loading class settings…';
     try {
       const data = await api(`/api/network/teacher/classes/${encodeURIComponent(classId)}`);
+      if (request !== teacherClassRequest) return;
       $('networkTeacherAccessToggle').checked = !!data.enabled;
+      $('networkTeacherAccessToggle').disabled = false;
       $('networkTeacherStatus').textContent = data.enabled ? `${data.class_name} can use Network Lab when it is globally enabled.` : `${data.class_name} cannot currently open Network Lab.`;
+      renderTeacherScenarios(data.scenarios || []);
+      $('networkTeacherLabHeading').hidden = false;
       renderTeacherLabs(data.labs || []);
-    } catch (error) { $('networkTeacherStatus').textContent = error.message; $('networkTeacherLabList').innerHTML = ''; }
+    } catch (error) { if (request === teacherClassRequest) $('networkTeacherStatus').textContent = error.message; }
+  }
+  function renderTeacherScenarios(scenarios) {
+    $('networkTeacherScenarios').hidden = !scenarios.length;
+    $('networkTeacherScenarioList').innerHTML = scenarios.map(item => `<li>
+      <label class="network-switch"><input type="checkbox" data-teacher-scenario="${escapeHtml(item.id)}" ${item.visible ? 'checked' : ''}>
+      <span><strong>${escapeHtml(item.title)}</strong><small>Show in this class</small></span></label></li>`).join('');
+  }
+  async function setTeacherScenario(input) {
+    const classId = state.teacherClassId;
+    const request = teacherClassRequest;
+    const scenarioId = input.dataset.teacherScenario;
+    const visible = input.checked;
+    input.disabled = true;
+    try {
+      await api(`/api/network/teacher/classes/${encodeURIComponent(classId)}/scenarios/${encodeURIComponent(scenarioId)}`,
+        { method: 'PUT', body: JSON.stringify({ visible }) });
+      if (request === teacherClassRequest) $('networkTeacherStatus').textContent = visible
+        ? 'Scenario shown for this class.' : 'Scenario hidden for this class. Saved projects are still available.';
+    } catch (error) {
+      input.checked = !visible;
+      if (request === teacherClassRequest) $('networkTeacherStatus').textContent = error.message;
+    } finally { input.disabled = false; }
   }
   function renderTeacherLabs(labs) {
     $('networkTeacherLabList').innerHTML = labs.map(lab => {
@@ -2568,6 +2616,7 @@
       if (data.openExample) return openExample(button, data.openExample);
       if (data.openSaved) return openSaved(button, data.openSaved);
       if (data.openSite) return openInfra(button, { siteId: data.openSite });
+      if (data.openScenario) return openInfra(button, { scenarioId: data.openScenario });
       if (data.deleteSaved) return deleteSaved(data.deleteSaved);
       if (data.deleteSite) return deleteInfra(data.deleteSite);
     });
@@ -2579,6 +2628,9 @@
     $('networkTeacherClassSelect')?.addEventListener('change', loadTeacherClass);
     $('networkTeacherRefreshBtn')?.addEventListener('click', loadTeacherClass);
     $('networkTeacherAccessToggle')?.addEventListener('change', event => setTeacherAccess(event.target.checked));
+    $('networkTeacherScenarioList')?.addEventListener('change', event => {
+      if (event.target.matches('[data-teacher-scenario]')) setTeacherScenario(event.target);
+    });
     $('networkTeacherLabList')?.addEventListener('click', event => {
       const demo = event.target.closest('[data-teacher-demo-lab]'); if (demo) return openTeacherLabDemo(demo.dataset.teacherDemoLab);
       const button = event.target.closest('[data-teacher-lab]'); if (button) toggleTeacherLab(button);

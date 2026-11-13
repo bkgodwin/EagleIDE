@@ -30,6 +30,25 @@ body.light-mode .wifi-workspace {
   background: var(--wifi-surface);
   border-color: var(--wifi-edge);
 }
+.wifi-scenario-button { border-color: var(--wifi-active); }
+.wifi-scenario-dialog {
+  width: min(560px, calc(100% - 28px)); max-height: calc(100% - 28px); padding: 0;
+  color: var(--wifi-text); background: var(--wifi-surface); border: 1px solid var(--wifi-edge);
+  border-radius: 12px; box-shadow: 0 18px 60px #0006; overflow: auto;
+}
+.wifi-scenario-dialog::backdrop { background: #07121caa; }
+.wifi-scenario-dialog header, .wifi-scenario-dialog footer { display: flex; gap: 16px; padding: 16px 22px; }
+.wifi-scenario-dialog header { align-items: flex-start; justify-content: space-between; border-bottom: 1px solid var(--wifi-edge); }
+.wifi-scenario-kicker { margin: 0 0 4px; color: var(--wifi-active); font-size: 12px; font-weight: 750; }
+.wifi-scenario-dialog h2 { margin: 0; font-size: clamp(20px, 4vw, 26px); line-height: 1.15; }
+.wifi-scenario-dialog header .wifi-control { font-size: 20px; min-width: 36px; }
+.wifi-scenario-body { padding: 16px 22px; font-size: 14px; line-height: 1.55; }
+.wifi-scenario-body p { margin: 0; }
+.wifi-scenario-body h3 { margin: 16px 0 4px; font-size: 14px; }
+.wifi-scenario-body ul { margin: 0 0 14px; padding-left: 22px; }
+.wifi-scenario-body li + li { margin-top: 4px; }
+.wifi-scenario-body .wifi-scenario-plan-note { color: var(--wifi-muted); font-size: 12px; }
+.wifi-scenario-dialog footer { justify-content: flex-end; border-top: 1px solid var(--wifi-edge); }
 .wifi-workspace .network-title-field span,
 .wifi-workspace .network-save-state { color: var(--wifi-muted); }
 .wifi-workspace .network-title-field input {

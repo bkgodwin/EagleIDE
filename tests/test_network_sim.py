@@ -1,5 +1,6 @@
 import copy
 import json
+import math
 import shutil
 import subprocess
 import tempfile
@@ -12,6 +13,7 @@ from flask import Flask
 from network_content import ACRONYM_REFERENCE, COMMAND_REFERENCE, DEVICE_PORTS, EXAMPLE_TOPOLOGIES, LABS, PORT_REFERENCE
 from network_features import register
 from network_store import MAX_DEVICES, NetworkDataError, NetworkStore, _stp_state, can_reach, can_reach_ipv6, grade_lab, migrate_topology, validate_topology, validate_wifi_site
+from wifi_scenarios import SCENARIOS
 
 
 class NetworkStoreTests(unittest.TestCase):
@@ -27,6 +29,19 @@ class NetworkStoreTests(unittest.TestCase):
             self.assertEqual(validate_topology(topology)["schema_version"], 2)
         for lab in LABS.values():
             self.assertEqual(validate_topology(lab["starter_topology"])["schema_version"], 2)
+
+    def test_community_center_starter_preserves_scale_and_is_open_for_design(self):
+        site = validate_wifi_site(SCENARIOS["port-adelaide-community-center"]["site"])
+        gym = next(wall for wall in site["walls"] if wall["id"] == "gym-north")
+        self.assertAlmostEqual(math.dist(tuple(gym["a"].values()), tuple(gym["b"].values())), 38.3, places=3)
+        self.assertEqual(gym["material"], "concrete")
+        self.assertEqual(site["units"], "m")
+        self.assertEqual(site["access_points"], [])
+        self.assertEqual(site["cables"], [])
+        self.assertEqual(site["equipment"], [])
+        self.assertEqual({item["kind"] for item in site["openings"]}, {"door", "window"})
+        self.assertTrue({"Gymnasium / events", "Foyer", "Access WC", "Activity room", "Side awning"}
+                        .issubset(item["text"] for item in site["labels"]))
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required to load the Infra Sim example")
     def test_infra_campus_example_can_be_saved_and_all_aps_are_wired(self):
@@ -358,6 +373,60 @@ class NetworkRouteTests(unittest.TestCase):
         self.assertEqual(self.client.get(practice_url).status_code, 200)
         self.config_state["network_sim_enabled"] = False
         self.assertEqual(self.client.get(practice_url).status_code, 403)
+
+    def test_scenario_visibility_checks_class_ownership_and_student_access(self):
+        scenario_id = "port-adelaide-community-center"
+        scenario_url = f"/api/network/wifi-scenarios/{scenario_id}"
+        settings_url = f"/api/network/teacher/classes/class-1/scenarios/{scenario_id}"
+        teacher = {"X-Teacher-Token": "teacher-token"}
+        student = {"X-User-Token": "student-token"}
+        self.store.set_class_access("class-1", True)
+        self.assertEqual(self.client.get(scenario_url).status_code, 404)
+        row = self.client.get("/api/network/bootstrap", headers=student).get_json()["data"]["scenarios"][0]
+        self.assertEqual(row["id"], scenario_id)
+        self.assertNotIn("site", row)
+        self.assertEqual(self.client.get(scenario_url, headers=student).status_code, 200)
+        self.assertEqual(self.client.put(settings_url, headers=student, json={"visible": False}).status_code, 401)
+        self.assertEqual(self.client.put(settings_url.replace("class-1", "class-2"), headers=teacher,
+                                         json={"visible": False}).status_code, 403)
+        self.assertEqual(self.client.put(settings_url, headers=teacher, json={"visible": "false"}).status_code, 400)
+        self.assertEqual(self.client.put(settings_url, headers=teacher, json={"visible": False}).status_code, 200)
+        classroom = self.client.get("/api/network/teacher/classes/class-1", headers=teacher).get_json()["data"]
+        self.assertFalse(classroom["scenarios"][0]["visible"])
+        self.assertEqual(self.client.get("/api/network/bootstrap", headers=student).get_json()["data"]["scenarios"], [])
+        self.assertEqual(self.client.get(scenario_url, headers=student).status_code, 404)
+        self.assertEqual(self.client.get(scenario_url, headers=teacher).status_code, 200)
+        self.students["student-token"]["class_ids"].append("class-2")
+        self.assertEqual(self.client.get(scenario_url, headers=student).status_code, 404)
+        self.store.set_class_access("class-2", True)
+        self.assertEqual(self.client.get(scenario_url, headers=student).status_code, 200)
+        self.store.set_class_access("class-2", False)
+        self.assertEqual(self.client.put(settings_url, headers=teacher, json={"visible": True}).status_code, 200)
+        self.assertEqual(self.client.get(scenario_url, headers=student).status_code, 200)
+
+    def test_saved_scenario_briefing_remains_available_after_teacher_hides_starter(self):
+        scenario_id = "port-adelaide-community-center"
+        scenario_url = f"/api/network/wifi-scenarios/{scenario_id}"
+        site_url = "/api/network/wifi-sites/my-renovation"
+        headers = {"X-User-Token": "student-token"}
+        self.store.set_class_access("class-1", True)
+        scenario = self.client.get(scenario_url, headers=headers).get_json()["data"]
+        scenario["site"]["title"] = "My renovation"
+        saved = self.client.put(site_url, headers=headers, json={"site": scenario["site"], "revision": 0})
+        self.assertEqual(saved.status_code, 200)
+        self.store.set_scenario_visibility("class-1", scenario_id, False)
+        reopened = self.client.get(site_url, headers=headers).get_json()["data"]
+        self.assertEqual(reopened["title"], "My renovation")
+        self.assertEqual(reopened["scenario_briefing"], scenario["briefing"])
+        self.assertEqual(len(reopened["scenario_briefing"]["traits"]), 4)
+        copied = self.client.put(site_url + "-copy", headers=headers, json={"site": reopened, "revision": 0})
+        self.assertEqual(copied.get_json()["data"]["scenario_id"], scenario_id)
+        # A different student cannot get the briefing by supplying a scenario ID with a personal save.
+        self.students["student-two"] = {"email": "two@example.com", "role": "student", "class_ids": ["class-1"]}
+        other = {"X-User-Token": "student-two"}
+        self.assertEqual(self.client.get(site_url, headers=other).status_code, 404)
+        forged = self.client.put(site_url, headers=other, json={"site": scenario["site"], "revision": 0})
+        self.assertNotIn("scenario_id", forged.get_json()["data"])
 
     def test_disabled_blocks_guest_but_admin_can_privately_preview(self):
         self.config_state["network_sim_enabled"] = False

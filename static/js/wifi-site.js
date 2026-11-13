@@ -11,6 +11,7 @@
   const stage = $('wifiStage');
   const objects = $('wifiObjects');
   const grid = $('wifiGrid');
+  const scenarioDialog = $('wifiScenarioDialog');
   const coverage = window.WifiSiteHeatmap.create($('wifiHeatmap'), updating => {
     $('wifiCoverageStatus').hidden = !updating;
   });
@@ -152,11 +153,11 @@
     if (current()) scheduleScene();
   }
 
-  function startProject(plan) {
-    const { id: siteId, revision, updated_at, ...layout } = plan;
+  function startProject(plan, briefing) {
+    const { id: siteId, revision, updated_at, scenario_briefing, ...layout } = plan;
     session = {
       id: siteId || id('site'), revision: revision || 0, plan: { ...blankPlan(), ...layout, schema_version: 4 }, account,
-      sequence: 0, savedSequence: 0, undo: [], redo: [],
+      sequence: 0, savedSequence: 0, undo: [], redo: [], briefing: briefing || scenario_briefing,
     };
     selected = previewAp = '';
     wires.reset();
@@ -166,6 +167,7 @@
     anchor = hover = drag = measure = probe = keyboardPoint = null;
     library.hidden = true;
     workspace.hidden = false;
+    $('wifiScenarioButton').hidden = !session.briefing;
     $('wifiSaveSite').hidden = $('wifiCopySite').hidden = !options.canSave;
     $('wifiCoverage').checked = $('wifiSnap').checked = $('wifiShowCables').checked = true;
     $('wifiOrthogonal').checked = false;
@@ -174,6 +176,22 @@
     fit();
     render();
     viewport.focus({ preventScroll: true });
+    showBriefing(true);
+  }
+
+  function showBriefing(atOpen = false) {
+    const briefing = session?.briefing;
+    if (!briefing || scenarioDialog.open) return;
+    $('wifiScenarioTitle').textContent = briefing.title;
+    $('wifiScenarioBriefing').textContent = briefing.briefing;
+    $('wifiScenarioTraits').replaceChildren(...briefing.traits.map(trait => {
+      const row = document.createElement('li');
+      row.textContent = trait;
+      return row;
+    }));
+    $('wifiScenarioPlanNote').textContent = briefing.plan_note;
+    $('wifiScenarioContinue').textContent = atOpen ? 'Open floor plan' : 'Back to plan';
+    scenarioDialog.showModal();
   }
 
   function scheduleSave() {
@@ -246,6 +264,7 @@
     if (session) clearTimeout(session.timer);
     workspace.hidden = true;
     session = null;
+    if (scenarioDialog.open) scenarioDialog.close();
     selected = previewAp = '';
     wires.reset();
     structure.reset();
@@ -1075,7 +1094,7 @@
   }
 
   function keyboard(event) {
-    if (!active() || !document.body.classList.contains('network-mode')) return;
+    if (!active() || scenarioDialog.open || !document.body.classList.contains('network-mode')) return;
     const typing = event.target.matches('input,textarea,select');
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's' && options.canSave) {
       event.preventDefault();
@@ -1161,6 +1180,7 @@
       });
     });
     $('wifiSiteBack').addEventListener('click', async () => { if (await leave()) options.onBack(); });
+    $('wifiScenarioButton').addEventListener('click', () => showBriefing());
     $('wifiSiteTitle').addEventListener('input', event => {
       const title = cleanText(event.target.value, 'Untitled Wi-Fi Site');
       if (title === current().title) return;
@@ -1184,7 +1204,7 @@
     $('wifiSaveSite').addEventListener('click', saveNow);
     $('wifiCopySite').addEventListener('click', saveCopy);
     $('wifiDiscardSite').addEventListener('click', () => {
-      if (window.confirm('Discard the unsaved edits to this site?')) showSites();
+      if (window.confirm('Discard the unsaved edits to this site?')) { hide(); options.onBack(); }
     });
     $('wifiUndo').addEventListener('click', () => history(true));
     $('wifiRedo').addEventListener('click', () => history(false));
@@ -1230,7 +1250,10 @@
       if (!sameAccount() && !workspace.hidden) { hide(); options.onBack(); }
     });
     new MutationObserver(() => {
-      if (active() && !document.body.classList.contains('network-mode')) flushSave();
+      if (active() && !document.body.classList.contains('network-mode')) {
+        if (scenarioDialog.open) scenarioDialog.close();
+        flushSave();
+      }
     }).observe(document.body, { attributeFilter: ['class'] });
     window.addEventListener('beforeunload', event => {
       if (active() && options.canSave && dirty(session)) {
@@ -1243,11 +1266,11 @@
   }
 
   window.WifiSite = {
-    open(config, { site, sample } = {}) {
+    open(config, { site, sample, briefing } = {}) {
       options = config;
       account = options.authKey();
       initialize();
-      startProject(site || (sample ? window.wifiCampusExample(blankPlan()) : blankPlan()));
+      startProject(site || (sample ? window.wifiCampusExample(blankPlan()) : blankPlan()), briefing);
     },
     hide, leave,
   };

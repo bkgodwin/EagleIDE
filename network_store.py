@@ -81,6 +81,10 @@ def validate_wifi_site(raw):
 
     plan = {"schema_version": WIFI_SCHEMA_VERSION, "title": label(raw.get("title"), 120, "Untitled Wi-Fi Site"),
             "units": units, "band": band}
+    if raw.get("scenario_id") is not None:
+        if not isinstance(raw["scenario_id"], str):
+            raise NetworkDataError("Invalid scenario identifier")
+        plan["scenario_id"] = _safe_id(raw["scenario_id"])
     seen = set()
     for kind in ("walls", "access_points", "labels"):
         items = raw.get(kind)
@@ -884,7 +888,7 @@ class NetworkStore:
                 return {**validate_wifi_site(site), **{key: site[key] for key in ("id", "revision", "updated_at")}}
             return site
 
-    def save_wifi_site(self, email, site_id, raw, revision):
+    def save_wifi_site(self, email, site_id, raw, revision, *, available_scenarios=()):
         site_id = _safe_id(site_id)
         site = validate_wifi_site(raw)
         if type(revision) is not int or revision < 0:
@@ -893,6 +897,15 @@ class NetworkStore:
             path = self._wifi_path(email)
             sites = self._read_wifi_sites(path)
             existing = sites.get(site_id)
+            scenario_id = site.pop("scenario_id", None)
+            if existing:
+                scenario_id = existing.get("scenario_id")
+            elif scenario_id and scenario_id not in available_scenarios and not any(
+                saved.get("scenario_id") == scenario_id for saved in sites.values()
+            ):
+                scenario_id = None
+            if scenario_id:
+                site["scenario_id"] = scenario_id
             current_revision = existing["revision"] if existing else 0
             if existing and raw["schema_version"] < 3 and any(existing.get(kind) for kind in ("equipment", "pass_throughs", "cables")):
                 raise WifiRevisionError("This project now has cabling. Reload the editor before editing it.")
@@ -986,6 +999,25 @@ class NetworkStore:
             data.setdefault("class_access", {})[str(class_id)] = bool(enabled)
             self._write_json(self.catalog_path, data)
             return bool(enabled)
+
+    def class_scenario_visibility(self, class_id, scenario_ids):
+        with self._lock:
+            overrides = self._catalog().get("scenario_visibility", {}).get(str(class_id), {})
+            return {scenario_id: overrides.get(scenario_id, True) for scenario_id in scenario_ids}
+
+    def student_scenarios(self, class_ids, scenario_ids):
+        with self._lock:
+            data = self._catalog()
+            enabled = data.get("class_access", {})
+            overrides = data.get("scenario_visibility", {})
+            policies = [overrides.get(str(class_id), {}) for class_id in class_ids if enabled.get(str(class_id))]
+            return {scenario_id for scenario_id in scenario_ids if any(policy.get(scenario_id, True) for policy in policies)}
+
+    def set_scenario_visibility(self, class_id, scenario_id, visible):
+        with self._lock:
+            data = self._catalog()
+            data.setdefault("scenario_visibility", {}).setdefault(str(class_id), {})[scenario_id] = visible
+            self._write_json(self.catalog_path, data)
 
     def assignments_for_class(self, class_id):
         wanted = str(class_id)

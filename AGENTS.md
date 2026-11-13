@@ -227,6 +227,8 @@ Required runtime components:
 
 Network Lab shares one bootstrap and landing page for Packet Sim and Infra Sim. Bootstrap lists saved project metadata for the current account. Packet Sim practice labs open writable starters and public task guides; assignment progress and grading stay on the class lab routes.
 
+Built-in Infra Sim scenarios live in `wifi_scenarios.py`. Keep starter layouts and briefs behind the scenario routes. The network catalog stores class visibility overrides; signed-in students can start a scenario when any eligible class shows it. Preserve scenario IDs on private saved work so students can continue after the starter is hidden.
+
 `eagle_lab_features.py` registers the native Eagle Lab section independently of
 the generic external-tool gateway. It accepts RFC1918 IPv4 PVE endpoints only,
 probes their HTTPS version route server-side, and requires both the off-by-default
