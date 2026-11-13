@@ -301,11 +301,12 @@
         alert(error.message);
         window.WikiReader?.showHome?.();
       } else {
-        $('networkLoading').textContent = error.message;
+        libraryError(error);
       }
     }
   }
   function showLibrary() {
+    libraryAction += 1;
     const pendingSave = flushPendingSave();
     $('networkLibrary').hidden = false;
     $('networkWorkspace').hidden = true;
@@ -319,13 +320,26 @@
     $('networkConnectBtn')?.setAttribute('aria-pressed', 'false');
     return pendingSave;
   }
+  async function returnToLibrary(focus) {
+    await Promise.resolve(showLibrary());
+    if (!document.body.classList.contains('network-mode')) return;
+    await loadBootstrap({ force: true }).catch(libraryError);
+    if (!$('networkLibrary').hidden) (focus?.isConnected ? focus : $('networkHubHeading')).focus();
+  }
+  function libraryError(error) {
+    $('networkLoading').hidden = false;
+    $('networkLoading').textContent = error.message;
+  }
   async function requestBootstrap({ force = false } = {}) {
     const key = currentAuthKey();
     if (!force && state.bootstrap && state.bootstrapKey === key) return state.bootstrap;
     if (!force && state.bootstrapPromise && state.bootstrapPromiseKey === key) return state.bootstrapPromise;
     let pending;
     pending = api('/api/network/bootstrap').then(data => {
-      if (currentAuthKey() === key) { state.bootstrap = data; state.bootstrapKey = key; }
+      if (currentAuthKey() === key && state.bootstrapPromise === pending) {
+        state.bootstrap = data;
+        state.bootstrapKey = key;
+      }
       return data;
     }).finally(() => {
       if (state.bootstrapPromise === pending) { state.bootstrapPromise = null; state.bootstrapPromiseKey = ''; }
@@ -335,15 +349,20 @@
     return pending;
   }
   async function loadBootstrap({ force = false } = {}) {
+    const key = currentAuthKey();
+    const request = ++bootstrapView;
     $('networkLoading').hidden = false;
-    $('networkLoading').textContent = 'Loading Network Simulator…';
+    $('networkLoading').textContent = 'Loading Network Lab…';
+    if (state.bootstrapKey !== key) $('networkHubTools').hidden = true;
     const data = await requestBootstrap({ force });
+    if (request !== bootstrapView || key !== currentAuthKey()) return data;
     $('networkLoading').hidden = true;
     $('networkPreviewWarning').hidden = !data.admin_preview;
     $('networkGuestNote').hidden = data.role !== 'guest';
     $('networkWifiBtn').disabled = !data.wifi_limits;
-    $('networkNewBtn').disabled = $('networkStarterBtn').disabled = false;
-    renderLibrary();
+    $('wifiSampleSite').disabled = !data.wifi_limits;
+    renderLibrary(data);
+    $('networkHubTools').hidden = false;
     renderCommandReference();
     return data;
   }
@@ -375,66 +394,108 @@
     }
   }
 
-  function renderLibrary() {
-    const data = state.bootstrap || {};
-    const assigned = data.assigned_labs || [];
-    $('networkAssignedSection').hidden = !assigned.length;
-    $('networkAssignedList').innerHTML = assigned.map(lab => `
-      <button class="network-card is-lab" type="button" data-open-lab="${escapeHtml(lab.id)}" data-class-id="${escapeHtml(lab.class_id)}">
-        <div class="network-card-meta"><span>${escapeHtml(lab.class_name)}</span><span>${escapeHtml(lab.level)}</span><span>${Number(lab.estimated_minutes) || 0} min</span></div>
-        <h3>${escapeHtml(lab.title)}</h3><p>${escapeHtml(lab.description)}</p>
-        <div class="network-card-actions"><strong>Open assigned lab</strong><span>→</span></div>
-      </button>`).join('');
-    $('networkExampleList').innerHTML = (data.examples || []).map(example => `
-      <button class="network-card" type="button" data-open-example="${escapeHtml(example.id)}">
-        <div class="network-card-meta"><span>${escapeHtml(example.category)}</span><span>${Number(example.objective_count) || 0} guided task${Number(example.objective_count) === 1 ? '' : 's'}</span></div>
-        <h3>${escapeHtml(example.title)}</h3><p>${escapeHtml(example.description)}</p>
-        <div class="network-card-actions"><strong>Open editable copy</strong><span>→</span></div>
-      </button>`).join('');
-    const saved = [...(data.saved || [])].sort((a, b) => Number(b.updated_at) - Number(a.updated_at));
-    const resume = $('networkResumeBtn');
-    resume.hidden = !saved.length;
-    resume.dataset.openSaved = saved[0]?.id || '';
-    resume.innerHTML = saved.length ? `<h3>Resume your latest network</h3><p>${escapeHtml(saved[0].title)}</p>` : '';
-    $('networkSavedSection').hidden = !data.can_save;
-    $('networkSavedList').innerHTML = saved.length ? saved.map(item => `
-      <article class="network-card" tabindex="0" role="button" data-open-saved="${escapeHtml(item.id)}">
-        <div class="network-card-meta"><span>Saved network</span><span>${formatTimestamp(item.updated_at)}</span></div>
-        <h3>${escapeHtml(item.title || 'Untitled Network')}</h3><p>${escapeHtml(item.description || 'Open this topology to continue building.')}</p>
-        <div class="network-card-actions"><strong>Continue</strong><button class="network-card-delete" type="button" data-delete-saved="${escapeHtml(item.id)}" aria-label="Delete ${escapeHtml(item.title)}">✕</button></div>
-      </article>`).join('') : '<div class="network-objectives-empty">No saved networks yet. Create one or save an example.</div>';
-  }
-  function formatTimestamp(value) {
-    if (!value) return '';
-    try { return new Date(Number(value) * 1000).toLocaleDateString(); } catch { return ''; }
+  function libraryRow(title, description, attributes, { meta = '', remove = '' } = {}) {
+    return `<li class="network-hub-row">
+      <button class="network-hub-row-open" type="button" ${attributes}>
+        <span class="network-hub-row-main"><strong>${escapeHtml(title)}</strong>${description ? `<small>${escapeHtml(description)}</small>` : ''}</span>
+        ${meta ? `<span class="network-hub-row-meta">${escapeHtml(meta)}</span>` : ''}
+        <span class="network-hub-arrow" aria-hidden="true">↗</span>
+      </button>${remove ? `<button class="network-hub-delete" type="button" ${remove} aria-label="Delete ${escapeHtml(title)}">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/></svg></button>` : ''}
+      </li>`;
   }
 
-  async function openWifiSite() {
-    const trigger = $('networkWifiBtn');
-    const authKey = currentAuthKey();
-    trigger.disabled = true;
+  function renderLibrary(data) {
+    const assigned = data.assigned_labs || [];
+    const labMeta = lab => [lab.class_name, lab.level, `${Number(lab.estimated_minutes)} min`].filter(Boolean).join(' · ');
+    $('networkAssignedSection').hidden = !assigned.length;
+    $('networkAssignedList').innerHTML = assigned.map(lab =>
+      libraryRow(lab.title, lab.description, `data-open-lab="${escapeHtml(lab.id)}" data-class-id="${escapeHtml(lab.class_id)}"`, { meta: labMeta(lab) })
+    ).join('');
+    $('networkPracticeList').innerHTML = (data.practice_labs || []).map(lab =>
+      libraryRow(lab.title, lab.description, `data-open-practice="${escapeHtml(lab.id)}"`, { meta: labMeta(lab) })
+    ).join('');
+    $('networkExampleList').innerHTML = (data.examples || []).map(example =>
+      libraryRow(example.title, example.description, `data-open-example="${escapeHtml(example.id)}"`, { meta: example.category })
+    ).join('');
+    const saved = [...(data.saved || [])].sort((a, b) => Number(b.updated_at) - Number(a.updated_at));
+    $('networkSavedSection').hidden = !data.can_save;
+    $('networkSavedEmpty').hidden = saved.length > 0;
+    $('networkSavedList').innerHTML = saved.map(item =>
+      libraryRow(item.title || 'Untitled Network', item.description, `data-open-saved="${escapeHtml(item.id)}"`,
+        { meta: formatTimestamp(item.updated_at), remove: `data-delete-saved="${escapeHtml(item.id)}"` })
+    ).join('');
+    const sites = data.saved_sites || [];
+    $('wifiSavedSection').hidden = !data.can_save;
+    $('wifiSavedEmpty').hidden = sites.length > 0;
+    $('wifiSavedSites').innerHTML = sites.map(item =>
+      libraryRow(item.title || 'Untitled Site', '', `data-open-site="${escapeHtml(item.id)}"`,
+        { meta: formatTimestamp(item.updated_at), remove: `data-delete-site="${escapeHtml(item.id)}"` })
+    ).join('');
+  }
+  function formatTimestamp(value) {
+    return value ? new Date(Number(value) * 1000).toLocaleDateString() : '';
+  }
+
+  let libraryAction = 0;
+  let bootstrapView = 0;
+  let libraryAuth = currentAuthKey();
+
+  async function fromLibrary(button, action) {
+    const key = currentAuthKey();
+    const number = ++libraryAction;
+    const valid = () => number === libraryAction && key === currentAuthKey()
+      && document.body.classList.contains('network-mode') && !$('networkLibrary').hidden;
+    button.disabled = true;
+    $('networkLoading').hidden = true;
     try {
-      const access = await requestBootstrap();
-      await window.EagleFeatures.load('wifiSite');
-      if (currentAuthKey() !== authKey || !document.body.classList.contains('network-mode') || $('networkLibrary').hidden) return;
-      $('networkLibrary').hidden = true;
-      await window.WifiSite.open({
-        api, authKey: currentAuthKey, canSave: access.can_save, limits: access.wifi_limits, catalog: access.wifi_cabling,
-        makeId, escapeHtml, onBack: () => {
-          showLibrary();
-          if (document.body.classList.contains('network-mode')) {
-            loadBootstrap({ force: true }).catch(error => { $('networkLoading').textContent = error.message; });
-            trigger.focus();
-          }
-        },
-      });
+      await action(valid);
     } catch (error) {
-      showLibrary();
-      $('networkLoading').hidden = false;
-      $('networkLoading').textContent = error.message;
+      if (valid()) {
+        $('networkLoading').hidden = false;
+        $('networkLoading').textContent = error.message;
+      }
     } finally {
-      trigger.disabled = false;
+      button.disabled = false;
     }
+  }
+
+  function openInfra(button, { sample = false, siteId = '' } = {}) {
+    return fromLibrary(button, async valid => {
+      const access = await requestBootstrap();
+      const [site] = await Promise.all([
+        siteId ? api(`/api/network/wifi-sites/${encodeURIComponent(siteId)}`) : null,
+        window.EagleFeatures.load('wifiSite'),
+      ]);
+      if (!valid()) return;
+      window.WifiSite.open({
+        api, authKey: currentAuthKey, canSave: access.can_save, limits: access.wifi_limits, catalog: access.wifi_cabling,
+        makeId, escapeHtml, onBack: () => returnToLibrary(siteId ? null : button),
+      }, { site, sample });
+    });
+  }
+
+  async function deleteInfra(siteId) {
+    if (!confirm('Delete this saved site? This cannot be undone.')) return;
+    try {
+      await api(`/api/network/wifi-sites/${encodeURIComponent(siteId)}`, { method: 'DELETE' });
+      await loadBootstrap({ force: true });
+    } catch (error) { alert(error.message); }
+  }
+
+  function openPractice(button, id) {
+    return fromLibrary(button, async valid => {
+      const lab = await api(`/api/network/practice-labs/${encodeURIComponent(id)}`);
+      if (!valid()) return;
+      const topology = lab.starter_topology;
+      topology.id = makeId('network');
+      topology.objectives = lab.objectives;
+      topology.metadata = { ...topology.metadata, practice_lab: lab.id };
+      openTopology(topology);
+      state.practiceGuide = lab;
+      renderLabGuide();
+      switchConsole('lab');
+    });
   }
 
   function openStarter() {
@@ -454,30 +515,35 @@
     openTopology(topology);
   }
 
-  async function openExample(id) {
-    try {
+  function openExample(button, id) {
+    return fromLibrary(button, async valid => {
       const topology = await api(`/api/network/examples/${encodeURIComponent(id)}`);
+      if (!valid()) return;
       topology.id = makeId('network');
       topology.title = `${topology.title} — Copy`;
       topology.metadata = { ...(topology.metadata || {}), source_example: id };
       openTopology(topology, { mode: 'personal', saved: false });
-    } catch (error) { alert(error.message); }
+    });
   }
-  async function openSaved(id) {
-    try { openTopology(await api(`/api/network/topologies/${encodeURIComponent(id)}`), { mode: 'personal', saved: true }); }
-    catch (error) { alert(error.message); }
+  function openSaved(button, id) {
+    return fromLibrary(button, async valid => {
+      const topology = await api(`/api/network/topologies/${encodeURIComponent(id)}`);
+      if (valid()) openTopology(topology, { mode: 'personal', saved: true });
+    });
   }
-  async function openLab(id, classId) {
-    try {
+  function openLab(button, id, classId) {
+    return fromLibrary(button, async valid => {
       const lab = await api(`/api/network/labs/${encodeURIComponent(id)}?class_id=${encodeURIComponent(classId)}`);
       const progress = await api(`/api/network/student/labs/${encodeURIComponent(classId)}/${encodeURIComponent(id)}`);
+      if (!valid()) return;
       state.lab = lab;
       state.labClassId = classId;
       openTopology(progress.topology || lab.starter_topology, { mode: 'lab', saved: true, grade: progress.grade });
       logEvent(`Opened ${lab.title}. Progress saves automatically.`);
-    } catch (error) { alert(error.message); }
+    });
   }
   function openTopology(topology, options = {}) {
+    libraryAction += 1;
     flushPendingSave();
     window.WifiSite?.hide();
     state.topology = clone(topology || blankTopology());
@@ -486,6 +552,7 @@
     state.mode = options.mode || 'personal';
     state.savedOnce = !!options.saved;
     state.grade = options.grade || null;
+    state.practiceGuide = null;
     if (!['lab', 'demo'].includes(state.mode)) { state.lab = null; state.labClassId = ''; }
     state.selectedId = '';
     state.selectedLinkId = '';
@@ -509,7 +576,7 @@
     $('networkTitleInput').value = state.topology.title || 'Untitled Network';
     if ($('networkPacketDomain')) $('networkPacketDomain').value = state.topology.metadata?.default_domain || '';
     $('networkSaveBtn').hidden = ['lab', 'demo'].includes(state.mode) || !state.bootstrap?.can_save;
-    $('networkLabGuideTab').hidden = !['lab', 'demo'].includes(state.mode);
+    $('networkLabGuideTab').hidden = !state.lab && !state.topology.metadata?.practice_lab;
     setModeHint();
     setStatus(state.mode === 'lab' ? 'Auto-save on' : state.mode === 'demo' ? 'Teacher demonstration' : (state.bootstrap?.can_save ? (state.savedOnce ? 'Saved' : 'Not saved') : 'Guest · export available'));
     autoAssignWanLeases({ render: false, recordHistory: false });
@@ -518,6 +585,21 @@
     switchConsole(state.mode === 'lab' ? 'lab' : 'objectives');
     requestAnimationFrame(fitCanvas);
     window.dispatchEvent(new CustomEvent('network-sim:topology-opened', { detail: { topology: state.topology, mode: state.mode } }));
+    if (options.saved && typeof state.topology.metadata?.practice_lab === 'string') restorePracticeGuide(state.topology);
+  }
+
+  async function restorePracticeGuide(topology) {
+    const key = currentAuthKey();
+    try {
+      const guide = await api(`/api/network/practice-labs/${encodeURIComponent(topology.metadata.practice_lab)}`);
+      if (key !== currentAuthKey() || state.topology?.id !== topology.id || $('networkWorkspace').hidden) return;
+      state.practiceGuide = guide;
+      renderLabGuide();
+    } catch {
+      if (key === currentAuthKey() && state.topology?.id === topology.id) {
+        $('networkLabGuidePanel').textContent = 'The practice guide could not be loaded.';
+      }
+    }
   }
 
   function snapshot() { return clone(state.topology); }
@@ -2100,8 +2182,9 @@
   }
   function renderLabGuide() {
     const panel = $('networkLabGuidePanel');
-    if (!state.lab) { panel.innerHTML = ''; return; }
-    panel.innerHTML = `<div class="network-lab-guide"><div><h3>${escapeHtml(state.lab.title)}</h3><ol>${(state.lab.instructions || []).map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ol></div><div><h3>Skills covered</h3><div class="network-card-meta">${(state.lab.covers || []).map(item => `<span>${escapeHtml(item)}</span>`).join('')}</div><p>${escapeHtml(state.lab.description)}</p>${state.mode === 'demo' && state.lab.solution ? `<h3>Teacher solution</h3><ol>${state.lab.solution.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ol>` : ''}</div></div>`;
+    const guide = state.lab || state.practiceGuide;
+    if (!guide) { panel.textContent = state.topology?.metadata?.practice_lab ? 'Loading practice guide…' : ''; return; }
+    panel.innerHTML = `<div class="network-lab-guide"><div><h3>${escapeHtml(guide.title)}</h3><ol>${(guide.instructions || []).map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ol></div><div><h3>Skills covered</h3><div class="network-card-meta">${(guide.covers || []).map(item => `<span>${escapeHtml(item)}</span>`).join('')}</div><p>${escapeHtml(guide.description)}</p>${state.mode === 'demo' && guide.solution ? `<h3>Teacher solution</h3><ol>${guide.solution.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ol>` : ''}</div></div>`;
   }
 
   function cliPrint(text) {
@@ -2329,7 +2412,7 @@
     try {
       const data = await api(`/api/network/teacher/classes/${encodeURIComponent(classId)}`);
       $('networkTeacherAccessToggle').checked = !!data.enabled;
-      $('networkTeacherStatus').textContent = data.enabled ? `${data.class_name} can use Network Simulator when it is globally enabled.` : `${data.class_name} cannot currently open Network Simulator.`;
+      $('networkTeacherStatus').textContent = data.enabled ? `${data.class_name} can use Network Lab when it is globally enabled.` : `${data.class_name} cannot currently open Network Lab.`;
       renderTeacherLabs(data.labs || []);
     } catch (error) { $('networkTeacherStatus').textContent = error.message; $('networkTeacherLabList').innerHTML = ''; }
   }
@@ -2435,7 +2518,8 @@
     $('wikiHeroNetworkBtn')?.addEventListener('click', () => show());
     $('networkNewBtn')?.addEventListener('click', () => openTopology(blankTopology(), { mode: 'personal', saved: false }));
     $('networkStarterBtn')?.addEventListener('click', openStarter);
-    $('networkWifiBtn')?.addEventListener('click', openWifiSite);
+    $('networkWifiBtn')?.addEventListener('click', event => openInfra(event.currentTarget));
+    $('wifiSampleSite')?.addEventListener('click', event => openInfra(event.currentTarget, { sample: true }));
     $('networkAddDeviceBtn')?.addEventListener('click', () => {
       if (state.connectMode) $('networkConnectBtn').click();
       setModeHint('Choose a device in the Devices panel to place it.');
@@ -2445,7 +2529,7 @@
       switchConsole('packet');
       $('networkPacketSource').focus();
     });
-    $('networkBackBtn')?.addEventListener('click', async () => { const pendingSave = showLibrary(); await Promise.resolve(pendingSave); await loadBootstrap({ force: true }).catch(error => { $('networkLoading').textContent = error.message; }); });
+    $('networkBackBtn')?.addEventListener('click', () => returnToLibrary($('networkNewBtn')));
     $('networkDevicePalette')?.addEventListener('click', event => {
       const button = event.target.closest('[data-add-device]');
       if (!button) return;
@@ -2476,17 +2560,18 @@
     $('networkCliForm')?.addEventListener('submit', event => { event.preventDefault(); runCli($('networkCliInput').value); $('networkCliInput').value = ''; });
     document.querySelectorAll('.network-console-tabs [data-network-panel]').forEach(button => button.addEventListener('click', () => switchConsole(button.dataset.networkPanel)));
     $('networkLibrary')?.addEventListener('click', event => {
-      const lab = event.target.closest('[data-open-lab]'); if (lab) return openLab(lab.dataset.openLab, lab.dataset.classId);
-      const example = event.target.closest('[data-open-example]'); if (example) return openExample(example.dataset.openExample);
-      const remove = event.target.closest('[data-delete-saved]'); if (remove) { event.stopPropagation(); return deleteSaved(remove.dataset.deleteSaved); }
-      const saved = event.target.closest('[data-open-saved]'); if (saved) return openSaved(saved.dataset.openSaved);
+      const button = event.target.closest('button');
+      if (!button) return;
+      const data = button.dataset;
+      if (data.openLab) return openLab(button, data.openLab, data.classId);
+      if (data.openPractice) return openPractice(button, data.openPractice);
+      if (data.openExample) return openExample(button, data.openExample);
+      if (data.openSaved) return openSaved(button, data.openSaved);
+      if (data.openSite) return openInfra(button, { siteId: data.openSite });
+      if (data.deleteSaved) return deleteSaved(data.deleteSaved);
+      if (data.deleteSite) return deleteInfra(data.deleteSite);
     });
-    $('networkSavedList')?.addEventListener('keydown', event => {
-      if (event.target.matches('article[data-open-saved]') && ['Enter', ' '].includes(event.key)) {
-        event.preventDefault();
-        openSaved(event.target.dataset.openSaved);
-      }
-    });
+    $('networkImportBtn')?.addEventListener('click', () => $('networkImportInput').click());
     $('networkImportInput')?.addEventListener('change', event => { importTopology(event.target.files?.[0]); event.target.value = ''; });
     $('networkCommandRefBtn')?.addEventListener('click', () => { $('networkCommandModal').style.display = 'flex'; });
     $('networkCommandCloseBtn')?.addEventListener('click', () => { $('networkCommandModal').style.display = 'none'; });
@@ -2500,7 +2585,17 @@
     });
     $('settingsOpenNetworkSimBtn')?.addEventListener('click', () => { $('adminSettingsModal').style.display = 'none'; show(); });
     [$('wikiViewBtn'), $('ideViewBtn')].forEach(button => button?.addEventListener('click', () => { stopPacketPlayback(); flushPendingSave(); }));
-    window.addEventListener('eagle-context-updated', refreshAvailability);
+    window.addEventListener('eagle-context-updated', () => {
+      refreshAvailability();
+      const key = currentAuthKey();
+      if (key === libraryAuth) return;
+      libraryAuth = key;
+      libraryAction += 1;
+      $('networkHubTools').hidden = true;
+      if (document.body.classList.contains('network-mode') && !$('networkLibrary').hidden) {
+        loadBootstrap({ force: true }).catch(libraryError);
+      }
+    });
     window.addEventListener('pagehide', stopPacketPlayback);
     window.addEventListener('keydown', event => {
       if (!document.body.classList.contains('network-mode') || $('networkWorkspace').hidden) return;

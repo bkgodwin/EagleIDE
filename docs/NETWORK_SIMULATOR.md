@@ -1,30 +1,30 @@
-# EagleIDE Network Simulator Guide
+# EagleIDE Network Lab Guide
 
-The Network Simulator is an optional EagleIDE app for learning network fundamentals and introductory cybersecurity. It runs entirely in the browser: packets, scans, services, and CLI commands are simulations and never send traffic to real devices.
+Network Lab brings **Packet Sim** and **Infra Sim** together on one page. Packet Sim teaches topology, addressing, routing, and packet inspection. Infra Sim is for floor plans, cabling, and Wi-Fi coverage. The simulators run in the browser and never send traffic to real devices.
 
 ## Access and saving
 
-- An administrator enables or disables the app in **Settings → Network Sim**. An administrator can open a private preview even while the global switch is off.
-- A teacher enables access separately for each class in **Teacher Dashboard → Network Sim**. Assigning a lab automatically enables that class, but the administrator's global switch still controls student access.
+- An administrator enables or disables the app in **Settings → Network Lab**. An administrator can open a private preview even while the global switch is off.
+- A teacher enables access separately for each class in **Teacher Dashboard → Packet Sim**. Assigning a lab automatically enables that class, but the administrator's global switch still controls student access.
 - A signed-in student may open the simulator when any joined class has access. Assigned labs appear at the top of the network library.
 - Guests may use examples, build from scratch, test, import, and export when the global switch is enabled. Guests cannot save networks or lab progress.
 - Signed-in users can save up to 40 personal networks. A topology supports up to 100 devices and 200 links.
 
 ## Start a network
 
-Open **Network Sim** in the top bar, then choose one of these paths:
+Open **Network Lab** in the top bar. The **Packet Sim** panel lists your assigned labs, saved networks, practice labs, and example topologies.
 
-1. **Build a Network** opens an empty canvas. **Start here: Connect two devices** opens two pre-addressed PCs and guides you through connecting their Ethernet ports and sending your first ping.
+1. **New Network** opens an empty canvas. **Connect Two Devices** opens two pre-addressed PCs and guides you through connecting their Ethernet ports and sending your first ping.
 2. **Example topologies** opens a writable copy of a complete network. Fourteen examples cover a LAN, routed subnets, DHCP, Layer 2 and Layer 3 switching, VLAN ACLs, hierarchical DNS/HTTP, redundant fiber with RSTP, RIP/OSPF, IPv6 dual stack, PAT and port forwarding, wireless channels/roaming, and a safe cyber traffic-analysis range. Each example includes guided objectives.
 3. **Assigned labs** resumes the student's saved copy and automatic objective grading.
 4. **Saved networks** resumes a signed-in user's private topology.
-5. **Import JSON** opens a topology exported from this simulator. **Resume your latest network** reopens your most recently saved topology.
+5. **Practice Labs** opens an editable copy of a built-in lab with its guide and objectives. Save it as a personal network. **Import JSON** opens a topology exported from Packet Sim.
 
 Use **Export** to keep a portable JSON copy. Export is available to guests and signed-in users.
 
 ## Design a Wi-Fi site
 
-Open **Network Sim → Design a Wi-Fi Site** and choose **New Site** or **Open Campus Example**. The example is a complete wired floor with a fiber backbone, two ISP connections, seven access points, and a concrete partition.
+Open **Network Lab → Infra Sim** and choose **New Site**, a saved site, or **Northfield Learning Center** under **Example Site**. The example includes a main network room, three IDF closets, an athletics wing, outdoor learning spaces, and 14 wired APs.
 
 1. Choose feet or meters from **Plan**. Scroll or pinch to zoom out and reveal more drawing space in every direction. Use **Pan** or hold **Space** and drag to move the view. **Fit Site** returns to the whole drawing.
 2. Use **Room** to draw a rectangle. With **Wall**, drag a single wall or click successive points for a connected run, then select **Finish Wall** or press **Escape**. **Snap** aligns to the grid or a nearby endpoint. Hold **Shift** or enable **Right angles** to constrain a wall to horizontal or vertical. Choose drywall, concrete, metal, glass, wood, or brick.
@@ -32,7 +32,7 @@ Open **Network Sim → Design a Wi-Fi Site** and choose **New Site** or **Open C
 4. Connect an access point by Ethernet to keep its coverage on. To test an unwired AP, select it and turn on **Estimated coverage**. This preview ends when you deselect the AP. Use **Check Signal** to compare 2.4 GHz and 5 GHz, see the strongest AP and walls crossed, and check a second AP when available. Treat these values as classroom estimates.
 5. Signed-in users can name a site and return to it from **Saved Wi-Fi sites**. Changes autosave, and **Save a Copy** creates a separate design. If another tab has saved a newer version, use **Save a Copy** to keep your local changes.
 
-Select an object to open its floating inspector. Use **Plan → Find an object** to open settings for an object elsewhere on the canvas. On the keyboard, focus the canvas, move the cursor with the arrow keys, and press Enter to use the selected tool.
+Click an object to open its floating inspector. The inspector closes as soon as you drag an object. Click it again to reopen its settings. Use **Plan → Find an object** for objects elsewhere on the canvas. On the keyboard, focus the canvas, move the cursor with the arrow keys, and press Enter to use the selected tool.
 
 Use **Background → Add Image** to import a PNG, JPEG, or WebP floor plan. Enter its width or choose **Calibrate with Two Points** and enter the real-world distance between them. Use **Move Image** or edit its X and Y coordinates to align it. The image stays behind the drawing and saves with the site.
 
@@ -260,7 +260,7 @@ Each objective updates immediately in the browser and is recalculated by the ser
 
 ## Teacher workflow
 
-1. Open **Dashboard → Network Sim**.
+1. Open **Dashboard → Packet Sim**.
 2. Select one class. Students may belong to multiple classes; access and assignments are stored per selected class.
 3. Turn on **Allow this class** or assign a lab (which enables class access automatically).
 4. Review each lab's level, expected duration, covered skills, student instructions, expandable solution, and **Student progress** table.

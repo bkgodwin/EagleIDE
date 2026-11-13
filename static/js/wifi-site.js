@@ -1,4 +1,4 @@
-/* Scaled floor plan editor for EagleIDE Network Simulator. */
+/* Infra Sim floor plan editor. */
 (function () {
   'use strict';
 
@@ -6,7 +6,7 @@
   const model = window.WifiSiteModel;
   const view = window.WifiSiteView;
   const workspace = $('wifiWorkspace');
-  const library = $('wifiSiteLibrary');
+  const library = $('networkLibrary');
   const viewport = $('wifiViewport');
   const stage = $('wifiStage');
   const objects = $('wifiObjects');
@@ -37,7 +37,6 @@
 
   let options;
   let account;
-  let viewRequest = 0;
   let session;
   let tool = 'select';
   let selected = '';
@@ -244,21 +243,20 @@
   }
 
   function hide() {
-    viewRequest += 1;
     if (session) clearTimeout(session.timer);
-    workspace.hidden = library.hidden = true;
+    workspace.hidden = true;
     session = null;
     selected = previewAp = '';
     wires.reset();
     structure.reset();
     showPanel('');
+    endMove(drag);
     drag = null;
     anchor = hover = measure = probe = keyboardPoint = pinch = null;
     touches.clear();
     if (sceneFrame) cancelAnimationFrame(sceneFrame);
     sceneFrame = 0;
     coverage.clear();
-    $('wifiSavedSites').replaceChildren();
     $('wifiProperties').replaceChildren();
     for (const name of ['wifiWalls', 'wifiOpenings', 'wifiMarkers', 'wifiOverlay', 'wifiWireLayer', 'wifiEquipmentLayer']) $(name).replaceChildren();
     wallSource = drawnWalls = drawnAccessPoints = drawnWiredAps = drawnLabels = null;
@@ -269,61 +267,6 @@
     $('wifiSiteTitle').value = '';
     $('wifiProbeResult').textContent = '';
     $('wifiProbeSummary').textContent = '';
-  }
-
-  async function loadSites() {
-    const request = ++viewRequest;
-    const saved = $('wifiSavedSites');
-    const message = $('wifiLibraryStatus');
-    const retry = $('wifiReloadSites');
-    retry.hidden = true;
-    message.textContent = 'Loading sites…';
-    try {
-      const sites = await options.api(endpoint);
-      if (viewRequest !== request || !sameAccount() || library.hidden) return;
-      message.textContent = sites.length ? '' : 'Create a site or try the two-room activity to get started.';
-      saved.innerHTML = sites.map(site => `
-        <article class="network-card wifi-site-card">
-          <h3><button type="button" data-wifi-open="${escape(site.id)}">${escape(site.title)}</button></h3>
-          <p>Edited ${escape(new Date(site.updated_at * 1000).toLocaleDateString())}</p>
-          <button class="btn secondary" type="button" data-wifi-delete="${escape(site.id)}" aria-label="Delete ${escape(site.title)}">Delete</button>
-        </article>`).join('');
-    } catch (error) {
-      if (viewRequest !== request || !sameAccount() || library.hidden) return;
-      message.textContent = error.message;
-      retry.hidden = false;
-    }
-  }
-
-  async function openSaved(siteId) {
-    const request = ++viewRequest;
-    $('wifiLibraryStatus').textContent = 'Opening site…';
-    try {
-      const plan = await options.api(siteUrl(siteId));
-      if (viewRequest === request && sameAccount() && !library.hidden) startProject(plan);
-    } catch (error) {
-      if (viewRequest === request && sameAccount() && !library.hidden) $('wifiLibraryStatus').textContent = error.message;
-    }
-  }
-
-  async function deleteSaved(siteId) {
-    if (!window.confirm('Delete this saved Wi-Fi site?')) return;
-    const request = ++viewRequest;
-    try {
-      await options.api(siteUrl(siteId), { method: 'DELETE' });
-      if (viewRequest === request && sameAccount() && !library.hidden) await loadSites();
-    } catch (error) {
-      if (viewRequest === request && sameAccount() && !library.hidden) $('wifiLibraryStatus').textContent = error.message;
-    }
-  }
-
-  function showSites() {
-    hide();
-    library.hidden = false;
-    $('wifiGuestNotice').hidden = options.canSave;
-    $('wifiSavedSection').hidden = !options.canSave;
-    $('wifiSiteHeading').focus();
-    if (options.canSave) loadSites();
   }
 
   function objectById(objectId) {
@@ -648,8 +591,8 @@
       $('wifiWalls').innerHTML = plan.walls.map(wall => {
         const object = `data-wifi-object="${escape(wall.id)}"`;
         const highlight = wallSelection === wall.id ? lineSvg(wall.a, wall.b, 'class="wifi-selected-wall"') : '';
-        return highlight + lineSvg(wall.a, wall.b, `class="wifi-wall" stroke="${model.MATERIALS[wall.material].color}"`)
-          + lineSvg(wall.a, wall.b, `class="wifi-wall-hit" ${object}`);
+        return `<g ${object}>${highlight}${lineSvg(wall.a, wall.b, `class="wifi-wall" stroke="${model.MATERIALS[wall.material].color}"`)}
+          ${lineSvg(wall.a, wall.b, 'class="wifi-wall-hit"')}</g>`;
       }).join('');
       drawnWalls = plan.walls;
       drawnWallSelection = wallSelection;
@@ -681,7 +624,8 @@
     }
     if (ghost && drag.match.kind === 'openings') parts.push(structure.markup(ghost, true));
     else if (ghost && !wireKinds.includes(drag.match.kind)) {
-      parts.push(ghost.a ? lineSvg(ghost.a, ghost.b, 'class="wifi-preview-line"') : marker(ghost, drag.match.kind, true));
+      parts.push(ghost.a ? lineSvg(ghost.a, ghost.b, `class="wifi-wall wifi-ghost" stroke="${model.MATERIALS[ghost.material].color}"`)
+        : marker(ghost, drag.match.kind, true));
     }
     parts.push(wires.overlay(ghost, drag?.match?.kind));
     parts.push(structure.calibrationMarkup());
@@ -716,6 +660,11 @@
     if (!sceneFrame) sceneFrame = requestAnimationFrame(() => {
       sceneFrame = 0;
       if (!active() || !dimensions.width || !dimensions.height) return;
+      if (drag?.motion) {
+        const { raw, shift } = drag.motion;
+        drag.preview = movePreview(drag, raw, shift);
+        drag.motion = null;
+      }
       drawGrid();
       drawOverlay();
       positionPanel();
@@ -926,7 +875,9 @@
     scheduleScene();
   }
 
-  function movedObject(item, end, start, point, bend, shift) {
+  function movePreview(gesture, point, shift) {
+    const { item } = gesture.match;
+    const { end, raw: start, bend } = gesture;
     if (item.waypoints) return bend === undefined ? item : wires.moveBend(item, bend, point, shift);
     const dx = point.x - start.x, dy = point.y - start.y;
     if (item.wall_id) {
@@ -935,15 +886,43 @@
       return wires.pointForEdit(item, { x: location.x + dx, y: location.y + dy });
     }
     const aim = part => ({ x: part.x + dx, y: part.y + dy });
-    if (!item.a) return { ...item, ...drawingPoint(aim(item)).point };
+    if (!item.a) return { ...item, ...movePoint(aim(item)) };
     if (end) {
-      const changed = { ...item, [end]: drawingPoint(aim(item[end]), { join: true, exclude: item.id }).point };
+      const changed = { ...item, [end]: movePoint(aim(item[end]), item.id) };
       return model.distance(changed.a, changed.b) >= 0.05 ? changed : item;
     }
-    const target = drawingPoint(aim(item.a), { join: true, exclude: item.id }).point;
+    const target = movePoint(aim(item.a), item.id);
     const translate = part => ({ x: coordinate(part.x + target.x - item.a.x), y: coordinate(part.y + target.y - item.a.y) });
     const a = translate(item.a), b = translate(item.b);
     return model.distance(a, b) >= 0.05 ? { ...item, a, b } : item;
+  }
+
+  function movePoint(raw, wallId) {
+    const snapped = drawingPoint(raw, { join: !!wallId, exclude: wallId });
+    if (snapped.joined || model.distance(raw, snapped.point) * camera.scale <= 6) return snapped.point;
+    return { x: coordinate(raw.x), y: coordinate(raw.y) };
+  }
+
+  function startMove(gesture) {
+    const id = gesture.match.item.id;
+    const changedSelection = selected !== id;
+    selected = id;
+    panelPoint = null;
+    showPanel('');
+    wires.hideMenu();
+    if (changedSelection) {
+      previewAp = '';
+      drawObjects();
+      refreshCoverage();
+    }
+    gesture.sourceNode = stage.querySelector(`[data-wifi-object="${CSS.escape(id)}"]`);
+    gesture.sourceNode?.classList.add('wifi-moving-source');
+    viewport.setAttribute('data-wifi-moving', '');
+  }
+
+  function endMove(gesture) {
+    gesture?.sourceNode?.classList.remove('wifi-moving-source');
+    viewport.removeAttribute('data-wifi-moving');
   }
 
   function touchPair() {
@@ -965,6 +944,7 @@
           $('wifiBackgroundImage').setAttribute('x', drag.background.x);
           $('wifiBackgroundImage').setAttribute('y', drag.background.y);
         }
+        endMove(drag);
         drag = hover = null;
         scheduleScene();
         return;
@@ -1021,7 +1001,7 @@
     if (drag.id !== event.pointerId) return;
     const dx = screen.x - drag.screen.x, dy = screen.y - drag.screen.y;
     if (!drag.moved && Math.hypot(dx, dy) < 4) return;
-    if (!drag.moved && drag.match) selectObject(drag.match.item.id);
+    if (!drag.moved && drag.match) startMove(drag);
     drag.moved = true;
     if (drag.pan) {
       camera = { ...drag.camera, x: drag.camera.x - dx / drag.camera.scale, y: drag.camera.y - dy / drag.camera.scale };
@@ -1031,7 +1011,7 @@
       $('wifiBackgroundImage').setAttribute('x', drag.image.x);
       $('wifiBackgroundImage').setAttribute('y', drag.image.y);
     } else if (drag.match) {
-      drag.preview = movedObject(drag.match.item, drag.end, drag.raw, raw, drag.bend, event.shiftKey);
+      drag.motion = { raw, shift: event.shiftKey };
     } else if (drag.draw) {
       drag.point = positionFor(raw, drag.start, event.shiftKey).point;
     }
@@ -1046,6 +1026,7 @@
     if (drag?.id !== event.pointerId) return;
     const gesture = drag;
     drag = null;
+    endMove(gesture);
     viewport.toggleAttribute('data-panning', spacePan);
     scheduleScene();
     if (gesture.background && gesture.image) {
@@ -1061,8 +1042,9 @@
     }
     if (event.type === 'pointercancel' || gesture.pan) return;
     const raw = view.screenToWorld(camera, screenPoint(event));
-    if (gesture.preview && JSON.stringify(gesture.preview) !== JSON.stringify(gesture.match.item)) {
-      replaceObject(gesture.match.kind, gesture.preview);
+    if (gesture.moved && gesture.match) {
+      const preview = movePreview(gesture, raw, event.shiftKey);
+      if (JSON.stringify(preview) !== JSON.stringify(gesture.match.item)) replaceObject(gesture.match.kind, preview);
     } else if (gesture.draw && gesture.moved) {
       drawFrom(gesture.start, positionFor(raw, gesture.start, event.shiftKey).point);
     } else if (!gesture.moved && tool === 'select') {
@@ -1160,8 +1142,6 @@
     const colors = levels.map(level => `rgb(${level.color.slice(0, 3).join(',')})`).join(',');
     $('wifiLegend').innerHTML = `<div class="wifi-legend-scale" style="background:linear-gradient(90deg,${colors})"></div>
       <div class="wifi-legend-labels">${levels.map(level => `<span>${level.label}</span>`).join('')}</div>`;
-    $('wifiNewSite').addEventListener('click', () => startProject(blankPlan()));
-    $('wifiSampleSite').addEventListener('click', () => startProject(window.wifiCampusExample(blankPlan())));
     workspace.querySelectorAll('[data-wifi-panel-button]').forEach(button => {
       button.addEventListener('click', () => {
         const name = button.dataset.wifiPanelButton;
@@ -1180,14 +1160,7 @@
         viewport.focus({ preventScroll: true });
       });
     });
-    $('wifiReloadSites').addEventListener('click', loadSites);
-    $('wifiSavedSites').addEventListener('click', event => {
-      const button = event.target.closest('button');
-      if (button?.dataset.wifiOpen) openSaved(button.dataset.wifiOpen);
-      if (button?.dataset.wifiDelete) deleteSaved(button.dataset.wifiDelete);
-    });
-    $('wifiNetworkBack').addEventListener('click', () => { hide(); options.onBack(); });
-    $('wifiSiteBack').addEventListener('click', async () => { if (await leave()) showSites(); });
+    $('wifiSiteBack').addEventListener('click', async () => { if (await leave()) options.onBack(); });
     $('wifiSiteTitle').addEventListener('input', event => {
       const title = cleanText(event.target.value, 'Untitled Wi-Fi Site');
       if (title === current().title) return;
@@ -1254,7 +1227,7 @@
     window.addEventListener('keyup', event => { if (event.code === 'Space' && spacePan) setSpacePan(false); });
     window.addEventListener('blur', () => setSpacePan(false));
     window.addEventListener('eagle-context-updated', () => {
-      if (!sameAccount() && (!library.hidden || !workspace.hidden)) { hide(); options.onBack(); }
+      if (!sameAccount() && !workspace.hidden) { hide(); options.onBack(); }
     });
     new MutationObserver(() => {
       if (active() && !document.body.classList.contains('network-mode')) flushSave();
@@ -1270,11 +1243,11 @@
   }
 
   window.WifiSite = {
-    async open(config) {
+    open(config, { site, sample } = {}) {
       options = config;
       account = options.authKey();
       initialize();
-      showSites();
+      startProject(site || (sample ? window.wifiCampusExample(blankPlan()) : blankPlan()));
     },
     hide, leave,
   };

@@ -1,20 +1,3 @@
-.wifi-site-library .network-library-hero h1 { margin-top: 16px; }
-.wifi-site-card { min-height: 130px; cursor: default; }
-.wifi-site-card:hover { transform: none; }
-.wifi-site-card h3 button {
-  padding: 0;
-  border: 0;
-  color: inherit;
-  background: transparent;
-  font: inherit;
-  text-align: left;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  cursor: pointer;
-}
-.wifi-site-card > button { align-self: flex-start; }
-#wifiLibraryStatus { margin: 8px 0; color: #c0d3e7; }
-
 .wifi-workspace {
   --wifi-text: #ecf4ff;
   --wifi-muted: #aebfd3;
@@ -206,6 +189,8 @@ body.light-mode .wifi-workspace .network-save-state[data-kind="error"] { color: 
 .wifi-note-pin.is-selected { stroke: #0867cd; stroke-width: 3; }
 .wifi-marker { transform: scale(var(--wifi-marker-scale, 1)); }
 .wifi-ghost, #wifiOverlay { pointer-events: none; }
+.wifi-moving-source { visibility: hidden; }
+.wifi-viewport[data-wifi-moving] .wifi-stage { cursor: grabbing; }
 #wifiOverlay .wifi-handle { pointer-events: auto; }
 .wifi-ap-text, .wifi-note-text { fill: #172d43; stroke: #fff; stroke-width: 3; stroke-linejoin: round; paint-order: stroke; font: 700 13px system-ui, sans-serif; }
 .wifi-viewport[data-tool="select"] [data-wifi-object] { cursor: move; }

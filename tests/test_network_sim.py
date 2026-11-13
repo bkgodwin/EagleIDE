@@ -1,4 +1,7 @@
 import copy
+import json
+import shutil
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -8,7 +11,7 @@ from flask import Flask
 
 from network_content import ACRONYM_REFERENCE, COMMAND_REFERENCE, DEVICE_PORTS, EXAMPLE_TOPOLOGIES, LABS, PORT_REFERENCE
 from network_features import register
-from network_store import MAX_DEVICES, NetworkDataError, NetworkStore, _stp_state, can_reach, can_reach_ipv6, grade_lab, migrate_topology, validate_topology
+from network_store import MAX_DEVICES, NetworkDataError, NetworkStore, _stp_state, can_reach, can_reach_ipv6, grade_lab, migrate_topology, validate_topology, validate_wifi_site
 
 
 class NetworkStoreTests(unittest.TestCase):
@@ -24,6 +27,24 @@ class NetworkStoreTests(unittest.TestCase):
             self.assertEqual(validate_topology(topology)["schema_version"], 2)
         for lab in LABS.values():
             self.assertEqual(validate_topology(lab["starter_topology"])["schema_version"], 2)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required to load the Infra Sim example")
+    def test_infra_campus_example_can_be_saved_and_all_aps_are_wired(self):
+        root = Path(__file__).resolve().parents[1]
+        script = """
+          global.window = global;
+          require('./static/js/wifi-site-example.js');
+          process.stdout.write(JSON.stringify(wifiCampusExample({schema_version: 4, units: 'm', band: '5'})));
+        """
+        raw = json.loads(subprocess.check_output(["node", "-e", script], cwd=root, timeout=10))
+        site = validate_wifi_site(raw)
+        ethernet_ends = {cable[end]["device_id"] for cable in site["cables"] if cable["media"] == "ethernet"
+                         for end in ("source", "target")}
+        self.assertGreaterEqual(len(site["access_points"]), 12)
+        self.assertTrue(all(ap["id"] in ethernet_ends for ap in site["access_points"]))
+        self.assertTrue(all(closet in {wall["id"] for wall in site["walls"]}
+                            for closet in ("west-idf-top", "east-idf-top", "annex-idf-top")))
+        self.assertTrue(any(ap["y"] < 0 for ap in site["access_points"]))
 
     def test_v1_migration_and_physical_media_rules(self):
         legacy = copy.deepcopy(EXAMPLE_TOPOLOGIES["simple-lan"])
@@ -314,11 +335,29 @@ class NetworkRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         bootstrap = response.get_json()["data"]
         self.assertFalse(bootstrap["can_save"])
+        self.assertEqual(bootstrap["saved_sites"], [])
+        self.assertEqual(len(bootstrap["practice_labs"]), len(LABS))
         self.assertEqual(bootstrap["command_reference"], COMMAND_REFERENCE)
         self.assertEqual(bootstrap["port_reference"], PORT_REFERENCE)
         self.assertEqual(bootstrap["acronym_reference"], ACRONYM_REFERENCE)
         response = self.client.put("/api/network/topologies/guest-work", json={"topology": EXAMPLE_TOPOLOGIES["simple-lan"]})
         self.assertEqual(response.status_code, 401)
+
+    def test_practice_labs_are_available_without_assignment_but_do_not_expose_solutions(self):
+        lab = "lab-01-connected-lan"
+        practice_url = f"/api/network/practice-labs/{lab}"
+        headers = {"X-User-Token": "student-token"}
+        self.assertEqual(self.client.get(practice_url, headers=headers).status_code, 403)
+        self.store.set_class_access("class-1", True)
+        practice = self.client.get(practice_url, headers=headers)
+        self.assertEqual(practice.status_code, 200)
+        self.assertEqual(practice.json["data"]["id"], lab)
+        self.assertIn("starter_topology", practice.json["data"])
+        self.assertNotIn("solution", practice.json["data"])
+        self.assertEqual(self.client.get(f"/api/network/labs/{lab}?class_id=class-1", headers=headers).status_code, 403)
+        self.assertEqual(self.client.get(practice_url).status_code, 200)
+        self.config_state["network_sim_enabled"] = False
+        self.assertEqual(self.client.get(practice_url).status_code, 403)
 
     def test_disabled_blocks_guest_but_admin_can_privately_preview(self):
         self.config_state["network_sim_enabled"] = False
@@ -401,6 +440,9 @@ class NetworkRouteTests(unittest.TestCase):
         self.assertEqual(saved.json["data"]["revision"], 1)
         opened = self.client.get(url, headers=headers).json["data"]
         self.assertEqual({key: opened[key] for key in plan}, plan)
+        self.assertEqual(self.client.get("/api/network/bootstrap", headers=headers).json["data"]["saved_sites"],
+                         [{"id": "site-1", "title": plan["title"], "updated_at": opened["updated_at"]}])
+        self.assertEqual(self.client.get("/api/network/bootstrap", headers=teacher).json["data"]["saved_sites"], [])
         self.assertEqual(self.client.get(url, headers=teacher).status_code, 404)
         self.assertEqual(self.client.delete(url, headers=teacher).status_code, 404)
         self.assertEqual(self.client.get("/api/network/wifi-sites", headers=teacher).json["data"], [])

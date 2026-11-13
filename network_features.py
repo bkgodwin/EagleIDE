@@ -89,7 +89,7 @@ def register(
     def network_bootstrap():
         current = actor()
         if not may_open(current):
-            message = "Network Simulator is disabled for your class" if current["role"] == "student" and globally_enabled() else "Network Simulator is disabled"
+            message = "Network Lab is disabled for your class" if current["role"] == "student" and globally_enabled() else "Network Lab is disabled"
             return jsonify(ok=False, error=message, enabled=False), 403
         class_ids = get_user_class_ids(current.get("record")) if current["role"] == "student" else []
         assigned = []
@@ -108,6 +108,7 @@ def register(
                             "assigned_at": assignment.get("assigned_at"),
                         })
         saved = [] if current["role"] == "guest" else store.list_topologies(current["email"])
+        saved_sites = [] if current["role"] == "guest" else store.list_wifi_sites(current["email"])
         return jsonify(
             ok=True,
             data={
@@ -117,7 +118,10 @@ def register(
                 "can_save": current["role"] != "guest",
                 "examples": example_summaries(),
                 "assigned_labs": assigned,
+                "practice_labs": [{key: lab[key] for key in ("id", "title", "description", "level", "estimated_minutes")}
+                                  for lab in LABS.values()],
                 "saved": saved,
+                "saved_sites": saved_sites,
                 "wifi_limits": WIFI_LIMITS,
                 "wifi_cabling": CABLING_CATALOG,
                 "command_reference": COMMAND_REFERENCE,
@@ -131,7 +135,7 @@ def register(
     def network_example(example_id):
         current = actor()
         if not may_open(current):
-            return jsonify(ok=False, error="Network Simulator is disabled"), 403
+            return jsonify(ok=False, error="Packet Sim is disabled"), 403
         topology = EXAMPLE_TOPOLOGIES.get(str(example_id))
         if not topology:
             return jsonify(ok=False, error="Example not found"), 404
@@ -144,7 +148,7 @@ def register(
         if not lab:
             return jsonify(ok=False, error="Lab not found"), 404
         if not may_open(current):
-            return jsonify(ok=False, error="Network Simulator is disabled"), 403
+            return jsonify(ok=False, error="Packet Sim is disabled"), 403
         class_id = str(request.args.get("class_id") or "")
         include_solution = current["role"] == "admin"
         if current["role"] == "teacher":
@@ -161,13 +165,24 @@ def register(
         payload["starter_topology"] = copy.deepcopy(lab["starter_topology"])
         return jsonify(ok=True, data=payload)
 
+    @app.get("/api/network/practice-labs/<lab_id>")
+    def network_practice_lab(lab_id):
+        if not may_open(actor()):
+            return jsonify(ok=False, error="Packet Sim is disabled"), 403
+        lab = LABS.get(lab_id)
+        if not lab:
+            return jsonify(ok=False, error="Lab not found"), 404
+        payload = lab_summary(lab)
+        payload["starter_topology"] = copy.deepcopy(lab["starter_topology"])
+        return jsonify(ok=True, data=payload)
+
     @app.get("/api/network/topologies")
     def network_topology_list():
         current = actor()
         if current["role"] == "guest":
             return jsonify(ok=False, error="Sign in to save networks"), 401
         if not may_open(current):
-            return jsonify(ok=False, error="Network Simulator is disabled"), 403
+            return jsonify(ok=False, error="Packet Sim is disabled"), 403
         return jsonify(ok=True, data=store.list_topologies(current["email"]))
 
     @app.get("/api/network/topologies/<topology_id>")
@@ -176,7 +191,7 @@ def register(
         if current["role"] == "guest":
             return jsonify(ok=False, error="Sign in to open saved networks"), 401
         if not may_open(current):
-            return jsonify(ok=False, error="Network Simulator is disabled"), 403
+            return jsonify(ok=False, error="Packet Sim is disabled"), 403
         topology = store.get_topology(current["email"], topology_id)
         if not topology:
             return jsonify(ok=False, error="Saved network not found"), 404
@@ -188,7 +203,7 @@ def register(
         if current["role"] == "guest":
             return jsonify(ok=False, error="Guests cannot save networks"), 401
         if not may_open(current):
-            return jsonify(ok=False, error="Network Simulator is disabled"), 403
+            return jsonify(ok=False, error="Packet Sim is disabled"), 403
         payload = json_object()
         if payload is None:
             return jsonify(ok=False, error="A JSON object is required"), 400
@@ -204,7 +219,7 @@ def register(
         if current["role"] == "guest":
             return jsonify(ok=False, error="Sign in to manage saved networks"), 401
         if not may_open(current):
-            return jsonify(ok=False, error="Network Simulator is disabled"), 403
+            return jsonify(ok=False, error="Packet Sim is disabled"), 403
         try:
             deleted = store.delete_topology(current["email"], topology_id)
         except NetworkDataError as exc:
@@ -218,7 +233,7 @@ def register(
         if current["role"] == "guest":
             return None, (jsonify(ok=False, error="Sign in to save or open Wi-Fi sites"), 401)
         if not may_open(current):
-            return None, (jsonify(ok=False, error="Network Simulator is disabled"), 403)
+            return None, (jsonify(ok=False, error="Infra Sim is disabled"), 403)
         return current["email"], None
 
     @app.get("/api/network/wifi-sites")
