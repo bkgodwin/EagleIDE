@@ -24,15 +24,17 @@ Use **Export** to keep a portable JSON copy. Export is available to guests and s
 
 ## Design a Wi-Fi site
 
-Open **Network Sim → Design a Wi-Fi Site** and choose **New Site** or **Try the Two-Room Activity**. The Wi-Fi editor models signal strength on one floor.
+Open **Network Sim → Design a Wi-Fi Site** and choose **New Site** or **Open Campus Example**. The example is a complete wired floor with a fiber backbone, two ISP connections, seven access points, and a concrete partition.
 
-1. Choose feet or meters under **Floor plan**. Scroll or pinch to zoom out and reveal more drawing space in every direction. The grid and scale bar adjust as you zoom. Use **Pan** or hold **Space** and drag to move the view, and choose **Fit Site** to return to the whole drawing. Changing units preserves physical size.
+1. Choose feet or meters from **Plan**. Scroll or pinch to zoom out and reveal more drawing space in every direction. Use **Pan** or hold **Space** and drag to move the view. **Fit Site** returns to the whole drawing.
 2. Use **Room** to draw a rectangle. With **Wall**, drag a single wall or click successive points for a connected run, then select **Finish Wall** or press **Escape**. **Snap** aligns to the grid or a nearby endpoint. Hold **Shift** or enable **Right angles** to constrain a wall to horizontal or vertical. Choose drywall, concrete, metal, glass, wood, or brick.
-3. Use **Access Point** to place a generic ceiling-mounted or wall-mounted AP. Adjust relative transmit power or rotate a wall-mounted AP. Use **Note** to label a room and **Measure** to check distances. Choose an object in the inspector to **Locate** or **Duplicate** it.
+3. Place **Door** or **Window** on a wall and choose its size and material in the floating inspector. Coverage uses that material wherever a signal crosses the opening. For APs, choose a ceiling or wall mount under **Equipment**. Use **Note** to label a room and **Measure** to check distances.
 4. Connect an access point by Ethernet to keep its coverage on. To test an unwired AP, select it and turn on **Estimated coverage**. This preview ends when you deselect the AP. Use **Check Signal** to compare 2.4 GHz and 5 GHz, see the strongest AP and walls crossed, and check a second AP when available. Treat these values as classroom estimates.
 5. Signed-in users can name a site and return to it from **Saved Wi-Fi sites**. Changes autosave, and **Save a Copy** creates a separate design. If another tab has saved a newer version, use **Save a Copy** to keep your local changes.
 
-On the keyboard, focus the plan, move the cursor with the arrow keys, and press Enter to use the selected tool. Choose an object from the **Objects** menu to edit its coordinates directly.
+Select an object to open its floating inspector. Use **Plan → Find an object** to open settings for an object elsewhere on the canvas. On the keyboard, focus the canvas, move the cursor with the arrow keys, and press Enter to use the selected tool.
+
+Use **Background → Add Image** to import a PNG, JPEG, or WebP floor plan. Enter its width or choose **Calibrate with Two Points** and enter the real-world distance between them. Use **Move Image** or edit its X and Y coordinates to align it. The image stays behind the drawing and saves with the site.
 
 ### Plan cabling and ISP handoffs
 
@@ -40,9 +42,9 @@ On the keyboard, focus the plan, move the cursor with the arrow keys, and press 
 - Place **Keystone Jack** on a wall. Use its **BACK** port for the installed run and **FRONT** for a patch cable. The jack carries PoE through when its other side reaches a source switch.
 - Place **ISP Demarcation** on a wall and choose a fictional provider. Match its fiber or Ethernet handoff to a router WAN port. The provider sets the link speed. Multiple demarcations can use separate WAN ports. CinderSky Satellite provides a 75 Mb/s Ethernet handoff for a remote site.
 - Select **Cable**, choose Ethernet or fiber, and choose a source device and port. Click the plan to add bends and a destination device to choose its port. Hold **Shift** or turn on **Right angles** for horizontal and vertical bends. Select **Connect** to save the route. Select a cable to rename, recolor, drag its bends, or reroute it. Overlapping runs show a bundle count. Click a bundle to pick an individual cable.
-- Concrete walls require a **Pass-through** at the crossing. Place it on the wall, then click it as part of the cable route. Each holds up to 10 cables, and pass-throughs on the same wall need 20 feet (6.096 m) between them. Cables can cross other wall materials anywhere.
+- Concrete walls require a **Pass-through** at the crossing. Place it on the wall, then click it as part of the cable route. Each holds up to 10 cables, and pass-throughs on the same wall need 20 feet (6.096 m) between them. Select a pass-through to see which cables occupy its eight channels. Cables can cross other wall materials anywhere.
 
-Open **Try the Cabling Activity** for a router, switch, concrete partition, jack, and AP to connect. The AP inspector shows whether the link is connected and whether a PoE source reaches it.
+Select a device to see its connected network speed, fastest available modeled ISP path, and power status. Switches and routers use local power, jacks and demarcations are passive, and APs show whether a PoE source reaches them.
 
 ## Build on desktop or iPad
 

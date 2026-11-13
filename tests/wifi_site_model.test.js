@@ -36,6 +36,20 @@ test('joined segments count once and the strongest access point wins', () => {
   assert.equal(winning.alternate.signal, coverageModel([barrier], [ceiling], '5')(probe));
 });
 
+test('a door or window changes only the rays through its span', () => {
+  const wall = { ...barrier, id: 'wall', material: 'concrete' };
+  const opening = { wall_id: 'wall', t: 0.5, width: 2, kind: 'door', material: 'wood' };
+  const baseline = coverageModel([wall], [ceiling], '5');
+  const throughDoor = coverageModel([wall], [ceiling], '5', [opening]);
+  const throughWindow = coverageModel([wall], [ceiling], '5', [{ ...opening, kind: 'window', material: 'glass' }]);
+  assert.deepEqual(throughDoor(probe, true).walls, ['Wood door']);
+  assert.ok(throughWindow(probe) > throughDoor(probe) && throughDoor(probe) > baseline(probe));
+  assert.equal(throughDoor({ x: 15, y: 16 }), baseline({ x: 15, y: 16 }));
+  const tile = { x: 0, y: 0, level: 0 };
+  const plan = { walls: [wall], access_points: [ceiling], band: '5' };
+  assert.notDeepEqual(createHeatSource(plan)(tile), createHeatSource({ ...plan, openings: [opening] })(tile));
+});
+
 test('wall mount rotation and power change the signal at the probe and on the map', () => {
   const forward = { ...ceiling, mount: 'wall' };
   const reversed = { ...forward, angle: 180 };

@@ -9,8 +9,11 @@ const catalog = {
     access_switch: { name: 'Access', groups: [group('ETH', 8)] },
     keystone: { name: 'Jack', groups: [group('FRONT', 0), group('BACK', 0)] },
     access_point: { name: 'AP', groups: [group('ETH', 1)] },
+    router: { name: 'Router', groups: [group('ETH', 4), { ...group('WAN', 2), wan: true }] },
   },
-  isps: {}, pass_capacity: 10, pass_spacing: 6.096, epsilon: 0.0002, crossing_tolerance: 0.075,
+  isps: { primary: { name: 'Primary', speed: 1000, media: 'ethernet' },
+    backup: { name: 'Satellite', speed: 75, media: 'ethernet' } },
+  pass_capacity: 10, pass_channels: 8, pass_spacing: 6.096, epsilon: 0.0002, crossing_tolerance: 0.075,
 };
 const limits = { bends: 40, total_bends: 6000 };
 const endpoint = (device_id, port) => ({ device_id, port });
@@ -35,7 +38,30 @@ test('wall-side transitions need a pass and capacity counts each cable once', ()
   const valid = build(plan, catalog, limits);
   assert.equal(valid.error, '');
   assert.equal(valid.usage.get('pass'), 1);
+  assert.equal(valid.channels('pass').length, 8);
+  assert.deepEqual(valid.channels('pass')[0].map(cable => cable.id), ['new']);
   assert.equal(valid.wired.has('ap'), true);
+});
+
+test('internet status follows the fastest connected ISP path and falls back when it is removed', () => {
+  const plan = layout();
+  plan.equipment.push({ id: 'router', kind: 'router', x: -3, y: 5 },
+    { id: 'isp-a', kind: 'demarc', isp: 'primary', wall_id: 'wall', t: 0.2 },
+    { id: 'isp-b', kind: 'demarc', isp: 'backup', wall_id: 'wall', t: 0.7 });
+  plan.pass_throughs.push({ id: 'pass', wall_id: 'wall', t: 1 / 3 });
+  plan.cables = [
+    wire('primary', endpoint('isp-a', 'ISP'), endpoint('router', 'WAN1')),
+    wire('backup', endpoint('isp-b', 'ISP'), endpoint('router', 'WAN2')),
+    wire('lan', endpoint('router', 'ETH1'), endpoint('switch', 'ETH1')),
+    wire('ap-link', endpoint('switch', 'ETH2'), endpoint('ap', 'ETH1'), [{ pass_id: 'pass' }]),
+  ];
+  const first = build(plan, catalog, limits);
+  assert.equal(first.status('ap').upstream.speed, 1000);
+  assert.equal(first.status('ap').power, 'PoE available');
+  plan.cables.shift();
+  const fallback = build(plan, catalog, limits).status('ap');
+  assert.equal(fallback.upstream.speed, 75);
+  assert.equal(fallback.speed, 1000);
 });
 
 test('an AP is wired by Ethernet and a passive jack carries PoE only from a source switch', () => {

@@ -1,7 +1,7 @@
 /* Render classroom coverage off the UI thread. */
 'use strict';
 
-importScripts('/static/js/wifi-site-model.js?v=20261112-open-canvas');
+importScripts('/static/js/wifi-site-model.js?v=20261113-plan');
 
 let revision;
 let renderTile;

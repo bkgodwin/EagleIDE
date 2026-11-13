@@ -39,7 +39,7 @@ ISPS = {
     "cindersky": {"name": "CinderSky Satellite", "media": "ethernet", "speed": 75},
 }
 
-CABLING_CATALOG = {"equipment": EQUIPMENT, "isps": ISPS, "pass_capacity": PASS_CAPACITY,
+CABLING_CATALOG = {"equipment": EQUIPMENT, "isps": ISPS, "pass_capacity": PASS_CAPACITY, "pass_channels": 8,
                    "pass_spacing": PASS_SPACING, "crossing_tolerance": CROSSING_TOLERANCE, "epsilon": EPSILON}
 
 

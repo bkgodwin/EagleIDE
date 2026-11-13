@@ -378,12 +378,13 @@ class NetworkRouteTests(unittest.TestCase):
 
     def wifi_plan(self):
         return {
-            "schema_version": 3, "title": "Two rooms",
+            "schema_version": 4, "title": "Two rooms",
             "units": "ft", "band": "5",
             "walls": [{"id": "wall-1", "a": {"x": 20, "y": 4}, "b": {"x": 20, "y": 24}, "material": "concrete"}],
             "access_points": [{"id": "ap-1", "x": 11, "y": 14, "mount": "wall", "angle": 90, "name": "Hall AP", "power_db": 0}],
             "labels": [{"id": "note-1", "x": 25, "y": 7, "text": "Check signal here"}],
             "equipment": [], "pass_throughs": [], "cables": [],
+            "openings": [], "background": None,
         }
 
     def test_wifi_site_access_and_account_owned_round_trip(self):

@@ -80,6 +80,8 @@
     const ports = new Map([...devices].map(([id, device]) => [id, portProfiles(device, catalog)]));
     const passesByWall = new Map();
     const occupancy = new Map(), usage = new Map(), inspections = new Map();
+    const links = new Map([...devices.keys()].map(id => [id, []]));
+    const internet = new Map();
     let totalBends = 0;
     const wired = new Set(), powered = new Set();
     function name(device) {
@@ -178,6 +180,8 @@
         const result = checkCable(cable);
         if (result.error) return result.error;
         inspections.set(cable.id, result);
+        links.get(cable.source.device_id).push({ to: cable.target.device_id, speed: result.speed, cable: cable.id });
+        links.get(cable.target.device_id).push({ to: cable.source.device_id, speed: result.speed, cable: cable.id });
         totalBends += result.bendCount;
         for (const pass of result.usedPasses) usage.set(pass, (usage.get(pass) || 0) + 1);
         for (const end of [cable.source, cable.target]) {
@@ -201,12 +205,41 @@
           if (copper.has(other) && !powered.has(other)) queue.push(other);
         }
       }
+      const upstream = [...devices].filter(([id, device]) => device.kind === 'demarc' && links.get(id).length)
+        .map(([id, device]) => ({ id, speed: catalog.isps[device.isp].speed, provider: catalog.isps[device.isp].name }));
+      while (upstream.length) {
+        upstream.sort((a, b) => b.speed - a.speed);
+        const path = upstream.shift();
+        if (internet.has(path.id)) continue;
+        internet.set(path.id, path);
+        if (devices.get(path.id).kind === 'access_point') continue;
+        for (const link of links.get(path.id)) {
+          if (!internet.has(link.to)) upstream.push({ id: link.to, speed: Math.min(path.speed, link.speed), provider: path.provider });
+        }
+      }
       return '';
     }
 
     const error = validate();
+    function status(id) {
+      const device = devices.get(id);
+      const connected = links.get(id);
+      const speed = Math.max(0, ...connected.map(link => link.speed));
+      const upstream = internet.get(id);
+      const power = device.kind === 'keystone' || device.kind === 'demarc' ? 'Passive'
+        : device.kind !== 'access_point' ? 'Local power'
+        : connected.some(link => powered.has(link.cable)) ? 'PoE available' : speed ? 'No PoE source' : 'Unwired';
+      return { speed, upstream, power, count: connected.length };
+    }
+
+    function channels(id) {
+      const slots = Array.from({ length: catalog.pass_channels || 8 }, () => []);
+      const cables = plan.cables.filter(cable => inspections.get(cable.id)?.usedPasses.has(id));
+      cables.forEach((cable, index) => slots[index % slots.length].push(cable));
+      return slots;
+    }
     return { error, walls, devices, passages, ports, occupancy, usage, inspections, wired, powered,
-      name, location, waypoint, route, endName, availablePorts, checkCable };
+      name, location, waypoint, route, endName, availablePorts, checkCable, status, channels };
   }
 
   function bundledSegments(cables, inspections) {

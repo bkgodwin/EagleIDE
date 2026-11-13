@@ -249,7 +249,7 @@ def register(
                 if site:
                     return jsonify(ok=True, data=site)
         except RequestEntityTooLarge:
-            return jsonify(ok=False, error="Wi-Fi site requests must be 1 MB or smaller"), 413
+            return jsonify(ok=False, error="Wi-Fi site requests must be 2 MB or smaller"), 413
         except RecursionError:
             return jsonify(ok=False, error="Wi-Fi site data is nested too deeply"), 400
         except WifiRevisionError as exc:
