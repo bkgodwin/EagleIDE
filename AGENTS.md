@@ -463,6 +463,8 @@ installed Chromium browser, and `EAGLE_TOOL_SCREENSHOT_DIR` to a scratch folder.
 
 ### Frontend
 
+Workspace file and notebook saves use HTTP. The connection controller pauses those operations when the browser goes offline or the HTTP health check fails. Socket.IO connectivity gates execution separately. A busy password queue returns HTTP 503 with Retry-After, and the browser allows one staggered retry after that response.
+
 `index.html` contains the complete UI markup. Scripts are classic global scripts, not ES modules, and their order is significant. The active order at the end of the page is:
 
 1. `app.js`, then `connection.js` and shared modal/lazy/layout/editor/Markdown/shell helpers.

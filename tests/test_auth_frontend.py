@@ -31,7 +31,7 @@ assert.equal(TEACHER_TOKEN,null);
 assert.equal(WIKI_MANAGER_TOKEN,'manager-token');
 """)
 
-    def run_javascript(self, functions, checks):
+    def run_javascript(self, functions, checks, *, setup=""):
         source = (ROOT / "static/js/app-core.js").read_text(encoding="utf-8")
         extracted = []
         for name in functions:
@@ -56,7 +56,7 @@ const emitJoinClassRoom = () => {};
 const refreshEagleIDEContext = () => {};
 const window = {};
 let fetch;
-""" + "\n".join(extracted) + "\n(async () => {\n" + checks + "\n})().catch(err => { console.error(err); process.exitCode = 1; });"
+""" + setup + "\n" + "\n".join(extracted) + "\n(async () => {\n" + checks + "\n})().catch(err => { console.error(err); process.exitCode = 1; });"
         result = subprocess.run([NODE, "-"], input=program, text=True, capture_output=True, timeout=20, cwd=ROOT)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -135,6 +135,36 @@ const passwordCalls = [];
 fetch = async url => { passwordCalls.push(url); return { status: 401, ok: false, json: async () => ({ ok: false, code: 'incorrect_password', error: 'Incorrect password' }) }; };
 assert.deepEqual(await tryUnifiedSignIn('student@school.test', 'wrong'), { ok: false, error: 'Incorrect password' });
 assert.deepEqual(passwordCalls, ['/api/auth/login', '/api/admin/login']);
+""")
+
+    def test_password_login_waits_for_queue_and_retries_only_explicit_busy(self):
+        self.run_javascript(["fetchAuthRequest"], r"""
+let calls = 0;
+fetch = async () => {
+  calls += 1;
+  return new Response('{}', { status: 503, headers: { 'Retry-After': '2' } });
+};
+assert.equal((await fetchAuthRequest('/api/auth/login')).status, 503);
+assert.equal(calls, 2);
+assert.deepEqual(deadlines, [20000, 20000]);
+assert.equal(waits.length, 1);
+assert.ok(waits[0] >= 2000 && waits[0] < 2500);
+
+for (const status of [429, 502, 503, 504]) {
+  calls = 0;
+  fetch = async () => { calls += 1; return new Response('{}', { status }); };
+  assert.equal((await fetchAuthRequest('/api/auth/login')).status, status);
+  assert.equal(calls, 1);
+}
+calls = 0;
+fetch = async () => { calls += 1; throw new DOMException('timed out', 'AbortError'); };
+await assert.rejects(fetchAuthRequest('/api/admin/login'), { code: 'timeout' });
+assert.equal(calls, 1);
+""", setup="""
+const waits = [], deadlines = [];
+const waitForAuthRetry = async delay => waits.push(delay);
+const setTimeout = (_, delay) => deadlines.push(delay);
+const clearTimeout = () => {};
 """)
 
 

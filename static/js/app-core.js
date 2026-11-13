@@ -2102,6 +2102,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         return;
       }
       if (window.EagleIDE?.connection?.isLost() || !socket?.connected) {
+        const sendBtn = document.getElementById('sendBtn');
+        if (sendBtn) sendBtn.disabled = true;
         runBtn.disabled = true;
         runBtn.textContent = 'Run ▶';
         runBtn.classList.remove('stop', 'run');
@@ -2112,6 +2114,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         refreshEagleIDEContext();
         return;
       }
+      const sendBtn = document.getElementById('sendBtn');
+      if (sendBtn) sendBtn.disabled = false;
       if (isProgramRunning && executionQueueState) {
         runBtn.textContent = executionQueueState.status === 'starting' ? 'Starting…' : 'Queued…';
         runBtn.disabled = true;
@@ -3364,21 +3368,29 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     async function fetchAuthRequest(url, options = {}, attempts = 3) {
+      const passwordLogin = url === '/api/auth/login' || url === '/api/admin/login';
+      const maxAttempts = passwordLogin ? Math.min(2, attempts) : attempts;
       let lastError = null;
-      for (let attempt = 0; attempt < attempts; attempt += 1) {
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-        const timeout = controller ? setTimeout(() => controller.abort(), 8000) : null;
+        // Password checks can spend up to 10 seconds waiting for a server slot.
+        const timeout = controller ? setTimeout(() => controller.abort(), passwordLogin ? 20000 : 8000) : null;
+        let retryDelay = 350 * (attempt + 1);
         try {
           const response = await fetch(url, { ...options, signal: controller?.signal });
-          if (![502, 503, 504].includes(response.status) || attempt === attempts - 1) return response;
+          if (attempt === maxAttempts - 1) return response;
+          const retryAfter = Number(response.headers?.get('Retry-After'));
+          if (passwordLogin ? response.status !== 503 || !(retryAfter > 0) : ![502, 503, 504].includes(response.status)) return response;
+          if (retryAfter > 0) retryDelay = Math.min(5000, retryAfter * 1000);
           lastError = new Error(`Server temporarily unavailable (${response.status})`);
         } catch (error) {
           lastError = error;
-          if (attempt === attempts - 1) break;
+          // A timed-out POST can still be waiting or running on the server.
+          if (passwordLogin || attempt === maxAttempts - 1) break;
         } finally {
           if (timeout) clearTimeout(timeout);
         }
-        await waitForAuthRetry(350 * (attempt + 1));
+        await waitForAuthRetry(retryDelay + Math.floor(Math.random() * 500));
       }
       if (lastError?.name === 'AbortError') {
         const timeoutError = new Error('The sign-in request timed out. The network may be slow; please try again.');
@@ -7122,7 +7134,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       clearTimeout(csvAutosaveTimer);
       clearTimeout(teacherBroadcastFlushTimer);
       if (lost) _ctxMenu?.remove();
-      document.getElementById('sendBtn').disabled = lost;
       setRunButtonState(isProgramRunning);
       updateFileActionButtons();
       // Suspend completion menus so Enter/arrows always edit during an outage.

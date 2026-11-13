@@ -1612,6 +1612,13 @@ def _login_succeeded(email):
     _login_account_limits.clear(hashlib.sha256(str(email).strip().lower().encode()).hexdigest())
 
 
+def _login_busy():
+    response = jsonify(ok=False, error="The sign-in queue is busy. Please try again in a moment.", code="auth_busy")
+    response.status_code = 503
+    response.headers["Retry-After"] = "2"
+    return response
+
+
 def _ai_identity(req):
     user = _require_user(req) or _require_teacher(req, allow_coteacher=True) or _require_wiki_manager(req)
     if user:
@@ -2954,7 +2961,7 @@ def admin_login():
     # Constant-time comparison to prevent timing attacks
     email_ok = hmac.compare_digest(email.lower().encode("utf-8"), ADMIN_ACCOUNT_EMAIL.lower().encode("utf-8"))
     if not _password_check_slots.acquire(timeout=AUTH_PASSWORD_QUEUE_TIMEOUT_SECONDS):
-        return jsonify(ok=False, error="Sign-in is busy. Try again shortly.", code="auth_busy"), 503
+        return _login_busy()
     try:
         if ADMIN_ACCOUNT_PASSWORD:
             # Compatibility for embedders which explicitly supply an in-memory credential.
@@ -3207,10 +3214,7 @@ def auth_login():
         return jsonify(ok=False, error="Too many sign-in attempts. Try again shortly.", code="auth_rate_limited"), 429
     user = _find_user(email)
     if not _password_check_slots.acquire(timeout=AUTH_PASSWORD_QUEUE_TIMEOUT_SECONDS):
-        response = jsonify(ok=False, error="The sign-in queue is busy. Please try again in a moment.", code="auth_busy")
-        response.status_code = 503
-        response.headers["Retry-After"] = "2"
-        return response
+        return _login_busy()
     try:
         if user:
             pw_ok = _verify_user_password(user, password)
