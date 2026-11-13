@@ -405,7 +405,7 @@
               <ul class="network-hub-list">
                 <li class="network-hub-row">
                   <button class="network-hub-row-open" id="wifiSampleSite" type="button">
-                    <span class="network-hub-row-main"><strong>Northfield Learning Center</strong><small>Explore a wired campus with dedicated IDF closets, an athletics wing, and outdoor Wi-Fi.</small></span>
+                    <span class="network-hub-row-main"><strong>Northfield Learning Center</strong><small>Explore a furnished campus, outdoor Wi-Fi, and wired and wireless clients.</small></span>
                     <span class="network-hub-arrow" aria-hidden="true">↗</span>
                   </button>
                 </li>
@@ -543,6 +543,8 @@
       <div class="wifi-toolbars">
         <div class="wifi-tool-group" role="group" aria-label="Floor plan tools">
           <button class="wifi-control" type="button" data-wifi-tool="select">Select</button>
+          <button class="wifi-control" type="button" data-wifi-tool="marquee">Box Select</button>
+          <button class="wifi-control" type="button" id="wifiDeleteSelected" hidden>Delete Selected</button>
           <button class="wifi-control" type="button" data-wifi-tool="pan">Pan</button>
           <button class="wifi-control" type="button" data-wifi-tool="wall">Wall</button>
           <button class="wifi-control" type="button" data-wifi-tool="room">Room</button>
@@ -608,7 +610,7 @@
               <canvas class="wifi-heatmap" id="wifiHeatmap" aria-hidden="true"></canvas>
               <svg class="wifi-grid" id="wifiGrid" aria-hidden="true"></svg>
               <svg class="wifi-objects" id="wifiObjects" aria-hidden="true">
-                <g id="wifiSurfaceHitLayer"></g><g id="wifiDecorLayer"></g><g id="wifiWalls"></g><g id="wifiOpenings"></g><g id="wifiWireLayer"></g><g id="wifiMarkers"></g><g id="wifiEquipmentLayer"></g><g id="wifiOverlay"></g>
+                <g id="wifiSurfaceHitLayer"></g><g id="wifiDecorLayer"></g><g id="wifiWalls"></g><g id="wifiOpenings"></g><g id="wifiWireLayer"></g><g id="wifiMarkers"></g><g id="wifiEquipmentLayer"></g><g id="wifiOverlay"></g><g id="wifiPingLayer"></g>
               </svg>
               <svg class="wifi-background-layer" id="wifiBackgroundLayer" aria-hidden="true"><image id="wifiBackgroundImage"/></svg>
               <svg class="wifi-surface-layer" id="wifiSurfaceLayer" aria-hidden="true"></svg>

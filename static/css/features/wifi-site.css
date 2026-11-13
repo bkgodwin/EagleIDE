@@ -166,7 +166,7 @@ body.light-mode .wifi-workspace .network-save-state[data-kind="error"] { color: 
 .wifi-wire-fiber { stroke-dasharray: 8 4; }
 .wifi-wire-stripe { stroke-dasharray: 4 3; }
 .wifi-wire-hit { stroke: transparent; stroke-width: 15px; pointer-events: stroke; cursor: pointer; }
-.wifi-viewport:not([data-tool="select"]) .wifi-wire-hit { pointer-events: none; }
+.wifi-viewport:not([data-tool="select"], [data-tool="marquee"]) .wifi-wire-hit { pointer-events: none; }
 .wifi-wire-draft, .wifi-wire-selection { stroke-width: 4px; stroke-dasharray: 6 3; paint-order: stroke; }
 .wifi-wire-selection { stroke-width: 5px; filter: drop-shadow(0 0 1.5px #fff); }
 .wifi-wire-draft.is-invalid { stroke: #b42d26; }
@@ -187,11 +187,14 @@ body.light-mode .wifi-workspace .network-save-state[data-kind="error"] { color: 
 .wifi-gear-router .wifi-gear-body { fill: #483e77; }
 .wifi-gear-distribution_switch .wifi-gear-body { fill: #176372; }
 .wifi-gear-access_switch .wifi-gear-body { fill: #41546b; }
+.wifi-gear-desktop .wifi-gear-body { fill: #254f82; }
+.wifi-gear-phone .wifi-gear-body { fill: #32664f; }
 .wifi-gear-demarc .wifi-gear-body { fill: #514183; }
 .wifi-gear-keystone .wifi-gear-body { fill: #365a76; }
 .wifi-gear-pass .wifi-gear-body { fill: #f4c75f; stroke: #5d411f; }
 .wifi-gear-pass { color: #3a2a1b; }
 .wifi-gear.is-selected .wifi-gear-body { stroke: #40abfa; stroke-width: 3; }
+.wifi-gear.is-overloaded .wifi-gear-body { fill: #a5222b; stroke: #ffb3b7; }
 .wifi-gear-icon { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
 .wifi-cable-menu {
   position: absolute;
@@ -222,6 +225,21 @@ body.light-mode .wifi-workspace .network-save-state[data-kind="error"] { color: 
 .wifi-note-pin.is-selected { stroke: #0867cd; stroke-width: 3; }
 .wifi-marker { transform: scale(var(--wifi-marker-scale, 1)); }
 .wifi-ghost, #wifiOverlay { pointer-events: none; }
+.wifi-ghost { opacity: .7; }
+#wifiOverlay .wifi-ghost * { pointer-events: none; }
+.wifi-selection-box, .wifi-group-line, .wifi-group-ring {
+  pointer-events: none;
+  stroke: #0867cd;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+.wifi-selection-box { fill: #0867cd25; stroke-dasharray: 5 3; }
+.wifi-group-line, .wifi-group-ring { fill: none; stroke-dasharray: 5 3; }
+#wifiPingLayer { pointer-events: none; }
+.wifi-ping-packet path { fill: #146ad0; stroke: #fff; stroke-width: 1.5; stroke-linejoin: round; }
+.wifi-ping-packet.is-reply path { fill: #008653; }
+.wifi-ping-packet text, .wifi-ping-packet.is-dropped path { display: none; }
+.wifi-ping-packet.is-dropped text { display: inline; font-size: 18px; }
 .wifi-moving-source { visibility: hidden; }
 .wifi-viewport[data-wifi-moving] .wifi-stage { cursor: grabbing; }
 #wifiOverlay .wifi-handle { pointer-events: auto; }
@@ -277,6 +295,12 @@ body.light-mode .wifi-workspace .network-save-state[data-kind="error"] { color: 
 .wifi-device-status > div { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 6px; }
 .wifi-device-status dt { color: var(--wifi-muted); }
 .wifi-device-status dd { margin: 0; color: var(--wifi-text); font-weight: 650; overflow-wrap: anywhere; }
+.wifi-panel .wifi-poe-warning { color: #9e2029; background: #ffe9eb; border-radius: 5px; padding: 7px; font-weight: 650; }
+.wifi-ping-controls { display: grid; gap: 5px; margin: 0 0 10px; }
+.wifi-ping-controls label { margin: 0; }
+.wifi-ping-controls button { justify-self: start; }
+.wifi-ping-controls output { font-size: 12px; color: var(--wifi-text); }
+.wifi-ping-controls output:empty { display: none; }
 .wifi-pass-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; margin-bottom: 10px; }
 .wifi-pass-channel { display: grid; gap: 3px; border: 1px solid var(--wifi-edge); border-radius: 5px; padding: 5px 7px; font-size: 11px; color: var(--wifi-muted); overflow-wrap: anywhere; }
 .wifi-pass-channel.is-used { background: var(--wifi-raised); color: var(--wifi-text); }

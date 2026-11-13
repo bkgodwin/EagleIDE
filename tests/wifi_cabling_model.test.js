@@ -5,10 +5,11 @@ const { build, bundledSegments } = require('../static/js/wifi-cabling-model.js')
 const group = (prefix, count, poe = false) => ({ prefix, count, poe, media: 'ethernet', speed: 1000 });
 const catalog = {
   equipment: {
-    core_switch: { name: 'Core', groups: [group('ETH', 48, true)] },
+    core_switch: { name: 'Core', poe_budget: 500, groups: [group('ETH', 48, true)] },
+    distribution_switch: { name: 'Distribution', poe_budget: 200, groups: [group('ETH', 24, true)] },
     access_switch: { name: 'Access', groups: [group('ETH', 8)] },
     keystone: { name: 'Jack', groups: [group('FRONT', 0), group('BACK', 0)] },
-    access_point: { name: 'AP', groups: [group('ETH', 1)] },
+    access_point: { name: 'AP', poe_draw: 20, groups: [group('ETH', 1)] },
     router: { name: 'Router', groups: [group('ETH', 4), { ...group('WAN', 2), wan: true }] },
   },
   isps: { primary: { name: 'Primary', speed: 1000, media: 'ethernet' },
@@ -90,3 +91,35 @@ test('partial, reversed cable overlap makes a bundle only along the shared route
   const bundles = bundledSegments([...data.keys()].map(id => ({ id })), data).filter(segment => segment.cableIds.length > 1);
   assert.deepEqual(bundles, [{ a: { x: 2, y: 2 }, b: { x: 8, y: 2 }, cableIds: ['left', 'right'] }]);
 });
+
+for (const [kind, budget] of [['core_switch', 500], ['distribution_switch', 200]]) {
+  test(`${kind} shuts down above ${budget} W and recovers at the exact budget`, () => {
+    const count = budget / 20 + 1;
+    const plan = {
+      walls: [{ id: 'wall', a: { x: 2, y: 0 }, b: { x: 2, y: 12 }, material: 'drywall' }],
+      pass_throughs: [],
+      access_points: Array.from({ length: count }, (_, i) => ({ id: `ap${i}`, x: 4, y: i })),
+      equipment: [{ id: 'switch', kind, x: 0, y: 0 }, { id: 'jack', kind: 'keystone', wall_id: 'wall', t: .5 },
+        { id: 'router', kind: 'router', x: -2, y: 0 }],
+      cables: [
+        wire('uplink', endpoint('switch', `ETH${count + 1}`), endpoint('router', 'ETH1')),
+        wire('patch', endpoint('ap0', 'ETH1'), endpoint('jack', 'FRONT')),
+        wire('rear', endpoint('jack', 'BACK'), endpoint('switch', 'ETH1')),
+        ...Array.from({ length: count - 1 }, (_, i) =>
+          wire(`direct${i}`, endpoint('switch', `ETH${i + 2}`), endpoint(`ap${i + 1}`, 'ETH1'))),
+      ],
+    };
+    const overloaded = build(plan, catalog, limits);
+    assert.equal(overloaded.error, '');
+    assert.deepEqual(overloaded.status('switch').poe, { watts: budget + 20, budget, overloaded: true });
+    assert.equal(overloaded.poweredAps.size, 0);
+    assert.equal(overloaded.status('router').speed, 0);
+    assert.equal(overloaded.powered.has('patch'), false);
+    plan.cables.pop();
+    const recovered = build(plan, catalog, limits);
+    assert.deepEqual(recovered.status('switch').poe, { watts: budget, budget, overloaded: false });
+    assert.equal(recovered.poweredAps.size, count - 1);
+    assert.equal(recovered.status('router').speed, 1000);
+    assert.equal(recovered.powered.has('patch'), true);
+  });
+}
