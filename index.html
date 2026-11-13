@@ -85,7 +85,7 @@
         </div>
         <button class="site-nav-link site-nav-link--return ide-only" id="wikiReturnBtn" type="button" hidden>← Return to Wiki</button>
         <button class="site-nav-link site-nav-link--wiki ide-only" id="wikiViewBtn" type="button">Wiki</button>
-        <button class="site-nav-link site-nav-link--network" id="networkViewBtn" type="button" hidden>Network Sim</button>
+        <button class="site-nav-link site-nav-link--network" id="networkViewBtn" type="button" hidden>Network Lab</button>
         <button class="site-nav-link site-nav-link--lab" id="eagleLabViewBtn" type="button" hidden><span aria-hidden="true">▦</span> Eagle Lab</button>
         <button class="site-nav-link site-nav-link--ide" id="ideViewBtn" type="button">Open IDE</button>
         <button class="site-nav-link" id="wikiBookmarksBtn" type="button" aria-expanded="false" aria-controls="wikiBookmarksPanel">Bookmarks</button>
@@ -214,7 +214,7 @@
           </div>
           <div class="wiki-hero-actions">
             <button class="btn run wiki-hero-ide-btn" id="wikiHeroIdeBtn" type="button">Open the IDE</button>
-            <button class="btn run wiki-hero-network-btn" id="wikiHeroNetworkBtn" type="button" hidden>Open Network Sim</button>
+            <button class="btn run wiki-hero-network-btn" id="wikiHeroNetworkBtn" type="button" hidden>Open Network Lab</button>
             <span id="externalToolButtons" class="external-tool-buttons"></span>
           </div>
         </div>
@@ -342,50 +342,79 @@
     <div id="wikiSearchResults"></div>
   </section>
 
-  <main class="network-view" id="networkView" aria-label="Network Simulator">
-    <section class="network-library" id="networkLibrary">
-      <header class="network-library-hero">
-        <div>
-          <span class="network-kicker">EagleIDE Network Lab</span>
-          <h1>Network Simulator</h1>
-          <p>Connect devices and trace packets, or design Wi-Fi coverage for a building.</p>
-          <div class="network-preview-warning" id="networkPreviewWarning" hidden>Admin preview: the simulator is currently disabled for other users.</div>
+  <main class="network-view" id="networkView" aria-label="Network Lab">
+    <section class="network-library network-hub" id="networkLibrary" aria-labelledby="networkHubHeading">
+      <div class="network-hub-inner">
+        <header class="network-hub-heading">
+          <h1 id="networkHubHeading" tabindex="-1">Network Lab</h1>
+          <p>Practice how networks work and plan where they go.</p>
+        </header>
+        <p class="network-preview-warning" id="networkPreviewWarning" hidden>Admin preview: access is currently disabled for other users.</p>
+        <p class="network-guest-note" id="networkGuestNote" hidden>Sign in to save projects or open labs assigned to your class.</p>
+        <div class="network-loading" id="networkLoading" role="status">Loading Network Lab…</div>
+        <div class="network-hub-grid" id="networkHubTools" hidden>
+          <section class="network-hub-sim" aria-labelledby="packetSimHeading">
+            <header class="network-hub-intro">
+              <div class="network-hub-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="6" height="5" rx="1"/><rect x="15.5" y="15" width="6" height="5" rx="1"/><path d="M8.5 6.5H17a3 3 0 0 1 3 3v2m-3-2 3 3 2-3M15.5 17.5H7a3 3 0 0 1-3-3v-2"/></svg></div>
+              <div><h2 id="packetSimHeading">Packet Sim</h2><p>Build a topology, configure devices, and trace packets.</p></div>
+              <div class="network-hub-actions">
+                <button class="btn run" id="networkNewBtn" type="button">New Network</button>
+                <button class="btn secondary" id="networkStarterBtn" type="button">Connect Two Devices</button>
+                <button class="btn secondary" id="networkImportBtn" type="button">Import JSON</button>
+                <input id="networkImportInput" type="file" accept="application/json,.json" hidden>
+                <button class="btn secondary" id="networkCommandRefBtn" type="button">Command Reference</button>
+              </div>
+            </header>
+            <section class="network-hub-group" id="networkAssignedSection" hidden>
+              <h3>Assigned Labs</h3>
+              <ul class="network-hub-list" id="networkAssignedList"></ul>
+            </section>
+            <section class="network-hub-group" id="networkSavedSection" hidden>
+              <h3>Saved Networks</h3>
+              <ul class="network-hub-list" id="networkSavedList"></ul>
+              <p class="network-hub-empty" id="networkSavedEmpty" hidden>No saved networks yet.</p>
+            </section>
+            <section class="network-hub-group">
+              <h3>Practice Labs</h3>
+              <ul class="network-hub-list" id="networkPracticeList"></ul>
+            </section>
+            <details class="network-hub-group network-hub-examples">
+              <summary>Example Topologies</summary>
+              <ul class="network-hub-list" id="networkExampleList"></ul>
+            </details>
+          </section>
+          <section class="network-hub-sim is-infra" aria-labelledby="infraSimHeading">
+            <header class="network-hub-intro">
+              <div class="network-hub-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 20V4h10v7H20v9H3.5Zm0-8h6m4-1v5m0 4h7.5M8 8h2m6 5h2"/></svg></div>
+              <div><h2 id="infraSimHeading">Infra Sim</h2><p>Design floor plans, route cables, and check Wi-Fi coverage.</p></div>
+              <div class="network-hub-actions">
+                <button class="btn run" id="networkWifiBtn" type="button">New Site</button>
+              </div>
+            </header>
+            <section class="network-hub-group" id="wifiSavedSection" hidden>
+              <h3>Saved Sites</h3>
+              <ul class="network-hub-list" id="wifiSavedSites"></ul>
+              <p class="network-hub-empty" id="wifiSavedEmpty" hidden>No saved sites yet.</p>
+            </section>
+            <section class="network-hub-group">
+              <h3>Example Site</h3>
+              <ul class="network-hub-list">
+                <li class="network-hub-row">
+                  <button class="network-hub-row-open" id="wifiSampleSite" type="button">
+                    <span class="network-hub-row-main"><strong>Northfield Learning Center</strong><small>Explore a wired campus with dedicated IDF closets, an athletics wing, and outdoor Wi-Fi.</small></span>
+                    <span class="network-hub-arrow" aria-hidden="true">↗</span>
+                  </button>
+                </li>
+              </ul>
+            </section>
+          </section>
         </div>
-        <div class="network-library-actions">
-          <button class="btn run" id="networkNewBtn" type="button" disabled>Build a Network</button>
-          <button class="btn secondary" id="networkWifiBtn" type="button" disabled>Design a Wi-Fi Site</button>
-          <label class="btn secondary network-file-button" for="networkImportInput">Import JSON</label>
-          <input id="networkImportInput" type="file" accept="application/json,.json" hidden>
-          <button class="btn secondary" id="networkCommandRefBtn" type="button">Command Reference</button>
-        </div>
-      </header>
-      <div class="network-guest-note" id="networkGuestNote" hidden>Guest session: you can build, run tests, and export a network, but saving and assigned labs require sign-in.</div>
-      <section class="network-library-section" id="networkAssignedSection" hidden>
-        <div class="network-section-heading"><div><span class="network-kicker">Your classes</span><h2>Assigned labs</h2></div></div>
-        <div class="network-card-grid" id="networkAssignedList"></div>
-      </section>
-      <section class="network-library-section">
-        <div class="network-library-start">
-          <button class="network-card" id="networkStarterBtn" type="button" disabled>
-            <h3>Start here: Connect two devices</h3><p>Connect two computers, check their addresses, and send your first ping.</p>
-          </button>
-          <button class="network-card" id="networkResumeBtn" type="button" hidden></button>
-        </div>
-      </section>
-      <section class="network-library-section" id="networkSavedSection" hidden>
-        <div class="network-section-heading"><div><span class="network-kicker">Private workspace</span><h2>Saved networks</h2></div></div>
-        <div class="network-card-grid" id="networkSavedList"></div>
-      </section>
-      <section class="network-library-section">
-        <div class="network-section-heading"><div><span class="network-kicker">Ready to explore</span><h2>Example topologies</h2></div><span>Open any example as your own editable copy.</span></div>
-        <div class="network-card-grid" id="networkExampleList"></div>
-      </section>
-      <div class="network-loading" id="networkLoading" role="status">Loading Network Simulator…</div>
+      </div>
     </section>
 
-    <section class="network-workspace" id="networkWorkspace" hidden>
+    <section class="network-workspace" id="networkWorkspace" aria-label="Packet Sim" hidden>
       <header class="network-toolbar">
-        <button class="network-icon-button" id="networkBackBtn" type="button" title="Back to network library" aria-label="Back to network library">←</button>
+        <button class="btn secondary" id="networkBackBtn" type="button" aria-label="Back to Network Lab">← Packet Sim</button>
         <label class="network-title-field"><span>Network name</span><input id="networkTitleInput" maxlength="120" value="Untitled Network"></label>
         <div class="network-toolbar-group">
           <button class="btn secondary" id="networkUndoBtn" type="button" title="Undo">↶ Undo</button>
@@ -494,30 +523,9 @@
       </section>
     </section>
 
-    <section class="network-library wifi-site-library" id="wifiSiteLibrary" aria-labelledby="wifiSiteHeading" hidden>
-      <header class="network-library-hero">
-        <div>
-          <button class="btn secondary" id="wifiNetworkBack" type="button">← Network Simulator</button>
-          <h1 id="wifiSiteHeading" tabindex="-1">Wi-Fi Site Simulator</h1>
-          <p>Draw a floor plan, route cables, and see how access points cover the building.</p>
-        </div>
-        <div class="network-library-actions">
-          <button class="btn run" id="wifiNewSite" type="button">New Site</button>
-          <button class="btn secondary" id="wifiSampleSite" type="button">Open Campus Example</button>
-        </div>
-      </header>
-      <p class="network-guest-note" id="wifiGuestNotice" hidden>Sign in with a class that has Network Simulator access to save your designs.</p>
-      <section class="network-library-section" id="wifiSavedSection" aria-label="Saved Wi-Fi sites" hidden>
-        <div class="network-section-heading"><h2>Saved Wi-Fi sites</h2></div>
-        <p id="wifiLibraryStatus" role="status"></p>
-        <button class="btn secondary" id="wifiReloadSites" type="button" hidden>Retry</button>
-        <div class="network-card-grid" id="wifiSavedSites"></div>
-      </section>
-    </section>
-
-    <section class="network-workspace wifi-workspace" id="wifiWorkspace" aria-label="Wi-Fi floor plan editor" hidden>
+    <section class="network-workspace wifi-workspace" id="wifiWorkspace" aria-label="Infra Sim" hidden>
       <header class="network-toolbar wifi-project-toolbar">
-        <button class="btn secondary" id="wifiSiteBack" type="button">← Wi-Fi Sites</button>
+        <button class="btn secondary" id="wifiSiteBack" type="button" aria-label="Back to Network Lab">← Infra Sim</button>
         <label class="network-title-field"><span>Site name</span><input id="wifiSiteTitle" maxlength="120" value="Untitled Wi-Fi Site"></label>
         <div class="network-toolbar-group network-toolbar-end">
           <span class="network-save-state" id="wifiSaveStatus" role="status"></span>
@@ -1059,7 +1067,7 @@
             <span class="navbtn-icon">📅</span><span>Lesson Plans</span>
           </button>
           <button class="teacher-dash-navbtn" data-view="dash-network">
-            <span class="navbtn-icon">🌐</span><span>Network Sim</span>
+            <span class="navbtn-icon">🌐</span><span>Packet Sim</span>
           </button>
           <button class="teacher-dash-navbtn" data-view="dash-eagle-lab">
             <span class="navbtn-icon">▣</span><span>Eagle Lab</span>
@@ -1237,10 +1245,10 @@
           <div class="teacher-dash-scroll" id="lessonPlanTeacherHost"></div>
         </div>
 
-        <!-- Network Simulator View -->
+        <!-- Packet Sim Labs -->
         <div class="teacher-dash-view" id="dash-network">
           <div class="teacher-dash-view-hdr">
-            <h2 class="teacher-dash-view-title">Network Simulator Labs</h2>
+            <h2 class="teacher-dash-view-title">Packet Sim Labs</h2>
             <div class="teacher-dash-view-actions">
               <label for="networkTeacherClassSelect">Class</label>
               <select id="networkTeacherClassSelect"></select>
@@ -2060,7 +2068,7 @@
           <button type="button" class="active" data-admin-settings-section="general">General</button>
           <button type="button" data-admin-settings-section="account">Account</button>
           <button type="button" data-admin-settings-section="wiki">Wiki</button>
-          <button type="button" data-admin-settings-section="network">Network Sim</button>
+          <button type="button" data-admin-settings-section="network">Network Lab</button>
           <button type="button" data-admin-settings-section="eagle-lab">Eagle Lab</button>
           <button type="button" data-admin-settings-section="tools">External Tools</button>
           <button type="button" data-admin-settings-section="ai">AI</button>
@@ -2113,8 +2121,8 @@
             <div class="admin-wiki-settings-card"><div><strong>External Tools</strong><span>Register private applications for teachers and let class owners grant student access.</span></div><button type="button" class="btn secondary" id="settingsExternalToolsBtn">External Tools</button></div>
           </section>
           <section class="admin-settings-pane" data-admin-settings-pane="network">
-            <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Optional learning app</span><h4>Network Simulator</h4><p>Enable the separate topology, lab, packet inspection, wireless, VLAN, and cybersecurity workspace.</p></div>
-            <label class="admin-setting-toggle"><input type="checkbox" id="networkSimEnabledModal"><span><strong>Enable Network Simulator</strong><small>Guests may simulate without saving. Signed-in students also require access from at least one of their classes.</small></span></label>
+            <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Optional learning app</span><h4>Network Lab</h4><p>Enable Packet Sim and Infra Sim.</p></div>
+            <label class="admin-setting-toggle"><input type="checkbox" id="networkSimEnabledModal"><span><strong>Enable Network Lab</strong><small>Guests may simulate without saving. Signed-in students also require access from at least one of their classes.</small></span></label>
             <div class="admin-wiki-settings-card">
               <div><strong>Private admin preview</strong><span>You can test the full simulator while it is disabled. Existing simulator data is preserved when the feature is turned off.</span></div>
               <button class="btn secondary" id="settingsOpenNetworkSimBtn" type="button">Open Simulator</button>
@@ -2334,7 +2342,7 @@
   <script src="/static/js/workspace-history.js?v=20261109-history"></script>
   <script src="/static/js/teacher-assignments.js?v=20261109-history"></script>
   <script src="/static/js/editor-edit-menu.js?v=2"></script>
-  <script src="/static/js/app-core.js?v=20261111-group-tree"></script>
+  <script src="/static/js/app-core.js?v=20261113-network-lab"></script>
   <script src="/static/js/eagle-lab-access.js?v=20261103-lab-polish"></script>
   <script src="/static/js/step-mode.js?v=20261011-files-5"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20261021-security-1"></script>

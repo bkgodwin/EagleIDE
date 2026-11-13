@@ -375,6 +375,18 @@
         }
       }
       if (ghost && ['equipment', 'pass_throughs'].includes(ghostKind)) parts.push(drawEquipment(ghost, ghostKind, true));
+      if (ghost && ['equipment', 'pass_throughs', 'access_points'].includes(ghostKind) && $('wifiShowCables').checked) {
+        const position = data.location(ghost);
+        for (const cable of plan().cables) {
+          if (cable.source.device_id !== ghost.id && cable.target.device_id !== ghost.id
+              && !cable.waypoints.some(bend => bend.pass_id === ghost.id)) continue;
+          const points = data.route(cable);
+          if (cable.source.device_id === ghost.id) points[0] = position;
+          if (cable.target.device_id === ghost.id) points[points.length - 1] = position;
+          cable.waypoints.forEach((bend, index) => { if (bend.pass_id === ghost.id) points[index + 1] = position; });
+          parts.unshift(polyline(points, 'wifi-wire-draft', cable.color));
+        }
+      }
       if (hover && (mode === 'pass' || mode === 'equipment')) parts.push(ctx.dot(hover, 6, 'wifi-cursor wifi-join-point'));
       return parts.join('');
     }
