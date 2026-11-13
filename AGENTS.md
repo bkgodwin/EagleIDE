@@ -54,6 +54,7 @@ Required runtime components:
 |-- network_content.py           Source-controlled example topologies, labs, and CLI reference
 |-- wifi_cabling.py              Site equipment and ISP catalog, port allocation, and wall penetration validation
 |-- wifi_site_structure.py       Wall opening geometry and bounded raster background validation
+|-- wifi_site_network.py         Infra Sim SSID, VLAN, DHCP, reservation and firewall validation
 |-- eagle_lab_features.py        Native PVE lab auth, class rules, status probes, and routes
 |-- eagle_lab_store.py           Atomic lab catalog and encrypted PVE credentials
 |-- eagle_lab_gateway.py         PIN-gated launch capabilities, live authorization, and gateway lifecycle
@@ -138,8 +139,9 @@ Required runtime components:
 |       |-- wifi-site-worker.js  Wi-Fi coverage tile rendering off the UI thread
 |       |-- wifi-cabling-model.js Cable geometry, bundles, port occupancy, and PoE paths
 |       |-- wifi-site-cabling.js Equipment placement, route drafting, and cable inspector
-|       |-- wifi-site-client-model.js Wireless association and simulated client packet routes
+|       |-- wifi-site-client-model.js Wireless association, IPv4 leasing and simulated packet routes
 |       |-- wifi-site-clients.js Client inspector and timed packet playback
+|       |-- wifi-site-network.js Infra Sim network settings in equipment inspectors
 |       |-- wifi-site-structure.js Wall openings and background image tools
 |       |-- wifi-site-example.js Complete wired campus sample
 |       |-- eagle-lab.js         Native PVE lab section, admin/teacher controls, and report window
@@ -739,7 +741,7 @@ Network simulator definitions are source data in `network_content.py`; assignmen
 - Network simulator catalog, permissions, grading, migrations, or storage: `network_features.py`, `network_store.py`, and `network_content.py`. Core browser topology/packet behavior belongs in `network-sim.js`; diagnostics, capture, deterministic traffic, IPv6, dynamic-routing views, and productivity tools belong in `network-sim-advanced.js`; background generation belongs in `network-sim-worker.js`; visuals belong in `features/network-sim.css`. Saved topology schema version 2 supports media-aware ports, parallel links, link properties, IPv6, RSTP, routing protocols, wireless radio settings, stateful policy, and seeded simulation metadata; preserve `migrate_topology()` compatibility when evolving it.
 - Infra Sim editing is lazy loaded through `feature-loader.js`. Keep the project schema in `network_store.py` and geometry in meters. The browser probe and worker share `wifi-site-model.js`. Keep backing canvases sized to the viewport or to a single tile; the camera and grid in `wifi-site-view.js` are independent of site extents. Preview object moves in the scene frame and commit geometry only on drop. Site editor styles belong in `features/wifi-site.css`.
 - Infra Sim design layers use `wifi-site-design.js` for symbol geometry and enclosed faces and `wifi_site_design.py` for save validation. Surface fills are visual only; the probe and heatmap use the same tree and car loss model. PDF export renders the complete scene offscreen in `wifi-site-export.js` and uses `wifi_site_pdf.py` for the printable sheet and account-derived author.
-- Infra Sim derives PoE and usable wired links in `wifi-cabling-model.js`. Client association and simulated ping routing use those links and the shared coverage model. Future SSIDs can filter AP association, and VLANs, firewalls, and ACLs can add forwarding decisions at each modeled hop. Keep the packet inspector and animation independent of those decisions.
+- Infra Sim derives PoE and usable wired links in `wifi-cabling-model.js`. Client association and the map use the same SSID and radio filters. The client model traverses VLAN-enabled ports, assigns dynamic leases in memory, and runs routed ping requests through the firewall. Static reservations and configuration live in the project schema. Keep animation timing independent of modeled latency.
 - Wi-Fi cabling uses the equipment/ISP catalog from `wifi_cabling.py` through network bootstrap. Browser checks guide routing, while the same port, wall, spacing, and capacity rules are enforced by the server on save. The coverage worker and probe receive wired APs plus at most the currently selected preview AP.
 - Wi-Fi openings stay anchored to their walls and feed both coverage paths. Background images are bounded JPEG references embedded in the private site document; the browser normalizes imports and the server verifies the decoded image and dimensions.
 - Native PVE lab enrollment/access: `eagle_lab_features.py` and `eagle_lab_store.py`; continuous report draft validation/storage: `lab_reports.py`; assignment-type normalization/scoring: `app.py`; browser section/report overlay: `eagle-lab.js` and `features/eagle-lab.css`.

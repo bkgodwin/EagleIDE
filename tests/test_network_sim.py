@@ -15,7 +15,7 @@ from PIL import Image
 
 from network_content import ACRONYM_REFERENCE, COMMAND_REFERENCE, DEVICE_PORTS, EXAMPLE_TOPOLOGIES, LABS, PORT_REFERENCE
 from network_features import register
-from network_store import MAX_DEVICES, NetworkDataError, NetworkStore, _stp_state, can_reach, can_reach_ipv6, grade_lab, migrate_topology, validate_topology, validate_wifi_site
+from network_store import MAX_DEVICES, WIFI_SCHEMA_VERSION, NetworkDataError, NetworkStore, _stp_state, can_reach, can_reach_ipv6, grade_lab, migrate_topology, validate_topology, validate_wifi_site
 from wifi_scenarios import SCENARIOS
 
 
@@ -537,10 +537,12 @@ class NetworkRouteTests(unittest.TestCase):
 
     def wifi_plan(self):
         return {
-            "schema_version": 5, "title": "Two rooms",
+            "schema_version": WIFI_SCHEMA_VERSION, "title": "Two rooms",
             "units": "ft", "band": "5",
             "walls": [{"id": "wall-1", "a": {"x": 20, "y": 4}, "b": {"x": 20, "y": 24}, "material": "concrete"}],
-            "access_points": [{"id": "ap-1", "x": 11, "y": 14, "mount": "wall", "angle": 90, "name": "Hall AP", "power_db": 0}],
+            "access_points": [{"id": "ap-1", "x": 11, "y": 14, "mount": "wall", "angle": 90, "name": "Hall AP", "power_db": 0,
+                               "ssid_ids": ["default"]}],
+            "ssids": [{"id": "default", "name": "Default", "band": "both", "vlan": 0}], "vlans": [],
             "labels": [{"id": "note-1", "x": 25, "y": 7, "text": "Check signal here"}],
             "equipment": [], "pass_throughs": [], "cables": [],
             "openings": [], "background": None,
@@ -613,6 +615,56 @@ class NetworkRouteTests(unittest.TestCase):
         plan['surfaces'][0]['color'] = 'url(https://example.test)'
         self.assertEqual(self.client.put(url, headers=headers, json={'site': plan, 'revision': 1}).status_code, 400)
 
+    def test_infra_network_settings_round_trip_and_validate_references(self):
+        plan = self.wifi_plan()
+        plan["vlans"] = [{"id": 20, "name": "Guest"}]
+        plan["ssids"] = [{"id": "guest", "name": "Guest Wi-Fi", "band": "2.4", "vlan": 20}]
+        plan["access_points"][0]["ssid_ids"] = ["guest"]
+        plan["equipment"] = [
+            {"id": "router", "kind": "router", "x": 0, "y": 0, "name": "Router",
+             "dhcp": {"gateway": "10.0.0.1/29", "dns": "1.1.1.1", "fallback_dns": "8.8.8.8"},
+             "firewall": [{"action": "deny", "source_vlan": 20, "destination_vlan": 0,
+                           "source_ip": "", "destination_ip": "10.0.0.4/29"}]},
+            {"id": "switch", "kind": "distribution_switch", "x": 0, "y": 1, "name": "Switch",
+             "port_vlans": {"ETH1": [0, 20], "ETH24": []}},
+            {"id": "phone", "kind": "phone", "x": 0, "y": 2, "name": "Client", "ssid_id": "guest",
+             "reservation": {"router_id": "router", "ip": "10.0.0.2"}},
+        ]
+        headers = {"X-Teacher-Token": "teacher-token"}
+        url = "/api/network/wifi-sites/network-settings"
+        result = self.client.put(url, headers=headers, json={"site": plan, "revision": 0})
+        self.assertEqual(result.status_code, 200, result.json)
+        saved = self.client.get(url, headers=headers).json["data"]
+        self.assertEqual(saved["equipment"][0]["firewall"][0]["destination_ip"], "10.0.0.0/29")
+        plan["equipment"][0]["firewall"][0]["destination_ip"] = "10.0.0.0/29"
+        self.assertEqual({key: saved[key] for key in plan}, plan)
+
+        for path, bad in (
+            (("access_points", 0, "ssid_ids"), ["guest"] * 5),
+            (("ssids", 0, "vlan"), 22),
+            (("equipment", 0, "dhcp", "gateway"), "10.0.0.7/29"),
+            (("equipment", 0, "firewall", 0, "destination_ip"), "10.0.0.4/"),
+            (("equipment", 1, "port_vlans"), {"ETH25": [20]}),
+            (("equipment", 2, "reservation", "ip"), "10.0.0.1"),
+            (("equipment", 2, "reservation", "router_id"), "switch"),
+        ):
+            with self.subTest(path=path):
+                invalid = copy.deepcopy(plan)
+                item = invalid
+                for key in path[:-1]:
+                    item = item[key]
+                item[path[-1]] = bad
+                response = self.client.put(url, headers=headers, json={"site": invalid, "revision": 1})
+                self.assertEqual(response.status_code, 400, response.json)
+        old = {**self.wifi_plan(), "schema_version": 5}
+        self.assertEqual(self.client.put(url, headers=headers, json={"site": old, "revision": 1}).status_code, 409)
+
+        plan["ssids"] = []
+        plan["access_points"][0]["ssid_ids"] = []
+        plan["equipment"][2]["ssid_id"] = ""
+        self.assertEqual(self.client.put(url, headers=headers, json={"site": plan, "revision": 1}).status_code, 200)
+        self.assertEqual(self.client.get(url, headers=headers).json["data"]["ssids"], [])
+
     def test_wifi_site_opens_legacy_data_and_saves_large_signed_coordinates(self):
         email = "teacher@example.com"
         headers = {"X-Teacher-Token": "teacher-token"}
@@ -621,6 +673,9 @@ class NetworkRouteTests(unittest.TestCase):
         legacy = {**copy.deepcopy(original), "id": "legacy-site", "revision": 7,
                   "updated_at": 1200, "schema_version": 1, "width": 40, "height": 28}
         del legacy["access_points"][0]["power_db"]
+        del legacy["access_points"][0]["ssid_ids"]
+        del legacy["ssids"]
+        del legacy["vlans"]
         self.store._write_json(self.store._wifi_path(email), {"sites": {"legacy-site": legacy}})
         opened = self.client.get(url, headers=headers).json["data"]
         self.assertEqual(opened["revision"], 7)

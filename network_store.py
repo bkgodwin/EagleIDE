@@ -18,6 +18,7 @@ from network_content import DEVICE_PORTS, LABS, PORT_CAPABILITIES
 from wifi_cabling import CABLING_LIMITS, validate_cabling
 from wifi_site_structure import validate_structure
 from wifi_site_design import DESIGN_LIMITS, validate_design
+from wifi_site_network import NETWORK_LIMITS, validate_network
 
 
 SCHEMA_VERSION = 2
@@ -25,10 +26,10 @@ MAX_DEVICES = 100
 MAX_LINKS = 200
 MAX_TOPOLOGY_BYTES = 512_000
 MAX_SAVED_TOPOLOGIES = 40
-WIFI_SCHEMA_VERSION = 5
+WIFI_SCHEMA_VERSION = 6
 MAX_WIFI_SITE_BYTES = 2_000_000
 WIFI_COORDINATE_LIMIT = 100_000_000_000  # Keep rounding within the browser's safe integer range.
-WIFI_LIMITS = {**CABLING_LIMITS, **DESIGN_LIMITS, "walls": 1200, "access_points": 128, "labels": 320, "openings": 500, "saved": 40,
+WIFI_LIMITS = {**CABLING_LIMITS, **DESIGN_LIMITS, **NETWORK_LIMITS, "walls": 1200, "access_points": 128, "labels": 320, "openings": 500, "saved": 40,
                "coordinate": WIFI_COORDINATE_LIMIT}
 WIFI_MATERIALS = {"drywall", "concrete", "reinforced_concrete", "metal", "glass", "wood", "brick"}
 DEVICE_TYPES = {"pc", "laptop", "phone", "server", "switch", "l3switch", "router", "firewall", "wap", "cloud"}
@@ -133,6 +134,7 @@ def validate_wifi_site(raw):
         plan.update(validate_structure(raw, plan, limits=WIFI_LIMITS, seen=seen, number=number,
                                        point=point, safe_id=_safe_id))
         plan.update(validate_cabling(raw, plan, number=number, label=label, point=point, safe_id=_safe_id, seen=seen))
+        plan.update(validate_network(raw, plan, label=label, safe_id=_safe_id))
     except ValueError as exc:
         raise NetworkDataError(str(exc)) from exc
     return plan
@@ -927,9 +929,13 @@ class NetworkStore:
             if existing and raw["schema_version"] < 5 and (any(existing.get(kind) for kind in ("decor", "surfaces", "background_color"))
                     or any(wall["material"] == "reinforced_concrete" for wall in existing["walls"])):
                 raise WifiRevisionError("This project has new design layers. Reload the editor before editing it.")
+            same_save = existing and all(existing.get(key) == value for key, value in site.items())
+            if (existing and existing.get("schema_version") == WIFI_SCHEMA_VERSION
+                    and raw["schema_version"] < WIFI_SCHEMA_VERSION and not same_save):
+                raise WifiRevisionError("This project uses the updated Infra Sim editor. Reload before editing it.")
             if revision != current_revision:
                 # A retry after a lost response may safely acknowledge the same save.
-                if existing and current_revision == revision + 1 and all(existing[key] == value for key, value in site.items()):
+                if current_revision == revision + 1 and same_save:
                     return existing
                 raise WifiRevisionError("This project changed in another tab or was deleted. Save a copy to keep your edits.")
             if existing is None and len(sites) >= WIFI_LIMITS["saved"]:
