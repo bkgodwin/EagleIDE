@@ -1220,7 +1220,7 @@
     document.querySelectorAll('.student-notebook-code-block').forEach(block => {
       const runBtn = block.querySelector('[data-code-action="run"]');
       const openBtn = block.querySelector('[data-code-action="open"]');
-      const disabled = running || readOnlyCheck || window.EagleIDE?.connection?.isLost();
+      const disabled = running || readOnlyCheck || window.EagleIDE?.connection?.canRun?.() === false;
       if (runBtn) {
         const runnable = isRunnableLanguage(block.dataset.language);
         runBtn.disabled = !runnable || disabled;
@@ -1241,7 +1241,7 @@
       return;
     }
     const c = ctx();
-    if (c.isProgramRunning || readOnlyCheck || window.EagleIDE?.connection?.isLost()) return;
+    if (c.isProgramRunning || readOnlyCheck || window.EagleIDE?.connection?.canRun?.() === false) return;
     const shell = block.querySelector('.student-notebook-inline-shell');
     shell.hidden = false;
     shell.querySelector('.notebook-shell-output').textContent = ctx().showSystemShellMessages ? '[Sending code]\n' : '';

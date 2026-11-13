@@ -58,6 +58,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     let auditEditorBackup = null;
     let registerMode = false;
     let authSubmitPending = false;
+    let authGeneration = 0;
+    let sessionRestore = null;
+    let bootSessionPending = true;
+    let bootFilesPending = true;
+    let sessionRecoveryPending = false;
+    let socketClassRooms = new Set();
+    let socketClassToken = '';
     let currentConfig = null;
     let pythonRuntimeAdminData = null;
     let mySid = null;
@@ -220,27 +227,19 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const role = WIKI_MANAGER_TOKEN ? 'wiki_manager' : USER_TOKEN ? 'student' : TEACHER_TOKEN ? 'teacher' : ADMIN_TOKEN ? 'admin' : null;
       const token = USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN || WIKI_MANAGER_TOKEN;
       const isSameSession = () => token === (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN || WIKI_MANAGER_TOKEN);
-      const rejectRestoredSession = () => {
-        if (!isSameSession()) return isAuthenticated();
-        clearAuthStateMemory();
-        saveAuthSession();
-        return false;
-      };
       if (!token) return false;
       try {
         const header = role === 'wiki_manager' ? 'X-Wiki-Manager-Token' : role === 'student' ? 'X-User-Token' : role === 'teacher' ? 'X-Teacher-Token' : 'X-Admin-Token';
-        const res = await fetch(role === 'admin' ? '/api/admin/server-health' : '/api/auth/me', {
-          headers: { [header]: token }
-        });
+        const res = await fetchAuthRequest('/api/auth/me', { headers: { [header]: token } }, 1);
         if (!isSameSession()) return isAuthenticated();
-        if (res.status === 401 || res.status === 403) return rejectRestoredSession();
-        if (!res.ok) return true;
+        if (res.status === 401 || res.status === 403) return false;
+        if (!res.ok) return null;
         const j = await res.json();
         if (!isSameSession()) return isAuthenticated();
         // Invalid proxy responses and incomplete JSON are not proof of an
         // expired session. Only reject a server-confirmed authentication error.
-        if (!j?.ok || (role !== 'admin' && (!j.user || typeof j.user !== 'object'))) return true;
-        if (role !== 'admin' && j.user.role !== role) return rejectRestoredSession();
+        if (!j?.ok || (role !== 'admin' && (!j.user || typeof j.user !== 'object'))) return null;
+        if (role !== 'admin' && j.user.role !== role) return false;
         if (role === 'student' || role === 'wiki_manager') {
           currentUser = j.user;
           currentTeacher = null;
@@ -261,10 +260,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         return true;
       } catch (err) {
         console.warn('Failed to validate restored auth session.', err);
-        // A suspended iPad tab or a brief server/network interruption is not
-        // proof that the token is invalid. Keep the saved session and retry
-        // naturally on the next page load/API request.
-        return !!(USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN || WIKI_MANAGER_TOKEN);
+        return null;
       }
     }
 
@@ -757,18 +753,28 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     function emitJoinClassRoom(role, token, classId) {
-      if (!socket || !role || !token || !classId) return;
-      socket.emit('join_class_room', { role: isCoTeacher() ? 'student' : role, token, class_id: classId });
-      if (role === 'student' || isCoTeacher()) socket.emit('workspace_file_opened', {name: currentOpenFile && !currentOpenFile.audit && !currentOpenFile.submission && !currentOpenFile.groupFileId ? currentOpenFile.name : ''});
+      if (!socket?.connected || !role || !token || !classId) return;
+      const roomRole = isCoTeacher() ? 'student' : role;
+      const identity = roomRole + ':' + token;
+      if (socketClassToken !== identity) { socketClassToken = identity; socketClassRooms = new Set(); }
+      if (socketClassRooms.has(classId)) return;
+      socketClassRooms.add(classId);
+      const rooms = socketClassRooms;
+      socket.timeout(8000).emit('join_class_room', {
+        role: roomRole, token, class_id: classId, open_file: workspacePresenceFileName(),
+      }, (error, response) => {
+        if (error || !response?.ok) rooms.delete(classId);
+      });
     }
 
     function emitLeaveClassRoom(classId) {
-      if (!socket || !classId) return;
+      if (!socket?.connected || !classId) return;
+      socketClassRooms.delete(classId);
       socket.emit('leave_class_room', { class_id: classId });
     }
 
     function rejoinClassRooms() {
-      if (!socket) return;
+      if (!socket?.connected) return;
       if (TEACHER_TOKEN && currentTeacherClassId) {
         emitJoinClassRoom('teacher', TEACHER_TOKEN, currentTeacherClassId);
         if (teacherStreamingEnabled && teacherBroadcastActive) {
@@ -1015,7 +1021,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
     }
 
-    async function loadStudentClassData() {
+    async function loadStudentClassData({ strict = false } = {}) {
       if (!USER_TOKEN) {
         studentClasses = [];
         studentClassData = null;
@@ -1024,7 +1030,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
       const token = USER_TOKEN;
       try {
-        const res = await fetch('/api/classes/current', { headers: { 'X-User-Token': token } });
+        const request = strict ? fetchAuthRequest : fetch;
+        const res = await request('/api/classes/current', { headers: { 'X-User-Token': token } }, 1);
         const j = await res.json();
         if (token !== USER_TOKEN) return studentClassData;
         if (!res.ok || !j?.ok || !Array.isArray(j.classList)) throw new Error(j?.error || 'Class data unavailable');
@@ -1040,6 +1047,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           if (cls?.id) emitJoinClassRoom('student', USER_TOKEN, cls.id);
         });
       } catch (err) {
+        if (strict) throw err;
         // A failed refresh must not erase the selected class or its controls.
         console.warn('Could not refresh student classes; retaining current class.', err);
       }
@@ -1048,11 +1056,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       return studentClassData;
     }
 
-    async function loadTeacherClasses() {
+    async function loadTeacherClasses({ strict = false } = {}) {
       if (!TEACHER_TOKEN) { teacherClasses = []; currentTeacherClassId = null; activeAssignmentsClassId = null; return []; }
       const token = TEACHER_TOKEN;
       try {
-        const res = await fetch('/api/teacher/classes', { headers: { 'X-Teacher-Token': token } });
+        const request = strict ? fetchAuthRequest : fetch;
+        const res = await request('/api/teacher/classes', { headers: { 'X-Teacher-Token': token } }, 1);
         const j = await res.json();
         if (token !== TEACHER_TOKEN) return teacherClasses;
         if (!res.ok || !j?.ok || !Array.isArray(j.classes)) throw new Error(j?.error || 'Class data unavailable');
@@ -1067,6 +1076,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           activeAssignmentsClassId = currentTeacherClassId;
         }
       } catch (err) {
+        if (strict) throw err;
         console.warn('Could not refresh teacher classes; retaining current class.', err);
       }
       return teacherClasses;
@@ -1746,7 +1756,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     if (typeof io !== 'undefined') {
       try {
         // Start with same-origin HTTP for school proxies that block WebSockets.
-        socket = io({ transports: ["polling", "websocket"], timeout: 10000, reconnectionDelayMax: 10000 });
+        socket = io({ transports: ["polling", "websocket"], timeout: 10000, reconnectionDelay: 1500,
+          reconnectionDelayMax: 15000, randomizationFactor: 0.8, autoConnect: false });
         window.eagleSocket = socket;
         window.dispatchEvent(new CustomEvent('eagle-socket-ready', { detail: { socket } }));
         socket.on('connected', (m) => {
@@ -1755,9 +1766,14 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           appendOut('[Connected]\n');
         });
         socket.on('connect', () => {
-          rejoinClassRooms();
-          updateActiveFileName();
-          setRunButtonState(isProgramRunning);
+          socketClassRooms = new Set();
+          const connectedId = socket.id;
+          if (!window.EagleIDE.connection.isLost()) {
+            window.EagleIDE.connection.check().then(ready => {
+              if (ready && socket.connected && socket.id === connectedId) rejoinClassRooms();
+              setRunButtonState(isProgramRunning);
+            });
+          }
         });
         socket.on('disconnect', () => {
           resetDisconnectedExecution();
@@ -2102,6 +2118,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         return;
       }
       if (window.EagleIDE?.connection?.isLost() || !socket?.connected) {
+        const sendBtn = document.getElementById('sendBtn');
+        if (sendBtn) sendBtn.disabled = true;
         runBtn.disabled = true;
         runBtn.textContent = 'Run ▶';
         runBtn.classList.remove('stop', 'run');
@@ -2112,6 +2130,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         refreshEagleIDEContext();
         return;
       }
+      const sendBtn = document.getElementById('sendBtn');
+      if (sendBtn) sendBtn.disabled = false;
       if (isProgramRunning && executionQueueState) {
         runBtn.textContent = executionQueueState.status === 'starting' ? 'Starting…' : 'Queued…';
         runBtn.disabled = true;
@@ -3038,7 +3058,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       } catch(error) {alert(error.message);}
     };
 
-    function updateAuthUI() {
+    function updateAuthUI({ refreshClasses = true } = {}) {
       window.TeacherAssignments?.setScope(JSON.stringify(assignmentManagerHeaders()));
       const guestBadge = document.getElementById('guestBadge');
       const rightEdgeToggleBtn = document.getElementById('rightEdgeToggleBtn');
@@ -3102,7 +3122,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       syncEditorBridge();
       updateEditorOverlay();
       renderClassSelector();
-      if (typeof window.afterAuthUiUpdate === "function") window.afterAuthUiUpdate();
+      if (typeof window.afterAuthUiUpdate === "function") window.afterAuthUiUpdate({ refreshClasses });
       refreshEagleIDEContext();
       window.ClassroomSignals?.onAuthChanged?.();
       window.StudentNotebook?.onAuthChanged?.();
@@ -3296,7 +3316,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
     }
 
-    async function applyAuthLoginPayload(j) {
+    async function applyAuthLoginPayload(j, { restored = false } = {}) {
       WIKI_MANAGER_TOKEN = null;
       if (j.role === 'wiki_manager') {
         clearAuthStateMemory();
@@ -3306,8 +3326,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         currentTeacherClassId = null; currentStudentClassId = null;
         document.body.classList.remove('admin-mode');
         setTeacherStreamingEnabled(false); setTeacherPaneOpen(false);
-        saveAuthSession(); closeLoginModal(); updateAuthUI();
-        await showFileBrowser();
+        saveAuthSession(); closeLoginModal();
+        if (!restored) { updateAuthUI({ refreshClasses: false }); await showFileBrowser(); }
         return;
       }
       if (j.role === 'admin') {
@@ -3333,7 +3353,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         currentStudentClassId = null;
         document.body.classList.add('admin-mode');
         saveAuthSession();
-        await loadTeacherClasses();
+        if (!restored) await loadTeacherClasses();
         renderClassSelector();
         setTeacherStreamingEnabled(false);
       } else {
@@ -3346,7 +3366,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         currentTeacherClassId = null;
         document.body.classList.remove('admin-mode');
         saveAuthSession();
-        await loadStudentClassData().catch((err) => {
+        if (!restored) await loadStudentClassData().catch((err) => {
           console.warn('Failed to refresh student class data after login.', err);
           alert('Signed in, but class data failed to load. Please refresh the page and try again.');
           return null;
@@ -3355,8 +3375,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
       saveAuthSession();
       closeLoginModal();
-      updateAuthUI();
-      await showFileBrowser();
+      if (!restored) { updateAuthUI({ refreshClasses: false }); await showFileBrowser(); }
     }
 
     function waitForAuthRetry(delayMs) {
@@ -3364,21 +3383,29 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     async function fetchAuthRequest(url, options = {}, attempts = 3) {
+      const passwordLogin = url === '/api/auth/login' || url === '/api/admin/login';
+      const maxAttempts = passwordLogin ? Math.min(2, attempts) : attempts;
       let lastError = null;
-      for (let attempt = 0; attempt < attempts; attempt += 1) {
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-        const timeout = controller ? setTimeout(() => controller.abort(), 8000) : null;
+        // Password checks can spend up to 10 seconds waiting for a server slot.
+        const timeout = controller ? setTimeout(() => controller.abort(), passwordLogin ? 20000 : 8000) : null;
+        let retryDelay = 350 * (attempt + 1);
         try {
           const response = await fetch(url, { ...options, signal: controller?.signal });
-          if (![502, 503, 504].includes(response.status) || attempt === attempts - 1) return response;
+          if (attempt === maxAttempts - 1) return response;
+          const retryAfter = Number(response.headers?.get('Retry-After'));
+          if (passwordLogin ? response.status !== 503 || !(retryAfter > 0) : ![502, 503, 504].includes(response.status)) return response;
+          if (retryAfter > 0) retryDelay = Math.min(5000, retryAfter * 1000);
           lastError = new Error(`Server temporarily unavailable (${response.status})`);
         } catch (error) {
           lastError = error;
-          if (attempt === attempts - 1) break;
+          // A timed-out POST can still be waiting or running on the server.
+          if (passwordLogin || attempt === maxAttempts - 1) break;
         } finally {
           if (timeout) clearTimeout(timeout);
         }
-        await waitForAuthRetry(350 * (attempt + 1));
+        await waitForAuthRetry(retryDelay + Math.floor(Math.random() * 500));
       }
       if (lastError?.name === 'AbortError') {
         const timeoutError = new Error('The sign-in request timed out. The network may be slow; please try again.');
@@ -3391,7 +3418,17 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     }
 
     async function fetchWithDeadline(url, options = {}, timeoutMs = 12000) {
-      if (window.EagleIDE?.connection) return window.EagleIDE.connection.request(url, options, timeoutMs);
+      if (window.EagleIDE?.connection) {
+        const response = await window.EagleIDE.connection.request(url, options, timeoutMs);
+        const token = options.headers?.['X-User-Token'] || options.headers?.['X-Teacher-Token'] ||
+          options.headers?.['X-Wiki-Manager-Token'] || options.headers?.['X-Admin-Token'];
+        if (response.status === 401 && token && token === (USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN || WIKI_MANAGER_TOKEN) &&
+            !sessionRecoveryPending) {
+          sessionRecoveryPending = true;
+          window.EagleIDE.connection.reportFailure();
+        }
+        return response;
+      }
       if (typeof AbortController === 'undefined') return fetch(url, options);
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -3450,17 +3487,94 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
     }
 
-    async function restoreDeviceSession() {
-      try {
-        const response = await fetchAuthRequest('/api/auth/restore', { method: 'POST' }, 2);
+    function prepareWorkspaceSession({ restarted, reconnecting }) {
+      if (sessionRestore) return sessionRestore;
+      if (!bootSessionPending && !sessionRecoveryPending && !restarted && !reconnecting) return true;
+      if (authSubmitPending) return true;
+      const generation = authGeneration;
+      const token = USER_TOKEN || TEACHER_TOKEN || ADMIN_TOKEN || WIKI_MANAGER_TOKEN;
+      const wasBoot = bootSessionPending;
+      sessionRecoveryPending = true;
+      sessionRestore = (async () => {
+        if (token && !restarted) {
+          const valid = await validateRestoredAuthSession();
+          if (generation !== authGeneration) return true;
+          if (valid === null) return false;
+          if (valid) {
+            if (wasBoot) {
+              if (USER_TOKEN) await loadStudentClassData({ strict: true });
+              else if (TEACHER_TOKEN) await loadTeacherClasses({ strict: true });
+            }
+            return true;
+          }
+        } else if (!wasBoot && !token) {
+          return true;
+        }
+        const response = await fetchAuthRequest('/api/auth/restore', { method: 'POST' }, 1);
         const data = await response.json().catch(() => ({}));
-        if (!response.ok || !data?.ok || !data.token || !data.role) return false;
-        await applyAuthLoginPayload(data);
-        return true;
-      } catch (error) {
-        console.warn('Could not restore the saved device session.', error);
+        if (generation !== authGeneration) return true;
+        if (response.ok && data?.ok && data.token && data.role && data.user) {
+          const previousRole = WIKI_MANAGER_TOKEN ? 'wiki_manager' : USER_TOKEN ? 'student' : TEACHER_TOKEN ? 'teacher' : ADMIN_TOKEN ? 'admin' : null;
+          const previousEmail = currentUser?.email || currentTeacher?.email;
+          if (token && (token !== data.token || previousRole !== data.role ||
+              (previousEmail && previousEmail.toLowerCase() !== data.user?.email?.toLowerCase()))) {
+            endUnrestorableWorkspaceSession();
+          } else if (wasBoot) {
+            socketClassRooms = new Set();
+            await applyAuthLoginPayload(data, { restored: true });
+            if (USER_TOKEN) await loadStudentClassData({ strict: true });
+            else if (TEACHER_TOKEN) await loadTeacherClasses({ strict: true });
+          } else {
+            if (USER_TOKEN || WIKI_MANAGER_TOKEN) currentUser = data.user;
+            else if (TEACHER_TOKEN) currentTeacher = data.user;
+            saveAuthSession();
+            socketClassRooms = new Set();
+            if (USER_TOKEN) await loadStudentClassData({ strict: true });
+            else if (TEACHER_TOKEN) await loadTeacherClasses({ strict: true });
+            if (generation === authGeneration) updateAuthUI({ refreshClasses: false });
+          }
+          return true;
+        }
+        if (['no_saved_session', 'expired_saved_session', 'invalid_saved_session', 'account_unavailable'].includes(data.code)) {
+          if (token) endUnrestorableWorkspaceSession();
+          return true;
+        }
         return false;
+      })().catch(() => false).then(ready => {
+        if (ready && generation === authGeneration) {
+          bootSessionPending = false;
+          sessionRecoveryPending = false;
+        }
+        return ready;
+      }).finally(() => { sessionRestore = null; });
+      return sessionRestore;
+    }
+
+    function endUnrestorableWorkspaceSession() {
+      // Preserve the editor buffer, but never save it under a different account.
+      if (currentOpenFile && (currentBufferDirty || currentOpenFile.draft)) {
+        const name = currentOpenFile.name;
+        const content = csvEditorActive ? window.WorkspaceData.recoverCsvPage() : editor.getValue();
+        setCsvMode(false);
+        currentOpenFile = { path: '', name, draft: true, recovered: true };
+        editor.setValue(content);
+        currentBufferDirty = true;
+      } else {
+        clearFileArtifactPreview();
+        setCsvMode(false);
+        currentOpenFile = null;
+        editor.setValue('');
       }
+      clearAuthStateMemory();
+      studentClasses = []; studentClassData = null; currentStudentClassId = null;
+      teacherClasses = []; currentTeacherClassId = null;
+      _allFileTree = [];
+      socketClassRooms.clear();
+      saveAuthSession();
+      document.body.classList.remove('admin-mode');
+      updateActiveFileName();
+      if (!bootFilesPending) updateAuthUI();
+      appendOut('[Your saved sign-in expired. Sign in again to open files.]\n');
     }
 
     // Login button: open unified login modal
@@ -3470,6 +3584,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (window.GroupProjects && !await window.GroupProjects.prepareSignOut()) return;
       window.ExternalTools?.accountLeaving?.();
       if (!isAuthenticated()) return;
+      authGeneration++;
+      bootFilesPending = bootSessionPending = sessionRecoveryPending = false;
       if (isProgramRunning && socket) socket.emit('stop', {});
       clearExecutionQueueState();
       stopAdminExecutionPolling();
@@ -3562,6 +3678,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const submitBtn = document.getElementById('loginSubmitBtn');
       const toggleBtn = document.getElementById('toggleRegisterBtn');
       authSubmitPending = true;
+      authGeneration++;
+      bootFilesPending = bootSessionPending = sessionRecoveryPending = false;
       submitBtn.disabled = true;
       toggleBtn.disabled = true;
       submitBtn.textContent = registerMode ? 'Creating account…' : 'Signing in…';
@@ -3592,26 +3710,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     document.getElementById('authPasswordInput').addEventListener('keypress', (e) => {
       if (e.key === 'Enter') document.getElementById('loginSubmitBtn').click();
     });
-    (async () => {
-      let restored = restoreAuthSession();
-      if (restored) {
-        restored = await validateRestoredAuthSession();
-      }
-      if (!restored) {
-        restored = await restoreDeviceSession();
-      }
-      if (restored) {
-        if (USER_TOKEN) {
-          await loadStudentClassData().catch(() => null);
-        } else if (TEACHER_TOKEN) {
-          await loadTeacherClasses().catch(() => []);
-        }
-      }
-      updateAuthUI();
-      if (isAuthenticated()) {
-        await showFileBrowser();
-      }
-    })();
+    // The connection controller staggers its first health check across tabs.
+    restoreAuthSession();
+    window.EagleIDE.connection.prepareSession(prepareWorkspaceSession);
 
     // Teacher Code Broadcasting
     function teacherBroadcastSelection(code) {
@@ -6278,14 +6379,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const res = await fetchWithDeadline('/api/files/list', { headers: fileAuthHeaders() });
       const j = await res.json().catch(() => ({}));
       if (requestContext !== JSON.stringify(fileAuthHeaders())) return false;
-      if (!j.ok) {
-        if (res.status === 401) {
-          clearAuthStateMemory();
-          saveAuthSession();
-          updateAuthUI();
-        }
-        return false;
-      }
+      if (!j.ok) return false;
       _allFileTree = j.files || [];
       // Stale folders after a delete, rename, or a different account sign-in
       // must not become invisible targets for subsequent New File actions.
@@ -6964,6 +7058,11 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
     }
 
+    function workspacePresenceFileName() {
+      return currentOpenFile && !currentOpenFile.audit && !currentOpenFile.submission && !currentOpenFile.groupFileId
+        ? currentOpenFile.name : '';
+    }
+
     // Update the editor header to show the active filename
     function updateActiveFileName() {
       window.GroupProjects?.guard();
@@ -6976,7 +7075,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const el = document.getElementById('activeFileName');
       if (el) el.textContent = currentOpenFile ? currentOpenFile.name : '';
       if (activeSubmissionContext && !currentOpenFile?.submission) hideSubmissionScoringPanel();
-      if (typeof socket !== 'undefined' && socket.connected) socket.emit('workspace_file_opened', {name: currentOpenFile && !currentOpenFile.audit && !currentOpenFile.submission && !currentOpenFile.groupFileId ? currentOpenFile.name : ''});
+      if (typeof socket !== 'undefined' && socket?.connected) socket.emit('workspace_file_opened', {name: workspacePresenceFileName()});
       if (!currentOpenFile || !currentOpenFile.name?.toLowerCase().endsWith('.json')) window.WorkspaceData?.jsonMode(false);
       const saveDraftBtn = document.getElementById('saveDraftBtn');
       if (saveDraftBtn) saveDraftBtn.style.display = currentOpenFile?.draft && isAuthenticated() ? '' : 'none';
@@ -7122,19 +7221,27 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       clearTimeout(csvAutosaveTimer);
       clearTimeout(teacherBroadcastFlushTimer);
       if (lost) _ctxMenu?.remove();
-      document.getElementById('sendBtn').disabled = lost;
       setRunButtonState(isProgramRunning);
       updateFileActionButtons();
       // Suspend completion menus so Enter/arrows always edit during an outage.
       window.eagleCompletionEngine?.setSuspended?.(lost);
       if (!lost) {
-        // Save the retained buffer before refreshing file metadata; never reload it.
-        saveCurrentFile().then(ok => {
-          if (!ok) appendOut('[Save failed after reconnecting. Keep this tab open and try saving again.]\n');
-          else if (currentBufferDirty) scheduleAutosave();
-          else if (currentOpenFile) appendOut('[Connection restored. Your current file is saved.]\n');
-        });
-        loadFileTree();
+        rejoinClassRooms();
+        if (bootFilesPending && !bootSessionPending) {
+          bootFilesPending = false;
+          updateAuthUI({ refreshClasses: false });
+          if (isAuthenticated()) showFileBrowser();
+          return;
+        }
+        // Save the retained buffer after the connection controller restores the session.
+        if (!currentOpenFile?.recovered && (currentBufferDirty || currentOpenFile?.groupFileId)) {
+          saveCurrentFile().then(ok => {
+            if (!ok) appendOut('[Save failed after reconnecting. Keep this tab open and try saving again.]\n');
+            else if (currentBufferDirty) scheduleAutosave();
+            else if (currentOpenFile) appendOut('[Connection restored. Your current file is saved.]\n');
+          });
+        }
+        if (_workspaceTab === WORKSPACE_TAB_FILES) loadFileTree();
         scheduleTeacherBroadcastFlush(true);
       }
     });
@@ -7258,6 +7365,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
     async function openFile(item) {
       if (window.EagleIDE?.connection?.isLost()) return;
       if (!USER_TOKEN && !TEACHER_TOKEN && !ADMIN_TOKEN && !WIKI_MANAGER_TOKEN) return;
+      if (currentOpenFile?.recovered) {
+        alert('Save a copy of your recovered edits before opening another file.');
+        return;
+      }
       const requestId = ++fileOpenRequestId;
       const requestContext = JSON.stringify(fileAuthHeaders());
       if (auditPreviewActive) closeAuditPreview();
@@ -10479,9 +10590,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
     }
 
-    window.afterAuthUiUpdate = async () => {
-      if (USER_TOKEN) await loadStudentClassData();
-      if (TEACHER_TOKEN) await loadTeacherClasses();
+    window.afterAuthUiUpdate = async ({ refreshClasses = true } = {}) => {
+      if (refreshClasses && USER_TOKEN) await loadStudentClassData();
+      if (refreshClasses && TEACHER_TOKEN) await loadTeacherClasses();
       renderClassSelector();
       refreshChallengeAuthState();
       await loadAssignments();
@@ -10501,14 +10612,3 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       else alert('Send file is unavailable. Please refresh the page.');
     });
     document.getElementById('classroomAuditCloseBannerBtn')?.addEventListener('click', closeAuditPreview);
-
-    (async () => {
-      if (USER_TOKEN) await loadStudentClassData();
-      if (TEACHER_TOKEN) await loadTeacherClasses();
-      renderClassSelector();
-      await loadAssignments();
-      refreshChallengeAuthState();
-      refreshEagleIDEContext();
-      window.StudentDashboard?.onAuthChanged?.();
-      updateSendFileButtonVisibility();
-    })();

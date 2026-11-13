@@ -50,7 +50,7 @@
 <body class="wiki-mode">
     <div class="app-shell">
   <div id="connectionWarning" class="connection-warning" role="alert" hidden>
-    <span><strong>Connection lost.</strong> Check your network connection. Keep this tab open until you reconnect. You can continue editing; changes cannot be saved yet.</span>
+    <span><strong id="connectionWarningTitle">Reconnecting to EagleIDE.</strong> Keep this tab open. You can continue editing while EagleIDE reconnects.</span>
     <button id="connectionRetryBtn" class="btn secondary" type="button">Retry connection</button>
   </div>
   <header class="topbar topbar-primary" id="topbarPrimary">
@@ -826,7 +826,7 @@
           <pre id="teacherStreamFallback" aria-label="Teacher stream code" tabindex="0" hidden></pre>
         </section>
         <section class="embedded-file-browser" id="fileBrowserTabPane" aria-label="File browser tab">
-          <div id="fileConnectionWarning" class="connection-warning file-connection-warning" role="status" hidden>File operations paused. Check your network connection and keep this tab open. Your editor is still available.</div>
+          <div id="fileConnectionWarning" class="connection-warning file-connection-warning" role="status" hidden>File operations will resume after EagleIDE reconnects. Keep this tab open to retain your edits.</div>
           <div class="file-sidebar-breadcrumb" id="fileBreadcrumb">
             <span class="crumb" data-path="">🏠 Home</span>
           </div>
@@ -868,6 +868,7 @@
         <!-- Shell -->
         <section class="panel" id="shellPanel">
           <div id="shellConnectionWarning" class="connection-warning shell-connection-warning" role="status" hidden>Connection error: check your network connection. Do not close this tab until you reconnect. Run and file operations are paused; you can keep editing.</div>
+            <div id="executionConnectionWarning" class="connection-warning shell-connection-warning" role="status" hidden>Code execution is disconnected. You can still open and save files.</div>
           <header class="shell-panel-header">
             <h3>Shell:</h3>
             <div class="shell-run-actions">

@@ -173,7 +173,8 @@ class RuntimeSecurityTests(unittest.TestCase):
         other = {"email": "other@example.invalid", "name": "Student B", "role": "student", "class_id": "b"}
         eagle._student_tokens[self.token] = user
         classes = {"a": {"id": "a", "students": [self.email]}, "b": {"id": "b", "students": [other["email"]]}}
-        with patch.object(eagle, "_load_users", return_value={"users": [user, other]}), \
+        data = {"users": [user, other]}
+        with patch.object(eagle, "_user_catalog", return_value=(data, eagle._index_users(data))), \
              patch.object(eagle, "_find_class_by_id", side_effect=classes.get), patch.object(eagle, "_load_challenge_scores", return_value={}):
             result = self.client.get("/api/challenge/leaderboard?classId=a", headers={"X-User-Token": self.token})
             self.assertEqual(result.status_code, 200)

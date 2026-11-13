@@ -922,10 +922,11 @@ _trash_locks = [threading.RLock() for _ in range(64)]
 
 def _trash_lock_for(user_dir):
     return _trash_locks[int(hashlib.sha256(str(user_dir).encode()).hexdigest()[:8], 16) % len(_trash_locks)]
-_users_cache: Optional[tuple[str, int, dict]] = None
+_users_cache: Optional[tuple[str, int, dict, dict]] = None
 _classes_cache: Optional[tuple[str, int, dict]] = None
 _skills_cache: Optional[tuple[str, int, dict]] = None
 SERVER_START_EPOCH = time.time()
+_server_connection_id = uuid.uuid4().hex
 _server_start_recorded = False
 _server_stop_recorded = False
 
@@ -951,7 +952,7 @@ def _account_store_unavailable(_error):
     return response, 503
 
 
-def _load_users(*, require_available=False) -> dict:
+def _user_catalog(*, require_available=False) -> tuple[dict, dict]:
     global _users_cache
     with _users_lock:
         if USERS_FILE.exists():
@@ -959,18 +960,19 @@ def _load_users(*, require_available=False) -> dict:
                 cache_path = str(USERS_FILE.resolve())
                 mtime_ns = USERS_FILE.stat().st_mtime_ns
                 if _users_cache and _users_cache[0] == cache_path and _users_cache[1] == mtime_ns:
-                    return copy.deepcopy(_users_cache[2])
+                    return _users_cache[2], _users_cache[3]
                 raw = json.loads(USERS_FILE.read_text(encoding="utf-8"))
                 valid_schema = (isinstance(raw, dict) and isinstance(raw.get("users"), list)
                                 and all(isinstance(user, dict) for user in raw["users"]))
-                if require_available and not valid_schema:
-                    raise UserStoreUnavailable("invalid_structure")
+                if not valid_schema:
+                    if require_available:
+                        raise UserStoreUnavailable("invalid_structure")
+                    normalized = _normalize_users_data(raw)
+                    return normalized, _index_users(normalized)
                 normalized = _normalize_users_data(raw)
-                # A permissive caller must not cache an invalid/partial store
-                # as an authoritative empty account list for authentication.
-                if valid_schema:
-                    _users_cache = (cache_path, mtime_ns, normalized)
-                return copy.deepcopy(normalized)
+                indexed = _index_users(normalized)
+                _users_cache = (cache_path, mtime_ns, normalized, indexed)
+                return normalized, indexed
             except UserStoreUnavailable:
                 raise
             except json.JSONDecodeError as exc:
@@ -984,7 +986,20 @@ def _load_users(*, require_available=False) -> dict:
                     raise UserStoreUnavailable("invalid_records") from exc
         elif require_available:
             raise UserStoreUnavailable("missing")
-        return {"users": []}
+        return {"users": []}, {}
+
+
+def _index_users(data: dict) -> dict:
+    by_email = {}
+    for record in data["users"]:
+        if isinstance(record.get("email"), str):
+            by_email.setdefault(record["email"].lower(), record)
+    return by_email
+
+
+def _load_users(*, require_available=False) -> dict:
+    data, _ = _user_catalog(require_available=require_available)
+    return copy.deepcopy(data)
 
 
 def _normalize_user_record(user: dict) -> dict:
@@ -1089,15 +1104,12 @@ def _save_users(data: dict) -> None:
         tmp = USERS_FILE.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(USERS_FILE)
-        _users_cache = (str(USERS_FILE.resolve()), USERS_FILE.stat().st_mtime_ns, copy.deepcopy(data))
+        cached = copy.deepcopy(data)
+        _users_cache = (str(USERS_FILE.resolve()), USERS_FILE.stat().st_mtime_ns, cached, _index_users(cached))
 
 def _find_user(email: str, *, require_available=False) -> Optional[dict]:
-    data = _load_users(require_available=require_available)
-    for u in data.get("users", []):
-        candidate = u.get("email")
-        if isinstance(candidate, str) and candidate.lower() == str(email or "").lower():
-            return _normalize_user_record(u)
-    return None
+    _, records = _user_catalog(require_available=require_available)
+    return copy.deepcopy(records.get(str(email or "").lower()))
 
 
 def _upgrade_legacy_password_if_needed(email: str, password: str) -> None:
@@ -1151,7 +1163,7 @@ def _user_info_from_record(user: dict, *, include_coteacher_classes=True) -> dic
     }
 
 
-def _device_credential_fingerprint(role: str, email: str) -> Optional[str]:
+def _device_credential_fingerprint(role: str, email: str, *, user=None) -> Optional[str]:
     normalized_role = str(role or "").strip().lower()
     normalized_email = str(email or "").strip().lower()
     if normalized_role == "admin":
@@ -1161,7 +1173,8 @@ def _device_credential_fingerprint(role: str, email: str) -> Optional[str]:
         if not ADMIN_ACCOUNT_PASSWORD and ADMIN_ACCOUNT_PASSWORD_SCHEME != "bcrypt":
             credential = ADMIN_ACCOUNT_PASSWORD_SCHEME + ":" + credential
     else:
-        user = _find_user(normalized_email)
+        if user is None:
+            user = _find_user(normalized_email)
         if not user or str(user.get("role") or "student").lower() != normalized_role:
             return None
         credential = str(user.get("password_hash") or user.get("password") or "")
@@ -1173,8 +1186,8 @@ def _device_credential_fingerprint(role: str, email: str) -> Optional[str]:
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
-def _set_device_session_cookie(response, role: str, email: str, access_token: str, first_issued_at=None) -> None:
-    fingerprint = _device_credential_fingerprint(role, email)
+def _set_device_session_cookie(response, role: str, email: str, access_token: str, first_issued_at=None, *, fingerprint=None) -> None:
+    fingerprint = fingerprint or _device_credential_fingerprint(role, email)
     if not fingerprint:
         return
     first_issued_at = int(time.time()) if first_issued_at is None else int(first_issued_at)
@@ -1610,6 +1623,13 @@ def _admit_login(email, ip):
 
 def _login_succeeded(email):
     _login_account_limits.clear(hashlib.sha256(str(email).strip().lower().encode()).hexdigest())
+
+
+def _login_busy():
+    response = jsonify(ok=False, error="The sign-in queue is busy. Please try again in a moment.", code="auth_busy")
+    response.status_code = 503
+    response.headers["Retry-After"] = "2"
+    return response
 
 
 def _ai_identity(req):
@@ -2818,9 +2838,17 @@ def _revoke_account_sessions(email, keep_token=""):
         _revoke_socket_sessions(email=email)
 
 
-def _validate_class_socket_sessions():
+def _validate_class_socket_sessions(class_id, recipients):
     """Recheck expiry and current membership immediately before room delivery."""
-    for sid, info in list(_socket_sid_info.items()):
+    cls = _find_class_by_id(class_id)
+    students = set((cls or {}).get("students", ()))
+    records = None
+    for sid in recipients:
+        info = _socket_sid_info.get(sid)
+        if not info:
+            continue
+        if class_id not in _socket_sid_rooms.get(sid, ()):
+            continue
         role, token, email = info.get("role"), info.get("token"), info.get("email", "")
         if not token:
             continue
@@ -2828,21 +2856,25 @@ def _validate_class_socket_sessions():
             valid = _admin_tokens.sessions.active(token)
             record = None
         else:
+            if records is None:
+                try:
+                    _, records = _user_catalog(require_available=True)
+                except UserStoreUnavailable:
+                    return False
             tokens = _wiki_manager_tokens if role == "wiki_manager" else _teacher_tokens if role == "teacher" else _student_tokens
-            record = _find_user(email)
+            record = records.get(email)
             valid = tokens.active(token) and record and record.get("enabled", True) and record.get("role") == role
         if not valid:
             _disconnect_auth_socket(sid)
             continue
-        for class_id in list(_socket_sid_rooms.get(sid, ())):
-            cls = _find_class_by_id(class_id)
-            allowed = cls and (role == "admin" or
-                (role == "teacher" and cls.get("teacher_email") == email) or
-                (role == "student" and email in cls.get("students", [])))
-            if not allowed:
-                for room in (f"class_{class_id}", f"class_{class_id}_students", f"class_{class_id}_teachers"):
-                    socketio.server.leave_room(sid, room, namespace="/")
-                _socket_sid_rooms.get(sid, set()).discard(class_id)
+        allowed = cls and (role == "admin" or
+            (role == "teacher" and cls.get("teacher_email") == email) or
+            (role == "student" and email in students))
+        if not allowed:
+            for room in (f"class_{class_id}", f"class_{class_id}_students", f"class_{class_id}_teachers"):
+                socketio.server.leave_room(sid, room, namespace="/")
+            _socket_sid_rooms.get(sid, set()).discard(class_id)
+    return True
 
 
 def _teacher_stream_active_for_class(class_id: str) -> bool:
@@ -2954,7 +2986,7 @@ def admin_login():
     # Constant-time comparison to prevent timing attacks
     email_ok = hmac.compare_digest(email.lower().encode("utf-8"), ADMIN_ACCOUNT_EMAIL.lower().encode("utf-8"))
     if not _password_check_slots.acquire(timeout=AUTH_PASSWORD_QUEUE_TIMEOUT_SECONDS):
-        return jsonify(ok=False, error="Sign-in is busy. Try again shortly.", code="auth_busy"), 503
+        return _login_busy()
     try:
         if ADMIN_ACCOUNT_PASSWORD:
             # Compatibility for embedders which explicitly supply an in-memory credential.
@@ -3207,10 +3239,7 @@ def auth_login():
         return jsonify(ok=False, error="Too many sign-in attempts. Try again shortly.", code="auth_rate_limited"), 429
     user = _find_user(email)
     if not _password_check_slots.acquire(timeout=AUTH_PASSWORD_QUEUE_TIMEOUT_SECONDS):
-        response = jsonify(ok=False, error="The sign-in queue is busy. Please try again in a moment.", code="auth_busy")
-        response.status_code = 503
-        response.headers["Retry-After"] = "2"
-        return response
+        return _login_busy()
     try:
         if user:
             pw_ok = _verify_user_password(user, password)
@@ -3251,11 +3280,14 @@ def auth_restore():
     if not encrypted:
         return jsonify(ok=False, error="No saved sign-in", code="no_saved_session"), 401
     try:
-        payload = json.loads(_admin_cipher().decrypt(encrypted.encode("ascii")).decode("utf-8"))
+        cipher = _admin_cipher()
+        payload = json.loads(cipher.decrypt(encrypted.encode("ascii")).decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("Invalid device session")
         role = str(payload.get("role") or "").strip().lower()
         email = str(payload.get("email") or "").strip().lower()
         expires_at = int(payload.get("expires_at") or 0)
-        first_issued_at = int(payload.get("first_issued_at") or _admin_cipher().extract_timestamp(encrypted.encode("ascii")))
+        first_issued_at = int(payload.get("first_issued_at") or cipher.extract_timestamp(encrypted.encode("ascii")))
         credential = str(payload.get("credential") or "")
         access_token = str(payload.get("access_token") or "")
     except (InvalidToken, ValueError, TypeError, UnicodeError, json.JSONDecodeError):
@@ -3263,7 +3295,8 @@ def auth_restore():
         response.status_code = 401
         _clear_device_session_cookie(response)
         return response
-    current_fingerprint = _device_credential_fingerprint(role, email)
+    user = _find_user(email, require_available=True) if role in {"student", "teacher", "wiki_manager"} else None
+    current_fingerprint = _device_credential_fingerprint(role, email, user=user) if role == "admin" or user else None
     if payload.get("v") != 1 or role not in {"student", "teacher", "wiki_manager", "admin"} or not re.fullmatch(r"[0-9a-f]{32}", access_token) \
             or expires_at <= int(time.time()) or first_issued_at + 30 * 24 * 3600 <= int(time.time()) \
             or not current_fingerprint or not hmac.compare_digest(credential, current_fingerprint):
@@ -3274,7 +3307,6 @@ def auth_restore():
     if role == "admin":
         user_info = {"email": ADMIN_ACCOUNT_EMAIL, "name": "Admin", "role": "admin"}
     else:
-        user = _find_user(email)
         if not user or not user.get("enabled", True):
             response = jsonify(ok=False, error="Account is unavailable", code="account_unavailable")
             response.status_code = 403
@@ -3283,7 +3315,7 @@ def auth_restore():
         user_info = _user_info_from_record(user)
     token = _issue_access_token(role, user_info, access_token)
     response = jsonify(ok=True, token=token, user=user_info, role=role)
-    _set_device_session_cookie(response, role, email, token, first_issued_at)
+    _set_device_session_cookie(response, role, email, token, first_issued_at, fingerprint=current_fingerprint)
     return response
 
 @app.post("/api/auth/logout")
@@ -3308,6 +3340,8 @@ def auth_me():
     if not user:
         user = _require_teacher(request, allow_coteacher=True)
     if not user:
+        if _require_admin(request):
+            return jsonify(ok=True, user={"email": ADMIN_ACCOUNT_EMAIL, "name": "Admin", "role": "admin"})
         return jsonify(ok=False, error="Not authenticated"), 401
     record = _find_user(user.get("email", ""))
     fresh = _user_info_from_record(record) if record else user
@@ -5959,7 +5993,7 @@ def _class_presence_payload(class_id: str, cls: Optional[dict] = None) -> dict:
     open_files = {}
     active_emails = set()
     in_quiz_emails = set()
-    users_by_email = {str(u.get("email") or "").strip().lower(): u for u in _load_users().get("users", [])}
+    _, users_by_email = _user_catalog()
     for sid, info in list(_socket_sid_info.items()):
         if (info or {}).get("role") != "student":
             continue
@@ -5986,9 +6020,27 @@ def _class_presence_payload(class_id: str, cls: Optional[dict] = None) -> dict:
     }
 
 
+_presence_update_lock = threading.Lock()
+_pending_presence_updates = set()
+
+
+def _flush_class_presence(class_id):
+    socketio.sleep(0.25)
+    with _presence_update_lock:
+        _pending_presence_updates.discard(class_id)
+    room = f"class_{class_id}_teachers"
+    if next(socketio.server.manager.get_participants("/", room), None) is not None:
+        socketio.emit("class_presence_updated", _class_presence_payload(class_id), to=room)
+
+
 def _emit_class_presence(class_id: str) -> None:
-    if class_id:
-        socketio.emit("class_presence_updated", _class_presence_payload(class_id), to=f"class_{class_id}_teachers")
+    if not class_id:
+        return
+    with _presence_update_lock:
+        if class_id in _pending_presence_updates:
+            return
+        _pending_presence_updates.add(class_id)
+    socketio.start_background_task(_flush_class_presence, class_id)
 
 
 @app.get("/api/teacher/classes/<class_id>/active-students")
@@ -9297,9 +9349,16 @@ def on_workspace_file_opened(payload):
     info = _socket_sid_info.get(request.sid)
     if not info or info.get("role") != "student" or not isinstance(payload, dict):
         return
-    info["open_file"] = str(payload.get("name") or "").replace("\\", "/").split("/")[-1][:160]
+    name = _socket_workspace_name(payload.get("name"))
+    if name == info.get("open_file", ""):
+        return
+    info["open_file"] = name
     for class_id in list(_socket_sid_rooms.get(request.sid, set())):
         _emit_class_presence(class_id)
+
+
+def _socket_workspace_name(value):
+    return str(value or "").replace("\\", "/").split("/")[-1][:160]
 
 
 @socketio.on("teacher_code_update")
@@ -9410,22 +9469,30 @@ def on_join_class_room(payload):
                 leave_room(room)
             _set_teacher_stream_state_for_sid(request.sid, old_class, False)
         _socket_sid_rooms[request.sid] = set()
+    cls = _find_class_by_id(class_id)
+    if not cls:
+        return
     if role == "student":
-        student = _student_tokens.get(token)
+        try:
+            student = _current_session_user(_student_tokens, token, "student")
+        except UserStoreUnavailable:
+            return
         if not student:
             return
-        student_record = _find_user(student.get("email", ""))
-        if not student_record or not student_record.get("enabled", True) or student_record.get("role") != "student":
+        if not _user_in_class(student, class_id) or student["email"].lower() not in cls.get("students", ()):
             return
-        if not _user_in_class(student_record, class_id):
-            return
-        student["class_id"] = student_record.get("class_id")
-        student["class_ids"] = _get_user_class_ids(student_record)
-        _socket_sid_info[request.sid] = {"role": "student", "email": (student.get("email") or "").strip().lower(), "in_quiz": False}
+        open_file = (payload or {}).get("open_file")
+        if open_file is None and previous and previous.get("token") == token:
+            open_file = previous.get("open_file")
+        _socket_sid_info[request.sid] = {"role": "student", "email": (student.get("email") or "").strip().lower(),
+                                         "in_quiz": bool(previous and previous.get("token") == token and previous.get("in_quiz")),
+                                         "open_file": _socket_workspace_name(open_file)}
     elif role == "teacher":
-        teacher = _teacher_tokens.get(token)
-        cls = _find_class_by_id(class_id)
-        if not teacher or not cls or (cls.get("teacher_email") or "").lower() != (teacher.get("email") or "").lower():
+        try:
+            teacher = _current_session_user(_teacher_tokens, token, "teacher")
+        except UserStoreUnavailable:
+            return
+        if not teacher or (cls.get("teacher_email") or "").lower() != (teacher.get("email") or "").lower():
             return
         _socket_sid_info[request.sid] = {"role": "teacher", "email": (teacher.get("email") or "").strip().lower()}
     elif role == "admin":
@@ -9435,9 +9502,6 @@ def on_join_class_room(payload):
     else:
         return
     _socket_sid_info[request.sid]["token"] = token
-    _validate_class_socket_sessions()
-    if request.sid not in _socket_sid_info:
-        return
     join_room(f"class_{class_id}")
     if role == "student":
         join_room(f"class_{class_id}_students")
@@ -9449,6 +9513,7 @@ def on_join_class_room(payload):
     if role == "student" and _teacher_stream_active_for_class(class_id) and snapshot is not None:
         socketio.emit("teacher_code", {key: value for key, value in snapshot.items() if key != "_sender"}, to=request.sid)
     _emit_class_presence(class_id)
+    return {"ok": True}
 
 
 # Every feature shares this Socket.IO instance, including classroom_features.py.
@@ -9462,7 +9527,14 @@ def _emit_with_class_validation(event, *args, **kwargs):
     if str(target).startswith("class_") and not getattr(_class_delivery_guard, "active", False):
         _class_delivery_guard.active = True
         try:
-            _validate_class_socket_sessions()
+            room = str(target)
+            recipients = {}
+            for sid, _ in socketio.server.manager.get_participants("/", room):
+                for class_id in tuple(_socket_sid_rooms.get(sid, ())):
+                    if room in (f"class_{class_id}", f"class_{class_id}_students", f"class_{class_id}_teachers"):
+                        recipients.setdefault(class_id, []).append(sid)
+            if not all(_validate_class_socket_sessions(class_id, members) for class_id, members in recipients.items()):
+                return
         finally:
             _class_delivery_guard.active = False
     return _emit_without_class_validation(event, *args, **kwargs)
@@ -13806,7 +13878,10 @@ def admin_server_health():
 # -------------------------
 @app.get("/health")
 def health():
-    return jsonify(ok=True)
+    response = jsonify(ok=True)
+    response.headers["X-EagleIDE-Instance"] = _server_connection_id
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 from data_cleanup import CleanupManager, register as register_data_cleanup
 _data_cleanup = CleanupManager(sys.modules[__name__], Path(os.environ.get(

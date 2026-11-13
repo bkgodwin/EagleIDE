@@ -2,9 +2,11 @@
 (function () {
   'use strict';
   const ide = window.EagleIDE = window.EagleIDE || {};
-  const message = 'Connection lost. Check your network connection. Keep this tab open until you reconnect; you can continue editing, but changes cannot be saved yet.';
+  const message = 'Connection lost. Keep this tab open while EagleIDE reconnects. You can continue editing.';
   let lost = navigator.onLine === false;
-  let socket = null, socketReady = false, serverReady = false;
+  let restoringSession = false;
+  let socket = null;
+  let instance = '', prepareSession;
   let timer = null, checking = null, revision = 0, failures = 0;
   const listeners = new Set();
 
@@ -14,8 +16,12 @@
       const element = document.getElementById(id);
       if (element) element.hidden = !lost;
     }
+    const executionWarning = document.getElementById('executionConnectionWarning');
+    if (executionWarning) executionWarning.hidden = lost || !!socket?.connected;
     const files = document.getElementById('fileBrowserTabPane');
     if (files) files.setAttribute('aria-disabled', String(lost));
+    const title = document.getElementById('connectionWarningTitle');
+    if (title) title.textContent = restoringSession ? 'Restoring your session.' : 'Reconnecting to EagleIDE.';
     if (lost) {
       for (const id of ['runBtn', 'stepModeBtn', 'sendBtn', 'executionQueueCancelBtn']) {
         const button = document.getElementById(id);
@@ -34,14 +40,13 @@
 
   function reportFailure() {
     revision++;
-    serverReady = false;
     setLost(true);
     schedule(1000);
   }
 
   function schedule(delay) {
     clearTimeout(timer);
-    timer = setTimeout(check, delay);
+    timer = setTimeout(check, delay + Math.floor(Math.random() * (lost ? 2000 : 4000)));
   }
 
   async function check() {
@@ -61,23 +66,34 @@
         });
         const probe = (async () => {
           const response = await fetch('/health', { cache: 'no-store', credentials: 'omit', signal: controller?.signal });
-          return response.ok && (await response.json()).ok === true;
+          return response.ok && (await response.json()).ok === true ? response : null;
         })();
-        const ok = await Promise.race([probe, expired]);
-        // An offline/socket event that occurred during the probe wins.
+        const response = await Promise.race([probe, expired]);
+        // A newer HTTP or browser-offline failure wins over this probe.
         if (startedRevision !== revision || navigator.onLine === false) return false;
-        serverReady = ok;
-        failures = ok ? 0 : failures + 1;
-        setLost(!serverReady || !socketReady);
+        if (!response) { restoringSession = false; failures++; setLost(true); return false; }
+        const nextInstance = response.headers?.get('X-EagleIDE-Instance') || instance;
+        const restarted = !!instance && instance !== nextInstance;
+        const session = prepareSession?.({ restarted, reconnecting: lost });
+        restoringSession = !!session?.then;
+        if (restarted || lost || restoringSession) setLost(true);
+        const ready = session === undefined || await session;
+        if (startedRevision !== revision || navigator.onLine === false) return false;
+        if (!ready) { failures++; setLost(true); return false; }
+        instance = nextInstance;
+        failures = 0;
+        restoringSession = false;
+        setLost(false);
+        if (socket?.active === false && !socket.connected) socket.connect();
         return !lost;
       } catch {
-        if (startedRevision === revision) { serverReady = false; failures++; setLost(true); }
+        if (startedRevision === revision) { failures++; setLost(true); }
         return false;
       } finally {
         clearTimeout(timeout);
         checking = null;
         // One bounded probe at a time; suspended tabs do less work.
-        schedule(document.hidden ? 30000 : lost ? Math.min(15000, 3000 * Math.max(1, failures)) : 15000);
+        schedule(document.hidden ? 30000 : lost ? Math.min(15000, 1500 * 2 ** Math.min(4, failures)) : 15000);
       }
     })();
     return checking;
@@ -85,11 +101,10 @@
 
   function bindSocket(nextSocket) {
     socket = nextSocket;
-    socketReady = !!socket?.connected;
-    socket.on('connect', () => { socketReady = true; revision++; check(); });
-    const closed = () => { socketReady = false; reportFailure(); };
-    socket.on('disconnect', closed);
-    socket.on('connect_error', closed);
+    socket.on('connect', render);
+    socket.on('disconnect', () => { render(); schedule(0); });
+    socket.on('connect_error', render);
+    render();
   }
 
   async function request(url, options = {}, timeoutMs = 12000) {
@@ -108,7 +123,9 @@
       })();
       return await Promise.race([operation, expired]);
     } catch (error) {
-      reportFailure();
+      // A slow individual request can fail while the rest of the site responds.
+      // Confirm reachability before disabling unrelated file operations.
+      check();
       throw error;
     } finally { clearTimeout(timeout); }
   }
@@ -123,15 +140,16 @@
     }, true);
   }
   window.addEventListener('offline', reportFailure);
-  window.addEventListener('online', () => { revision++; check(); socket?.connect(); });
-  window.addEventListener('pageshow', check);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
+  window.addEventListener('online', () => schedule(0));
+  window.addEventListener('pageshow', () => schedule(0));
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) schedule(0); });
   window.addEventListener('beforeunload', event => {
     if (!lost) return;
     event.preventDefault(); event.returnValue = '';
   });
-  document.getElementById('connectionRetryBtn')?.addEventListener('click', () => { check(); socket?.connect(); });
+  document.getElementById('connectionRetryBtn')?.addEventListener('click', check);
   ide.connection = { isLost: () => lost, canRun: () => !lost && !!socket?.connected, request, check, reportFailure,
+    prepareSession(handler) { prepareSession = handler; },
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); }, message };
   window.addEventListener('eagle-socket-ready', event => bindSocket(event.detail.socket));
   render();

@@ -58,7 +58,7 @@
   function updateLaunchButton() {
     const button = $('stepModeBtn');
     if (!button) return;
-    button.disabled = !!window.EagleIDE?.connection?.isLost();
+    button.disabled = state !== 'playback' && window.EagleIDE?.connection?.canRun?.() === false;
     button.classList.toggle('is-active', state === 'playback');
     if (state === 'generating') {
       button.textContent = '⏹';
@@ -419,7 +419,7 @@
   }
 
   async function start() {
-    if (window.EagleIDE?.connection?.isLost() && state !== 'playback') {
+    if (window.EagleIDE?.connection?.canRun?.() === false && state !== 'playback') {
       setStatus('Connection error: check your network connection and keep this tab open until you reconnect.', 'error');
       return;
     }
