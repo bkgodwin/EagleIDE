@@ -5,6 +5,7 @@
   const MATERIALS = Object.freeze({
     drywall: { name: 'Drywall', color: '#60758b', loss: { '2.4': 3, '5': 5 } },
     concrete: { name: 'Concrete', color: '#a35e36', loss: { '2.4': 12, '5': 17 } },
+    reinforced_concrete: { name: 'Thick reinforced concrete', color: '#684735', loss: { '2.4': 20, '5': 28 } },
     metal: { name: 'Metal', color: '#7752a8', loss: { '2.4': 22, '5': 27 } },
     glass: { name: 'Glass', color: '#15848e', loss: { '2.4': 2, '5': 4 } },
     wood: { name: 'Wood', color: '#966835', loss: { '2.4': 4, '5': 6 } },
@@ -28,6 +29,8 @@
   const SAMPLES = 64;
   const PADDING = 1;
   const referenceSignal = (band, ap) => (band === '5' ? -42 : -35) + (ap.power_db || 0);
+  const OBSTACLES = { tree: { name: 'Tree canopy', rx: 1.75, ry: 1.75, loss: { '2.4': 2, '5': 4 } },
+    car: { name: 'Parked car', rx: .9, ry: 2.2, loss: { '2.4': 3, '5': 5 } } };
   const radius = (band, ap) => 10 ** ((referenceSignal(band, ap) - FADE_END) / 25);
 
   function wallIntersection(ap, dx, dy, wall) {
@@ -41,7 +44,7 @@
     return across >= -1e-7 && across <= 1 + 1e-7 ? along : null;
   }
 
-  function transmittersFor(walls, accessPoints, band, heat = false, openings = []) {
+  function transmittersFor(walls, accessPoints, band, heat = false, openings = [], decor = []) {
     const byWall = new Map();
     for (const opening of openings) {
       if (!byWall.has(opening.wall_id)) byWall.set(opening.wall_id, []);
@@ -58,13 +61,21 @@
         return { start: opening.t - half, end: opening.t + half, loss: profile.loss[band], material: profile.name };
       }),
     }));
+    const objects = decor.flatMap(item => {
+      const profile = OBSTACLES[item.kind];
+      if (!profile) return [];
+      const angle = (item.angle || 0) * Math.PI / 180;
+      const c = Math.cos(angle), s = Math.sin(angle), extent = Math.max(profile.rx, profile.ry);
+      return [{ ...profile, x: item.x, y: item.y, c, s, left: item.x - extent, right: item.x + extent,
+        top: item.y - extent, bottom: item.y + extent, material: profile.name, loss: profile.loss[band] }];
+    });
+    const nearby = (items, ap, range) => heat ? items.filter(item => item.left <= ap.x + range && item.right >= ap.x - range
+      && item.top <= ap.y + range && item.bottom >= ap.y - range) : items;
     return accessPoints.map(ap => {
       const radians = ap.angle * Math.PI / 180;
       const range = heat ? radius(band, ap) : Infinity;
-      const nearby = heat ? segments.filter(wall => wall.left <= ap.x + range && wall.right >= ap.x - range
-        && wall.top <= ap.y + range && wall.bottom >= ap.y - range) : segments;
       return { ap, facingX: Math.cos(radians), facingY: Math.sin(radians), range,
-        walls: nearby, reference: referenceSignal(band, ap) };
+        walls: nearby(segments, ap, range), objects: nearby(objects, ap, range), reference: referenceSignal(band, ap) };
     });
   }
 
@@ -76,7 +87,7 @@
       let bestSignal = -Infinity;
       let best = null;
       let alternate = null;
-      for (const { ap, facingX, facingY, range, walls, reference } of transmitters) {
+      for (const { ap, facingX, facingY, range, walls, objects, reference } of transmitters) {
         const dx = point.x - ap.x;
         const dy = point.y - ap.y;
         const squared = dx * dx + dy * dy;
@@ -114,6 +125,18 @@
           if (signal <= cutoff) break;
         }
         if (signal <= cutoff) continue;
+        if (squared > 0) for (const object of objects) {
+          if (object.left > right || object.right < left || object.top > bottom || object.bottom < top) continue;
+          const x = ap.x - object.x, y = ap.y - object.y;
+          const u = (x * object.c + y * object.s) / object.rx, v = (y * object.c - x * object.s) / object.ry;
+          const du = (dx * object.c + dy * object.s) / object.rx, dv = (dy * object.c - dx * object.s) / object.ry;
+          const t = Math.max(0, Math.min(1, -(u * du + v * dv) / (du * du + dv * dv)));
+          if ((u + du * t) ** 2 + (v + dv * t) ** 2 >= 1) continue;
+          signal -= object.loss;
+          if (detailed) { crossings.push(t); obstacles.push(object); }
+          if (signal <= cutoff) break;
+        }
+        if (signal <= cutoff) continue;
         if (signal <= bestSignal) {
           if (detailed) alternate = { ap, signal };
           continue;
@@ -130,8 +153,8 @@
     };
   }
 
-  function coverageModel(walls, accessPoints, band, openings) {
-    return estimateWith(transmittersFor(walls, accessPoints, band, false, openings));
+  function coverageModel(walls, accessPoints, band, openings, decor) {
+    return estimateWith(transmittersFor(walls, accessPoints, band, false, openings, decor));
   }
 
   const LEVELS = [
@@ -185,8 +208,8 @@
     return areas.some(({ ap, range }) => inRange(ap, range, bounds));
   }
 
-  function createHeatSource({ walls, access_points, band, openings }) {
-    const transmitters = transmittersFor(walls, access_points, band, true, openings);
+  function createHeatSource({ walls, access_points, band, openings, decor }) {
+    const transmitters = transmittersFor(walls, access_points, band, true, openings, decor);
     return tile => {
       const bounds = tileBounds(tile, PADDING);
       const local = transmitters.filter(({ ap, range }) => inRange(ap, range, bounds));
@@ -213,7 +236,7 @@
   }
 
   const model = {
-    MATERIALS, MOUNTS, OPENINGS, LEVELS, gridStep, displayDistance, metersFrom,
+    MATERIALS, MOUNTS, OPENINGS, OBSTACLES, LEVELS, gridStep, displayDistance, metersFrom,
     roundDistance, distance, coverageModel, signalLevel, signalColor, SAMPLES, PADDING,
     tileLevel, tileSize, tileStep, tileBounds, tileHasCoverage, heatAreas, createHeatSource,
   };

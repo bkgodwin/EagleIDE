@@ -111,9 +111,10 @@
   function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
   }
-  async function api(url, options = {}) {
+  async function api(url, options = {}, { download = false } = {}) {
     options.headers = { ...authHeaders(!!options.body), ...(options.headers || {}) };
     const response = await fetch(url, options);
+    if (download && response.ok) return response.blob();
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || payload?.ok === false) {
       const error = new Error(payload?.error || `Request failed (${response.status})`);

@@ -17,6 +17,7 @@ from pathlib import Path
 from network_content import DEVICE_PORTS, LABS, PORT_CAPABILITIES
 from wifi_cabling import CABLING_LIMITS, validate_cabling
 from wifi_site_structure import validate_structure
+from wifi_site_design import DESIGN_LIMITS, validate_design
 
 
 SCHEMA_VERSION = 2
@@ -24,12 +25,12 @@ MAX_DEVICES = 100
 MAX_LINKS = 200
 MAX_TOPOLOGY_BYTES = 512_000
 MAX_SAVED_TOPOLOGIES = 40
-WIFI_SCHEMA_VERSION = 4
+WIFI_SCHEMA_VERSION = 5
 MAX_WIFI_SITE_BYTES = 2_000_000
 WIFI_COORDINATE_LIMIT = 100_000_000_000  # Keep rounding within the browser's safe integer range.
-WIFI_LIMITS = {**CABLING_LIMITS, "walls": 1200, "access_points": 128, "labels": 320, "openings": 500, "saved": 40,
+WIFI_LIMITS = {**CABLING_LIMITS, **DESIGN_LIMITS, "walls": 1200, "access_points": 128, "labels": 320, "openings": 500, "saved": 40,
                "coordinate": WIFI_COORDINATE_LIMIT}
-WIFI_MATERIALS = {"drywall", "concrete", "metal", "glass", "wood", "brick"}
+WIFI_MATERIALS = {"drywall", "concrete", "reinforced_concrete", "metal", "glass", "wood", "brick"}
 DEVICE_TYPES = {"pc", "laptop", "phone", "server", "switch", "l3switch", "router", "firewall", "wap", "cloud"}
 LINK_TYPES = {"ethernet", "fiber", "serial"}
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
@@ -46,7 +47,7 @@ class WifiRevisionError(NetworkDataError):
 def validate_wifi_site(raw):
     """Normalize a single-floor plan in meters, including legacy bounded plans."""
     version = raw.get("schema_version") if isinstance(raw, dict) else None
-    if type(version) is not int or version not in (1, 2, 3, WIFI_SCHEMA_VERSION):
+    if type(version) is not int or not 1 <= version <= WIFI_SCHEMA_VERSION:
         raise NetworkDataError("Unsupported Wi-Fi site format")
 
     def number(value, minimum, maximum, field, *, precision=4):
@@ -117,6 +118,7 @@ def validate_wifi_site(raw):
                 clean = {**point(item), "text": label(item.get("text"), 160, "New note")}
             plan[kind].append({"id": item_id, **clean})
     try:
+        plan.update(validate_design(raw, seen=seen, number=number, point=point, safe_id=_safe_id))
         plan.update(validate_structure(raw, plan, limits=WIFI_LIMITS, seen=seen, number=number,
                                        point=point, safe_id=_safe_id))
         plan.update(validate_cabling(raw, plan, number=number, label=label, point=point, safe_id=_safe_id, seen=seen))
@@ -911,6 +913,9 @@ class NetworkStore:
                 raise WifiRevisionError("This project now has cabling. Reload the editor before editing it.")
             if existing and raw["schema_version"] < 4 and (existing.get("openings") or existing.get("background")):
                 raise WifiRevisionError("This project has a background or openings. Reload the editor before editing it.")
+            if existing and raw["schema_version"] < 5 and (any(existing.get(kind) for kind in ("decor", "surfaces", "background_color"))
+                    or any(wall["material"] == "reinforced_concrete" for wall in existing["walls"])):
+                raise WifiRevisionError("This project has new design layers. Reload the editor before editing it.")
             if revision != current_revision:
                 # A retry after a lost response may safely acknowledge the same save.
                 if existing and current_revision == revision + 1 and all(existing[key] == value for key, value in site.items()):

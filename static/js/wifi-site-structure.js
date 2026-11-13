@@ -53,7 +53,8 @@
     function markup(item, ghost = false) {
       const [a, b] = anchors(item);
       if (!a) return '';
-      const cls = item.kind === 'door' ? 'wifi-door' : 'wifi-window';
+      const cls = (item.kind === 'door' ? 'wifi-door' : 'wifi-window')
+        + (ctx.walls().get(item.wall_id)?.material === 'reinforced_concrete' ? ' is-reinforced' : '');
       const style = ghost ? ' wifi-opening-ghost' : item.id === ctx.selected() ? ' is-selected' : '';
       const attr = ghost ? '' : `data-wifi-object="${ctx.escape(item.id)}"`;
       let geometry = '';

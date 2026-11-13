@@ -7,14 +7,16 @@ host application supplies only its existing authentication/class callbacks.
 from __future__ import annotations
 
 import copy
+import io
 
-from flask import jsonify, request
+from flask import jsonify, request, send_file
 from werkzeug.exceptions import RequestEntityTooLarge
 
 from network_content import ACRONYM_REFERENCE, COMMAND_REFERENCE, EXAMPLE_TOPOLOGIES, LABS, PORT_REFERENCE, example_summaries, lab_summary
 from network_store import MAX_WIFI_SITE_BYTES, WIFI_LIMITS, NetworkDataError, NetworkStore, WifiRevisionError, grade_lab, validate_topology
 from wifi_cabling import CABLING_CATALOG
 from wifi_scenarios import SCENARIOS, scenario_briefing, scenario_summary
+from wifi_site_pdf import MAX_EXPORT_BYTES, render_plan_pdf
 
 
 def register(
@@ -260,6 +262,26 @@ def register(
         scenario = SCENARIOS[scenario_id]
         return jsonify(ok=True, data={"site": {**scenario["site"], "scenario_id": scenario_id},
                                      "briefing": scenario_briefing(scenario)})
+
+    @app.post("/api/network/wifi-export.pdf")
+    def network_wifi_export():
+        current = actor()
+        if not may_open(current):
+            return jsonify(ok=False, error="Infra Sim is disabled"), 403
+        request.max_content_length = MAX_EXPORT_BYTES + 4096
+        try:
+            data = json_object()
+            if data is None:
+                raise ValueError("A floor plan is required")
+            author = (current["record"] or {}).get("name") or ("Administrator" if current["role"] == "admin" else "Guest")
+            pdf, filename = render_plan_pdf(data.get("image"), data.get("title"), author, data.get("date"))
+        except RequestEntityTooLarge:
+            return jsonify(ok=False, error="The floor plan is too large to export"), 413
+        except ValueError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+        response = send_file(io.BytesIO(pdf), mimetype="application/pdf", as_attachment=True, download_name=filename, max_age=0)
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.route("/api/network/wifi-sites/<site_id>", methods=["GET", "PUT", "DELETE"])
     def wifi_site(site_id):

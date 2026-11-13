@@ -35,8 +35,12 @@ class WifiCablingTests(unittest.TestCase):
                 validate_wifi_site(self.plan)
         self.plan["pass_throughs"] = [{"id": "opening", "wall_id": "wall", "t": 1 / 3}]
         self.assertEqual(len(validate_wifi_site(self.plan)["cables"]), 1)
-        self.plan["walls"][0]["material"] = "glass"
+        self.plan["walls"][0]["material"] = "reinforced_concrete"
+        self.assertEqual(len(validate_wifi_site(self.plan)["cables"]), 1)
         self.plan["pass_throughs"] = []
+        with self.assertRaisesRegex(NetworkDataError, "crosses concrete"):
+            validate_wifi_site(self.plan)
+        self.plan["walls"][0]["material"] = "glass"
         self.assertEqual(len(validate_wifi_site(self.plan)["cables"]), 1)
 
     def test_wall_spacing_capacity_and_pass_references(self):

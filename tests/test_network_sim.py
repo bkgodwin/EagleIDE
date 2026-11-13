@@ -1,4 +1,6 @@
 import copy
+import base64
+import io
 import json
 import math
 import shutil
@@ -9,6 +11,7 @@ import unittest
 from pathlib import Path
 
 from flask import Flask
+from PIL import Image
 
 from network_content import ACRONYM_REFERENCE, COMMAND_REFERENCE, DEVICE_PORTS, EXAMPLE_TOPOLOGIES, LABS, PORT_REFERENCE
 from network_features import register
@@ -39,6 +42,9 @@ class NetworkStoreTests(unittest.TestCase):
         self.assertEqual(site["access_points"], [])
         self.assertEqual(site["cables"], [])
         self.assertEqual(site["equipment"], [])
+        self.assertGreaterEqual(sum(wall['material'] == 'reinforced_concrete' for wall in site['walls']), 4)
+        self.assertTrue({'car', 'tree', 'lamp', 'desk', 'chair'}.issubset(item['kind'] for item in site['decor']))
+        self.assertTrue({'floor', 'sidewalk', 'pavement'}.issubset(item['kind'] for item in site['surfaces']))
         self.assertEqual({item["kind"] for item in site["openings"]}, {"door", "window"})
         self.assertTrue({"Gymnasium / events", "Foyer", "Access WC", "Activity room", "Side awning"}
                         .issubset(item["text"] for item in site["labels"]))
@@ -428,6 +434,27 @@ class NetworkRouteTests(unittest.TestCase):
         forged = self.client.put(site_url, headers=other, json={"site": scenario["site"], "revision": 0})
         self.assertNotIn("scenario_id", forged.get_json()["data"])
 
+    def test_wifi_pdf_download_uses_authenticated_author_and_is_not_cached(self):
+        self.store.set_class_access('class-1', True)
+        self.students['student-token']['name'] = 'Alice Example'
+        image = io.BytesIO()
+        Image.new('RGB', (180, 100), '#dbe5ec').save(image, 'JPEG')
+        url = '/api/network/wifi-export.pdf'
+        payload = {'image': base64.b64encode(image.getvalue()).decode(), 'title': 'My civic plan',
+                   'date': '2026-11-13', 'author': 'Other person'}
+        headers = {'X-User-Token': 'student-token'}
+        with self.client.post(url, json=payload, headers=headers) as response:
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.mimetype, 'application/pdf')
+            self.assertIn('My civic plan.pdf', response.headers['Content-Disposition'])
+            self.assertEqual(response.headers['Cache-Control'], 'no-store')
+            self.assertTrue(response.data.startswith(b'%PDF'))
+            self.assertIn(b'/Author (Alice Example)', response.data)
+            self.assertNotIn(b'Other person', response.data)
+        self.assertEqual(self.client.post(url, json={**payload, 'image': 'invalid'}, headers=headers).status_code, 400)
+        self.store.set_class_access('class-1', False)
+        self.assertEqual(self.client.post(url, json=payload, headers=headers).status_code, 403)
+
     def test_disabled_blocks_guest_but_admin_can_privately_preview(self):
         self.config_state["network_sim_enabled"] = False
         self.assertEqual(self.client.get("/api/network/bootstrap").status_code, 403)
@@ -486,13 +513,14 @@ class NetworkRouteTests(unittest.TestCase):
 
     def wifi_plan(self):
         return {
-            "schema_version": 4, "title": "Two rooms",
+            "schema_version": 5, "title": "Two rooms",
             "units": "ft", "band": "5",
             "walls": [{"id": "wall-1", "a": {"x": 20, "y": 4}, "b": {"x": 20, "y": 24}, "material": "concrete"}],
             "access_points": [{"id": "ap-1", "x": 11, "y": 14, "mount": "wall", "angle": 90, "name": "Hall AP", "power_db": 0}],
             "labels": [{"id": "note-1", "x": 25, "y": 7, "text": "Check signal here"}],
             "equipment": [], "pass_throughs": [], "cables": [],
             "openings": [], "background": None,
+            "surfaces": [], "decor": [], "background_color": None,
         }
 
     def test_wifi_site_access_and_account_owned_round_trip(self):
@@ -544,6 +572,22 @@ class NetworkRouteTests(unittest.TestCase):
         self.assertEqual(self.client.get(url, headers=headers).json["data"]["title"], updated["title"])
         self.assertEqual(self.client.delete(url, headers=headers).status_code, 200)
         self.assertEqual(self.client.put(url, headers=headers, json={"site": plan, "revision": 2}).status_code, 409)
+
+    def test_new_design_layers_round_trip_and_are_protected_from_older_editors(self):
+        plan = self.wifi_plan()
+        old_editor = {**plan, 'schema_version': 4}
+        plan['background_color'] = '#ddeedd'
+        plan['decor'] = [{'id': 'tree-1', 'kind': 'tree', 'x': 3, 'y': 5, 'angle': 15}]
+        plan['surfaces'] = [{'id': 'walk', 'kind': 'sidewalk', 'color': '#cacaca',
+                             'points': [{'x': 0, 'y': 0}, {'x': 2, 'y': 0}, {'x': 0, 'y': 2}], 'holes': []}]
+        url = '/api/network/wifi-sites/design-layers'
+        headers = {'X-Teacher-Token': 'teacher-token'}
+        self.assertEqual(self.client.put(url, headers=headers, json={'site': plan, 'revision': 0}).status_code, 200)
+        actual = self.client.get(url, headers=headers).json['data']
+        self.assertEqual({key: actual[key] for key in plan}, plan)
+        self.assertEqual(self.client.put(url, headers=headers, json={'site': old_editor, 'revision': 1}).status_code, 409)
+        plan['surfaces'][0]['color'] = 'url(https://example.test)'
+        self.assertEqual(self.client.put(url, headers=headers, json={'site': plan, 'revision': 1}).status_code, 400)
 
     def test_wifi_site_opens_legacy_data_and_saves_large_signed_coordinates(self):
         email = "teacher@example.com"

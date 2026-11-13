@@ -28,6 +28,8 @@ Open **Network Lab → Infra Sim** and choose **New Site**, a saved site, or **N
 
 Open the **Scenarios** folder for design challenges. **Port Adelaide Community Center** starts with an editable metric floor plan traced from the Lefevre Community Stadium drawing and calibrated to its 38.3 m gym wall. The briefing opens with the plan; use **Scenario** in the editor to read it again. There is no installed network in the starter. Save your own design under **Saved Sites**.
 
+The community center includes a comms room, an electrical room, thick reinforced walls, furnished activity rooms, and a civic plaza with paths and parking. Find a route around the concrete or use pass-throughs where needed.
+
 Under **Teacher Dashboard → Network Lab → Infra Sim Scenarios**, select a class and choose which challenges students can start. New scenarios are shown by default to signed-in students in classes with Network Lab enabled. A student enrolled in multiple classes can start a scenario if any enabled class shows it. Hiding the starter preserves students' saved projects and briefings.
 
 1. Choose feet or meters from **Plan**. Scroll or pinch to zoom out and reveal more drawing space in every direction. Use **Pan** or hold **Space** and drag to move the view. **Fit Site** returns to the whole drawing.
@@ -39,6 +41,10 @@ Under **Teacher Dashboard → Network Lab → Infra Sim Scenarios**, select a cl
 Click an object to open its floating inspector. The inspector closes as soon as you drag an object. Click it again to reopen its settings. Use **Plan → Find an object** for objects elsewhere on the canvas. On the keyboard, focus the canvas, move the cursor with the arrow keys, and press Enter to use the selected tool.
 
 Use **Background → Add Image** to import a PNG, JPEG, or WebP floor plan. Enter its width or choose **Calibrate with Two Points** and enter the real-world distance between them. Use **Move Image** or edit its X and Y coordinates to align it. The image stays behind the drawing and saves with the site.
+
+- **Symbols** places top-down trees, cars, furniture, lamp posts, and parking bays at plan scale. Select one to move, rotate, duplicate, or delete it. Trees and cars add a small estimated signal loss when a signal crosses them. Other symbols are decorative.
+- **Paint Bucket** colors an enclosed room from its walls, or the background when you click outside. Use **Clear Fill** to remove a color. For sidewalks, pavement, and landscape, choose **Draw Surface**, click the corners, and select **Finish Surface**. These fills have no effect on cabling or signal.
+- **Export PDF** fits the entire drawing to a printable page, regardless of pan or zoom, and puts the file name, account name, and date below the diagram. The export follows the **Coverage** and **Cables** toggles and includes unsaved edits.
 
 ### Plan cabling and ISP handoffs
 
