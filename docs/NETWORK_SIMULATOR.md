@@ -5,7 +5,7 @@ Network Lab brings **Packet Sim** and **Infra Sim** together on one page. Packet
 ## Access and saving
 
 - An administrator enables or disables the app in **Settings → Network Lab**. An administrator can open a private preview even while the global switch is off.
-- A teacher enables access separately for each class in **Teacher Dashboard → Packet Sim**. Assigning a lab automatically enables that class, but the administrator's global switch still controls student access.
+- A teacher enables access separately for each class in **Teacher Dashboard → Network Lab**. Assigning a Packet Sim lab automatically enables that class, but the administrator's global switch still controls student access.
 - A signed-in student may open the simulator when any joined class has access. Assigned labs appear at the top of the network library.
 - Guests may use examples, build from scratch, test, import, and export when the global switch is enabled. Guests cannot save networks or lab progress.
 - Signed-in users can save up to 40 personal networks. A topology supports up to 100 devices and 200 links.
@@ -25,6 +25,10 @@ Use **Export** to keep a portable JSON copy. Export is available to guests and s
 ## Design a Wi-Fi site
 
 Open **Network Lab → Infra Sim** and choose **New Site**, a saved site, or **Northfield Learning Center** under **Example Site**. The example includes a main network room, three IDF closets, an athletics wing, outdoor learning spaces, and 14 wired APs.
+
+Open the **Scenarios** folder for design challenges. **Port Adelaide Community Center** starts with an editable metric floor plan traced from the Lefevre Community Stadium drawing and calibrated to its 38.3 m gym wall. The briefing opens with the plan; use **Scenario** in the editor to read it again. There is no installed network in the starter. Save your own design under **Saved Sites**.
+
+Under **Teacher Dashboard → Network Lab → Infra Sim Scenarios**, select a class and choose which challenges students can start. New scenarios are shown by default to signed-in students in classes with Network Lab enabled. A student enrolled in multiple classes can start a scenario if any enabled class shows it. Hiding the starter preserves students' saved projects and briefings.
 
 1. Choose feet or meters from **Plan**. Scroll or pinch to zoom out and reveal more drawing space in every direction. Use **Pan** or hold **Space** and drag to move the view. **Fit Site** returns to the whole drawing.
 2. Use **Room** to draw a rectangle. With **Wall**, drag a single wall or click successive points for a connected run, then select **Finish Wall** or press **Escape**. **Snap** aligns to the grid or a nearby endpoint. Hold **Shift** or enable **Right angles** to constrain a wall to horizontal or vertical. Choose drywall, concrete, metal, glass, wood, or brick.

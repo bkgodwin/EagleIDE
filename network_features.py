@@ -14,6 +14,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 from network_content import ACRONYM_REFERENCE, COMMAND_REFERENCE, EXAMPLE_TOPOLOGIES, LABS, PORT_REFERENCE, example_summaries, lab_summary
 from network_store import MAX_WIFI_SITE_BYTES, WIFI_LIMITS, NetworkDataError, NetworkStore, WifiRevisionError, grade_lab, validate_topology
 from wifi_cabling import CABLING_CATALOG
+from wifi_scenarios import SCENARIOS, scenario_briefing, scenario_summary
 
 
 def register(
@@ -65,6 +66,11 @@ def register(
             return student_enabled(current)
         return True
 
+    def available_scenarios(current):
+        if current["role"] == "student":
+            return store.student_scenarios(get_user_class_ids(current.get("record")), SCENARIOS)
+        return SCENARIOS if current["role"] in ("admin", "teacher") else ()
+
     def teacher_class(class_id):
         teacher = require_teacher(request)
         if not teacher:
@@ -109,6 +115,7 @@ def register(
                         })
         saved = [] if current["role"] == "guest" else store.list_topologies(current["email"])
         saved_sites = [] if current["role"] == "guest" else store.list_wifi_sites(current["email"])
+        allowed_scenarios = available_scenarios(current)
         return jsonify(
             ok=True,
             data={
@@ -122,6 +129,8 @@ def register(
                                   for lab in LABS.values()],
                 "saved": saved,
                 "saved_sites": saved_sites,
+                "scenarios": [scenario_summary(item) for scenario_id, item in SCENARIOS.items()
+                              if scenario_id in allowed_scenarios],
                 "wifi_limits": WIFI_LIMITS,
                 "wifi_cabling": CABLING_CATALOG,
                 "command_reference": COMMAND_REFERENCE,
@@ -234,27 +243,38 @@ def register(
             return None, (jsonify(ok=False, error="Sign in to save or open Wi-Fi sites"), 401)
         if not may_open(current):
             return None, (jsonify(ok=False, error="Infra Sim is disabled"), 403)
-        return current["email"], None
+        return current, None
 
     @app.get("/api/network/wifi-sites")
     def wifi_sites_list():
-        email, error = wifi_account()
+        current, error = wifi_account()
         if error:
             return error
-        return jsonify(ok=True, data=store.list_wifi_sites(email))
+        return jsonify(ok=True, data=store.list_wifi_sites(current["email"]))
+
+    @app.get("/api/network/wifi-scenarios/<scenario_id>")
+    def network_wifi_scenario(scenario_id):
+        current = actor()
+        if not may_open(current) or scenario_id not in available_scenarios(current):
+            return jsonify(ok=False, error="This scenario is not available"), 404
+        scenario = SCENARIOS[scenario_id]
+        return jsonify(ok=True, data={"site": {**scenario["site"], "scenario_id": scenario_id},
+                                     "briefing": scenario_briefing(scenario)})
 
     @app.route("/api/network/wifi-sites/<site_id>", methods=["GET", "PUT", "DELETE"])
     def wifi_site(site_id):
-        email, error = wifi_account()
+        current, error = wifi_account()
         if error:
             return error
+        email = current["email"]
         try:
             if request.method == "PUT":
                 request.max_content_length = MAX_WIFI_SITE_BYTES
                 payload = json_object()
                 if payload is None:
                     raise NetworkDataError("A JSON object is required")
-                site = store.save_wifi_site(email, site_id, payload.get("site"), payload.get("revision"))
+                site = store.save_wifi_site(email, site_id, payload.get("site"), payload.get("revision"),
+                                            available_scenarios=available_scenarios(current))
                 return jsonify(ok=True, data=site)
             if request.method == "DELETE":
                 if store.delete_wifi_site(email, site_id):
@@ -262,6 +282,9 @@ def register(
             else:
                 site = store.get_wifi_site(email, site_id)
                 if site:
+                    scenario = SCENARIOS.get(site.get("scenario_id"))
+                    if scenario:
+                        site = {**site, "scenario_briefing": scenario_briefing(scenario)}
                     return jsonify(ok=True, data=site)
         except RequestEntityTooLarge:
             return jsonify(ok=False, error="Wi-Fi site requests must be 2 MB or smaller"), 413
@@ -351,7 +374,23 @@ def register(
                 "roster_count": len(roster),
             }
             labs.append(item)
-        return jsonify(ok=True, data={"class_id": class_id, "class_name": classroom.get("name"), "enabled": store.class_access(class_id), "labs": labs})
+        visibility = store.class_scenario_visibility(class_id, SCENARIOS)
+        scenarios = [{**scenario_summary(item), "visible": visibility[scenario_id]} for scenario_id, item in SCENARIOS.items()]
+        return jsonify(ok=True, data={"class_id": class_id, "class_name": classroom.get("name"),
+                                     "enabled": store.class_access(class_id), "labs": labs, "scenarios": scenarios})
+
+    @app.put("/api/network/teacher/classes/<class_id>/scenarios/<scenario_id>")
+    def network_teacher_scenario_visibility(class_id, scenario_id):
+        owned, error = teacher_class(class_id)
+        if error:
+            return error
+        if scenario_id not in SCENARIOS:
+            return jsonify(ok=False, error="Scenario not found"), 404
+        data = json_object()
+        if data is None or type(data.get("visible")) is not bool:
+            return jsonify(ok=False, error="Choose whether to show this scenario"), 400
+        store.set_scenario_visibility(class_id, scenario_id, data["visible"])
+        return jsonify(ok=True, data={"id": scenario_id, "visible": data["visible"]})
 
     @app.put("/api/network/teacher/classes/<class_id>/access")
     def network_teacher_class_access_put(class_id):

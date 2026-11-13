@@ -4150,8 +4150,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
                 await window.EagleFeatures?.load?.('network');
                 await window.NetworkSim?.openTeacherPanel?.();
               } catch (error) {
-                console.error('Packet Sim labs failed to load:', error);
-                alert('Packet Sim labs could not be loaded. Refresh the page and try again.');
+                console.error('Network Lab settings failed to load:', error);
+                alert('Network Lab settings could not be loaded. Refresh the page and try again.');
               }
             } else if (btn.dataset.view === 'dash-eagle-lab') {
               stopTeacherDashboardRosterPolling();
@@ -4268,8 +4268,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             await window.EagleFeatures?.load?.('network');
             window.NetworkSim?.openTeacherPanel?.();
           } catch (error) {
-            console.error('Packet Sim labs failed to load:', error);
-            alert('Packet Sim labs could not be loaded. Refresh the page and try again.');
+            console.error('Network Lab settings failed to load:', error);
+            alert('Network Lab settings could not be loaded. Refresh the page and try again.');
           }
         }
         if (targetView === 'dash-eagle-lab') {

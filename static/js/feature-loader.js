@@ -7,11 +7,11 @@
     externalToolsAdmin: ['/static/js/external-tools-admin.js?v=20261020-storage-1'],
     eagleLab: ['/static/js/lab-report-content.js?v=20261103', '/static/js/eagle-lab.js?v=20261103', '/static/js/lab-manual.js?v=20261103', '/static/js/lab-report-editor.js?v=20261103'],
     network: [
-      '/static/js/network-sim.js?v=20261113-hub',
+      '/static/js/network-sim.js?v=20261113-scenarios',
       '/static/js/network-sim-advanced.js?v=20261113-hub',
     ],
     wifiSite: [
-      '/static/css/features/wifi-site.css?v=20261113-hub',
+      '/static/css/features/wifi-site.css?v=20261113-scenarios',
       '/static/js/wifi-site-model.js?v=20261113-plan',
       '/static/js/wifi-site-view.js?v=20261112-open-canvas',
       '/static/js/wifi-site-heatmap.js?v=20261113-plan',
@@ -19,7 +19,7 @@
       '/static/js/wifi-site-cabling.js?v=20261113-hub',
       '/static/js/wifi-site-structure.js?v=20261113-plan',
       '/static/js/wifi-site-example.js?v=20261113-hub',
-      '/static/js/wifi-site.js?v=20261113-hub',
+      '/static/js/wifi-site.js?v=20261113-scenarios',
     ],
     wikiTools: [
       '/static/css/features/wiki-tools.css?v=20260921-1',
