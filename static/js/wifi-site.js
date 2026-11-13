@@ -4,6 +4,7 @@
 
   const $ = id => document.getElementById(id);
   const model = window.WifiSiteModel;
+  const cableModel = window.WifiCablingModel;
   const design = window.WifiSiteDesign;
   const view = window.WifiSiteView;
   const workspace = $('wifiWorkspace');
@@ -24,6 +25,7 @@
   const drawTools = new Set(['room', 'wall', 'measure']);
   const toolHints = {
     select: 'Select an object to edit it. Drag to move it, or drag a selected wall’s end to resize it.',
+    marquee: 'Drag a box around objects. Drag a selected object to move the group, or use Delete Selected.',
     pan: 'Drag in any direction. Use Fit Site to return to your drawing.',
     room: 'Choose two opposite corners, or drag to draw a rectangular room.',
     wall: 'Drag a single wall or click to draw connected walls. Hold Shift for right angles.',
@@ -35,7 +37,7 @@
     surface: 'Click the corners of a surface, then choose Finish Surface or click its first corner.',
     measure: 'Choose two points to measure the distance.',
     probe: 'Click or tap a spot to see the strongest access point and the walls in its path.',
-    equipment: 'Choose a device and place it on the plan. Keystone jacks and ISP demarcations snap to walls.',
+    equipment: 'Choose a device, preview its position, then click to place it. Wall-mounted devices snap to walls.',
     cable: 'Choose Ethernet or fiber, then select the source device.',
     pass: 'Click a concrete wall to add a pass-through. Each holds 10 cables and needs 20 feet of spacing.',
   };
@@ -45,6 +47,7 @@
   let session;
   let tool = 'select';
   let selected = '';
+  let selection = new Set();
   let openPanel = '';
   let panelPoint;
   let previewAp = '';
@@ -63,7 +66,7 @@
   let drawnWalls;
   let drawnWallSelection;
   let drawnAccessPoints;
-  let drawnWiredAps;
+  let drawnPoweredAps;
   let drawnLabels;
   let drawnMarkerSelection;
   let listedObjects = [];
@@ -94,8 +97,10 @@
     catalog: () => options.catalog, limits: () => options.limits, getPlan: current, selected: () => selected, apNames: model.MOUNTS,
     select: selectObject, changeTool, add: addObjects, replace: replaceObject, draw: drawObjects, frame: scheduleScene,
     hint, escape, id, fmt, display, tidy: cleanText, toMeters: value => model.metersFrom(value, current().units),
-    scale: () => camera.scale, snap: drawingPoint, line: lineSvg, dot, pointFields,
+    scale: () => camera.scale, snap: drawingPoint, line: lineSvg, dot, pointFields, marker, roundPoint,
+    clientInspector: item => clients.inspector(item),
   });
+  const clients = window.WifiSiteClients.create({ plan: current, cabling: () => wires.index(), escape, selected: () => selected });
   const structure = window.WifiSiteStructure.create({
     plan: current, project: () => session, walls: () => wires.index().walls, selected: () => selected,
     scale: () => camera.scale, id, escape, add: addObjects, replace: replaceObject, hint, line: lineSvg, dot,
@@ -145,6 +150,9 @@
   function changeTool(value) {
     if (tool === 'background-scale' && value !== 'background-scale') structure.resetCalibration();
     tool = value;
+    setSelection();
+    if (value === 'marquee') selected = previewAp = '';
+    $('wifiDeleteSelected').hidden = value !== 'marquee';
     surfaceDraft = [];
     anchor = hover = keyboardPoint = null;
     hoverJoined = false;
@@ -166,7 +174,10 @@
       if (previewAp) { previewAp = ''; refreshCoverage(); }
       showPanel('');
     }
-    if (current()) scheduleScene();
+    if (current()) {
+      if (value === 'marquee') { drawObjects(); refreshCoverage(); }
+      scheduleScene();
+    }
   }
 
   function startProject(plan, briefing) {
@@ -176,6 +187,7 @@
       sequence: 0, savedSequence: 0, undo: [], redo: [], briefing: briefing || scenario_briefing,
     };
     selected = previewAp = '';
+    clients.reset();
     wires.reset();
     structure.reset();
     panelPoint = null;
@@ -317,6 +329,8 @@
     if (session) clearTimeout(session.timer);
     workspace.hidden = true;
     session = null;
+    clients.reset();
+    setSelection();
     if (scenarioDialog.open) scenarioDialog.close();
     selected = previewAp = '';
     wires.reset();
@@ -333,7 +347,7 @@
     for (const name of ['wifiWalls', 'wifiOpenings', 'wifiMarkers', 'wifiOverlay', 'wifiWireLayer', 'wifiEquipmentLayer',
       'wifiSurfaceLayer', 'wifiSurfaceHitLayer', 'wifiDecorLayer']) $(name).replaceChildren();
     drawnDecor = drawnSurfaces = roomWalls = roomFaces = null;
-    wallSource = drawnWalls = drawnAccessPoints = drawnWiredAps = drawnLabels = null;
+    wallSource = drawnWalls = drawnAccessPoints = drawnPoweredAps = drawnLabels = null;
     indexedPlan = null;
     objectIndex.clear();
     listedObjects = [];
@@ -374,6 +388,13 @@
   }
 
   function update(next, { inspector = true } = {}) {
+    if (next.walls !== current().walls) {
+      const walls = new Map(next.walls.map(wall => [wall.id, wall]));
+      next = { ...next, access_points: next.access_points.map(ap => {
+        const wall = walls.get(ap.wall_id);
+        return wall ? { ...ap, ...roundPoint(cableModel.pointAt(wall, ap.t)) } : ap;
+      }) };
+    }
     const vertexCount = next.surfaces.reduce((sum, item) => sum + item.points.length + item.holes.reduce((n, hole) => n + hole.length, 0), 0);
     if (vertexCount > options.limits.surface_vertices) { hint('This plan has reached the limit for surface corners.'); return false; }
     const error = structure.validate(next) || wires.index(next).error;
@@ -389,6 +410,7 @@
     session.plan = plan;
     session.sequence += 1;
     if (!objectById(selected)) { selected = ''; if (openPanel === 'object') showPanel(''); }
+    if (selection.size) setSelection(new Set([...selection].filter(objectById)));
     scheduleSave();
     render({ inspector });
   }
@@ -431,13 +453,24 @@
   function removeObject() {
     const match = objectById(selected);
     if (!match) return;
-    if (['decor', 'surfaces'].includes(match.kind)) {
-      update({ ...current(), [match.kind]: current()[match.kind].filter(item => item.id !== selected) });
-      return;
-    }
-    const { next, attached } = wires.removePlan(match);
+    const { next, attached } = wires.removePlan(new Set([selected]));
     if (attached && !window.confirm(`Delete this object and ${attached} attached ${attached === 1 ? 'item' : 'items'}? You can undo this change.`)) return;
     if (update(next)) viewport.focus({ preventScroll: true });
+  }
+
+  function setSelection(ids = new Set()) {
+    selection = ids;
+    const button = $('wifiDeleteSelected');
+    button.disabled = !ids.size;
+    button.textContent = ids.size ? `Delete Selected (${ids.size})` : 'Delete Selected';
+  }
+
+  function removeSelection() {
+    if (!selection.size) return;
+    const { next, attached } = wires.removePlan(selection);
+    const details = attached ? ` and ${attached} attached ${attached === 1 ? 'item' : 'items'}` : '';
+    if (!window.confirm(`Delete ${selection.size} selected ${selection.size === 1 ? 'item' : 'items'}${details}? You can undo this change.`)) return;
+    if (update(next)) { hint(); viewport.focus({ preventScroll: true }); }
   }
 
   function render({ inspector = true } = {}) {
@@ -520,12 +553,12 @@
       const data = wires.index();
       const cable = data.occupancy.get(`${item.id}:ETH1`);
       const connection = cable ? `<div class="wifi-wire-summary"><strong>Ethernet connected</strong><span>${data.powered.has(cable) ? 'PoE available' : 'No PoE source on this path'}</span></div>`
-        : `<div class="wifi-wire-summary"><strong>Unwired</strong><span>Connect Ethernet to keep coverage on.</span></div>
+        : `<div class="wifi-wire-summary"><strong>Unwired</strong><span>Connect this AP to PoE to enable coverage.</span></div>
           <label class="wifi-estimate-toggle"><input type="checkbox" id="wifiEstimateCoverage"${previewAp === item.id ? ' checked' : ''}> Estimated coverage</label>`;
       fields = wires.deviceStatus(item.id) + connection + `<label>Access point label<input data-wifi-field="name" value="${escape(item.name)}" maxlength="60" placeholder="Optional"></label>
         <label>Mount<select data-wifi-field="mount">${choiceList(Object.entries(model.MOUNTS), item.mount)}</select></label>
         <label>Transmit power adjustment (dB)<input type="number" min="-12" max="6" step="1" data-wifi-field="power_db" value="${item.power_db}"></label>
-        ${pointFields(item)}${item.mount === 'wall' ? `<label>Direction in degrees (0° points right)<input type="number" min="0" max="360" step="1" data-wifi-field="angle" value="${item.angle}"></label>` : ''}`;
+        ${item.wall_id ? wires.wallField(item) : pointFields(item)}${item.mount === 'wall' ? `<label>Direction in degrees (0° points right)<input type="number" min="0" max="360" step="1" data-wifi-field="angle" value="${item.angle}"></label>` : ''}`;
     } else {
       fields = `<label>Note text<input data-wifi-field="text" value="${escape(item.text)}" maxlength="160"></label>${pointFields(item)}`;
     }
@@ -549,6 +582,7 @@
       return;
     }
     if (input.dataset.wifiWireField) { wires.edit(match, input); return; }
+    if (input.id === 'wifiPingTarget') { clients.setTarget(selected, input.value); return; }
     if (!input.dataset.wifiField) return;
     const { kind, item } = match;
     const field = input.dataset.wifiField;
@@ -566,6 +600,20 @@
         return;
       }
       input.value = Number(display(value).toFixed(3));
+    } else if (field === 'mount') {
+      next.mount = input.value;
+      if (next.mount === 'wall') {
+        const anchored = anchorAccessPoint(next, item);
+        if (anchored === next) {
+          input.value = item.mount;
+          hint('Move the access point near a wall before changing its mount.');
+          return;
+        }
+        Object.assign(next, anchored);
+      } else {
+        delete next.wall_id;
+        delete next.t;
+      }
     } else if (field === 'angle') {
       next.angle = Math.min(360, Math.max(0, Number(input.value))) % 360;
       input.value = next.angle;
@@ -584,6 +632,15 @@
 
   function coordinate(value) {
     return view.clamp(model.roundDistance(value), options.limits.coordinate);
+  }
+
+  function roundPoint({ x, y }) {
+    return { x: coordinate(x), y: coordinate(y) };
+  }
+
+  function anchorAccessPoint(ap, point) {
+    const anchor = cableModel.closestWall(point, current().walls, Math.min(3, 19 / camera.scale));
+    return anchor ? { ...ap, ...roundPoint(anchor.point), wall_id: anchor.wall_id, t: anchor.t } : ap;
   }
 
   function planExtents(plan, includeImage = true) {
@@ -700,12 +757,12 @@
       drawnWalls = plan.walls;
       drawnWallSelection = wallSelection;
     }
-    const wired = wires.index().wired;
-    if (drawnAccessPoints !== plan.access_points || drawnLabels !== plan.labels || drawnMarkerSelection !== markerSelection || drawnWiredAps !== wired) {
+    const powered = wires.index().poweredAps;
+    if (drawnAccessPoints !== plan.access_points || drawnLabels !== plan.labels || drawnMarkerSelection !== markerSelection || drawnPoweredAps !== powered) {
       $('wifiMarkers').innerHTML = plan.access_points.map(ap => marker(ap, 'access_points')).join('')
         + plan.labels.map(label => marker(label, 'labels')).join('');
       drawnAccessPoints = plan.access_points;
-      drawnWiredAps = wired;
+      drawnPoweredAps = powered;
       drawnLabels = plan.labels;
       drawnMarkerSelection = markerSelection;
     }
@@ -734,6 +791,29 @@
 
   function drawOverlay() {
     const parts = [];
+    if (drag?.box) {
+      const { left, top, right, bottom } = view.bounds([drag.raw, drag.box]);
+      parts.push(`<rect class="wifi-selection-box" x="${left}" y="${top}" width="${right - left}" height="${bottom - top}"/>`);
+    }
+    if (selection.size) {
+      const preview = drag?.groupPreview;
+      const plan = preview || current();
+      const data = preview ? groupGeometry(plan) : wires.index();
+      for (const kind of kinds) {
+        for (const item of plan[kind]) {
+          if (!selection.has(item.id)) continue;
+          if (preview) parts.push(groupGhost(kind, item, data));
+          if (kind === 'walls') parts.push(lineSvg(item.a, item.b, 'class="wifi-group-line"'));
+          else if (kind === 'surfaces') parts.push(`<path class="wifi-group-line" d="${design.surfacePath(item)}"/>`);
+          else if (kind === 'cables') {
+            parts.push(`<polyline class="wifi-group-line" points="${design.polygon(data.route(item))}"/>`);
+          } else {
+            const point = data.location(item);
+            if (point) parts.push(dot(point, 15, 'wifi-group-ring'));
+          }
+        }
+      }
+    }
     const ghost = drag?.preview;
     const match = objectById(selected);
     if (match?.kind === 'walls') {
@@ -753,6 +833,9 @@
       const points = [...surfaceDraft, ...((hover || keyboardPoint) ? [hover || keyboardPoint] : [])];
       parts.push(`<polyline class="wifi-preview-line" points="${design.polygon(points)}"/>`,
         ...surfaceDraft.map((point, index) => dot(point, index ? 3 : 6, 'wifi-cursor')));
+    }
+    if (tool === 'decor' && (hover || keyboardPoint)) {
+      parts.push(design.decorMarkup({ kind: $('wifiDecorType').value, ...(hover || keyboardPoint), angle: 0 }, '', 'wifi-ghost'));
     }
     parts.push(wires.overlay(ghost, drag?.match?.kind));
     parts.push(structure.calibrationMarkup());
@@ -789,7 +872,8 @@
       if (!active() || !dimensions.width || !dimensions.height) return;
       if (drag?.motion) {
         const { raw, shift } = drag.motion;
-        drag.preview = movePreview(drag, raw, shift);
+        if (drag.group) drag.groupPreview = moveGroup(drag, raw);
+        else drag.preview = movePreview(drag, raw, shift);
         drag.motion = null;
       }
       drawGrid();
@@ -806,6 +890,75 @@
     if (kind === 'decor') return design.bounds(item);
     if (kind === 'surfaces') return item.points;
     return item.a ? [item.a, item.b] : [item];
+  }
+
+  function groupGeometry(plan) {
+    const walls = new Map(plan.walls.map(wall => [wall.id, wall]));
+    const objects = new Map([...plan.equipment, ...plan.access_points, ...plan.pass_throughs].map(item => [item.id, item]));
+    const location = item => item.wall_id ? cableModel.pointAt(walls.get(item.wall_id), item.t) : item;
+    const route = cable => [location(objects.get(cable.source.device_id)),
+      ...cable.waypoints.map(bend => bend.pass_id ? location(objects.get(bend.pass_id)) : bend),
+      location(objects.get(cable.target.device_id))];
+    return { location, route, walls };
+  }
+
+  function groupGhost(kind, item, data) {
+    if (kind === 'decor') return design.decorMarkup(item, '', 'wifi-ghost');
+    if (['labels', 'access_points'].includes(kind)) {
+      return marker({ ...item, ...data.location(item) }, kind, true);
+    }
+    if (kind === 'openings') return structure.markup(item, true, data.walls.get(item.wall_id));
+    if (kind === 'equipment' || kind === 'pass_throughs') {
+      const { wall_id, ...device } = item;
+      return wires.drawEquipment(device, kind, true, data.location(item));
+    }
+    return '';
+  }
+
+  function selectWithin(a, b) {
+    const box = view.bounds([a, b]);
+    const contains = point => point.x >= box.left && point.x <= box.right && point.y >= box.top && point.y <= box.bottom;
+    const plan = current();
+    const ids = kinds.flatMap(kind => plan[kind].filter(item => {
+      if (kind === 'cables' && !$('wifiShowCables').checked) return false;
+      const points = objectPoints({ kind, item });
+      return points.length && points.every(point => point && contains(point));
+    }).map(item => item.id));
+    setSelection(new Set(ids));
+    hint(ids.length ? `${ids.length} selected. Drag a selected object to move the group.` : undefined);
+  }
+
+  function moveGroup(gesture, raw) {
+    const plan = current();
+    let dx = raw.x - gesture.raw.x, dy = raw.y - gesture.raw.y;
+    if (gesture.groupOrigin) {
+      const point = gesture.groupOrigin;
+      const snapped = drawingPoint({ x: point.x + dx, y: point.y + dy }).point;
+      dx = snapped.x - point.x;
+      dy = snapped.y - point.y;
+    }
+    const move = point => roundPoint({ x: point.x + dx, y: point.y + dy });
+    const data = wires.index();
+    const next = { ...plan };
+    for (const kind of kinds) {
+      next[kind] = plan[kind].map(item => {
+        if (!selection.has(item.id)) return item;
+        if (item.wall_id) {
+          if (selection.has(item.wall_id)) return item;
+          const aim = move(data.location(item));
+          if (kind === 'openings') return structure.slide(item, aim);
+          const adjusted = wires.pointForEdit(item, aim);
+          return kind === 'access_points' ? { ...adjusted, ...roundPoint(data.location(adjusted)) } : adjusted;
+        }
+        if (item.a) return { ...item, a: move(item.a), b: move(item.b) };
+        if (item.points) return { ...item, points: item.points.map(move), holes: item.holes.map(ring => ring.map(move)) };
+        if (item.waypoints) return { ...item, waypoints: item.waypoints.map(bend => bend.pass_id ? bend : move(bend)) };
+        if (kind === 'access_points' && item.mount === 'wall') return anchorAccessPoint(item, move(item));
+        return { ...item, ...move(item) };
+      });
+      if (next[kind].every((item, i) => item === plan[kind][i])) next[kind] = plan[kind];
+    }
+    return next;
   }
 
   function showPanel(name) {
@@ -882,15 +1035,20 @@
     const { kind, item } = match;
     const offset = gridSize || model.gridStep(current().units);
     const shift = point => ({ x: coordinate(point.x + offset), y: coordinate(point.y + offset) });
-    const copy = { ...item, id: id(kind === 'walls' ? 'wall' : kind === 'access_points' ? 'ap' : kind === 'decor' ? 'symbol' : 'label'),
+    let copy = { ...item, id: id(kind === 'walls' ? 'wall' : kind === 'access_points' ? 'ap' : kind === 'decor' ? 'symbol' : 'label'),
       ...(item.a ? { a: shift(item.a), b: shift(item.b) } : shift(item)) };
+    if (kind === 'access_points' && item.mount === 'wall') {
+      const anchored = anchorAccessPoint(copy, copy);
+      if (anchored === copy) { hint('Place the duplicate using Equipment → Wall access point.'); return; }
+      copy = anchored;
+    }
     if (!item.a || model.distance(copy.a, copy.b) >= 0.05) addObjects(kind, [copy]);
   }
 
   function transmittingAps() {
-    const wired = wires.index().wired;
+    const { wired, poweredAps } = wires.index();
     if (previewAp !== selected || wired.has(previewAp)) previewAp = '';
-    return current().access_points.filter(ap => wired.has(ap.id) || ap.id === previewAp);
+    return current().access_points.filter(ap => poweredAps.has(ap.id) || ap.id === previewAp);
   }
 
   function refreshCoverage() {
@@ -913,7 +1071,7 @@
     const estimate = model.coverageModel(plan.walls, accessPoints, plan.band, plan.openings, plan.decor);
     probe.result = estimate(probe.point, true);
     if (!probe.result) {
-      readout.textContent = 'Connect an access point or select an unwired AP and turn on Estimated coverage.';
+      readout.textContent = 'Connect an access point to PoE or select an unwired AP and turn on Estimated coverage.';
       return;
     }
     const { ap, signal, distance, walls, alternate } = probe.result;
@@ -941,7 +1099,7 @@
   }
 
   function positionFor(raw, origin, shift = false) {
-    if (['measure', 'probe', 'select', 'paint'].includes(tool)) {
+    if (['measure', 'probe', 'select', 'marquee', 'paint'].includes(tool)) {
       return { point: { x: coordinate(raw.x), y: coordinate(raw.y) }, joined: false };
     }
     return drawingPoint(raw, {
@@ -1059,22 +1217,23 @@
   }
 
   function movePreview(gesture, point, shift) {
-    const { item } = gesture.match;
+    const { item, kind } = gesture.match;
     const { end, raw: start, bend } = gesture;
     if (item.waypoints) return bend === undefined ? item : wires.moveBend(item, bend, point, shift);
     const dx = point.x - start.x, dy = point.y - start.y;
+    const aim = part => ({ x: part.x + dx, y: part.y + dy });
+    if (kind === 'access_points' && item.mount === 'wall') return anchorAccessPoint(item, aim(item));
     if (item.wall_id) {
       const location = wires.index().location(item);
       if (item.kind === 'door' || item.kind === 'window') return structure.slide(item, { x: location.x + dx, y: location.y + dy });
-      return wires.pointForEdit(item, { x: location.x + dx, y: location.y + dy });
+      return wires.pointForEdit(item, aim(location));
     }
-    const aim = part => ({ x: part.x + dx, y: part.y + dy });
     if (item.points) {
       const target = movePoint(aim(item.points[0]));
       const move = p => ({ x: coordinate(p.x + target.x - item.points[0].x), y: coordinate(p.y + target.y - item.points[0].y) });
       return { ...item, points: item.points.map(move), holes: item.holes.map(ring => ring.map(move)) };
     }
-    if (!item.a) return { ...item, ...movePoint(aim(item)) };
+    if (!item.a) return { ...item, ...drawingPoint(aim(item)).point };
     if (end) {
       const changed = { ...item, [end]: movePoint(aim(item[end]), item.id) };
       return model.distance(changed.a, changed.b) >= 0.05 ? changed : item;
@@ -1110,6 +1269,7 @@
 
   function endMove(gesture) {
     gesture?.sourceNode?.classList.remove('wifi-moving-source');
+    for (const node of gesture?.sourceNodes || []) node.classList.remove('wifi-moving-source');
     viewport.removeAttribute('data-wifi-moving');
   }
 
@@ -1148,8 +1308,14 @@
     const raw = view.screenToWorld(camera, screen);
     const pan = tool === 'pan' || spacePan || event.button === 1;
     const draw = !pan && drawTools.has(tool) && !anchor;
+    const marquee = !pan && tool === 'marquee';
+    const object = hit && objectById(hit.dataset.wifiObject);
+    const group = marquee && (hit ? selection.has(hit.dataset.wifiObject) : bundle && wires.bundleHas(Number(bundle.dataset.wifiBundle), selection));
+    const movable = match => match && !match.item.wall_id && (match.kind === 'equipment' ||
+      (match.kind === 'access_points' && match.item.mount !== 'wall') || match.kind === 'decor');
+    const groupOrigin = group && (movable(object) ? object : [...selection].map(objectById).find(movable))?.item;
     drag = {
-      id: event.pointerId, screen, camera, raw, pan, draw,
+      id: event.pointerId, screen, camera, raw, pan, draw, marquee, group, groupOrigin,
       start: draw ? positionFor(raw, null).point : null,
       match: !pan && tool === 'select' && hit ? objectById(hit.dataset.wifiObject) : null,
       hit: hit?.dataset.wifiObject,
@@ -1158,6 +1324,10 @@
       background: !pan && tool === 'background-move' ? current().background : null,
       end: hit?.dataset.wifiEnd,
     };
+    if (!pan && (tool === 'equipment' || tool === 'pass')) {
+      wires.hoverAt(raw, event.shiftKey);
+      scheduleScene();
+    }
     viewport.toggleAttribute('data-panning', pan);
   }
 
@@ -1178,7 +1348,7 @@
         wires.hoverAt(raw, event.shiftKey);
         scheduleScene();
       }
-      if (event.pointerType !== 'touch' && (anchor || tool === 'wall' || tool === 'room' || surfaceDraft.length)) {
+      if (event.pointerType !== 'touch' && (anchor || ['wall', 'room', 'decor'].includes(tool) || surfaceDraft.length)) {
         const snap = positionFor(raw, anchor, event.shiftKey);
         hover = snap.point;
         hoverJoined = snap.joined;
@@ -1190,6 +1360,12 @@
     const dx = screen.x - drag.screen.x, dy = screen.y - drag.screen.y;
     if (!drag.moved && Math.hypot(dx, dy) < 4) return;
     if (!drag.moved && drag.match) startMove(drag);
+    if (!drag.moved && drag.group) {
+      drag.sourceNodes = [...stage.querySelectorAll('[data-wifi-object]')]
+        .filter(node => selection.has(node.dataset.wifiObject));
+      for (const node of drag.sourceNodes) node.classList.add('wifi-moving-source');
+      viewport.setAttribute('data-wifi-moving', '');
+    }
     drag.moved = true;
     if (drag.pan) {
       camera = { ...drag.camera, x: drag.camera.x - dx / drag.camera.scale, y: drag.camera.y - dy / drag.camera.scale };
@@ -1198,8 +1374,10 @@
         y: coordinate(drag.background.y + raw.y - drag.raw.y) };
       $('wifiBackgroundImage').setAttribute('x', drag.image.x);
       $('wifiBackgroundImage').setAttribute('y', drag.image.y);
-    } else if (drag.match) {
+    } else if (drag.match || drag.group) {
       drag.motion = { raw, shift: event.shiftKey };
+    } else if (drag.marquee) {
+      drag.box = raw;
     } else if (drag.draw) {
       drag.point = positionFor(raw, drag.start, event.shiftKey).point;
     }
@@ -1230,7 +1408,11 @@
     }
     if (event.type === 'pointercancel' || gesture.pan) return;
     const raw = view.screenToWorld(camera, screenPoint(event));
-    if (gesture.moved && gesture.match) {
+    if (gesture.marquee) {
+      if (gesture.moved && gesture.group) update(moveGroup(gesture, raw));
+      else if (gesture.moved) selectWithin(gesture.raw, raw);
+      else if (!gesture.group) { setSelection(); hint(); }
+    } else if (gesture.moved && gesture.match) {
       const preview = movePreview(gesture, raw, event.shiftKey);
       if (JSON.stringify(preview) !== JSON.stringify(gesture.match.item)) replaceObject(gesture.match.kind, preview);
     } else if (gesture.draw && gesture.moved) {
@@ -1272,8 +1454,10 @@
       event.preventDefault();
       history(!event.shiftKey);
     } else if (event.key === 'Delete' && !typing && workspace.contains(event.target)) {
-      removeObject();
+      if (tool === 'marquee') removeSelection();
+      else removeObject();
     } else if (event.key === 'Escape') {
+      if (tool === 'marquee' && selection.size) { setSelection(); hint(); scheduleScene(); return; }
       if (surfaceDraft.length) { surfaceDraft = []; hover = null; hint(); scheduleScene(); return; }
       if (wires.cancel()) return;
       if (openPanel === 'object') { selectObject(''); return; }
@@ -1308,13 +1492,15 @@
       }
       return;
     }
-    const point = keyboardPoint || positionFor(view.screenToWorld(camera, center()), anchor).point;
+    const centerPoint = view.screenToWorld(camera, center());
+    const point = keyboardPoint || (wireTools.has(tool) ? centerPoint : positionFor(centerPoint, anchor).point);
     if (!direction) {
-      useTool(positionFor(point, anchor).point);
+      if (tool !== 'marquee') useTool(wireTools.has(tool) ? point : positionFor(point, anchor).point);
       return;
     }
     const step = view.gridSpacing(camera.scale, model.gridStep(current().units)) * (event.shiftKey ? 5 : 1);
     keyboardPoint = { x: coordinate(point.x + direction[0] * step), y: coordinate(point.y + direction[1] * step) };
+    if (tool === 'equipment' || tool === 'pass') wires.hoverAt(keyboardPoint, event.shiftKey);
     hover = null;
     const screen = view.worldToScreen(camera, keyboardPoint);
     if (screen.x < 24 || screen.y < 24 || screen.x > dimensions.width - 24 || screen.y > dimensions.height - 24) {
@@ -1328,6 +1514,8 @@
     initialized = true;
     $('wifiMaterial').innerHTML = choiceList(materialEntries(), 'drywall');
     $('wifiDecorType').innerHTML = choiceList(Object.entries(design.symbols).map(([kind, info]) => [kind, info[0]]), 'tree');
+    $('wifiDecorType').addEventListener('change', scheduleScene);
+    $('wifiSnap').addEventListener('change', scheduleScene);
     $('wifiSurfaceType').innerHTML = choiceList(Object.entries(design.surfaces).filter(([kind]) => kind !== 'floor'), 'sidewalk');
     $('wifiSurfaceType').addEventListener('change', event => { $('wifiFillColor').value = design.choices[event.target.value]; });
     $('wifiFillColor').addEventListener('input', () => $('wifiClearPaint').setAttribute('aria-pressed', 'false'));
@@ -1401,11 +1589,13 @@
       viewport.focus({ preventScroll: true });
     });
     $('wifiSelection').addEventListener('change', event => { changeTool('select'); selectObject(event.target.value); });
+    $('wifiDeleteSelected').addEventListener('click', removeSelection);
     $('wifiProperties').addEventListener('change', event => editObject(event.target));
     $('wifiProperties').addEventListener('click', event => {
       if (event.target.id === 'wifiDeleteObject') removeObject();
       if (event.target.id === 'wifiLocateObject') locateSelected();
       if (event.target.id === 'wifiDuplicateObject') duplicateSelected();
+      if (event.target.id === 'wifiPingToggle') clients.toggle(selected);
       const match = objectById(selected);
       if (match?.kind === 'cables' && event.target.id === 'wifiRerouteCable') wires.reroute(match.item);
       if (match?.kind === 'cables' && event.target.id === 'wifiRemoveCableBend' && match.item.waypoints.length) {
@@ -1434,6 +1624,7 @@
     new MutationObserver(() => {
       if (active() && !document.body.classList.contains('network-mode')) {
         if (scenarioDialog.open) scenarioDialog.close();
+        clients.suspend();
         flushSave();
       }
     }).observe(document.body, { attributeFilter: ['class'] });

@@ -16,10 +16,9 @@
     function wallPoint(raw) {
       return cable.closestWall(raw, ctx.plan().walls, Math.min(3, 18 / ctx.scale()));
     }
-    function anchors(item) {
-      const wall = ctx.walls().get(item.wall_id);
+    function anchors(item, wall = ctx.walls().get(item.wall_id)) {
       if (!wall) return [];
-      const half = item.width / (2 * wall.length);
+      const half = item.width / (2 * (wall.length || model.distance(wall.a, wall.b)));
       return [cable.pointAt(wall, item.t - half), cable.pointAt(wall, item.t + half)];
     }
     function place(kind, raw) {
@@ -50,11 +49,11 @@
       }
       return '';
     }
-    function markup(item, ghost = false) {
-      const [a, b] = anchors(item);
+    function markup(item, ghost = false, wall = ctx.walls().get(item.wall_id)) {
+      const [a, b] = anchors(item, wall);
       if (!a) return '';
       const cls = (item.kind === 'door' ? 'wifi-door' : 'wifi-window')
-        + (ctx.walls().get(item.wall_id)?.material === 'reinforced_concrete' ? ' is-reinforced' : '');
+        + (wall.material === 'reinforced_concrete' ? ' is-reinforced' : '');
       const style = ghost ? ' wifi-opening-ghost' : item.id === ctx.selected() ? ' is-selected' : '';
       const attr = ghost ? '' : `data-wifi-object="${ctx.escape(item.id)}"`;
       let geometry = '';

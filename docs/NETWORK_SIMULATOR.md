@@ -24,7 +24,7 @@ Use **Export** to keep a portable JSON copy. Export is available to guests and s
 
 ## Design a Wi-Fi site
 
-Open **Network Lab → Infra Sim** and choose **New Site**, a saved site, or **Northfield Learning Center** under **Example Site**. The example includes a main network room, three IDF closets, an athletics wing, outdoor learning spaces, and 14 wired APs.
+Open **Network Lab → Infra Sim** and choose **New Site**, a saved site, or **Northfield Learning Center** under **Example Site**. The furnished campus includes a reading garden, outdoor learning courtyard, athletics terrace, visitor parking, 14 wired APs, two desktops, and two phones.
 
 Open the **Scenarios** folder for design challenges. **Port Adelaide Community Center** starts with an editable metric floor plan traced from the Lefevre Community Stadium drawing and calibrated to its 38.3 m gym wall. The briefing opens with the plan; use **Scenario** in the editor to read it again. There is no installed network in the starter. Save your own design under **Saved Sites**.
 
@@ -35,10 +35,12 @@ Under **Teacher Dashboard → Network Lab → Infra Sim Scenarios**, select a cl
 1. Choose feet or meters from **Plan**. Scroll or pinch to zoom out and reveal more drawing space in every direction. Use **Pan** or hold **Space** and drag to move the view. **Fit Site** returns to the whole drawing.
 2. Use **Room** to draw a rectangle. With **Wall**, drag a single wall or click successive points for a connected run, then select **Finish Wall** or press **Escape**. **Snap** aligns to the grid or a nearby endpoint. Hold **Shift** or enable **Right angles** to constrain a wall to horizontal or vertical. Choose drywall, concrete, metal, glass, wood, or brick.
 3. Place **Door** or **Window** on a wall and choose its size and material in the floating inspector. Coverage uses that material wherever a signal crosses the opening. For APs, choose a ceiling or wall mount under **Equipment**. Use **Note** to label a room and **Measure** to check distances.
-4. Connect an access point by Ethernet to keep its coverage on. To test an unwired AP, select it and turn on **Estimated coverage**. This preview ends when you deselect the AP. Use **Check Signal** to compare 2.4 GHz and 5 GHz, see the strongest AP and walls crossed, and check a second AP when available. Treat these values as classroom estimates.
+4. Connect an access point to a PoE switch to enable its coverage. To test an unwired AP, select it and turn on **Estimated coverage**. This preview ends when you deselect the AP. Use **Check Signal** to compare 2.4 GHz and 5 GHz, see the strongest AP and walls crossed, and check a second AP when available. Treat these values as classroom estimates.
 5. Signed-in users can name a site and return to it from **Saved Wi-Fi sites**. Changes autosave, and **Save a Copy** creates a separate design. If another tab has saved a newer version, use **Save a Copy** to keep your local changes.
 
 Click an object to open its floating inspector. The inspector closes as soon as you drag an object. Click it again to reopen its settings. Use **Plan → Find an object** for objects elsewhere on the canvas. On the keyboard, focus the canvas, move the cursor with the arrow keys, and press Enter to use the selected tool.
+
+Use **Box Select** and drag around objects to select them. Drag a selected object to move the group, or choose **Delete Selected**. Each group move or deletion is one undoable edit. Use **Select** to open an individual object's settings.
 
 Use **Background → Add Image** to import a PNG, JPEG, or WebP floor plan. Enter its width or choose **Calibrate with Two Points** and enter the real-world distance between them. Use **Move Image** or edit its X and Y coordinates to align it. The image stays behind the drawing and saves with the site.
 
@@ -48,13 +50,20 @@ Use **Background → Add Image** to import a PNG, JPEG, or WebP floor plan. Ente
 
 ### Plan cabling and ISP handoffs
 
-- Use **Equipment** to place a router, 48-port core switch, 24-port switch, or 8-port access switch. The router, core, and 24-port switch have dedicated 10 Gb/s fiber ports. Each Ethernet port supports a single 1 Gb/s LAN connection. The core and 24-port switch supply PoE on Ethernet. The 8-port switch and router are data-only.
+- Use **Equipment** to preview a device, then click to place it. Free-standing devices snap to the grid when **Snap** is on. Wall APs, keystone jacks, and ISP demarcations attach to a wall and follow it when it moves.
+- The router, 48-port core switch, and 24-port switch have dedicated 10 Gb/s fiber ports. Each Ethernet LAN port supports a single 1 Gb/s connection. The 48-port switch supplies 500 W of PoE, the 24-port switch supplies 200 W, and each AP draws 20 W. A switch that exceeds its budget turns red and shuts down its links and connected APs. Open its inspector to see the warning and load. Removing enough AP load restores it automatically. The 8-port switch and router are data-only.
 - Place **Keystone Jack** on a wall. Use its **BACK** port for the installed run and **FRONT** for a patch cable. The jack carries PoE through when its other side reaches a source switch.
 - Place **ISP Demarcation** on a wall and choose a fictional provider. Match its fiber or Ethernet handoff to a router WAN port. The provider sets the link speed. Multiple demarcations can use separate WAN ports. CinderSky Satellite provides a 75 Mb/s Ethernet handoff for a remote site.
 - Select **Cable**, choose Ethernet or fiber, and choose a source device and port. Click the plan to add bends and a destination device to choose its port. Hold **Shift** or turn on **Right angles** for horizontal and vertical bends. Select **Connect** to save the route. Select a cable to rename, recolor, drag its bends, or reroute it. Overlapping runs show a bundle count. Click a bundle to pick an individual cable.
 - Concrete walls require a **Pass-through** at the crossing. Place it on the wall, then click it as part of the cable route. Each holds up to 10 cables, and pass-throughs on the same wall need 20 feet (6.096 m) between them. Select a pass-through to see which cables occupy its eight channels. Cables can cross other wall materials anywhere.
 
 Select a device to see its connected network speed, fastest available modeled ISP path, and power status. Switches and routers use local power, jacks and demarcations are passive, and APs show whether a PoE source reaches them.
+
+### Test clients
+
+Place a **Desktop** and connect its Ethernet port, or place a **Phone** to join the strongest powered AP in range. The client inspector shows its uplink and internet speeds. Phones also show signal in dBm and their associated AP. Moving a phone farther away or behind barriers can reduce its speed and increase packet loss.
+
+Choose a client, router, or **google.com** in the client's **Ping target** menu and select **Start Ping**. Blue envelopes carry requests and green envelopes carry replies along their simulated paths. A dropped wireless packet changes into a fading skull at the receiving end of the wireless hop. For google.com the packet leaves and returns at the router. Pings run every half second for up to one minute. Select **Stop Ping** to see delivery, loss, and modeled round-trip time. For a quick demo, ping **STEM desktop** or **google.com** from **Library phone** in the Northfield example.
 
 ## Build on desktop or iPad
 

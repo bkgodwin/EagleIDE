@@ -13,13 +13,15 @@
     keystone: '<rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M8.5 9h7v5h-2v2h-3v-2h-2zM11 6h2"/>',
     demarc: '<circle cx="12" cy="12" r="8.5"/><ellipse cx="12" cy="12" rx="3.6" ry="8.5"/><path d="M4 9h16M4 15h16"/>',
     access_point: '<circle cx="12" cy="12" r="9"/><path d="M6 11a9 9 0 0 1 12 0m-9 3a4.5 4.5 0 0 1 6 0m-3 3h.01"/>',
+    desktop: '<rect x="2.5" y="4" width="19" height="13" rx="1.5"/><path d="M12 17v4m-4 0h8"/>',
+    phone: '<rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 5h2m-2 14h2"/>',
     cable: '<path d="M5 4v4m4-4v4M4 8h6v4a3 3 0 0 1-6 0zm3 7v2a4 4 0 1 0 8 0v-3m-3 0h6v-4a3 3 0 1 0-6 0zm1-7V4m4 3V4"/>',
     pass: '<path d="M3 4h18v16H3zM3 9h5m8 0h5M3 15h5m8 0h5"/><circle cx="12" cy="12" r="3"/>',
   };
   const icon = type => `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">${ICONS[type]}</svg>`;
 
   function create(ctx) {
-    let draft, hover, routeError;
+    let draft, hover, placementPoint, routeError;
     let cached, sourceArrays, renderedIndex, renderedSelection, renderedVisibility;
     let segments = [];
     let mode = 'select';
@@ -49,33 +51,39 @@
     }
 
     function equipmentSpecs(kind) {
+      if (kind === 'phone') return 'Wi-Fi · automatically joins the strongest powered AP';
       if (kind === 'demarc') {
         const isp = catalog().isps[$('wifiEquipmentIsp').value];
         return isp ? `${model.speedName(isp.speed)} ${model.mediaName(isp.media)} to the router WAN` : '';
       }
       if (kind === 'keystone') return 'Wall mount · rear termination and front patch port';
-      return catalog().equipment[kind].groups.map(group => {
+      const { groups, poe_budget } = catalog().equipment[kind];
+      const specs = groups.map(group => {
         const role = group.wan ? ' WAN' : kind === 'router' ? ' LAN' : '';
         return `${group.count} × ${model.speedName(group.speed)} ${model.mediaName(group.media)}${role}${group.poe ? ' with PoE' : ''}`;
-      }).join(' · ');
+      });
+      if (poe_budget) specs.push(`${poe_budget} W PoE budget`);
+      return specs.join(' · ');
     }
 
     function equipmentControls() {
       const kind = $('wifiEquipmentType').value;
       $('wifiEquipmentIcon').innerHTML = icon(kind.startsWith('ap-') ? 'access_point' : kind);
       $('wifiEquipmentIspField').hidden = kind !== 'demarc';
-      $('wifiEquipmentSpecs').textContent = kind.startsWith('ap-') ? '1 Gb/s Ethernet · PoE capable' : equipmentSpecs(kind);
+      $('wifiEquipmentSpecs').textContent = kind.startsWith('ap-')
+        ? `1 Gb/s Ethernet · ${catalog().equipment.access_point.poe_draw} W PoE` : equipmentSpecs(kind);
+      ctx.frame();
     }
 
     function reset() {
-      draft = hover = routeError = null;
+      draft = hover = placementPoint = routeError = null;
       menu.hidden = true;
       sourceArrays = cached = renderedIndex = null;
       segments = [];
     }
 
     function setTool(tool) {
-      if (tool !== mode) draft = hover = routeError = null;
+      if (tool !== mode) draft = hover = placementPoint = routeError = null;
       mode = tool;
       menu.hidden = true;
       $('wifiEquipmentControls').hidden = mode !== 'equipment';
@@ -88,36 +96,38 @@
       }
     }
 
-    function place(raw) {
+    function placement(raw) {
       const kind = $('wifiEquipmentType').value;
-      if (mode === 'equipment' && kind.startsWith('ap-')) {
-        const mount = kind.slice(3);
-        if (ctx.add('access_points', [{ id: ctx.id('ap'), ...ctx.snap(raw).point, name: '', mount, angle: 0, power_db: 0 }])) {
-          ctx.hint('Access point placed. Use Cable to connect it or turn on Estimated coverage.');
-        }
-        return;
-      }
-      const data = catalog().equipment[kind];
       const penetration = mode === 'pass';
-      if (penetration || data.wall_mount) {
-        const anchor = model.closestWall(raw, plan().walls, Math.min(3, 19 / ctx.scale()), penetration);
-        if (!anchor) {
-          ctx.hint(penetration ? 'Choose a point on a concrete wall.' : 'Choose a point on a wall.');
-          return;
-        }
-        const { wall_id, t } = anchor;
-        if (penetration) {
-          if (ctx.add('pass_throughs', [{ id: ctx.id('pass'), wall_id, t }])) ctx.hint('Pass-through added · capacity 10 cables.');
-          return;
-        }
-        const item = { id: ctx.id('device'), kind, name: '', wall_id, t };
-        if (kind === 'demarc') item.isp = $('wifiEquipmentIsp').value;
-        if (ctx.add('equipment', [item])) ctx.hint(`${data.name} placed. Use Cable to connect its ports.`);
-        return;
+      const mount = !penetration && kind.startsWith('ap-') ? kind.slice(3) : '';
+      const profile = catalog().equipment[kind];
+      const wallMount = penetration || mount === 'wall' || profile?.wall_mount;
+      const anchor = wallMount && model.closestWall(raw, plan().walls, Math.min(3, 19 / ctx.scale()), penetration);
+      if (wallMount && !anchor) return null;
+      const position = anchor ? { wall_id: anchor.wall_id, t: anchor.t } : ctx.snap(raw).point;
+      if (penetration) return { group: 'pass_throughs', item: position };
+      if (mount) {
+        const point = anchor ? ctx.roundPoint(anchor.point) : position;
+        return { group: 'access_points', item: { ...position, ...point, name: '', mount, angle: 0, power_db: 0 } };
       }
       const count = plan().equipment.filter(item => item.kind === kind).length + 1;
-      if (ctx.add('equipment', [{ id: ctx.id('device'), kind, name: `${data.name} ${count}`, ...ctx.snap(raw).point }])) {
-        ctx.hint(`${data.name} placed. Use Cable to connect its ports.`);
+      const item = { ...position, kind, name: anchor ? '' : `${profile.name} ${count}` };
+      if (kind === 'demarc') item.isp = $('wifiEquipmentIsp').value;
+      return { group: 'equipment', item };
+    }
+
+    function place(raw) {
+      const preview = placement(raw);
+      if (!preview) {
+        ctx.hint(mode === 'pass' ? 'Choose a point on a concrete wall.' : 'Choose a point on a wall.');
+        return;
+      }
+      const { group, item } = preview;
+      if (ctx.add(group, [{ ...item, id: ctx.id(group === 'access_points' ? 'ap' : group === 'equipment' ? 'device' : 'pass') }])) {
+        ctx.hint(group === 'pass_throughs' ? 'Pass-through added · capacity 10 cables.'
+          : group === 'access_points' ? 'Access point placed. Connect it to PoE to enable coverage.'
+            : item.kind === 'phone' ? 'Phone placed. It joins the strongest powered access point in range.'
+              : `${catalog().equipment[item.kind].name} placed. Use Cable to connect its ports.`);
       }
     }
 
@@ -275,17 +285,17 @@
       return match.kind === 'cables' ? data.route(match.item) : [data.location(match.item)];
     }
 
-    function drawEquipment(item, kind, ghost = false) {
-      const point = index().location(item);
+    function drawEquipment(item, kind, ghost = false, point = index().location(item)) {
       if (!point) return '';
       const pass = kind === 'pass_throughs';
       const type = pass ? 'pass' : item.kind;
       const selected = item.id === ctx.selected() ? ' is-selected' : '';
+      const overloaded = index().poe.get(item.id)?.overloaded ? ' is-overloaded' : '';
       const object = ghost ? 'class="wifi-ghost"' : `data-wifi-object="${e(item.id)}"`;
       let title = pass ? `Concrete pass-through · ${index().usage.get(item.id) || 0}/10 cables` : index().name(item);
       if (item.kind === 'demarc' && item.name) title = `${item.name} · ${catalog().isps[item.isp].name}`;
       const label = title.length > 38 ? `${title.slice(0, 37)}…` : title;
-      return `<g transform="translate(${point.x} ${point.y})" ${object}><g class="wifi-marker wifi-gear wifi-gear-${type}${selected}">
+      return `<g transform="translate(${point.x} ${point.y})" ${object}><g class="wifi-marker wifi-gear wifi-gear-${type}${selected}${overloaded}">
         <title>${e(title)}</title><rect class="wifi-gear-body" x="${pass ? -9 : -14}" y="${pass ? -9 : -12}" width="${pass ? 18 : 28}" height="${pass ? 18 : 24}" rx="${pass ? 3 : 5}"/>
         <g class="wifi-gear-icon" transform="translate(${pass ? -7 : -10} ${pass ? -7 : -10}) scale(${pass ? 0.58 : 0.83})">${ICONS[type]}</g>
         ${pass ? '' : `<text class="wifi-equipment-text" x="17" y="-7">${e(label)}</text>`}
@@ -387,15 +397,17 @@
           parts.unshift(polyline(points, 'wifi-wire-draft', cable.color));
         }
       }
-      if (hover && (mode === 'pass' || mode === 'equipment')) parts.push(ctx.dot(hover, 6, 'wifi-cursor wifi-join-point'));
+      if (placementPoint && (mode === 'pass' || mode === 'equipment')) {
+        const preview = placement(placementPoint);
+        if (preview) parts.push(preview.group === 'access_points' ? ctx.marker(preview.item, preview.group, true)
+          : drawEquipment(preview.item, preview.group, true));
+      }
       return parts.join('');
     }
 
     function hoverAt(raw, shift) {
       if (mode === 'cable' && draft?.source && !draft.target) hover = index().waypoint(draftWaypoint(raw, shift));
-      else if (mode === 'pass' || (mode === 'equipment' && catalog().equipment[$('wifiEquipmentType').value]?.wall_mount)) {
-        hover = model.closestWall(raw, plan().walls, Math.min(3, 19 / ctx.scale()), mode === 'pass')?.point;
-      }
+      else if (mode === 'pass' || mode === 'equipment') placementPoint = raw;
     }
 
     function pick(segment, screen) {
@@ -441,7 +453,8 @@
       const ports = data.ports.get(item.id);
       const used = ports.filter(port => data.occupancy.has(model.portKey({ device_id: item.id, port: port.id })));
       const isp = item.kind === 'demarc' ? catalog().isps[item.isp] : null;
-      return deviceStatus(item.id) + `<div class="wifi-wire-summary"><strong>${e(catalog().equipment[item.kind].name)}</strong>
+      const client = item.kind === 'phone' || item.kind === 'desktop';
+      return (client ? ctx.clientInspector(item) : deviceStatus(item.id)) + `<div class="wifi-wire-summary"><strong>${e(catalog().equipment[item.kind].name)}</strong>
         <span>${used.length} of ${ports.length} ports in use${item.kind === 'access_switch' ? ' · data only' : ''}</span>
         ${used.length ? `<span class="wifi-ports-used">${used.map(port => e(port.id)).join(', ')}</span>` : ''}</div>
         <label>Equipment label<input data-wifi-wire-field="name" maxlength="60" value="${e(item.name)}" placeholder="Optional"></label>
@@ -455,7 +468,9 @@
       const internet = status.upstream ? `${model.speedName(status.upstream.speed)} · ${status.upstream.provider}` : 'No ISP path';
       const network = status.speed ? `${model.speedName(status.speed)} · ${status.count} ${status.count === 1 ? 'link' : 'links'}` : 'Disconnected';
       return `<dl class="wifi-device-status"><div><dt>Internet</dt><dd>${e(internet)}</dd></div>
-        <div><dt>Network</dt><dd>${e(network)}</dd></div><div><dt>Power</dt><dd>${e(status.power)}</dd></div></dl>`;
+        <div><dt>Network</dt><dd>${e(network)}</dd></div><div><dt>Power</dt><dd>${e(status.power)}</dd></div>
+        ${status.poe ? `<div><dt>PoE</dt><dd>${status.poe.watts} / ${status.poe.budget} W</dd></div>` : ''}</dl>
+        ${status.poe?.overloaded ? '<p class="wifi-poe-warning" role="alert">PoE overload. This switch and its connected APs are offline. Disconnect APs to restore power.</p>' : ''}`;
     }
 
     function wallField(item) {
@@ -472,6 +487,7 @@
         if (input.value === '') { input.value = Number(ctx.display(index().walls.get(item.wall_id).length * item.t).toFixed(4)); return; }
         const length = index().walls.get(item.wall_id).length;
         next.t = Number(Math.max(0, Math.min(1, ctx.toMeters(Number(input.value)) / length)).toFixed(10));
+        if (kind === 'access_points') Object.assign(next, ctx.roundPoint(index().location(next)));
       } else {
         next[field] = ctx.tidy(input.value);
       }
@@ -480,28 +496,24 @@
       }
     }
 
-    function removePlan(match) {
-      const { kind, item } = match;
+    function removePlan(ids) {
       const current = plan();
-      const next = { ...current, [kind]: current[kind].filter(object => object.id !== item.id) };
-      if (kind === 'labels' || kind === 'cables') return { next };
-      const devices = new Set(), passes = new Set();
-      if (kind === 'access_points' || kind === 'equipment') devices.add(item.id);
-      if (kind === 'pass_throughs') passes.add(item.id);
-      if (kind === 'walls') {
-        for (const device of current.equipment) if (device.wall_id === item.id) devices.add(device.id);
-        for (const pass of current.pass_throughs) if (pass.wall_id === item.id) passes.add(pass.id);
-        next.equipment = current.equipment.filter(device => !devices.has(device.id));
-        next.pass_throughs = current.pass_throughs.filter(pass => !passes.has(pass.id));
-        next.openings = current.openings.filter(opening => opening.wall_id !== item.id);
+      const removed = new Set(ids);
+      const groups = ['walls', 'access_points', 'openings', 'labels', 'decor', 'surfaces', ...KINDS];
+      for (const group of ['equipment', 'pass_throughs', 'openings', 'access_points']) {
+        for (const item of current[group]) if (ids.has(item.wall_id)) removed.add(item.id);
       }
       const data = index();
-      next.cables = current.cables.filter(cable =>
-        !devices.has(cable.source.device_id) && !devices.has(cable.target.device_id) &&
-        ![...data.inspections.get(cable.id).usedPasses].some(pass => passes.has(pass)));
-      const attached = current.cables.length - next.cables.length
-        + (kind === 'walls' ? devices.size + passes.size + current.openings.length - next.openings.length : 0);
-      return { next, attached };
+      for (const cable of current.cables) {
+        if (removed.has(cable.source.device_id) || removed.has(cable.target.device_id) ||
+            [...data.inspections.get(cable.id).usedPasses].some(pass => removed.has(pass))) removed.add(cable.id);
+      }
+      const next = { ...current };
+      for (const group of groups) {
+        const kept = current[group].filter(item => !removed.has(item.id));
+        if (kept.length !== current[group].length) next[group] = kept;
+      }
+      return { next, attached: removed.size - ids.size };
     }
 
     function init() {
@@ -528,7 +540,8 @@
 
     return { init, reset, index, setTool, use, cancel, draw, overlay, hoverAt, pick, name, locationPoints, deviceStatus, updateBundleBadges,
       moveBend, pointForEdit, inspector, edit, removePlan, reroute, refreshDraft,
-      hideMenu: () => { menu.hidden = true; }, clearHover: () => { hover = null; } };
+      hideMenu: () => { menu.hidden = true; }, clearHover: () => { hover = placementPoint = null; },
+      drawEquipment, wallField, bundleHas: (number, ids) => segments[number]?.cableIds.some(id => ids.has(id)) };
   }
 
   window.WifiSiteCabling = { create, kinds: KINDS };

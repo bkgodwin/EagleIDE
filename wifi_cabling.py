@@ -22,21 +22,25 @@ EQUIPMENT = {
         _group("ETH", 4), _group("SFP", 2, "fiber"), _group("WAN", 2, wan=True),
         _group("WAN-SFP", 2, "fiber", wan=True),
     ]},
-    "core_switch": {"name": "48-port Core Switch", "groups": [_group("ETH", 48, poe=True), _group("SFP", 4, "fiber")]},
-    "distribution_switch": {"name": "24-port Switch", "groups": [_group("ETH", 24, poe=True), _group("SFP", 2, "fiber")]},
+    "core_switch": {"name": "48-port Core Switch", "poe_budget": 500,
+                    "groups": [_group("ETH", 48, poe=True), _group("SFP", 4, "fiber")]},
+    "distribution_switch": {"name": "24-port Switch", "poe_budget": 200,
+                            "groups": [_group("ETH", 24, poe=True), _group("SFP", 2, "fiber")]},
     "access_switch": {"name": "8-port Access Switch", "groups": [_group("ETH", 8)]},
     "keystone": {"name": "Keystone Jack", "wall_mount": True,
                  "groups": [_group("BACK", 0), _group("FRONT", 0)]},
     "demarc": {"name": "ISP Demarcation", "wall_mount": True, "groups": []},
-    "access_point": {"name": "Access Point", "groups": [_group("ETH", 1)]},
+    "access_point": {"name": "Access Point", "poe_draw": 20, "groups": [_group("ETH", 1)]},
+    "desktop": {"name": "Desktop", "groups": [_group("ETH", 1)]},
+    "phone": {"name": "Phone", "groups": []},
 }
 
 ISPS = {
-    "alderline": {"name": "Alderline Fiber", "media": "fiber", "speed": 10000},
-    "granite": {"name": "Granite Metro Networks", "media": "fiber", "speed": 2500},
-    "meadowlink": {"name": "MeadowLink Broadband", "media": "ethernet", "speed": 1000},
-    "coppercreek": {"name": "Copper Creek Internet", "media": "ethernet", "speed": 300},
-    "cindersky": {"name": "CinderSky Satellite", "media": "ethernet", "speed": 75},
+    "alderline": {"name": "Alderline Fiber", "media": "fiber", "speed": 10000, "rtt_ms": 18},
+    "granite": {"name": "Granite Metro Networks", "media": "fiber", "speed": 2500, "rtt_ms": 24},
+    "meadowlink": {"name": "MeadowLink Broadband", "media": "ethernet", "speed": 1000, "rtt_ms": 30},
+    "coppercreek": {"name": "Copper Creek Internet", "media": "ethernet", "speed": 300, "rtt_ms": 38},
+    "cindersky": {"name": "CinderSky Satellite", "media": "ethernet", "speed": 75, "rtt_ms": 580},
 }
 
 CABLING_CATALOG = {"equipment": EQUIPMENT, "isps": ISPS, "pass_capacity": PASS_CAPACITY, "pass_channels": 8,

@@ -87,6 +87,7 @@ def validate_wifi_site(raw):
             raise NetworkDataError("Invalid scenario identifier")
         plan["scenario_id"] = _safe_id(raw["scenario_id"])
     seen = set()
+    walls = {}
     for kind in ("walls", "access_points", "labels"):
         items = raw.get(kind)
         if not isinstance(items, list) or len(items) > WIFI_LIMITS[kind]:
@@ -107,6 +108,7 @@ def validate_wifi_site(raw):
                 if (a["x"] - b["x"]) ** 2 + (a["y"] - b["y"]) ** 2 < 0.0499 ** 2:
                     raise NetworkDataError("Wall segments must be at least 5 centimeters long")
                 clean = {"a": a, "b": b, "material": material}
+                walls[item_id] = clean
             elif kind == "access_points":
                 mount = item.get("mount")
                 if mount not in ("wall", "ceiling"):
@@ -114,6 +116,15 @@ def validate_wifi_site(raw):
                 clean = {**point(item), "mount": mount, "name": label(item.get("name"), 60),
                          "angle": number(item.get("angle"), 0, 360, "access point direction") % 360,
                          "power_db": number(item.get("power_db", 0), -12, 6, "transmit power adjustment")}
+                if "wall_id" in item or "t" in item:
+                    wall_id = item.get("wall_id")
+                    wall = walls.get(wall_id) if isinstance(wall_id, str) else None
+                    if mount != "wall" or wall is None:
+                        raise NetworkDataError("Wall-mounted access points require a wall")
+                    t = number(item.get("t"), 0, 1, "wall position", precision=10)
+                    clean.update(wall_id=wall_id, t=t)
+                    for axis in ("x", "y"):
+                        clean[axis] = round(wall["a"][axis] + (wall["b"][axis] - wall["a"][axis]) * t, 4)
             else:
                 clean = {**point(item), "text": label(item.get("text"), 160, "New note")}
             plan[kind].append({"id": item_id, **clean})

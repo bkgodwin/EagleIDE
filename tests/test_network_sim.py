@@ -66,6 +66,30 @@ class NetworkStoreTests(unittest.TestCase):
         self.assertTrue(all(closet in {wall["id"] for wall in site["walls"]}
                             for closet in ("west-idf-top", "east-idf-top", "annex-idf-top")))
         self.assertTrue(any(ap["y"] < 0 for ap in site["access_points"]))
+        self.assertEqual({item["kind"] for item in site["surfaces"]}, {"floor", "sidewalk", "pavement", "landscape"})
+        self.assertTrue({"desk", "chair", "tree", "parking_bay"}.issubset(item["kind"] for item in site["decor"]))
+        self.assertTrue({"desktop", "phone"}.issubset(item["kind"] for item in site["equipment"]))
+        self.assertTrue(all(item["id"] in ethernet_ends for item in site["equipment"] if item["kind"] == "desktop"))
+        self.assertTrue(all(item["id"] not in ethernet_ends for item in site["equipment"] if item["kind"] == "phone"))
+        for ap in site["access_points"]:
+            if ap["mount"] == "wall":
+                wall = next(wall for wall in site["walls"] if wall["id"] == ap["wall_id"])
+                for axis in ("x", "y"):
+                    self.assertAlmostEqual(ap[axis], wall["a"][axis] + ap["t"] * (wall["b"][axis] - wall["a"][axis]), places=4)
+
+    def test_anchored_ap_follows_edited_wall_and_legacy_position_remains_valid(self):
+        plan = {"schema_version": 5, "title": "Anchors", "units": "m", "band": "5",
+                "walls": [{"id": "wall", "a": {"x": 2, "y": 7}, "b": {"x": 10, "y": 7}, "material": "drywall"}],
+                "access_points": [
+                    {"id": "anchored", "name": "", "mount": "wall", "x": 1, "y": 1, "angle": 0, "wall_id": "wall", "t": .5},
+                    {"id": "legacy", "name": "", "mount": "wall", "x": 3, "y": 4, "angle": 90},
+                ], "labels": []}
+        anchored, legacy = validate_wifi_site(plan)["access_points"]
+        self.assertEqual((anchored["x"], anchored["y"]), (6, 7))
+        self.assertEqual((legacy["x"], legacy["y"]), (3, 4))
+        plan["access_points"][0]["wall_id"] = "missing"
+        with self.assertRaisesRegex(NetworkDataError, "require a wall"):
+            validate_wifi_site(plan)
 
     def test_v1_migration_and_physical_media_rules(self):
         legacy = copy.deepcopy(EXAMPLE_TOPOLOGIES["simple-lan"])
