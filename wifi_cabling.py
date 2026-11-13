@@ -66,7 +66,7 @@ class _Wall:
         self.ux, self.uy = self.dx / self.length, self.dy / self.length
         self.left, self.right = sorted((self.x, wall["b"]["x"]))
         self.top, self.bottom = sorted((self.y, wall["b"]["y"]))
-        self.concrete = wall["material"] == "concrete"
+        self.concrete = wall["material"] in ("concrete", "reinforced_concrete")
 
     def point(self, t):
         return self.x + self.dx * t, self.y + self.dy * t

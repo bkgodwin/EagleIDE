@@ -4,6 +4,7 @@
 
   const $ = id => document.getElementById(id);
   const model = window.WifiSiteModel;
+  const design = window.WifiSiteDesign;
   const view = window.WifiSiteView;
   const workspace = $('wifiWorkspace');
   const library = $('networkLibrary');
@@ -17,7 +18,7 @@
   });
   const endpoint = '/api/network/wifi-sites';
   const wireKinds = window.WifiSiteCabling.kinds;
-  const kinds = ['walls', 'openings', 'access_points', 'labels', ...wireKinds];
+  const kinds = ['walls', 'openings', 'access_points', 'labels', 'decor', 'surfaces', ...wireKinds];
   const panels = { plan: $('wifiPlanPanel'), background: $('wifiBackgroundPanel'), signal: $('wifiSignalPanel'), object: $('wifiObjectPanel') };
   const wireTools = new Set(['equipment', 'cable', 'pass']);
   const drawTools = new Set(['room', 'wall', 'measure']);
@@ -29,6 +30,9 @@
     door: 'Click a wall to place a door. Choose its size and material in the floating inspector.',
     window: 'Click a wall to place a window. Choose its size and glass in the floating inspector.',
     label: 'Click or tap to place a note, then edit its text in Objects.',
+    decor: 'Choose a symbol, then click or tap to place it. Select a placed symbol to rotate or move it.',
+    paint: 'Choose a color, then click an enclosed room or the open background. Clear Fill removes the color.',
+    surface: 'Click the corners of a surface, then choose Finish Surface or click its first corner.',
     measure: 'Choose two points to measure the distance.',
     probe: 'Click or tap a spot to see the strongest access point and the walls in its path.',
     equipment: 'Choose a device and place it on the plan. Keystone jacks and ISP demarcations snap to walls.',
@@ -73,6 +77,8 @@
   let spacePan = false;
   const touches = new Map();
   let initialized = false;
+  let surfaceDraft = [];
+  let roomWalls, roomFaces, drawnDecor, drawnSurfaces, drawnDesignSelection;
 
   const current = () => session?.plan;
   const active = () => !workspace.hidden && !!session;
@@ -105,8 +111,9 @@
 
   function blankPlan() {
     return {
-      schema_version: 4, title: 'Untitled Wi-Fi Site',
+      schema_version: 5, title: 'Untitled Wi-Fi Site',
       units: 'm', band: '5', walls: [], openings: [], background: null, access_points: [], labels: [], equipment: [], pass_throughs: [], cables: [],
+      decor: [], surfaces: [], background_color: null,
     };
   }
 
@@ -131,11 +138,14 @@
   function hint(message) {
     $('wifiToolHint').textContent = message || toolHints[tool];
     $('wifiFinishWall').hidden = tool !== 'wall' || !anchor;
+    $('wifiFinishSurface').disabled = surfaceDraft.length < 3;
+    $('wifiCancelSurface').disabled = !surfaceDraft.length;
   }
 
   function changeTool(value) {
     if (tool === 'background-scale' && value !== 'background-scale') structure.resetCalibration();
     tool = value;
+    surfaceDraft = [];
     anchor = hover = keyboardPoint = null;
     hoverJoined = false;
     viewport.dataset.tool = value;
@@ -144,6 +154,12 @@
     });
     $('wifiMaterialField').hidden = !['wall', 'room'].includes(value);
     $('wifiOrthogonalField').hidden = value !== 'wall' && value !== 'cable';
+    $('wifiDesignControls').hidden = !['decor', 'paint', 'surface'].includes(value);
+    $('wifiDecorField').hidden = value !== 'decor';
+    $('wifiSurfaceField').hidden = $('wifiFinishSurface').hidden = $('wifiCancelSurface').hidden = value !== 'surface';
+    $('wifiFillField').hidden = value === 'decor';
+    $('wifiClearPaint').hidden = value !== 'paint';
+    if (value === 'surface') $('wifiFillColor').value = design.choices[$('wifiSurfaceType').value];
     hint();
     wires.setTool(value);
     if (value !== 'select') {
@@ -156,7 +172,7 @@
   function startProject(plan, briefing) {
     const { id: siteId, revision, updated_at, scenario_briefing, ...layout } = plan;
     session = {
-      id: siteId || id('site'), revision: revision || 0, plan: { ...blankPlan(), ...layout, schema_version: 4 }, account,
+      id: siteId || id('site'), revision: revision || 0, plan: { ...blankPlan(), ...layout, schema_version: 5 }, account,
       sequence: 0, savedSequence: 0, undo: [], redo: [], briefing: briefing || scenario_briefing,
     };
     selected = previewAp = '';
@@ -170,6 +186,7 @@
     $('wifiScenarioButton').hidden = !session.briefing;
     $('wifiSaveSite').hidden = $('wifiCopySite').hidden = !options.canSave;
     $('wifiCoverage').checked = $('wifiSnap').checked = $('wifiShowCables').checked = true;
+    $('wifiClearPaint').setAttribute('aria-pressed', 'false');
     $('wifiOrthogonal').checked = false;
     status(options.canSave ? (revision ? 'Saved' : 'New project') : 'Guest preview');
     changeTool('select');
@@ -237,6 +254,42 @@
     return flushSave();
   }
 
+  async function exportPdf() {
+    const button = $('wifiExportPdf');
+    const plan = current();
+    const project = session;
+    if (!plan || button.disabled) return;
+    button.disabled = true;
+    button.textContent = 'Exporting…';
+    try {
+      if (document.fonts?.status === 'loading') await document.fonts.ready;
+      if (session !== project || current() !== plan || !sameAccount()) return;
+      const layers = ['wifiDecorLayer', 'wifiWalls', 'wifiOpenings', 'wifiMarkers', 'wifiEquipmentLayer'];
+      if ($('wifiShowCables').checked) layers.splice(3, 0, 'wifiWireLayer');
+      const image = await window.WifiSiteExport.render({ bounds: planExtents(plan), plan,
+        background: $('wifiBackgroundImage'), surfaces: $('wifiSurfaceLayer'), groups: layers.map($),
+        coverage: $('wifiCoverage').checked ? { walls: plan.walls, openings: plan.openings, band: plan.band,
+          access_points: transmittingAps(), decor: plan.decor } : null });
+      if (!sameAccount() || session !== project) return;
+      const today = new Date();
+      const date = [today.getFullYear(), today.getMonth() + 1, today.getDate()].map(value => String(value).padStart(2, '0')).join('-');
+      const pdf = await options.api('/api/network/wifi-export.pdf', { method: 'POST', body: JSON.stringify({ image, title: plan.title, date }) }, { download: true });
+      if (session !== project || !sameAccount()) return;
+      const url = URL.createObjectURL(pdf);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = (plan.title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').replace(/^[ .]+|[ .]+$/g, '') || 'Infra Sim plan') + '.pdf';
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      hint('PDF downloaded.');
+    } catch (error) {
+      if (session === project) hint(error.message || 'Could not export the floor plan.');
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Export PDF';
+    }
+  }
+
   async function saveCopy() {
     const project = session;
     clearTimeout(project.timer);
@@ -277,7 +330,9 @@
     sceneFrame = 0;
     coverage.clear();
     $('wifiProperties').replaceChildren();
-    for (const name of ['wifiWalls', 'wifiOpenings', 'wifiMarkers', 'wifiOverlay', 'wifiWireLayer', 'wifiEquipmentLayer']) $(name).replaceChildren();
+    for (const name of ['wifiWalls', 'wifiOpenings', 'wifiMarkers', 'wifiOverlay', 'wifiWireLayer', 'wifiEquipmentLayer',
+      'wifiSurfaceLayer', 'wifiSurfaceHitLayer', 'wifiDecorLayer']) $(name).replaceChildren();
+    drawnDecor = drawnSurfaces = roomWalls = roomFaces = null;
     wallSource = drawnWalls = drawnAccessPoints = drawnWiredAps = drawnLabels = null;
     indexedPlan = null;
     objectIndex.clear();
@@ -303,6 +358,8 @@
     if (kind === 'openings') return `${item.kind === 'door' ? 'Door' : 'Window'} ${index + 1} · ${model.OPENINGS[item.kind][item.material].name}`;
     if (kind === 'walls') return `${model.MATERIALS[item.material].name} wall ${index + 1}`;
     if (kind === 'labels') return item.text;
+    if (kind === 'decor') return design.symbols[item.kind][0];
+    if (kind === 'surfaces') return design.surfaces[item.kind];
     return item.name || model.MOUNTS[item.mount];
   }
 
@@ -317,6 +374,8 @@
   }
 
   function update(next, { inspector = true } = {}) {
+    const vertexCount = next.surfaces.reduce((sum, item) => sum + item.points.length + item.holes.reduce((n, hole) => n + hole.length, 0), 0);
+    if (vertexCount > options.limits.surface_vertices) { hint('This plan has reached the limit for surface corners.'); return false; }
     const error = structure.validate(next) || wires.index(next).error;
     if (error) { hint(error); return false; }
     session.undo.push(session.plan);
@@ -339,6 +398,7 @@
     const to = backward ? session.redo : session.undo;
     if (!from.length) return;
     wires.cancel();
+    surfaceDraft = [];
     to.push(session.plan);
     finishWall();
     setPlan(from.pop());
@@ -371,6 +431,10 @@
   function removeObject() {
     const match = objectById(selected);
     if (!match) return;
+    if (['decor', 'surfaces'].includes(match.kind)) {
+      update({ ...current(), [match.kind]: current()[match.kind].filter(item => item.id !== selected) });
+      return;
+    }
     const { next, attached } = wires.removePlan(match);
     if (attached && !window.confirm(`Delete this object and ${attached} attached ${attached === 1 ? 'item' : 'items'}? You can undo this change.`)) return;
     if (update(next)) viewport.focus({ preventScroll: true });
@@ -408,7 +472,7 @@
     if (kinds.some((kind, index) => listedObjects[index] !== plan[kind])) {
       listedObjects = kinds.map(kind => plan[kind]);
       const groups = { walls: 'Walls', openings: 'Doors and windows', access_points: 'Access points', labels: 'Notes', equipment: 'Equipment',
-        pass_throughs: 'Pass-throughs', cables: 'Cables' };
+        pass_throughs: 'Pass-throughs', cables: 'Cables', decor: 'Plan symbols', surfaces: 'Surfaces' };
       input.innerHTML = '<option value="">None selected</option>' + kinds.filter(kind => plan[kind].length).map(kind =>
         `<optgroup label="${groups[kind]}">${plan[kind].map((item, index) =>
           `<option value="${escape(item.id)}">${escape(objectName(kind, item, index))}</option>`).join('')}</optgroup>`
@@ -445,6 +509,10 @@
       fields = wires.inspector(kind, item);
     } else if (kind === 'openings') {
       fields = structure.inspector(item);
+    } else if (kind === 'decor') {
+      fields = `${pointFields(item)}<label>Rotation (degrees)<input type="number" min="0" max="360" step="1" data-wifi-field="angle" value="${item.angle}"></label>`;
+    } else if (kind === 'surfaces') {
+      fields = `<label>Color<input type="color" data-wifi-field="color" value="${item.color}"></label>`;
     } else if (kind === 'walls') {
       fields = `<label>Wall material<select data-wifi-field="material">${choiceList(materialEntries(), item.material)}</select></label>
         ${pointFields(item.a, 'a', 'Start ')}${pointFields(item.b, 'b', 'End ')}`;
@@ -463,7 +531,7 @@
     }
     panel.innerHTML = fields + `<div class="wifi-object-actions">
       <button class="wifi-control" id="wifiLocateObject" type="button">Locate</button>
-      ${kind === 'cables' || kind === 'pass_throughs' || item.wall_id ? '' : '<button class="wifi-control" id="wifiDuplicateObject" type="button">Duplicate</button>'}
+      ${kind === 'cables' || kind === 'pass_throughs' || kind === 'surfaces' || item.wall_id ? '' : '<button class="wifi-control" id="wifiDuplicateObject" type="button">Duplicate</button>'}
       <button class="wifi-control" id="wifiDeleteObject" type="button">Delete</button></div>`;
   }
 
@@ -522,6 +590,20 @@
     const data = wires.index(plan);
     const image = plan.background;
     return view.bounds([...plan.walls.flatMap(wall => [wall.a, wall.b]), ...plan.access_points, ...plan.labels,
+      ...plan.decor.flatMap(design.bounds), ...plan.surfaces.flatMap(item => item.points),
+      ...plan.openings.filter(item => item.kind === 'door').flatMap(item => {
+        const [a, b] = structure.anchors(item);
+        if (!a) return [];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        // The door leaf swings from b toward the perpendicular at a.
+        const tips = [b, { x: a.x - dy, y: a.y + dx }];
+        for (const unit of [{ x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }, { x: 0, y: -1 }]) {
+          if (unit.x * dx + unit.y * dy >= 0 && unit.y * dx - unit.x * dy >= 0) {
+            tips.push({ x: a.x + item.width * unit.x, y: a.y + item.width * unit.y });
+          }
+        }
+        return tips;
+      }),
       ...plan.equipment.map(data.location), ...plan.pass_throughs.map(data.location),
       ...(includeImage && image ? [image, { x: image.x + image.width, y: image.y + structure.height(image) }] : []),
       ...[...data.inspections.values()].flatMap(result => result.points)].filter(Boolean));
@@ -541,6 +623,7 @@
     grid.setAttribute('viewBox', box);
     objects.setAttribute('viewBox', box);
     $('wifiBackgroundLayer').setAttribute('viewBox', box);
+    $('wifiSurfaceLayer').setAttribute('viewBox', box);
     objects.style.setProperty('--wifi-marker-scale', String(1 / camera.scale));
     wires.updateBundleBadges(camera.scale);
     viewport.toggleAttribute('data-wifi-overview', camera.scale < 0.8);
@@ -609,8 +692,9 @@
     if (drawnWalls !== plan.walls || drawnWallSelection !== wallSelection) {
       $('wifiWalls').innerHTML = plan.walls.map(wall => {
         const object = `data-wifi-object="${escape(wall.id)}"`;
-        const highlight = wallSelection === wall.id ? lineSvg(wall.a, wall.b, 'class="wifi-selected-wall"') : '';
-        return `<g ${object}>${highlight}${lineSvg(wall.a, wall.b, `class="wifi-wall" stroke="${model.MATERIALS[wall.material].color}"`)}
+        const style = `wifi-wall-${wall.material}`;
+        const highlight = wallSelection === wall.id ? lineSvg(wall.a, wall.b, `class="wifi-selected-wall ${style}"`) : '';
+        return `<g ${object}>${highlight}${lineSvg(wall.a, wall.b, `class="wifi-wall ${style}" stroke="${model.MATERIALS[wall.material].color}"`)}
           ${lineSvg(wall.a, wall.b, 'class="wifi-wall-hit"')}</g>`;
       }).join('');
       drawnWalls = plan.walls;
@@ -625,6 +709,23 @@
       drawnLabels = plan.labels;
       drawnMarkerSelection = markerSelection;
     }
+    stage.style.backgroundColor = plan.background_color || '';
+    if (drawnSurfaces !== plan.surfaces) {
+      const surfaces = [...plan.surfaces.filter(item => item.kind !== 'floor'), ...plan.surfaces.filter(item => item.kind === 'floor')];
+      $('wifiSurfaceLayer').innerHTML = surfaces.map(item => design.surfaceMarkup(item)).join('');
+    }
+    const designSelection = ['decor', 'surfaces'].includes(selectionKind) ? selected : '';
+    if (drawnSurfaces !== plan.surfaces || drawnDesignSelection !== designSelection) {
+      $('wifiSurfaceHitLayer').innerHTML = [...plan.surfaces.filter(item => item.kind !== 'floor'), ...plan.surfaces.filter(item => item.kind === 'floor')]
+        .map(item => `<path class="wifi-surface-hit${item.id === selected ? ' is-selected' : ''}" d="${design.surfacePath(item)}" fill-rule="evenodd" data-wifi-object="${escape(item.id)}"/>`).join('');
+    }
+    if (drawnDecor !== plan.decor || drawnDesignSelection !== designSelection) {
+      $('wifiDecorLayer').innerHTML = plan.decor.map(item => design.decorMarkup(item, `data-wifi-object="${escape(item.id)}"`,
+        item.id === selected ? 'is-selected' : '')).join('');
+    }
+    drawnSurfaces = plan.surfaces;
+    drawnDecor = plan.decor;
+    drawnDesignSelection = designSelection;
     wires.draw();
     wires.updateBundleBadges(camera.scale);
     structure.draw();
@@ -641,10 +742,17 @@
       parts.push(dot(wall.a, 6, 'wifi-handle', `${attr} data-wifi-end="a"`),
         dot(wall.b, 6, 'wifi-handle', `${attr} data-wifi-end="b"`));
     }
-    if (ghost && drag.match.kind === 'openings') parts.push(structure.markup(ghost, true));
+    if (ghost && drag.match.kind === 'decor') parts.push(design.decorMarkup(ghost, '', 'wifi-ghost'));
+    else if (ghost && drag.match.kind === 'surfaces') parts.push(design.surfaceMarkup(ghost, 'opacity=".65"'));
+    else if (ghost && drag.match.kind === 'openings') parts.push(structure.markup(ghost, true));
     else if (ghost && !wireKinds.includes(drag.match.kind)) {
-      parts.push(ghost.a ? lineSvg(ghost.a, ghost.b, `class="wifi-wall wifi-ghost" stroke="${model.MATERIALS[ghost.material].color}"`)
+      parts.push(ghost.a ? lineSvg(ghost.a, ghost.b, `class="wifi-wall wifi-wall-${ghost.material} wifi-ghost" stroke="${model.MATERIALS[ghost.material].color}"`)
         : marker(ghost, drag.match.kind, true));
+    }
+    if (surfaceDraft.length) {
+      const points = [...surfaceDraft, ...((hover || keyboardPoint) ? [hover || keyboardPoint] : [])];
+      parts.push(`<polyline class="wifi-preview-line" points="${design.polygon(points)}"/>`,
+        ...surfaceDraft.map((point, index) => dot(point, index ? 3 : 6, 'wifi-cursor')));
     }
     parts.push(wires.overlay(ghost, drag?.match?.kind));
     parts.push(structure.calibrationMarkup());
@@ -695,6 +803,8 @@
     const { item, kind } = match;
     if (wireKinds.includes(kind)) return wires.locationPoints(match);
     if (kind === 'openings') return structure.anchors(item);
+    if (kind === 'decor') return design.bounds(item);
+    if (kind === 'surfaces') return item.points;
     return item.a ? [item.a, item.b] : [item];
   }
 
@@ -768,11 +878,11 @@
 
   function duplicateSelected() {
     const match = objectById(selected);
-    if (!match || match.kind === 'cables' || match.kind === 'pass_throughs' || match.item.wall_id) return;
+    if (!match || ['cables', 'pass_throughs', 'surfaces'].includes(match.kind) || match.item.wall_id) return;
     const { kind, item } = match;
     const offset = gridSize || model.gridStep(current().units);
     const shift = point => ({ x: coordinate(point.x + offset), y: coordinate(point.y + offset) });
-    const copy = { ...item, id: id(kind === 'walls' ? 'wall' : kind === 'access_points' ? 'ap' : 'label'),
+    const copy = { ...item, id: id(kind === 'walls' ? 'wall' : kind === 'access_points' ? 'ap' : kind === 'decor' ? 'symbol' : 'label'),
       ...(item.a ? { a: shift(item.a), b: shift(item.b) } : shift(item)) };
     if (!item.a || model.distance(copy.a, copy.b) >= 0.05) addObjects(kind, [copy]);
   }
@@ -800,7 +910,7 @@
       return;
     }
     const plan = current();
-    const estimate = model.coverageModel(plan.walls, accessPoints, plan.band, plan.openings);
+    const estimate = model.coverageModel(plan.walls, accessPoints, plan.band, plan.openings, plan.decor);
     probe.result = estimate(probe.point, true);
     if (!probe.result) {
       readout.textContent = 'Connect an access point or select an unwired AP and turn on Estimated coverage.';
@@ -831,7 +941,7 @@
   }
 
   function positionFor(raw, origin, shift = false) {
-    if (['measure', 'probe', 'select'].includes(tool)) {
+    if (['measure', 'probe', 'select', 'paint'].includes(tool)) {
       return { point: { x: coordinate(raw.x), y: coordinate(raw.y) }, joined: false };
     }
     return drawingPoint(raw, {
@@ -861,10 +971,64 @@
     scheduleScene();
   }
 
+  function paint(point, hit) {
+    const plan = current();
+    const color = $('wifiClearPaint').getAttribute('aria-pressed') === 'true' ? null : $('wifiFillColor').value;
+    if (roomWalls !== plan.walls) {
+      roomWalls = plan.walls;
+      roomFaces = design.rooms(plan.walls);
+    }
+    if (!roomFaces) { hint('Too many crossing walls to identify rooms. Draw a surface instead.'); return; }
+    const room = roomFaces.find(face => design.contains(face.points, point) && !face.holes.some(hole => design.contains(hole, point)));
+    const match = objectById(hit);
+    const key = room && design.surfaceKey(room);
+    const filled = room && plan.surfaces.find(item => item.kind === 'floor' && design.surfaceKey(item) === key);
+    const old = filled || (match?.kind === 'surfaces' && (!room || match.item.kind === 'floor') ? match.item : null);
+    if (old) {
+      if (color === null) update({ ...plan, surfaces: plan.surfaces.filter(item => item.id !== old.id) });
+      else if (room && old.kind === 'floor') replaceObject('surfaces', { ...old, points: room.points, holes: room.holes, color });
+      else replaceObject('surfaces', { ...old, color });
+    } else if (!room) {
+      if (plan.background_color !== color) update({ ...plan, background_color: color });
+    } else if (color !== null) {
+      if (room.points.length > 320 || room.holes.length > 40 || room.holes.some(hole => hole.length > 320)) {
+        hint('This room boundary is too complex. Draw a surface instead.'); return;
+      }
+      addObjects('surfaces', [{ id: id('floor'), kind: 'floor', points: room.points, holes: room.holes, color }]);
+    }
+  }
+
+  function finishSurface() {
+    if (!design.simple(surfaceDraft)) { hint('Use at least three distinct corners and avoid crossing edges.'); return; }
+    const kind = $('wifiSurfaceType').value;
+    if (addObjects('surfaces', [{ id: id(kind), kind, points: surfaceDraft, holes: [], color: $('wifiFillColor').value }])) {
+      surfaceDraft = [];
+      hover = null;
+      hint();
+      scheduleScene();
+    }
+  }
+
   function useTool(point, hit, shift) {
     if (tool === 'door' || tool === 'window') { structure.place(tool, point); return; }
     if (tool === 'background-scale') { structure.calibrationPoint(point); return; }
     if (wireTools.has(tool)) { wires.use(point, hit, shift); return; }
+    if (tool === 'paint') { paint(point, hit); return; }
+    if (tool === 'decor') {
+      addObjects('decor', [{ id: id('symbol'), kind: $('wifiDecorType').value, ...point, angle: 0 }]);
+      return;
+    }
+    if (tool === 'surface') {
+      if (surfaceDraft.length >= 3 && model.distance(point, surfaceDraft[0]) * camera.scale <= 11) finishSurface();
+      else if (surfaceDraft.length >= 320) hint('Finish the surface before adding more corners.');
+      else if (!surfaceDraft.length || model.distance(surfaceDraft.at(-1), point) >= .01) {
+        surfaceDraft.push(point);
+        hover = null;
+        hint();
+      }
+      scheduleScene();
+      return;
+    }
     if (drawTools.has(tool)) {
       if (!anchor) {
         anchor = point;
@@ -905,6 +1069,11 @@
       return wires.pointForEdit(item, { x: location.x + dx, y: location.y + dy });
     }
     const aim = part => ({ x: part.x + dx, y: part.y + dy });
+    if (item.points) {
+      const target = movePoint(aim(item.points[0]));
+      const move = p => ({ x: coordinate(p.x + target.x - item.points[0].x), y: coordinate(p.y + target.y - item.points[0].y) });
+      return { ...item, points: item.points.map(move), holes: item.holes.map(ring => ring.map(move)) };
+    }
     if (!item.a) return { ...item, ...movePoint(aim(item)) };
     if (end) {
       const changed = { ...item, [end]: movePoint(aim(item[end]), item.id) };
@@ -1009,7 +1178,7 @@
         wires.hoverAt(raw, event.shiftKey);
         scheduleScene();
       }
-      if (event.pointerType !== 'touch' && (anchor || tool === 'wall' || tool === 'room')) {
+      if (event.pointerType !== 'touch' && (anchor || tool === 'wall' || tool === 'room' || surfaceDraft.length)) {
         const snap = positionFor(raw, anchor, event.shiftKey);
         hover = snap.point;
         hoverJoined = snap.joined;
@@ -1105,6 +1274,7 @@
     } else if (event.key === 'Delete' && !typing && workspace.contains(event.target)) {
       removeObject();
     } else if (event.key === 'Escape') {
+      if (surfaceDraft.length) { surfaceDraft = []; hover = null; hint(); scheduleScene(); return; }
       if (wires.cancel()) return;
       if (openPanel === 'object') { selectObject(''); return; }
       if (openPanel) { showPanel(''); return; }
@@ -1157,6 +1327,17 @@
     if (initialized) return;
     initialized = true;
     $('wifiMaterial').innerHTML = choiceList(materialEntries(), 'drywall');
+    $('wifiDecorType').innerHTML = choiceList(Object.entries(design.symbols).map(([kind, info]) => [kind, info[0]]), 'tree');
+    $('wifiSurfaceType').innerHTML = choiceList(Object.entries(design.surfaces).filter(([kind]) => kind !== 'floor'), 'sidewalk');
+    $('wifiSurfaceType').addEventListener('change', event => { $('wifiFillColor').value = design.choices[event.target.value]; });
+    $('wifiFillColor').addEventListener('input', () => $('wifiClearPaint').setAttribute('aria-pressed', 'false'));
+    $('wifiClearPaint').addEventListener('click', event => {
+      const clear = event.currentTarget.getAttribute('aria-pressed') !== 'true';
+      event.currentTarget.setAttribute('aria-pressed', String(clear));
+      hint(clear ? 'Click a colored room, surface, or open background to clear its fill.' : undefined);
+    });
+    $('wifiFinishSurface').addEventListener('click', () => { finishSurface(); viewport.focus({ preventScroll: true }); });
+    $('wifiCancelSurface').addEventListener('click', () => { surfaceDraft = []; hover = null; hint(); scheduleScene(); });
     const levels = [...model.LEVELS].reverse();
     const colors = levels.map(level => `rgb(${level.color.slice(0, 3).join(',')})`).join(',');
     $('wifiLegend').innerHTML = `<div class="wifi-legend-scale" style="background:linear-gradient(90deg,${colors})"></div>
@@ -1181,6 +1362,7 @@
     });
     $('wifiSiteBack').addEventListener('click', async () => { if (await leave()) options.onBack(); });
     $('wifiScenarioButton').addEventListener('click', () => showBriefing());
+    $('wifiExportPdf').addEventListener('click', exportPdf);
     $('wifiSiteTitle').addEventListener('input', event => {
       const title = cleanText(event.target.value, 'Untitled Wi-Fi Site');
       if (title === current().title) return;

@@ -5,6 +5,7 @@
   const COLORS = { ethernet: '#0879b3', fiber: '#982fba' };
   const TYPES = ['router', 'core_switch', 'distribution_switch', 'access_switch', 'keystone', 'demarc'];
   const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const isConcrete = wall => ['concrete', 'reinforced_concrete'].includes(wall?.material);
   const portKey = ({ device_id, port }) => `${device_id}:${port}`;
   const mediaName = media => media === 'fiber' ? 'Fiber' : 'Ethernet';
   const speedName = mbps => mbps >= 1000 ? `${mbps / 1000} Gb/s` : `${mbps} Mb/s`;
@@ -26,7 +27,7 @@
     let best = null;
     let gap = tolerance;
     for (const wall of walls) {
-      if (concrete && wall.material !== 'concrete') continue;
+      if (concrete && !isConcrete(wall)) continue;
       const dx = wall.b.x - wall.a.x, dy = wall.b.y - wall.a.y;
       const t = Math.max(0, Math.min(1, ((point.x - wall.a.x) * dx + (point.y - wall.a.y) * dy) / (dx * dx + dy * dy)));
       const nearest = pointAt(wall, t);
@@ -73,7 +74,7 @@
 
   function build(plan, catalog, limits, apNames = {}) {
     const walls = new Map(plan.walls.map(wall => [wall.id, wallGeometry(wall)]));
-    const concrete = [...walls.values()].filter(wall => wall.material === 'concrete');
+    const concrete = [...walls.values()].filter(isConcrete);
     const devices = new Map(plan.equipment.map(device => [device.id, device]));
     for (const ap of plan.access_points) devices.set(ap.id, { ...ap, kind: 'access_point' });
     const passages = new Map(plan.pass_throughs.map(pass => [pass.id, pass]));
@@ -163,7 +164,7 @@
     function validate() {
       for (const device of devices.values()) if (!location(device)) return 'Wall-mounted equipment requires a wall.';
       for (const pass of passages.values()) {
-        if (walls.get(pass.wall_id)?.material !== 'concrete') return 'Pass-throughs require a concrete wall.';
+        if (!isConcrete(walls.get(pass.wall_id))) return 'Pass-throughs require a concrete wall.';
         if (!passesByWall.has(pass.wall_id)) passesByWall.set(pass.wall_id, []);
         passesByWall.get(pass.wall_id).push(pass);
       }

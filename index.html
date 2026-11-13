@@ -534,6 +534,7 @@
         <div class="network-toolbar-group network-toolbar-end">
           <span class="network-save-state" id="wifiSaveStatus" role="status"></span>
           <button class="btn secondary wifi-scenario-button" id="wifiScenarioButton" type="button" aria-haspopup="dialog" aria-controls="wifiScenarioDialog" hidden>Scenario</button>
+          <button class="btn secondary" id="wifiExportPdf" type="button">Export PDF</button>
           <button class="btn secondary" id="wifiDiscardSite" type="button" hidden>Discard Unsaved Edits</button>
           <button class="btn secondary" id="wifiCopySite" type="button">Save a Copy</button>
           <button class="btn run" id="wifiSaveSite" type="button">Save</button>
@@ -550,6 +551,11 @@
           <button class="wifi-control" type="button" data-wifi-tool="label">Note</button>
           <button class="wifi-control" type="button" data-wifi-tool="measure">Measure</button>
           <button class="wifi-control" type="button" data-wifi-tool="probe">Check Signal</button>
+        </div>
+        <div class="wifi-tool-group wifi-design-tools" role="group" aria-label="Design tools">
+          <button class="wifi-control" type="button" data-wifi-tool="decor">Symbols</button>
+          <button class="wifi-control" type="button" data-wifi-tool="paint">Paint Bucket</button>
+          <button class="wifi-control" type="button" data-wifi-tool="surface">Draw Surface</button>
         </div>
         <div class="wifi-tool-group wifi-wiring-tools" role="group" aria-label="Cabling tools">
           <button class="wifi-control" type="button" data-wifi-tool="equipment"><span data-wifi-icon="core_switch" aria-hidden="true"></span>Equipment</button>
@@ -568,6 +574,14 @@
           <label>Band<select id="wifiBand"><option value="2.4">2.4 GHz</option><option value="5">5 GHz</option></select></label>
           <button class="wifi-control" type="button" data-wifi-panel-button="plan" aria-expanded="false" aria-controls="wifiPlanPanel">Plan</button>
           <button class="wifi-control" type="button" data-wifi-panel-button="background" aria-expanded="false" aria-controls="wifiBackgroundPanel">Background</button>
+        </div>
+        <div id="wifiDesignControls" class="wifi-cabling-context wifi-tool-group" role="group" aria-label="Design tool settings" hidden>
+          <label id="wifiDecorField">Symbol<select id="wifiDecorType"></select></label>
+          <label id="wifiSurfaceField">Surface<select id="wifiSurfaceType"></select></label>
+          <label id="wifiFillField">Color<input id="wifiFillColor" type="color" value="#dbe7f1"></label>
+          <button class="wifi-control" id="wifiClearPaint" type="button" aria-pressed="false" hidden>Clear Fill</button>
+          <button class="wifi-control" id="wifiFinishSurface" type="button" hidden>Finish Surface</button>
+          <button class="wifi-control" id="wifiCancelSurface" type="button" hidden>Cancel</button>
         </div>
         <div id="wifiEquipmentControls" class="wifi-cabling-context wifi-tool-group" role="group" aria-label="Place equipment" hidden>
           <span id="wifiEquipmentIcon" class="wifi-equipment-preview" aria-hidden="true"></span>
@@ -594,9 +608,10 @@
               <canvas class="wifi-heatmap" id="wifiHeatmap" aria-hidden="true"></canvas>
               <svg class="wifi-grid" id="wifiGrid" aria-hidden="true"></svg>
               <svg class="wifi-objects" id="wifiObjects" aria-hidden="true">
-                <g id="wifiWalls"></g><g id="wifiOpenings"></g><g id="wifiWireLayer"></g><g id="wifiMarkers"></g><g id="wifiEquipmentLayer"></g><g id="wifiOverlay"></g>
+                <g id="wifiSurfaceHitLayer"></g><g id="wifiDecorLayer"></g><g id="wifiWalls"></g><g id="wifiOpenings"></g><g id="wifiWireLayer"></g><g id="wifiMarkers"></g><g id="wifiEquipmentLayer"></g><g id="wifiOverlay"></g>
               </svg>
               <svg class="wifi-background-layer" id="wifiBackgroundLayer" aria-hidden="true"><image id="wifiBackgroundImage"/></svg>
+              <svg class="wifi-surface-layer" id="wifiSurfaceLayer" aria-hidden="true"></svg>
             </div>
             <div class="wifi-cable-menu" id="wifiCableBundleMenu" hidden>
               <label for="wifiCableBundleChoice" id="wifiCableBundleHeading"></label>
@@ -2344,7 +2359,7 @@
 
   <script src="/static/js/app.js"></script>
   <script src="/static/js/connection.js?v=20261011-files-5"></script>
-  <script src="/static/js/feature-loader.js?v=20261113-scenarios"></script>
+  <script src="/static/js/feature-loader.js?v=20261113-design"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20261021-security-1"></script>
   <script src="/static/js/layout.js?v=20261011-files-5"></script>

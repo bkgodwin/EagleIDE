@@ -1,7 +1,7 @@
 /* Render classroom coverage off the UI thread. */
 'use strict';
 
-importScripts('/static/js/wifi-site-model.js?v=20261113-plan');
+importScripts('/static/js/wifi-site-model.js?v=20261113-design');
 
 let revision;
 let renderTile;

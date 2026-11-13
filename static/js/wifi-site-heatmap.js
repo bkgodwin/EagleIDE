@@ -35,7 +35,7 @@
 
     function setPlan(next) {
       if (layout && layout.walls === next.walls && layout.openings === next.openings && layout.band === next.band
-          && sameRadios(layout.access_points, next.access_points)) return;
+          && layout.decor === next.decor && sameRadios(layout.access_points, next.access_points)) return;
       layout = next;
       revision += 1;
       areas = model.heatAreas(next.access_points, next.band);
@@ -185,7 +185,7 @@
       pending = { ...job, key: tileKey(tile) };
       if (!worker && !workerFailed) {
         try {
-          const source = new Worker('/static/js/wifi-site-worker.js?v=20261113-plan');
+          const source = new Worker('/static/js/wifi-site-worker.js?v=20261113-design');
           worker = source;
           source.onmessage = ({ data }) => { if (worker === source) tileReady(data); };
           source.onerror = () => {
