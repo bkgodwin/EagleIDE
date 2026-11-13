@@ -116,3 +116,27 @@ test('a failed workspace fetch pauses file actions when the HTTP health check al
   assert.equal(h.api.isLost(), true);
   assert.equal(h.api.canRun(), false);
 });
+
+test('a new server instance keeps file operations paused until session recovery succeeds', async () => {
+  let instance = 'first', finishRestore, recoveries = 0;
+  const h = harness(async () => new Response('{"ok":true}', { headers: { 'X-EagleIDE-Instance': instance } }));
+  await h.api.check();
+  h.api.prepareSession(({ restarted, reconnecting }) => {
+    if (!restarted) return true;
+    recoveries++;
+    assert.equal(reconnecting, recoveries > 1);
+    return new Promise(resolve => { finishRestore = resolve; });
+  });
+  instance = 'second';
+  let pending = h.api.check();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.api.isLost(), true);
+  await assert.rejects(h.api.request('/api/files/list'));
+  finishRestore(false);
+  assert.equal(await pending, false);
+  pending = h.api.check();
+  await new Promise(resolve => setImmediate(resolve));
+  finishRestore(true);
+  assert.equal(await pending, true);
+  assert.equal((await h.api.request('/api/files/list')).ok, true);
+});

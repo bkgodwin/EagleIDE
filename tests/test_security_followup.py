@@ -1,11 +1,13 @@
 """Round-two session, background-ingestion and configuration regressions."""
 import ast
+from concurrent.futures import ThreadPoolExecutor
 import io
 import json
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+import threading
 from unittest.mock import patch
 
 from PIL import Image, PngImagePlugin
@@ -84,6 +86,85 @@ class SecurityFollowupTests(unittest.TestCase):
                 eagle._save_users({"users": [r for r in self.records if r["role"] != role]})
                 self.assertEqual(self.client.get("/api/auth/me", headers={header: token}).status_code, 401)
                 self.assertFalse(client.is_connected())
+
+    def test_classroom_sessions_restore_concurrently_after_restart(self):
+        credentials = "fixture-hash"
+        students = [{**self.records[0], "email": f"student{i}@example.invalid", "password_hash": credentials}
+                    for i in range(30)]
+        eagle._save_users({"users": students})
+        eagle._save_classes({"classes": [{"id": "fixture", "students": [student["email"] for student in students]}]})
+        cipher = eagle.Fernet(eagle.Fernet.generate_key())
+        barrier = threading.Barrier(len(students))
+
+        def make_client(student, token):
+            client = eagle.app.test_client()
+            with eagle.app.test_request_context():
+                response = eagle.jsonify(ok=True)
+                eagle._set_device_session_cookie(response, "student", student["email"], token)
+            cookie = response.headers["Set-Cookie"].split(";", 1)[0].split("=", 1)[1]
+            client.set_cookie(eagle.AUTH_DEVICE_COOKIE, cookie)
+            return client
+
+        def restore(client, token):
+            barrier.wait(timeout=10)
+            self.assertEqual(client.get("/api/auth/me", headers={"X-User-Token": token}).status_code, 401)
+            response = client.post("/api/auth/restore")
+            self.assertEqual(response.status_code, 200, response.get_json())
+            self.assertEqual(response.get_json()["token"], token)
+            headers = {"X-User-Token": token, "X-Class-ID": "fixture"}
+            self.assertEqual(client.get("/api/files/list", headers=headers).status_code, 200)
+
+        with patch.object(eagle, "_admin_cipher", return_value=cipher), \
+             patch.object(eagle.bcrypt, "checkpw", side_effect=AssertionError("restore must not verify passwords")), \
+             patch.object(eagle, "_load_users", side_effect=AssertionError("restore must not copy the account catalog")):
+            clients = [(make_client(student, f"{i:032x}"), f"{i:032x}") for i, student in enumerate(students)]
+            with ThreadPoolExecutor(max_workers=len(clients)) as pool:
+                for future in [pool.submit(restore, *entry) for entry in clients]:
+                    future.result(timeout=20)
+            self.assertEqual(len(eagle._student_tokens), 30)
+
+            # An unreadable account store is temporary and keeps the signed cookie.
+            client, token = clients[0]
+            eagle._student_tokens.clear()
+            eagle.USERS_FILE.write_text("{", encoding="utf-8")
+            eagle._users_cache = None
+            unavailable = client.post("/api/auth/restore")
+            self.assertEqual(unavailable.status_code, 503)
+            self.assertNotIn("Set-Cookie", unavailable.headers)
+            eagle._save_users({"users": students})
+            self.assertEqual(client.post("/api/auth/restore").get_json()["token"], token)
+
+    def test_room_reconnects_coalesce_presence_and_check_current_membership(self):
+        students = [{**self.records[0], "email": f"student{i}@example.invalid"} for i in range(30)]
+        teacher = self.records[1]
+        eagle._save_users({"users": [*students, teacher]})
+        classroom = {"id": "fixture", "teacher_email": teacher["email"], "students": [item["email"] for item in students]}
+        eagle._save_classes({"classes": [classroom]})
+        self.addCleanup(eagle._pending_presence_updates.discard, "fixture")
+        with patch.object(eagle.socketio, "start_background_task") as enqueue:
+            listeners = []
+            for account in [teacher, *students]:
+                client = eagle.socketio.test_client(eagle.app)
+                self.addCleanup(lambda c=client: c.disconnect() if c.is_connected() else None)
+                token = eagle._issue_access_token(account["role"], account)
+                client.emit("join_class_room", {"role": account["role"], "token": token, "class_id": "fixture",
+                                                "open_file": "main.py"})
+                listeners.append(client)
+            enqueue.assert_called_once_with(eagle._flush_class_presence, "fixture")
+            with patch.object(eagle.socketio, "sleep"), patch.object(eagle, "_find_class_by_id", wraps=eagle._find_class_by_id) as find:
+                eagle._flush_class_presence("fixture")
+                self.assertEqual(find.call_count, 2)
+            messages = [item for item in listeners[0].get_received() if item["name"] == "class_presence_updated"]
+            self.assertEqual(len(messages), 1)
+            self.assertEqual(len(messages[0]["args"][0]["activeStudents"]), 30)
+            self.assertTrue(all(name == "main.py" for name in messages[0]["args"][0]["openFilesByEmail"].values()))
+            for student in listeners[1:]:
+                student.get_received()
+            classroom["students"].remove(students[0]["email"])
+            eagle._save_classes({"classes": [classroom]})
+            eagle.socketio.emit("fixture_delivery", {}, to="class_fixture_students")
+            self.assertFalse(listeners[1].get_received())
+            self.assertTrue(any(item["name"] == "fixture_delivery" for item in listeners[2].get_received()))
 
     def test_http_validation_uses_current_account_for_each_separate_role(self):
         for role, header, validator in (

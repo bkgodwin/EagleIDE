@@ -188,6 +188,15 @@
     updateFile(file) { item = file; },
     snapshot: () => page ? JSON.parse(JSON.stringify({...page, firstRow})) : null,
     saveCsv, csvDirty: () => edits.size > 0,
+    recoverCsvPage() {
+      const quote = value => '"' + String(value ?? '').replaceAll('"', '""') + '"';
+      return [{ offset: page.headerOffset, cells: page.header }, ...page.rows].map(({ offset, cells }) => {
+        const values = Array.from({ length: column }, () => '');
+        cells.forEach((value, index) => { values[column + index] = value; });
+        for (const change of edits.values()) if (change.offset === offset) values[change.column] = change.value;
+        return Array.from(values, quote).join(',');
+      }).join('\n');
+    },
     signature: () => JSON.stringify([...edits.values()]),
     jsonMode,
     changed() { if (!el('jsonToolbar').hidden) { clearTimeout(jsonTimer); jsonTimer = setTimeout(refreshJson, 400); } },

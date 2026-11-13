@@ -15,7 +15,7 @@ NODE = os.environ.get("EAGLEIDE_TEST_NODE") or shutil.which("node")
 @unittest.skipUnless(NODE, "Node.js is required for frontend authentication checks")
 class AuthFrontendTests(unittest.TestCase):
     def test_wiki_manager_session_restores_as_its_own_role(self):
-        self.run_javascript(["validateRestoredAuthSession"], r"""
+        self.run_javascript(["waitForAuthRetry", "fetchAuthRequest", "validateRestoredAuthSession"], r"""
 USER_TOKEN = null;
 WIKI_MANAGER_TOKEN = 'manager-token';
 fetch = async (url, options) => {
@@ -61,24 +61,24 @@ let fetch;
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_session_validation_preserves_transient_failures_but_rejects_invalid_tokens(self):
-        self.run_javascript(["validateRestoredAuthSession"], r"""
+        self.run_javascript(["waitForAuthRetry", "fetchAuthRequest", "validateRestoredAuthSession"], r"""
 for (const response of [
   { status: 503, ok: false },
   { status: 200, ok: true, json: async () => { throw new SyntaxError('proxy HTML'); } },
   { status: 200, ok: true, json: async () => ({}) },
 ]) {
   fetch = async () => response;
-  assert.equal(await validateRestoredAuthSession(), true);
+  assert.equal(await validateRestoredAuthSession(), null);
   assert.equal(USER_TOKEN, 'student-token');
 }
 fetch = async () => { throw new Error('offline'); };
-assert.equal(await validateRestoredAuthSession(), true);
+assert.equal(await validateRestoredAuthSession(), null);
 assert.equal(USER_TOKEN, 'student-token');
 for (const status of [401, 403]) {
   USER_TOKEN = 'expired-token';
   fetch = async () => ({ status, ok: false });
   assert.equal(await validateRestoredAuthSession(), false);
-  assert.equal(USER_TOKEN, null);
+  assert.equal(USER_TOKEN, 'expired-token');
 }
 USER_TOKEN = 'old-token';
 let release;
@@ -165,6 +165,38 @@ const waits = [], deadlines = [];
 const waitForAuthRetry = async delay => waits.push(delay);
 const setTimeout = (_, delay) => deadlines.push(delay);
 const clearTimeout = () => {};
+""")
+
+    def test_restart_restores_once_per_tab_and_keeps_session_on_transient_failure(self):
+        self.run_javascript(["prepareWorkspaceSession"], r"""
+const pending = prepareWorkspaceSession({ restarted: true, reconnecting: true });
+assert.equal(prepareWorkspaceSession({ restarted: true, reconnecting: true }), pending);
+release(new Response('{}', { status: 503 }));
+assert.equal(await pending, false);
+assert.equal(USER_TOKEN, 'student-token');
+assert.equal(sessionRecoveryPending, true);
+const retry = prepareWorkspaceSession({ restarted: true, reconnecting: true });
+release(Response.json({ ok: true, role: 'student', token: USER_TOKEN, user: currentUser }));
+assert.equal(await retry, true);
+assert.equal(sessionRecoveryPending, false);
+assert.equal(classLoads, 1);
+assert.equal(requests, 2);
+assert.equal(prepareWorkspaceSession({ restarted: false, reconnecting: false }), true);
+
+const stale = prepareWorkspaceSession({ restarted: true, reconnecting: true });
+authGeneration++;
+release(Response.json({ ok: true, role: 'student', token: 'other', user: { email: 'other@school.test' } }));
+assert.equal(await stale, true);
+assert.equal(USER_TOKEN, 'student-token');
+""", setup="""
+let authGeneration = 0, sessionRestore = null, bootSessionPending = false, sessionRecoveryPending = false;
+let authSubmitPending = false, release, requests = 0, classLoads = 0;
+let socketClassRooms = new Set();
+const endUnrestorableWorkspaceSession = () => { throw new Error('must preserve the current account'); };
+const validateRestoredAuthSession = () => { throw new Error('do not validate a lost token after a confirmed restart'); };
+const fetchAuthRequest = url => { assert.equal(url, '/api/auth/restore'); requests++; return new Promise(resolve => { release = resolve; }); };
+const loadStudentClassData = async () => { classLoads++; };
+const updateAuthUI = () => {};
 """)
 
 

@@ -463,7 +463,9 @@ installed Chromium browser, and `EAGLE_TOOL_SCREENSHOT_DIR` to a scratch folder.
 
 ### Frontend
 
-Workspace file and notebook saves use HTTP. The connection controller pauses those operations when the browser goes offline or the HTTP health check fails. Socket.IO connectivity gates execution separately. A busy password queue returns HTTP 503 with Retry-After, and the browser allows one staggered retry after that response.
+Workspace file and notebook saves use HTTP. The connection controller staggers health checks and waits for the saved session before resuming writes after a restart. `/health` exposes a per-process instance header, and a temporary account-store failure preserves the saved session cookie. Socket.IO connectivity gates execution separately. A busy password queue returns HTTP 503 with Retry-After, and the browser allows one staggered retry after that response.
+
+Classroom reconnects send one acknowledged join per class and socket. The server coalesces presence snapshots per classroom and checks current account and class access before sending to room recipients. Point account lookups copy only the matching record from the account catalog, with the existing file-change invalidation.
 
 `index.html` contains the complete UI markup. Scripts are classic global scripts, not ES modules, and their order is significant. The active order at the end of the page is:
 
