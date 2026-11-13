@@ -503,8 +503,7 @@
         </div>
         <div class="network-library-actions">
           <button class="btn run" id="wifiNewSite" type="button">New Site</button>
-          <button class="btn secondary" id="wifiSampleSite" type="button">Try the Two-Room Activity</button>
-          <button class="btn secondary" id="wifiWiringSample" type="button">Try the Cabling Activity</button>
+          <button class="btn secondary" id="wifiSampleSite" type="button">Open Campus Example</button>
         </div>
       </header>
       <p class="network-guest-note" id="wifiGuestNotice" hidden>Sign in with a class that has Network Simulator access to save your designs.</p>
@@ -533,7 +532,8 @@
           <button class="wifi-control" type="button" data-wifi-tool="pan">Pan</button>
           <button class="wifi-control" type="button" data-wifi-tool="wall">Wall</button>
           <button class="wifi-control" type="button" data-wifi-tool="room">Room</button>
-          <button class="wifi-control" type="button" data-wifi-tool="ap">Access Point</button>
+          <button class="wifi-control" type="button" data-wifi-tool="door">Door</button>
+          <button class="wifi-control" type="button" data-wifi-tool="window">Window</button>
           <button class="wifi-control" type="button" data-wifi-tool="label">Note</button>
           <button class="wifi-control" type="button" data-wifi-tool="measure">Measure</button>
           <button class="wifi-control" type="button" data-wifi-tool="probe">Check Signal</button>
@@ -545,7 +545,6 @@
         </div>
         <div class="wifi-tool-group" role="group" aria-label="Editing and coverage">
           <label id="wifiMaterialField">Material<select id="wifiMaterial"></select></label>
-          <label id="wifiMountField" hidden>Mount<select id="wifiMount"></select></label>
           <label class="wifi-toggle" id="wifiOrthogonalField" hidden><input type="checkbox" id="wifiOrthogonal"> Right angles</label>
           <button class="wifi-control" id="wifiFinishWall" type="button" hidden>Finish Wall</button>
           <button class="wifi-control" id="wifiUndo" type="button">Undo</button>
@@ -554,6 +553,8 @@
           <label class="wifi-toggle"><input type="checkbox" id="wifiCoverage" checked> Coverage</label>
           <label class="wifi-toggle"><input type="checkbox" id="wifiShowCables" checked> Cables</label>
           <label>Band<select id="wifiBand"><option value="2.4">2.4 GHz</option><option value="5">5 GHz</option></select></label>
+          <button class="wifi-control" type="button" data-wifi-panel-button="plan" aria-expanded="false" aria-controls="wifiPlanPanel">Plan</button>
+          <button class="wifi-control" type="button" data-wifi-panel-button="background" aria-expanded="false" aria-controls="wifiBackgroundPanel">Background</button>
         </div>
         <div id="wifiEquipmentControls" class="wifi-cabling-context wifi-tool-group" role="group" aria-label="Place equipment" hidden>
           <span id="wifiEquipmentIcon" class="wifi-equipment-preview" aria-hidden="true"></span>
@@ -580,14 +581,51 @@
               <canvas class="wifi-heatmap" id="wifiHeatmap" aria-hidden="true"></canvas>
               <svg class="wifi-grid" id="wifiGrid" aria-hidden="true"></svg>
               <svg class="wifi-objects" id="wifiObjects" aria-hidden="true">
-                <g id="wifiWalls"></g><g id="wifiWireLayer"></g><g id="wifiMarkers"></g><g id="wifiEquipmentLayer"></g><g id="wifiOverlay"></g>
+                <g id="wifiWalls"></g><g id="wifiOpenings"></g><g id="wifiWireLayer"></g><g id="wifiMarkers"></g><g id="wifiEquipmentLayer"></g><g id="wifiOverlay"></g>
               </svg>
+              <svg class="wifi-background-layer" id="wifiBackgroundLayer" aria-hidden="true"><image id="wifiBackgroundImage"/></svg>
             </div>
             <div class="wifi-cable-menu" id="wifiCableBundleMenu" hidden>
               <label for="wifiCableBundleChoice" id="wifiCableBundleHeading"></label>
               <select id="wifiCableBundleChoice"></select>
               <button class="wifi-control" id="wifiCableBundleClose" type="button" aria-label="Close cable bundle">×</button>
             </div>
+            <section class="wifi-float wifi-panel" id="wifiObjectPanel" aria-labelledby="wifiObjectHeading" hidden>
+              <header><h2 id="wifiObjectHeading">Object</h2><button class="wifi-control" data-wifi-close-panel type="button" aria-label="Close object settings">×</button></header>
+              <div id="wifiProperties"></div>
+            </section>
+            <section class="wifi-float wifi-panel wifi-menu-panel" id="wifiPlanPanel" aria-labelledby="wifiPlanHeading" hidden>
+              <header><h2 id="wifiPlanHeading">Plan</h2><button class="wifi-control" data-wifi-close-panel type="button" aria-label="Close plan settings">×</button></header>
+              <label>Find an object<select id="wifiSelection"><option value="">None selected</option></select></label>
+              <label>Units<select id="wifiUnits"><option value="m">Meters</option><option value="ft">Feet</option></select></label>
+              <p id="wifiSiteExtents"></p><p id="wifiGridLabel"></p>
+              <p>Scroll or pinch to zoom. Use Pan or hold Space and drag to move the view.</p>
+            </section>
+            <section class="wifi-float wifi-panel wifi-menu-panel" id="wifiBackgroundPanel" aria-labelledby="wifiBackgroundHeading" hidden>
+              <header><h2 id="wifiBackgroundHeading">Background</h2><button class="wifi-control" data-wifi-close-panel type="button" aria-label="Close background settings">×</button></header>
+              <input type="file" id="wifiBackgroundFile" accept="image/png,image/jpeg,image/webp" hidden>
+              <div class="wifi-object-actions">
+                <button class="wifi-control" type="button" id="wifiBackgroundImport">Add Image</button>
+                <button class="wifi-control" type="button" id="wifiBackgroundMove" hidden>Move Image</button>
+                <button class="wifi-control" type="button" id="wifiBackgroundRemove" hidden>Delete Image</button>
+              </div>
+              <p id="wifiBackgroundStatus" role="status">Import a PNG, JPEG, or WebP floor plan.</p>
+              <div id="wifiBackgroundFields" hidden>
+                <div class="wifi-two-fields"><label>Image width <span data-wifi-unit></span><input type="number" data-wifi-background="width" step="any"></label>
+                <label>Image height<input id="wifiBackgroundHeight" readonly></label></div>
+                <div class="wifi-two-fields"><label>X <span data-wifi-unit></span><input type="number" data-wifi-background="x" step="any"></label>
+                <label>Y <span data-wifi-unit></span><input type="number" data-wifi-background="y" step="any"></label></div>
+                <button class="wifi-control" type="button" id="wifiBackgroundCalibrate">Calibrate with Two Points</button>
+                <form id="wifiBackgroundCalibration" hidden>
+                  <label>Known distance <span data-wifi-unit></span><input id="wifiBackgroundDistance" type="number" min="0.01" step="any" required></label>
+                  <button class="wifi-control" type="submit">Apply Scale</button>
+                </form>
+              </div>
+            </section>
+            <section class="wifi-float wifi-panel wifi-menu-panel" id="wifiSignalPanel" aria-labelledby="wifiSignalHeading" hidden>
+              <header><h2 id="wifiSignalHeading">Estimated signal</h2><button class="wifi-control" data-wifi-close-panel type="button" aria-label="Close signal details">×</button></header>
+              <div id="wifiProbeResult" role="status"></div>
+            </section>
           </div>
           <footer class="wifi-map-footer">
             <div class="wifi-tool-group" role="group" aria-label="Zoom">
@@ -598,45 +636,10 @@
             <div id="wifiScale" class="wifi-scale" aria-label="Map scale"><span></span><strong></strong></div>
             <output id="wifiMeasureResult"></output>
             <output id="wifiProbeSummary" aria-label="Signal at selected point"></output>
+            <div id="wifiLegend" class="wifi-legend" aria-label="Coverage legend"></div>
             <span id="wifiCoverageStatus" class="wifi-coverage-status" hidden>Updating coverage…</span>
           </footer>
         </div>
-        <aside class="wifi-inspector" aria-label="Floor plan settings">
-          <details class="wifi-activity" id="wifiActivity" hidden>
-            <summary>Two-Room Activity</summary>
-            <ol>
-              <li>Check the signal in the second room at 5 GHz.</li>
-              <li>Select the middle wall and change it from drywall to concrete. Check the same spot again.</li>
-              <li>Move the access point or add another one to improve coverage. Add a note explaining what changed.</li>
-            </ol>
-          </details>
-          <details class="wifi-activity" id="wifiWiringGuide" hidden>
-            <summary>Cabling Activity</summary>
-            <ol>
-              <li>Connect the core switch to the router with fiber.</li>
-              <li>Run Ethernet from the core switch to the classroom jack. Click the pass-through to cross the concrete wall.</li>
-              <li>Patch the jack to the classroom AP. Check its coverage and PoE status.</li>
-            </ol>
-          </details>
-          <section class="wifi-panel">
-            <h2>Floor plan</h2>
-            <label>Units<select id="wifiUnits"><option value="m">Meters</option><option value="ft">Feet</option></select></label>
-            <p id="wifiSiteExtents"></p>
-            <p id="wifiGridLabel"></p>
-            <p>Scroll or pinch to zoom. Use Pan or hold Space and drag to move the view.</p>
-          </section>
-          <section class="wifi-panel">
-            <h2>Objects</h2>
-            <label>Selected object<select id="wifiSelection"><option value="">None selected</option></select></label>
-            <div id="wifiProperties"></div>
-          </section>
-          <section class="wifi-panel wifi-signal-panel">
-            <h2>Estimated signal</h2>
-            <div id="wifiLegend" class="wifi-legend"></div>
-            <div id="wifiProbeResult" role="status"></div>
-            <details class="wifi-model-info"><summary>About this estimate</summary><p>The map shows the strongest predicted signal at each point. The classroom model uses distance, wall loss, antenna direction, and relative transmit power. Use the second AP reading to compare overlap. These signal estimates do not model speed or interference.</p></details>
-          </section>
-        </aside>
       </div>
     </section>
   </main>

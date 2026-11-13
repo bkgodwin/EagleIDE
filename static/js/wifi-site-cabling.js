@@ -6,12 +6,13 @@
   const model = window.WifiCablingModel;
   const KINDS = ['equipment', 'pass_throughs', 'cables'];
   const ICONS = {
-    router: '<rect x="2.5" y="9" width="19" height="10" rx="2"/><path d="M7 9V4m10 5V4M6 14h1m3 0h1m3 0h4"/>',
-    core_switch: '<rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="M6 9h2m3 0h2m3 0h2M6 14h2m3 0h2m3 0h2"/>',
-    distribution_switch: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 12h2m3 0h2m3 0h2m-6-6v2"/>',
-    access_switch: '<rect x="3" y="7" width="18" height="10" rx="2"/><path d="M7 12h2m3 0h2m3 0h1"/>',
-    keystone: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 9h8v5h-2v2h-4v-2H8z"/>',
-    demarc: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18m0-18a14 14 0 0 0 0 18"/>',
+    router: '<path d="M5 9V4m14 5V4"/><rect x="2" y="9" width="20" height="11" rx="2.5"/><path d="M6 14h.1m3 0h.1m3 2h6m-2-2 2 2-2 2"/>',
+    core_switch: '<rect x="2" y="3.5" width="20" height="17" rx="2.5"/><path d="M2 12h20M6 8h1m3 0h1m3 0h1m3 0h1M6 16h1m3 0h1m3 0h1m3 0h1"/>',
+    distribution_switch: '<rect x="2" y="5.5" width="20" height="13" rx="2.5"/><path d="M5.5 10h2v3h-2zm4 0h2v3h-2zm4 0h2v3h-2zM19 10h.1m0 4h.1"/>',
+    access_switch: '<rect x="3" y="7" width="18" height="10" rx="2.5"/><path d="M6.5 11h2v2h-2zm4 0h2v2h-2zm4 0h2v2h-2z"/>',
+    keystone: '<rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M8.5 9h7v5h-2v2h-3v-2h-2zM11 6h2"/>',
+    demarc: '<circle cx="12" cy="12" r="8.5"/><ellipse cx="12" cy="12" rx="3.6" ry="8.5"/><path d="M4 9h16M4 15h16"/>',
+    access_point: '<circle cx="12" cy="12" r="9"/><path d="M6 11a9 9 0 0 1 12 0m-9 3a4.5 4.5 0 0 1 6 0m-3 3h.01"/>',
     cable: '<path d="M5 4v4m4-4v4M4 8h6v4a3 3 0 0 1-6 0zm3 7v2a4 4 0 1 0 8 0v-3m-3 0h6v-4a3 3 0 1 0-6 0zm1-7V4m4 3V4"/>',
     pass: '<path d="M3 4h18v16H3zM3 9h5m8 0h5M3 15h5m8 0h5"/><circle cx="12" cy="12" r="3"/>',
   };
@@ -61,9 +62,9 @@
 
     function equipmentControls() {
       const kind = $('wifiEquipmentType').value;
-      $('wifiEquipmentIcon').innerHTML = icon(kind);
+      $('wifiEquipmentIcon').innerHTML = icon(kind.startsWith('ap-') ? 'access_point' : kind);
       $('wifiEquipmentIspField').hidden = kind !== 'demarc';
-      $('wifiEquipmentSpecs').textContent = equipmentSpecs(kind);
+      $('wifiEquipmentSpecs').textContent = kind.startsWith('ap-') ? '1 Gb/s Ethernet · PoE capable' : equipmentSpecs(kind);
     }
 
     function reset() {
@@ -89,6 +90,13 @@
 
     function place(raw) {
       const kind = $('wifiEquipmentType').value;
+      if (mode === 'equipment' && kind.startsWith('ap-')) {
+        const mount = kind.slice(3);
+        if (ctx.add('access_points', [{ id: ctx.id('ap'), ...ctx.snap(raw).point, name: '', mount, angle: 0, power_db: 0 }])) {
+          ctx.hint('Access point placed. Use Cable to connect it or turn on Estimated coverage.');
+        }
+        return;
+      }
       const data = catalog().equipment[kind];
       const penetration = mode === 'pass';
       if (penetration || data.wall_mount) {
@@ -284,8 +292,9 @@
         </g></g>`;
     }
 
-    function badge(point, text, cls) {
-      return `<g transform="translate(${point.x} ${point.y})" class="wifi-wire-badge"><g class="wifi-marker"><text class="${cls}" text-anchor="middle" dy="-6">${e(text)}</text></g></g>`;
+    function badge(point, text, cls, length) {
+      const span = length === undefined ? '' : ` data-wifi-bundle-length="${length}"`;
+      return `<g transform="translate(${point.x} ${point.y})" class="wifi-wire-badge"${span}><g class="wifi-marker"><text class="${cls}" text-anchor="middle" dy="-6">${e(text)}</text></g></g>`;
     }
 
     function draw() {
@@ -321,9 +330,15 @@
           : colors.map((color, index) => ctx.line(a, b, `class="wifi-wire" stroke="${color}" stroke-width="2.5" stroke-dasharray="6 ${6 * (colors.length - 1)}" stroke-dashoffset="${-6 * index}"`)).join('');
         return ctx.line(a, b, `class="wifi-wire wifi-wire-casing" stroke-width="${width + 2}"`)
           + ctx.line(a, b, `class="wifi-wire${fiber && !bundle ? ' wifi-wire-fiber' : ''}" stroke="${color}" stroke-width="${width}"`)
-          + stripe + (bundle ? badge(center, `×${cableIds.length}`, 'wifi-bundle-count') : '')
+          + stripe + (bundle ? badge(center, `×${cableIds.length}`, 'wifi-bundle-count', model.distance(a, b)) : '')
           + ctx.line(a, b, `class="wifi-wire-hit" data-wifi-bundle="${i}" aria-label="${e(bundle ? `${cableIds.length} cables` : model.cableName(cable, number))}"`);
       }).join('') + [...labeled.values()].map(item => badge(item.center, item.label, 'wifi-wire-label')).join('');
+    }
+
+    function updateBundleBadges(scale) {
+      for (const badge of $('wifiWireLayer').querySelectorAll('[data-wifi-bundle-length]')) {
+        badge.style.visibility = Number(badge.dataset.wifiBundleLength) * scale >= 28 ? '' : 'hidden';
+      }
     }
 
     function polyline(points, cls, color) {
@@ -366,7 +381,7 @@
 
     function hoverAt(raw, shift) {
       if (mode === 'cable' && draft?.source && !draft.target) hover = index().waypoint(draftWaypoint(raw, shift));
-      else if (mode === 'pass' || (mode === 'equipment' && catalog().equipment[$('wifiEquipmentType').value].wall_mount)) {
+      else if (mode === 'pass' || (mode === 'equipment' && catalog().equipment[$('wifiEquipmentType').value]?.wall_mount)) {
         hover = model.closestWall(raw, plan().walls, Math.min(3, 19 / ctx.scale()), mode === 'pass')?.point;
       }
     }
@@ -404,19 +419,31 @@
       }
       if (kind === 'pass_throughs') {
         const used = data.usage.get(item.id) || 0;
-        return `<div class="wifi-wire-summary"><strong>Concrete pass-through</strong><span>${used} of 10 cables · 20 ft minimum spacing</span><progress value="${used}" max="10" aria-label="Pass-through capacity"></progress></div>
+        const channels = data.channels(item.id);
+        return `<div class="wifi-wire-summary"><strong>Concrete pass-through</strong><span>${used} of ${catalog().pass_capacity} cables · 20 ft minimum spacing</span>
+          <progress value="${used}" max="${catalog().pass_capacity}" aria-label="Pass-through capacity"></progress></div>
+          <div class="wifi-pass-grid" aria-label="Pass-through channel utilization">${channels.map((slot, i) =>
+            `<div class="wifi-pass-channel${slot.length ? ' is-used' : ''}"><strong>Channel ${i + 1}</strong><span>${slot.length ? slot.map(cable => e(model.cableName(cable, plan().cables.indexOf(cable)))).join(', ') : 'Available'}</span></div>`).join('')}</div>
           ${wallField(item)}`;
       }
       const ports = data.ports.get(item.id);
       const used = ports.filter(port => data.occupancy.has(model.portKey({ device_id: item.id, port: port.id })));
       const isp = item.kind === 'demarc' ? catalog().isps[item.isp] : null;
-      return `<div class="wifi-wire-summary"><strong>${e(catalog().equipment[item.kind].name)}</strong>
+      return deviceStatus(item.id) + `<div class="wifi-wire-summary"><strong>${e(catalog().equipment[item.kind].name)}</strong>
         <span>${used.length} of ${ports.length} ports in use${item.kind === 'access_switch' ? ' · data only' : ''}</span>
         ${used.length ? `<span class="wifi-ports-used">${used.map(port => e(port.id)).join(', ')}</span>` : ''}</div>
         <label>Equipment label<input data-wifi-wire-field="name" maxlength="60" value="${e(item.name)}" placeholder="Optional"></label>
         ${isp ? `<label>Provider<select data-wifi-wire-field="isp">${ispChoices(item.isp)}</select></label>
           <p>${e(isp.name)} · ${model.speedName(isp.speed)} ${model.mediaName(isp.media)}</p>` : ''}
         ${item.wall_id ? wallField(item) : ctx.pointFields(item)}`;
+    }
+
+    function deviceStatus(id) {
+      const status = index().status(id);
+      const internet = status.upstream ? `${model.speedName(status.upstream.speed)} · ${status.upstream.provider}` : 'No ISP path';
+      const network = status.speed ? `${model.speedName(status.speed)} · ${status.count} ${status.count === 1 ? 'link' : 'links'}` : 'Disconnected';
+      return `<dl class="wifi-device-status"><div><dt>Internet</dt><dd>${e(internet)}</dd></div>
+        <div><dt>Network</dt><dd>${e(network)}</dd></div><div><dt>Power</dt><dd>${e(status.power)}</dd></div></dl>`;
     }
 
     function wallField(item) {
@@ -454,18 +481,21 @@
         for (const pass of current.pass_throughs) if (pass.wall_id === item.id) passes.add(pass.id);
         next.equipment = current.equipment.filter(device => !devices.has(device.id));
         next.pass_throughs = current.pass_throughs.filter(pass => !passes.has(pass.id));
+        next.openings = current.openings.filter(opening => opening.wall_id !== item.id);
       }
       const data = index();
       next.cables = current.cables.filter(cable =>
         !devices.has(cable.source.device_id) && !devices.has(cable.target.device_id) &&
         ![...data.inspections.get(cable.id).usedPasses].some(pass => passes.has(pass)));
-      const attached = current.cables.length - next.cables.length + (kind === 'walls' ? devices.size + passes.size : 0);
+      const attached = current.cables.length - next.cables.length
+        + (kind === 'walls' ? devices.size + passes.size + current.openings.length - next.openings.length : 0);
       return { next, attached };
     }
 
     function init() {
       document.querySelectorAll('[data-wifi-icon]').forEach(el => { el.innerHTML = icon(el.dataset.wifiIcon); });
-      $('wifiEquipmentType').innerHTML = choices(model.TYPES.map(type => [type, catalog().equipment[type].name]), 'router');
+      $('wifiEquipmentType').innerHTML = choices([...model.TYPES.map(type => [type, catalog().equipment[type].name]),
+        ...Object.entries(ctx.apNames).map(([mount, name]) => [`ap-${mount}`, name])], 'router');
       $('wifiEquipmentIsp').innerHTML = ispChoices('alderline');
       $('wifiEquipmentType').addEventListener('change', equipmentControls);
       $('wifiEquipmentIsp').addEventListener('change', equipmentControls);
@@ -484,7 +514,7 @@
       $('wifiCableBundleClose').addEventListener('click', () => { menu.hidden = true; $('wifiViewport').focus({ preventScroll: true }); });
     }
 
-    return { init, reset, index, setTool, use, cancel, draw, overlay, hoverAt, pick, name, locationPoints,
+    return { init, reset, index, setTool, use, cancel, draw, overlay, hoverAt, pick, name, locationPoints, deviceStatus, updateBundleBadges,
       moveBend, pointForEdit, inspector, edit, removePlan, reroute, refreshDraft,
       hideMenu: () => { menu.hidden = true; }, clearHover: () => { hover = null; } };
   }

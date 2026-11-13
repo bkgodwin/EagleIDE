@@ -11,6 +11,12 @@
     brick: { name: 'Brick', color: '#b34a4a', loss: { '2.4': 8, '5': 12 } },
   });
   const MOUNTS = Object.freeze({ ceiling: 'Ceiling-mounted access point', wall: 'Wall-mounted access point' });
+  const OPENINGS = {
+    door: { wood: { name: 'Wood door', loss: { '2.4': 2, '5': 4 } }, glass: { name: 'Glass door', loss: { '2.4': 1, '5': 3 } },
+      metal: { name: 'Metal door', loss: { '2.4': 5, '5': 8 } } },
+    window: { glass: { name: 'Clear glass', loss: { '2.4': 1, '5': 2 } },
+      coated_glass: { name: 'Coated glass', loss: { '2.4': 3, '5': 5 } } },
+  };
   const FEET = 0.3048;
   const gridStep = units => units === 'ft' ? 5 * FEET : 1;
   const displayDistance = (meters, units) => meters / (units === 'ft' ? FEET : 1);
@@ -26,21 +32,31 @@
 
   function wallIntersection(ap, dx, dy, wall) {
     const denominator = dx * wall.dy - dy * wall.dx;
-    if (Math.abs(denominator) < 1e-8) return -1;
+    if (Math.abs(denominator) < 1e-8) return null;
     const wx = wall.a.x - ap.x;
     const wy = wall.a.y - ap.y;
     const along = (wx * wall.dy - wy * wall.dx) / denominator;
-    if (along <= 1e-7 || along >= 1 - 1e-7) return -1;
+    if (along <= 1e-7 || along >= 1 - 1e-7) return null;
     const across = (wx * dy - wy * dx) / denominator;
-    return across >= -1e-7 && across <= 1 + 1e-7 ? along : -1;
+    return across >= -1e-7 && across <= 1 + 1e-7 ? along : null;
   }
 
-  function transmittersFor(walls, accessPoints, band, heat = false) {
+  function transmittersFor(walls, accessPoints, band, heat = false, openings = []) {
+    const byWall = new Map();
+    for (const opening of openings) {
+      if (!byWall.has(opening.wall_id)) byWall.set(opening.wall_id, []);
+      byWall.get(opening.wall_id).push(opening);
+    }
     const segments = walls.map(wall => ({
       a: wall.a, dx: wall.b.x - wall.a.x, dy: wall.b.y - wall.a.y,
       left: Math.min(wall.a.x, wall.b.x), right: Math.max(wall.a.x, wall.b.x),
       top: Math.min(wall.a.y, wall.b.y), bottom: Math.max(wall.a.y, wall.b.y),
       loss: MATERIALS[wall.material].loss[band], material: wall.material,
+      openings: (byWall.get(wall.id) || []).map(opening => {
+        const half = opening.width / (2 * distance(wall.a, wall.b));
+        const profile = OPENINGS[opening.kind][opening.material];
+        return { start: opening.t - half, end: opening.t + half, loss: profile.loss[band], material: profile.name };
+      }),
     }));
     return accessPoints.map(ap => {
       const radians = ap.angle * Math.PI / 180;
@@ -78,16 +94,22 @@
         for (const wall of walls) {
           if (wall.left > right || wall.right < left || wall.top > bottom || wall.bottom < top) continue;
           const crossing = wallIntersection(ap, dx, dy, wall);
-          if (crossing < 0) continue;
+          if (crossing === null) continue;
+          let barrier = wall;
+          if (wall.openings.length) {
+            const wx = ap.x + dx * crossing - wall.a.x, wy = ap.y + dy * crossing - wall.a.y;
+            const across = (wx * wall.dx + wy * wall.dy) / (wall.dx * wall.dx + wall.dy * wall.dy);
+            barrier = wall.openings.find(opening => across >= opening.start && across <= opening.end) || wall;
+          }
           // Joined or coincident segments at the same crossing count as one barrier.
           const previous = crossings.findIndex(value => Math.abs(value - crossing) * length < 0.0001);
           if (previous < 0) {
             crossings.push(crossing);
-            obstacles.push(wall);
-            signal -= wall.loss;
-          } else if (wall.loss > obstacles[previous].loss) {
-            signal -= wall.loss - obstacles[previous].loss;
-            obstacles[previous] = wall;
+            obstacles.push(barrier);
+            signal -= barrier.loss;
+          } else if (barrier.loss > obstacles[previous].loss) {
+            signal -= barrier.loss - obstacles[previous].loss;
+            obstacles[previous] = barrier;
           }
           if (signal <= cutoff) break;
         }
@@ -108,8 +130,8 @@
     };
   }
 
-  function coverageModel(walls, accessPoints, band) {
-    return estimateWith(transmittersFor(walls, accessPoints, band));
+  function coverageModel(walls, accessPoints, band, openings) {
+    return estimateWith(transmittersFor(walls, accessPoints, band, false, openings));
   }
 
   const LEVELS = [
@@ -163,8 +185,8 @@
     return areas.some(({ ap, range }) => inRange(ap, range, bounds));
   }
 
-  function createHeatSource({ walls, access_points, band }) {
-    const transmitters = transmittersFor(walls, access_points, band, true);
+  function createHeatSource({ walls, access_points, band, openings }) {
+    const transmitters = transmittersFor(walls, access_points, band, true, openings);
     return tile => {
       const bounds = tileBounds(tile, PADDING);
       const local = transmitters.filter(({ ap, range }) => inRange(ap, range, bounds));
@@ -191,7 +213,7 @@
   }
 
   const model = {
-    MATERIALS, MOUNTS, LEVELS, gridStep, displayDistance, metersFrom,
+    MATERIALS, MOUNTS, OPENINGS, LEVELS, gridStep, displayDistance, metersFrom,
     roundDistance, distance, coverageModel, signalLevel, signalColor, SAMPLES, PADDING,
     tileLevel, tileSize, tileStep, tileBounds, tileHasCoverage, heatAreas, createHeatSource,
   };
