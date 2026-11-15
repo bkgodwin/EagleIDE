@@ -61,9 +61,21 @@ Select a device to see its connected network speed, fastest available modeled IS
 
 ### Test clients
 
-Place a **Desktop** and connect its Ethernet port, or place a **Phone** to join the strongest powered AP in range. The client inspector shows its uplink and internet speeds. Phones also show signal in dBm and their associated AP. Moving a phone farther away or behind barriers can reduce its speed and increase packet loss.
+Place a **Desktop** and connect its Ethernet port, or place a **Phone** and select its Wi-Fi network. Phones use the best usable radio for the selected SSID. The client inspector shows link speed, VLAN, and IPv4 settings. Phones also show signal in dBm and their associated AP. Distance and barriers can reduce speed and increase packet loss.
 
-Choose a client, router, or **google.com** in the client's **Ping target** menu and select **Start Ping**. Blue envelopes carry requests and green envelopes carry replies along their simulated paths. A dropped wireless packet changes into a fading skull at the receiving end of the wireless hop. For google.com the packet leaves and returns at the router. Pings run every half second for up to one minute. Select **Stop Ping** to see delivery, loss, and modeled round-trip time. For a quick demo, ping **STEM desktop** or **google.com** from **Library phone** in the Northfield example.
+Choose a client, router, or **google.com** in the client's **Ping target** menu and select **Start Ping**. Blue envelopes carry requests and green envelopes carry replies. Packet drops show a fading skull, and the results show the last drop reason. Pings run every half second for up to one minute. Select **Stop Ping** to see delivery, loss, and modeled round-trip time. For a quick demo, ping **STEM desktop** or **google.com** from **Library phone** in the Northfield example.
+
+### Configure Wi-Fi and VLANs
+
+- Select an AP and choose **Add SSID…** to name a shared network, select 2.4 GHz, 5 GHz, or both, and assign a VLAN. Each AP can broadcast up to four shared SSIDs. New APs broadcast the first SSID in the list. You can remove the built-in **Default** SSID from the project.
+- Use the **SSID** menu beside **Coverage** to display only the selected network on the current map band. The signal probe and PDF export follow the same selection.
+- Create named VLANs in a router's **VLANs** section. VLAN 0 represents the untagged LAN. On a 24- or 48-port switch, open **Port VLANs**, choose an Ethernet or fiber port, and enable every VLAN that should cross it. Ports start with VLAN 0. Enable the SSID's VLAN on the AP port and every managed uplink along the path to the router. For a wired client, the first enabled VLAN on its managed access port is its VLAN.
+
+### Configure DHCP and firewall rules
+
+- Each router serves one shared IPv4 pool across its reachable VLANs. The default gateway and subnet are `192.168.0.1/24`, with DNS `1.1.1.1` and fallback DNS `8.8.8.8`. The pool excludes the gateway, network, and broadcast addresses. The router's **DHCP** section warns when the pool fills.
+- Use **Reserve as static IP** on a client with an address to keep that address across disconnects and project reloads. A dynamic client releases its address on disconnect and requests a lease on reconnect.
+- The router **Firewall** matches source and destination VLANs and IPv4 addresses or CIDRs. The first matching rule wins, with unmatched traffic allowed. Same-VLAN client traffic stays local. An allowed ping can receive its reply without a separate rule. To match the simulated **google.com** target by address, use `203.0.113.10`.
 
 ## Build on desktop or iPad
 

@@ -23,6 +23,7 @@
   function create(ctx) {
     let draft, hover, placementPoint, routeError;
     let cached, sourceArrays, renderedIndex, renderedSelection, renderedVisibility;
+    let exhaustedRouters = new Set();
     let segments = [];
     let mode = 'select';
     const catalog = () => ctx.catalog();
@@ -108,7 +109,9 @@
       if (penetration) return { group: 'pass_throughs', item: position };
       if (mount) {
         const point = anchor ? ctx.roundPoint(anchor.point) : position;
-        return { group: 'access_points', item: { ...position, ...point, name: '', mount, angle: 0, power_db: 0 } };
+        const ssid = plan().ssids[0];
+        return { group: 'access_points', item: { ...position, ...point, name: '', mount, angle: 0, power_db: 0,
+          ssid_ids: ssid ? [ssid.id] : [] } };
       }
       const count = plan().equipment.filter(item => item.kind === kind).length + 1;
       const item = { ...position, kind, name: anchor ? '' : `${profile.name} ${count}` };
@@ -291,13 +294,15 @@
       const type = pass ? 'pass' : item.kind;
       const selected = item.id === ctx.selected() ? ' is-selected' : '';
       const overloaded = index().poe.get(item.id)?.overloaded ? ' is-overloaded' : '';
+      const exhausted = exhaustedRouters.has(item.id);
       const object = ghost ? 'class="wifi-ghost"' : `data-wifi-object="${e(item.id)}"`;
       let title = pass ? `Concrete pass-through · ${index().usage.get(item.id) || 0}/10 cables` : index().name(item);
       if (item.kind === 'demarc' && item.name) title = `${item.name} · ${catalog().isps[item.isp].name}`;
       const label = title.length > 38 ? `${title.slice(0, 37)}…` : title;
       return `<g transform="translate(${point.x} ${point.y})" ${object}><g class="wifi-marker wifi-gear wifi-gear-${type}${selected}${overloaded}">
-        <title>${e(title)}</title><rect class="wifi-gear-body" x="${pass ? -9 : -14}" y="${pass ? -9 : -12}" width="${pass ? 18 : 28}" height="${pass ? 18 : 24}" rx="${pass ? 3 : 5}"/>
+        <title>${e(title)}${exhausted ? ' · DHCP pool exhausted' : ''}</title><rect class="wifi-gear-body" x="${pass ? -9 : -14}" y="${pass ? -9 : -12}" width="${pass ? 18 : 28}" height="${pass ? 18 : 24}" rx="${pass ? 3 : 5}"/>
         <g class="wifi-gear-icon" transform="translate(${pass ? -7 : -10} ${pass ? -7 : -10}) scale(${pass ? 0.58 : 0.83})">${ICONS[type]}</g>
+        ${exhausted ? '<g class="wifi-dhcp-badge"><circle cx="12" cy="9" r="6"/><text x="12" y="12" text-anchor="middle">!</text></g>' : ''}
         ${pass ? '' : `<text class="wifi-equipment-text" x="17" y="-7">${e(label)}</text>`}
         </g></g>`;
     }
@@ -311,8 +316,11 @@
       const data = index();
       const visible = $('wifiShowCables').checked;
       const selected = ctx.selected();
+      const exhausted = ctx.exhaustedRouters();
+      const warningChanged = exhausted.length !== exhaustedRouters.size || exhausted.some(id => !exhaustedRouters.has(id));
+      if (warningChanged) exhaustedRouters = new Set(exhausted);
       if (data !== renderedIndex) segments = model.bundledSegments(plan().cables, data.inspections);
-      if (data === renderedIndex && selected === renderedSelection && visible === renderedVisibility) return;
+      if (data === renderedIndex && selected === renderedSelection && visible === renderedVisibility && !warningChanged) return;
       renderedIndex = data;
       renderedSelection = selected;
       renderedVisibility = visible;
@@ -454,7 +462,7 @@
       const used = ports.filter(port => data.occupancy.has(model.portKey({ device_id: item.id, port: port.id })));
       const isp = item.kind === 'demarc' ? catalog().isps[item.isp] : null;
       const client = item.kind === 'phone' || item.kind === 'desktop';
-      return (client ? ctx.clientInspector(item) : deviceStatus(item.id)) + `<div class="wifi-wire-summary"><strong>${e(catalog().equipment[item.kind].name)}</strong>
+      return (client ? ctx.clientInspector(item) : deviceStatus(item.id) + ctx.deviceInspector(item)) + `<div class="wifi-wire-summary"><strong>${e(catalog().equipment[item.kind].name)}</strong>
         <span>${used.length} of ${ports.length} ports in use${item.kind === 'access_switch' ? ' · data only' : ''}</span>
         ${used.length ? `<span class="wifi-ports-used">${used.map(port => e(port.id)).join(', ')}</span>` : ''}</div>
         <label>Equipment label<input data-wifi-wire-field="name" maxlength="60" value="${e(item.name)}" placeholder="Optional"></label>
@@ -512,6 +520,13 @@
       for (const group of groups) {
         const kept = current[group].filter(item => !removed.has(item.id));
         if (kept.length !== current[group].length) next[group] = kept;
+      }
+      if (next.equipment.some(device => removed.has(device.reservation?.router_id))) {
+        next.equipment = next.equipment.map(device => {
+          if (!removed.has(device.reservation?.router_id)) return device;
+          const { reservation, ...client } = device;
+          return client;
+        });
       }
       return { next, attached: removed.size - ids.size };
     }

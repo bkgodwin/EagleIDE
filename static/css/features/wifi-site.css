@@ -195,6 +195,8 @@ body.light-mode .wifi-workspace .network-save-state[data-kind="error"] { color: 
 .wifi-gear-pass { color: #3a2a1b; }
 .wifi-gear.is-selected .wifi-gear-body { stroke: #40abfa; stroke-width: 3; }
 .wifi-gear.is-overloaded .wifi-gear-body { fill: #a5222b; stroke: #ffb3b7; }
+.wifi-dhcp-badge circle { fill: #a5222b; stroke: #fff; }
+.wifi-dhcp-badge text { fill: #fff; font-size: 9px; font-weight: 800; }
 .wifi-gear-icon { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
 .wifi-cable-menu {
   position: absolute;
@@ -301,6 +303,12 @@ body.light-mode .wifi-workspace .network-save-state[data-kind="error"] { color: 
 .wifi-ping-controls button { justify-self: start; }
 .wifi-ping-controls output { font-size: 12px; color: var(--wifi-text); }
 .wifi-ping-controls output:empty { display: none; }
+.wifi-network-settings { margin: 0 0 9px; padding: 8px; border: 1px solid var(--wifi-edge); border-radius: 5px; }
+.wifi-network-settings summary { cursor: pointer; font-size: 13px; font-weight: 700; }
+.wifi-network-settings[open] summary { margin-bottom: 8px; }
+.wifi-vlan-list, .wifi-firewall-list { margin: 6px 0 10px; padding-left: 20px; font-size: 12px; overflow-wrap: anywhere; }
+.wifi-firewall-list li { margin-bottom: 7px; }
+#wifiCoverageSsid { max-width: 160px; }
 .wifi-pass-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; margin-bottom: 10px; }
 .wifi-pass-channel { display: grid; gap: 3px; border: 1px solid var(--wifi-edge); border-radius: 5px; padding: 5px 7px; font-size: 11px; color: var(--wifi-muted); overflow-wrap: anywhere; }
 .wifi-pass-channel.is-used { background: var(--wifi-raised); color: var(--wifi-text); }

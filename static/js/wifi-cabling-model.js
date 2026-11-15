@@ -83,7 +83,7 @@
     const occupancy = new Map(), usage = new Map(), inspections = new Map();
     const links = new Map([...devices.keys()].map(id => [id, []]));
     const activeLinks = new Map([...devices.keys()].map(id => [id, []]));
-    const internet = new Map();
+    const internet = new Map(), wan = new Map();
     let totalBends = 0;
     const wired = new Set(), powered = new Set(), poweredAps = new Set(), poe = new Map();
     function name(device) {
@@ -184,6 +184,7 @@
         inspections.set(cable.id, result);
         for (const [from, to] of [[cable.source, cable.target], [cable.target, cable.source]]) {
           links.get(from.device_id).push({ to: to.device_id, speed: result.speed, cable: cable.id, media: cable.media,
+            fromPort: from.port, toPort: to.port, wan: Boolean(findPort(from).wan || findPort(to).wan),
             length: result.length, points: from === cable.source ? result.points : [...result.points].reverse() });
           if (cable.media !== 'ethernet' || !findPort(from).poe) continue;
           if (!feeds.has(from.device_id)) feeds.set(from.device_id, []);
@@ -228,6 +229,12 @@
       const upstream = [...devices].filter(([id, device]) => device.kind === 'demarc' && activeLinks.get(id).length)
         .map(([id, device]) => ({ id, speed: catalog.isps[device.isp].speed, provider: catalog.isps[device.isp].name,
           rtt: catalog.isps[device.isp].rtt_ms, router: activeLinks.get(id)[0].to }));
+      for (const handoff of upstream) {
+        const speed = Math.min(handoff.speed, activeLinks.get(handoff.id)[0].speed);
+        if (speed > (wan.get(handoff.router)?.speed ?? 0)) {
+          wan.set(handoff.router, { ...handoff, speed });
+        }
+      }
       while (upstream.length) {
         upstream.sort((a, b) => b.speed - a.speed);
         const path = upstream.shift();
@@ -252,7 +259,7 @@
         : budget?.overloaded ? 'Shut down'
         : device.kind !== 'access_point' ? 'Local power'
         : poweredAps.has(id) ? 'PoE available' : wired.has(id) ? 'No PoE source' : 'Unwired';
-      return { speed, upstream, power, count: connected.length, poe: budget };
+      return { speed, upstream, isp: wan.get(id), power, count: connected.length, poe: budget };
     }
 
     function channels(id) {

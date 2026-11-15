@@ -24,16 +24,16 @@
     return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
   }
 
-  function create({ plan, cabling, escape, selected }) {
+  function create({ plan, cabling, escape, selected, networkInspector }) {
     const layer = document.getElementById('wifiPingLayer');
     const preferences = new Map(), summaries = new Map(), packets = new Set();
     let graph, sources, run, timer, frame;
 
     function network() {
       const layout = plan(), cables = cabling();
-      const next = [cables, layout.band, layout.openings, layout.decor];
+      const next = [cables, layout.ssids, layout.openings, layout.decor];
       if (!sources || next.some((source, i) => source !== sources[i])) {
-        graph = model.build(layout, cables, window.WifiSiteModel.coverageModel);
+        graph = model.build(layout, cables, window.WifiSiteModel.coverageModel, graph);
         sources = next;
       }
       return graph;
@@ -42,10 +42,10 @@
     function stats(id) {
       const summary = summaries.get(id);
       if (!summary) return '';
-      const { sent, received, total, min, max } = summary;
+      const { sent, received, total, min, max, reason } = summary;
       const loss = sent ? Math.round(100 * (sent - received) / sent) : 0;
       const time = received ? ` · RTT ${(total / received).toFixed(1)} ms avg (${min.toFixed(1)}–${max.toFixed(1)} ms)` : '';
-      return `${received} arrived · ${sent - received} dropped (${loss}%) · ${sent} sent${time}`;
+      return `${received} arrived · ${sent - received} dropped (${loss}%) · ${sent} sent${time}${reason ? ` · Last drop: ${reason}` : ''}`;
     }
 
     function refresh() {
@@ -57,29 +57,34 @@
       button.disabled = !target.value && run?.id !== id;
       target.disabled = run?.id === id;
       const output = document.getElementById('wifiPingStats');
-      const text = run?.id === id ? '' : stats(id);
+      const text = stats(id);
       if (output.textContent !== text) output.textContent = text;
     }
 
     function inspector(device) {
       const data = network();
-      const { speed, upstream, signal, ap } = data.clients.get(device.id);
+      const info = data.clients.get(device.id);
+      const { speed, upstream, signal, ap, band } = info;
       const internet = upstream ? `${speedName(upstream.speed)} · ${upstream.provider}` : 'Disconnected';
       const uplink = speed ? speedName(speed) : 'Disconnected';
       const targets = [...data.devices.values()].filter(other => other.id !== device.id &&
         (model.isClient(other) || other.kind === 'router'));
       const preferred = preferences.get(device.id);
-      const options = [[model.INTERNET, 'google.com'], ...targets.map(item => [item.id, cabling().name(item)])];
+      const options = [[model.INTERNET, `google.com (${model.INTERNET_IP})`], ...targets.map(item => {
+        const ip = data.clients.get(item.id)?.lease?.ip ?? data.routers.get(item.id)?.pool.gateway;
+        return [item.id, ip === undefined ? cabling().name(item) : `${cabling().name(item)} (${model.address(ip)})`];
+      })];
       const target = options.some(([id]) => id === preferred) ? preferred : model.INTERNET;
       return `<dl class="wifi-device-status"><div><dt>Uplink</dt><dd>${uplink}</dd></div>
         <div><dt>Internet</dt><dd>${escape(internet)}</dd></div>
         ${device.kind === 'phone' ? `<div><dt>Signal</dt><dd>${signal === undefined ? 'No signal' : `${Math.round(signal)} dBm · ${window.WifiSiteModel.signalLevel(signal).label}`}</dd></div>
-          <div><dt>Wi-Fi</dt><dd>${ap ? escape(cabling().name(data.devices.get(ap.id))) : 'Not associated'}</dd></div>` : ''}</dl>
+          <div><dt>Wi-Fi</dt><dd>${ap ? `${escape(cabling().name(data.devices.get(ap.id)))} · ${band} GHz` : 'Not associated'}</dd></div>` : ''}</dl>
+        ${networkInspector(device, info)}
         <div class="wifi-ping-controls">
           <label>Ping target<select id="wifiPingTarget"${run?.id === device.id ? ' disabled' : ''}>${options.map(([id, label]) =>
             `<option value="${escape(id)}"${id === target ? ' selected' : ''}>${escape(label)}</option>`).join('')}</select></label>
           <button type="button" class="wifi-control" id="wifiPingToggle">${run?.id === device.id ? 'Stop Ping' : 'Start Ping'}</button>
-          <output id="wifiPingStats" aria-live="polite">${run?.id === device.id ? '' : stats(device.id)}</output>
+          <output id="wifiPingStats" aria-live="polite">${escape(stats(device.id))}</output>
         </div>`;
     }
 
@@ -118,14 +123,14 @@
         summary.total += packet.rtt;
         summary.min = Math.min(summary.min, packet.rtt);
         summary.max = Math.max(summary.max, packet.rtt);
-      }
+      } else summary.reason = packet.reason;
       const node = document.createElementNS(svgNS, 'g');
       node.classList.add('wifi-ping-packet');
       node.style.display = 'none';
       node.innerHTML = '<g class="wifi-marker"><path d="M-8-5H8V5H-8ZM-8-5L0 1L8-5"/><text text-anchor="middle" y="5">💀</text></g>';
       layer.append(node);
-      const weights = packet.stages.map(stage => stage.points ? 52 + Math.min(155, stage.length * 4) : 0);
-      const scale = Math.min(1, 1500 / weights.reduce((sum, weight) => sum + weight, 0));
+      const weights = packet.stages.map(stage => stage.points ? 75 + Math.min(225, stage.length * 5.8) : 0);
+      const scale = Math.min(1, 2100 / weights.reduce((sum, weight) => sum + weight, 0));
       const stages = packet.stages.map((stage, i) => ({ ...stage, points: stage.points && stagePoints(stage.points),
         duration: stage.duration || weights[i] * scale }));
       packets.add({ node, start: performance.now(), stages, dropPoint: packet.dropPoint });
@@ -176,7 +181,7 @@
       summaries.clear();
     }
 
-    return { inspector, toggle, suspend, reset, setTarget: (id, target) => { preferences.set(id, target); refresh(); } };
+    return { network, inspector, toggle, suspend, reset, setTarget: (id, target) => { preferences.set(id, target); refresh(); } };
   }
 
   window.WifiSiteClients = { create };

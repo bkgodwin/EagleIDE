@@ -5,6 +5,7 @@
   const $ = id => document.getElementById(id);
   const model = window.WifiSiteModel;
   const cableModel = window.WifiCablingModel;
+  const clientModel = window.WifiSiteClientModel;
   const design = window.WifiSiteDesign;
   const view = window.WifiSiteView;
   const workspace = $('wifiWorkspace');
@@ -99,8 +100,15 @@
     hint, escape, id, fmt, display, tidy: cleanText, toMeters: value => model.metersFrom(value, current().units),
     scale: () => camera.scale, snap: drawingPoint, line: lineSvg, dot, pointFields, marker, roundPoint,
     clientInspector: item => clients.inspector(item),
+    deviceInspector: item => networkSettings.deviceInspector(item),
+    exhaustedRouters: () => [...clients.network().routers.values()].filter(router => router.available === 0).map(router => router.id),
   });
-  const clients = window.WifiSiteClients.create({ plan: current, cabling: () => wires.index(), escape, selected: () => selected });
+  const clients = window.WifiSiteClients.create({ plan: current, cabling: () => wires.index(), escape, selected: () => selected,
+    networkInspector: (item, info) => networkSettings.clientInspector(item, info) });
+  const networkSettings = window.WifiSiteNetwork.create({
+    plan: current, cabling: () => wires.index(), graph: clients.network, update, replace: replaceObject,
+    render: renderInspector, hint, escape, choices: choiceList, id, limits: () => options.limits,
+  });
   const structure = window.WifiSiteStructure.create({
     plan: current, project: () => session, walls: () => wires.index().walls, selected: () => selected,
     scale: () => camera.scale, id, escape, add: addObjects, replace: replaceObject, hint, line: lineSvg, dot,
@@ -116,9 +124,9 @@
 
   function blankPlan() {
     return {
-      schema_version: 5, title: 'Untitled Wi-Fi Site',
+      schema_version: 6, title: 'Untitled Wi-Fi Site',
       units: 'm', band: '5', walls: [], openings: [], background: null, access_points: [], labels: [], equipment: [], pass_throughs: [], cables: [],
-      decor: [], surfaces: [], background_color: null,
+      decor: [], surfaces: [], background_color: null, ssids: [{ ...clientModel.DEFAULT_SSID }], vlans: [],
     };
   }
 
@@ -183,11 +191,12 @@
   function startProject(plan, briefing) {
     const { id: siteId, revision, updated_at, scenario_briefing, ...layout } = plan;
     session = {
-      id: siteId || id('site'), revision: revision || 0, plan: { ...blankPlan(), ...layout, schema_version: 5 }, account,
+      id: siteId || id('site'), revision: revision || 0, plan: { ...blankPlan(), ...layout, schema_version: 6 }, account,
       sequence: 0, savedSequence: 0, undo: [], redo: [], briefing: briefing || scenario_briefing,
     };
     selected = previewAp = '';
     clients.reset();
+    networkSettings.reset();
     wires.reset();
     structure.reset();
     panelPoint = null;
@@ -198,6 +207,7 @@
     $('wifiScenarioButton').hidden = !session.briefing;
     $('wifiSaveSite').hidden = $('wifiCopySite').hidden = !options.canSave;
     $('wifiCoverage').checked = $('wifiSnap').checked = $('wifiShowCables').checked = true;
+    $('wifiCoverageSsid').value = '';
     $('wifiClearPaint').setAttribute('aria-pressed', 'false');
     $('wifiOrthogonal').checked = false;
     status(options.canSave ? (revision ? 'Saved' : 'New project') : 'Guest preview');
@@ -475,9 +485,13 @@
 
   function render({ inspector = true } = {}) {
     const plan = current();
+    clients.network();
     if (document.activeElement !== $('wifiSiteTitle')) $('wifiSiteTitle').value = plan.title;
     $('wifiUnits').value = plan.units;
     $('wifiBand').value = plan.band;
+    const ssidFilter = $('wifiCoverageSsid');
+    const filter = plan.ssids.some(ssid => ssid.id === ssidFilter.value) ? ssidFilter.value : '';
+    ssidFilter.innerHTML = choiceList([['', 'All SSIDs'], ...plan.ssids.map(ssid => [ssid.id, ssid.name])], filter);
     if (wallSource !== plan.walls) {
       wallSource = plan.walls;
       endpoints = plan.walls.flatMap(wall => [{ ...wall.a, wallId: wall.id }, { ...wall.b, wallId: wall.id }]);
@@ -520,7 +534,7 @@
   }
 
   function choiceList(entries, value) {
-    return entries.map(([key, label]) => `<option value="${key}"${key === value ? ' selected' : ''}>${label}</option>`).join('');
+    return entries.map(([key, label]) => `<option value="${escape(key)}"${key === value ? ' selected' : ''}>${escape(label)}</option>`).join('');
   }
 
   function renderObjectHeading({ kind, item }) {
@@ -536,6 +550,10 @@
       return;
     }
     const { kind, item } = match;
+    const sameObject = panel.dataset.objectId === item.id;
+    const openSections = sameObject ? [...panel.querySelectorAll('details[data-wifi-config][open]')]
+      .map(detail => detail.dataset.wifiConfig) : [];
+    panel.dataset.objectId = item.id;
     renderObjectHeading(match);
     let fields;
     if (wireKinds.includes(kind)) {
@@ -555,7 +573,7 @@
       const connection = cable ? `<div class="wifi-wire-summary"><strong>Ethernet connected</strong><span>${data.powered.has(cable) ? 'PoE available' : 'No PoE source on this path'}</span></div>`
         : `<div class="wifi-wire-summary"><strong>Unwired</strong><span>Connect this AP to PoE to enable coverage.</span></div>
           <label class="wifi-estimate-toggle"><input type="checkbox" id="wifiEstimateCoverage"${previewAp === item.id ? ' checked' : ''}> Estimated coverage</label>`;
-      fields = wires.deviceStatus(item.id) + connection + `<label>Access point label<input data-wifi-field="name" value="${escape(item.name)}" maxlength="60" placeholder="Optional"></label>
+      fields = wires.deviceStatus(item.id) + connection + networkSettings.apInspector(item) + `<label>Access point label<input data-wifi-field="name" value="${escape(item.name)}" maxlength="60" placeholder="Optional"></label>
         <label>Mount<select data-wifi-field="mount">${choiceList(Object.entries(model.MOUNTS), item.mount)}</select></label>
         <label>Transmit power adjustment (dB)<input type="number" min="-12" max="6" step="1" data-wifi-field="power_db" value="${item.power_db}"></label>
         ${item.wall_id ? wires.wallField(item) : pointFields(item)}${item.mount === 'wall' ? `<label>Direction in degrees (0° points right)<input type="number" min="0" max="360" step="1" data-wifi-field="angle" value="${item.angle}"></label>` : ''}`;
@@ -566,6 +584,9 @@
       <button class="wifi-control" id="wifiLocateObject" type="button">Locate</button>
       ${kind === 'cables' || kind === 'pass_throughs' || kind === 'surfaces' || item.wall_id ? '' : '<button class="wifi-control" id="wifiDuplicateObject" type="button">Duplicate</button>'}
       <button class="wifi-control" id="wifiDeleteObject" type="button">Delete</button></div>`;
+    for (const detail of panel.querySelectorAll('details[data-wifi-config]')) {
+      if (openSections.includes(detail.dataset.wifiConfig)) detail.open = true;
+    }
   }
 
   function materialEntries() {
@@ -583,6 +604,7 @@
     }
     if (input.dataset.wifiWireField) { wires.edit(match, input); return; }
     if (input.id === 'wifiPingTarget') { clients.setTarget(selected, input.value); return; }
+    if (networkSettings.change(match.item, input)) return;
     if (!input.dataset.wifiField) return;
     const { kind, item } = match;
     const field = input.dataset.wifiField;
@@ -1037,6 +1059,7 @@
     const shift = point => ({ x: coordinate(point.x + offset), y: coordinate(point.y + offset) });
     let copy = { ...item, id: id(kind === 'walls' ? 'wall' : kind === 'access_points' ? 'ap' : kind === 'decor' ? 'symbol' : 'label'),
       ...(item.a ? { a: shift(item.a), b: shift(item.b) } : shift(item)) };
+    if (clientModel.isClient(copy)) delete copy.reservation;
     if (kind === 'access_points' && item.mount === 'wall') {
       const anchored = anchorAccessPoint(copy, copy);
       if (anchored === copy) { hint('Place the duplicate using Equipment → Wall access point.'); return; }
@@ -1048,7 +1071,9 @@
   function transmittingAps() {
     const { wired, poweredAps } = wires.index();
     if (previewAp !== selected || wired.has(previewAp)) previewAp = '';
-    return current().access_points.filter(ap => poweredAps.has(ap.id) || ap.id === previewAp);
+    const { access_points, ssids, band } = current();
+    const available = access_points.filter(ap => poweredAps.has(ap.id) || ap.id === previewAp);
+    return clientModel.coverageAps(available, ssids, band, $('wifiCoverageSsid').value);
   }
 
   function refreshCoverage() {
@@ -1071,7 +1096,7 @@
     const estimate = model.coverageModel(plan.walls, accessPoints, plan.band, plan.openings, plan.decor);
     probe.result = estimate(probe.point, true);
     if (!probe.result) {
-      readout.textContent = 'Connect an access point to PoE or select an unwired AP and turn on Estimated coverage.';
+      readout.textContent = 'No AP is broadcasting a matching SSID on this band. Check the coverage filter, SSID settings, and PoE.';
       return;
     }
     const { ap, signal, distance, walls, alternate } = probe.result;
@@ -1582,6 +1607,7 @@
     $('wifiZoomIn').addEventListener('click', () => zoom(1.25));
     $('wifiZoomOut').addEventListener('click', () => zoom(0.8));
     $('wifiCoverage').addEventListener('change', scheduleScene);
+    $('wifiCoverageSsid').addEventListener('change', refreshCoverage);
     $('wifiBand').addEventListener('change', event => update({ ...current(), band: event.target.value }));
     $('wifiUnits').addEventListener('change', event => update({ ...current(), units: event.target.value }));
     $('wifiFinishWall').addEventListener('click', () => {
@@ -1597,6 +1623,7 @@
       if (event.target.id === 'wifiDuplicateObject') duplicateSelected();
       if (event.target.id === 'wifiPingToggle') clients.toggle(selected);
       const match = objectById(selected);
+      if (match && event.target.dataset.wifiNetwork) networkSettings.click(match.item, event.target);
       if (match?.kind === 'cables' && event.target.id === 'wifiRerouteCable') wires.reroute(match.item);
       if (match?.kind === 'cables' && event.target.id === 'wifiRemoveCableBend' && match.item.waypoints.length) {
         replaceObject('cables', { ...match.item, waypoints: match.item.waypoints.slice(0, -1) });
