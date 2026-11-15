@@ -816,7 +816,7 @@
         const point = points.get(id);
         if (!point) continue;
         const label = item.querySelector('.wifi-note-text, .wifi-ap-text, .wifi-equipment-text');
-        markerLabels.push({ id, point, label, note: label?.classList.contains('wifi-note-text'),
+        markerLabels.push({ id, point, label, node: item, note: label?.classList.contains('wifi-note-text'),
           width: label ? labelMetrics.measureText(label.textContent).width + 5 : 0 });
       }
     }
@@ -829,11 +829,16 @@
     markerScale = scale;
     // Panning preserves overlap because icons and labels have constant pixel sizes.
     const hideDevices = !$('wifiShowLabels').checked;
-    const blocked = markerLabels.map(({ point, note, id }) => {
+    const compactNotes = scale < 3.5 && current().labels.length > 50;
+    viewport.toggleAttribute('data-wifi-compact-notes', compactNotes);
+    const pin = ({ point, note, id }) => {
       const x = point.x * scale, y = point.y * scale;
       const radius = note ? 5 : 14;
       return { left: x - radius, right: x + radius, top: y - radius, bottom: y + radius, id };
-    });
+    };
+    const blocked = markerLabels.filter(item => !compactNotes || !item.note || item.id === selected).map(pin);
+    const overlaps = (box, id) => blocked.some(other => other.id !== id &&
+      other.left < box.right && other.right > box.left && other.top < box.bottom && other.bottom > box.top);
     const priority = item => item.id === selected ? 0 : item.note ? 1 : 2;
     for (const item of [...markerLabels].sort((a, b) => priority(a) - priority(b))) {
       if (!item.label) continue;
@@ -841,16 +846,21 @@
       const y = item.point.y * scale + Number(item.label.getAttribute('y'));
       const candidates = [[0, 0], [0, 24], [-item.width - 29, 0]];
       let placed = false;
-      if (item.note || !hideDevices) for (const [dx, dy] of candidates) {
-        const box = { left: x + dx, right: x + dx + item.width, top: y + dy - 12, bottom: y + dy + 3 };
-        if (item.id !== selected && blocked.some(other => other.id !== item.id &&
-            other.left < box.right && other.right > box.left && other.top < box.bottom && other.bottom > box.top)) continue;
-        item.label.setAttribute('transform', `translate(${dx} ${dy})`);
-        blocked.push(box);
-        placed = true;
-        break;
+      const compactNote = compactNotes && item.note && item.id !== selected;
+      const pinBox = compactNote ? pin(item) : null;
+      if ((item.note || !hideDevices) && (!pinBox || !overlaps(pinBox, item.id))) {
+        for (const [dx, dy] of candidates) {
+          const box = { left: x + dx, right: x + dx + item.width, top: y + dy - 12, bottom: y + dy + 3 };
+          if (item.id !== selected && overlaps(box, item.id)) continue;
+          item.label.setAttribute('transform', `translate(${dx} ${dy})`);
+          blocked.push(box);
+          if (pinBox) blocked.push(pinBox);
+          placed = true;
+          break;
+        }
       }
       item.label.style.visibility = placed ? '' : 'hidden';
+      if (item.note) item.node.classList.toggle('wifi-note-overlap', compactNote && !placed);
     }
   }
 

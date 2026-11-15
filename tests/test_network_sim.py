@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import threading
 import unittest
+from itertools import combinations
 from pathlib import Path
 
 from flask import Flask
@@ -105,17 +106,38 @@ class NetworkStoreTests(unittest.TestCase):
                          "Shop IDF", "Athletics IDF", "Wood shop", "Metal shop", "Bus rider pickup",
                          "Car rider pickup"}.issubset(names))
         self.assertTrue(scenario["briefing"])
+        self.assertTrue({"Learning courtyard", "Outdoor classrooms", "Visitor parking", "PE practice field",
+                         "Cafeteria terrace", "Main entrance plaza", "Covered bus waiting"}.issubset(names))
         for room in (item for item in site["labels"] if item["text"] in classrooms):
             floor = next(finish for finish in site["surfaces"]
-                         if finish["points"][0] == {"x": round(room["x"] - .6, 4),
+                         if finish["kind"] == "floor"
+                         and finish["points"][0] == {"x": round(room["x"] - .6, 4),
                                                      "y": round(room["y"] - 1.25, 4)})
             start, _, far, _ = floor["points"]
-            self.assertEqual((far["x"] - start["x"], far["y"] - start["y"]), (9, 9.5))
+            self.assertEqual((far["x"] - start["x"], far["y"] - start["y"]), (9.5, 9))
             seats = [item for item in site["decor"] if item["kind"] == "student_table"
                      and start["x"] < item["x"] < far["x"] and start["y"] < item["y"] < far["y"]]
             self.assertEqual(len(seats), 14)
         self.assertEqual(sum(item["kind"] == "basketball_court" for item in site["decor"]), 2)
         self.assertFalse(site["equipment"] or site["access_points"] or site["cables"] or site["pass_throughs"])
+
+    def test_high_school_idfs_are_distributed_and_served_by_real_corridors(self):
+        site = SCENARIOS["alder-ridge-high-school"]["site"]
+        closets = {label["text"]: label for label in site["labels"] if label["text"].endswith(" IDF")}
+        self.assertEqual(set(closets), {"West IDF", "East IDF", "Athletics IDF", "Shop IDF"})
+        for first, second in combinations(closets.values(), 2):
+            self.assertGreater(math.hypot(first["x"] - second["x"], first["y"] - second["y"]), 40)
+        walls = {item["id"]: item for item in site["walls"]}
+        for wall_id, expected_center in (
+            ("west-support-west", -6.15), ("east-support-west", -6.15),
+            ("athletics-support-entries", 152), ("shop-corridor-south", 146),
+        ):
+            wall = walls[wall_id]
+            axis = "x" if wall["a"]["x"] != wall["b"]["x"] else "y"
+            with self.subTest(corridor=wall_id):
+                centers = [wall["a"][axis] + opening["t"] * (wall["b"][axis] - wall["a"][axis])
+                           for opening in site["openings"] if opening["wall_id"] == wall_id]
+                self.assertTrue(any(math.isclose(center, expected_center, abs_tol=.001) for center in centers))
 
     def test_infra_campus_example_can_be_saved_and_all_aps_are_wired(self):
         root = Path(__file__).resolve().parents[1]

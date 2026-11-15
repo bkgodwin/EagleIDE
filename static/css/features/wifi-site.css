@@ -279,6 +279,8 @@ body.light-mode .wifi-workspace .network-save-state[data-kind="error"] { color: 
 .wifi-direction { stroke: #102d4b; paint-order: stroke; filter: drop-shadow(0 0 1px white); }
 .wifi-note-pin { fill: #ffd052; stroke: #253a4e; stroke-width: 1.5; }
 .wifi-note-pin.is-selected { stroke: #0867cd; stroke-width: 3; }
+.wifi-viewport[data-wifi-compact-notes] .wifi-note-overlap { display: none; }
+.wifi-viewport[data-wifi-compact-notes] .wifi-note-pin:not(.is-selected) { r: 3.4px; }
 .wifi-marker { transform: scale(var(--wifi-marker-scale, 1)); }
 .wifi-ghost, #wifiOverlay { pointer-events: none; }
 .wifi-ghost { opacity: .7; }
