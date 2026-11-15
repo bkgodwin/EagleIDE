@@ -1,7 +1,7 @@
 /* Render classroom coverage off the UI thread. */
 'use strict';
 
-importScripts('/static/js/wifi-site-model.js?v=20261115-infra-workspace-3');
+importScripts('/static/js/wifi-site-model.js?v=20261115-infra-school');
 
 let revision;
 let renderTile;

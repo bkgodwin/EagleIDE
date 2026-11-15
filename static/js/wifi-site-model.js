@@ -86,7 +86,8 @@
           || Math.min(a.y, b.y) > y + range || Math.max(a.y, b.y) < y - range) return [];
       return [{ a, dx: b.x - a.x, dy: b.y - a.y }];
     }));
-    const steps = Math.ceil(field_of_view / 4);
+    // Use an even number of steps so the central ray can anchor the aim handle.
+    const steps = 2 * Math.ceil(field_of_view / 8);
     const outline = [{ x, y }];
     for (let i = 0; i <= steps; i += 1) {
       const radians = (angle + field_of_view * (i / steps - 0.5)) * Math.PI / 180;
@@ -96,6 +97,14 @@
       outline.push({ x: roundDistance(x + dx * visible), y: roundDistance(y + dy * visible) });
     }
     return outline;
+  }
+
+  function cameraHeading(camera, start, pointer, deadZone, snap = false) {
+    if (distance(camera, pointer) < deadZone) return null;
+    const bearing = point => Math.atan2(point.y - camera.y, point.x - camera.x);
+    const degrees = camera.angle + (bearing(pointer) - bearing(start)) * 180 / Math.PI;
+    const step = snap ? 15 : 1;
+    return ((Math.round(degrees / step) * step % 360) + 360) % 360;
   }
 
   function estimateWith(transmitters) {
@@ -262,7 +271,7 @@
 
   const model = {
     MATERIALS, MOUNTS, OPENINGS, OBSTACLES, LEVELS, gridStep, displayDistance, metersFrom,
-    roundDistance, distance, cameraCoverage, coverageModel, signalLevel, signalColor, SAMPLES, PADDING,
+    roundDistance, distance, cameraCoverage, cameraHeading, coverageModel, signalLevel, signalColor, SAMPLES, PADDING,
     tileLevel, tileSize, tileStep, tileBounds, tileHasCoverage, heatAreas, createHeatSource,
   };
   if (typeof module === 'object' && module.exports) module.exports = model;

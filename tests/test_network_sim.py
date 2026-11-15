@@ -76,6 +76,47 @@ class NetworkStoreTests(unittest.TestCase):
                 self.assertTrue(any(opening["material"] == "none" for opening in plan["openings"]))
                 self.assertFalse(plan["equipment"] or plan["access_points"] or plan["cables"])
 
+    def test_house_garage_car_aligns_with_the_overhead_door_and_driveway(self):
+        site = SCENARIOS["maple-lane-house"]["site"]
+        walls = {wall["id"]: wall for wall in site["walls"]}
+        front, east = walls["garage-front"], walls["garage-east"]
+        self.assertAlmostEqual(front["b"]["x"] - front["a"]["x"], 6.5)
+        self.assertAlmostEqual(east["b"]["y"] - east["a"]["y"], 6.6)
+        overhead = next(opening for opening in site["openings"] if opening["wall_id"] == front["id"])
+        car = next(item for item in site["decor"] if item["kind"] == "car")
+        center = front["a"]["x"] + overhead["t"] * 6.5
+        self.assertEqual(car["angle"], 0)
+        self.assertLess(abs(car["x"] - center) + 1.85 / 2, overhead["width"] / 2)
+        self.assertLess(car["y"] + 4.55 / 2, front["a"]["y"])
+        self.assertGreater(car["y"] - 4.55 / 2, east["a"]["y"])
+        drive = next(finish for finish in site["surfaces"] if finish["kind"] == "pavement")
+        self.assertEqual(min(point["y"] for point in drive["points"]), front["a"]["y"])
+        self.assertLess(min(point["x"] for point in drive["points"]), car["x"])
+        self.assertLess(car["x"], max(point["x"] for point in drive["points"]))
+
+    def test_high_school_starter_has_scaled_classrooms_courts_and_no_network_gear(self):
+        scenario = SCENARIOS["alder-ridge-high-school"]
+        site = validate_wifi_site(scenario["site"])
+        names = {item["text"] for item in site["labels"]}
+        classrooms = {f"Classroom {wing + number}" for wing in (100, 200) for number in range(1, 9)}
+        self.assertEqual({name for name in names if name.startswith("Classroom ")}, classrooms)
+        self.assertTrue({"Main gym", "Auxiliary gym", "Cafeteria", "Counseling office", "Conference room",
+                         "Front office / reception", "Main IT / network room", "West IDF", "East IDF",
+                         "Shop IDF", "Athletics IDF", "Wood shop", "Metal shop", "Bus rider pickup",
+                         "Car rider pickup"}.issubset(names))
+        self.assertTrue(scenario["briefing"])
+        for room in (item for item in site["labels"] if item["text"] in classrooms):
+            floor = next(finish for finish in site["surfaces"]
+                         if finish["points"][0] == {"x": round(room["x"] - .6, 4),
+                                                     "y": round(room["y"] - 1.25, 4)})
+            start, _, far, _ = floor["points"]
+            self.assertEqual((far["x"] - start["x"], far["y"] - start["y"]), (9, 9.5))
+            seats = [item for item in site["decor"] if item["kind"] == "student_table"
+                     and start["x"] < item["x"] < far["x"] and start["y"] < item["y"] < far["y"]]
+            self.assertEqual(len(seats), 14)
+        self.assertEqual(sum(item["kind"] == "basketball_court" for item in site["decor"]), 2)
+        self.assertFalse(site["equipment"] or site["access_points"] or site["cables"] or site["pass_throughs"])
+
     def test_infra_campus_example_can_be_saved_and_all_aps_are_wired(self):
         root = Path(__file__).resolve().parents[1]
         script = """

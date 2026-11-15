@@ -3,7 +3,10 @@
 import re
 
 
-DECOR_TYPES = {'tree', 'desk', 'chair', 'table', 'bench', 'car', 'bed', 'lamp', 'parking_bay'}
+DECOR_TYPES = {
+    'tree', 'desk', 'chair', 'table', 'bench', 'car', 'bed', 'lamp', 'parking_bay',
+    'sofa', 'counter', 'tub', 'toilet', 'student_table', 'cafeteria_table', 'basketball_court', 'bus',
+}
 DESIGN_LIMITS = {'decor': 500, 'surfaces': 160, 'surface_vertices': 1600}
 _COLOR = re.compile(r'#[0-9a-fA-F]{6}\Z')
 

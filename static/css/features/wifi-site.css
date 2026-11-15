@@ -167,6 +167,13 @@ body.light-mode .wifi-workspace .network-save-state[data-kind="error"] { color: 
 .wifi-camera-cone { fill: #4689b5; fill-opacity: .18; stroke: #27688f; stroke-opacity: .60; stroke-width: 1.2; vector-effect: non-scaling-stroke; pointer-events: none; }
 .wifi-camera-cone.is-preview { fill-opacity: .07; stroke-dasharray: 4 4; }
 #wifiCameraLayer[hidden] { display: none; }
+.wifi-camera-aim-line, .wifi-camera-aim-cross { stroke: #0a5c90; stroke-width: 1.6; vector-effect: non-scaling-stroke; pointer-events: none; }
+.wifi-camera-aim-line { stroke-dasharray: 4 3; opacity: .75; }
+.wifi-camera-aim-dot { fill: #eff9ff; stroke: #0a5c90; stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none; }
+#wifiOverlay .wifi-camera-aim-hit { fill: transparent; pointer-events: all; cursor: grab; }
+#wifiOverlay [data-wifi-rotate]:hover .wifi-camera-aim-dot { fill: #bce7ff; }
+.wifi-viewport[data-wifi-camera-rotating] .wifi-stage,
+.wifi-viewport[data-wifi-camera-rotating] #wifiOverlay .wifi-camera-aim-hit { cursor: grabbing; }
 .wifi-window-rail { stroke: #08738b; stroke-width: 1.35px; }
 .wifi-opening-hit { stroke: transparent; stroke-width: 18px; pointer-events: stroke; }
 .wifi-opening.is-selected .wifi-opening-gap { stroke: #2284c1; stroke-opacity: .55; stroke-width: 6px; }

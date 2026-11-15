@@ -19,7 +19,7 @@
     $('wifiCoverageStatus').hidden = !updating;
   });
   const endpoint = '/api/network/wifi-sites';
-  const schemaVersion = 7;
+  const schemaVersion = 8;
   const wireKinds = window.WifiSiteCabling.kinds;
   const kinds = ['walls', 'openings', 'access_points', 'labels', 'decor', 'surfaces', ...wireKinds];
   const panels = { plan: $('wifiPlanPanel'), background: $('wifiBackgroundPanel'), signal: $('wifiSignalPanel'), object: $('wifiObjectPanel') };
@@ -161,6 +161,7 @@
   }
 
   function changeTool(value) {
+    cancelCameraRotation();
     if (tool === 'background-scale' && value !== 'background-scale') structure.resetCalibration();
     const selecting = value === 'select' || value === 'marquee';
     const hadPreview = !!previewAp;
@@ -451,6 +452,7 @@
     const from = backward ? session.undo : session.redo;
     const to = backward ? session.redo : session.undo;
     if (!from.length) return;
+    cancelCameraRotation();
     wires.cancel();
     surfaceDraft = [];
     to.push(session.plan);
@@ -941,6 +943,21 @@
       parts.push(dot(wall.a, 6, 'wifi-handle', `${attr} data-wifi-end="a"`),
         dot(wall.b, 6, 'wifi-handle', `${attr} data-wifi-end="b"`));
     }
+    const aimedCamera = tool === 'select' && match?.item.kind === 'poe_camera' ? match.item : null;
+    const rotating = Boolean(drag?.rotate && ghost);
+    const aimCamera = rotating ? ghost : aimedCamera;
+    const aim = wires.cameraAim(aimCamera, rotating);
+    if (aim && (!ghost || rotating)) {
+      const angle = aimCamera.angle * Math.PI / 180;
+      const gap = Math.min(128, Math.max(28, model.distance(aimCamera, aim) * camera.scale * .70)) / camera.scale;
+      const handle = { x: aimCamera.x + Math.cos(angle) * gap, y: aimCamera.y + Math.sin(angle) * gap };
+      parts.push(lineSvg(aimCamera, handle, 'class="wifi-camera-aim-line"'),
+        `<g data-wifi-object="${escape(aimCamera.id)}" data-wifi-rotate>
+          <title>Drag to rotate camera</title>${dot(handle, 17, 'wifi-camera-aim-hit')}${dot(handle, 8, 'wifi-camera-aim-dot')}
+          ${lineSvg({ x: handle.x - 4 / camera.scale, y: handle.y }, { x: handle.x + 4 / camera.scale, y: handle.y }, 'class="wifi-camera-aim-cross"')}
+          ${lineSvg({ x: handle.x, y: handle.y - 4 / camera.scale }, { x: handle.x, y: handle.y + 4 / camera.scale }, 'class="wifi-camera-aim-cross"')}
+        </g>`);
+    }
     if (ghost && drag.match.kind === 'decor') parts.push(design.decorMarkup(ghost, '', 'wifi-ghost'));
     else if (ghost && drag.match.kind === 'surfaces') parts.push(design.surfaceMarkup(ghost, 'opacity=".65"'));
     else if (ghost && drag.match.kind === 'openings') parts.push(structure.markup(ghost, true));
@@ -956,7 +973,7 @@
     if (tool === 'decor' && (hover || keyboardPoint)) {
       parts.push(design.decorMarkup({ kind: $('wifiDecorType').value, ...(hover || keyboardPoint), angle: 0 }, '', 'wifi-ghost'));
     }
-    parts.push(wires.overlay(ghost, drag?.match?.kind));
+    parts.push(wires.overlay(rotating ? null : ghost, drag?.match?.kind));
     parts.push(structure.calibrationMarkup());
     if (probe) {
       if (probe.result) parts.push(lineSvg(probe.result.ap, probe.point, 'class="wifi-probe-path"'));
@@ -965,7 +982,7 @@
     if (measure) parts.push(lineSvg(measure.a, measure.b, 'class="wifi-preview-line"'), dot(measure.b, 4, 'wifi-cursor'));
     const start = drag?.draw ? drag.start : anchor;
     const end = drag?.draw ? drag.point : hover || keyboardPoint;
-    let readout = measure ? `Distance: ${fmt(model.distance(measure.a, measure.b))}` : '';
+    let readout = rotating ? `Camera direction: ${ghost.angle}°` : measure ? `Distance: ${fmt(model.distance(measure.a, measure.b))}` : '';
     if (start) {
       parts.push(dot(start, 5, 'wifi-cursor'));
       if (end) {
@@ -1330,6 +1347,10 @@
   function movePreview(gesture, point, shift) {
     const { item, kind } = gesture.match;
     const { end, raw: start, bend } = gesture;
+    if (gesture.rotate) {
+      const angle = model.cameraHeading(item, start, point, 8 / gesture.camera.scale, shift);
+      return angle === null ? gesture.preview || item : { ...item, angle };
+    }
     if (item.waypoints) return bend === undefined ? item : wires.moveBend(item, bend, point, shift);
     const dx = point.x - start.x, dy = point.y - start.y;
     const aim = part => ({ x: part.x + dx, y: part.y + dy });
@@ -1381,6 +1402,17 @@
     gesture?.sourceNode?.classList.remove('wifi-moving-source');
     for (const node of gesture?.sourceNodes || []) node.classList.remove('wifi-moving-source');
     viewport.removeAttribute('data-wifi-moving');
+    viewport.removeAttribute('data-wifi-camera-rotating');
+  }
+
+  function cancelCameraRotation() {
+    if (!drag?.rotate) return false;
+    const { id } = drag;
+    endMove(drag);
+    drag = null;
+    if (viewport.hasPointerCapture(id)) viewport.releasePointerCapture(id);
+    scheduleScene();
+    return true;
   }
 
   function touchPair() {
@@ -1419,15 +1451,16 @@
     const raw = view.screenToWorld(camera, screen);
     const pan = tool === 'pan' || spacePan || event.button === 1;
     const draw = !pan && drawTools.has(tool) && !anchor;
-    const marquee = !pan && (tool === 'marquee' || (tool === 'select' && event.shiftKey));
     const object = hit && objectById(hit.dataset.wifiObject);
-    const group = !pan && (marquee || tool === 'select') &&
+    const rotate = !pan && tool === 'select' && hit?.hasAttribute('data-wifi-rotate') && object?.item.kind === 'poe_camera';
+    const marquee = !pan && !rotate && (tool === 'marquee' || (tool === 'select' && event.shiftKey));
+    const group = !pan && !rotate && (marquee || tool === 'select') &&
       (hit ? selection.has(hit.dataset.wifiObject) : bundle && wires.bundleHas(Number(bundle.dataset.wifiBundle), selection));
     const movable = match => match && !match.item.wall_id && (match.kind === 'equipment' ||
       (match.kind === 'access_points' && match.item.mount !== 'wall') || match.kind === 'decor');
     const groupOrigin = group && (movable(object) ? object : [...selection].map(objectById).find(movable))?.item;
     drag = {
-      id: event.pointerId, screen, camera, raw, pan, draw, marquee, group, groupOrigin,
+      id: event.pointerId, screen, camera, raw, pan, draw, rotate, marquee, group, groupOrigin,
       start: draw ? positionFor(raw, null).point : null,
       match: !pan && !marquee && !group && tool === 'select' ? object : null,
       hit: hit?.dataset.wifiObject,
@@ -1471,7 +1504,8 @@
     if (drag.id !== event.pointerId) return;
     const dx = screen.x - drag.screen.x, dy = screen.y - drag.screen.y;
     if (!drag.moved && Math.hypot(dx, dy) < 4) return;
-    if (!drag.moved && drag.match) startMove(drag);
+    if (!drag.moved && drag.rotate) viewport.setAttribute('data-wifi-camera-rotating', '');
+    else if (!drag.moved && drag.match) startMove(drag);
     if (!drag.moved && drag.group) {
       drag.sourceNodes = [...stage.querySelectorAll('[data-wifi-object]')]
         .filter(node => selection.has(node.dataset.wifiObject));
@@ -1520,7 +1554,11 @@
     }
     if (event.type === 'pointercancel' || gesture.pan) return;
     const raw = view.screenToWorld(camera, screenPoint(event));
-    if (gesture.moved && gesture.group) {
+    if (gesture.rotate) {
+      if (!gesture.moved) return;
+      const aimed = movePreview(gesture, raw, event.shiftKey);
+      if (aimed.angle !== gesture.match.item.angle) replaceObject('equipment', aimed);
+    } else if (gesture.moved && gesture.group) {
       update(moveGroup(gesture, raw));
     } else if (gesture.marquee || gesture.group) {
       if (gesture.moved) selectWithin(gesture.raw, raw, event.shiftKey);
@@ -1582,7 +1620,7 @@
       if (selection.size) removeSelection();
       else removeObject();
     } else if (event.key === 'Escape') {
-      if (closeToolMenus()) return;
+      if (cancelCameraRotation() || closeToolMenus()) return;
       if (selection.size) { setSelection(); hint(); scheduleScene(); return; }
       if (surfaceDraft.length) { surfaceDraft = []; hover = null; hint(); scheduleScene(); return; }
       if (wires.cancel()) return;
@@ -1691,7 +1729,7 @@
     });
     workspace.querySelectorAll('[data-wifi-close-panel]').forEach(button => {
       button.addEventListener('click', () => {
-        if (openPanel === 'object') selectObject('');
+        if (openPanel === 'object' && objectById(selected)?.item.kind !== 'poe_camera') selectObject('');
         else {
           if (tool.startsWith('background-')) changeTool('select');
           showPanel('');

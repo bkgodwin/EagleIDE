@@ -193,7 +193,7 @@
       pending = { ...job, key: tileKey(tile) };
       if (!worker && !workerFailed) {
         try {
-          const source = new Worker('/static/js/wifi-site-worker.js?v=20261115-infra-workspace-3');
+          const source = new Worker('/static/js/wifi-site-worker.js?v=20261115-infra-school');
           worker = source;
           source.onmessage = ({ data }) => { if (worker === source) tileReady(data); };
           source.onerror = () => {
