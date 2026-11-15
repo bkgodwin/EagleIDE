@@ -117,7 +117,7 @@ def _community_center():
     activity_split = (1225 + 6 * (1132 - 1125) / (1182 - 1125), 1132)
     wall('activity-foyer-lower', (1225, 1125), activity_split, material='brick')
     wall('activity-foyer-doors', activity_split, (1231, 1182), doors=[(1136, 1179, 'wood')], material='brick')
-    wall('activity-split', activity_split, (1449, 1132), doors=[(1290, 1360, 'wood')], material='drywall')
+    wall('activity-split', activity_split, (1449, 1132), doors=[(1290, 1360, 'none')], material='drywall')
 
     label('gym-label', (1060, 580), 'Gymnasium / events')
     label('seating-label', (1415, 588), 'Seating')
@@ -180,6 +180,117 @@ def _community_center():
                                'access_points': [], 'decor': decor, 'surfaces': surfaces})
 
 
+def _starter(title, walls, rooms, furniture, surfaces=()):
+    """Build an unwired starter from meter-based wall and furnishing schedules."""
+    def point(x, y):
+        return {'x': x, 'y': y}
+
+    openings, segments = [], []
+    for wall_id, a, b, material, *cuts in walls:
+        segments.append({'id': wall_id, 'a': point(*a), 'b': point(*b), 'material': material})
+        length = math.dist(a, b)
+        for i, (kind, finish, center, width) in enumerate(cuts):
+            openings.append({'id': f'{wall_id}-{i + 1}', 'wall_id': wall_id, 'kind': kind,
+                             'material': finish, 't': center / length, 'width': width})
+
+    return validate_wifi_site({
+        'schema_version': WIFI_SCHEMA_VERSION, 'title': title, 'units': 'm', 'band': '5',
+        'walls': segments, 'openings': openings, 'access_points': [],
+        'labels': [{'id': f'room-{i}', **point(x, y), 'text': text}
+                   for i, (x, y, text) in enumerate(rooms)],
+        'decor': [{'id': f'fixture-{i}', **point(x, y), 'kind': kind, 'angle': angle}
+                  for i, (kind, x, y, angle) in enumerate(furniture)],
+        'surfaces': [{'id': f'finish-{i}', 'kind': kind, 'color': color,
+                      'points': [point(x1, y1), point(x2, y1), point(x2, y2), point(x1, y2)]}
+                     for i, (kind, color, x1, y1, x2, y2) in enumerate(surfaces)],
+    })
+
+
+def _coffee_shop():
+    walls = [
+        ('front-glazing', (0, 11), (15, 11), 'brick',
+         ('window', 'coated_glass', 2.7, 4), ('door', 'glass', 7, 1.8), ('window', 'coated_glass', 11.6, 4)),
+        ('west-exterior', (0, 0), (0, 11), 'brick', ('window', 'glass', 8.5, 2.4)),
+        ('east-exterior', (15, 0), (15, 11), 'brick', ('door', 'glass', 8.6, 1.6)),
+        ('rear-exterior', (0, 0), (15, 0), 'brick', ('door', 'metal', 3.2, 1.15)),
+        ('service-partition', (0, 4), (15, 4), 'drywall',
+         ('door', 'none', 4.2, 1.3), ('door', 'wood', 9.1, 1), ('door', 'wood', 12.7, 1.05)),
+        ('prep-office', (7.5, 0), (7.5, 4), 'drywall'),
+        ('office-restroom', (10.9, 0), (10.9, 4), 'drywall'),
+        ('stockroom', (4.8, 0), (4.8, 2.4), 'drywall', ('door', 'wood', 1.1, .85)),
+        ('stockroom-front', (4.8, 2.4), (7.5, 2.4), 'drywall'),
+        ('patio-screen', (15, 5), (21, 5), 'wood'),
+    ]
+    rooms = [
+        (1, 1.2, 'Prep and wash'), (5.25, 1.2, 'Stock'), (8.1, 1.2, 'Office / network shelf'),
+        (11.7, 1.2, 'Accessible WC'), (1, 4.8, 'Service counter'), (8, 5, 'Pickup'),
+        (1, 7.1, 'Indoor seating'), (15.8, 6.1, 'Patio seating'),
+        (1, 12.7, 'Street entrance'), (1, -0.8, 'Delivery lane'),
+    ]
+    seating = [(2.4, 8.5), (4.9, 8.5), (10.7, 8.5), (13, 8.5),
+               (17, 7.5), (19.5, 7.5), (17, 10), (19.5, 10)]
+    furniture = [('desk', 2, 5.6, 0), ('desk', 4.1, 5.6, 0), ('desk', 6.2, 5.6, 0),
+                 ('desk', 9.5, 2.3, 0), ('bench', 1.4, 2.1, 0), ('bench', 12.8, 6.9, 0),
+                 ('tree', 21.2, 10, 0), ('tree', 20.7, 4.3, 0), ('lamp', 15.7, 11.7, 0)]
+    for x, y in seating:
+        furniture.extend([('table', x, y, 0), ('chair', x, y - .8, 180), ('chair', x, y + .8, 0)])
+    surfaces = [
+        ('floor', '#eee3d1', 0, 4, 15, 11), ('floor', '#e9d4bb', 0, 4, 7.5, 6.3),
+        ('floor', '#dbe3df', 0, 0, 7.5, 4), ('floor', '#dbe6ed', 7.5, 0, 10.9, 4),
+        ('floor', '#e3e5ee', 10.9, 0, 15, 4), ('pavement', '#e4d9c9', 15, 5, 21, 11.8),
+        ('sidewalk', '#e5e7e9', -1, 11, 21, 13.5), ('pavement', '#d6dce1', -1, -2, 15, 0),
+    ]
+    return _starter('Juniper & Main Coffee', walls, rooms, furniture, surfaces)
+
+
+def _three_bedroom_house():
+    walls = [
+        ('front', (0, 11), (15, 11), 'brick', ('window', 'glass', 2.7, 2.8),
+         ('door', 'wood', 6.6, 1), ('door', 'metal', 11.5, 4.5)),
+        ('back', (0, 0), (15, 0), 'brick', ('window', 'glass', 2.5, 2),
+         ('window', 'glass', 7.4, 1.8), ('window', 'glass', 12.4, 1.8)),
+        ('west', (0, 0), (0, 11), 'brick', ('door', 'glass', 7.6, 1.7)),
+        ('east', (15, 0), (15, 11), 'brick', ('window', 'glass', 2.2, 1.9)),
+        ('bedroom-hall', (0, 4.2), (15, 4.2), 'drywall',
+         ('door', 'wood', 4.4, .9), ('door', 'wood', 6.3, .9), ('door', 'wood', 10.9, .9)),
+        ('bedroom-primary-divider', (5.2, 0), (5.2, 4.2), 'drywall'),
+        ('bedroom-divider', (10.1, 0), (10.1, 4.2), 'drywall'),
+        ('ensuite-wall', (0, 2.2), (2.15, 2.2), 'drywall', ('door', 'wood', 1.3, .8)),
+        ('ensuite-side', (2.15, 2.2), (2.15, 4.2), 'drywall'),
+        ('hall-living', (0, 5.6), (9.3, 5.6), 'drywall',
+         ('door', 'none', 3.65, 2.8), ('door', 'none', 6.75, 1.5), ('door', 'wood', 8.55, .85)),
+        ('hall-utility', (9.3, 5.6), (15, 5.6), 'drywall', ('door', 'wood', 1.35, .85)),
+        ('utility-garage', (9.3, 7.9), (15, 7.9), 'drywall'),
+        ('garage-house', (9.3, 5.6), (9.3, 11), 'drywall', ('door', 'wood', 3.3, .9)),
+        ('bath-side', (7.8, 5.6), (7.8, 7.9), 'drywall'),
+        ('bath-front', (7.8, 7.9), (9.3, 7.9), 'drywall'),
+    ]
+    rooms = [
+        (2.5, 1, 'Primary bedroom'), (.25, 3.6, 'En suite'), (6, 1, 'Bedroom 2'),
+        (11, 1, 'Bedroom 3'), (7, 5.15, 'Hall'), (1, 6.4, 'Kitchen'),
+        (4.55, 7.1, 'Dining'), (1, 10.5, 'Living'), (6, 10.35, 'Entry'),
+        (8, 6.5, 'Bath'), (10, 6.45, 'Laundry / utility'), (11, 8.7, 'Garage'),
+        (-3.8, 7.8, 'Back deck'), (10.9, 13.45, 'Driveway'),
+    ]
+    furniture = [('bed', 3.45, 2.45, 90), ('bed', 8.4, 2.35, 90), ('bed', 13.15, 2.35, 90),
+                 ('desk', 6.8, 2.4, 0), ('desk', 11.5, 2.4, 0), ('desk', 1.55, 7, 0),
+                 ('bench', 1.5, 9.5, 90), ('bench', 3.15, 9.9, 0), ('table', 5.15, 8.2, 0),
+                 ('chair', 5.15, 7.5, 180), ('chair', 5.15, 9, 0),
+                 ('car', 12.3, 9.5, 90), ('table', -2.25, 8.75, 0), ('chair', -2.25, 9.5, 0),
+                 ('tree', -4.5, 4.2, 0), ('tree', -3, 11.6, 0), ('lamp', 6.65, 11.5, 0)]
+    surfaces = [
+        ('floor', '#ebe4d9', 0, 0, 15, 4.2), ('floor', '#dbe7ec', 0, 2.2, 2.15, 4.2),
+        ('floor', '#e9dbc7', 0, 4.2, 15, 5.6), ('floor', '#eee4d6', 0, 5.6, 9.3, 11),
+        ('floor', '#dbe7ec', 7.8, 5.6, 9.3, 7.9), ('floor', '#dae3e7', 9.3, 5.6, 15, 7.9),
+        ('floor', '#d9dadd', 9.3, 7.9, 15, 11), ('sidewalk', '#dfc9ad', -3.8, 6.7, 0, 10.6),
+        ('pavement', '#d0d8de', 9.5, 11, 15, 14), ('sidewalk', '#e4ddd2', 5.5, 11, 7.6, 13.75),
+        ('landscape', '#dce9d5', -5.6, -1, 0, 13.3),
+    ]
+    # Place the deck after the lawn so its outline stays visible.
+    surfaces.append(surfaces.pop(7))
+    return _starter('Maple Lane House', walls, rooms, furniture, surfaces)
+
+
 SCENARIOS = {
     'port-adelaide-community-center': {
         'id': 'port-adelaide-community-center',
@@ -195,6 +306,36 @@ SCENARIOS = {
         'plan_note': 'Adapted from the Lefevre Community Stadium floor plan and scaled from its 38.3 m gym wall. '
                      'Service rooms, parking, landscaping, and wall materials are modeled for this exercise.',
         'site': _community_center(),
+    },
+    'juniper-main-coffee': {
+        'id': 'juniper-main-coffee',
+        'title': 'Juniper & Main Coffee',
+        'description': 'Design wired service, guest Wi-Fi, and PoE for a busy café with a sidewalk patio.',
+        'briefing': 'Juniper & Main is opening in a brick storefront beside a bus stop. The morning line forms '
+                    'at the front counter while regulars work inside and on the patio. The owner needs wired '
+                    'checkout, an office phone, and camera coverage of the public entrance and delivery lane. '
+                    'The network shelf and ISP handoff will sit in the back office.',
+        'traits': ['Keep checkout and office traffic separate from guest Wi-Fi.',
+                   'Check signal at the far patio tables with the glass door closed.',
+                   'Plan PoE capacity and aim cameras away from the restroom.'],
+        'plan_note': 'The furnished floor plan has no network equipment. The staff opening behind the counter '
+                     'has no door material. The public entrance and patio door are glass.',
+        'site': _coffee_shop(),
+    },
+    'maple-lane-house': {
+        'id': 'maple-lane-house',
+        'title': 'Maple Lane House',
+        'description': 'Plan a home network for three bedrooms, a garage, and a back deck.',
+        'briefing': 'A family in a single-story home wants reliable video calls from the desk in bedroom 2, '
+                    'streaming in the living room, and coverage on the back deck. The ISP enters in the laundry '
+                    'and utility room. Plan wired drops for fixed equipment and a ceiling-mounted PoE camera '
+                    'covering the garage entrance from inside.',
+        'traits': ['Compare signal on both bands in the bedrooms and on the deck.',
+                   'Use the central hall and open living area when comparing AP locations.',
+                   'Check how brick, glass, and the garage door affect coverage.'],
+        'plan_note': 'The starter includes furniture, two bathrooms, a utility room, an attached garage, '
+                     'and open passages from the hall to the kitchen and living area.',
+        'site': _three_bedroom_house(),
     },
 }
 

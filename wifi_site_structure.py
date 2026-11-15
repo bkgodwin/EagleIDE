@@ -9,7 +9,7 @@ from functools import lru_cache
 from PIL import Image
 
 
-OPENING_MATERIALS = {"door": ("wood", "glass", "metal"), "window": ("glass", "coated_glass")}
+OPENING_MATERIALS = {"door": ("none", "wood", "glass", "metal"), "window": ("glass", "coated_glass")}
 MAX_BACKGROUND_BYTES = 450_000
 
 

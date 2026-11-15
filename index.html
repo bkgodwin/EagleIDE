@@ -529,7 +529,7 @@
 
     <section class="network-workspace wifi-workspace" id="wifiWorkspace" aria-label="Infra Sim" hidden>
       <header class="network-toolbar wifi-project-toolbar">
-        <button class="btn secondary" id="wifiSiteBack" type="button" aria-label="Back to Network Lab">← Infra Sim</button>
+        <button class="btn secondary" id="wifiSiteBack" type="button" aria-label="Back to Network Lab">‹ Network Lab</button>
         <label class="network-title-field"><span>Site name</span><input id="wifiSiteTitle" maxlength="120" value="Untitled Wi-Fi Site"></label>
         <div class="network-toolbar-group network-toolbar-end">
           <span class="network-save-state" id="wifiSaveStatus" role="status"></span>
@@ -544,39 +544,66 @@
         <div class="wifi-tool-group" role="group" aria-label="Floor plan tools">
           <button class="wifi-control" type="button" data-wifi-tool="select">Select</button>
           <button class="wifi-control" type="button" data-wifi-tool="marquee">Box Select</button>
-          <button class="wifi-control" type="button" id="wifiDeleteSelected" hidden>Delete Selected</button>
           <button class="wifi-control" type="button" data-wifi-tool="pan">Pan</button>
+        </div>
+        <details class="wifi-toolbar-menu" data-wifi-menu>
+          <summary class="wifi-control">Draw</summary>
+          <div class="wifi-toolbar-dropdown" role="group" aria-label="Drawing tools">
           <button class="wifi-control" type="button" data-wifi-tool="wall">Wall</button>
           <button class="wifi-control" type="button" data-wifi-tool="room">Room</button>
           <button class="wifi-control" type="button" data-wifi-tool="door">Door</button>
           <button class="wifi-control" type="button" data-wifi-tool="window">Window</button>
           <button class="wifi-control" type="button" data-wifi-tool="label">Note</button>
-          <button class="wifi-control" type="button" data-wifi-tool="measure">Measure</button>
-          <button class="wifi-control" type="button" data-wifi-tool="probe">Check Signal</button>
-        </div>
-        <div class="wifi-tool-group wifi-design-tools" role="group" aria-label="Design tools">
+          </div>
+        </details>
+        <details class="wifi-toolbar-menu" data-wifi-menu>
+          <summary class="wifi-control">Design</summary>
+          <div class="wifi-toolbar-dropdown" role="group" aria-label="Design tools">
           <button class="wifi-control" type="button" data-wifi-tool="decor">Symbols</button>
           <button class="wifi-control" type="button" data-wifi-tool="paint">Paint Bucket</button>
           <button class="wifi-control" type="button" data-wifi-tool="surface">Draw Surface</button>
-        </div>
+          </div>
+        </details>
         <div class="wifi-tool-group wifi-wiring-tools" role="group" aria-label="Cabling tools">
           <button class="wifi-control" type="button" data-wifi-tool="equipment"><span data-wifi-icon="core_switch" aria-hidden="true"></span>Equipment</button>
           <button class="wifi-control" type="button" data-wifi-tool="cable"><span data-wifi-icon="cable" aria-hidden="true"></span>Cable</button>
           <button class="wifi-control" type="button" data-wifi-tool="pass"><span data-wifi-icon="pass" aria-hidden="true"></span>Pass-through</button>
         </div>
-        <div class="wifi-tool-group" role="group" aria-label="Editing and coverage">
+        <div class="wifi-tool-group wifi-tools-right" role="group" aria-label="Edit and view">
+          <button class="wifi-control" id="wifiUndo" type="button" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
+          <button class="wifi-control" id="wifiRedo" type="button" title="Redo (Ctrl+Shift+Z)" aria-label="Redo">↷</button>
+          <details class="wifi-toolbar-menu" data-wifi-menu>
+            <summary class="wifi-control">View</summary>
+            <div class="wifi-toolbar-dropdown wifi-view-menu">
+              <button class="wifi-control" type="button" data-wifi-tool="measure">Measure</button>
+              <button class="wifi-control" type="button" data-wifi-tool="probe">Check Signal</button>
+              <button class="wifi-control" type="button" data-wifi-panel-button="plan" aria-expanded="false" aria-controls="wifiPlanPanel">Plan Settings</button>
+              <button class="wifi-control" type="button" data-wifi-panel-button="background" aria-expanded="false" aria-controls="wifiBackgroundPanel">Background Image</button>
+              <label class="wifi-toggle"><input type="checkbox" id="wifiShowCables" checked> Cables</label>
+              <label class="wifi-toggle"><input type="checkbox" id="wifiShowCameras" checked> Camera coverage</label>
+              <label class="wifi-toggle"><input type="checkbox" id="wifiShowLabels" checked> Device labels</label>
+              <label class="wifi-toggle" title="Snap to the grid or a nearby wall endpoint"><input type="checkbox" id="wifiSnap" checked> Snap to grid</label>
+            </div>
+          </details>
+          <details class="wifi-toolbar-menu" data-wifi-menu>
+            <summary class="wifi-control">Wi-Fi</summary>
+            <div class="wifi-toolbar-dropdown wifi-view-menu">
+              <label class="wifi-toggle"><input type="checkbox" id="wifiCoverage" checked> Wi-Fi coverage</label>
+              <label>SSID<select id="wifiCoverageSsid" aria-label="Coverage SSID"><option value="">All SSIDs</option></select></label>
+              <label>Band<select id="wifiBand"><option value="2.4">2.4 GHz</option><option value="5">5 GHz</option></select></label>
+              <label>Overlay opacity<input type="range" id="wifiCoverageOpacity" min="20" max="100" value="75"></label>
+            </div>
+          </details>
+        </div>
+        <div class="wifi-tool-group wifi-tool-options" id="wifiToolOptions" aria-label="Drawing and selection settings" hidden>
           <label id="wifiMaterialField">Material<select id="wifiMaterial"></select></label>
+          <label id="wifiDoorMaterialField" hidden>Material<select id="wifiDoorMaterial"></select></label>
           <label class="wifi-toggle" id="wifiOrthogonalField" hidden><input type="checkbox" id="wifiOrthogonal"> Right angles</label>
           <button class="wifi-control" id="wifiFinishWall" type="button" hidden>Finish Wall</button>
-          <button class="wifi-control" id="wifiUndo" type="button">Undo</button>
-          <button class="wifi-control" id="wifiRedo" type="button">Redo</button>
-          <label class="wifi-toggle" title="Snap to the grid or a nearby wall endpoint"><input type="checkbox" id="wifiSnap" checked> Snap</label>
-          <label class="wifi-toggle"><input type="checkbox" id="wifiCoverage" checked> Coverage</label>
-          <label>SSID<select id="wifiCoverageSsid" aria-label="Coverage SSID"><option value="">All SSIDs</option></select></label>
-          <label class="wifi-toggle"><input type="checkbox" id="wifiShowCables" checked> Cables</label>
-          <label>Band<select id="wifiBand"><option value="2.4">2.4 GHz</option><option value="5">5 GHz</option></select></label>
-          <button class="wifi-control" type="button" data-wifi-panel-button="plan" aria-expanded="false" aria-controls="wifiPlanPanel">Plan</button>
-          <button class="wifi-control" type="button" data-wifi-panel-button="background" aria-expanded="false" aria-controls="wifiBackgroundPanel">Background</button>
+          <span id="wifiSelectionCount" aria-live="polite" hidden></span>
+          <button class="wifi-control" type="button" id="wifiFitSelected" hidden>Fit Selection</button>
+          <button class="wifi-control" type="button" id="wifiDeleteSelected" hidden>Delete Selected</button>
+          <button class="wifi-control" type="button" id="wifiClearSelection" hidden>Clear</button>
         </div>
         <div id="wifiDesignControls" class="wifi-cabling-context wifi-tool-group" role="group" aria-label="Design tool settings" hidden>
           <label id="wifiDecorField">Symbol<select id="wifiDecorType"></select></label>
@@ -599,6 +626,7 @@
           <label>To<select id="wifiCableToDevice" aria-label="Destination device"></select></label>
           <label>Port<select id="wifiCableToPort" aria-label="Destination port"></select></label>
           <button class="wifi-control" id="wifiCableUndoBend" type="button">Undo Bend</button>
+          <button class="wifi-control" id="wifiCableClearBends" type="button" hidden>Clear Bends</button>
           <button class="wifi-control" id="wifiCableCancel" type="button">Cancel</button>
           <button class="btn run" id="wifiCableConnect" type="button">Connect</button>
         </div>
@@ -611,7 +639,7 @@
               <canvas class="wifi-heatmap" id="wifiHeatmap" aria-hidden="true"></canvas>
               <svg class="wifi-grid" id="wifiGrid" aria-hidden="true"></svg>
               <svg class="wifi-objects" id="wifiObjects" aria-hidden="true">
-                <g id="wifiSurfaceHitLayer"></g><g id="wifiDecorLayer"></g><g id="wifiWalls"></g><g id="wifiOpenings"></g><g id="wifiWireLayer"></g><g id="wifiMarkers"></g><g id="wifiEquipmentLayer"></g><g id="wifiOverlay"></g><g id="wifiPingLayer"></g>
+                <g id="wifiSurfaceHitLayer"></g><g id="wifiCameraLayer"></g><g id="wifiDecorLayer"></g><g id="wifiWalls"></g><g id="wifiOpenings"></g><g id="wifiWireLayer"></g><g id="wifiMarkers"></g><g id="wifiEquipmentLayer"></g><g id="wifiOverlay"></g><g id="wifiPingLayer"></g>
               </svg>
               <svg class="wifi-background-layer" id="wifiBackgroundLayer" aria-hidden="true"><image id="wifiBackgroundImage"/></svg>
               <svg class="wifi-surface-layer" id="wifiSurfaceLayer" aria-hidden="true"></svg>
@@ -622,7 +650,11 @@
               <button class="wifi-control" id="wifiCableBundleClose" type="button" aria-label="Close cable bundle">×</button>
             </div>
             <section class="wifi-float wifi-panel" id="wifiObjectPanel" aria-labelledby="wifiObjectHeading" hidden>
-              <header><h2 id="wifiObjectHeading">Object</h2><button class="wifi-control" data-wifi-close-panel type="button" aria-label="Close object settings">×</button></header>
+              <header class="wifi-inspector-header">
+                <span class="wifi-inspector-icon" id="wifiObjectIcon" aria-hidden="true"></span>
+                <div><p id="wifiObjectType"></p><h2 id="wifiObjectHeading">Object</h2></div>
+                <button class="wifi-control" data-wifi-close-panel type="button" aria-label="Close object settings">×</button>
+              </header>
               <div id="wifiProperties"></div>
             </section>
             <section class="wifi-float wifi-panel wifi-menu-panel" id="wifiPlanPanel" aria-labelledby="wifiPlanHeading" hidden>
@@ -2363,7 +2395,7 @@
 
   <script src="/static/js/app.js"></script>
   <script src="/static/js/connection.js?v=20261011-files-5"></script>
-  <script src="/static/js/feature-loader.js?v=20261113-design"></script>
+  <script src="/static/js/feature-loader.js?v=20261115-infra-workspace-3"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20261021-security-1"></script>
   <script src="/static/js/layout.js?v=20261011-files-5"></script>

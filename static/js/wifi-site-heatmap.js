@@ -28,6 +28,13 @@
     let queue = [];
     let frame = 0;
     let cacheLimit = 192;
+    let updating = false;
+
+    function showUpdating(value) {
+      if (value === updating) return;
+      updating = value;
+      setUpdating(value);
+    }
 
     function invalidate() {
       if (!frame) frame = requestAnimationFrame(paint);
@@ -156,7 +163,8 @@
         cache.set(key, entry);
         draw(entry, rectangle(tile, camera, ratio), missing.length > 0);
       }
-      setUpdating(missing.length > 0);
+      if (missing.length) showUpdating(true);
+      else { updating = false; setUpdating(false); }
       requestTile();
     }
 
@@ -179,13 +187,13 @@
     }
 
     function requestTile() {
-      if (pending || !queue.length) return;
+      if (pending || !view?.enabled || !queue.length) return;
       const tile = queue.shift();
       const job = { revision, tile };
       pending = { ...job, key: tileKey(tile) };
       if (!worker && !workerFailed) {
         try {
-          const source = new Worker('/static/js/wifi-site-worker.js?v=20261113-design');
+          const source = new Worker('/static/js/wifi-site-worker.js?v=20261115-infra-workspace-3');
           worker = source;
           source.onmessage = ({ data }) => { if (worker === source) tileReady(data); };
           source.onerror = () => {

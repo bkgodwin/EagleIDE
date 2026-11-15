@@ -5,6 +5,8 @@
   const model = window.WifiSiteClientModel;
   const speedName = window.WifiCablingModel.speedName;
   const distance = window.WifiCablingModel.distance;
+  const PLAY_INTERVAL = 2300;
+  const DROP_TIME = 750;
   const svgNS = 'http://www.w3.org/2000/svg';
 
   function stagePoints(points) {
@@ -97,7 +99,7 @@
           elapsed -= item.duration;
           return false;
         });
-        const dropping = !stage && packet.dropPoint && elapsed < 440;
+        const dropping = !stage && packet.dropPoint && elapsed < DROP_TIME;
         if (!stage && !dropping) {
           packet.node.remove();
           packets.delete(packet);
@@ -109,7 +111,7 @@
         packet.node.setAttribute('transform', `translate(${point.x} ${point.y})`);
         packet.node.classList.toggle('is-reply', !!stage?.reply);
         packet.node.classList.toggle('is-dropped', !!dropping);
-        packet.node.style.opacity = dropping ? String(1 - elapsed / 440) : '';
+        packet.node.style.opacity = dropping ? String(1 - elapsed / DROP_TIME) : '';
       }
       if (packets.size) frame = requestAnimationFrame(paint);
     }
@@ -127,14 +129,15 @@
       const node = document.createElementNS(svgNS, 'g');
       node.classList.add('wifi-ping-packet');
       node.style.display = 'none';
-      node.innerHTML = '<g class="wifi-marker"><path d="M-8-5H8V5H-8ZM-8-5L0 1L8-5"/><text text-anchor="middle" y="5">💀</text></g>';
+      node.innerHTML = '<g class="wifi-marker"><path d="M-10-6H10V6H-10ZM-10-6L0 1L10-6"/><text text-anchor="middle" y="5">💀</text></g>';
       layer.append(node);
-      const weights = packet.stages.map(stage => stage.points ? 75 + Math.min(225, stage.length * 5.8) : 0);
-      const scale = Math.min(1, 2100 / weights.reduce((sum, weight) => sum + weight, 0));
+      const weights = packet.stages.map(stage => stage.points ? 280 + Math.min(1050, stage.length * 24) : 0);
+      const scale = Math.min(1, 8000 / weights.reduce((sum, weight) => sum + weight, 0));
       const stages = packet.stages.map((stage, i) => ({ ...stage, points: stage.points && stagePoints(stage.points),
         duration: stage.duration || weights[i] * scale }));
       packets.add({ node, start: performance.now(), stages, dropPoint: packet.dropPoint });
       if (!frame) frame = requestAnimationFrame(paint);
+      refresh();
     }
 
     function stop() {
@@ -147,17 +150,17 @@
       const now = performance.now();
       if (now >= run.end || !network().clients.has(run.id)) { stop(); return; }
       transmit();
-      run.next += model.INTERVAL;
+      run.next += PLAY_INTERVAL;
       // Skip elapsed slots when a background tab throttles its timers.
-      if (run.next <= now) run.next += Math.ceil((now - run.next + 1) / model.INTERVAL) * model.INTERVAL;
+      if (run.next <= now) run.next += Math.ceil((now - run.next + 1) / PLAY_INTERVAL) * PLAY_INTERVAL;
       timer = setTimeout(tick, Math.max(0, Math.min(run.next, run.end) - performance.now()));
     }
 
     function toggle(id) {
-      if (run?.id === id) { stop(); return; }
+      if (run?.id === id) { suspend(); return; }
       const target = document.getElementById('wifiPingTarget')?.value;
       if (!target || !network().clients.has(id)) return;
-      stop();
+      suspend();
       const summary = { sent: 0, received: 0, total: 0, min: Infinity, max: 0 };
       summaries.set(id, summary);
       const now = performance.now();

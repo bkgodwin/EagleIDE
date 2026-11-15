@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { coverageModel, displayDistance, metersFrom, gridStep, signalColor,
+const { coverageModel, cameraCoverage, displayDistance, metersFrom, gridStep, signalColor,
   createHeatSource, SAMPLES, PADDING } = require('../static/js/wifi-site-model.js');
 const { bounds, fitCamera, viewportBounds, zoomAt, screenToWorld, gridSpacing,
   snapConstruction } = require('../static/js/wifi-site-view.js');
@@ -48,6 +48,24 @@ test('a door or window changes only the rays through its span', () => {
   const tile = { x: 0, y: 0, level: 0 };
   const plan = { walls: [wall], access_points: [ceiling], band: '5' };
   assert.notDeepEqual(createHeatSource(plan)(tile), createHeatSource({ ...plan, openings: [opening] })(tile));
+});
+
+test('an open doorway adds no RF loss and camera rays stop at opaque spans', () => {
+  const ap = { id: 'ap', x: 0, y: 0, mount: 'ceiling', angle: 0, power_db: 0 };
+  const wall = { id: 'wall', a: { x: 3, y: -4 }, b: { x: 3, y: 4 }, material: 'concrete' };
+  const opening = { wall_id: 'wall', t: .5, width: 2, kind: 'door', material: 'none' };
+  const sample = { x: 5, y: 0 };
+  for (const band of ['2.4', '5']) {
+    const open = coverageModel([wall], [ap], band, [opening])(sample, true);
+    assert.equal(open.signal, coverageModel([], [ap], band)(sample));
+    assert.deepEqual(open.walls, []);
+  }
+  const camera = { x: 0, y: 0, angle: 0, field_of_view: 80, range: 8 };
+  const spans = new Map([[wall.id, [[wall.a, { x: 3, y: -1 }], [{ x: 3, y: 1 }, wall.b]]]]);
+  const clips = cameraCoverage(camera, spans);
+  assert.equal(clips[1].x, 3);
+  assert.equal(clips[11].x, 8);
+  assert.equal(clips.at(-1).x, 3);
 });
 
 test('wall mount rotation and power change the signal at the probe and on the map', () => {

@@ -8,7 +8,8 @@
   const RUN_TIME = 60_000;
   const DEFAULT_SSID = { id: 'default', name: 'Default', band: 'both', vlan: 0 };
   const DEFAULT_DHCP = { gateway: '192.168.0.1/24', dns: '1.1.1.1', fallback_dns: '8.8.8.8' };
-  const isClient = device => device?.kind === 'desktop' || device?.kind === 'phone';
+  const { CLIENTS } = typeof module === 'object' && module.exports ? require('./wifi-cabling-model.js') : root.WifiCablingModel;
+  const isClient = device => CLIENTS.has(device?.kind);
   const managed = device => ['core_switch', 'distribution_switch'].includes(device.kind);
   const portVlans = (device, port) => device.port_vlans?.[port] ?? [0];
   const apSsids = (ap, ssids) => ap.ssid_ids ?? ssids.slice(0, 1).map(ssid => ssid.id);
@@ -59,8 +60,8 @@
     return { speed: Math.max(1, Math.round(peak * quality ** 2)), loss: 0.85 * (1 - quality) ** 3 };
   }
 
-  function desktopVlan(network, id) {
-    // The first managed switch port sets the desktop's untagged access VLAN.
+  function wiredVlan(network, id) {
+    // The first managed switch port sets the client's untagged access VLAN.
     // Keystone jacks and the unmanaged switch carry the access segment.
     const visited = new Set([id]), queue = [id];
     for (const node of queue) {
@@ -176,8 +177,8 @@
         routers.set(device.id, { id: device.id, pool, isp, waiting: [], unassigned: 0 });
       }
       if (!isClient(device)) continue;
-      if (device.kind === 'desktop') {
-        clients.set(device.id, { speed: cables.status(device.id).speed, vlan: desktopVlan(network, device.id) });
+      if (device.kind !== 'phone') {
+        clients.set(device.id, { speed: cables.status(device.id).speed, vlan: wiredVlan(network, device.id) });
         continue;
       }
       const ssid = device.ssid_id ? ssids.find(item => item.id === device.ssid_id) : ssids[0];

@@ -3,7 +3,7 @@
 import ipaddress
 import re
 
-from wifi_cabling import _ports
+from wifi_cabling import _ports, CLIENT_KINDS
 
 
 NETWORK_LIMITS = {"ssids": 64, "vlans": 64, "firewall_rules": 64}
@@ -142,7 +142,7 @@ def validate_network(raw, plan, *, label, safe_id):
     occupied = set()
     for item, device in zip(raw.get("equipment", []), plan["equipment"]):
         reservation = item.get("reservation")
-        if device["kind"] not in ("desktop", "phone") or reservation is None:
+        if device["kind"] not in CLIENT_KINDS or reservation is None:
             continue
         router = reservation.get("router_id") if isinstance(reservation, dict) else None
         gateway = gateways.get(router) if isinstance(router, str) else None

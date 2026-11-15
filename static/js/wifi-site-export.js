@@ -45,9 +45,7 @@
         .wifi-marker { transform: scale(${1 / scale}); }
         .wifi-wall { stroke-width: ${4 * ratio}; }
         .wifi-wall-reinforced_concrete { stroke-width: ${8 * ratio}; }
-        .wifi-opening-gap { stroke-width: ${5 * ratio}; }
-        .wifi-opening.is-reinforced .wifi-opening-gap { stroke-width: ${9 * ratio}; }
-        .wifi-window-rail, .wifi-door-swing { stroke-width: ${1.5 * ratio}; }
+        .wifi-window-rail, .wifi-door-leaf { stroke-width: ${1.5 * ratio}; }
         .wifi-wire { vector-effect: non-scaling-stroke; }
       ]]></style>${content}</svg>`;
     return new Promise((resolve, reject) => {
@@ -80,14 +78,19 @@
     } finally { painter?.clear(); }
   }
 
-  async function render({ bounds, plan, background, surfaces, groups, coverage }) {
+  async function render({ bounds, plan, background, surfaces, groups, coverage, showDeviceLabels, opacity }) {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     const layers = groups.map(group => {
       const copy = group.cloneNode(true);
+      if (!showDeviceLabels) copy.querySelectorAll('.wifi-ap-text, .wifi-equipment-text').forEach(node => node.remove());
       copy.querySelectorAll('title, .wifi-selected-wall, .wifi-wall-hit, .wifi-opening-hit, .wifi-wire-hit, .wifi-decor-hit').forEach(node => node.remove());
       copy.querySelectorAll('.is-selected, .wifi-moving-source').forEach(node => node.classList.remove('is-selected', 'wifi-moving-source'));
       copy.querySelectorAll('[data-wifi-bundle-length]').forEach(node => { node.style.visibility = ''; });
+      copy.querySelectorAll('.wifi-note-text, .wifi-ap-text, .wifi-equipment-text').forEach(node => {
+        node.style.visibility = '';
+        node.removeAttribute('transform');
+      });
       return copy;
     });
     const marks = [];
@@ -118,7 +121,13 @@
     ctx.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
     ctx.fillStyle = plan.background_color || '#ffffff';
     ctx.fillRect(0, 0, width, height);
-    for (const image of [under, heat, over]) if (image) ctx.drawImage(image, 0, 0, width, height);
+    ctx.drawImage(under, 0, 0, width, height);
+    if (heat) {
+      ctx.globalAlpha = opacity;
+      ctx.drawImage(heat, 0, 0, width, height);
+      ctx.globalAlpha = 1;
+    }
+    ctx.drawImage(over, 0, 0, width, height);
     const unit = plan.units === 'ft' ? .3048 : 1;
     const meters = window.WifiSiteView.scaleBar(frame.scale, unit, Math.min(90, width / 3));
     const length = meters * frame.scale;

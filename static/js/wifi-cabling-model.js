@@ -3,7 +3,8 @@
   'use strict';
 
   const COLORS = { ethernet: '#0879b3', fiber: '#982fba' };
-  const TYPES = ['router', 'core_switch', 'distribution_switch', 'access_switch', 'keystone', 'demarc', 'desktop', 'phone'];
+  const TYPES = ['router', 'core_switch', 'distribution_switch', 'access_switch', 'keystone', 'demarc', 'desktop', 'phone', 'poe_camera', 'voip_phone', 'pos_terminal', 'copy_machine'];
+  const CLIENTS = new Set(['desktop', 'phone', 'poe_camera', 'voip_phone', 'pos_terminal', 'copy_machine']);
   const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
   const isConcrete = wall => ['concrete', 'reinforced_concrete'].includes(wall?.material);
   const portKey = ({ device_id, port }) => `${device_id}:${port}`;
@@ -85,7 +86,8 @@
     const activeLinks = new Map([...devices.keys()].map(id => [id, []]));
     const internet = new Map(), wan = new Map();
     let totalBends = 0;
-    const wired = new Set(), powered = new Set(), poweredAps = new Set(), poe = new Map();
+    const wired = new Set(), powered = new Set(), poweredDevices = new Set(), poweredAps = new Set(), poe = new Map();
+    const draw = device => catalog.equipment[device.kind]?.poe_draw || 0;
     function name(device) {
       if (device.name) return device.name;
       if (device.kind === 'demarc') return catalog.isps[device.isp].name;
@@ -194,35 +196,38 @@
         for (const pass of result.usedPasses) usage.set(pass, (usage.get(pass) || 0) + 1);
         for (const end of [cable.source, cable.target]) {
           occupancy.set(portKey(end), cable.id);
-          if (devices.get(end.device_id).kind === 'access_point') wired.add(end.device_id);
+          wired.add(end.device_id);
         }
         if (cable.media === 'ethernet') copper.set(cable.id, cable);
       }
       for (const [id, device] of devices) {
         const budget = catalog.equipment[device.kind]?.poe_budget;
         if (!budget) continue;
-        const routes = new Set(), aps = new Set();
+        const routes = new Set(), receivers = new Set();
         for (const feed of feeds.get(id) || []) {
           let { cable, end } = feed;
           while (cable && !routes.has(cable.id)) {
             routes.add(cable.id);
             const receiver = devices.get(end.device_id);
-            if (receiver.kind === 'access_point') aps.add(receiver.id);
+            if (draw(receiver)) receivers.add(receiver.id);
             // A keystone joins its front patch port to its rear termination.
             if (receiver.kind !== 'keystone') break;
             cable = copper.get(occupancy.get(portKey({ device_id: receiver.id, port: end.port === 'FRONT' ? 'BACK' : 'FRONT' })));
             if (cable) end = cable.source.device_id === receiver.id ? cable.target : cable.source;
           }
         }
-        const watts = aps.size * catalog.equipment.access_point.poe_draw;
+        const watts = [...receivers].reduce((sum, receiver) => sum + draw(devices.get(receiver)), 0);
         const overloaded = watts > budget;
         poe.set(id, { watts, budget, overloaded });
         if (overloaded) continue;
         for (const cableId of routes) powered.add(cableId);
-        for (const apId of aps) poweredAps.add(apId);
+        for (const receiver of receivers) {
+          poweredDevices.add(receiver);
+          if (devices.get(receiver).kind === 'access_point') poweredAps.add(receiver);
+        }
       }
       const online = id => !poe.get(id)?.overloaded &&
-        (devices.get(id).kind !== 'access_point' || poweredAps.has(id));
+        (!draw(devices.get(id)) || poweredDevices.has(id));
       for (const [id, connections] of links) {
         if (online(id)) activeLinks.set(id, connections.filter(link => online(link.to)));
       }
@@ -240,7 +245,7 @@
         const path = upstream.shift();
         if (internet.has(path.id)) continue;
         internet.set(path.id, path);
-        if (['access_point', 'desktop', 'phone'].includes(devices.get(path.id).kind)) continue;
+        if (devices.get(path.id).kind === 'access_point' || CLIENTS.has(devices.get(path.id).kind)) continue;
         for (const link of activeLinks.get(path.id)) {
           if (!internet.has(link.to)) upstream.push({ ...path, id: link.to, speed: Math.min(path.speed, link.speed) });
         }
@@ -257,8 +262,8 @@
       const budget = poe.get(id);
       const power = device.kind === 'keystone' || device.kind === 'demarc' ? 'Passive'
         : budget?.overloaded ? 'Shut down'
-        : device.kind !== 'access_point' ? 'Local power'
-        : poweredAps.has(id) ? 'PoE available' : wired.has(id) ? 'No PoE source' : 'Unwired';
+        : !draw(device) ? 'Local power'
+        : poweredDevices.has(id) ? 'PoE available' : wired.has(id) ? 'No PoE source' : 'Unwired';
       return { speed, upstream, isp: wan.get(id), power, count: connected.length, poe: budget };
     }
 
@@ -268,7 +273,7 @@
       cables.forEach((cable, index) => slots[index % slots.length].push(cable));
       return slots;
     }
-    return { error, walls, devices, passages, ports, occupancy, usage, inspections, wired, powered, poweredAps, poe, activeLinks,
+    return { error, walls, devices, passages, ports, occupancy, usage, inspections, wired, powered, poweredDevices, poweredAps, poe, activeLinks,
       name, location, waypoint, route, endName, availablePorts, checkCable, status, channels };
   }
 
@@ -310,7 +315,7 @@
     return segments;
   }
 
-  const model = { COLORS, TYPES, distance, portKey, mediaName, speedName, cableName, pointAt, closestWall, build, bundledSegments };
+  const model = { COLORS, TYPES, CLIENTS, distance, portKey, mediaName, speedName, cableName, pointAt, closestWall, build, bundledSegments };
   if (typeof module === 'object' && module.exports) module.exports = model;
   else root.WifiCablingModel = model;
 })(globalThis);

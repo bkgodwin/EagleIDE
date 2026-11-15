@@ -13,7 +13,7 @@
   });
   const MOUNTS = Object.freeze({ ceiling: 'Ceiling-mounted access point', wall: 'Wall-mounted access point' });
   const OPENINGS = {
-    door: { wood: { name: 'Wood door', loss: { '2.4': 2, '5': 4 } }, glass: { name: 'Glass door', loss: { '2.4': 1, '5': 3 } },
+    door: { none: { name: 'None (opening)', loss: { '2.4': 0, '5': 0 } }, wood: { name: 'Wood door', loss: { '2.4': 2, '5': 4 } }, glass: { name: 'Glass door', loss: { '2.4': 1, '5': 3 } },
       metal: { name: 'Metal door', loss: { '2.4': 5, '5': 8 } } },
     window: { glass: { name: 'Clear glass', loss: { '2.4': 1, '5': 2 } },
       coated_glass: { name: 'Coated glass', loss: { '2.4': 3, '5': 5 } } },
@@ -77,6 +77,25 @@
       return { ap, facingX: Math.cos(radians), facingY: Math.sin(radians), range,
         walls: nearby(segments, ap, range), objects: nearby(objects, ap, range), reference: referenceSignal(band, ap) };
     });
+  }
+
+  function cameraCoverage(camera, wallSpans) {
+    const { x, y, range, angle, field_of_view } = camera;
+    const walls = [...wallSpans.values()].flatMap(spans => spans.flatMap(([a, b]) => {
+      if (Math.min(a.x, b.x) > x + range || Math.max(a.x, b.x) < x - range
+          || Math.min(a.y, b.y) > y + range || Math.max(a.y, b.y) < y - range) return [];
+      return [{ a, dx: b.x - a.x, dy: b.y - a.y }];
+    }));
+    const steps = Math.ceil(field_of_view / 4);
+    const outline = [{ x, y }];
+    for (let i = 0; i <= steps; i += 1) {
+      const radians = (angle + field_of_view * (i / steps - 0.5)) * Math.PI / 180;
+      const dx = Math.cos(radians) * range, dy = Math.sin(radians) * range;
+      let visible = 1;
+      for (const wall of walls) visible = Math.min(visible, wallIntersection(camera, dx, dy, wall) ?? 1);
+      outline.push({ x: roundDistance(x + dx * visible), y: roundDistance(y + dy * visible) });
+    }
+    return outline;
   }
 
   function estimateWith(transmitters) {
@@ -146,7 +165,7 @@
           if (best) alternate = { ap: best.ap, signal: best.signal };
           const path = crossings.map((crossing, i) => ({ crossing, wall: obstacles[i] }));
           path.sort((a, b) => a.crossing - b.crossing);
-          best = { ap, signal, distance: length, walls: path.map(item => item.wall.material) };
+          best = { ap, signal, distance: length, walls: path.filter(item => item.wall.loss > 0).map(item => item.wall.material) };
         }
       }
       return detailed && best ? { ...best, alternate } : detailed ? null : bestSignal;
@@ -212,7 +231,13 @@
     const transmitters = transmittersFor(walls, access_points, band, true, openings, decor);
     return tile => {
       const bounds = tileBounds(tile, PADDING);
-      const local = transmitters.filter(({ ap, range }) => inRange(ap, range, bounds));
+      const local = transmitters.filter(({ ap, range }) => inRange(ap, range, bounds)).map(transmitter => {
+        const { ap } = transmitter;
+        const left = Math.min(bounds.left, ap.x), right = Math.max(bounds.right, ap.x);
+        const top = Math.min(bounds.top, ap.y), bottom = Math.max(bounds.bottom, ap.y);
+        const inPathBounds = item => item.left <= right && item.right >= left && item.top <= bottom && item.bottom >= top;
+        return { ...transmitter, walls: transmitter.walls.filter(inPathBounds), objects: transmitter.objects.filter(inPathBounds) };
+      });
       if (!local.length) return null;
       const estimate = estimateWith(local);
       const step = tileStep(tile.level);
@@ -237,7 +262,7 @@
 
   const model = {
     MATERIALS, MOUNTS, OPENINGS, OBSTACLES, LEVELS, gridStep, displayDistance, metersFrom,
-    roundDistance, distance, coverageModel, signalLevel, signalColor, SAMPLES, PADDING,
+    roundDistance, distance, cameraCoverage, coverageModel, signalLevel, signalColor, SAMPLES, PADDING,
     tileLevel, tileSize, tileStep, tileBounds, tileHasCoverage, heatAreas, createHeatSource,
   };
   if (typeof module === 'object' && module.exports) module.exports = model;
