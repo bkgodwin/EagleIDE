@@ -131,7 +131,7 @@
       return { ...item, t: Math.max(half, Math.min(1 - half, hit.t)) };
     }
     async function importFile(file) {
-      if (!file) return;
+      if (!file || ctx.plan()?.floor_locked) return;
       if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 16_000_000) {
         $('wifiBackgroundStatus').textContent = 'Choose a PNG, JPEG, or WebP image under 16 MB.';
         return;
@@ -210,12 +210,16 @@
     function calibrationMarkup() {
       return (first ? ctx.dot(first, 5, 'wifi-cursor') : '') + (second ? ctx.line(first, second, 'class="wifi-preview-line"') + ctx.dot(second, 5, 'wifi-cursor') : '');
     }
+    function cancelBackgroundEdit() {
+      request += 1;
+      resetCalibration();
+      $('wifiBackgroundStatus').textContent = background()
+        ? 'Set the image width or calibrate with two points.' : 'Import a PNG, JPEG, or WebP floor plan.';
+    }
     function reset() {
       painted = openingsRef = wallsRef = selection = null;
-      request += 1;
       $('wifiBackgroundImage').removeAttribute('href');
-      $('wifiBackgroundStatus').textContent = 'Import a PNG, JPEG, or WebP floor plan.';
-      resetCalibration();
+      cancelBackgroundEdit();
     }
     function init() {
       $('wifiBackgroundImport').addEventListener('click', () => $('wifiBackgroundFile').click());
@@ -246,7 +250,7 @@
       });
     }
     return { init, wallSpans, reset, draw, place, validate, markup, anchors, slide, inspector, edit, height,
-      backgroundControls, calibrationPoint, calibrationMarkup, resetCalibration };
+      backgroundControls, calibrationPoint, calibrationMarkup, resetCalibration, cancelBackgroundEdit };
   }
 
   window.WifiSiteStructure = { create };

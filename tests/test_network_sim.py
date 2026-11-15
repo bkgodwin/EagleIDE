@@ -139,6 +139,28 @@ class NetworkStoreTests(unittest.TestCase):
                            for opening in site["openings"] if opening["wall_id"] == wall_id]
                 self.assertTrue(any(math.isclose(center, expected_center, abs_tol=.001) for center in centers))
 
+    def test_stadium_starter_has_full_bowl_and_unwired_sports_and_service_areas(self):
+        scenario = SCENARIOS["harborline-stadium"]
+        site = validate_wifi_site(scenario["site"])
+        labels = {item["text"] for item in site["labels"]}
+        self.assertTrue({"Press box", "Announcer booth", "Public concourse", "West concessions", "East ticket office",
+                         "Home team locker room", "Visiting team locker room", "Security operations", "Water & fire services",
+                         "Main bowl air handling", "East bowl air handling", "Central chilled-water plant",
+                         "Basketball gym", "Strength & cardio gym", "Indoor tennis hall", "Yoga studio",
+                         "Aquatics hall / lap pool", "Pool filtration & water treatment", "Fan park & warm-up lawn"}.issubset(labels))
+        self.assertTrue(scenario["briefing"])
+        self.assertTrue(site["floor_locked"])
+        self.assertFalse(any(site[layer] for layer in ("equipment", "access_points", "cables", "pass_throughs")))
+        field, = [item for item in site["decor"] if item["kind"] == "football_field"]
+        seating = [item for item in site["decor"] if item["kind"] == "stadium_seating"]
+        for axis, span in (("x", 65), ("y", 32)):
+            with self.subTest(axis=axis):
+                self.assertTrue(any(seat[axis] < field[axis] - span for seat in seating))
+                self.assertTrue(any(seat[axis] > field[axis] + span for seat in seating))
+        self.assertEqual(sum(item["kind"] == "tennis_court" for item in site["decor"]), 2)
+        self.assertEqual(sum(item["kind"] == "lap_pool" for item in site["decor"]), 1)
+        self.assertGreaterEqual(sum(wall["material"] == "reinforced_concrete" for wall in site["walls"]), 12)
+
     def test_infra_campus_example_can_be_saved_and_all_aps_are_wired(self):
         root = Path(__file__).resolve().parents[1]
         script = """
@@ -673,6 +695,26 @@ class NetworkRouteTests(unittest.TestCase):
         self.config_state["network_sim_enabled"] = True
         self.assertEqual(self.client.delete(url, headers=headers).status_code, 200)
         self.assertEqual(self.client.get(url, headers=headers).status_code, 404)
+
+    def test_wifi_floor_lock_survives_saves_and_legacy_plans_open_unlocked(self):
+        url = "/api/network/wifi-sites/floor-lock"
+        headers = {"X-Teacher-Token": "teacher-token"}
+        plan = self.wifi_plan()
+        legacy = {**plan, "schema_version": WIFI_SCHEMA_VERSION - 1}
+        self.assertFalse(validate_wifi_site(legacy)["floor_locked"])
+        invalid = self.client.put(url, headers=headers, json={"site": {**plan, "floor_locked": 1}, "revision": 0})
+        self.assertEqual(invalid.status_code, 400)
+        saved = self.client.put(url, headers=headers, json={"site": {**plan, "floor_locked": True}, "revision": 0})
+        self.assertEqual(saved.status_code, 200, saved.json)
+        self.assertTrue(self.client.get(url, headers=headers).json["data"]["floor_locked"])
+        stale_format = self.client.put(url, headers=headers, json={"site": legacy, "revision": 1})
+        self.assertEqual(stale_format.status_code, 409)
+        plan["access_points"][0]["name"] = "Moved hall AP"
+        saved = self.client.put(url, headers=headers, json={"site": {**plan, "floor_locked": True}, "revision": 1})
+        self.assertEqual(saved.status_code, 200, saved.json)
+        unlocked = self.client.put(url, headers=headers, json={"site": {**plan, "floor_locked": False}, "revision": 2})
+        self.assertEqual(unlocked.status_code, 200, unlocked.json)
+        self.assertFalse(self.client.get(url, headers=headers).json["data"]["floor_locked"])
 
     def test_wifi_site_validates_objects_and_rejects_stale_autosaves(self):
         url = "/api/network/wifi-sites/site-1"

@@ -27,6 +27,20 @@ test('nested walls create a hole in the surrounding room and polygon tool reject
   assert.equal(design.simple([p(0, 0), p(4, 0), p(4, 4), p(2, 2), p(0, 4)]), true);
 });
 
+test('sports furnishings keep their scale and render when rotated', () => {
+  const sizes = [
+    ['football_field', 109.728, 48.768], ['stadium_seating', 14, 14],
+    ['tennis_court', 23.77, 10.97], ['lap_pool', 25, 16],
+  ];
+  for (const [kind, width, height] of sizes) {
+    const item = { kind, x: 0, y: 0, angle: 90 };
+    const [min, max] = design.bounds(item);
+    assert.ok(Math.abs(max.x - min.x - height) < 1e-8);
+    assert.ok(Math.abs(max.y - min.y - width) < 1e-8);
+    assert.ok(design.decorMarkup(item).includes('rotate(90)'));
+  }
+});
+
 test('only trees and cars contribute decor losses to the signal path', () => {
   const ap = { ...p(0, 0), angle: 0, mount: 'ceiling' };
   const target = p(10, 0);

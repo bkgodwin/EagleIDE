@@ -105,6 +105,13 @@ body.light-mode .wifi-workspace .network-save-state[data-kind="error"] { color: 
 .wifi-view-menu { inset-inline: auto 0; }
 .wifi-view-menu label { min-height: 32px; }
 .wifi-wiring-tools button { display: inline-flex; align-items: center; gap: 6px; }
+.wifi-floor-lock { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.wifi-floor-lock[aria-pressed="true"] .wifi-lock-open,
+.wifi-floor-lock[aria-pressed="false"] .wifi-lock-closed { display: none; }
+.wifi-viewport[data-wifi-floor-locked] :is(#wifiWalls, #wifiOpenings, #wifiDecorLayer, #wifiSurfaceHitLayer, [data-wifi-floor-note]),
+.wifi-viewport[data-wifi-floor-locked] :is(#wifiWalls, #wifiOpenings, #wifiDecorLayer, #wifiSurfaceHitLayer, [data-wifi-floor-note]) * {
+  pointer-events: none;
+}
 .wifi-wiring-tools [data-wifi-icon], .wifi-equipment-preview { display: inline-flex; width: 18px; height: 18px; }
 .wifi-equipment-preview { width: 24px; height: 24px; color: var(--wifi-active); }
 .wifi-cabling-context { flex-basis: 100%; padding-top: 7px; border-top: 1px solid var(--wifi-edge); }
