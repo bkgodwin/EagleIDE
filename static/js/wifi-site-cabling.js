@@ -31,7 +31,10 @@
     let segments = [];
     let renderedWires, badgeNodes = [], bendSelection;
     let draftIndex, draftSignature;
-    let cameraSources;
+    let cameraSources, cameraSpans, rotatingCone;
+    const cameraCones = new Map();
+    const conePoints = points => points.map(({ x, y }) => `${x},${y}`).join(' ');
+    const outline = camera => window.WifiSiteModel.cameraCoverage(camera, cameraSpans);
     const cableEnds = ['source', 'target'];
     let mode = 'select';
     const catalog = () => ctx.catalog();
@@ -91,7 +94,8 @@
       menu.hidden = true;
       sourceArrays = cached = renderedIndex = null;
       segments = [];
-      renderedWires = bendSelection = draftIndex = cameraSources = null;
+      renderedWires = bendSelection = draftIndex = cameraSources = cameraSpans = rotatingCone = null;
+      cameraCones.clear();
       badgeNodes = [];
     }
 
@@ -412,18 +416,38 @@
       const layout = plan(), data = index();
       const next = [layout.walls, layout.openings, layout.equipment, data.poweredDevices];
       if (cameraSources && next.every((value, i) => value === cameraSources[i])) return;
+      const geometryChanged = !cameraSources || layout.walls !== cameraSources[0] || layout.openings !== cameraSources[1];
       cameraSources = next;
+      rotatingCone = null;
+      cameraCones.clear();
       const cameras = layout.equipment.filter(item => item.kind === 'poe_camera');
       const layer = $('wifiCameraLayer');
+      if (geometryChanged) cameraSpans = null;
       if (!cameras.length) { layer.replaceChildren(); return; }
-      const opaque = layout.walls.filter(wall => wall.material !== 'glass');
-      const transparent = layout.openings.filter(item => ['none', 'glass', 'coated_glass'].includes(item.material));
-      const spans = ctx.wallSpans(opaque, transparent);
-      layer.innerHTML = cameras.map(camera => {
-        const points = window.WifiSiteModel.cameraCoverage(camera, spans);
-        return `<polygon class="wifi-camera-cone${data.poweredDevices.has(camera.id) ? '' : ' is-preview'}"
-          points="${points.map(({ x, y }) => `${x},${y}`).join(' ')}"/>`;
-      }).join('');
+      if (!cameraSpans) {
+        const opaque = layout.walls.filter(wall => wall.material !== 'glass');
+        const transparent = layout.openings.filter(item => ['none', 'glass', 'coated_glass'].includes(item.material));
+        cameraSpans = ctx.wallSpans(opaque, transparent);
+      }
+      const cones = cameras.map(camera => ({ id: camera.id, points: outline(camera) }));
+      layer.innerHTML = cones.map(({ id, points }) =>
+        `<polygon class="wifi-camera-cone${data.poweredDevices.has(id) ? '' : ' is-preview'}" points="${conePoints(points)}"/>`).join('');
+      cones.forEach((cone, i) => cameraCones.set(cone.id, { ...cone, node: layer.children[i] }));
+    }
+
+    function cameraAim(camera, preview) {
+      if (rotatingCone && (!preview || rotatingCone.id !== camera?.id)) {
+        rotatingCone.node.setAttribute('points', conePoints(rotatingCone.points));
+        rotatingCone = null;
+      }
+      const cone = camera && cameraCones.get(camera.id);
+      if (!cone || !$('wifiShowCameras').checked) return null;
+      if (preview && rotatingCone?.heading !== camera.angle) {
+        const points = outline(camera);
+        cone.node.setAttribute('points', conePoints(points));
+        rotatingCone = { ...cone, heading: camera.angle, aim: points[Math.floor(points.length / 2)] };
+      }
+      return preview ? rotatingCone.aim : cone.points[Math.floor(cone.points.length / 2)];
     }
 
     function updateBundleBadges(scale) {
@@ -548,7 +572,8 @@
         ${item.kind === 'poe_camera' ? `<div class="wifi-two-fields">
           <label>Direction (°)<input type="number" min="0" max="360" step="1" data-wifi-field="angle" value="${item.angle}"></label>
           <label>Field of view (°)<input type="number" min="15" max="160" step="1" data-wifi-field="field_of_view" value="${item.field_of_view}"></label></div>
-          <label>View range (${plan().units})<input type="number" step="any" data-wifi-field="range" value="${Number(ctx.display(item.range).toFixed(2))}"></label>` : ''}
+          <label>View range (${plan().units})<input type="number" step="any" data-wifi-field="range" value="${Number(ctx.display(item.range).toFixed(2))}"></label>
+          <p>Drag the aim handle on the plan or enter a direction above. Hold Shift while dragging to snap to 15°.</p>` : ''}
         ${client ? ctx.clientInspector(item) : deviceStatus(item.id)}
         ${profile.poe_draw ? `<p>${profile.mount === 'ceiling' ? 'Ceiling mounted · ' : ''}${profile.poe_draw} W PoE · ${e(data.status(item.id).power)}</p>` : ''}
         ${ports.length ? `<div class="wifi-wire-summary"><strong>${used.length} of ${ports.length} ports connected</strong>
@@ -654,7 +679,7 @@
     return { init, reset, index, setTool, use, cancel, draw, overlay, hoverAt, pick, name, locationPoints, deviceStatus, updateBundleBadges,
       moveBend, setBend, editBends, pointForEdit, inspector, edit, removePlan, reroute, refreshDraft,
       hideMenu: () => { menu.hidden = true; }, clearHover: () => { hover = placementPoint = null; },
-      drawEquipment, drawCameraCoverage, wallField, bundleIds: number => segments[number]?.cableIds || [], bundleHas: (number, ids) => segments[number]?.cableIds.some(id => ids.has(id)) };
+      drawEquipment, drawCameraCoverage, cameraAim, wallField, bundleIds: number => segments[number]?.cableIds || [], bundleHas: (number, ids) => segments[number]?.cableIds.some(id => ids.has(id)) };
   }
 
   window.WifiSiteCabling = { create, icon, kinds: KINDS };

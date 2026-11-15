@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { coverageModel, cameraCoverage, displayDistance, metersFrom, gridStep, signalColor,
+const { coverageModel, cameraCoverage, cameraHeading, displayDistance, metersFrom, gridStep, signalColor,
   createHeatSource, SAMPLES, PADDING } = require('../static/js/wifi-site-model.js');
 const { bounds, fitCamera, viewportBounds, zoomAt, screenToWorld, gridSpacing,
   snapConstruction } = require('../static/js/wifi-site-view.js');
@@ -64,8 +64,18 @@ test('an open doorway adds no RF loss and camera rays stop at opaque spans', () 
   const spans = new Map([[wall.id, [[wall.a, { x: 3, y: -1 }], [{ x: 3, y: 1 }, wall.b]]]]);
   const clips = cameraCoverage(camera, spans);
   assert.equal(clips[1].x, 3);
-  assert.equal(clips[11].x, 8);
+  assert.deepEqual(clips[Math.floor(clips.length / 2)], { x: 8, y: 0 });
   assert.equal(clips.at(-1).x, 3);
+});
+
+test('camera drag preserves its grab offset, wraps bearings, and skips the dead zone', () => {
+  const camera = { x: 4, y: 5, angle: 350 };
+  const start = { x: 7, y: 4 };
+  assert.equal(cameraHeading(camera, start, start, .25), 350);
+  assert.equal(cameraHeading(camera, start, { x: 5, y: 8 }, .25), 80);
+  assert.equal(cameraHeading(camera, start, { x: 5, y: 8 }, .25, true), 75);
+  assert.equal(cameraHeading(camera, start, { x: 4.1, y: 5 }, .25), null);
+  assert.equal(cameraHeading({ ...camera, angle: 2 }, { x: 1, y: 5.1 }, { x: 1, y: 4.9 }, .25), 6);
 });
 
 test('wall mount rotation and power change the signal at the probe and on the map', () => {
