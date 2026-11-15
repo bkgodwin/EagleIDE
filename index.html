@@ -541,12 +541,20 @@
         </div>
       </header>
       <div class="wifi-toolbars">
-        <div class="wifi-tool-group" role="group" aria-label="Floor plan tools">
+        <button class="wifi-control wifi-floor-lock" id="wifiFloorLock" type="button" aria-label="Lock floor plan" aria-pressed="false">
+          <svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+            <rect x="4" y="9" width="12" height="8" rx="1.5"/>
+            <path class="wifi-lock-closed" d="M7 9V6a3 3 0 0 1 6 0v3"/>
+            <path class="wifi-lock-open" d="M7 9V6a3 3 0 0 1 5.8-1"/>
+          </svg>
+          <span id="wifiFloorLockText">Lock floor plan</span>
+        </button>
+        <div class="wifi-tool-group" role="group" aria-label="Selection and navigation">
           <button class="wifi-control" type="button" data-wifi-tool="select">Select</button>
           <button class="wifi-control" type="button" data-wifi-tool="marquee">Box Select</button>
           <button class="wifi-control" type="button" data-wifi-tool="pan">Pan</button>
         </div>
-        <details class="wifi-toolbar-menu" data-wifi-menu>
+        <details class="wifi-toolbar-menu" data-wifi-menu data-wifi-floor-control>
           <summary class="wifi-control">Draw</summary>
           <div class="wifi-toolbar-dropdown" role="group" aria-label="Drawing tools">
           <button class="wifi-control" type="button" data-wifi-tool="wall">Wall</button>
@@ -556,7 +564,7 @@
           <button class="wifi-control" type="button" data-wifi-tool="label">Note</button>
           </div>
         </details>
-        <details class="wifi-toolbar-menu" data-wifi-menu>
+        <details class="wifi-toolbar-menu" data-wifi-menu data-wifi-floor-control>
           <summary class="wifi-control">Design</summary>
           <div class="wifi-toolbar-dropdown" role="group" aria-label="Design tools">
           <button class="wifi-control" type="button" data-wifi-tool="decor">Symbols</button>
@@ -578,7 +586,7 @@
               <button class="wifi-control" type="button" data-wifi-tool="measure">Measure</button>
               <button class="wifi-control" type="button" data-wifi-tool="probe">Check Signal</button>
               <button class="wifi-control" type="button" data-wifi-panel-button="plan" aria-expanded="false" aria-controls="wifiPlanPanel">Plan Settings</button>
-              <button class="wifi-control" type="button" data-wifi-panel-button="background" aria-expanded="false" aria-controls="wifiBackgroundPanel">Background Image</button>
+              <button class="wifi-control" type="button" data-wifi-panel-button="background" data-wifi-floor-control aria-expanded="false" aria-controls="wifiBackgroundPanel">Background Image</button>
               <label class="wifi-toggle"><input type="checkbox" id="wifiShowCables" checked> Cables</label>
               <label class="wifi-toggle"><input type="checkbox" id="wifiShowCameras" checked> Camera coverage</label>
               <label class="wifi-toggle"><input type="checkbox" id="wifiShowLabels" checked> Device labels</label>
@@ -2395,7 +2403,7 @@
 
   <script src="/static/js/app.js"></script>
   <script src="/static/js/connection.js?v=20261011-files-5"></script>
-  <script src="/static/js/feature-loader.js?v=20261115-campus-rebuild"></script>
+  <script src="/static/js/feature-loader.js?v=20261115-stadium"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20261021-security-1"></script>
   <script src="/static/js/layout.js?v=20261011-files-5"></script>

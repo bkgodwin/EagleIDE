@@ -4,6 +4,7 @@ import math
 
 from network_store import WIFI_SCHEMA_VERSION, validate_wifi_site
 from wifi_school import school_layout
+from wifi_stadium import stadium_layout
 
 
 def _community_center():
@@ -181,7 +182,7 @@ def _community_center():
                                'access_points': [], 'decor': decor, 'surfaces': surfaces})
 
 
-def _starter(title, walls, rooms, furniture, surfaces=()):
+def _starter(title, walls, rooms, furniture, surfaces=(), *, floor_locked=False):
     """Build an unwired starter from meter-based wall and furnishing schedules."""
     def point(x, y):
         return {'x': x, 'y': y}
@@ -202,7 +203,7 @@ def _starter(title, walls, rooms, furniture, surfaces=()):
 
     return validate_wifi_site({
         'schema_version': WIFI_SCHEMA_VERSION, 'title': title, 'units': 'm', 'band': '5',
-        'walls': segments, 'openings': openings, 'access_points': [],
+        'floor_locked': floor_locked, 'walls': segments, 'openings': openings, 'access_points': [],
         'labels': [{'id': f'room-{i}', **point(x, y), 'text': text}
                    for i, (x, y, text) in enumerate(rooms)],
         'decor': [{'id': f'fixture-{i}', **point(x, y), 'kind': kind, 'angle': angle}
@@ -374,6 +375,27 @@ SCENARIOS = {
                      'contain 28 × 15 m courts, and the detached trades building is 40 × 28 m. '
                      'Furniture and landscape features are shown. All network rooms and closets are empty.',
         'site': _starter('Alder Ridge High School', *school_layout()),
+    },
+    'harborline-stadium': {
+        'id': 'harborline-stadium',
+        'title': 'Harborline Stadium & Sports Center',
+        'description': 'Plan matchday and everyday networks for an indoor football stadium, an attached sports center, and their outdoor plazas.',
+        'briefing': 'Harborline hosts football and community events in a concrete bowl with seating on every side. '
+                    'On match days, visitors arrive at the plaza and pass through screening before entering a continuous '
+                    'concourse. The press and announcer rooms overlook the field. The sports center opens daily for '
+                    'basketball, indoor tennis, fitness, lessons, and swimming. Its street entrance stays open when the '
+                    'fire doors to the stadium are closed. Delivery and team vehicles arrive through the service lanes.',
+        'traits': [
+            'Plan wired service for ticketing, concessions, broadcast, and facility operations. Keep public traffic separate.',
+            'Route from the main IT room to the West, North, East, and Sports center IDFs. Account for concrete barriers, '
+            'the length of the concourse, and the closed link between venues.',
+            'Check Wi-Fi at the four seating sides, concessions, entrance queues, the pool deck, and the outdoor fan park.',
+            'Keep the north mechanical plant and the pool filtration and dehumidification rooms accessible from their service routes.',
+        ],
+        'plan_note': 'The starter is drawn in meters on one plan level. It includes the playing field, raked seating '
+                     'sections, sports courts, and a 25 m lap pool. Network closets are empty. The floor plan '
+                     'starts locked for network layout and can be unlocked from the toolbar.',
+        'site': _starter('Harborline Stadium & Sports Center', *stadium_layout(), floor_locked=True),
     },
 }
 

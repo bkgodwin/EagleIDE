@@ -19,9 +19,13 @@
     $('wifiCoverageStatus').hidden = !updating;
   });
   const endpoint = '/api/network/wifi-sites';
-  const schemaVersion = 8;
+  const schemaVersion = 9;
   const wireKinds = window.WifiSiteCabling.kinds;
+  const floorKinds = ['walls', 'openings', 'labels', 'decor', 'surfaces'];
+  const floorLayers = [...floorKinds, 'background', 'background_color'];
+  const networkKinds = ['access_points', ...wireKinds];
   const kinds = ['walls', 'openings', 'access_points', 'labels', 'decor', 'surfaces', ...wireKinds];
+  const floorTools = new Set(['wall', 'room', 'door', 'window', 'label', 'decor', 'paint', 'surface', 'background-move', 'background-scale']);
   const panels = { plan: $('wifiPlanPanel'), background: $('wifiBackgroundPanel'), signal: $('wifiSignalPanel'), object: $('wifiObjectPanel') };
   const wireTools = new Set(['equipment', 'cable', 'pass']);
   const drawTools = new Set(['room', 'wall', 'measure']);
@@ -74,6 +78,7 @@
   let drawnLabels;
   let drawnMarkerSelection;
   let listedObjects = [];
+  let listedLocked;
   let listedSsids;
   let gridSize = 0;
   let gridCamera;
@@ -89,6 +94,9 @@
   let roomWalls, roomFaces, drawnDecor, drawnSurfaces, drawnDesignSelection;
 
   const current = () => session?.plan;
+  const floorLocked = () => current()?.floor_locked === true;
+  const sameFloor = plan => floorLayers.every(layer => plan[layer] === current()[layer]);
+  const selectableKinds = () => floorLocked() ? networkKinds : kinds;
   const active = () => !workspace.hidden && !!session;
   const sameAccount = () => options && options.authKey() === account;
   const escape = value => options.escapeHtml(value);
@@ -130,7 +138,7 @@
   function blankPlan() {
     return {
       schema_version: schemaVersion, title: 'Untitled Wi-Fi Site',
-      units: 'm', band: '5', walls: [], openings: [], background: null, access_points: [], labels: [], equipment: [], pass_throughs: [], cables: [],
+      units: 'm', band: '5', floor_locked: false, walls: [], openings: [], background: null, access_points: [], labels: [], equipment: [], pass_throughs: [], cables: [],
       decor: [], surfaces: [], background_color: null, ssids: [{ ...clientModel.DEFAULT_SSID }], vlans: [],
     };
   }
@@ -154,13 +162,16 @@
   }
 
   function hint(message) {
-    $('wifiToolHint').textContent = message || toolHints[tool];
+    const lockedHint = tool === 'select' ? 'Select or drag networking equipment and cables.' :
+      tool === 'marquee' ? 'Drag a box to select networking objects.' : toolHints[tool];
+    $('wifiToolHint').textContent = message || (floorLocked() ? `Floor plan locked. ${lockedHint}` : toolHints[tool]);
     $('wifiFinishWall').hidden = tool !== 'wall' || !anchor;
     $('wifiFinishSurface').disabled = surfaceDraft.length < 3;
     $('wifiCancelSurface').disabled = !surfaceDraft.length;
   }
 
   function changeTool(value) {
+    if (floorLocked() && floorTools.has(value)) return;
     cancelCameraRotation();
     if (tool === 'background-scale' && value !== 'background-scale') structure.resetCalibration();
     const selecting = value === 'select' || value === 'marquee';
@@ -409,7 +420,13 @@
     return item.name || model.MOUNTS[item.mount];
   }
 
+  function selectable(objectId) {
+    const match = objectById(objectId);
+    return match && (!floorLocked() || networkKinds.includes(match.kind)) ? match : null;
+  }
+
   function selectObject(objectId) {
+    if (!selectable(objectId)) objectId = '';
     const hadPreview = !!previewAp;
     if (selected !== objectId) previewAp = '';
     setSelection();
@@ -421,6 +438,10 @@
   }
 
   function update(next, { inspector = true } = {}) {
+    if (floorLocked() && !sameFloor(next)) {
+      hint('Unlock the floor plan to change its geometry.');
+      return false;
+    }
     if (next.walls !== current().walls) {
       const walls = new Map(next.walls.map(wall => [wall.id, wall]));
       next = { ...next, access_points: next.access_points.map(ap => {
@@ -442,22 +463,57 @@
   function setPlan(plan, inspector = true) {
     session.plan = plan;
     session.sequence += 1;
-    if (!objectById(selected)) { selected = ''; if (openPanel === 'object') showPanel(''); }
-    if (selection.size) setSelection(new Set([...selection].filter(objectById)));
+    if (!selectable(selected)) { selected = ''; if (openPanel === 'object') showPanel(''); }
+    if (selection.size) setSelection(new Set([...selection].filter(selectable)));
     scheduleSave();
     render({ inspector });
+  }
+
+  function toggleFloorLock() {
+    const locked = !floorLocked();
+    if (locked) {
+      structure.cancelBackgroundEdit();
+      if (drag && (floorTools.has(tool) || floorKinds.includes(drag.match?.kind) || drag.group)) {
+        const { id, background } = drag;
+        if (background) {
+          $('wifiBackgroundImage').setAttribute('x', background.x);
+          $('wifiBackgroundImage').setAttribute('y', background.y);
+        }
+        endMove(drag);
+        drag = null;
+        viewport.toggleAttribute('data-panning', spacePan);
+        if (viewport.hasPointerCapture(id)) viewport.releasePointerCapture(id);
+      }
+      if (openPanel === 'background') showPanel('');
+    }
+    setPlan({ ...current(), floor_locked: locked });
+    if (locked && floorTools.has(tool)) changeTool('select');
+    hint();
+  }
+
+  function updateHistoryButtons() {
+    $('wifiUndo').disabled = !canRestore(session.undo.at(-1));
+    $('wifiRedo').disabled = !canRestore(session.redo.at(-1));
+  }
+
+  function canRestore(plan) {
+    return !!plan && (!floorLocked() || sameFloor(plan));
   }
 
   function history(backward) {
     const from = backward ? session.undo : session.redo;
     const to = backward ? session.redo : session.undo;
     if (!from.length) return;
+    if (!canRestore(from.at(-1))) {
+      hint('Unlock the floor plan to restore a floor plan edit.');
+      return;
+    }
     cancelCameraRotation();
     wires.cancel();
     surfaceDraft = [];
     to.push(session.plan);
     finishWall();
-    setPlan(from.pop());
+    setPlan({ ...from.pop(), floor_locked: floorLocked() });
   }
 
   function replaceObject(kind, item, refresh = true) {
@@ -542,8 +598,13 @@
     $('wifiSiteExtents').textContent = extents
       ? `Drawing extents: ${fmt(extents.right - extents.left)} × ${fmt(extents.bottom - extents.top)}`
       : 'Start drawing anywhere on the grid.';
-    $('wifiUndo').disabled = !session.undo.length;
-    $('wifiRedo').disabled = !session.redo.length;
+    updateHistoryButtons();
+    const locked = floorLocked();
+    viewport.toggleAttribute('data-wifi-floor-locked', locked);
+    $('wifiFloorLock').setAttribute('aria-pressed', String(locked));
+    $('wifiFloorLock').title = locked ? 'Unlock the floor plan to edit its walls, notes, and furnishings' : 'Lock the floor plan while laying out the network';
+    $('wifiFloorLockText').textContent = locked ? 'Floor plan locked' : 'Lock floor plan';
+    for (const control of workspace.querySelectorAll('[data-wifi-floor-control]')) control.hidden = locked;
     if (inspector) renderInspector();
     else {
       renderObjectOptions();
@@ -558,11 +619,12 @@
   function renderObjectOptions() {
     const plan = current();
     const input = $('wifiSelection');
-    if (kinds.some((kind, index) => listedObjects[index] !== plan[kind])) {
+    if (listedLocked !== floorLocked() || kinds.some((kind, index) => listedObjects[index] !== plan[kind])) {
+      listedLocked = floorLocked();
       listedObjects = kinds.map(kind => plan[kind]);
       const groups = { walls: 'Walls', openings: 'Doors and windows', access_points: 'Access points', labels: 'Notes', equipment: 'Equipment',
         pass_throughs: 'Pass-throughs', cables: 'Cables', decor: 'Plan symbols', surfaces: 'Surfaces' };
-      input.innerHTML = '<option value="">None selected</option>' + kinds.filter(kind => plan[kind].length).map(kind =>
+      input.innerHTML = '<option value="">None selected</option>' + selectableKinds().filter(kind => plan[kind].length).map(kind =>
         `<optgroup label="${groups[kind]}">${plan[kind].map((item, index) =>
           `<option value="${escape(item.id)}">${escape(objectName(kind, item, index))}</option>`).join('')}</optgroup>`
       ).join('');
@@ -801,7 +863,7 @@
       content = `<title>${escape(item.text)}</title><circle r="5" class="wifi-note-pin${selectedClass}"/>
         <text class="wifi-note-text" x="8" y="-7">${escape(text)}</text>`;
     }
-    return `<g transform="translate(${item.x} ${item.y})" ${object}><g class="wifi-marker">${content}</g></g>`;
+    return `<g transform="translate(${item.x} ${item.y})" ${object}${kind === 'labels' ? ' data-wifi-floor-note' : ''}><g class="wifi-marker">${content}</g></g>`;
   }
 
   function collectMarkerLabels() {
@@ -1069,7 +1131,7 @@
     const box = view.bounds([a, b]);
     const contains = point => point.x >= box.left && point.x <= box.right && point.y >= box.top && point.y <= box.bottom;
     const plan = current();
-    const ids = kinds.flatMap(kind => plan[kind].filter(item => {
+    const ids = selectableKinds().flatMap(kind => plan[kind].filter(item => {
       if (kind === 'cables' && !$('wifiShowCables').checked) return false;
       const points = objectPoints({ kind, item });
       return points.length && points.every(point => point && contains(point));
@@ -1113,6 +1175,7 @@
   }
 
   function showPanel(name) {
+    if (name === 'background' && floorLocked()) return;
     if (name && name !== 'object' && selected) {
       selected = previewAp = '';
       renderObjectOptions();
@@ -1461,7 +1524,7 @@
     const raw = view.screenToWorld(camera, screen);
     const pan = tool === 'pan' || spacePan || event.button === 1;
     const draw = !pan && drawTools.has(tool) && !anchor;
-    const object = hit && objectById(hit.dataset.wifiObject);
+    const object = hit && selectable(hit.dataset.wifiObject);
     const rotate = !pan && tool === 'select' && hit?.hasAttribute('data-wifi-rotate') && object?.item.kind === 'poe_camera';
     const marquee = !pan && !rotate && (tool === 'marquee' || (tool === 'select' && event.shiftKey));
     const group = !pan && !rotate && (marquee || tool === 'select') &&
@@ -1473,7 +1536,7 @@
       id: event.pointerId, screen, camera, raw, pan, draw, rotate, marquee, group, groupOrigin,
       start: draw ? positionFor(raw, null).point : null,
       match: !pan && !marquee && !group && tool === 'select' ? object : null,
-      hit: hit?.dataset.wifiObject,
+      hit: object?.item.id,
       bundle: bundle ? Number(bundle.dataset.wifiBundle) : null,
       bend: hit?.dataset.wifiBend === undefined ? undefined : Number(hit.dataset.wifiBend),
       background: !pan && tool === 'background-move' ? current().background : null,
@@ -1761,8 +1824,7 @@
       }
       session.plan = { ...session.plan, title };
       session.sequence += 1;
-      $('wifiUndo').disabled = false;
-      $('wifiRedo').disabled = true;
+      updateHistoryButtons();
       scheduleSave();
     });
     $('wifiSiteTitle').addEventListener('blur', event => {
@@ -1770,6 +1832,7 @@
       event.target.value = current().title;
       session.titleEditing = false;
     });
+    $('wifiFloorLock').addEventListener('click', toggleFloorLock);
     $('wifiSaveSite').addEventListener('click', saveNow);
     $('wifiCopySite').addEventListener('click', saveCopy);
     $('wifiDiscardSite').addEventListener('click', () => {

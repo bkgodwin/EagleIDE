@@ -26,7 +26,7 @@ MAX_DEVICES = 100
 MAX_LINKS = 200
 MAX_TOPOLOGY_BYTES = 512_000
 MAX_SAVED_TOPOLOGIES = 40
-WIFI_SCHEMA_VERSION = 8
+WIFI_SCHEMA_VERSION = 9
 MAX_WIFI_SITE_BYTES = 2_000_000
 WIFI_COORDINATE_LIMIT = 100_000_000_000  # Keep rounding within the browser's safe integer range.
 WIFI_LIMITS = {**CABLING_LIMITS, **DESIGN_LIMITS, **NETWORK_LIMITS, "walls": 1200, "access_points": 128, "labels": 320, "openings": 500, "saved": 40,
@@ -81,8 +81,11 @@ def validate_wifi_site(raw):
         return {"x": number(value.get("x"), minimum, width, "x coordinate"),
                 "y": number(value.get("y"), minimum, height, "y coordinate")}
 
+    floor_locked = raw.get("floor_locked", False)
+    if type(floor_locked) is not bool:
+        raise NetworkDataError("Invalid floor plan lock")
     plan = {"schema_version": WIFI_SCHEMA_VERSION, "title": label(raw.get("title"), 120, "Untitled Wi-Fi Site"),
-            "units": units, "band": band}
+            "units": units, "band": band, "floor_locked": floor_locked}
     if raw.get("scenario_id") is not None:
         if not isinstance(raw["scenario_id"], str):
             raise NetworkDataError("Invalid scenario identifier")
