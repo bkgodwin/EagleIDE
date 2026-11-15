@@ -21,6 +21,26 @@
       const half = item.width / (2 * (wall.length || model.distance(wall.a, wall.b)));
       return [cable.pointAt(wall, item.t - half), cable.pointAt(wall, item.t + half)];
     }
+    function wallSpans(walls, openings) {
+      const byWall = new Map();
+      for (const item of openings) {
+        if (!byWall.has(item.wall_id)) byWall.set(item.wall_id, []);
+        byWall.get(item.wall_id).push(item);
+      }
+      return new Map(walls.map(wall => {
+        const length = model.distance(wall.a, wall.b);
+        const cuts = (byWall.get(wall.id) || []).sort((a, b) => a.t - b.t);
+        const spans = [];
+        let start = 0;
+        for (const cut of cuts) {
+          const half = cut.width / (2 * length);
+          if (cut.t - half > start) spans.push([cable.pointAt(wall, start), cable.pointAt(wall, cut.t - half)]);
+          start = cut.t + half;
+        }
+        if (start < 1) spans.push([cable.pointAt(wall, start), wall.b]);
+        return [wall.id, spans];
+      }));
+    }
     function place(kind, raw) {
       const hit = wallPoint(raw);
       if (!hit) { ctx.hint('Choose a spot on a wall.'); return; }
@@ -29,7 +49,7 @@
       if (wall.length < width) { ctx.hint('Choose a longer wall for this opening.'); return; }
       const half = width / (2 * wall.length);
       const t = Math.max(half, Math.min(1 - half, hit.t));
-      if (ctx.add('openings', [{ id: ctx.id(kind), wall_id: hit.wall_id, kind, width, t, material: kind === 'door' ? 'wood' : 'glass' }])) {
+      if (ctx.add('openings', [{ id: ctx.id(kind), wall_id: hit.wall_id, kind, width, t, material: kind === 'door' ? $('wifiDoorMaterial').value : 'glass' }])) {
         ctx.changeTool('select');
       }
     }
@@ -52,20 +72,19 @@
     function markup(item, ghost = false, wall = ctx.walls().get(item.wall_id)) {
       const [a, b] = anchors(item, wall);
       if (!a) return '';
-      const cls = (item.kind === 'door' ? 'wifi-door' : 'wifi-window')
-        + (wall.material === 'reinforced_concrete' ? ' is-reinforced' : '');
+      const cls = item.kind === 'window' ? 'wifi-window' : 'wifi-door';
+      const material = 'wifi-opening-' + item.material;
       const style = ghost ? ' wifi-opening-ghost' : item.id === ctx.selected() ? ' is-selected' : '';
       const attr = ghost ? '' : `data-wifi-object="${ctx.escape(item.id)}"`;
       let geometry = '';
       if (item.kind === 'door') {
-        const nx = -(b.y - a.y), ny = b.x - a.x;
-        geometry = `<path class="wifi-door-swing" d="M ${b.x} ${b.y} A ${item.width} ${item.width} 0 0 1 ${a.x + nx} ${a.y + ny} L ${a.x} ${a.y}"/>`;
+        if (item.material !== 'none') geometry = ctx.line(a, b, 'class="wifi-door-leaf"');
       } else {
         const nx = -(b.y - a.y) * 0.055 / item.width, ny = (b.x - a.x) * 0.055 / item.width;
         geometry = ctx.line({ x: a.x + nx, y: a.y + ny }, { x: b.x + nx, y: b.y + ny }, 'class="wifi-window-rail"')
           + ctx.line({ x: a.x - nx, y: a.y - ny }, { x: b.x - nx, y: b.y - ny }, 'class="wifi-window-rail"');
       }
-      return `<g class="wifi-opening ${cls}${style}" ${attr}><title>${model.OPENINGS[item.kind][item.material].name}</title>
+      return `<g class="wifi-opening ${cls} ${material}${style}" ${attr}><title>${model.OPENINGS[item.kind][item.material].name}</title>
         ${ctx.line(a, b, 'class="wifi-opening-gap"')}${geometry}${ctx.line(a, b, 'class="wifi-opening-hit"')}</g>`;
     }
     function draw() {
@@ -89,6 +108,7 @@
       const wall = ctx.walls().get(item.wall_id);
       const materials = Object.entries(model.OPENINGS[item.kind]).map(([key, value]) => [key, value.name]);
       return `<label>Material<select data-wifi-opening="material">${ctx.choices(materials, item.material)}</select></label>
+        ${item.material === 'none' ? '<p>Wi-Fi passes through this opening without additional wall loss.</p>' : ''}
         <label>Width (${ctx.plan().units})<input type="number" step="any" data-wifi-opening="width" value="${ctx.number(item.width)}"></label>
         <label>Center from wall start (${ctx.plan().units})<input type="number" step="any" data-wifi-opening="offset" value="${ctx.number(wall.length * item.t)}"></label>`;
     }
@@ -225,7 +245,7 @@
         if (key) backgroundControls();
       });
     }
-    return { init, reset, draw, place, validate, markup, anchors, slide, inspector, edit, height,
+    return { init, wallSpans, reset, draw, place, validate, markup, anchors, slide, inspector, edit, height,
       backgroundControls, calibrationPoint, calibrationMarkup, resetCalibration };
   }
 

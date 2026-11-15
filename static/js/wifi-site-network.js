@@ -8,10 +8,10 @@
   const bands = [['2.4', '2.4 GHz'], ['5', '5 GHz'], ['both', 'Both bands']];
 
   function create({ plan, cabling, graph, update, replace, render, hint, escape, choices, id, limits }) {
-    let apEdit, portEdit;
+    let apEdit, portEdit, vlanEdit = ADD, ruleEdit;
 
     const option = (entries, value) => choices(entries.map(([key, name]) => [String(key), name]), String(value));
-    const vlans = () => [[0, '0 · Untagged LAN'], ...plan().vlans.map(vlan => [vlan.id, `${vlan.id} · ${vlan.name}`])];
+    const vlans = () => [[0, '0 · Untagged LAN'], ...[...plan().vlans].sort((a, b) => a.id - b.id).map(vlan => [vlan.id, `${vlan.id} · ${vlan.name}`])];
     const vlanSelect = value => option(vlans(), value);
     const button = (action, text, extra = '') => `<button class="wifi-control" type="button" data-wifi-network="${action}"${extra}>${text}</button>`;
     const checked = value => value ? ' checked' : '';
@@ -48,7 +48,9 @@
       const dhcp = router.dhcp ?? model.DEFAULT_DHCP;
       const rules = router.firewall ?? [];
       const { available, unassigned, pool } = graph().routers.get(router.id);
-      const vlanOptions = option([['', 'Any VLAN'], ...vlans()], '');
+      const editing = ruleEdit?.router === router.id && rules[ruleEdit.index] === ruleEdit.rule ? ruleEdit : null;
+      const rule = editing?.rule;
+      const vlan = vlanEdit === ADD ? null : plan().vlans.find(item => item.id === vlanEdit);
       const endpoint = (rule, side) => {
         const vid = rule[side + '_vlan'];
         const vlan = vid == null ? 'Any VLAN' : `VLAN ${vid}`;
@@ -64,26 +66,33 @@
         ${button('save-dhcp', 'Save DHCP')}
       </details>
       <details class="wifi-network-settings" data-wifi-config="vlans"><summary>VLANs</summary>
-        <ul class="wifi-vlan-list">${vlans().map(([, label]) => `<li>${escape(label)}</li>`).join('')}</ul>
-        <div class="wifi-two-fields"><label>Name<input id="wifiVlanName" maxlength="60"></label>
-        <label>VLAN ID<input id="wifiVlanId" type="number" min="1" max="4094" step="1"></label></div>
-        ${button('add-vlan', 'Add VLAN')}
+        <p>VLAN 0 is the untagged LAN. VLAN names are shared throughout this site.</p>
+        <label>VLAN<select id="wifiRouterVlan">${option([[ADD, 'New VLAN…'], ...vlans().slice(1)], vlan?.id ?? ADD)}</select></label>
+        <div class="wifi-two-fields"><label>Name<input id="wifiVlanName" maxlength="60" value="${escape(vlan?.name ?? '')}"></label>
+        <label>VLAN ID<input id="wifiVlanId" type="number" min="1" max="4094" step="1" value="${vlan?.id ?? ''}"${vlan ? ' readonly' : ''}></label></div>
+        <div class="wifi-object-actions">${button('save-vlan', vlan ? 'Save Name' : 'Add VLAN')}
+          ${vlan ? button('remove-vlan', 'Remove VLAN') : ''}</div>
       </details>
       <details class="wifi-network-settings" data-wifi-config="firewall"><summary>Firewall</summary>
         <p>First matching rule wins. Unmatched router traffic is allowed. Same-VLAN traffic stays on the switch.</p>
-        ${rules.length ? `<ol class="wifi-firewall-list">${rules.map((rule, i) => `<li>
-          <strong>${rule.action === 'allow' ? 'Allow' : 'Deny'}</strong>
-          <p>From ${escape(endpoint(rule, 'source'))}<br>To ${escape(endpoint(rule, 'destination'))}</p>
+        ${rules.length ? `<ol class="wifi-firewall-list">${rules.map((item, i) => `<li class="${editing?.index === i ? 'is-editing' : ''}">
+          <strong class="wifi-rule-action wifi-rule-${item.action}">${i + 1} · ${item.action === 'allow' ? 'Allow' : 'Deny'}</strong>
+          <p>From ${escape(endpoint(item, 'source'))}<br>To ${escape(endpoint(item, 'destination'))}</p>
           <div class="wifi-object-actions">
-            ${button('move-rule', 'Move up', ` data-index="${i}"${i ? '' : ' disabled'}`)}
+            ${button('edit-rule', 'Edit', ` data-index="${i}" aria-label="Edit firewall rule ${i + 1}"`)}
+            ${button('rule-up', '↑', ` data-index="${i}" aria-label="Move rule ${i + 1} up"${i ? '' : ' disabled'}`)}
+            ${button('rule-down', '↓', ` data-index="${i}" aria-label="Move rule ${i + 1} down"${i < rules.length - 1 ? '' : ' disabled'}`)}
             ${button('remove-rule', 'Remove', ` data-index="${i}" aria-label="Remove firewall rule ${i + 1}"`)}
-          </div></li>`).join('')}</ol>` : ''}
-        <label>Action<select id="wifiFirewallAction"><option value="allow">Allow</option><option value="deny">Deny</option></select></label>
-        <div class="wifi-two-fields"><label>Source VLAN<select id="wifiFirewallSourceVlan">${vlanOptions}</select></label>
-        <label>Destination VLAN<select id="wifiFirewallDestinationVlan">${vlanOptions}</select></label></div>
-        <div class="wifi-two-fields"><label>Source IP or CIDR<input id="wifiFirewallSourceIp" maxlength="18" placeholder="Any"></label>
-        <label>Destination IP or CIDR<input id="wifiFirewallDestinationIp" maxlength="18" placeholder="Any"></label></div>
-        ${button('add-rule', 'Add Rule')}
+          </div></li>`).join('')}</ol>` : '<p>No firewall rules.</p>'}
+        <fieldset class="wifi-rule-editor"><legend>${editing ? `Edit rule ${editing.index + 1}` : 'New rule'}</legend>
+          <label>Action<select id="wifiFirewallAction">${option([['allow', 'Allow'], ['deny', 'Deny']], rule?.action ?? 'allow')}</select></label>
+          <div class="wifi-two-fields"><label>Source VLAN<select id="wifiFirewallSourceVlan">${option([['', 'Any VLAN'], ...vlans()], rule?.source_vlan ?? '')}</select></label>
+          <label>Destination VLAN<select id="wifiFirewallDestinationVlan">${option([['', 'Any VLAN'], ...vlans()], rule?.destination_vlan ?? '')}</select></label></div>
+          <div class="wifi-two-fields"><label>Source IP or CIDR<input id="wifiFirewallSourceIp" maxlength="18" placeholder="Any" value="${escape(rule?.source_ip ?? '')}"></label>
+          <label>Destination IP or CIDR<input id="wifiFirewallDestinationIp" maxlength="18" placeholder="Any" value="${escape(rule?.destination_ip ?? '')}"></label></div>
+          <div class="wifi-object-actions">${button('save-rule', editing ? 'Save Rule' : 'Add Rule')}
+            ${editing ? button('cancel-rule', 'Cancel') : ''}</div>
+        </fieldset>
       </details>`;
     }
 
@@ -91,13 +100,27 @@
       const port = selectedPort(device);
       const enabled = model.portVlans(device, port.id);
       const data = cabling();
-      return `<details class="wifi-network-settings" data-wifi-config="ports"><summary>Port VLANs</summary>
-        <label>Switch port<select id="wifiVlanPort">${option(data.ports.get(device.id).map(port => [
-          port.id, `${port.id}${data.occupancy.has(`${device.id}:${port.id}`) ? ' · Connected' : ''}`,
-        ]), port.id)}</select></label>
-        <p>Enable every VLAN the port should carry. The first enabled VLAN is the access VLAN for wired clients.</p>
-        ${vlans().map(([vid, label]) => `<label class="wifi-estimate-toggle"><input type="checkbox" data-wifi-port-vlan="${vid}"
-          ${checked(enabled.includes(vid))}> ${escape(label)}${enabled[0] === vid ? ' · Access' : ''}</label>`).join('')}
+      const cables = new Map(plan().cables.map(cable => [cable.id, cable]));
+      const connected = candidate => cables.get(data.occupancy.get(`${device.id}:${candidate.id}`));
+      const cable = connected(port);
+      const peer = cable && (cable.source.device_id === device.id ? cable.target : cable.source);
+      return `<details class="wifi-network-settings" data-wifi-config="ports"><summary>Switch ports</summary>
+        <div class="wifi-port-grid" role="group" aria-label="Switch port">
+          ${data.ports.get(device.id).map(candidate => {
+            const used = Boolean(connected(candidate));
+            return button('pick-port', escape(candidate.id), ` data-port="${escape(candidate.id)}"
+              id="wifiPort-${escape(candidate.id)}" aria-pressed="${candidate === port}"
+              aria-label="${escape(candidate.id)} · ${used ? 'Connected' : 'Free'}" data-connected="${used}"`);
+          }).join('')}
+        </div>
+        <div class="wifi-wire-summary"><strong>${escape(port.id)} · ${window.WifiCablingModel.speedName(port.speed)}${port.poe ? ' · PoE' : ''}</strong>
+          <span>${peer ? `Connected to ${escape(data.endName(peer))}` : 'Free port'}</span></div>
+        <label>Access VLAN<select id="wifiPortAccess">${option([['', 'Disabled'], ...vlans()], enabled[0] ?? '')}</select></label>
+        ${enabled.length ? `<fieldset class="wifi-tagged-vlans"><legend>Additional tagged VLANs</legend>
+          ${vlans().filter(([vid]) => vid !== enabled[0]).map(([vid, label]) =>
+            `<label class="wifi-estimate-toggle"><input type="checkbox" id="wifiTagged-${vid}" data-wifi-port-vlan="${vid}"
+            ${checked(enabled.includes(vid))}> ${escape(label)}</label>`).join('') || '<p>Add site VLANs in the router settings.</p>'}
+          </fieldset>` : '<p>This port carries no VLAN traffic.</p>'}
       </details>`;
     }
 
@@ -135,10 +158,15 @@
         if (!input.checked || enabled.length < 4) {
           replace('access_points', { ...device, ssid_ids: input.checked ? [...enabled, ssid] : enabled.filter(id => id !== ssid) });
         }
-      } else if (input.id === 'wifiVlanPort') {
-        portEdit = { device: device.id, port: input.value };
+      } else if (input.id === 'wifiRouterVlan') {
+        vlanEdit = input.value === ADD ? ADD : Number(input.value);
         render();
-        $('wifiVlanPort').focus({ preventScroll: true });
+      } else if (input.id === 'wifiPortAccess') {
+        const { id: port } = selectedPort(device);
+        const vid = Number(input.value);
+        const previous = model.portVlans(device, port);
+        const values = input.value ? [vid, ...previous.filter(value => value !== vid)] : [];
+        replace('equipment', { ...device, port_vlans: { ...device.port_vlans, [port]: values } });
       } else if (input.dataset.wifiPortVlan !== undefined) {
         const { id: port } = selectedPort(device);
         const vid = Number(input.dataset.wifiPortVlan);
@@ -203,19 +231,34 @@
         : 'DHCP settings saved.');
     }
 
-    function addVlan() {
+    function saveVlan() {
       const layout = plan(), vid = Number($('wifiVlanId').value);
       const name = $('wifiVlanName').value.trim().replace(/\s+/g, ' ');
-      if (!name || !Number.isInteger(vid) || vid < 1 || vid > 4094 || layout.vlans.some(vlan => vlan.id === vid)) {
+      const existing = layout.vlans.find(vlan => vlan.id === vid);
+      if (!name || !Number.isInteger(vid) || vid < 1 || vid > 4094 || (existing && vlanEdit !== vid)) {
         return hint('Enter a name and an unused VLAN ID from 1 to 4094.');
       }
-      if (layout.vlans.length >= limits().vlans) return hint('The VLAN list is full.');
-      update({ ...layout, vlans: [...layout.vlans, { id: vid, name }] });
+      if (!existing && layout.vlans.length >= limits().vlans) return hint('The VLAN list is full.');
+      vlanEdit = vid;
+      const vlans = existing ? layout.vlans.map(vlan => vlan === existing ? { id: vid, name } : vlan)
+        : [...layout.vlans, { id: vid, name }];
+      if (update({ ...layout, vlans })) hint('VLAN saved.');
     }
 
-    function addRule(router) {
-      const rules = router.firewall ?? [];
-      if (rules.length >= limits().firewall_rules) return hint('The firewall rule list is full.');
+    function removeVlan() {
+      const layout = plan(), vid = vlanEdit;
+      const inUse = layout.ssids.some(ssid => ssid.vlan === vid) || layout.equipment.some(item =>
+        Object.values(item.port_vlans || {}).some(tags => tags.includes(vid)) ||
+        item.firewall?.some(rule => rule.source_vlan === vid || rule.destination_vlan === vid));
+      if (inUse) return hint('This VLAN is in use. Remove it from SSIDs, switch ports, and firewall rules first.');
+      vlanEdit = ADD;
+      if (update({ ...layout, vlans: layout.vlans.filter(vlan => vlan.id !== vid) })) hint('VLAN removed.');
+    }
+
+    function saveRule(router) {
+      const rules = [...(router.firewall ?? [])];
+      const editing = ruleEdit?.router === router.id && rules[ruleEdit.index] === ruleEdit.rule;
+      if (!editing && rules.length >= limits().firewall_rules) return hint('The firewall rule list is full.');
       const rule = { action: $('wifiFirewallAction').value };
       for (const side of ['source', 'destination']) {
         const prefix = side === 'source' ? 'Source' : 'Destination';
@@ -226,7 +269,10 @@
         rule[side + '_ip'] = cidr ? (cidr.prefix === 32 ? model.address(cidr.first) : `${model.address(cidr.first)}/${cidr.prefix}`) : '';
         rule[side + '_vlan'] = vlan === '' ? null : Number(vlan);
       }
-      replace('equipment', { ...router, firewall: [...rules, rule] });
+      if (editing) rules[ruleEdit.index] = rule;
+      else rules.push(rule);
+      ruleEdit = null;
+      if (replace('equipment', { ...router, firewall: rules })) hint('Firewall rule saved.');
     }
 
     function click(device, target) {
@@ -234,19 +280,35 @@
       if (action === 'save-ssid') saveSsid(device);
       else if (action === 'remove-ssid') removeSsid();
       else if (action === 'save-dhcp') saveDhcp(device);
-      else if (action === 'add-vlan') addVlan();
-      else if (action === 'add-rule') addRule(device);
-      else if (action === 'move-rule' || action === 'remove-rule') {
+      else if (action === 'save-vlan') saveVlan();
+      else if (action === 'remove-vlan') removeVlan();
+      else if (action === 'save-rule') saveRule(device);
+      else if (action === 'pick-port') {
+        portEdit = { device: device.id, port: target.dataset.port };
+        render();
+      } else if (action === 'cancel-rule') {
+        ruleEdit = null;
+        render();
+      } else if (action === 'edit-rule') {
+        const index = Number(target.dataset.index);
+        ruleEdit = { router: device.id, index, rule: device.firewall[index] };
+        render();
+        $('wifiFirewallAction').focus();
+      } else if (['rule-up', 'rule-down', 'remove-rule'].includes(action)) {
         const index = Number(target.dataset.index);
         const firewall = [...device.firewall];
         if (action === 'remove-rule') firewall.splice(index, 1);
-        else [firewall[index - 1], firewall[index]] = [firewall[index], firewall[index - 1]];
+        else {
+          const to = index + (action === 'rule-up' ? -1 : 1);
+          [firewall[index], firewall[to]] = [firewall[to], firewall[index]];
+        }
+        ruleEdit = null;
         replace('equipment', { ...device, firewall });
       }
     }
 
     return { apInspector, deviceInspector, clientInspector, change, click,
-      reset: () => { apEdit = portEdit = null; } };
+      reset: () => { apEdit = portEdit = ruleEdit = null; vlanEdit = ADD; } };
   }
 
   window.WifiSiteNetwork = { create };

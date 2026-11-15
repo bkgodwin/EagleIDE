@@ -26,7 +26,7 @@ MAX_DEVICES = 100
 MAX_LINKS = 200
 MAX_TOPOLOGY_BYTES = 512_000
 MAX_SAVED_TOPOLOGIES = 40
-WIFI_SCHEMA_VERSION = 6
+WIFI_SCHEMA_VERSION = 7
 MAX_WIFI_SITE_BYTES = 2_000_000
 WIFI_COORDINATE_LIMIT = 100_000_000_000  # Keep rounding within the browser's safe integer range.
 WIFI_LIMITS = {**CABLING_LIMITS, **DESIGN_LIMITS, **NETWORK_LIMITS, "walls": 1200, "access_points": 128, "labels": 320, "openings": 500, "saved": 40,
@@ -850,6 +850,7 @@ class NetworkStore:
         self.progress_dir = self.base_dir / "progress"
         self.catalog_path = self.base_dir / "catalog.json"
         self._lock = threading.RLock()
+        self._wifi_locks = tuple(threading.Lock() for _ in range(32))
         self.users_dir.mkdir(parents=True, exist_ok=True)
         self.progress_dir.mkdir(parents=True, exist_ok=True)
         if not self.catalog_path.exists():
@@ -883,6 +884,9 @@ class NetworkStore:
     def _wifi_path(self, email):
         return self.wifi_dir / f"{self._user_key(email)}.json"
 
+    def _wifi_lock(self, path):
+        return self._wifi_locks[int(path.stem[:2], 16) % len(self._wifi_locks)]
+
     def _read_wifi_sites(self, path):
         # A failed read must never be treated as permission to replace saved work.
         try:
@@ -891,25 +895,27 @@ class NetworkStore:
             return {}
 
     def list_wifi_sites(self, email):
-        with self._lock:
-            sites = self._read_wifi_sites(self._wifi_path(email))
-            return [{key: site[key] for key in ("id", "title", "updated_at")}
-                    for site in sorted(sites.values(), key=lambda site: site["updated_at"], reverse=True)]
+        path = self._wifi_path(email)
+        with self._wifi_lock(path):
+            sites = self._read_wifi_sites(path)
+        return [{key: site[key] for key in ("id", "title", "updated_at")}
+                for site in sorted(sites.values(), key=lambda site: site["updated_at"], reverse=True)]
 
     def get_wifi_site(self, email, site_id):
-        with self._lock:
-            site = self._read_wifi_sites(self._wifi_path(email)).get(_safe_id(site_id))
-            if site and site.get("schema_version") != WIFI_SCHEMA_VERSION:
-                return {**validate_wifi_site(site), **{key: site[key] for key in ("id", "revision", "updated_at")}}
-            return site
+        path = self._wifi_path(email)
+        with self._wifi_lock(path):
+            site = self._read_wifi_sites(path).get(_safe_id(site_id))
+        if site and site.get("schema_version") != WIFI_SCHEMA_VERSION:
+            return {**validate_wifi_site(site), **{key: site[key] for key in ("id", "revision", "updated_at")}}
+        return site
 
     def save_wifi_site(self, email, site_id, raw, revision, *, available_scenarios=()):
         site_id = _safe_id(site_id)
         site = validate_wifi_site(raw)
         if type(revision) is not int or revision < 0:
             raise NetworkDataError("A valid project revision is required")
-        with self._lock:
-            path = self._wifi_path(email)
+        path = self._wifi_path(email)
+        with self._wifi_lock(path):
             sites = self._read_wifi_sites(path)
             existing = sites.get(site_id)
             scenario_id = site.pop("scenario_id", None)
@@ -930,8 +936,7 @@ class NetworkStore:
                     or any(wall["material"] == "reinforced_concrete" for wall in existing["walls"])):
                 raise WifiRevisionError("This project has new design layers. Reload the editor before editing it.")
             same_save = existing and all(existing.get(key) == value for key, value in site.items())
-            if (existing and existing.get("schema_version") == WIFI_SCHEMA_VERSION
-                    and raw["schema_version"] < WIFI_SCHEMA_VERSION and not same_save):
+            if existing and raw["schema_version"] < existing.get("schema_version", 1) and not same_save:
                 raise WifiRevisionError("This project uses the updated Infra Sim editor. Reload before editing it.")
             if revision != current_revision:
                 # A retry after a lost response may safely acknowledge the same save.
@@ -947,8 +952,8 @@ class NetworkStore:
             return site
 
     def delete_wifi_site(self, email, site_id):
-        with self._lock:
-            path = self._wifi_path(email)
+        path = self._wifi_path(email)
+        with self._wifi_lock(path):
             sites = self._read_wifi_sites(path)
             if sites.pop(_safe_id(site_id), None) is None:
                 return False

@@ -11,6 +11,9 @@ const catalog = {
     router: { groups: [eth(4), eth(1, { prefix: 'WAN', wan: true })] },
     distribution_switch: { groups: [eth(24, { poe: true })], poe_budget: 200 },
     desktop: { groups: [eth(1)] }, phone: { groups: [] }, access_point: { groups: [eth(1)], poe_draw: 20 },
+    poe_camera: { groups: [eth(1)], poe_draw: 12 }, voip_phone: { groups: [eth(1)], poe_draw: 7 },
+    pos_terminal: { groups: [eth(1)] }, copy_machine: { groups: [eth(1)] },
+    access_switch: { groups: [eth(8)] },
   },
   isps: { primary: { name: 'Primary', speed: 300, media: 'ethernet', rtt_ms: 40 } },
   epsilon: .0002, crossing_tolerance: .075, pass_spacing: 6.096, pass_capacity: 10,
@@ -45,6 +48,31 @@ function graph(plan, prior) {
   assert.equal(data.error, '');
   return build(plan, data, coverageModel, prior);
 }
+
+test('wired clients get DHCP, while the camera and desk phone need PoE', () => {
+  const plan = layout();
+  const kinds = ['poe_camera', 'voip_phone', 'pos_terminal', 'copy_machine'];
+  kinds.forEach((kind, i) => {
+    plan.equipment.push({ id: kind, kind, x: 9 + i, y: 6 });
+    plan.cables.push(wire(kind, end('switch', `ETH${i + 4}`), end(kind)));
+  });
+  const limits = { bends: 40, total_bends: 6000 };
+  const data = cabling(plan, catalog, limits);
+  assert.equal(data.poe.get('switch').watts, 20 + 12 + 7);
+  const network = build(plan, data, coverageModel);
+  for (const id of kinds) {
+    assert.equal(network.clients.get(id).speed, 1000);
+    assert.ok(network.clients.get(id).lease);
+    assert.ok(ping(network, id, 'router').rtt > 0);
+  }
+  const withoutPoe = { ...plan, equipment: plan.equipment.map(item =>
+    item.id === 'switch' ? { ...item, kind: 'access_switch' } : item) };
+  const unpowered = cabling(withoutPoe, catalog, limits);
+  assert.equal(unpowered.status('poe_camera').power, 'No PoE source');
+  assert.equal(unpowered.status('voip_phone').speed, 0);
+  assert.equal(unpowered.status('pos_terminal').speed, 1000);
+  assert.equal(unpowered.status('copy_machine').speed, 1000);
+});
 
 test('powered APs serve phones and Internet speed respects both uplink and ISP bottlenecks', () => {
   const plan = layout();

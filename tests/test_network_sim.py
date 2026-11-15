@@ -1,4 +1,5 @@
 import copy
+from concurrent.futures import ThreadPoolExecutor
 import base64
 import io
 import json
@@ -50,6 +51,31 @@ class NetworkStoreTests(unittest.TestCase):
                         .issubset(item["text"] for item in site["labels"]))
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required to load the Infra Sim example")
+    def test_concurrent_infra_saves_isolate_accounts_and_keep_shared_account_revisions(self):
+        plan = SCENARIOS["juniper-main-coffee"]["site"]
+
+        def save(index):
+            email = f"student-{index // 4}@example.test"
+            site_id = f"site-{index}"
+            self.store.save_wifi_site(email, site_id, plan, 0)
+            return self.store.get_wifi_site(email, site_id)["revision"]
+
+        with ThreadPoolExecutor(max_workers=12) as executor:
+            self.assertEqual(list(executor.map(save, range(32))), [1] * 32)
+        for index in range(8):
+            self.assertEqual(len(self.store.list_wifi_sites(f"student-{index}@example.test")), 4)
+        self.assertFalse(self.store.list_wifi_sites("other@example.test"))
+
+    def test_coffee_and_house_scenarios_are_furnished_unwired_starters(self):
+        for scenario_id in ("juniper-main-coffee", "maple-lane-house"):
+            with self.subTest(scenario=scenario_id):
+                scenario = SCENARIOS[scenario_id]
+                plan = validate_wifi_site(scenario["site"])
+                self.assertTrue(scenario["description"] and scenario["briefing"])
+                self.assertTrue(plan["walls"] and plan["labels"] and plan["surfaces"] and plan["decor"])
+                self.assertTrue(any(opening["material"] == "none" for opening in plan["openings"]))
+                self.assertFalse(plan["equipment"] or plan["access_points"] or plan["cables"])
+
     def test_infra_campus_example_can_be_saved_and_all_aps_are_wired(self):
         root = Path(__file__).resolve().parents[1]
         script = """
@@ -71,6 +97,14 @@ class NetworkStoreTests(unittest.TestCase):
         self.assertTrue({"desktop", "phone"}.issubset(item["kind"] for item in site["equipment"]))
         self.assertTrue(all(item["id"] in ethernet_ends for item in site["equipment"] if item["kind"] == "desktop"))
         self.assertTrue(all(item["id"] not in ethernet_ends for item in site["equipment"] if item["kind"] == "phone"))
+        wired_clients = {"poe_camera", "voip_phone", "pos_terminal", "copy_machine"}
+        self.assertEqual({item["kind"] for item in site["equipment"] if item["id"] in ethernet_ends} & wired_clients,
+                         wired_clients)
+        camera = next(item for item in site["equipment"] if item["kind"] == "poe_camera")
+        self.assertEqual((camera["angle"], camera["field_of_view"], camera["range"]), (171, 90, 6))
+        with self.assertRaisesRegex(NetworkDataError, "camera field of view"):
+            validate_wifi_site({**site, "equipment": [{**item, "field_of_view": 500} if item == camera else item
+                                                      for item in site["equipment"]]})
         for ap in site["access_points"]:
             if ap["mount"] == "wall":
                 wall = next(wall for wall in site["walls"] if wall["id"] == ap["wall_id"])
@@ -423,7 +457,8 @@ class NetworkRouteTests(unittest.TestCase):
         self.assertEqual(self.client.put(settings_url, headers=teacher, json={"visible": False}).status_code, 200)
         classroom = self.client.get("/api/network/teacher/classes/class-1", headers=teacher).get_json()["data"]
         self.assertFalse(classroom["scenarios"][0]["visible"])
-        self.assertEqual(self.client.get("/api/network/bootstrap", headers=student).get_json()["data"]["scenarios"], [])
+        visible = self.client.get("/api/network/bootstrap", headers=student).get_json()["data"]["scenarios"]
+        self.assertEqual({row["id"] for row in visible}, set(SCENARIOS) - {scenario_id})
         self.assertEqual(self.client.get(scenario_url, headers=student).status_code, 404)
         self.assertEqual(self.client.get(scenario_url, headers=teacher).status_code, 200)
         self.students["student-token"]["class_ids"].append("class-2")

@@ -32,8 +32,14 @@ EQUIPMENT = {
     "demarc": {"name": "ISP Demarcation", "wall_mount": True, "groups": []},
     "access_point": {"name": "Access Point", "poe_draw": 20, "groups": [_group("ETH", 1)]},
     "desktop": {"name": "Desktop", "groups": [_group("ETH", 1)]},
-    "phone": {"name": "Phone", "groups": []},
+    "phone": {"name": "Mobile Phone", "groups": []},
+    "poe_camera": {"name": "PoE Camera", "poe_draw": 12, "mount": "ceiling", "groups": [_group("ETH", 1)]},
+    "voip_phone": {"name": "VoIP Phone", "poe_draw": 7, "groups": [_group("ETH", 1)]},
+    "pos_terminal": {"name": "POS Terminal", "groups": [_group("ETH", 1)]},
+    "copy_machine": {"name": "Copy Machine", "groups": [_group("ETH", 1)]},
 }
+
+CLIENT_KINDS = {"desktop", "phone", "poe_camera", "voip_phone", "pos_terminal", "copy_machine"}
 
 ISPS = {
     "alderline": {"name": "Alderline Fiber", "media": "fiber", "speed": 10000, "rtt_ms": 18},
@@ -137,6 +143,12 @@ def validate_cabling(raw, plan, *, number, label, point, safe_id, seen):
             if not isinstance(isp, str) or isp not in ISPS:
                 raise CablingError("Select a listed ISP")
             clean["isp"] = isp
+        if kind == "poe_camera":
+            clean.update(
+                angle=number(item.get("angle", 0), 0, 360, "camera direction") % 360,
+                field_of_view=number(item.get("field_of_view", 90), 15, 160, "camera field of view"),
+                range=number(item.get("range", 10), 1, 50, "camera range"),
+            )
         equipment.append(clean)
         devices[device_id] = clean
 
