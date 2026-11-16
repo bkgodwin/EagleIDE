@@ -15,6 +15,7 @@
   const objects = $('wifiObjects');
   const grid = $('wifiGrid');
   const scenarioDialog = $('wifiScenarioDialog');
+  const tutorialDialog = $('wifiTutorialDialog');
   const coverage = window.WifiSiteHeatmap.create($('wifiHeatmap'), updating => {
     $('wifiCoverageStatus').hidden = !updating;
   });
@@ -214,6 +215,7 @@
   }
 
   function startProject(plan, briefing, { sample = false } = {}) {
+    if (tutorialDialog.open) tutorialDialog.close();
     const { id: siteId, revision, updated_at, scenario_briefing, ...layout } = plan;
     session = {
       id: siteId || id('site'), revision: revision || 0, plan: { ...blankPlan(), ...layout, schema_version: schemaVersion }, account,
@@ -374,6 +376,7 @@
     clients.reset();
     setSelection();
     if (scenarioDialog.open) scenarioDialog.close();
+    if (tutorialDialog.open) tutorialDialog.close();
     selected = previewAp = '';
     wires.reset();
     structure.reset();
@@ -1683,7 +1686,7 @@
   }
 
   function keyboard(event) {
-    if (!active() || scenarioDialog.open || !document.body.classList.contains('network-mode')) return;
+    if (!active() || scenarioDialog.open || tutorialDialog.open || !document.body.classList.contains('network-mode')) return;
     const typing = event.target.matches('input,textarea,select');
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's' && options.canSave) {
       event.preventDefault();
@@ -1770,6 +1773,7 @@
   function initialize() {
     if (initialized) return;
     initialized = true;
+    window.WifiSiteTutorials.create($('wifiTutorialMenu'), tutorialDialog);
     $('wifiMaterial').innerHTML = choiceList(materialEntries(), 'drywall');
     $('wifiDoorMaterial').innerHTML = choiceList(Object.entries(model.OPENINGS.door).map(([key, value]) => [key, value.name]), 'wood');
     workspace.addEventListener('click', event => {
@@ -1902,6 +1906,7 @@
     new MutationObserver(() => {
       if (active() && !document.body.classList.contains('network-mode')) {
         if (scenarioDialog.open) scenarioDialog.close();
+        if (tutorialDialog.open) tutorialDialog.close();
         clients.suspend();
         flushSave();
       }

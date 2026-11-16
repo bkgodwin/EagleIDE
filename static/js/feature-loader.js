@@ -11,7 +11,7 @@
       '/static/js/network-sim-advanced.js?v=20261113-hub',
     ],
     wifiSite: [
-      '/static/css/features/wifi-site.css?v=20261115-stadium',
+      '/static/css/features/wifi-site.css?v=20261115-infra-tutorials',
       '/static/js/wifi-site-model.js?v=20261115-infra-school',
       '/static/js/wifi-site-design.js?v=20261115-hospital',
       '/static/js/wifi-site-view.js?v=20261112-open-canvas',
@@ -22,9 +22,10 @@
       '/static/js/wifi-site-clients.js?v=20261115-infra-workspace-3',
       '/static/js/wifi-site-cabling.js?v=20261115-infra-school',
       '/static/js/wifi-site-structure.js?v=20261115-stadium',
-      '/static/js/wifi-site-example.js?v=20261115-starter-refresh',
+      '/static/js/wifi-site-example.js?v=20261115-infra-tutorials',
       '/static/js/wifi-site-export.js?v=20261115-infra-workspace-3',
-      '/static/js/wifi-site.js?v=20261115-starter-refresh',
+      '/static/js/wifi-site-tutorials.js?v=20261115-infra-tutorials',
+      '/static/js/wifi-site.js?v=20261115-infra-tutorials',
     ],
     wikiTools: [
       '/static/css/features/wiki-tools.css?v=20260921-1',

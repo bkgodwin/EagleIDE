@@ -593,6 +593,10 @@
               <label class="wifi-toggle" title="Snap to the grid or a nearby wall endpoint"><input type="checkbox" id="wifiSnap" checked> Snap to grid</label>
             </div>
           </details>
+          <details class="wifi-toolbar-menu wifi-tutorial-menu" data-wifi-menu id="wifiTutorialMenu">
+            <summary class="wifi-control">Tutorials</summary>
+            <div class="wifi-toolbar-dropdown" role="group" aria-label="Tutorial topics"></div>
+          </details>
           <details class="wifi-toolbar-menu" data-wifi-menu>
             <summary class="wifi-control">Wi-Fi</summary>
             <div class="wifi-toolbar-dropdown wifi-view-menu">
@@ -712,6 +716,17 @@
           </footer>
         </div>
       </div>
+      <dialog class="wifi-tutorial-dialog" id="wifiTutorialDialog" aria-labelledby="wifiTutorialTitle">
+        <header>
+          <h2 id="wifiTutorialTitle" tabindex="-1"></h2>
+          <form method="dialog"><button class="wifi-control" type="submit" aria-label="Close tutorial">×</button></form>
+        </header>
+        <article class="wifi-tutorial-page" aria-labelledby="wifiTutorialTitle" tabindex="0"></article>
+        <nav aria-label="Tutorial navigation">
+          <button class="wifi-control" type="button" id="wifiTutorialPrevious">‹ Previous</button>
+          <button class="wifi-control" type="button" id="wifiTutorialNext">Next ›</button>
+        </nav>
+      </dialog>
       <dialog class="wifi-scenario-dialog" id="wifiScenarioDialog" aria-labelledby="wifiScenarioTitle" aria-describedby="wifiScenarioBriefing">
         <form method="dialog">
           <header>
@@ -2403,7 +2418,7 @@
 
   <script src="/static/js/app.js"></script>
   <script src="/static/js/connection.js?v=20261011-files-5"></script>
-  <script src="/static/js/feature-loader.js?v=20261115-starter-refresh"></script>
+  <script src="/static/js/feature-loader.js?v=20261115-infra-tutorials"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20261021-security-1"></script>
   <script src="/static/js/layout.js?v=20261011-files-5"></script>
