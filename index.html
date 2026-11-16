@@ -388,6 +388,8 @@
               <div class="network-hub-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 20V4h10v7H20v9H3.5Zm0-8h6m4-1v5m0 4h7.5M8 8h2m6 5h2"/></svg></div>
               <div><h2 id="infraSimHeading">Infra Sim</h2><p>Design floor plans, route cables, and check Wi-Fi coverage.</p></div>
               <div class="network-hub-actions">
+                <button class="btn secondary" id="wifiOpenFile" type="button">Open Project File</button>
+                <input id="wifiProjectFile" type="file" accept=".json,application/json" hidden>
                 <button class="btn run" id="networkWifiBtn" type="button">New Site</button>
               </div>
             </header>
@@ -395,6 +397,7 @@
               <h3>Saved Sites</h3>
               <ul class="network-hub-list" id="wifiSavedSites"></ul>
               <p class="network-hub-empty" id="wifiSavedEmpty" hidden>No saved sites yet.</p>
+              <p class="network-hub-empty" id="wifiSavedUnavailable" role="status" hidden>Saved sites are temporarily unavailable.</p>
             </section>
             <details class="network-hub-group network-hub-folder" id="wifiScenariosFolder" hidden>
               <summary><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>Scenarios <span id="wifiScenarioCount" aria-hidden="true"></span></summary>
@@ -405,7 +408,7 @@
               <ul class="network-hub-list">
                 <li class="network-hub-row">
                   <button class="network-hub-row-open" id="wifiSampleSite" type="button">
-                    <span class="network-hub-row-main"><strong>Northfield Learning Center</strong><small>Explore a wired campus with a detached trades pavilion, redundant fiber routes, and indoor and outdoor Wi-Fi.</small></span>
+                    <span class="network-hub-row-main"><strong>Northfield Learning Center</strong><small>Explore a campus with patched racks, service VMs, redundant fiber, and indoor and outdoor Wi-Fi.</small></span>
                     <span class="network-hub-arrow" aria-hidden="true">↗</span>
                   </button>
                 </li>
@@ -536,6 +539,7 @@
           <button class="btn secondary wifi-scenario-button" id="wifiScenarioButton" type="button" aria-haspopup="dialog" aria-controls="wifiScenarioDialog" hidden>Scenario</button>
           <button class="btn secondary" id="wifiMaterials" type="button" aria-haspopup="dialog">Bill of Materials</button>
           <button class="btn secondary" id="wifiExportPdf" type="button">Export PDF</button>
+          <button class="btn secondary" id="wifiDownloadProject" type="button">Download Project</button>
           <button class="btn secondary" id="wifiDiscardSite" type="button" hidden>Discard Unsaved Edits</button>
           <button class="btn secondary" id="wifiCopySite" type="button">Save a Copy</button>
           <button class="btn run" id="wifiSaveSite" type="button">Save</button>
@@ -2430,7 +2434,7 @@
 
   <script src="/static/js/app.js"></script>
   <script src="/static/js/connection.js?v=20261011-files-5"></script>
-  <script src="/static/js/feature-loader.js?v=20261116-server-vms"></script>
+  <script src="/static/js/feature-loader.js?v=20261116-infra-polish"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20261021-security-1"></script>
   <script src="/static/js/layout.js?v=20261011-files-5"></script>

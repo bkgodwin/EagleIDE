@@ -292,6 +292,11 @@
   }
   async function show({ push = true } = {}) {
     if (window.ExternalTools?.active?.() && !window.ExternalTools.leave()) return;
+    if (!document.body.classList.contains('network-mode') && window.WifiSite?.canResume?.()) {
+      showMode({ push });
+      window.WifiSite.resume();
+      return;
+    }
     if (window.WifiSite && !await window.WifiSite.leave()) return;
     showMode({ push });
     showLibrary();
@@ -355,7 +360,13 @@
     $('networkLoading').hidden = false;
     $('networkLoading').textContent = 'Loading Network Lab…';
     if (state.bootstrapKey !== key) $('networkHubTools').hidden = true;
-    const data = await requestBootstrap({ force });
+    let data;
+    try {
+      data = await requestBootstrap({ force });
+    } catch (error) {
+      if (request !== bootstrapView || key !== currentAuthKey()) return;
+      throw error;
+    }
     if (request !== bootstrapView || key !== currentAuthKey()) return data;
     $('networkLoading').hidden = true;
     $('networkPreviewWarning').hidden = !data.admin_preview;
@@ -388,9 +399,12 @@
     applyConfig(config);
     const ctx = context();
     if (config.network_sim_enabled && ctx.USER_TOKEN && !ctx.TEACHER_TOKEN && !ctx.ADMIN_TOKEN) {
-      try { await requestBootstrap(); }
+      const key = currentAuthKey();
+      try { await api('/api/network/access'); }
       catch (error) {
-        if (error.status === 403) [$('networkViewBtn'), $('wikiHeroNetworkBtn')].forEach(button => { if (button) button.hidden = true; });
+        if (key === currentAuthKey() && error.status === 403) {
+          [$('networkViewBtn'), $('wikiHeroNetworkBtn')].forEach(button => { if (button) button.hidden = true; });
+        }
       }
     }
   }
@@ -427,8 +441,10 @@
         { meta: formatTimestamp(item.updated_at), remove: `data-delete-saved="${escapeHtml(item.id)}"` })
     ).join('');
     const sites = data.saved_sites || [];
+    const sitesAvailable = data.wifi_storage_available !== false;
     $('wifiSavedSection').hidden = !data.can_save;
-    $('wifiSavedEmpty').hidden = sites.length > 0;
+    $('wifiSavedEmpty').hidden = !sitesAvailable || sites.length > 0;
+    $('wifiSavedUnavailable').hidden = sitesAvailable;
     $('wifiSavedSites').innerHTML = sites.map(item =>
       libraryRow(item.title || 'Untitled Site', '', `data-open-site="${escapeHtml(item.id)}"`,
         { meta: item.updated_at ? new Date(Number(item.updated_at) * 1000).toLocaleString() : '', remove: `data-delete-site="${escapeHtml(item.id)}"` })
@@ -467,23 +483,30 @@
     }
   }
 
-  function openInfra(button, { sample = false, siteId = '', scenarioId = '' } = {}) {
+  function openInfra(button, { sample = false, siteId = '', scenarioId = '', file } = {}) {
     return fromLibrary(button, async valid => {
       const access = await requestBootstrap();
+      if (!valid()) return;
       const returnFocus = scenarioId ? $('wifiScenariosFolder').querySelector('summary') : siteId ? null : button;
+      if (file && file.size > access.wifi_limits.project_bytes) throw new Error('Project files must be 2 MB or smaller.');
       const [saved] = await Promise.all([
         siteId ? api(`/api/network/wifi-sites/${encodeURIComponent(siteId)}`) : null,
         window.EagleFeatures.load('wifiSite'),
       ]);
       if (!valid()) return;
-      const project = scenarioId
+      let project = scenarioId
         ? await api(`/api/network/wifi-scenarios/${encodeURIComponent(scenarioId)}`, { method: 'POST' })
         : saved;
+      if (file) {
+        const body = await file.text();
+        if (!valid()) return;
+        project = await api('/api/network/wifi-project/validate', { method: 'POST', body });
+      }
       if (!valid()) return;
       window.WifiSite.open({
         api, authKey: currentAuthKey, canSave: access.can_save, limits: access.wifi_limits, catalog: access.wifi_cabling,
         makeId, escapeHtml, onBack: () => returnToLibrary(returnFocus),
-      }, { site: scenarioId ? project.site : project, sample, briefing: scenarioId ? project.briefing : null });
+      }, { site: scenarioId ? project.site : project, sample, imported: Boolean(file), briefing: scenarioId ? project.briefing : null });
     });
   }
 
@@ -2595,6 +2618,13 @@
     $('networkStarterBtn')?.addEventListener('click', openStarter);
     $('networkWifiBtn')?.addEventListener('click', event => openInfra(event.currentTarget));
     $('wifiSampleSite')?.addEventListener('click', event => openInfra(event.currentTarget, { sample: true }));
+    $('wifiOpenFile')?.addEventListener('click', () => $('wifiProjectFile').click());
+    $('wifiProjectFile')?.addEventListener('change', event => {
+      const input = event.target;
+      const file = input.files[0];
+      input.value = '';
+      if (file) openInfra($('wifiOpenFile'), { file });
+    });
     $('networkAddDeviceBtn')?.addEventListener('click', () => {
       if (state.connectMode) $('networkConnectBtn').click();
       setModeHint('Choose a device in the Devices panel to place it.');

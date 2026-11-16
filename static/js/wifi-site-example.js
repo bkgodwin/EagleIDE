@@ -161,7 +161,8 @@
           dhcp: { gateway: '10.18.0.1/24', dns: '1.1.1.1', fallback_dns: '8.8.8.8' },
           firewall: [0, 30, 40, 50, 60].map(destination_vlan =>
             ({ action: 'deny', source_vlan: 20, destination_vlan, source_ip: '', destination_ip: '' })) },
-        { ...device('core', 'core_switch', 'Campus core', 10, 29), port_vlans: trunks('SFP1', 'SFP2', 'SFP3', 'SFP4') },
+        { ...device('core', 'core_switch', 'Campus core', 10, 29),
+          port_vlans: { ...trunks('SFP1', 'SFP2', 'SFP3', 'SFP4'), ETH1: [0, 20, 40] } },
         { ...device('west-dist', 'distribution_switch', 'West PoE switch', 19, 13),
           port_vlans: { ...trunks('SFP1', 'SFP2'), ETH2: [0, 40], ETH3: [0, 40], ETH4: [0, 20],
             ETH5: [40], ETH6: [30], ETH7: [50], ETH9: [30] } },
@@ -314,7 +315,12 @@
       });
       if (id === 'main') {
         example.equipment.push(mount(device('ups-main-2', 'ups', 'Battery backup 2', rack.x, rack.y), 3),
-          mount({ ...device('campus-server', 'server', 'Campus services server', rack.x, rack.y), reservation: reservation(10) }, 8));
+          mount({ ...device('campus-server', 'server', 'Campus services server', rack.x, rack.y), reservation: reservation(10),
+            services: [
+              { kind: 'dns', vlan: 0, ip: '10.18.0.81' },
+              { kind: 'web', vlan: 20, ip: '' },
+              { kind: 'file', vlan: 40, ip: '10.18.0.82' },
+            ] }, 8));
       }
     }
     const patch = (...args) => ({ ...wire(...args), rack_patch: true });
@@ -337,7 +343,7 @@
     const channel5 = [36, 44, 149, 157, 44, 36, 149, 157, 36, 44, 149, 157, 36, 44, 149, 157];
     example.access_points = example.access_points.map((item, i) => ({ ...item, radios: {
       '2.4': { channel: channel24[i % channel24.length], width: 20 },
-      '5': { channel: channel5[i % channel5.length], width: 40 },
+      '5': { channel: channel5[i % channel5.length], width: [20, 40, 80][i % 3] },
     } }));
     return example;
   };

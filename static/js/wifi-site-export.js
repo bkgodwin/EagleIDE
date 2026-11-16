@@ -48,8 +48,9 @@
     });
   }
 
-  function drawCoverage(frame, plan) {
+  function drawCoverage(frame, plan, signal) {
     if (!plan.radios.length) return Promise.resolve(null);
+    signal?.throwIfAborted();
     const canvas = document.createElement('canvas');
     return new Promise((resolve, reject) => {
       let finished = false;
@@ -66,9 +67,12 @@
         finish();
         reject(new Error('Wi-Fi coverage took too long to render for export.'));
       }, 30000);
+      const abort = () => { finish(); reject(signal.reason); };
+      signal?.addEventListener('abort', abort, { once: true });
       function finish() {
         finished = true;
         clearTimeout(timeout);
+        signal?.removeEventListener('abort', abort);
         painter.clear();
       }
       painter.setPlan(plan);
@@ -76,11 +80,19 @@
     });
   }
 
-  function annotations(frame, plan, cabling, network, cameraOutlines) {
+  function annotations(frame, plan, cabling, network, cameraOutlines, serviceNames) {
     const clientModel = window.WifiSiteClientModel;
     const point = item => [item.x, item.y].map((coordinate, i) => Number(
       ((coordinate - (i ? frame.y : frame.x)) * frame.scale / (i ? frame.height : frame.width)).toFixed(7)));
     const ssidById = new Map(plan.ssids.map(ssid => [ssid.id, ssid]));
+    const hosted = new Map();
+    for (const vm of network.services.values()) {
+      const lease = network.clients.get(vm.id)?.lease;
+      const address = lease ? clientModel.address(lease.ip) : vm.ip ? `${vm.ip} (offline)` : 'IPv4 unassigned';
+      const lines = hosted.get(vm.hostId) ?? [];
+      lines.push(`${serviceNames?.[vm.kind] ?? vm.kind} · ${address} · VLAN ${vm.vlan}`);
+      hosted.set(vm.hostId, lines);
+    }
     const cameraData = item => ({ cone: (cameraOutlines.get(item.id) || []).map(point),
       powered: cabling.poweredDevices.has(item.id) });
     const details = item => {
@@ -100,6 +112,7 @@
     const equipment = plan.equipment.map(item => ({ point: point(cabling.location(item)),
       name: cabling.name(item), kind: item.kind, details: details(item), mounted: Boolean(item.rack_id),
       ...(item.kind === 'rack' ? { rack_id: item.id } : {}),
+      ...(hosted.has(item.id) ? { services: hosted.get(item.id) } : {}),
       ...(item.kind === 'poe_camera' ? cameraData(item) : {}) }));
     const passes = plan.pass_throughs.map(item => ({ point: point(cabling.location(item)),
       name: 'Concrete pass-through', kind: 'pass_through', details: [] }));
@@ -121,22 +134,27 @@
     return { notes, equipment: [...equipment, ...passes], aps, cables };
   }
 
-  async function render({ bounds, plan, cabling, network, cameraOutlines, background, surfaces, decor, structure }) {
+  function rasterRatio(width, height) {
+    return Math.min(2, 2400 / Math.max(width, height), Math.sqrt(4_950_000 / (width * height)));
+  }
+
+  async function render({ bounds, plan, cabling, network, cameraOutlines, background, surfaces, decor, structure, signal, serviceNames }) {
     const frame = layout(bounds, cameraOutlines);
-    const data = annotations(frame, plan, cabling, network, cameraOutlines);
+    const data = annotations(frame, plan, cabling, network, cameraOutlines, serviceNames);
     const radioAps = plan.access_points.filter(ap => cabling.poweredAps.has(ap.id));
     const radios = ['2.4', '5'].map(band => ({ band,
       access_points: window.WifiSiteClientModel.coverageAps(radioAps, plan.ssids, band) }))
       .filter(layer => layer.access_points.length);
-    const ratio = Math.min(2, 2400 / Math.max(frame.width, frame.height));
+    const ratio = rasterRatio(frame.width, frame.height);
     const styles = Array.from(document.styleSheets).filter(sheet => sheet.href?.includes('/features/wifi-site.css'))
       .flatMap(sheet => Array.from(sheet.cssRules).map(rule => rule.cssText)).join('\n');
     const base = (background?.hasAttribute('href') ? `<g opacity=".58">${cleanLayer(background)}</g>` : '')
       + Array.from(surfaces.children).map(cleanLayer).join('') + cleanLayer(decor);
     const [under, over, heat] = await Promise.all([
       svgImage(frame, base, styles, ratio), svgImage(frame, structure.map(cleanLayer).join(''), styles, ratio),
-      drawCoverage(frame, { walls: plan.walls, openings: plan.openings, decor: plan.decor, radios }),
+      drawCoverage(frame, { walls: plan.walls, openings: plan.openings, decor: plan.decor, radios }, signal),
     ]);
+    signal?.throwIfAborted();
     const canvas = document.createElement('canvas');
     canvas.width = Math.ceil(frame.width * ratio);
     canvas.height = Math.ceil(frame.height * ratio);
@@ -156,6 +174,7 @@
       let image = encode(.95);
       if (image.length > 2_400_000) image = encode(.82);
       if (image.length > 2_400_000) image = encode(.66);
+      if (image.length > 2_400_000) image = encode(.48);
       return image;
     };
     return { ...data, image: draw(null), coverage_image: heat ? draw(heat) : null,

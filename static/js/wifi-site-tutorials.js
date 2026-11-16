@@ -26,6 +26,7 @@
         '<strong>Patch inside the rack.</strong> Open the rack and select its <strong>Cable</strong> tool. Patch router ETH1 to switch ETH1. Hover a front patch-panel port to see the label of the device connected to its rear. Patch the two front ports to switch ETH2 and ETH3 to complete the desktop and AP circuits.',
         '<strong>Check the desktop.</strong> Use <strong>Select</strong> and click the desktop. Its inspector should show a DHCP address. Set <strong>Ping target</strong> to the router and press <strong>Start Ping</strong>.',
         '<strong>Try Wi-Fi.</strong> Place a Mobile Phone near the access point. Select it and check the associated AP, signal, and IPv4 address in its inspector.',
+        '<strong>Keep a project file.</strong> Choose <strong>Download Project</strong> to keep an editable snapshot. Use <strong>Open Project File</strong> in Network Lab to open it as a new draft.',
         '<strong>Add Internet service if needed.</strong> Place an ISP Demarcation on a wall. Start the cable at the handoff and click the rack. Confirm the selected router WAN port, connect, and try the simulated Internet ping.',
       ],
     },
@@ -45,6 +46,7 @@
         '<strong>Patch the front.</strong> In the rack, choose <strong>Cable</strong> and pick Ethernet or SFP fiber. Zoom in with <strong>+</strong> and scroll as needed. Select two highlighted ports on different devices. The <strong>Patch cables</strong> list shows each connection and lets you disconnect it.',
         '<strong>Rearrange the rack.</strong> Return to <strong>Select</strong>, then drag a chassis to an open position or use its <strong>Mounting position</strong> menu. The cables stay connected and redraw at the new port positions. Choose <strong>Fit width</strong> to see the full width again.',
         '<strong>Host services on a rack server.</strong> Select the server and enable a service under <strong>Service VMs</strong>. Choose its VLAN, leave IPv4 blank for DHCP or enter an address in a reachable router’s subnet, and choose <strong>Save VM</strong>. Add the VM’s VLAN to the switch port facing the server. Select a client to see its <strong>Reachable server services</strong> and ping their addresses.',
+        '<strong>Try it in Northfield.</strong> The Campus services server in Main IT Rack hosts staff DNS, a guest Web VM, and lab File sharing. Compare the Reachable server services on the STEM desktop and Visitor phone, then inspect the core switch port facing the server.',
       ],
     },
     {

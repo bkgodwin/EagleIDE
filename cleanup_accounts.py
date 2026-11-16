@@ -170,6 +170,12 @@ def purge_account(run, email):
         assignment_development._storage_cache.pop(str(development), None)
         assignment_development.invalidate_policy()
     network = eagle.app.extensions["network_store"]
+    wifi_path = network._wifi_path(email)
+    with network._wifi_lock(wifi_path):
+        if wifi_path.exists() or wifi_path.is_symlink():
+            if wifi_path.is_dir():
+                raise ValueError("Invalid Infra Sim project storage file")
+            run.delete(kind, network.wifi_dir, wifi_path)
     with network._lock:
         run.delete(kind, network.users_dir, network._user_path(email))
         digest = network._user_key(email) + ".json"

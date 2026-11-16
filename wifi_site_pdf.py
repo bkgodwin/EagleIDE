@@ -21,6 +21,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen.canvas import Canvas
 
 from wifi_cabling import COST_ITEMS, EQUIPMENT, MAX_RACKS, RACK_UNITS, _ports
+from wifi_site_network import SERVER_SERVICES
 
 
 MAX_EXPORT_BYTES = 6_500_000
@@ -141,8 +142,10 @@ def _read_annotations(data):
             if type(powered) is not bool or type(mounted) is not bool:
                 raise ValueError('Invalid device power state')
             details = [_text(value, 120) for value in _list(item.get('details', []), 4)]
+            services = ([_text(value, 120) for value in _list(item.get('services', []), len(SERVER_SERVICES))]
+                        if kind == 'server' else [])
             output.append(dict(ref=f'{prefix}{i:02}', name=_text(item.get('name'), 160), kind=kind,
-                               point=_point(item.get('point')), details=details, powered=powered, mounted=mounted,
+                               point=_point(item.get('point')), details=details, services=services, powered=powered, mounted=mounted,
                                rack_id=_text(item.get('rack_id', ''), 64) if kind == 'rack' else '',
                                radio_plan=_text(item.get('radio_plan', ''), 120),
                                cone=_points(item.get('cone', []), 256) if kind == 'poe_camera' else []))
@@ -414,6 +417,8 @@ def _schedules(equipment, aps, notes, note_refs, cables, units):
     device_rows = []
     for item in [*equipment, *aps]:
         details = _device_details(item, 1) if item['kind'] == 'access_point' else item['details']
+        if item['services']:
+            details = [*details, *item['services']]
         device_rows.append(([f"{item['ref']}  {item['name']}"], [_DEVICE_TYPES[item['kind']]], details))
     device_rows.extend(([f"{note['ref']}  {note['name']}"], ['Plan label reference'], [])
                        for note in notes if note['ref'] in note_refs)

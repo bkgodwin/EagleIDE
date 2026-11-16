@@ -310,7 +310,7 @@ class NetworkStoreTests(unittest.TestCase):
           const { plan, catalog, limits } = JSON.parse(readFileSync(0, 'utf8'));
           const wiring = require('./static/js/wifi-cabling-model');
           const { coverageModel } = require('./static/js/wifi-site-model');
-          const { INTERNET, build, ping } = require('./static/js/wifi-site-client-model');
+          const { INTERNET, build, ping, reachableServices } = require('./static/js/wifi-site-client-model');
           const paths = input => {
             const cables = wiring.build(input, catalog, limits);
             assert.equal(cables.error, '');
@@ -324,6 +324,8 @@ class NetworkStoreTests(unittest.TestCase):
           for (const client of network.clients.values()) assert.ok(client.router && client.lease);
           assert.ok(ping(network, 'phone-courtyard', INTERNET, () => 1).rtt > 0);
           assert.match(ping(network, 'phone-courtyard', 'desktop-pavilion', () => 1).reason, /firewall/);
+          assert.deepEqual(reachableServices(network, 'phone-courtyard').map(vm => vm.kind), ['web']);
+          assert.deepEqual(reachableServices(network, 'desktop-stem').map(vm => vm.kind), ['dns', 'web', 'file']);
           assert.ok(ping(network, 'phone-pavilion', 'desktop-media', () => 1).rtt > 0);
           for (const disconnected of ['east-fiber', 'east-spare']) {
             const cables = plan.cables.filter(cable => cable.id !== disconnected);
@@ -710,7 +712,8 @@ class NetworkRouteTests(unittest.TestCase):
         url = f"/api/network/wifi-scenarios/{scenario_id}"
         student = {"X-User-Token": "student-token"}
         self.store.set_class_access("class-1", True)
-        self.assertEqual(self.client.post(url).status_code, 404)
+        self.assertEqual(self.client.post(url).status_code, 401)
+        self.assertFalse(self.store._wifi_path("").exists())
         first = self.client.post(url, headers=student)
         second = self.client.post(url, headers=student)
         self.assertEqual((first.status_code, second.status_code), (201, 201))
@@ -772,6 +775,8 @@ class NetworkRouteTests(unittest.TestCase):
                  'details': ['IP 10.18.0.2/24', 'Subnet 10.18.0.0/24', 'SSID Staff Wireless']},
                 {'kind': 'poe_camera', 'point': [.65, .6], 'name': 'Entry camera', 'powered': True,
                  'cone': [[.65, .6], [.7, .8], [.8, .65]]},
+                {'kind': 'server', 'name': 'Print host', 'mounted': True, 'point': [.5, .5],
+                 'services': ['Print · 10.18.0.4 · VLAN 20']},
             ],
             'cables': [{'name': 'Hall ceiling drop', 'media': 'ethernet', 'color': '#224488',
                         'source': 'Lobby switch ETH1', 'target': 'North AP ETH1', 'length': 35.4,
@@ -818,6 +823,7 @@ class NetworkRouteTests(unittest.TestCase):
                       'North AP ETH1', '35.4 ft', 'D01', 'Front desk mobile', 'Wireless phone',
                       'IP 10.18.0.2/24', 'D02', 'Entry camera', 'A01', 'North AP', 'Staff Wireless (5 GHz)'):
             self.assertIn(label, schedules)
+        self.assertIn('Print · 10.18.0.4 · VLAN 20', schedules)
 
         sheets[:] = [[]]
         dense = {**payload,
@@ -851,7 +857,7 @@ class NetworkRouteTests(unittest.TestCase):
         self.assertEqual(len(sheets[:-1]), 6)
         for sheet in sheets[:3]:
             diagram = ' '.join(sheet)
-            for label in ("Rack equipment", "D03  West IDF", "U16 Building header",
+            for label in ("Rack equipment", "D04  West IDF", "U16 Building header",
                           "U14 Floor switch", "U1-U2 Battery backup"):
                 self.assertIn(label, diagram)
         for label in ("Rack elevation", "West IDF", "104 MIN", "FRONT1", "Patch to AP", "North AP"):
@@ -1038,6 +1044,61 @@ class NetworkRouteTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/network/topologies/my-lan", headers={"X-Teacher-Token": "teacher-token"}).status_code, 200)
         self.store.set_class_access("class-1", True)
         self.assertEqual(self.client.get("/api/network/topologies/my-lan", headers={"X-User-Token": "student-token"}).status_code, 404)
+
+    def test_infra_project_file_opens_as_a_new_draft_and_compact_save_acknowledges_revision(self):
+        path = "/api/network/wifi-project/validate"
+        plan = {**self.wifi_plan(), "id": "someone-elses-site", "revision": 14,
+                "scenario_id": "maple-lane-house"}
+        envelope = {"format": "eagleide-infra-project", "project": plan}
+        imported = self.client.post(path, json=envelope)
+        self.assertEqual(imported.status_code, 200, imported.json)
+        draft = imported.json["data"]
+        self.assertFalse({"id", "revision", "scenario_id"} & draft.keys())
+        self.assertFalse(self.store._wifi_path("").exists())
+        self.assertEqual(self.client.post(path, json={"format": "other", "project": plan}).status_code, 400)
+        self.assertEqual(self.client.post(path, data=b"x" * 2_000_001, content_type="application/json").status_code, 413)
+        teacher = {"X-Teacher-Token": "teacher-token"}
+        url = "/api/network/wifi-sites/imported"
+        saved = self.client.put(url + "?summary=1", headers=teacher, json={"site": draft, "revision": 0})
+        self.assertEqual(saved.status_code, 200, saved.json)
+        self.assertEqual(set(saved.json["data"]), {"id", "revision", "updated_at"})
+        self.assertEqual(self.client.get(url, headers=teacher).json["data"]["title"], plan["title"])
+        self.assertEqual(self.client.get(url, headers={"X-Admin-Token": "admin-token"}).status_code, 404)
+        old = {**self.wifi_plan(), "schema_version": 11, "id": "older", "revision": 1, "updated_at": 10,
+               "equipment": [{"id": "loose", "kind": "router", "x": 0, "y": 0}]}
+        legacy_file = {"format": envelope["format"], "project": validate_wifi_site(old)}
+        self.store._write_json(self.store._wifi_path("teacher@example.com"), {"sites": {"older": old}})
+        self.assertEqual(self.client.post(path, headers=teacher, json=legacy_file).status_code, 200)
+        self.assertEqual(self.client.post(path, json=legacy_file).status_code, 400)
+        self.config_state["network_sim_enabled"] = False
+        self.assertEqual(self.client.post(path, json=envelope).status_code, 403)
+
+    def test_infra_account_checks_do_not_read_sites_and_storage_failure_is_recoverable(self):
+        headers = {"X-User-Token": "student-token"}
+        self.assertEqual(self.client.get("/api/network/access", headers=headers).status_code, 403)
+        self.store.set_class_access("class-1", True)
+        path = self.store._wifi_path("student@example.com")
+        path.parent.mkdir(parents=True)
+        corrupt = '{"sites": {"broken": null}}'
+        path.write_text(corrupt, encoding="utf-8")
+        self.assertEqual(self.client.get("/api/network/access", headers=headers).json["data"], {"role": "student"})
+        hub = self.client.get("/api/network/bootstrap", headers=headers)
+        self.assertEqual(hub.status_code, 200)
+        self.assertFalse(hub.json["data"]["wifi_storage_available"])
+        self.assertTrue(hub.json["data"]["practice_labs"])
+        self.assertEqual(self.client.get("/api/network/wifi-sites", headers=headers).status_code, 503)
+        url = "/api/network/wifi-sites/new"
+        self.assertEqual(self.client.put(url, headers=headers, json={"site": self.wifi_plan(), "revision": 0}).status_code, 503)
+        self.assertEqual(path.read_text(encoding="utf-8"), corrupt)
+
+        self.store.save_wifi_site("teacher@example.com", "keep", self.wifi_plan(), 0)
+        self.store.delete_account_wifi("student@example.com")
+        self.assertEqual(self.store.list_wifi_sites("student@example.com"), [])
+        self.assertTrue(self.store.get_wifi_site("teacher@example.com", "keep"))
+        with patch.object(self.store, "class_access", side_effect=[True, False]):
+            revoked = self.client.put(url, headers=headers, json={"site": self.wifi_plan(), "revision": 0})
+        self.assertEqual(revoked.status_code, 403)
+        self.assertFalse(path.exists())
 
     def wifi_plan(self):
         return {

@@ -288,6 +288,7 @@ class DataCleanupTests(unittest.TestCase):
         network = eagle.app.extensions["network_store"]
         for who in (email, other):
             network._user_path(who).write_text("{}")
+            network._write_json(network._wifi_path(who), {"sites": {}})
         eagle.CHALLENGE_SCORE_FILE.write_text(json.dumps({"students": {email: {"score": 1}, other: {"score": 2}}}))
         page = eagle._wiki_store.create_page("Bookmark", "keep", status="published")
         for who in (email, other): eagle._wiki_store.add_personal_bookmark(who, page["id"])
@@ -307,11 +308,22 @@ class DataCleanupTests(unittest.TestCase):
             self.assertEqual([row[0] for row in db.execute("SELECT email FROM frames")], [other])
             self.assertEqual([row[0] for row in db.execute("SELECT email FROM batches")], [other])
         self.assertFalse(network._user_path(email).exists()); self.assertTrue(network._user_path(other).exists())
+        self.assertFalse(network._wifi_path(email).exists()); self.assertTrue(network._wifi_path(other).exists())
         self.assertEqual(list(json.loads(eagle.CHALLENGE_SCORE_FILE.read_text())["students"]), [other])
         with eagle._wiki_store._connect() as db:
             self.assertEqual([row[0] for row in db.execute("SELECT owner_email FROM bookmarks")], [other])
         self.assertEqual(json.loads(eagle.SIGN_IN_EVENTS_FILE.read_text())[0]["email"], other)
         self.assertEqual(json.loads(classroom_features.CLASSROOM_SIGNALS_FILE.read_text())["classes"]["class-one"]["hands"], [{"student_email": other}])
+
+    def test_account_deletion_removes_its_infra_sites_and_preserves_other_owners(self):
+        store = eagle.app.extensions["network_store"]
+        email, other = self.student["email"], self.disabled["email"]
+        for owner in (email, other):
+            store._write_json(store._wifi_path(owner), {"sites": {}})
+        response = eagle.app.test_client().post("/api/admin/users/delete", headers=self.headers, json={"email": email})
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertFalse(store._wifi_path(email).exists())
+        self.assertTrue(store._wifi_path(other).exists())
 
     def test_account_recreation_is_blocked_only_while_its_owned_data_is_being_cleaned(self):
         email = "removed@example.invalid"

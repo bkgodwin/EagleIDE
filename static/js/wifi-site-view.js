@@ -67,6 +67,34 @@
     return factor * power * displayUnit;
   }
 
+  function labelIndex() {
+    const cells = new Map();
+    const cellSize = 64;
+    function visit(box, inspect) {
+      const right = Math.floor(box.right / cellSize), bottom = Math.floor(box.bottom / cellSize);
+      const left = Math.floor(box.left / cellSize);
+      for (let y = Math.floor(box.top / cellSize); y <= bottom; y += 1) {
+        for (let x = left; x <= right; x += 1) {
+          if (inspect(`${x}:${y}`)) return true;
+        }
+      }
+      return false;
+    }
+    return {
+      add(box) {
+        visit(box, key => {
+          const entries = cells.get(key);
+          if (entries) entries.push(box);
+          else cells.set(key, [box]);
+        });
+      },
+      overlaps(box, id) {
+        return visit(box, key => cells.get(key)?.some(other => other.id !== id &&
+          other.left < box.right && other.right > box.left && other.top < box.bottom && other.bottom > box.top));
+      },
+    };
+  }
+
   function snapConstruction(point, { origin, orthogonal, endpoints = [], exclude, tolerance = 0, step = 0 }) {
     const fixed = origin && orthogonal ? (Math.abs(point.x - origin.x) >= Math.abs(point.y - origin.y) ? 'y' : 'x') : '';
     const aligned = fixed ? { ...point, [fixed]: origin[fixed] } : point;
@@ -89,7 +117,7 @@
   }
 
   const view = { clamp, screenToWorld, worldToScreen, placeWorldPoint, zoomAt, bounds, viewportBounds,
-    fitCamera, gridSpacing, scaleBar, snapConstruction };
+    fitCamera, gridSpacing, scaleBar, snapConstruction, labelIndex };
   if (typeof module === 'object' && module.exports) module.exports = view;
   else root.WifiSiteView = view;
 })(globalThis);
