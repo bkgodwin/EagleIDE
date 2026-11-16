@@ -378,37 +378,6 @@
     renderCommandReference();
     return data;
   }
-  function applyConfig(config = {}) {
-    const ctx = context();
-    const available = !!(config.network_sim_enabled || ctx.ADMIN_TOKEN);
-    [$('networkViewBtn'), $('wikiHeroNetworkBtn')].forEach(button => { if (button) button.hidden = !available; });
-  }
-  async function refreshAvailability() {
-    let config = context().currentConfig;
-    if (!config && window.EagleIDE?.configReady) {
-      await window.EagleIDE.configReady;
-      config = context().currentConfig;
-    }
-    if (!config) {
-      try {
-        const response = await fetch('/api/config');
-        const payload = await response.json();
-        config = payload?.data || {};
-      } catch { config = {}; }
-    }
-    applyConfig(config);
-    const ctx = context();
-    if (config.network_sim_enabled && ctx.USER_TOKEN && !ctx.TEACHER_TOKEN && !ctx.ADMIN_TOKEN) {
-      const key = currentAuthKey();
-      try { await api('/api/network/access'); }
-      catch (error) {
-        if (key === currentAuthKey() && error.status === 403) {
-          [$('networkViewBtn'), $('wikiHeroNetworkBtn')].forEach(button => { if (button) button.hidden = true; });
-        }
-      }
-    }
-  }
-
   function libraryRow(title, description, attributes, { meta = '', remove = '' } = {}) {
     return `<li class="network-hub-row">
       <button class="network-hub-row-open" type="button" ${attributes}>
@@ -2430,28 +2399,84 @@
   }
 
   let teacherClassRequest = 0;
-  const scenarioWrites = new Map();
+  let teacherPanelAccount;
+  let savedTeacherSettings;
+  let teacherWriteInProgress = false;
+
+  function teacherScenarioInputs() {
+    return [...$('networkTeacherScenarioList').querySelectorAll('[data-teacher-scenario]')];
+  }
 
   function countVisibleScenarios() {
-    const options = [...$('networkTeacherScenarioList').querySelectorAll('[data-teacher-scenario]')];
-    $('networkTeacherScenarioCount').textContent = `${options.filter(option => option.checked).length} of ${options.length} available`;
+    const options = teacherScenarioInputs();
+    $('networkTeacherScenarioCount').textContent = `${options.filter(option => option.checked).length} of ${options.length} selected`;
+  }
+
+  function teacherSettingsChanges() {
+    const changes = {};
+    if (!savedTeacherSettings) return changes;
+    const enabled = $('networkTeacherAccessToggle').checked;
+    if (enabled !== savedTeacherSettings.enabled) changes.enabled = enabled;
+    const visibility = Object.fromEntries(teacherScenarioInputs()
+      .filter(input => input.checked !== savedTeacherSettings.scenario_visibility[input.dataset.teacherScenario])
+      .map(input => [input.dataset.teacherScenario, input.checked]));
+    if (Object.keys(visibility).length) changes.scenario_visibility = visibility;
+    return changes;
+  }
+
+  function updateTeacherSettingsControls() {
+    const dirty = Object.keys(teacherSettingsChanges()).length > 0;
+    const locked = dirty || teacherWriteInProgress;
+    const select = $('networkTeacherClassSelect');
+    select.disabled = !select.options.length || locked;
+    $('networkTeacherRefreshBtn').disabled = select.disabled;
+    $('networkTeacherSaveBtn').disabled = $('networkTeacherDiscardBtn').disabled = !dirty || teacherWriteInProgress;
+    $('networkTeacherAccessToggle').disabled = !savedTeacherSettings || teacherWriteInProgress;
+    teacherScenarioInputs().forEach(input => { input.disabled = teacherWriteInProgress; });
+    $('networkTeacherLabList').querySelectorAll('[data-teacher-lab]').forEach(button => { button.disabled = locked; });
+    countVisibleScenarios();
+    return dirty;
+  }
+
+  function showSavedTeacherSettings(message = '') {
+    const { enabled, globally_enabled, scenario_visibility } = savedTeacherSettings;
+    $('networkTeacherAccessToggle').checked = enabled;
+    teacherScenarioInputs().forEach(input => { input.checked = scenario_visibility[input.dataset.teacherScenario]; });
+    const access = enabled ? (globally_enabled ? 'Students in this class can open Network Lab.'
+      : 'Class access is enabled. An administrator must enable Network Lab school-wide.') : 'Class access is disabled.';
+    $('networkTeacherStatus').textContent = message ? `${message} ${access}` : access;
+    updateTeacherSettingsControls();
+  }
+
+  function teacherSettingsChanged() {
+    if (updateTeacherSettingsControls()) $('networkTeacherStatus').textContent = 'Unsaved changes.';
+    else showSavedTeacherSettings();
   }
 
   async function openTeacherPanel() {
     const ctx = context();
+    const account = currentAuthKey();
     const classes = ctx.teacherClasses || [];
+    if (account === teacherPanelAccount && classes.some(item => item.id === state.teacherClassId)
+        && (teacherWriteInProgress || Object.keys(teacherSettingsChanges()).length)) return;
+    teacherPanelAccount = account;
+    teacherWriteInProgress = false;
     const select = $('networkTeacherClassSelect');
     select.innerHTML = classes.map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
     if (!classes.length) {
       teacherClassRequest += 1;
       state.teacherClassId = '';
-      $('networkTeacherAccessToggle').disabled = true;
+      savedTeacherSettings = null;
+      $('networkTeacherAccessToggle').checked = false;
+      $('networkTeacherScenarioList').replaceChildren();
       $('networkTeacherScenarios').hidden = $('networkTeacherLabHeading').hidden = true;
       $('networkTeacherStatus').textContent = '';
       $('networkTeacherLabList').innerHTML = '<div class="network-objectives-empty">Create a class to manage labs and scenarios.</div>';
+      updateTeacherSettingsControls();
       return;
     }
-    state.teacherClassId = classes.some(item => item.id === state.teacherClassId) ? state.teacherClassId : (ctx.currentTeacherClassId || classes[0].id);
+    state.teacherClassId = classes.find(item => item.id === state.teacherClassId)?.id
+      || classes.find(item => item.id === ctx.currentTeacherClassId)?.id || classes[0].id;
     select.value = state.teacherClassId;
     await loadTeacherClass();
   }
@@ -2462,21 +2487,25 @@
     const account = currentAuthKey();
     const valid = () => request === teacherClassRequest && account === currentAuthKey();
     state.teacherClassId = classId;
-    $('networkTeacherAccessToggle').disabled = true;
+    savedTeacherSettings = null;
+    $('networkTeacherAccessToggle').checked = false;
+    $('networkTeacherScenarioList').replaceChildren();
     $('networkTeacherScenarios').hidden = $('networkTeacherLabHeading').hidden = true;
     $('networkTeacherLabList').replaceChildren();
     $('networkTeacherStatus').textContent = 'Loading class settings…';
+    updateTeacherSettingsControls();
     try {
-      await Promise.allSettled(scenarioWrites.get(`${account}:${classId}`) || []);
+      const data = await api(`/api/network/teacher/classes/${encodeURIComponent(classId)}`, { cache: 'no-store' });
       if (!valid()) return;
-      const data = await api(`/api/network/teacher/classes/${encodeURIComponent(classId)}`);
-      if (!valid()) return;
-      $('networkTeacherAccessToggle').checked = !!data.enabled;
-      $('networkTeacherAccessToggle').disabled = false;
-      $('networkTeacherStatus').textContent = data.enabled ? `${data.class_name} can use Network Lab when it is globally enabled.` : `${data.class_name} cannot currently open Network Lab.`;
-      renderTeacherScenarios(data.scenarios || []);
+      savedTeacherSettings = {
+        enabled: data.enabled,
+        globally_enabled: data.globally_enabled,
+        scenario_visibility: Object.fromEntries(data.scenarios.map(item => [item.id, item.visible])),
+      };
+      renderTeacherScenarios(data.scenarios);
       $('networkTeacherLabHeading').hidden = false;
       renderTeacherLabs(data.labs || []);
+      showSavedTeacherSettings();
     } catch (error) { if (valid()) $('networkTeacherStatus').textContent = error.message; }
   }
   function renderTeacherScenarios(scenarios) {
@@ -2484,34 +2513,30 @@
     $('networkTeacherScenarioList').innerHTML = scenarios.map(item => `<li>
       <label class="network-switch"><input type="checkbox" data-teacher-scenario="${escapeHtml(item.id)}" ${item.visible ? 'checked' : ''}>
       <span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.description)}</small></span></label></li>`).join('');
-    countVisibleScenarios();
   }
-  async function setTeacherScenario(input) {
+  async function saveTeacherSettings() {
+    const changes = teacherSettingsChanges();
+    if (teacherWriteInProgress || !Object.keys(changes).length) return;
     const classId = state.teacherClassId;
     const request = teacherClassRequest;
     const account = currentAuthKey();
-    const key = `${account}:${classId}`;
     const valid = () => request === teacherClassRequest && account === currentAuthKey();
-    const scenarioId = input.dataset.teacherScenario;
-    const visible = input.checked;
-    input.disabled = true;
-    const pending = scenarioWrites.get(key) || new Set();
-    scenarioWrites.set(key, pending);
-    const write = api(`/api/network/teacher/classes/${encodeURIComponent(classId)}/scenarios/${encodeURIComponent(scenarioId)}`,
-      { method: 'PUT', body: JSON.stringify({ visible }) });
-    pending.add(write);
+    teacherWriteInProgress = true;
+    updateTeacherSettingsControls();
+    $('networkTeacherStatus').textContent = 'Saving class settings…';
     try {
-      await write;
-      if (valid()) $('networkTeacherStatus').textContent = visible
-        ? 'Scenario available to this class.' : 'Scenario hidden from this class. Students can reopen saved attempts.';
+      const saved = await api(`/api/network/teacher/classes/${encodeURIComponent(classId)}/settings`,
+        { method: 'PUT', body: JSON.stringify(changes) });
+      if (!valid()) return;
+      savedTeacherSettings = saved;
+      showSavedTeacherSettings('Settings saved.');
     } catch (error) {
-      input.checked = !visible;
-      if (valid()) $('networkTeacherStatus').textContent = error.message;
+      if (valid()) $('networkTeacherStatus').textContent = `Could not save settings. ${error.message}`;
     } finally {
-      pending.delete(write);
-      if (!pending.size) scenarioWrites.delete(key);
-      input.disabled = false;
-      if (valid()) countVisibleScenarios();
+      if (valid()) {
+        teacherWriteInProgress = false;
+        updateTeacherSettingsControls();
+      }
     }
   }
   function renderTeacherLabs(labs) {
@@ -2533,9 +2558,23 @@
   }
   async function toggleTeacherLab(button) {
     const classId = state.teacherClassId, labId = button.dataset.teacherLab, assigned = button.dataset.assigned === 'true';
-    button.disabled = true;
-    try { await api(`/api/network/teacher/classes/${encodeURIComponent(classId)}/labs/${encodeURIComponent(labId)}`, { method: assigned ? 'DELETE' : 'PUT', body: assigned ? undefined : '{}' }); await loadTeacherClass(); }
-    catch (error) { $('networkTeacherStatus').textContent = error.message; button.disabled = false; }
+    const request = teacherClassRequest;
+    const account = currentAuthKey();
+    const valid = () => request === teacherClassRequest && account === currentAuthKey();
+    teacherWriteInProgress = true;
+    updateTeacherSettingsControls();
+    try {
+      await api(`/api/network/teacher/classes/${encodeURIComponent(classId)}/labs/${encodeURIComponent(labId)}`, { method: assigned ? 'DELETE' : 'PUT', body: assigned ? undefined : '{}' });
+      if (!valid()) return;
+      teacherWriteInProgress = false;
+      await loadTeacherClass();
+    } catch (error) {
+      if (valid()) {
+        teacherWriteInProgress = false;
+        updateTeacherSettingsControls();
+        $('networkTeacherStatus').textContent = error.message;
+      }
+    }
   }
   async function openTeacherLabDemo(labId) {
     if (!state.teacherClassId || !labId) return;
@@ -2548,13 +2587,6 @@
       logEvent(`Opened teacher demonstration for ${lab.title}. Changes are temporary.`);
     } catch (error) { $('networkTeacherStatus').textContent = error.message; }
   }
-  async function setTeacherAccess(enabled) {
-    if (!state.teacherClassId) return;
-    $('networkTeacherStatus').textContent = 'Saving class access…';
-    try { await api(`/api/network/teacher/classes/${encodeURIComponent(state.teacherClassId)}/access`, { method: 'PUT', body: JSON.stringify({ enabled }) }); await loadTeacherClass(); }
-    catch (error) { $('networkTeacherStatus').textContent = error.message; $('networkTeacherAccessToggle').checked = !enabled; }
-  }
-
   function setupPanelResizers() {
     const workspace = $('networkWorkspace');
     const inspectorHandle = $('networkInspectorResizer');
@@ -2684,9 +2716,11 @@
     $('networkCommandModal')?.addEventListener('click', event => { if (event.target === $('networkCommandModal')) $('networkCommandModal').style.display = 'none'; });
     $('networkTeacherClassSelect')?.addEventListener('change', loadTeacherClass);
     $('networkTeacherRefreshBtn')?.addEventListener('click', loadTeacherClass);
-    $('networkTeacherAccessToggle')?.addEventListener('change', event => setTeacherAccess(event.target.checked));
+    $('networkTeacherAccessToggle')?.addEventListener('change', teacherSettingsChanged);
+    $('networkTeacherSaveBtn')?.addEventListener('click', saveTeacherSettings);
+    $('networkTeacherDiscardBtn')?.addEventListener('click', () => showSavedTeacherSettings('Changes discarded.'));
     $('networkTeacherScenarioList')?.addEventListener('change', event => {
-      if (event.target.matches('[data-teacher-scenario]')) setTeacherScenario(event.target);
+      if (event.target.matches('[data-teacher-scenario]')) teacherSettingsChanged();
     });
     $('networkTeacherLabList')?.addEventListener('click', event => {
       const demo = event.target.closest('[data-teacher-demo-lab]'); if (demo) return openTeacherLabDemo(demo.dataset.teacherDemoLab);
@@ -2695,7 +2729,6 @@
     $('settingsOpenNetworkSimBtn')?.addEventListener('click', () => { $('adminSettingsModal').style.display = 'none'; show(); });
     [$('wikiViewBtn'), $('ideViewBtn')].forEach(button => button?.addEventListener('click', () => { stopPacketPlayback(); flushPendingSave(); }));
     window.addEventListener('eagle-context-updated', () => {
-      refreshAvailability();
       const key = currentAuthKey();
       if (key === libraryAuth) return;
       libraryAuth = key;
@@ -2720,11 +2753,10 @@
     state.initialized = true;
     attachEvents();
     setupPanelResizers();
-    refreshAvailability();
   }
 
   window.NetworkSim = {
-    applyConfig, openTeacherPanel, refreshAvailability, show,
+    openTeacherPanel, show,
     getState: () => state,
     getTopology: () => state.topology,
     mutate, renderAll, renderCanvas, renderInspector, renderPacketResult,

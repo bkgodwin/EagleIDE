@@ -83,8 +83,13 @@ def register(
     def network_access():
         current = actor()
         if not may_open(current):
-            return access_denied(current)
-        return jsonify(ok=True, data={"role": current["role"]})
+            response, status = access_denied(current)
+            response.status_code = status
+        else:
+            response = jsonify(ok=True, data={"role": current["role"]})
+        response.cache_control.private = True
+        response.cache_control.no_store = True
+        return response
 
     def available_scenarios(current):
         if current["role"] == "student":
@@ -464,10 +469,30 @@ def register(
                 "roster_count": len(roster),
             }
             labs.append(item)
-        visibility = store.class_scenario_visibility(class_id, SCENARIOS)
+        enabled, visibility = store.class_settings(class_id, SCENARIOS)
         scenarios = [{**scenario_summary(item), "visible": visibility[scenario_id]} for scenario_id, item in SCENARIOS.items()]
         return jsonify(ok=True, data={"class_id": class_id, "class_name": classroom.get("name"),
-                                     "enabled": store.class_access(class_id), "labs": labs, "scenarios": scenarios})
+                                     "enabled": enabled, "globally_enabled": globally_enabled(),
+                                     "labs": labs, "scenarios": scenarios})
+
+    @app.put("/api/network/teacher/classes/<class_id>/settings")
+    def network_teacher_class_settings_put(class_id):
+        _, error = teacher_class(class_id)
+        if error:
+            return error
+        data = json_object()
+        if data is None:
+            return jsonify(ok=False, error="A JSON object is required"), 400
+        enabled = data.get("enabled")
+        visibility = data.get("scenario_visibility", {})
+        if (("enabled" in data and type(enabled) is not bool)
+                or not isinstance(visibility, dict)
+                or any(key not in SCENARIOS or type(value) is not bool for key, value in visibility.items())
+                or (enabled is None and not visibility)):
+            return jsonify(ok=False, error="Invalid class access or scenario settings"), 400
+        enabled, visibility = store.update_class_settings(class_id, SCENARIOS, enabled, visibility)
+        return jsonify(ok=True, data={"enabled": enabled, "globally_enabled": globally_enabled(),
+                                     "scenario_visibility": visibility})
 
     @app.put("/api/network/teacher/classes/<class_id>/scenarios/<scenario_id>")
     def network_teacher_scenario_visibility(class_id, scenario_id):
