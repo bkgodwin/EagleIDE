@@ -3,7 +3,7 @@ const test = require('node:test');
 const { coverageModel, cameraCoverage, cameraHeading, displayDistance, metersFrom, gridStep, signalColor,
   createHeatSource, SAMPLES, PADDING } = require('../static/js/wifi-site-model.js');
 const { bounds, fitCamera, viewportBounds, zoomAt, screenToWorld, gridSpacing,
-  snapConstruction } = require('../static/js/wifi-site-view.js');
+  snapConstruction, labelIndex } = require('../static/js/wifi-site-view.js');
 
 const ceiling = { x: 5, y: 10, angle: 0, mount: 'ceiling' };
 const probe = { x: 15, y: 10 };
@@ -104,6 +104,16 @@ test('coverage fades continuously and adjacent tiles share their interpolation s
     assert.deepEqual(left.slice(start + SAMPLES * 4, start + size * 4), right.slice(start, start + 2 * PADDING * 4));
   }
   assert.equal(tile({ x: 100_000, y: -200_000, level: 0 }), null);
+});
+
+test('spatial label collision matches exact overlap rules across grid boundaries', () => {
+  const index = labelIndex();
+  index.add({ left: -80, right: 96, top: -10, bottom: 15, id: 'room' });
+  index.add({ left: 60, right: 84, top: 62, bottom: 80, id: 'rack' });
+  assert.equal(index.overlaps({ left: -82, right: -70, top: -5, bottom: 3 }, 'ap'), true);
+  assert.equal(index.overlaps({ left: 64, right: 96, top: 64, bottom: 120 }, 'ap'), true);
+  assert.equal(index.overlaps({ left: 64, right: 96, top: 64, bottom: 120 }, 'rack'), false);
+  assert.equal(index.overlaps({ left: 96, right: 120, top: 0, bottom: 5 }, 'ap'), false);
 });
 
 test('grid adapts as the camera zooms and construction can snap to existing endpoints', () => {

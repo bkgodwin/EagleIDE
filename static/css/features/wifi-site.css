@@ -352,6 +352,11 @@ body.light-mode .wifi-workspace .network-save-state[data-kind="error"] { color: 
 .wifi-viewport[data-wifi-compact-notes] .wifi-note-overlap { display: none; }
 .wifi-viewport[data-wifi-compact-notes] .wifi-note-pin:not(.is-selected) { r: 3.4px; }
 .wifi-marker { transform: scale(var(--wifi-marker-scale, 1)); }
+.wifi-viewport[data-wifi-compact-network] :is(#wifiMarkers, #wifiEquipmentLayer) >
+[data-wifi-object]:not([data-wifi-floor-note]) > .wifi-marker:not(.is-selected, :has(.is-selected)) {
+  transform: scale(calc(var(--wifi-marker-scale, 1) * .55));
+}
+.wifi-viewport[data-wifi-compact-network] :is(.wifi-ap-channel, .wifi-wire-badge) { display: none; }
 .wifi-ghost, #wifiOverlay { pointer-events: none; }
 .wifi-ghost { opacity: .7; }
 #wifiOverlay .wifi-ghost * { pointer-events: none; }

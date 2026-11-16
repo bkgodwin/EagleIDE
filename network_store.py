@@ -30,7 +30,7 @@ WIFI_SCHEMA_VERSION = 13
 MAX_WIFI_SITE_BYTES = 2_000_000
 WIFI_COORDINATE_LIMIT = 100_000_000_000  # Keep rounding within the browser's safe integer range.
 WIFI_LIMITS = {**CABLING_LIMITS, **DESIGN_LIMITS, **NETWORK_LIMITS, "walls": 1200, "access_points": 128, "labels": 320, "openings": 500, "saved": 40,
-               "coordinate": WIFI_COORDINATE_LIMIT}
+               "coordinate": WIFI_COORDINATE_LIMIT, "project_bytes": MAX_WIFI_SITE_BYTES}
 WIFI_MATERIALS = {"drywall", "concrete", "reinforced_concrete", "metal", "glass", "wood", "brick"}
 DEVICE_TYPES = {"pc", "laptop", "phone", "server", "switch", "l3switch", "router", "firewall", "wap", "cloud"}
 LINK_TYPES = {"ethernet", "fiber", "serial"}
@@ -42,6 +42,14 @@ class NetworkDataError(ValueError):
 
 
 class WifiRevisionError(NetworkDataError):
+    pass
+
+
+class WifiStorageError(RuntimeError):
+    pass
+
+
+class WifiAccessError(PermissionError):
     pass
 
 
@@ -868,11 +876,17 @@ class NetworkStore:
     def _write_json(path, data, *, compact=False):
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-        with temporary.open("w", encoding="utf-8", newline="\n") as handle:
-            json.dump(data, handle, indent=None if compact else 2, ensure_ascii=False)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
+        try:
+            with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+                json.dump(data, handle, indent=None if compact else 2, ensure_ascii=False)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+        finally:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     @staticmethod
     def _read_json(path, fallback):
@@ -898,9 +912,27 @@ class NetworkStore:
     def _read_wifi_sites(self, path):
         # A failed read must never be treated as permission to replace saved work.
         try:
-            return json.loads(path.read_text(encoding="utf-8"))["sites"]
+            if path.is_symlink() or self.wifi_dir.is_symlink():
+                raise WifiStorageError("Saved sites are unavailable")
+            data = json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return {}
+        except (OSError, ValueError, RecursionError) as exc:
+            raise WifiStorageError("Saved sites are unavailable") from exc
+        sites = data.get("sites") if isinstance(data, dict) else None
+        if not isinstance(sites, dict) or any(
+            not isinstance(site, dict) or site.get("id") != key or not isinstance(site.get("title"), str)
+            or type(site.get("revision")) is not int or type(site.get("updated_at")) not in (int, float)
+            or not 0 <= site["updated_at"] < 1e12
+            for key, site in sites.items()
+        ):
+            raise WifiStorageError("Saved sites are unavailable")
+        return sites
+
+    @staticmethod
+    def _require_wifi_write(authorized):
+        if authorized is not None and not authorized():
+            raise WifiAccessError("Your access to this project changed. Sign in or export a project file to keep your edits.")
 
     def list_wifi_sites(self, email):
         path = self._wifi_path(email)
@@ -925,10 +957,11 @@ class NetworkStore:
         self._write_json(path, {"sites": sites}, compact=True)
         return site
 
-    def start_wifi_scenario(self, email, scenario):
+    def start_wifi_scenario(self, email, scenario, *, authorized=None):
         """Create a private attempt from the already validated built-in plan."""
         path = self._wifi_path(email)
         with self._wifi_lock(path):
+            self._require_wifi_write(authorized)
             sites = self._read_wifi_sites(path)
             titles = {site["title"] for site in sites.values()}
             name = scenario["title"][:100]
@@ -937,27 +970,51 @@ class NetworkStore:
             starter = {**scenario["site"], "scenario_id": scenario["id"], "title": f"{name} — Attempt {attempt}"}
             return self._write_wifi_site(path, sites, starter, f"site-{uuid.uuid4().hex}", 1)
 
-    def save_wifi_site(self, email, site_id, raw, revision, *, available_scenarios=()):
+    @staticmethod
+    def _needs_wifi_compatibility(raw):
+        if not isinstance(raw, dict):
+            return False
+        return any(
+            isinstance(item, dict) and (item.get("legacy_length") or
+                (item.get("kind") in ("router", "core_switch", "distribution_switch") and not item.get("rack_id")))
+            for group in ("equipment", "cables")
+            for item in (raw.get(group) if isinstance(raw.get(group), list) else [])
+        )
+
+    @staticmethod
+    def _wifi_compatibility(sites):
+        compatibility = {"equipment": [], "cables": []}
+        for saved in sites.values():
+            saved = validate_wifi_site(saved) if saved.get("schema_version", 1) < 12 else saved
+            for group in compatibility:
+                compatibility[group].extend(saved.get(group, []))
+        return compatibility
+
+    def open_wifi_project(self, email, raw):
+        compatibility = {}
+        if email and self._needs_wifi_compatibility(raw):
+            path = self._wifi_path(email)
+            with self._wifi_lock(path):
+                compatibility = self._wifi_compatibility(self._read_wifi_sites(path))
+        site = validate_wifi_site(raw, existing=compatibility)
+        site.pop("scenario_id", None)
+        return site
+
+    def save_wifi_site(self, email, site_id, raw, revision, *, available_scenarios=(), authorized=None):
         site_id = _safe_id(site_id)
         if type(revision) is not int or revision < 0:
             raise NetworkDataError("A valid project revision is required")
         path = self._wifi_path(email)
         with self._wifi_lock(path):
+            self._require_wifi_write(authorized)
             sites = self._read_wifi_sites(path)
             existing = sites.get(site_id)
             compatibility = existing
             if existing and existing.get("schema_version", 1) < 12:
                 compatibility = validate_wifi_site(existing)
-            elif existing is None and isinstance(raw, dict):
+            elif existing is None and self._needs_wifi_compatibility(raw):
                 # Save a Copy can carry forward equipment from older projects owned by this account.
-                if any(isinstance(item, dict) and (item.get("legacy_length") or
-                       (item.get("kind") in ("router", "core_switch", "distribution_switch") and not item.get("rack_id")))
-                       for group in ("equipment", "cables") for item in (raw.get(group) if isinstance(raw.get(group), list) else [])):
-                    compatibility = {"equipment": [], "cables": []}
-                    for saved in sites.values():
-                        saved = validate_wifi_site(saved) if saved.get("schema_version", 1) < 12 else saved
-                        for group in compatibility:
-                            compatibility[group].extend(saved.get(group, []))
+                compatibility = self._wifi_compatibility(sites)
             site = validate_wifi_site(raw, existing=compatibility or {})
             scenario_id = site.pop("scenario_id", None)
             if existing:
@@ -986,14 +1043,22 @@ class NetworkStore:
                 raise WifiRevisionError("This project changed in another tab or was deleted. Save a copy to keep your edits.")
             return self._write_wifi_site(path, sites, site, site_id, revision + 1)
 
-    def delete_wifi_site(self, email, site_id):
+    def delete_wifi_site(self, email, site_id, *, authorized=None):
         path = self._wifi_path(email)
         with self._wifi_lock(path):
+            self._require_wifi_write(authorized)
             sites = self._read_wifi_sites(path)
             if sites.pop(_safe_id(site_id), None) is None:
                 return False
             self._write_json(path, {"sites": sites}, compact=True)
             return True
+
+    def delete_account_wifi(self, email):
+        path = self._wifi_path(email)
+        with self._wifi_lock(path):
+            if self.wifi_dir.is_symlink() or path.is_symlink() or path.resolve().parent != self.wifi_dir:
+                raise OSError("Infra Sim project storage failed containment")
+            path.unlink(missing_ok=True)
 
     def _catalog(self):
         return self._read_json(self.catalog_path, {"schema_version": SCHEMA_VERSION, "class_access": {}, "assignments": []})

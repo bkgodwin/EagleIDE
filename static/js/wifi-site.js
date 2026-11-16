@@ -166,7 +166,8 @@
     $('wifiSaveStatus').textContent = message;
     $('wifiSaveStatus').dataset.kind = kind;
     $('wifiSaveSite').textContent = kind === 'error' && !session?.conflict ? 'Retry Save' : 'Save';
-    $('wifiSaveSite').disabled = !!session?.conflict;
+    $('wifiSaveSite').disabled = !!(session?.conflict || session?.copying);
+    $('wifiCopySite').disabled = !!session?.copying;
     $('wifiDiscardSite').hidden = kind !== 'error';
   }
 
@@ -223,7 +224,7 @@
     }
   }
 
-  function startProject(plan, briefing, { sample = false } = {}) {
+  function startProject(plan, briefing, { sample = false, imported = false } = {}) {
     if (tutorialDialog.open) tutorialDialog.close();
     const { id: siteId, revision, updated_at, scenario_briefing, ...layout } = plan;
     session = {
@@ -253,7 +254,7 @@
     syncLayers();
     $('wifiClearPaint').setAttribute('aria-pressed', 'false');
     $('wifiOrthogonal').checked = false;
-    status(options.canSave ? (revision ? 'Saved' : 'New project') : 'Guest preview');
+    status(options.canSave ? (revision ? 'Saved' : imported ? 'Project file · not saved' : 'New project') : 'Guest preview');
     changeTool('select');
     fit();
     render();
@@ -277,7 +278,7 @@
   }
 
   function scheduleSave() {
-    if (!options.canSave || session.conflict) return;
+    if (!options.canSave || session.conflict || session.copying) return;
     const project = session;
     clearTimeout(project.timer);
     status('Unsaved changes');
@@ -287,6 +288,7 @@
   function flushSave(project = session) {
     if (!project || !options.canSave || project.account !== options.authKey()) return Promise.resolve(false);
     clearTimeout(project.timer);
+    if (project.copyPending) return project.copyPending.then(saved => saved && flushSave(project));
     if (project.conflict) return Promise.resolve(false);
     if (project.pending) return project.pending;
     if (!dirty(project)) return Promise.resolve(true);
@@ -295,8 +297,9 @@
         const attempt = project.attempt ||= { sequence: project.sequence, plan: project.plan };
         if (session === project) status('Saving…');
         try {
-          const saved = await options.api(siteUrl(project.id), {
-            method: 'PUT', body: JSON.stringify({ site: attempt.plan, revision: project.revision }),
+          const saved = await options.api(siteUrl(project.id) + '?summary=1', {
+            method: 'PUT', signal: AbortSignal.timeout(20000),
+            body: JSON.stringify({ site: attempt.plan, revision: project.revision }),
           });
           project.revision = saved.revision;
           project.savedSequence = attempt.sequence;
@@ -319,66 +322,134 @@
     return flushSave();
   }
 
+  function filename(title) {
+    return title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').replace(/^[ .]+|[ .]+$/g, '') || 'Infra Sim plan';
+  }
+
+  function downloadBlob(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = name;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }
+
+  function downloadProject() {
+    if (!active() || !sameAccount()) return;
+    const { scenario_id, ...project } = current();
+    const json = JSON.stringify({ format: 'eagleide-infra-project', project });
+    downloadBlob(new Blob([json], { type: 'application/json' }), filename(project.title) + '.infra.json');
+    session.downloadedSequence = session.sequence;
+    hint('Project file downloaded.');
+  }
+
+  function cancelPdf(project = session) {
+    if (!project?.pdf) return;
+    project.pdf.abort();
+    project.pdf = null;
+    $('wifiExportPdf').disabled = false;
+    $('wifiExportPdf').textContent = 'Export PDF';
+  }
+
   async function exportPdf() {
     const button = $('wifiExportPdf');
     const plan = current();
     const project = session;
-    if (!plan || button.disabled) return;
+    if (!plan || project.pdf) return;
+    const controller = new AbortController();
+    project.pdf = controller;
+    const { signal } = controller;
     button.disabled = true;
     button.textContent = 'Exporting…';
-    const rackExport = racks.exportData(plan, wires.index(plan));
     try {
       if (document.fonts?.status === 'loading') await document.fonts.ready;
-      if (session !== project || current() !== plan || !sameAccount()) return;
+      if (signal.aborted || session !== project || current() !== plan || !sameAccount()) return;
+      const rackExport = racks.exportData(plan, wires.index(plan));
+      hint('Preparing floor plan and coverage…');
       const drawing = await window.WifiSiteExport.render({ bounds: planExtents(plan), plan,
         cabling: wires.index(plan), network: clients.network(), cameraOutlines: wires.cameraOutlines(),
         background: $('wifiBackgroundImage'), surfaces: $('wifiSurfaceLayer'), decor: $('wifiDecorLayer'),
-        structure: [$('wifiWalls'), $('wifiOpenings')] });
-      if (!sameAccount() || session !== project) return;
+        structure: [$('wifiWalls'), $('wifiOpenings')], signal, serviceNames: serviceNames() });
+      if (signal.aborted || !sameAccount() || session !== project) return;
       const today = new Date();
       const date = [today.getFullYear(), today.getMonth() + 1, today.getDate()].map(value => String(value).padStart(2, '0')).join('-');
-      const pdf = await options.api('/api/network/wifi-export.pdf', { method: 'POST', body: JSON.stringify({ ...drawing, ...rackExport, title: plan.title, date }) }, { download: true });
-      if (session !== project || !sameAccount()) return;
-      const url = URL.createObjectURL(pdf);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = (plan.title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').replace(/^[ .]+|[ .]+$/g, '') || 'Infra Sim plan') + '.pdf';
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 30000);
-      hint('Three-sheet PDF downloaded.');
+      const pdf = await options.api('/api/network/wifi-export.pdf', { method: 'POST', signal,
+        body: JSON.stringify({ ...drawing, ...rackExport, title: plan.title, date }) }, { download: true });
+      if (signal.aborted || session !== project || !sameAccount()) return;
+      downloadBlob(pdf, filename(plan.title) + '.pdf');
+      hint('PDF downloaded.');
     } catch (error) {
-      if (session === project) hint(error.message || 'Could not export the floor plan.');
+      if (!signal.aborted && session === project) hint(error.message || 'Could not export the floor plan.');
     } finally {
-      button.disabled = false;
-      button.textContent = 'Export PDF';
+      controller.abort();
+      if (session === project && project.pdf === controller) {
+        project.pdf = null;
+        button.disabled = false;
+        button.textContent = 'Export PDF';
+      }
     }
   }
 
-  async function saveCopy() {
+  function saveCopy() {
     const project = session;
+    if (!project || project.copyPending) return;
     clearTimeout(project.timer);
-    if (project.pending) await project.pending;
-    if (session !== project || !sameAccount()) return;
-    const suffix = ' — Copy';
-    project.id = id('site');
-    project.revision = project.savedSequence = 0;
-    project.sequence = 1;
-    project.conflict = false;
-    project.attempt = null;
-    const title = Array.from(project.plan.title).slice(0, 120 - suffix.length).join('');
-    project.plan = { ...project.plan, title: title + suffix };
-    $('wifiSiteTitle').value = project.plan.title;
-    await flushSave(project);
+    project.copying = true;
+    status('Saving a copy…');
+    project.copyPending = (async () => {
+      if (project.pending) await project.pending;
+      if (session !== project || !sameAccount()) return false;
+      const suffix = ' — Copy';
+      const title = Array.from(project.plan.title).slice(0, 120 - suffix.length).join('') + suffix;
+      const copy = project.copyAttempt ||= { id: id('site'), sequence: project.sequence, sourceTitle: project.plan.title,
+        plan: { ...project.plan, title } };
+      try {
+        const saved = await options.api(siteUrl(copy.id) + '?summary=1', {
+          method: 'PUT', signal: AbortSignal.timeout(20000),
+          body: JSON.stringify({ site: copy.plan, revision: 0 }),
+        });
+        if (session !== project || !sameAccount()) return false;
+        project.id = saved.id;
+        project.revision = saved.revision;
+        project.savedSequence = copy.sequence;
+        project.conflict = false;
+        project.attempt = project.copyAttempt = null;
+        if (project.plan.title === copy.sourceTitle) project.plan = { ...project.plan, title: copy.plan.title };
+        $('wifiSiteTitle').value = project.plan.title;
+        return true;
+      } catch (error) {
+        if (error.status >= 400 && error.status < 500) project.copyAttempt = null;
+        if (session === project) {
+          project.copying = false;
+          status(`Copy failed. ${error.message}`, 'error');
+        }
+        return false;
+      }
+    })().then(saved => {
+      project.copying = false;
+      project.copyPending = null;
+      if (saved && session === project) {
+        if (dirty(project)) scheduleSave();
+        else status('Copy saved', 'good');
+      }
+      return saved;
+    });
   }
 
   async function leave() {
-    if (active() && options.canSave && sameAccount() && dirty(session) && !await flushSave()) return false;
+    if (active() && sameAccount()) {
+      if (options.canSave && (dirty(session) || session.copyPending) && !await flushSave()) return false;
+      if (!options.canSave && dirty(session) && session.downloadedSequence !== session.sequence &&
+          !window.confirm('Leave this guest project? Download a project file to keep your edits.')) return false;
+    }
     hide();
     return true;
   }
 
   function hide() {
     if (session) clearTimeout(session.timer);
+    cancelPdf();
     workspace.hidden = true;
     session = null;
     clients.reset();
@@ -410,6 +481,7 @@
     listedObjects = [];
     setSpacePan(false);
     $('wifiSiteTitle').value = '';
+    status('');
     $('wifiProbeResult').textContent = '';
     $('wifiProbeSummary').textContent = '';
   }
@@ -931,20 +1003,24 @@
 
   function layoutMarkerLabels() {
     const scale = camera.scale;
-    if (!markerLabels || markerScale === scale) return;
+    if (!markerLabels) return;
+    const compactNetwork = scale < 4 && dimensions.width <= 640 && markerLabels.length > 32;
+    if (markerScale === scale && viewport.hasAttribute('data-wifi-compact-network') === compactNetwork) return;
     markerScale = scale;
+    viewport.toggleAttribute('data-wifi-compact-network', compactNetwork);
     // Panning preserves overlap because icons and labels have constant pixel sizes.
     const hideDevices = !$('wifiShowLabels').checked;
     const compactNotes = scale < 3.5 && current().labels.length > 50;
     viewport.toggleAttribute('data-wifi-compact-notes', compactNotes);
     const pin = ({ point, note, id }) => {
       const x = point.x * scale, y = point.y * scale;
-      const radius = note ? 5 : 14;
+      const radius = note ? 5 : compactNetwork && id !== selected ? 8 : 14;
       return { left: x - radius, right: x + radius, top: y - radius, bottom: y + radius, id };
     };
-    const blocked = markerLabels.filter(item => !compactNotes || !item.note || item.id === selected).map(pin);
-    const overlaps = (box, id) => blocked.some(other => other.id !== id &&
-      other.left < box.right && other.right > box.left && other.top < box.bottom && other.bottom > box.top);
+    const blocked = view.labelIndex();
+    for (const item of markerLabels) {
+      if (!compactNotes || !item.note || item.id === selected) blocked.add(pin(item));
+    }
     const priority = item => item.id === selected ? 0 : item.note ? 1 : 2;
     for (const item of [...markerLabels].sort((a, b) => priority(a) - priority(b))) {
       if (!item.label) continue;
@@ -954,13 +1030,14 @@
       let placed = false;
       const compactNote = compactNotes && item.note && item.id !== selected;
       const pinBox = compactNote ? pin(item) : null;
-      if ((item.note || !hideDevices) && (!pinBox || !overlaps(pinBox, item.id))) {
+      const showDevice = !hideDevices && (!compactNetwork || item.id === selected);
+      if ((item.note || showDevice) && (!pinBox || !blocked.overlaps(pinBox, item.id))) {
         for (const [dx, dy] of candidates) {
           const box = { left: x + dx, right: x + dx + item.width, top: y + dy - 12, bottom: y + dy + 3 };
-          if (item.id !== selected && overlaps(box, item.id)) continue;
+          if (item.id !== selected && blocked.overlaps(box, item.id)) continue;
           item.label.setAttribute('transform', `translate(${dx} ${dy})`);
-          blocked.push(box);
-          if (pinBox) blocked.push(pinBox);
+          blocked.add(box);
+          if (pinBox) blocked.add(pinBox);
           placed = true;
           break;
         }
@@ -1729,12 +1806,16 @@
   }
 
   function keyboard(event) {
-    if (!active() || scenarioDialog.open || tutorialDialog.open || $('wifiRackDialog').open || $('wifiMaterialsDialog').open || !document.body.classList.contains('network-mode')) return;
-    const typing = event.target.matches('input,textarea,select');
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's' && options.canSave) {
+    if (!active() || !document.body.classList.contains('network-mode')) return;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
       event.preventDefault();
-      saveNow();
-    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !typing) {
+      if (options.canSave) saveNow();
+      else downloadProject();
+      return;
+    }
+    if (scenarioDialog.open || tutorialDialog.open || $('wifiRackDialog').open || $('wifiMaterialsDialog').open) return;
+    const typing = event.target.matches('input,textarea,select');
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !typing) {
       event.preventDefault();
       history(!event.shiftKey);
     } else if (event.key === 'Delete' && !typing && workspace.contains(event.target)) {
@@ -1862,6 +1943,7 @@
     $('wifiSiteBack').addEventListener('click', async () => { if (await leave()) options.onBack(); });
     $('wifiScenarioButton').addEventListener('click', () => showBriefing());
     $('wifiExportPdf').addEventListener('click', exportPdf);
+    $('wifiDownloadProject').addEventListener('click', downloadProject);
     $('wifiMaterials').addEventListener('click', racks.inspectMaterials);
     $('wifiProperties').addEventListener('click', event => {
       const control = event.target.closest('[data-wifi-open-rack]');
@@ -1955,12 +2037,15 @@
       if (active() && !document.body.classList.contains('network-mode')) {
         if (scenarioDialog.open) scenarioDialog.close();
         if (tutorialDialog.open) tutorialDialog.close();
+        racks.reset();
+        cancelPdf();
         clients.suspend();
         flushSave();
       }
     }).observe(document.body, { attributeFilter: ['class'] });
     window.addEventListener('beforeunload', event => {
-      if (active() && options.canSave && dirty(session)) {
+      if (active() && ((options.canSave && session.copyPending) ||
+          (dirty(session) && (options.canSave || session.downloadedSequence !== session.sequence)))) {
         event.preventDefault();
         event.returnValue = '';
       }
@@ -1970,12 +2055,17 @@
   }
 
   window.WifiSite = {
-    open(config, { site, sample, briefing } = {}) {
+    open(config, { site, sample, briefing, imported } = {}) {
       options = config;
       account = options.authKey();
       initialize();
       const example = sample && !site;
-      startProject(site || (example ? window.wifiCampusExample(blankPlan()) : blankPlan()), briefing, { sample: example });
+      startProject(site || (example ? window.wifiCampusExample(blankPlan()) : blankPlan()), briefing, { sample: example, imported });
+    },
+    canResume: () => active() && sameAccount(),
+    resume() {
+      resizeViewport();
+      viewport.focus({ preventScroll: true });
     },
     hide, leave,
   };

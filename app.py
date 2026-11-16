@@ -4868,6 +4868,7 @@ def _delete_user_by_email(email: str) -> bool:
             group_projects.forget_account(sys.modules[__name__], email)
         if deleted_user.get("tool_storage_id"):
             _external_tools.storage.delete_account(deleted_user["tool_storage_id"])
+        app.extensions["network_store"].delete_account_wifi(email)
     except (OSError, ValueError, sqlite3.Error) as exc:
         raise AccountCleanupError("Account disabled, but storage cleanup failed. Retry deletion; the account record was retained.") from exc
     _invalidate_workspace_tree_cache(user_dir)

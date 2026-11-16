@@ -13,7 +13,8 @@ from flask import jsonify, request, send_file
 from werkzeug.exceptions import RequestEntityTooLarge
 
 from network_content import ACRONYM_REFERENCE, COMMAND_REFERENCE, EXAMPLE_TOPOLOGIES, LABS, PORT_REFERENCE, example_summaries, lab_summary
-from network_store import MAX_WIFI_SITE_BYTES, WIFI_LIMITS, NetworkDataError, NetworkStore, WifiRevisionError, grade_lab, validate_topology
+from network_store import (MAX_WIFI_SITE_BYTES, WIFI_LIMITS, NetworkDataError, NetworkStore, WifiAccessError,
+                           WifiRevisionError, WifiStorageError, grade_lab, validate_topology)
 from wifi_cabling import CABLING_CATALOG
 from wifi_scenarios import SCENARIOS, scenario_briefing, scenario_summary
 from wifi_site_pdf import MAX_EXPORT_BYTES, render_plan_pdf
@@ -69,6 +70,22 @@ def register(
             return student_enabled(current)
         return True
 
+    def recheck_wifi_access(original, scenario_id=None):
+        current = actor()
+        return (current["role"] == original["role"] and current["email"] == original["email"] and may_open(current)
+                and (scenario_id is None or scenario_id in available_scenarios(current)))
+
+    def access_denied(current):
+        message = "Network Lab is disabled for your class" if current["role"] == "student" and globally_enabled() else "Network Lab is disabled"
+        return jsonify(ok=False, error=message, enabled=False), 403
+
+    @app.get("/api/network/access")
+    def network_access():
+        current = actor()
+        if not may_open(current):
+            return access_denied(current)
+        return jsonify(ok=True, data={"role": current["role"]})
+
     def available_scenarios(current):
         if current["role"] == "student":
             return store.student_scenarios(get_user_class_ids(current.get("record")), SCENARIOS)
@@ -98,8 +115,7 @@ def register(
     def network_bootstrap():
         current = actor()
         if not may_open(current):
-            message = "Network Lab is disabled for your class" if current["role"] == "student" and globally_enabled() else "Network Lab is disabled"
-            return jsonify(ok=False, error=message, enabled=False), 403
+            return access_denied(current)
         class_ids = get_user_class_ids(current.get("record")) if current["role"] == "student" else []
         assigned = []
         if current["role"] == "student":
@@ -117,7 +133,12 @@ def register(
                             "assigned_at": assignment.get("assigned_at"),
                         })
         saved = [] if current["role"] == "guest" else store.list_topologies(current["email"])
-        saved_sites = [] if current["role"] == "guest" else store.list_wifi_sites(current["email"])
+        saved_sites, wifi_storage_available = [], True
+        if current["role"] != "guest":
+            try:
+                saved_sites = store.list_wifi_sites(current["email"])
+            except WifiStorageError:
+                wifi_storage_available = False
         allowed_scenarios = available_scenarios(current)
         return jsonify(
             ok=True,
@@ -132,6 +153,7 @@ def register(
                                   for lab in LABS.values()],
                 "saved": saved,
                 "saved_sites": saved_sites,
+                "wifi_storage_available": wifi_storage_available,
                 "scenarios": [scenario_summary(item) for scenario_id, item in SCENARIOS.items()
                               if scenario_id in allowed_scenarios],
                 "wifi_limits": WIFI_LIMITS,
@@ -253,17 +275,48 @@ def register(
         current, error = wifi_account()
         if error:
             return error
-        return jsonify(ok=True, data=store.list_wifi_sites(current["email"]))
+        try:
+            return jsonify(ok=True, data=store.list_wifi_sites(current["email"]))
+        except WifiStorageError:
+            return jsonify(ok=False, error="Saved sites are unavailable. Try again later."), 503
+
+    @app.post("/api/network/wifi-project/validate")
+    def wifi_project_validate():
+        current = actor()
+        if not may_open(current):
+            return access_denied(current)
+        request.max_content_length = MAX_WIFI_SITE_BYTES
+        try:
+            payload = json_object()
+            if not payload or payload.get("format") != "eagleide-infra-project":
+                raise NetworkDataError("Choose an EagleIDE Infra Sim project file")
+            project = store.open_wifi_project(current["email"], payload.get("project"))
+            return jsonify(ok=True, data=project)
+        except RequestEntityTooLarge:
+            return jsonify(ok=False, error="Project files must be 2 MB or smaller"), 413
+        except RecursionError:
+            return jsonify(ok=False, error="Project data is nested too deeply"), 400
+        except WifiStorageError:
+            return jsonify(ok=False, error="Saved sites are unavailable. Try again later."), 503
+        except NetworkDataError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
 
     @app.route("/api/network/wifi-scenarios/<scenario_id>", methods=["GET", "POST"])
     def network_wifi_scenario(scenario_id):
         current = actor()
+        if request.method == "POST" and current["role"] == "guest":
+            return jsonify(ok=False, error="Sign in to start a scenario attempt"), 401
         if not may_open(current) or scenario_id not in available_scenarios(current):
             return jsonify(ok=False, error="This scenario is not available"), 404
         scenario = SCENARIOS[scenario_id]
         if request.method == "POST":
             try:
-                site = store.start_wifi_scenario(current["email"], scenario)
+                site = store.start_wifi_scenario(
+                    current["email"], scenario, authorized=lambda: recheck_wifi_access(current, scenario_id))
+            except WifiAccessError as exc:
+                return jsonify(ok=False, error=str(exc)), 403
+            except (WifiStorageError, OSError):
+                return jsonify(ok=False, error="Saved sites are unavailable. Try again later."), 503
             except NetworkDataError as exc:
                 return jsonify(ok=False, error=str(exc)), 400
             return jsonify(ok=True, data={"site": site, "briefing": scenario_briefing(scenario)}), 201
@@ -305,10 +358,12 @@ def register(
                 if payload is None:
                     raise NetworkDataError("A JSON object is required")
                 site = store.save_wifi_site(email, site_id, payload.get("site"), payload.get("revision"),
-                                            available_scenarios=available_scenarios(current))
-                return jsonify(ok=True, data=site)
+                                            available_scenarios=available_scenarios(current),
+                                            authorized=lambda: recheck_wifi_access(current))
+                data = {key: site[key] for key in ("id", "revision", "updated_at")} if request.args.get("summary") == "1" else site
+                return jsonify(ok=True, data=data)
             if request.method == "DELETE":
-                if store.delete_wifi_site(email, site_id):
+                if store.delete_wifi_site(email, site_id, authorized=lambda: recheck_wifi_access(current)):
                     return jsonify(ok=True)
             else:
                 site = store.get_wifi_site(email, site_id)
@@ -323,6 +378,10 @@ def register(
             return jsonify(ok=False, error="Wi-Fi site data is nested too deeply"), 400
         except WifiRevisionError as exc:
             return jsonify(ok=False, error=str(exc)), 409
+        except WifiAccessError as exc:
+            return jsonify(ok=False, error=str(exc)), 403
+        except (WifiStorageError, OSError):
+            return jsonify(ok=False, error="Saved sites are unavailable. Try again later."), 503
         except NetworkDataError as exc:
             return jsonify(ok=False, error=str(exc)), 400
         return jsonify(ok=False, error="Saved Wi-Fi site not found"), 404
