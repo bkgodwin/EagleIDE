@@ -7,7 +7,7 @@
     externalToolsAdmin: ['/static/js/external-tools-admin.js?v=20261020-storage-1'],
     eagleLab: ['/static/js/lab-report-content.js?v=20261103', '/static/js/eagle-lab.js?v=20261103', '/static/js/lab-manual.js?v=20261103', '/static/js/lab-report-editor.js?v=20261103'],
     network: [
-      '/static/js/network-sim.js?v=20261116-infra-polish',
+      '/static/js/network-sim.js?v=20261116-class-settings',
       '/static/js/network-sim-advanced.js?v=20261113-hub',
     ],
     wifiSite: [
@@ -34,6 +34,44 @@
     ],
   };
   const pending = new Map();
+  let networkAccessKey;
+  let networkAccessRequest;
+
+  function showNetworkLaunchers(visible) {
+    for (const id of ['networkViewBtn', 'wikiHeroNetworkBtn']) {
+      const button = document.getElementById(id);
+      if (button) button.hidden = !visible;
+    }
+  }
+
+  function refreshNetworkAccess(force = false) {
+    const ctx = window.EagleIDE?.getContext?.();
+    if (!ctx) return;
+    const headers = {};
+    if (ctx.ADMIN_TOKEN) headers['X-Admin-Token'] = ctx.ADMIN_TOKEN;
+    if (ctx.WIKI_MANAGER_TOKEN) headers['X-Wiki-Manager-Token'] = ctx.WIKI_MANAGER_TOKEN;
+    if (ctx.TEACHER_TOKEN) headers['X-Teacher-Token'] = ctx.TEACHER_TOKEN;
+    if (ctx.USER_TOKEN) headers['X-User-Token'] = ctx.USER_TOKEN;
+    const key = JSON.stringify([headers, ctx.currentConfig?.network_sim_enabled,
+      ctx.studentClasses?.map(item => item.id)]);
+    if (key === networkAccessKey && (!force || networkAccessRequest)) return;
+    if (key !== networkAccessKey) showNetworkLaunchers(false);
+    networkAccessKey = key;
+    const request = fetch('/api/network/access', { headers, cache: 'no-store', signal: AbortSignal.timeout(8000) })
+      .then(async response => {
+        const payload = await response.json();
+        if (networkAccessRequest === request) showNetworkLaunchers(response.ok && payload?.ok === true);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (networkAccessRequest === request) networkAccessRequest = null;
+      });
+    networkAccessRequest = request;
+  }
+
+  window.addEventListener('eagle-context-updated', () => refreshNetworkAccess());
+  window.addEventListener('focus', () => refreshNetworkAccess(true));
+  refreshNetworkAccess();
 
   function loadScript(src) {
     return new Promise((resolve, reject) => {

@@ -12,6 +12,9 @@ const source = fs.readFileSync(
 function createHarness() {
   const scripts = [];
   const documentListeners = new Map();
+  const windowListeners = new Map();
+  const buttons = Object.fromEntries(['networkViewBtn', 'wikiHeroNetworkBtn'].map(id => [id, { hidden: true }]));
+  const accessRequests = [];
   const document = {
     querySelector(selector) {
       const match = selector.match(/data-eagle-feature-src="([^"]+)"/);
@@ -33,8 +36,8 @@ function createHarness() {
     addEventListener(name, callback) {
       documentListeners.set(name, callback);
     },
-    getElementById() {
-      return null;
+    getElementById(id) {
+      return buttons[id] || null;
     },
     head: {
       appendChild(script) {
@@ -43,7 +46,7 @@ function createHarness() {
       },
     },
   };
-  const window = { alert() {} };
+  const window = { alert() {}, addEventListener: (name, callback) => windowListeners.set(name, callback) };
   vm.runInNewContext(source, {
     window,
     document,
@@ -51,10 +54,54 @@ function createHarness() {
     Promise,
     Map,
     Error,
+    AbortSignal,
+    fetch(url, options) {
+      assert.equal(url, '/api/network/access');
+      assert.equal(options.cache, 'no-store');
+      return new Promise(resolve => accessRequests.push({
+        headers: options.headers,
+        respond: ok => resolve({ ok, json: async () => ({ ok }) }),
+      }));
+    },
     queueMicrotask,
   });
-  return { window, scripts, documentListeners };
+  return { window, scripts, documentListeners, windowListeners, buttons, accessRequests };
 }
+
+test('student launchers follow current class access without loading the simulator', async () => {
+  const { window, scripts, windowListeners, buttons, accessRequests } = createHarness();
+  let ctx = { USER_TOKEN: 'student-a', currentConfig: { network_sim_enabled: true } };
+  window.EagleIDE = { getContext: () => ctx };
+  const contextUpdated = windowListeners.get('eagle-context-updated');
+  const focus = windowListeners.get('focus');
+  const flush = () => new Promise(resolve => setImmediate(resolve));
+  const hidden = () => Object.values(buttons).map(button => button.hidden);
+
+  contextUpdated();
+  contextUpdated();
+  assert.equal(accessRequests.length, 1);
+  assert.equal(accessRequests[0].headers['X-User-Token'], 'student-a');
+  assert.deepEqual(hidden(), [true, true]);
+  accessRequests[0].respond(false);
+  await flush();
+  assert.deepEqual(hidden(), [true, true]);
+
+  focus();
+  accessRequests[1].respond(true);
+  await flush();
+  assert.deepEqual(hidden(), [false, false]);
+
+  focus();
+  ctx = { ...ctx, USER_TOKEN: 'student-b' };
+  contextUpdated();
+  assert.equal(accessRequests[3].headers['X-User-Token'], 'student-b');
+  assert.deepEqual(hidden(), [true, true]);
+  accessRequests[3].respond(false);
+  accessRequests[2].respond(true);
+  await flush();
+  assert.deepEqual(hidden(), [true, true]);
+  assert.equal(scripts.length, 0);
+});
 
 test('network feature loads in dependency order and deduplicates concurrent requests', async () => {
   const { window, scripts } = createHarness();

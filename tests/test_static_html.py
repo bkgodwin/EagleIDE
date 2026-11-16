@@ -489,6 +489,7 @@ class StaticHtmlTestCase(unittest.TestCase):
             "networkPacketDomain", "networkPacketOverlayLayer", "networkPortPicker",
             "networkInspectorResizer", "networkConsoleResizer",
             "networkTeacherClassSelect", "networkTeacherAccessToggle",
+            "networkTeacherSaveBtn", "networkTeacherDiscardBtn", "networkTeacherStatus",
             "networkTeacherLabList", "networkSimEnabledModal", "networkCommandModal",
             "networkReferencePanel", "networkDiagnosticsPanel", "networkCapturePanel",
             "networkSimulationPanel", "networkTrafficToggleBtn",
@@ -537,7 +538,6 @@ class StaticHtmlTestCase(unittest.TestCase):
         self.assertIn("data-route-field", script)
         self.assertIn("data-firewall-interface-field", script)
         self.assertIn("data-address-list", script)
-        self.assertIn("window.EagleIDE?.configReady", script)
         self.assertIn("requestBootstrap", script)
         self.assertIn("previousForm && device && previousForm.dataset.inspectorDevice", script)
         self.assertIn(".network-link.is-selected", script)

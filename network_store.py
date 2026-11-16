@@ -1127,10 +1127,26 @@ class NetworkStore:
             self._write_json(self.catalog_path, data)
             return bool(enabled)
 
-    def class_scenario_visibility(self, class_id, scenario_ids):
+    def class_settings(self, class_id, scenario_ids):
         with self._lock:
-            overrides = self._catalog().get("scenario_visibility", {}).get(str(class_id), {})
-            return {scenario_id: overrides.get(scenario_id, True) for scenario_id in scenario_ids}
+            return self._class_settings(self._catalog(), str(class_id), scenario_ids)
+
+    @staticmethod
+    def _class_settings(data, class_id, scenario_ids):
+        enabled = bool(data.get("class_access", {}).get(class_id, False))
+        overrides = data.get("scenario_visibility", {}).get(class_id, {})
+        return enabled, {scenario_id: overrides.get(scenario_id, True) for scenario_id in scenario_ids}
+
+    def update_class_settings(self, class_id, scenario_ids, enabled, visibility):
+        class_id = str(class_id)
+        with self._lock:
+            data = self._catalog()
+            if enabled is not None:
+                data.setdefault("class_access", {})[class_id] = enabled
+            if visibility:
+                data.setdefault("scenario_visibility", {}).setdefault(class_id, {}).update(visibility)
+            self._write_json(self.catalog_path, data)
+            return self._class_settings(data, class_id, scenario_ids)
 
     def student_scenarios(self, class_ids, scenario_ids):
         with self._lock:

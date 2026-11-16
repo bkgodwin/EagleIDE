@@ -676,6 +676,35 @@ class NetworkRouteTests(unittest.TestCase):
                 self.assertEqual(scenario.status_code, 200)
                 self.assertTrue(scenario.json["data"]["site"]["floor_locked"])
 
+    def test_teacher_saves_class_access_and_scenario_changes_together(self):
+        scenario_id = "port-adelaide-community-center"
+        class_url = "/api/network/teacher/classes/class-1"
+        access_url = "/api/network/access"
+        teacher = {"X-Teacher-Token": "teacher-token"}
+        student = {"X-User-Token": "student-token"}
+        changes = {"enabled": True, "scenario_visibility": {scenario_id: False}}
+        denied = self.client.get(access_url, headers=student)
+        self.assertEqual(denied.status_code, 403)
+        self.assertTrue(denied.cache_control.no_store)
+        self.assertEqual(self.client.put(class_url + "/settings", headers=student, json=changes).status_code, 401)
+        self.assertEqual(self.client.put(class_url.replace("class-1", "class-2") + "/settings",
+                                         headers=teacher, json=changes).status_code, 403)
+        invalid = {**changes, "scenario_visibility": {scenario_id: "false"}}
+        self.assertEqual(self.client.put(class_url + "/settings", headers=teacher, json=invalid).status_code, 400)
+        self.assertFalse(self.store.class_access("class-1"))
+
+        saved = self.client.put(class_url + "/settings", headers=teacher, json=changes)
+        self.assertEqual(saved.status_code, 200)
+        self.assertTrue(saved.json["data"]["enabled"])
+        self.assertFalse(saved.json["data"]["scenario_visibility"][scenario_id])
+        classroom = self.client.get(class_url, headers=teacher).json["data"]
+        self.assertTrue(classroom["enabled"])
+        self.assertFalse(next(item for item in classroom["scenarios"] if item["id"] == scenario_id)["visible"])
+        allowed = self.client.get(access_url, headers=student)
+        self.assertEqual(allowed.json["data"], {"role": "student"})
+        self.assertTrue(allowed.cache_control.private and allowed.cache_control.no_store)
+        self.assertEqual(self.client.get(f"/api/network/wifi-scenarios/{scenario_id}", headers=student).status_code, 404)
+
     def test_scenario_visibility_checks_class_ownership_and_student_access(self):
         scenario_id = "port-adelaide-community-center"
         scenario_url = f"/api/network/wifi-scenarios/{scenario_id}"

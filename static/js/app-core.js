@@ -2634,7 +2634,6 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const eagleLabNav = document.getElementById('eagleLabViewBtn');
       if (eagleLabNav) eagleLabNav.hidden = !ADMIN_TOKEN && !window.EagleLabAccess?.get?.().available;
       window.EagleLabAccess?.refresh?.(cfg);
-      window.NetworkSim?.applyConfig?.(cfg);
       window.EagleLab?.applyConfig?.(cfg);
       applyClassTabVisibility();
       refreshEagleIDEContext();
