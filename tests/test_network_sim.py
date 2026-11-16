@@ -161,6 +161,37 @@ class NetworkStoreTests(unittest.TestCase):
         self.assertEqual(sum(item["kind"] == "lap_pool" for item in site["decor"]), 1)
         self.assertGreaterEqual(sum(wall["material"] == "reinforced_concrete" for wall in site["walls"]), 12)
 
+    def test_industrial_starter_keeps_logistics_and_detached_buildings_at_scale(self):
+        scenario = SCENARIOS["rivermill-fabrication-works"]
+        site = validate_wifi_site(scenario["site"])
+        self.assertTrue({"Materials warehouse", "Fabrication & welding hall", "CNC machining hall",
+                         "Assembly lines", "Main power & electrical", "Main IT / network room",
+                         "Warehouse IDF", "Production IDF", "Assembly IDF", "Fleet IDF", "Training IDF",
+                         "Outdoor steel stockyard", "Crane & service pad", "Heavy equipment garage",
+                         "Training classroom", "Practical training lab"}.issubset(
+                             label["text"] for label in site["labels"]))
+        self.assertTrue(scenario["briefing"])
+        self.assertTrue(site["floor_locked"])
+        self.assertFalse(any(site[layer] for layer in ("equipment", "access_points", "cables")))
+        walls = {wall["id"]: wall for wall in site["walls"]}
+        self.assertEqual(walls["plant-south-shell"]["b"], {"x": 168, "y": 92})
+        self.assertGreater(walls["fleet-west-shell"]["a"]["x"] - walls["plant-east-shell"]["a"]["x"], 20)
+        self.assertGreater(walls["training-north-shell"]["a"]["y"] - walls["fleet-south-shell"]["a"]["y"], 40)
+        dock_centers = [
+            round(opening["t"] * 168, 2) for opening in site["openings"]
+            if opening["wall_id"] == "plant-north-shell" and opening["material"] == "metal" and opening["width"] == 3.6
+        ]
+        self.assertEqual(dock_centers, [7.5, 15.5, 23.5, 31.5, 39.5, 47.5, 116, 124, 132, 140, 148, 156, 164])
+        mills = [item for item in site["decor"] if item["kind"] == "cnc_mill"]
+        self.assertEqual(len(mills), 12)
+        self.assertTrue(all(52 < item["x"] < 112 and 52 < item["y"] < 78 for item in mills))
+        service_bays = [item for item in site["decor"] if item["kind"] == "service_bay"]
+        self.assertEqual(len(service_bays), 4)
+        self.assertTrue(all(194 < item["x"] < 241 and -16 < item["y"] < 13 for item in service_bays))
+        yard_symbols = {item["kind"] for item in site["decor"]
+                        if item["x"] < 0 or (item["x"] > 168 and 27 < item["y"] < 69)}
+        self.assertTrue({"mobile_crane", "telehandler", "forklift", "steel_stock"}.issubset(yard_symbols))
+
     def test_infra_campus_example_can_be_saved_and_all_aps_are_wired(self):
         root = Path(__file__).resolve().parents[1]
         script = """
