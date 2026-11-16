@@ -30,6 +30,7 @@
     const gear = data.racks.get(rack.id) || [];
     const patches = plan.cables.filter(cable => cable.rack_patch && data.devices.get(cable.source.device_id)?.rack_id === rack.id);
     return {
+      id: rack.id,
       name: data.name(rack),
       power: data.rackPower(rack.id),
       devices: gear.map(item => ({

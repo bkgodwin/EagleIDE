@@ -26,7 +26,7 @@
     return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
   }
 
-  function create({ plan, cabling, escape, selected, networkInspector }) {
+  function create({ plan, cabling, escape, selected, networkInspector, serviceNames }) {
     const layer = document.getElementById('wifiPingLayer');
     const preferences = new Map(), summaries = new Map(), packets = new Set();
     let graph, sources, run, timer, frame;
@@ -71,17 +71,28 @@
       const uplink = speed ? speedName(speed) : 'Disconnected';
       const targets = [...data.devices.values()].filter(other => other.id !== device.id &&
         (model.isClient(other) || other.kind === 'router'));
+      const services = model.reachableServices(data, device.id).map(vm => ({
+        id: vm.id, name: serviceNames()?.[vm.kind] ?? vm.kind, host: cabling().name(data.devices.get(vm.hostId)),
+        ip: model.address(data.clients.get(vm.id).lease.ip), vlan: vm.vlan,
+      }));
       const preferred = preferences.get(device.id);
       const options = [[model.INTERNET, `google.com (${model.INTERNET_IP})`], ...targets.map(item => {
         const ip = data.clients.get(item.id)?.lease?.ip ?? data.routers.get(item.id)?.pool.gateway;
         return [item.id, ip === undefined ? cabling().name(item) : `${cabling().name(item)} (${model.address(ip)})`];
-      })];
+      }), ...services.map(vm => [vm.id, `${vm.name} on ${vm.host} (${vm.ip})`])];
       const target = options.some(([id]) => id === preferred) ? preferred : model.INTERNET;
       return `<dl class="wifi-device-status"><div><dt>Uplink</dt><dd>${uplink}</dd></div>
         <div><dt>Internet</dt><dd>${escape(internet)}</dd></div>
         ${device.kind === 'phone' ? `<div><dt>Signal</dt><dd>${signal === undefined ? 'No signal' : `${Math.round(signal)} dBm · ${window.WifiSiteModel.signalLevel(signal).label}`}</dd></div>
           <div><dt>Wi-Fi</dt><dd>${ap ? `${escape(cabling().name(data.devices.get(ap.id)))} · ${band} GHz` : 'Not associated'}</dd></div>` : ''}</dl>
         ${networkInspector(device, info)}
+        <details class="wifi-network-settings" data-wifi-config="reachable-services">
+          <summary>Reachable server services (${services.length})</summary>
+          ${services.length ? `<ul class="wifi-reachable-services">${services.map(vm =>
+            `<li><strong>${escape(vm.name)}</strong> · ${escape(vm.host)}<br>
+            <span>${vm.ip} · ${vm.vlan === 0 ? 'Untagged LAN' : `VLAN ${vm.vlan}`}</span></li>`).join('')}</ul>`
+            : '<p>No server services reachable.</p>'}
+        </details>
         <div class="wifi-ping-controls">
           <label>Ping target<select id="wifiPingTarget"${run?.id === device.id ? ' disabled' : ''}>${options.map(([id, label]) =>
             `<option value="${escape(id)}"${id === target ? ' selected' : ''}>${escape(label)}</option>`).join('')}</select></label>

@@ -7,7 +7,7 @@
   const ADD = ':add';
   const bands = [['2.4', '2.4 GHz'], ['5', '5 GHz'], ['both', 'Both bands']];
 
-  function create({ plan, cabling, graph, update, replace, render, hint, escape, choices, id, limits }) {
+  function create({ plan, cabling, graph, update, replace, render, hint, escape, choices, id, limits, serviceNames }) {
     let apEdit, portEdit, vlanEdit = ADD, ruleEdit;
 
     const option = (entries, value) => choices(entries.map(([key, name]) => [String(key), name]), String(value));
@@ -141,14 +141,60 @@
           : info.speed ? '<p>Waiting for DHCP. Check the VLAN path and router pool.</p>' : ''}`;
     }
 
+    function serverInspector(device) {
+      const services = new Map((device.services ?? []).map(service => [service.kind, service]));
+      const network = graph();
+      const catalog = Object.entries(serviceNames() ?? {});
+      return `<details class="wifi-network-settings" data-wifi-config="service-vms"><summary>Service VMs</summary>
+        <p>Enable the services this server hosts. Each VM gets its own IPv4 address on its selected VLAN.</p>
+        <ul class="wifi-service-vms">${catalog.map(([kind, name]) => {
+          const service = services.get(kind);
+          const lease = network.clients.get(model.serviceId(device.id, kind))?.lease;
+          return `<li class="wifi-service-vm">
+            <label class="wifi-estimate-toggle"><input type="checkbox" id="wifiVm-${escape(kind)}"
+              data-wifi-service-toggle="${escape(kind)}"${checked(service)}> ${escape(name)}</label>
+            ${service ? `<div class="wifi-two-fields">
+              <label>VLAN<select data-wifi-service-vlan aria-label="${escape(name)} VLAN">${vlanSelect(service.vlan)}</select></label>
+              <label>IPv4<input data-wifi-service-ip aria-label="${escape(name)} IPv4" inputmode="decimal" maxlength="15"
+                placeholder="DHCP" value="${escape(service.ip)}"></label></div>
+              <p>${lease ? `${model.address(lease.ip)} · ${lease.static ? 'Static' : 'DHCP'}` :
+                service.ip ? 'Waiting for a router on this VLAN with a matching subnet.' : 'Waiting for an IPv4 lease.'}</p>
+              ${button('save-vm', 'Save VM', ` data-service="${escape(kind)}"`)}` : ''}
+            </li>`;
+        }).join('')}</ul>
+        <p>Leave IPv4 blank for DHCP. The switch port to the server must carry each VM’s VLAN.</p>
+      </details>`;
+    }
+
     function deviceInspector(device) {
       if (device.kind === 'router') return routerInspector(device);
+      if (device.kind === 'server') return serverInspector(device);
       return model.managed(device) ? switchInspector(device) : '';
+    }
+
+    function saveService(device, kind, row) {
+      const ip = row.querySelector('[data-wifi-service-ip]').value.trim();
+      if (ip && model.serviceAddress(ip) === null) return hint('Enter a unicast IPv4 address or leave the field blank for DHCP.');
+      if (ip && plan().equipment.some(item => item.reservation?.ip === ip ||
+          (item.kind === 'router' && (item.dhcp ?? model.DEFAULT_DHCP).gateway.split('/')[0] === ip) ||
+          item.services?.some(vm => vm.ip === ip && (item.id !== device.id || vm.kind !== kind)))) {
+        return hint('That IPv4 address is already configured on this site.');
+      }
+      const vlan = Number(row.querySelector('[data-wifi-service-vlan]').value);
+      const services = device.services.map(vm => vm.kind === kind ? { ...vm, vlan, ip } : vm);
+      if (replace('equipment', { ...device, services })) hint('Service VM saved.');
     }
 
     function change(device, input) {
       const { ssids } = plan();
-      if (input.id === 'wifiApSsid') {
+      if (input.dataset.wifiServiceToggle) {
+        const kind = input.dataset.wifiServiceToggle;
+        const services = (device.services ?? []).filter(vm => vm.kind !== kind);
+        if (input.checked) services.push({ kind, vlan: graph().clients.get(device.id).vlan ?? 0, ip: '' });
+        const next = { ...device, services };
+        if (!services.length) delete next.services;
+        replace('equipment', next);
+      } else if (input.id === 'wifiApSsid') {
         apEdit = { ap: device.id, ssid: input.value };
         render();
         $('wifiApSsid').focus({ preventScroll: true });
@@ -218,6 +264,9 @@
       const pool = model.dhcpPool(dhcp);
       if (!pool) return hint('Enter a usable IPv4 gateway with a prefix that leaves room for clients, and two IPv4 DNS addresses.');
       const layout = plan();
+      if (layout.equipment.some(item => item.services?.some(vm => vm.ip === model.address(pool.gateway)))) {
+        return hint('A service VM already uses that gateway address. Change the VM address first.');
+      }
       let released = 0;
       const equipment = layout.equipment.map(device => {
         if (device === router) return { ...router, dhcp };
@@ -249,8 +298,9 @@
       const layout = plan(), vid = vlanEdit;
       const inUse = layout.ssids.some(ssid => ssid.vlan === vid) || layout.equipment.some(item =>
         Object.values(item.port_vlans || {}).some(tags => tags.includes(vid)) ||
+        item.services?.some(vm => vm.vlan === vid) ||
         item.firewall?.some(rule => rule.source_vlan === vid || rule.destination_vlan === vid));
-      if (inUse) return hint('This VLAN is in use. Remove it from SSIDs, switch ports, and firewall rules first.');
+      if (inUse) return hint('This VLAN is in use. Check SSIDs, switch ports, service VMs, and firewall rules.');
       vlanEdit = ADD;
       if (update({ ...layout, vlans: layout.vlans.filter(vlan => vlan.id !== vid) })) hint('VLAN removed.');
     }
@@ -280,6 +330,7 @@
       if (action === 'save-ssid') saveSsid(device);
       else if (action === 'remove-ssid') removeSsid();
       else if (action === 'save-dhcp') saveDhcp(device);
+      else if (action === 'save-vm') saveService(device, target.dataset.service, target.closest('.wifi-service-vm'));
       else if (action === 'save-vlan') saveVlan();
       else if (action === 'remove-vlan') removeVlan();
       else if (action === 'save-rule') saveRule(device);

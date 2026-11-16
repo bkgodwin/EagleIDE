@@ -631,11 +631,12 @@
           <label>Field of view (°)<input type="number" min="15" max="160" step="1" data-wifi-field="field_of_view" value="${item.field_of_view}"></label></div>
           <label>View range (${plan().units})<input type="number" step="any" data-wifi-field="range" value="${Number(ctx.display(item.range).toFixed(2))}"></label>
           <p>Drag the aim handle on the plan or enter a direction above. Hold Shift while dragging to snap to 15°.</p>` : ''}
+        ${item.kind === 'server' ? ctx.deviceInspector(item) : ''}
         ${client ? ctx.clientInspector(item) : deviceStatus(item.id)}
         ${profile.poe_draw ? `<p>${profile.mount === 'ceiling' ? 'Ceiling mounted · ' : ''}${profile.poe_draw} W PoE · ${e(data.status(item.id).power)}</p>` : ''}
         ${ports.length ? `<div class="wifi-wire-summary"><strong>${used.length} of ${ports.length} ports connected</strong>
           ${used.length && !window.WifiSiteClientModel.managed(item) ? `<span>${used.map(port => e(port.id)).join(', ')}</span>` : ''}</div>` : ''}
-        ${ctx.deviceInspector(item)}
+        ${item.kind !== 'server' ? ctx.deviceInspector(item) : ''}
         ${!inRack && (item.kind === 'rack' || item.rack_id) ? `<button class="wifi-control" type="button" data-wifi-open-rack="${e(item.rack_id || item.id)}" data-wifi-rack-device="${item.rack_id ? e(item.id) : ''}">Open Rack</button>` : ''}
         ${item.rack_id ? inRack ? '' : `<p>Rack position · U${item.rack_u}</p>` : `<details class="wifi-network-settings" data-wifi-config="placement"><summary>Position</summary>
           ${item.wall_id ? wallField(item) : ctx.pointFields(item)}</details>`}`;

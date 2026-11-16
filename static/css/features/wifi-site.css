@@ -459,6 +459,12 @@ body.light-mode .wifi-workspace .network-save-state[data-kind="error"] { color: 
 .wifi-network-settings { margin: 0 0 9px; padding: 8px; border: 1px solid var(--wifi-edge); border-radius: 5px; }
 .wifi-network-settings summary { cursor: pointer; font-size: 13px; font-weight: 700; }
 .wifi-network-settings[open] summary { margin-bottom: 8px; }
+.wifi-service-vms, .wifi-reachable-services { list-style: none; margin: 6px 0; padding: 0; }
+.wifi-service-vm, .wifi-reachable-services li { padding: 6px 0; border-top: 1px solid var(--wifi-edge); }
+.wifi-service-vm > label.wifi-estimate-toggle { margin: 0; }
+.wifi-service-vm > button { margin-top: 5px; }
+.wifi-reachable-services li { font-size: 12px; overflow-wrap: anywhere; }
+.wifi-reachable-services span { color: var(--wifi-muted); }
 .wifi-firewall-list { display: grid; gap: 6px; margin: 8px 0; padding: 0; list-style: none; font-size: 12px; overflow-wrap: anywhere; }
 .wifi-firewall-list li { padding: 8px; border: 1px solid var(--wifi-edge); border-radius: 6px; background: var(--wifi-raised); }
 .wifi-firewall-list li.is-editing { border-color: var(--wifi-focus); }
