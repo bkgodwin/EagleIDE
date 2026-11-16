@@ -148,6 +148,9 @@
     return { member, overlaps };
   }
 
+  const INTERFERENCE_FLOOR = -85;
+  const MAX_INTERFERENCE_PENALTY = 12;
+
   function estimateWith(transmitters) {
     // Reuse crossing arrays for heatmap samples. The probe copies its winning path.
     const crossings = [];
@@ -164,6 +167,7 @@
       groupBest.fill(-1);
       groupNext.fill(-1);
       const paths = detailed ? [] : null;
+      let bestReceived = -Infinity;
       let bestSignal = -Infinity;
       let best = null;
       let alternate = null;
@@ -177,7 +181,10 @@
         const directionLoss = ap.mount === 'wall' && length > 0.01
           ? 9 * (1 - (dx * facingX + dy * facingY) / length) : 0;
         let signal = reference - 25 * Math.log10(Math.max(1, length)) - directionLoss;
-        const cutoff = detailed ? -Infinity : !competitive[i] && ap.interfererOnly ? Infinity : FADE_END;
+        // An AP below both thresholds can neither win nor interfere at this sample.
+        const candidateFloor = ap.interfererOnly ? Infinity : detailed ? -Infinity : bestReceived - MAX_INTERFERENCE_PENALTY;
+        const competingFloor = competitive[i] ? INTERFERENCE_FLOOR : Infinity;
+        const cutoff = Math.max(detailed ? -Infinity : FADE_END, Math.min(candidateFloor, competingFloor));
         if (signal <= cutoff) continue;
         crossings.length = 0;
         obstacles.length = 0;
@@ -219,6 +226,7 @@
         }
         if (signal <= cutoff) continue;
         raw[i] = signal;
+        if (!ap.interfererOnly && signal > bestReceived) bestReceived = signal;
         const group = member[i];
         if (group !== -1) {
           if (groupBest[group] === -1 || signal > raw[groupBest[group]]) {
@@ -245,7 +253,7 @@
           if (other !== -1) competing = Math.max(competing, raw[other] - overlap.loss);
         }
         // Model airtime contention as a bounded usable-signal penalty for teaching.
-        const penalty = Math.max(0, Math.min(12, (competing + 85) * .6, (competing - received + 22) * .52));
+        const penalty = Math.max(0, Math.min(MAX_INTERFERENCE_PENALTY, (competing - INTERFERENCE_FLOOR) * .6, (competing - received + 22) * .52));
         const signal = received - penalty;
         if (signal > bestSignal) {
           bestSignal = signal;
@@ -328,7 +336,7 @@
         const inPathBounds = item => item.left <= right && item.right >= left && item.top <= bottom && item.bottom >= top;
         return { ...transmitter, walls: transmitter.walls.filter(inPathBounds), objects: transmitter.objects.filter(inPathBounds) };
       });
-      if (!local.length) return null;
+      if (!local.some(({ ap }) => !ap.interfererOnly)) return null;
       const estimate = estimateWith(local);
       const step = tileStep(tile.level);
       const size = SAMPLES + PADDING * 2;

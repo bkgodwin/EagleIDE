@@ -857,6 +857,29 @@ class NetworkRouteTests(unittest.TestCase):
         self.store.set_class_access('class-1', False)
         self.assertEqual(self.client.post(url, json=payload, headers=headers).status_code, 403)
 
+    def test_legacy_routed_copper_can_reopen_and_shorten(self):
+        email = "legacy-infra@example.test"
+        route = {"id": "old-run", "source": {"device_id": "switch", "port": "ETH1"},
+                 "target": {"device_id": "ap-1", "port": "ETH1"}, "media": "ethernet",
+                 "color": "#225588", "label": "", "waypoints": []}
+        legacy = {**self.wifi_plan(), "id": "original", "revision": 3, "updated_at": 1200, "schema_version": 11,
+                  "walls": [], "equipment": [{"id": "switch", "kind": "distribution_switch", "x": 0, "y": 0, "name": "Existing"}],
+                  "cables": [route]}
+        legacy["access_points"][0].update(x=100, y=0)
+        self.store._write_json(self.store._wifi_path(email), {"sites": {"original": legacy}}, compact=True)
+        opened = self.store.get_wifi_site(email, "original")
+        self.assertEqual(opened["cables"][0]["legacy_length"], 100)
+        opened["title"] = "Legacy design"
+        self.store.save_wifi_site(email, "original", opened, 3)
+        opened["access_points"][0]["x"] = 110
+        with self.assertRaisesRegex(NetworkDataError, "capacity reached"):
+            self.store.save_wifi_site(email, "original", opened, 4)
+        opened["access_points"][0]["x"] = 89
+        shortened = self.store.save_wifi_site(email, "original", opened, 4)
+        self.assertNotIn("legacy_length", shortened["cables"][0])
+        with self.assertRaisesRegex(NetworkDataError, "equipment rack"):
+            self.store.save_wifi_site("new-project@example.test", "fresh", legacy, 0)
+
     def test_infra_rack_slots_port_faces_and_copper_limit(self):
         url = "/api/network/wifi-sites/rack-lab"
         headers = {"X-Teacher-Token": "teacher-token"}
