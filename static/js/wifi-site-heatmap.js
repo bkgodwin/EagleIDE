@@ -5,10 +5,12 @@
   const model = window.WifiSiteModel;
   const tileKey = ({ x, y, level }) => `${level}:${x}:${y}`;
 
-  function sameRadios(before, after) {
+  function sameRadios(before, after, band) {
     return before === after || (before.length === after.length && before.every((ap, i) => {
       const next = after[i];
-      return ap.x === next.x && ap.y === next.y && ap.mount === next.mount
+      const oldRadio = ap.radios?.[band], newRadio = next.radios?.[band];
+      return ap.interfererOnly === next.interfererOnly && oldRadio?.channel === newRadio?.channel
+        && oldRadio?.width === newRadio?.width && ap.x === next.x && ap.y === next.y && ap.mount === next.mount
         && ap.angle === next.angle && ap.power_db === next.power_db;
     }));
   }
@@ -43,7 +45,7 @@
     function setPlan(next) {
       if (layout === next || (layout && !layout.radios && !next.radios && layout.walls === next.walls
           && layout.openings === next.openings && layout.band === next.band && layout.decor === next.decor
-          && sameRadios(layout.access_points, next.access_points))) return;
+          && sameRadios(layout.access_points, next.access_points, next.band))) return;
       layout = next;
       revision += 1;
       areas = next.radios
@@ -196,7 +198,7 @@
       pending = { ...job, key: tileKey(tile) };
       if (!worker && !workerFailed) {
         try {
-          const source = new Worker('/static/js/wifi-site-worker.js?v=20261115-infra-sheets');
+          const source = new Worker('/static/js/wifi-site-worker.js?v=20261116-rack-radio');
           worker = source;
           source.onmessage = ({ data }) => { if (worker === source) tileReady(data); };
           source.onerror = () => {

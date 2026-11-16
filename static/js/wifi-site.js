@@ -20,7 +20,7 @@
     $('wifiCoverageStatus').hidden = !updating;
   });
   const endpoint = '/api/network/wifi-sites';
-  const schemaVersion = 11;
+  const schemaVersion = 12;
   const wireKinds = window.WifiSiteCabling.kinds;
   const floorKinds = ['walls', 'openings', 'labels', 'decor', 'surfaces'];
   const floorLayers = [...floorKinds, 'background', 'background_color'];
@@ -69,6 +69,7 @@
   let wallSource;
   let indexedPlan;
   let objectIndex = new Map();
+  let drawnBand;
   let drawnWalls, drawnWallOpenings, drawSpans;
   let overlayMarkup = '';
   let markerLabels, markerScale;
@@ -109,7 +110,7 @@
   const fmt = meters => `${display(meters).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${current().units}`;
   const wires = window.WifiSiteCabling.create({
     catalog: () => options.catalog, limits: () => options.limits, getPlan: current, selected: () => selected, apNames: model.MOUNTS,
-    select: selectObject, changeTool, add: addObjects, replace: replaceObject, draw: drawObjects, frame: scheduleScene,
+    select: selectObject, openRack: (id, kind) => racks.open(id, kind), changeTool, add: addObjects, replace: replaceObject, draw: drawObjects, frame: scheduleScene,
     hint, escape, id, fmt, display, tidy: cleanText, toMeters: value => model.metersFrom(value, current().units),
     scale: () => camera.scale, snap: drawingPoint, line: lineSvg, dot, pointFields, marker, roundPoint,
     wallSpans: (walls, openings) => structure.wallSpans(walls, openings),
@@ -119,6 +120,11 @@
   });
   const clients = window.WifiSiteClients.create({ plan: current, cabling: () => wires.index(), escape, selected: () => selected,
     networkInspector: (item, info) => networkSettings.clientInspector(item, info) });
+  const racks = window.WifiSiteRacks.create({
+    plan: current, data: () => wires.index(), catalog: () => options.catalog, escape, id,
+    add: addObjects, replace: replaceObject, configure: selectObject,
+    removeCable: cable => update({ ...current(), cables: current().cables.filter(item => item.id !== cable) }),
+  });
   const networkSettings = window.WifiSiteNetwork.create({
     plan: current, cabling: () => wires.index(), graph: clients.network, update, replace: replaceObject,
     render: renderInspector, hint, escape, choices: choiceList, id, limits: () => options.limits,
@@ -218,7 +224,8 @@
     if (tutorialDialog.open) tutorialDialog.close();
     const { id: siteId, revision, updated_at, scenario_briefing, ...layout } = plan;
     session = {
-      id: siteId || id('site'), revision: revision || 0, plan: { ...blankPlan(), ...layout, schema_version: schemaVersion }, account,
+      id: siteId || id('site'), revision: revision || 0, plan: { ...blankPlan(), ...layout, schema_version: schemaVersion,
+        access_points: (layout.access_points || []).map((ap, i) => ({ radios: model.defaultRadios(i), ...ap })) }, account,
       sequence: 0, savedSequence: 0, undo: [], redo: [], briefing: briefing || scenario_briefing,
     };
     selected = previewAp = '';
@@ -226,6 +233,7 @@
     clients.reset();
     networkSettings.reset();
     wires.reset();
+    racks.reset();
     structure.reset();
     showPanel('');
     anchor = hover = drag = measure = probe = keyboardPoint = null;
@@ -315,6 +323,7 @@
     if (!plan || button.disabled) return;
     button.disabled = true;
     button.textContent = 'Exporting…';
+    const rackExport = racks.exportData(plan, wires.index(plan));
     try {
       if (document.fonts?.status === 'loading') await document.fonts.ready;
       if (session !== project || current() !== plan || !sameAccount()) return;
@@ -325,7 +334,7 @@
       if (!sameAccount() || session !== project) return;
       const today = new Date();
       const date = [today.getFullYear(), today.getMonth() + 1, today.getDate()].map(value => String(value).padStart(2, '0')).join('-');
-      const pdf = await options.api('/api/network/wifi-export.pdf', { method: 'POST', body: JSON.stringify({ ...drawing, title: plan.title, date }) }, { download: true });
+      const pdf = await options.api('/api/network/wifi-export.pdf', { method: 'POST', body: JSON.stringify({ ...drawing, ...rackExport, title: plan.title, date }) }, { download: true });
       if (session !== project || !sameAccount()) return;
       const url = URL.createObjectURL(pdf);
       const link = document.createElement('a');
@@ -375,6 +384,7 @@
     if (tutorialDialog.open) tutorialDialog.close();
     selected = previewAp = '';
     wires.reset();
+    racks.reset();
     structure.reset();
     showPanel('');
     endMove(drag);
@@ -449,6 +459,17 @@
         const wall = walls.get(ap.wall_id);
         return wall ? { ...ap, ...roundPoint(cableModel.pointAt(wall, ap.t)) } : ap;
       }) };
+    }
+    if (next.equipment !== current().equipment) {
+      const data = wires.index();
+      for (const item of next.equipment) {
+        const old = data.devices.get(item.id);
+        if ((!item.rack_id && item.kind !== 'rack') || !old || !data.isConnected(item.id)) continue;
+        if (['x', 'y', 'rack_u', 'rack_id'].some(key => old[key] !== item[key])) {
+          hint('Disconnect all cables before moving rack equipment.');
+          return false;
+        }
+      }
     }
     const vertexCount = next.surfaces.reduce((sum, item) => sum + item.points.length + item.holes.reduce((n, hole) => n + hole.length, 0), 0);
     if (vertexCount > options.limits.surface_vertices) { hint('This plan has reached the limit for surface corners.'); return false; }
@@ -686,7 +707,7 @@
       const connection = cable ? `<div class="wifi-wire-summary"><strong>Ethernet connected</strong><span>${data.powered.has(cable) ? 'PoE available' : 'No PoE source on this path'}</span></div>`
         : `<div class="wifi-wire-summary"><strong>Unwired</strong><span>Connect this AP to PoE to enable coverage.</span></div>
           <label class="wifi-estimate-toggle"><input type="checkbox" id="wifiEstimateCoverage"${previewAp === item.id ? ' checked' : ''}> Estimated coverage</label>`;
-      fields = wires.deviceStatus(item.id) + connection + networkSettings.apInspector(item) + `<label>Access point label<input data-wifi-field="name" value="${escape(item.name)}" maxlength="60" placeholder="Optional"></label>
+      fields = wires.deviceStatus(item.id) + connection + networkSettings.apInspector(item) + radioFields(item) + `<label>Access point label<input data-wifi-field="name" value="${escape(item.name)}" maxlength="60" placeholder="Optional"></label>
         <label>Mount<select data-wifi-field="mount">${choiceList(Object.entries(model.MOUNTS), item.mount)}</select></label>
         <label>Transmit power adjustment (dB)<input type="number" min="-12" max="6" step="1" data-wifi-field="power_db" value="${item.power_db}"></label>
         ${item.wall_id ? wires.wallField(item) : pointFields(item)}${item.mount === 'wall' ? `<label>Direction in degrees (0° points right)<input type="number" min="0" max="360" step="1" data-wifi-field="angle" value="${item.angle}"></label>` : ''}`;
@@ -695,7 +716,7 @@
     }
     panel.innerHTML = fields + `<div class="wifi-object-actions">
       <button class="wifi-control" id="wifiLocateObject" type="button">Locate</button>
-      ${kind === 'cables' || kind === 'pass_throughs' || kind === 'surfaces' || item.wall_id ? '' : '<button class="wifi-control" id="wifiDuplicateObject" type="button">Duplicate</button>'}
+      ${kind === 'cables' || kind === 'pass_throughs' || kind === 'surfaces' || item.wall_id || item.rack_id || item.kind === 'rack' ? '' : '<button class="wifi-control" id="wifiDuplicateObject" type="button">Duplicate</button>'}
       <button class="wifi-control" id="wifiDeleteObject" type="button">Delete</button></div>`;
     for (const detail of panel.querySelectorAll('details[data-wifi-config]')) {
       detail.open = openSections.includes(detail.dataset.wifiConfig);
@@ -725,6 +746,12 @@
     const { kind, item } = match;
     const field = input.dataset.wifiField;
     const next = { ...item };
+    if (field.startsWith('radio:')) {
+      const [, band, setting] = field.split(':');
+      next.radios = { ...item.radios, [band]: { ...item.radios[band], [setting]: Number(input.value) } };
+      replaceObject(kind, next, true);
+      return;
+    }
     if (/^[ab]?[xy]$/.test(field)) {
       const axis = field.at(-1);
       const part = field.length === 2 ? field[0] : null;
@@ -766,6 +793,16 @@
       const before = /^[ab][xy]$/.test(field) ? item[field[0]][field[1]] : item[field];
       input.value = /^[ab]?[xy]$/.test(field) ? Number(display(before).toFixed(3)) : before;
     }
+  }
+
+  function radioFields(item) {
+    return Object.entries(item.radios ?? model.defaultRadios()).map(([band, radio]) => `<div class="wifi-radio-fields">
+      <strong>${band} GHz radio</strong><div class="wifi-two-fields">
+      <label>Channel<select data-wifi-field="radio:${band}:channel">${choiceList(model.radioChannels(band, radio.width)
+        .map(channel => [String(channel), channel]), String(radio.channel))}</select></label>
+      <label>Channel width<select data-wifi-field="radio:${band}:width">${choiceList(model.radioWidths(band, radio.channel)
+        .map(width => [String(width), `${width} MHz`]), String(radio.width))}</select></label>
+      </div></div>`).join('');
   }
 
   function coordinate(value) {
@@ -857,6 +894,7 @@
       const direction = item.mount === 'wall' ? `<path class="wifi-direction" transform="rotate(${item.angle})" d="M 9 0 L 20 0 M 16 -4 L 20 0 L 16 4"/>` : '';
       content = `<circle r="11" class="wifi-ap${connected ? '' : ' wifi-ap-unwired'}${selectedClass}"/>${direction}
         <path class="wifi-radio" d="M -6 -2 Q 0 -8 6 -2 M -3 1 Q 0 -2 3 1 M 0 4 h .1"/>
+        <text class="wifi-ap-channel" x="-12" y="-13">${(item.radios ?? model.defaultRadios())[current().band].channel}</text>
         ${connected ? `<circle class="wifi-ap-connected${powered ? '' : ' is-unpowered'}" cx="8" cy="8" r="3.6"/>` : ''}
         ${item.name ? `<title>${escape(item.name)}</title><text class="wifi-ap-text" x="15" y="4">${escape(item.name.length > 38 ? item.name.slice(0, 37) + '…' : item.name)}</text>` : ''}`;
     } else {
@@ -948,12 +986,13 @@
       drawnWallSelection = wallSelection;
     }
     const powered = wires.index();
-    const markersChanged = drawnAccessPoints !== plan.access_points || drawnLabels !== plan.labels ||
+    const markersChanged = drawnAccessPoints !== plan.access_points || drawnLabels !== plan.labels || drawnBand !== plan.band ||
       drawnMarkerSelection !== markerSelection || drawnPoweredAps !== powered;
     if (markersChanged) {
       $('wifiMarkers').innerHTML = plan.access_points.map(ap => marker(ap, 'access_points')).join('')
         + plan.labels.map(label => marker(label, 'labels')).join('');
       drawnAccessPoints = plan.access_points;
+      drawnBand = plan.band;
       drawnPoweredAps = powered;
       drawnLabels = plan.labels;
       drawnMarkerSelection = markerSelection;
@@ -1108,7 +1147,7 @@
   function groupGeometry(plan) {
     const walls = new Map(plan.walls.map(wall => [wall.id, wall]));
     const objects = new Map([...plan.equipment, ...plan.access_points, ...plan.pass_throughs].map(item => [item.id, item]));
-    const location = item => item.wall_id ? cableModel.pointAt(walls.get(item.wall_id), item.t) : item;
+    const location = item => item.rack_id ? objects.get(item.rack_id) : item.wall_id ? cableModel.pointAt(walls.get(item.wall_id), item.t) : item;
     const route = cable => [location(objects.get(cable.source.device_id)),
       ...cable.waypoints.map(bend => bend.pass_id ? location(objects.get(bend.pass_id)) : bend),
       location(objects.get(cable.target.device_id))];
@@ -1133,7 +1172,8 @@
     const contains = point => point.x >= box.left && point.x <= box.right && point.y >= box.top && point.y <= box.bottom;
     const plan = current();
     const ids = selectableKinds().flatMap(kind => plan[kind].filter(item => {
-      if (kind === 'cables' && !$('wifiShowCables').checked) return false;
+      if (kind === 'cables' && (!$('wifiShowCables').checked || item.rack_patch)) return false;
+      if (kind === 'equipment' && item.rack_id) return false;
       const points = objectPoints({ kind, item });
       return points.length && points.every(point => point && contains(point));
     }).map(item => item.id));
@@ -1156,7 +1196,7 @@
     const next = { ...plan };
     for (const kind of kinds) {
       next[kind] = plan[kind].map(item => {
-        if (!selection.has(item.id)) return item;
+        if (!selection.has(item.id) || item.rack_id) return item;
         if (item.wall_id) {
           if (selection.has(item.wall_id)) return item;
           const aim = move(data.location(item));
@@ -1250,7 +1290,7 @@
     if (previewAp !== selected || wired.has(previewAp)) previewAp = '';
     const { access_points, ssids, band } = current();
     const available = access_points.filter(ap => poweredAps.has(ap.id) || ap.id === previewAp);
-    return clientModel.coverageAps(available, ssids, band, $('wifiCoverageSsid').value);
+    return clientModel.coverageAps(available, ssids, band, $('wifiCoverageSsid').value, true);
   }
 
   function refreshCoverage() {
@@ -1276,11 +1316,12 @@
       readout.textContent = 'No AP is broadcasting a matching SSID on this band. Check the coverage filter, SSID settings, and PoE.';
       return;
     }
-    const { ap, signal, distance, walls, alternate } = probe.result;
+    const { ap, signal, received, penalty, distance, walls, alternate } = probe.result;
     const crossed = walls.map(material => model.MATERIALS[material]?.name || material).join(', ');
-    summary.textContent = `${Math.round(signal)} dBm · ${model.signalLevel(signal).label}${ap.id === previewAp ? ' · preview' : ''}`;
+    summary.textContent = `${Math.round(signal)} dBm usable · ${model.signalLevel(signal).label}${ap.id === previewAp ? ' · preview' : ''}`;
     readout.innerHTML = `<strong>${summary.textContent}</strong>
       <p>${escape(ap.name || model.MOUNTS[ap.mount])} · ${fmt(distance)} away</p>
+      ${penalty > .25 ? `<p>Received ${Math.round(received)} dBm · interference penalty ${Math.round(penalty)} dB</p>` : ''}
       <p>Barriers crossed: ${crossed || 'None'}</p>
       ${alternate ? `<p>Second AP: ${escape(alternate.ap.name || model.MOUNTS[alternate.ap.mount])} · ${Math.round(alternate.signal)} dBm</p>` : ''}`;
   }
@@ -1652,6 +1693,7 @@
       else {
         wires.hideMenu();
         selectObject(gesture.match?.item.id || '');
+        if (gesture.match?.item.kind === 'rack') racks.open(gesture.match.item.id);
         if (gesture.bend !== undefined && gesture.match) {
           wires.setBend(gesture.match.item, gesture.bend);
           renderInspector();
@@ -1682,7 +1724,7 @@
   }
 
   function keyboard(event) {
-    if (!active() || scenarioDialog.open || tutorialDialog.open || !document.body.classList.contains('network-mode')) return;
+    if (!active() || scenarioDialog.open || tutorialDialog.open || $('wifiRackDialog').open || $('wifiMaterialsDialog').open || !document.body.classList.contains('network-mode')) return;
     const typing = event.target.matches('input,textarea,select');
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's' && options.canSave) {
       event.preventDefault();
@@ -1815,6 +1857,11 @@
     $('wifiSiteBack').addEventListener('click', async () => { if (await leave()) options.onBack(); });
     $('wifiScenarioButton').addEventListener('click', () => showBriefing());
     $('wifiExportPdf').addEventListener('click', exportPdf);
+    $('wifiMaterials').addEventListener('click', racks.inspectMaterials);
+    $('wifiProperties').addEventListener('click', event => {
+      const control = event.target.closest('[data-wifi-open-rack]');
+      if (control) racks.open(control.dataset.wifiOpenRack);
+    });
     $('wifiSiteTitle').addEventListener('input', event => {
       const title = cleanText(event.target.value, 'Untitled Wi-Fi Site');
       if (title === current().title) return;

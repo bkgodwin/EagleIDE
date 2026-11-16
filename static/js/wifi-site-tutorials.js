@@ -20,11 +20,12 @@
         ${box(340, 81, 128, 'Access point', 'Ethernet + PoE')}`),
       caption: 'The switch connects the desktop and supplies power and data to the access point.',
       steps: [
-        '<strong>Place the devices.</strong> In a new site, choose <strong>Equipment</strong>. Select and place a Router, a 24-port Switch, a Desktop, and a Ceiling-mounted access point.',
-        '<strong>Make three Ethernet links.</strong> Use <strong>Cable</strong> to connect router ETH1 to switch ETH1, switch ETH2 to the desktop, and switch ETH3 to the access point. Select both ends and press <strong>Connect</strong> for each link.',
+        '<strong>Place the devices.</strong> Use <strong>Equipment</strong> to place a rack, a desktop, and a ceiling AP. Click the rack and use <strong>Install Equipment</strong> to mount a Router, 24-port Switch, and Patch Panel in open slots.',
+        '<strong>Route building Ethernet.</strong> Choose <strong>Cable</strong> on the plan. Connect the desktop and AP to rear patch-panel ports by clicking each device, then the rack. Confirm the chosen port and press <strong>Connect</strong>.',
+        '<strong>Patch inside the rack.</strong> Open the rack and select its <strong>Cable</strong> tool. Patch router ETH1 to switch ETH1. Patch the two front panel ports to switch ETH2 and ETH3 to complete the desktop and AP circuits.',
         '<strong>Check the desktop.</strong> Use <strong>Select</strong> and click the desktop. Its inspector should show a DHCP address. Set <strong>Ping target</strong> to the router and press <strong>Start Ping</strong>.',
         '<strong>Try Wi-Fi.</strong> Place a Mobile Phone near the access point. Select it and check the associated AP, signal, and IPv4 address in its inspector.',
-        '<strong>Add Internet service if needed.</strong> Place an ISP Demarcation on a wall. Match its media to the router WAN port, such as MeadowLink Ethernet to WAN1. Connect it and try the simulated Internet ping.',
+        '<strong>Add Internet service if needed.</strong> Place an ISP Demarcation on a wall. Start the cable at the handoff and click the rack. Confirm the selected router WAN port, connect, and try the simulated Internet ping.',
       ],
     },
     {
@@ -35,12 +36,13 @@
         <text class="wifi-guide-small" x="271" y="76">Bends</text>
         ${box(12, 16, 120, 'From', 'Free port')}
         ${box(349, 76, 120, 'To', 'Free port')}`),
-      caption: 'Bends set the route between two ports. The endpoints stay attached when a device moves.',
+      caption: 'Bends set the cable length. A building Ethernet run can be at most 90 m.',
       steps: [
         '<strong>Choose Cable and select the media.</strong> Use Ethernet for devices that need PoE. Use fiber between compatible SFP ports.',
         '<strong>Choose the source.</strong> Click it on the plan or use <strong>From</strong>. Check the selected port before adding bends.',
         '<strong>Follow the intended route.</strong> Click the plan to add bends. Hold Shift or enable <strong>Right angles</strong> to align bends. Click a pass-through marker where the cable crosses concrete.',
-        '<strong>Finish the link.</strong> Choose the destination and port, then press <strong>Connect</strong>. If the button is disabled, check the message above the plan.',
+        '<strong>Finish the building run.</strong> Click the rack to pick a rear patch-panel port. The first free port on the highest panel is preselected. Connect, then open the rack and use its <strong>Cable</strong> tool to patch the corresponding front port.',
+        '<strong>Check length.</strong> Add an IDF or use fiber between compatible SFP ports when a building Ethernet run reaches 90 m.',
         '<strong>Adjust a saved cable.</strong> Use <strong>Select</strong> and click the cable. If it belongs to a bundle, choose the cable from the list. Drag a bend or use <strong>Edit Route &amp; Ports</strong>, then <strong>Save Route</strong>.',
       ],
     },
@@ -125,7 +127,7 @@
       caption: 'In this illustration, −55 dBm is stronger than −78 dBm. Check the actual estimate on your plan.',
       steps: [
         '<strong>Choose a network and band.</strong> In <strong>Wi-Fi</strong>, select the SSID and band you want to inspect. Enable <strong>Wi-Fi coverage</strong> to see the heatmap.',
-        '<strong>Probe a location.</strong> Open <strong>View</strong>, choose <strong>Check Signal</strong>, then click a spot. Read the estimated dBm, strongest AP, and barriers crossed. Compare both sides of a wall or door.',
+        '<strong>Probe a location.</strong> Open <strong>View</strong>, choose <strong>Check Signal</strong>, then click a spot. Read the estimated dBm, strongest AP, and barriers crossed. Compare both sides of a wall or door. The probe separates received signal from the interference penalty. Change a nearby AP’s channel or width to compare.',
         '<strong>Test packet loss.</strong> Place or move a Mobile Phone to that spot and select the same SSID. Ping the router and compare the dropped percentage over several packets with a test near the AP.',
         '<strong>Check what changed.</strong> Confirm which AP and band the phone actually uses. If the signal is strong and pings still drop, check the client’s network path and <strong>Last drop</strong>.',
       ],

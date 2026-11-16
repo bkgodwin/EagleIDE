@@ -20,6 +20,8 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen.canvas import Canvas
 
+from wifi_cabling import COST_ITEMS, EQUIPMENT, MAX_RACKS, RACK_UNITS, _ports
+
 
 MAX_EXPORT_BYTES = 6_500_000
 _IMAGE_BYTES = 2_500_000
@@ -38,6 +40,7 @@ _GLYPHS = {
     'router': 'R', 'core_switch': 'S', 'distribution_switch': 'S', 'access_switch': 'S', 'keystone': 'J',
     'demarc': 'I', 'desktop': 'D', 'phone': 'M', 'voip_phone': 'V', 'pos_terminal': '$',
     'poe_camera': 'C', 'copy_machine': 'P', 'pass_through': 'T', 'access_point': 'A',
+    'rack': 'E', 'patch_panel': 'P', 'server': 'H', 'ups': 'U',
 }
 _DEVICE_TYPES = {
     'router': 'Router', 'core_switch': 'Core switch', 'distribution_switch': 'Distribution switch',
@@ -45,6 +48,7 @@ _DEVICE_TYPES = {
     'desktop': 'Desktop computer', 'phone': 'Wireless phone', 'voip_phone': 'VoIP phone',
     'pos_terminal': 'POS terminal', 'poe_camera': 'PoE camera', 'copy_machine': 'Copy machine',
     'pass_through': 'Concrete pass-through', 'access_point': 'Access point',
+    'rack': 'Equipment rack', 'patch_panel': 'Patch panel', 'server': 'Rack server', 'ups': 'UPS unit',
 }
 
 
@@ -129,12 +133,13 @@ def _read_annotations(data):
                 raise ValueError('Unknown floor plan device')
             if key == 'aps' and kind != 'access_point':
                 raise ValueError('Only access points belong on the Wi-Fi sheet')
-            powered = item.get('powered', False)
-            if type(powered) is not bool:
+            powered, mounted = item.get('powered', False), item.get('mounted', False)
+            if type(powered) is not bool or type(mounted) is not bool:
                 raise ValueError('Invalid device power state')
             details = [_text(value, 120) for value in _list(item.get('details', []), 4)]
             output.append(dict(ref=f'{prefix}{i:02}', name=_text(item.get('name'), 160), kind=kind,
-                               point=_point(item.get('point')), details=details, powered=powered,
+                               point=_point(item.get('point')), details=details, powered=powered, mounted=mounted,
+                               radio_plan=_text(item.get('radio_plan', ''), 120),
                                cone=_points(item.get('cone', []), 256) if kind == 'poe_camera' else []))
     for i, item in enumerate(_list(data.get('cables', []), 512), 1):
         if not isinstance(item, dict):
@@ -252,7 +257,8 @@ def _wire_anchors(points):
 
 def _device_details(item, sheet):
     if sheet == 1 and item['kind'] == 'access_point':
-        return item['details'] or (['No SSIDs enabled'] if item['powered'] else ['Not transmitting (no PoE)'])
+        radios = [item['radio_plan']] if item['radio_plan'] else []
+        return radios + (item['details'] or (['No SSIDs enabled'] if item['powered'] else ['Not transmitting (no PoE)']))
     if sheet == 2:
         return [] if item['powered'] else ['Unpowered preview']
     if item['kind'] == 'access_point':
@@ -299,7 +305,7 @@ def _arrange(sheet, frame, plot, notes, devices, cables):
 
 
 def _layout(image_size, notes, equipment, aps, cables):
-    sheets = ([*equipment, *aps], aps, [item for item in equipment if item['kind'] == 'poe_camera'])
+    sheets = ([*(item for item in equipment if not item['mounted']), *aps], aps, [item for item in equipment if item['kind'] == 'poe_camera'])
     landscape_sizes = (_TABLOID, (1728, 1296), (2592, 1728), (3456, 2592), (4320, 3456))
     ratio = image_size[0] / image_size[1]
     best = None
@@ -406,7 +412,7 @@ def _draw_scale(canvas, frame, paper, unit, world_width):
 def _draw_legend(canvas, index, paper, devices):
     x, y = _MARGIN, paper[1] - _MARGIN - 36
     if index == 1:
-        _draw_line(canvas, 'Strongest modeled signal across enabled SSIDs and both bands', x, y, _FONT, 8, _MUTED)
+        _draw_line(canvas, 'Usable signal (both bands), including channel interference', x, y, _FONT, 8, _MUTED)
         x += 283
         for swatch, text in (('#9b72a7', '< -85'), ('#e98264', '-85'), ('#efbe53', '-75'),
                              ('#8eba60', '-67'), ('#36aa7c', '-58 dBm')):
@@ -538,6 +544,243 @@ def _draw_schedule(canvas, entries, x, title, headings, widths, continued, empty
         canvas.line(x, top, x + width, top)
 
 
+_RACK_COLORS = {key: HexColor(color) for key, color in {
+    "router": "#e7edf2", "core_switch": "#adbfc9", "distribution_switch": "#cedbe2",
+    "patch_panel": "#33546a", "server": "#38506a", "ups": "#23384b",
+}.items()}
+
+
+def _read_racks(data):
+    racks = []
+    for item in _list(data.get("racks", []), MAX_RACKS):
+        if not isinstance(item, dict) or not isinstance(item.get("power"), dict):
+            raise ValueError("Invalid rack sheet")
+        occupied, gear, ports = set(), [], {}
+        for device in _list(item.get("devices"), RACK_UNITS):
+            if not isinstance(device, dict) or not isinstance(device.get("kind"), str) or device["kind"] not in _RACK_COLORS:
+                raise ValueError("Invalid equipment in rack sheet")
+            identifier = _text(device.get("id"), 64)
+            kind = device["kind"]
+            size = EQUIPMENT[kind]["rack_units"]
+            u = device.get("u")
+            if type(u) is not int or not 1 <= u <= RACK_UNITS + 1 - size:
+                raise ValueError("Invalid rack unit")
+            slots = set(range(u, u + size))
+            if slots & occupied:
+                raise ValueError("Equipment overlaps on rack sheet")
+            occupied.update(slots)
+            face = []
+            expected = _ports({"kind": kind})
+            for port in _list(device.get("ports"), 52):
+                if not isinstance(port, dict):
+                    raise ValueError("Invalid rack port")
+                key = _text(port.get("id"), 16)
+                address = identifier, key
+                if key not in expected or key.startswith("BACK") or address in ports:
+                    raise ValueError("Unknown or duplicate rack port")
+                profile = expected[key]
+                connected = port.get("connected")
+                if type(connected) is not bool:
+                    raise ValueError("Invalid rack port status")
+                record = dict(id=key, media=profile["media"], wan=profile["wan"], address=address,
+                              connected=connected, destination=_text(port.get("destination", ""), 60),
+                              peer=_text(port.get("peer", ""), 100))
+                ports[address] = record
+                face.append(record)
+            gear.append(dict(id=identifier, kind=kind, u=u, size=size, name=_text(device.get("name"), 60), ports=face))
+        patches = []
+        used = set()
+        for patch in _list(item.get("patches"), 416):
+            if not isinstance(patch, dict):
+                raise ValueError("Invalid rack patch cable")
+            media = patch.get("media")
+            color = patch.get("color")
+            if media not in ("ethernet", "fiber") or not isinstance(color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+                raise ValueError("Invalid rack cable color or media")
+            endpoints = []
+            for key in ("source", "target"):
+                end = patch.get(key)
+                if not isinstance(end, dict):
+                    raise ValueError("Invalid rack cable endpoint")
+                address = _text(end.get("device_id"), 64), _text(end.get("port"), 16)
+                if address not in ports or address in used or ports[address]["media"] != media or ports[address]["wan"]:
+                    raise ValueError("Invalid rack cable port")
+                used.add(address)
+                endpoints.append(address)
+            patches.append(dict(ends=endpoints, color=HexColor(color), media=media, label=_text(patch.get("label", ""), 80)))
+        power = item["power"]
+        if type(power.get("overloaded")) is not bool:
+            raise ValueError("Invalid rack power status")
+        racks.append(dict(name=_text(item.get("name"), 60), gear=gear, patches=patches,
+                          watts=_number(power.get("watts"), 0, 20_000),
+                          minutes=_number(power.get("minutes"), 0, 100_000), overloaded=power["overloaded"]))
+    return racks
+
+
+def _cost_breakdown(payload, units):
+    if not isinstance(payload, dict) or not payload.keys() <= COST_ITEMS.keys():
+        raise ValueError("Unknown bill of materials item")
+    rows = []
+    for key, profile in COST_ITEMS.items():
+        quantity = _number(payload.get(key, 0), 0, 21_000_000_000_000_000 if profile["unit"] == "m" else 1024)
+        if not quantity:
+            continue
+        feet = profile["unit"] == "m" and units == "ft"
+        displayed = quantity / .3048 if feet else quantity
+        unit_price = profile["cents"] * .3048 if feet else profile["cents"]
+        rows.append((profile["name"], displayed, (units if profile["unit"] == "m" else "each"),
+                     unit_price, math.floor(quantity * profile["cents"] + .5)))
+    return rows
+
+
+def _draw_rack_face(canvas, rack, paper, width):
+    top, left = paper[1] - _MARGIN - 62, _MARGIN
+    scale = min(width / 700, (top - _MARGIN - 48) / 561)
+    canvas.saveState()
+    canvas.translate(left, top)
+    canvas.scale(scale, scale)
+    canvas.setFillColor(HexColor("#182b3b"))
+    canvas.roundRect(0, -562, 700, 562, 6, fill=1, stroke=0)
+    for i in range(RACK_UNITS):
+        y = -i * 35
+        canvas.setStrokeColor(HexColor("#52697f"))
+        canvas.line(23, y, 669, y)
+        _draw_line(canvas, str(RACK_UNITS - i), 6, y - 22, _BOLD, 9, HexColor("#c3d0dc"))
+        canvas.setFillColor(HexColor("#8fa5b6"))
+        canvas.circle(29, y - 17, 2, fill=1, stroke=0)
+        canvas.circle(658, y - 17, 2, fill=1, stroke=0)
+    locations = {}
+    for item in rack["gear"]:
+        y = -(RACK_UNITS + 1 - item["u"] - item["size"]) * 35
+        height = item["size"] * 35 - 2
+        kind = item["kind"]
+        dark = kind in ("patch_panel", "server", "ups")
+        ink = white if dark else _INK
+        canvas.setFillColor(_RACK_COLORS[kind])
+        canvas.roundRect(35, y - height - 1, 617, height, 2, fill=1, stroke=0)
+        label = _wrap(item["name"], _BOLD, 9, 147)
+        for j, line in enumerate(label[:2]):
+            _draw_line(canvas, line, 48, y - 15 - j * 10, _BOLD, 9, ink)
+        if kind == "ups":
+            canvas.setFillColor(HexColor("#091a24"))
+            canvas.roundRect(411, y - 54, 140, 40, 4, fill=1, stroke=0)
+            digital = HexColor("#a7e9d7")
+            runtime = "OVERLOAD" if rack["overloaded"] else f"{rack['minutes']:g} MIN" if rack["watts"] else "NO LOAD"
+            _draw_line(canvas, runtime, 422, y - 29, _BOLD, 12, digital)
+            _draw_line(canvas, f"LOAD {rack['watts']:g} W", 422, y - 43, _FONT, 8, digital)
+        regular = [port for port in item["ports"] if port["media"] == "ethernet" and not port["wan"]]
+        uplink = [port for port in item["ports"] if port["media"] == "fiber" or port["wan"]]
+        anchors = [(port, 223 + (i % 24) * 15, y - (8 + (i // 24) * 16 if len(regular) > 24 else 13))
+                   for i, port in enumerate(regular)] + [
+                       (port, 634 - (len(uplink) - i - 1) * 17, y - 13) for i, port in enumerate(uplink)]
+        for port, x, py in anchors:
+            locations[port["address"]] = x, py
+            canvas.setFillColor(HexColor("#0d202d"))
+            canvas.setStrokeColor(HexColor("#61d8a3" if port["connected"] else "#e9b155" if port["destination"] else "#648398"))
+            canvas.setLineWidth(.65)
+            canvas.rect(x - 5, py - 4, 10, 8, fill=1, stroke=1)
+            tag = re.search(r"\d+$", port["id"])
+            prefix = ("WF" if port["media"] == "fiber" else "W") if port["wan"] else "S" if port["media"] == "fiber" else ""
+            _draw_line(canvas, prefix + (tag.group() if tag else port["id"]), x - 4, py - 11, _FONT, 5.5, ink)
+    canvas.setLineCap(1)
+    for i, cord in enumerate(rack["patches"]):
+        a, b = (locations[end] for end in cord["ends"])
+        rail = 661 + (i % 10) * 3
+        path = canvas.beginPath()
+        path.moveTo(*a)
+        path.lineTo(a[0], a[1] - 6)
+        path.lineTo(rail, a[1] - 6)
+        path.lineTo(rail, b[1] - 6)
+        path.lineTo(b[0], b[1] - 6)
+        path.lineTo(*b)
+        canvas.setDash()
+        canvas.setStrokeColor(HexColor("#102536"))
+        canvas.setLineWidth(2.4)
+        canvas.drawPath(path)
+        if cord["media"] == "fiber":
+            canvas.setDash(3.5, 2)
+        canvas.setStrokeColor(cord["color"])
+        canvas.setLineWidth(1.25)
+        canvas.drawPath(path)
+    canvas.restoreState()
+
+
+def _rack_entries(rack):
+    lookup = {dev["id"]: dev["name"] for dev in rack["gear"]}
+    entries = []
+    patched = {end for wire in rack["patches"] for end in wire["ends"]}
+    for device in rack["gear"]:
+        for port in device["ports"]:
+            if port["destination"]:
+                entries.append((f"U{device['u']} · {port['id']}", port["destination"]))
+            elif port["peer"] and port["address"] not in patched:
+                entries.append((f"U{device['u']} · {port['id']}", port["peer"]))
+    for i, cable in enumerate(rack["patches"], 1):
+        a, b = cable["ends"]
+        entries.append((f"P{i:02} · {cable['label'] or cable['media'].title()}",
+                        f"{lookup[a[0]]} {a[1]} → {lookup[b[0]]} {b[1]}"))
+    return entries
+
+
+def _layout_rack_entries(entries):
+    for paper in (_TABLOID, (1728, 1296), (2592, 1728), (3456, 2592)):
+        face_width = min(950, paper[0] * .55)
+        left, right = _MARGIN + face_width + 18, paper[0] - _MARGIN
+        top, bottom = paper[1] - _MARGIN - 63, _MARGIN + 38
+        columns = max(1, int((right - left) / 235))
+        width = (right - left) / columns
+        arranged = [[]]
+        size = 8.5
+        cursor = top
+        for label, description in entries:
+            lines = _wrap(f"{label}   {description}", _FONT, size, width - 13)
+            if cursor - (size + 2) * len(lines) < bottom:
+                arranged.append([])
+                cursor = top
+            if len(arranged) > columns:
+                break
+            for line in lines:
+                arranged[-1].append((cursor, line))
+                cursor -= size + 2
+        if len(arranged) <= columns:
+            return paper, face_width, left, width, top, arranged
+    raise ValueError("The rack has too many port labels for one sheet")
+
+
+def _draw_rack_sheet(canvas, rack, page, count, title, author, day):
+    entries = _rack_entries(rack)
+    paper, face_width, left, width, top, columns = _layout_rack_entries(entries)
+    canvas.setPageSize(paper)
+    _draw_title(canvas, f"Rack elevation · {rack['name']}", page, count, paper, title, author, day)
+    _draw_line(canvas, f"Front view · 16U · {rack['watts']:g} W total load", _MARGIN, paper[1] - _MARGIN - 43, _FONT, 9, _MUTED)
+    _draw_rack_face(canvas, rack, paper, face_width)
+    _draw_line(canvas, "Port labels and patch cables", left, paper[1] - _MARGIN - 43, _BOLD, 11, _INK)
+    for i, lines in enumerate(columns):
+        for y, line in lines:
+            _draw_line(canvas, line, left + i * width, y, _FONT, 8.5, _INK)
+    if not entries:
+        _draw_line(canvas, "No cables connected", left, top, _FONT, 9, _MUTED)
+    canvas.showPage()
+
+
+def _draw_cost_sheet(canvas, rows, page, count, title, author, day):
+    canvas.setPageSize(_TABLOID)
+    _draw_title(canvas, "Bill of Materials", page, count, _TABLOID, title, author, day)
+    entries = [([[name], [f"{amount:,.0f}" if unit == "each" else f"{amount:,.2f} {unit}"],
+                 [f"${price / 100:,.2f}" + (f" / {unit}" if unit != "each" else "")], [f"${total / 100:,.2f}"]], 20)
+               for name, amount, unit, price, total in rows]
+    _draw_schedule(canvas, entries, _MARGIN, "Estimated hardware and cable materials · USD",
+                   ("Item", "Quantity", "Unit cost", "Subtotal"), (520, 190, 180, 288), False, "No network materials placed")
+    y = _TABLOID[1] - _MARGIN - 127 - 20 * max(1, len(entries))
+    canvas.setFillColor(_WASH)
+    canvas.rect(_MARGIN, y, _TABLOID[0] - 2 * _MARGIN, 35, fill=1, stroke=0)
+    _draw_line(canvas, "Estimated total", _MARGIN + 8, y + 12, _BOLD, 12, _INK)
+    total = sum(row[-1] for row in rows)
+    _draw_line(canvas, f"${total / 100:,.2f}", _MARGIN + 896, y + 12, _BOLD, 14, _INK)
+    _draw_line(canvas, "Budget estimates exclude labor, tax, and recurring service.", _MARGIN, y - 20, _FONT, 8.5, _MUTED)
+    canvas.showPage()
+
+
 def render_plan_pdf(data, author):
     image = _decode(data.get('image'))
     coverage = _decode(data['coverage_image']) if data.get('coverage_image') is not None else image
@@ -558,7 +801,9 @@ def render_plan_pdf(data, author):
     paper, frame, devices, layouts, note_refs = _layout(image.getSize(), notes, equipment, aps, cables)
     cable_pages, device_pages = _schedules(equipment, aps, notes, note_refs, cables, units)
     schedule_count = max(len(cable_pages), len(device_pages))
-    sheet_count = len(_SHEETS) + schedule_count
+    racks = _read_racks(data)
+    costs = _cost_breakdown(data["bill"], units) if "bill" in data else None
+    sheet_count = len(_SHEETS) + schedule_count + len(racks) + (costs is not None)
     out = io.BytesIO()
     canvas = Canvas(out, pagesize=paper, pageCompression=1)
     canvas.setTitle(_supported(title))
@@ -588,6 +833,10 @@ def render_plan_pdf(data, author):
                            'Device inventory', ('Reference / name', 'Type', 'Details'), _DEVICE_COLUMNS,
                            index > 0, 'No devices placed')
         canvas.showPage()
+    for index, rack in enumerate(racks, len(_SHEETS) + schedule_count + 1):
+        _draw_rack_sheet(canvas, rack, index, sheet_count, title, author, day)
+    if costs is not None:
+        _draw_cost_sheet(canvas, costs, sheet_count, sheet_count, title, author, day)
     canvas.save()
     filename = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '-', title).strip(' .') or 'Infra Sim plan'
     return out.getvalue(), filename + '.pdf'

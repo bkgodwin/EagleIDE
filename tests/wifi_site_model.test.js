@@ -130,3 +130,19 @@ test('zoom holds the point under the cursor and fit includes geometry far outsid
   assert.ok(visible.left < site.left && visible.top < site.top);
   assert.ok(visible.right > site.right && visible.bottom > site.bottom);
 });
+
+test('overlapping bonded channels reduce usable signal even across different SSIDs', () => {
+  const heard = (channel, width, x) => ({ ...ceiling, x, radios: { '5': { channel, width } } });
+  const target = heard(36, 80, 5);
+  const rival = { ...heard(44, 20, 25), interfererOnly: true };
+  const baseline = coverageModel([], [target], '5')(probe, true);
+  const collided = coverageModel([], [target, rival], '5')(probe, true);
+  assert.equal(collided.ap, target);
+  assert.equal(collided.received, baseline.received);
+  assert.ok(collided.signal <= baseline.signal - 8 && collided.penalty <= 12);
+  const moved = coverageModel([], [target, { ...heard(149, 20, 25), interfererOnly: true }], '5')(probe, true);
+  assert.equal(moved.penalty, 0);
+  assert.equal(moved.signal, baseline.signal);
+  assert.equal(coverageModel([], [rival], '5')(probe, true), null);
+  assert.equal(coverageModel([], [target, rival], '5')(probe), collided.signal);
+});

@@ -8,6 +8,11 @@ PASS_CAPACITY = 10
 PASS_SPACING = 6.096  # 20 feet, in meters.
 CROSSING_TOLERANCE = 0.075
 EPSILON = 0.0002
+COPPER_LIMIT = 90
+RACK_UNITS = 16
+MAX_RACKS = 32
+UPS = {"capacity_wh": 216, "max_w": 1000, "half_load_minutes": 8}
+PATCH_LENGTH = 1
 CABLING_LIMITS = {"equipment": 256, "pass_throughs": 320, "cables": 512,
                   "bends": 40, "total_bends": 6000}
 
@@ -18,14 +23,18 @@ def _group(prefix, count, media="ethernet", *, speed=None, poe=False, wan=False)
 
 
 EQUIPMENT = {
-    "router": {"name": "Router", "groups": [
+    "router": {"name": "Router", "rack_units": 1, "draw_w": 45, "groups": [
         _group("ETH", 4), _group("SFP", 2, "fiber"), _group("WAN", 2, wan=True),
         _group("WAN-SFP", 2, "fiber", wan=True),
     ]},
-    "core_switch": {"name": "48-port Core Switch", "poe_budget": 500,
+    "core_switch": {"name": "48-port Core Switch", "poe_budget": 500, "rack_units": 1, "draw_w": 70,
                     "groups": [_group("ETH", 48, poe=True), _group("SFP", 4, "fiber")]},
-    "distribution_switch": {"name": "24-port Switch", "poe_budget": 200,
+    "distribution_switch": {"name": "24-port Switch", "poe_budget": 200, "rack_units": 1, "draw_w": 38,
                             "groups": [_group("ETH", 24, poe=True), _group("SFP", 2, "fiber")]},
+    "rack": {"name": "Equipment Rack", "groups": []},
+    "patch_panel": {"name": "24-port Patch Panel", "rack_units": 1, "groups": [_group("FRONT", 24), _group("BACK", 24)]},
+    "ups": {"name": "UPS Unit", "rack_units": 2, "groups": []},
+    "server": {"name": "Rack Server", "rack_units": 2, "draw_w": 180, "groups": [_group("ETH", 1)]},
     "access_switch": {"name": "8-port Access Switch", "groups": [_group("ETH", 8)]},
     "keystone": {"name": "Keystone Jack", "wall_mount": True,
                  "groups": [_group("BACK", 0), _group("FRONT", 0)]},
@@ -39,7 +48,7 @@ EQUIPMENT = {
     "copy_machine": {"name": "Copy Machine", "groups": [_group("ETH", 1)]},
 }
 
-CLIENT_KINDS = {"desktop", "phone", "poe_camera", "voip_phone", "pos_terminal", "copy_machine"}
+CLIENT_KINDS = {"server", "desktop", "phone", "poe_camera", "voip_phone", "pos_terminal", "copy_machine"}
 
 ISPS = {
     "alderline": {"name": "Alderline Fiber", "media": "fiber", "speed": 10000, "rtt_ms": 18},
@@ -49,8 +58,28 @@ ISPS = {
     "cindersky": {"name": "CinderSky Satellite", "media": "ethernet", "speed": 75, "rtt_ms": 580},
 }
 
+# Representative US hardware budgets in cents, including a populated patch panel.
+# Network gear and UPS benchmarks: https://store.ui.com/us/en/
+# Server: Dell PowerEdge R760. Copier: Xerox VersaLink B415. POS: Square Terminal.
+COST_ITEMS = {
+    **{key: {"name": EQUIPMENT[key]["name"], "cents": cents, "unit": "each"}
+       for key, cents in {
+           "rack": 38000, "router": 37900, "core_switch": 109900, "distribution_switch": 69900,
+           "access_switch": 10900, "patch_panel": 17900, "ups": 27900, "server": 298500,
+           "keystone": 850, "demarc": 15000, "access_point": 15900, "desktop": 82900,
+           "phone": 49900, "poe_camera": 12900, "voip_phone": 9900, "pos_terminal": 33900,
+           "copy_machine": 139900,
+       }.items()},
+    "pass": {"name": "Firestop sleeve and materials", "cents": 4800, "unit": "each"},
+    "ethernet": {"name": "Cat6 building cable", "cents": 78, "unit": "m"},
+    "fiber": {"name": "Single-mode building fiber", "cents": 165, "unit": "m"},
+    "patch_ethernet": {"name": "Ethernet patch cable", "cents": 400, "unit": "m"},
+    "patch_fiber": {"name": "Fiber SFP patch cable", "cents": 1100, "unit": "m"},
+}
+
 CABLING_CATALOG = {"equipment": EQUIPMENT, "isps": ISPS, "pass_capacity": PASS_CAPACITY, "pass_channels": 8,
-                   "pass_spacing": PASS_SPACING, "crossing_tolerance": CROSSING_TOLERANCE, "epsilon": EPSILON}
+                   "rack_units": RACK_UNITS, "max_racks": MAX_RACKS, "ups": UPS, "patch_length": PATCH_LENGTH,
+                   "copper_limit": COPPER_LIMIT, "costs": COST_ITEMS, "pass_spacing": PASS_SPACING, "crossing_tolerance": CROSSING_TOLERANCE, "epsilon": EPSILON}
 
 
 class CablingError(ValueError):
@@ -105,7 +134,7 @@ class _Wall:
             on_low, on_high = math.inf, -math.inf
 
 
-def validate_cabling(raw, plan, *, number, label, point, safe_id, seen):
+def validate_cabling(raw, plan, *, number, label, point, safe_id, seen, legacy=False, existing=None):
     walls = {item["id"]: _Wall(item) for item in plan["walls"]}
     concrete = [wall for wall in walls.values() if wall.concrete]
     devices = {item["id"]: {**item, "kind": "access_point"} for item in plan["access_points"]}
@@ -132,12 +161,27 @@ def validate_cabling(raw, plan, *, number, label, point, safe_id, seen):
         return {"wall_id": wall.id, "t": number(value.get("t"), 0, 1, "wall position", precision=10)}
 
     equipment = []
+    prior = {item["id"]: item for item in (existing or {}).get("equipment", [])}
+    prior_runs = {item["id"]: item.get("legacy_length", 0) for item in (existing or {}).get("cables", [])}
     for device_id, item in items("equipment"):
         kind = item.get("kind")
         if not isinstance(kind, str) or kind not in EQUIPMENT or kind == "access_point":
             raise CablingError("Unknown equipment type")
         clean = {"id": device_id, "kind": kind, "name": label(item.get("name", ""), 60)}
-        clean.update(anchor(item) if EQUIPMENT[kind].get("wall_mount") else point(item))
+        rack_id = item.get("rack_id")
+        if rack_id is not None:
+            unit = item.get("rack_u")
+            size = EQUIPMENT[kind].get("rack_units", 0)
+            if not isinstance(rack_id, str) or not size or type(unit) is not int or not 1 <= unit <= RACK_UNITS + 1 - size:
+                raise CablingError("Choose a rack and a valid mounting position")
+            clean.update(rack_id=safe_id(rack_id), rack_u=unit)
+        else:
+            old = prior.get(device_id, {})
+            legacy_kind = kind in {"router", "core_switch", "distribution_switch"} and (
+                (legacy and existing is None) or (old.get("kind") == kind and "rack_id" not in old))
+            if EQUIPMENT[kind].get("rack_units") and not legacy_kind:
+                raise CablingError(f"Install the {EQUIPMENT[kind]['name']} in an equipment rack")
+            clean.update(anchor(item) if EQUIPMENT[kind].get("wall_mount") else point(item))
         if kind == "demarc":
             isp = item.get("isp")
             if not isinstance(isp, str) or isp not in ISPS:
@@ -151,6 +195,22 @@ def validate_cabling(raw, plan, *, number, label, point, safe_id, seen):
             )
         equipment.append(clean)
         devices[device_id] = clean
+
+    rack_slots = {item["id"]: set() for item in equipment if item["kind"] == "rack"}
+    if len(rack_slots) > MAX_RACKS:
+        raise CablingError(f"A site supports up to {MAX_RACKS} equipment racks")
+    for item in equipment:
+        if "rack_id" not in item:
+            continue
+        rack = devices.get(item["rack_id"])
+        if rack is None or rack["kind"] != "rack":
+            raise CablingError("Choose an existing equipment rack")
+        slots = rack_slots[rack["id"]]
+        used = set(range(item["rack_u"], item["rack_u"] + EQUIPMENT[item["kind"]]["rack_units"]))
+        if slots & used:
+            raise CablingError("Equipment cannot overlap in a rack")
+        slots.update(used)
+        item.update(x=rack["x"], y=rack["y"])
 
     passages, by_wall = {}, {}
     for pass_id, item in items("pass_throughs"):
@@ -208,6 +268,23 @@ def validate_cabling(raw, plan, *, number, label, point, safe_id, seen):
         bends = item.get("waypoints")
         if not isinstance(bends, list) or len(bends) > CABLING_LIMITS["bends"]:
             raise CablingError(f"A cable supports up to {CABLING_LIMITS['bends']} bends")
+        patch = item.get("rack_patch", False)
+        if type(patch) is not bool:
+            raise CablingError("Invalid cable routing mode")
+        if patch and (not a.get("rack_id") or a["rack_id"] != b.get("rack_id") or bends or has_isp):
+            raise CablingError("A rack patch cable requires devices in the same rack")
+        if not patch and a.get("rack_id") and a.get("rack_id") == b.get("rack_id"):
+            raise CablingError("Use the rack cable tool to connect equipment in the same rack")
+        for device, end in ((a, source), (b, target)):
+            if device["kind"] == "patch_panel" and not end["port"].startswith("FRONT" if patch else "BACK"):
+                raise CablingError("Patch cables use the front; building cables use the rear of a patch panel")
+            if device.get("rack_id") and not patch and media == "ethernet" and not has_isp and device["kind"] != "patch_panel":
+                raise CablingError("Route building Ethernet through a patch panel")
+        clean_cable = {"id": cable_id, "media": media, "label": name, "color": color.lower(),
+                       "source": source, "target": target, "waypoints": []}
+        if patch:
+            cables.append({**clean_cable, "rack_patch": True})
+            continue
         total_bends += len(bends)
         if total_bends > CABLING_LIMITS["total_bends"]:
             raise CablingError("This site has reached its total cable bend limit")
@@ -225,6 +302,12 @@ def validate_cabling(raw, plan, *, number, label, point, safe_id, seen):
                 waypoints.append(clean)
                 points.append(location(clean))
         points.append(location(b))
+        length = sum(math.dist(a, b) for a, b in zip(points, points[1:]))
+        if media == "ethernet" and length > COPPER_LIMIT + EPSILON:
+            previous_limit = prior_runs.get(cable_id, 0)
+            if (not legacy or existing is not None) and length > previous_limit + EPSILON:
+                raise CablingError("Cable capacity reached (90 m)")
+            clean_cable["legacy_length"] = length
         xs, ys = zip(*points)
         left, right, top, bottom = min(xs), max(xs), min(ys), max(ys)
         if math.hypot(right - left, bottom - top) <= EPSILON:
@@ -242,7 +325,6 @@ def validate_cabling(raw, plan, *, number, label, point, safe_id, seen):
             usage[pass_id] = usage.get(pass_id, 0) + 1
             if usage[pass_id] > PASS_CAPACITY:
                 raise CablingError("A concrete pass-through can carry up to 10 cables")
-        cables.append({"id": cable_id, "media": media, "label": name, "color": color.lower(),
-                       "source": source, "target": target, "waypoints": waypoints})
+        cables.append({**clean_cable, "waypoints": waypoints})
 
     return {"equipment": equipment, "pass_throughs": list(passages.values()), "cables": cables}

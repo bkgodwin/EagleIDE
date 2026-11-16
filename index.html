@@ -534,6 +534,7 @@
         <div class="network-toolbar-group network-toolbar-end">
           <span class="network-save-state" id="wifiSaveStatus" role="status"></span>
           <button class="btn secondary wifi-scenario-button" id="wifiScenarioButton" type="button" aria-haspopup="dialog" aria-controls="wifiScenarioDialog" hidden>Scenario</button>
+          <button class="btn secondary" id="wifiMaterials" type="button" aria-haspopup="dialog">Bill of Materials</button>
           <button class="btn secondary" id="wifiExportPdf" type="button">Export PDF</button>
           <button class="btn secondary" id="wifiDiscardSite" type="button" hidden>Discard Unsaved Edits</button>
           <button class="btn secondary" id="wifiCopySite" type="button">Save a Copy</button>
@@ -716,6 +717,16 @@
           </footer>
         </div>
       </div>
+      <dialog class="wifi-rack-dialog" id="wifiRackDialog" aria-labelledby="wifiRackTitle">
+        <header><div><p class="wifi-rack-subtitle">Equipment rack · 16U</p><h2 id="wifiRackTitle"></h2></div>
+          <form method="dialog"><button type="submit" class="wifi-control" aria-label="Close rack">×</button></form></header>
+        <div id="wifiRackBody" class="wifi-rack-body"></div>
+      </dialog>
+      <dialog class="wifi-rack-dialog wifi-materials-dialog" id="wifiMaterialsDialog" aria-labelledby="wifiMaterialsTitle">
+        <header><h2 id="wifiMaterialsTitle">Bill of Materials</h2>
+          <form method="dialog"><button type="submit" class="wifi-control" aria-label="Close bill of materials">×</button></form></header>
+        <div class="wifi-rack-body" id="wifiMaterialsBody"></div>
+      </dialog>
       <dialog class="wifi-tutorial-dialog" id="wifiTutorialDialog" aria-labelledby="wifiTutorialTitle">
         <header>
           <h2 id="wifiTutorialTitle" tabindex="-1"></h2>
@@ -2419,7 +2430,7 @@
 
   <script src="/static/js/app.js"></script>
   <script src="/static/js/connection.js?v=20261011-files-5"></script>
-  <script src="/static/js/feature-loader.js?v=20261115-infra-sheets"></script>
+  <script src="/static/js/feature-loader.js?v=20261116-rack-radio"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20261021-security-1"></script>
   <script src="/static/js/layout.js?v=20261011-files-5"></script>
