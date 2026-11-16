@@ -123,3 +123,56 @@ for (const [kind, budget] of [['core_switch', 500], ['distribution_switch', 200]
     assert.equal(recovered.powered.has('patch'), true);
   });
 }
+
+test('rear ports sort by rack unit and only the matching front port completes a PoE circuit', () => {
+  const profile = { ...catalog, equipment: {
+    ...catalog.equipment,
+    distribution_switch: { ...catalog.equipment.distribution_switch, draw_w: 38, rack_units: 1 },
+    rack: { name: 'Equipment rack', groups: [] },
+    patch_panel: { name: 'Patch panel', rack_units: 1, groups: [group('FRONT', 24), group('BACK', 24)] },
+    ups: { name: 'UPS', rack_units: 2, groups: [] },
+  }};
+  const plan = layout();
+  plan.walls = [];
+  plan.equipment = [
+    { id: 'rack', kind: 'rack', x: 0, y: 10 },
+    { id: 'switch', kind: 'distribution_switch', rack_id: 'rack', rack_u: 14 },
+    { id: 'lower', kind: 'patch_panel', rack_id: 'rack', rack_u: 12 },
+    { id: 'panel', kind: 'patch_panel', rack_id: 'rack', rack_u: 16 },
+    { id: 'ups', kind: 'ups', rack_id: 'rack', rack_u: 1 },
+  ];
+  const drop = wire('drop', endpoint('ap', 'ETH1'), endpoint('panel', 'BACK1'));
+  plan.cables = [drop];
+  const unpatched = build(plan, profile, limits);
+  assert.equal(unpatched.poweredAps.has('ap'), false);
+  assert.deepEqual(unpatched.floorPorts('rack', 'ethernet', 'ap').slice(0, 2).map(({ device_id, port }) => [device_id, port]),
+    [['panel', 'BACK2'], ['panel', 'BACK3']]);
+  const patch = { ...wire('patch', endpoint('switch', 'ETH1'), endpoint('panel', 'FRONT2')), rack_patch: true };
+  plan.cables.push(patch);
+  assert.equal(build(plan, profile, limits).poweredAps.has('ap'), false);
+  patch.target.port = 'FRONT1';
+  const patched = build(plan, profile, limits);
+  assert.equal(patched.error, '');
+  assert.equal(patched.poweredAps.has('ap'), true);
+  assert.equal(patched.activeLinks.get('switch')[0].to, 'ap');
+  assert.equal(patched.rackPower('rack').watts, 58);
+  plan.equipment.push({ id: 'ups2', kind: 'ups', rack_id: 'rack', rack_u: 3 });
+  assert.ok(build(plan, profile, limits).rackPower('rack').minutes > patched.rackPower('rack').minutes);
+});
+
+test('building Ethernet stops at 90 m of routed length and fiber accepts the same run', () => {
+  const fiber = { ...group('SFP', 2), media: 'fiber' };
+  const profile = { ...catalog, equipment: { ...catalog.equipment,
+    core_switch: { ...catalog.equipment.core_switch, groups: [group('ETH', 48, true), fiber] },
+  }};
+  const plan = { ...layout(), walls: [], access_points: [], equipment: [
+    { id: 'switch', kind: 'core_switch', x: 0, y: 0 },
+    { id: 'peer', kind: 'core_switch', x: 80, y: 0 },
+  ] };
+  const graph = build(plan, profile, limits);
+  const route = wire('run', endpoint('switch', 'ETH1'), endpoint('peer', 'ETH1'), [{ x: 85, y: 0 }]);
+  assert.equal(graph.checkCable(route).length, 90);
+  route.waypoints[0].x = 90;
+  assert.deepEqual(graph.checkCable(route), { error: 'cable capacity reached', point: { x: 90, y: 0 } });
+  assert.equal(graph.checkCable({ ...route, media: 'fiber', source: endpoint('switch', 'SFP1'), target: endpoint('peer', 'SFP1') }).length, 100);
+});

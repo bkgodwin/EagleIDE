@@ -830,11 +830,73 @@ class NetworkRouteTests(unittest.TestCase):
         self.assertIn('Client 000', ' '.join(sheets[3]))
         self.assertIn('Route 047', ' '.join(text for page in sheets[4:-1] for text in page))
         self.assertIn('Client 047', ' '.join(text for page in sheets[4:-1] for text in page))
+        sheets[:] = [[]]
+        rack_report = {**payload, "racks": [{
+            "name": "West IDF", "power": {"watts": 50, "minutes": 104, "overloaded": False},
+            "devices": [
+                {"id": "panel", "kind": "patch_panel", "name": "Building header", "u": 16,
+                 "ports": [{"id": "FRONT1", "connected": True, "destination": "North AP"}]},
+                {"id": "switch", "kind": "distribution_switch", "name": "Floor switch", "u": 14,
+                 "ports": [{"id": "ETH1", "connected": True}]},
+                {"id": "ups", "kind": "ups", "name": "Battery backup", "u": 1, "ports": []},
+            ],
+            "patches": [{"source": {"device_id": "panel", "port": "FRONT1"},
+                         "target": {"device_id": "switch", "port": "ETH1"},
+                         "media": "ethernet", "color": "#224488", "label": "Patch to AP"}],
+        }], "bill": {"rack": 1, "ethernet": 10, "patch_ethernet": 1}}
+        with patch('wifi_site_pdf.Canvas', RecordingCanvas), self.client.post(url, json=rack_report, headers=headers) as response:
+            self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(sheets[:-1]), 6)
+        for label in ("Rack elevation", "West IDF", "104 MIN", "FRONT1", "Patch to AP", "North AP"):
+            self.assertIn(label, ' '.join(sheets[4]))
+        for label in ("Bill of Materials", "32.81 ft", "Estimated total", "$391.80"):
+            self.assertIn(label, ' '.join(sheets[5]))
         self.assertEqual(self.client.post(url, json={**payload, 'image': 'invalid'}, headers=headers).status_code, 400)
         bad = {**payload, 'notes': [{'point': [-1, .25], 'name': 'Outside'}]}
         self.assertEqual(self.client.post(url, json=bad, headers=headers).status_code, 400)
         self.store.set_class_access('class-1', False)
         self.assertEqual(self.client.post(url, json=payload, headers=headers).status_code, 403)
+
+    def test_infra_rack_slots_port_faces_and_copper_limit(self):
+        url = "/api/network/wifi-sites/rack-lab"
+        headers = {"X-Teacher-Token": "teacher-token"}
+        plan = {**self.wifi_plan(), "walls": []}
+        plan["access_points"][0].update(x=90, y=0)
+        plan["equipment"] = [
+            {"id": "rack", "kind": "rack", "name": "West rack", "x": 0, "y": 0},
+            {"id": "switch", "kind": "distribution_switch", "name": "Switch", "rack_id": "rack", "rack_u": 14},
+            {"id": "panel", "kind": "patch_panel", "name": "Panel", "rack_id": "rack", "rack_u": 16},
+            {"id": "ups", "kind": "ups", "name": "Backup", "rack_id": "rack", "rack_u": 1},
+        ]
+        plan["cables"] = [
+            {"id": "run", "source": {"device_id": "ap-1", "port": "ETH1"},
+             "target": {"device_id": "panel", "port": "BACK1"}, "media": "ethernet",
+             "color": "#225588", "label": "", "waypoints": []},
+            {"id": "patch", "source": {"device_id": "switch", "port": "ETH1"},
+             "target": {"device_id": "panel", "port": "FRONT1"}, "media": "ethernet",
+             "color": "#225588", "label": "", "waypoints": [], "rack_patch": True},
+        ]
+        saved = self.client.put(url, headers=headers, json={"site": plan, "revision": 0})
+        self.assertEqual(saved.status_code, 200, saved.json)
+        self.assertTrue(saved.json["data"]["cables"][1]["rack_patch"])
+        for collection, index, key, value, error in (
+            ("equipment", 2, "rack_u", 14, "overlap"),
+            ("equipment", 1, "rack_u", 15, "Disconnect"),
+            ("equipment", 3, "rack_u", 16, "mounting position"),
+            ("cables", 0, "target", {"device_id": "panel", "port": "FRONT2"}, "rear"),
+            ("access_points", 0, "x", 90.01, "capacity reached"),
+            ("access_points", 0, "radios", {"2.4": {"channel": 6, "width": 20},
+                                            "5": {"channel": 165, "width": 80}}, "channel and width"),
+        ):
+            bad = copy.deepcopy(plan)
+            bad[collection][index][key] = value
+            with self.subTest(key=key, value=value):
+                response = self.client.put(url, headers=headers, json={"site": bad, "revision": 1})
+                self.assertEqual(response.status_code, 400, response.json)
+                self.assertIn(error, response.json["error"])
+        plan["cables"].pop()
+        plan["equipment"][1]["rack_u"] = 15
+        self.assertEqual(self.client.put(url, headers=headers, json={"site": plan, "revision": 1}).status_code, 200)
 
     def test_disabled_blocks_guest_but_admin_can_privately_preview(self):
         self.config_state["network_sim_enabled"] = False
@@ -898,6 +960,7 @@ class NetworkRouteTests(unittest.TestCase):
             "units": "ft", "band": "5",
             "walls": [{"id": "wall-1", "a": {"x": 20, "y": 4}, "b": {"x": 20, "y": 24}, "material": "concrete"}],
             "access_points": [{"id": "ap-1", "x": 11, "y": 14, "mount": "wall", "angle": 90, "name": "Hall AP", "power_db": 0,
+                               "radios": {"2.4": {"channel": 1, "width": 20}, "5": {"channel": 36, "width": 20}},
                                "ssid_ids": ["default"]}],
             "ssids": [{"id": "default", "name": "Default", "band": "both", "vlan": 0}], "vlans": [],
             "labels": [{"id": "note-1", "x": 25, "y": 7, "text": "Check signal here"}],
@@ -998,14 +1061,15 @@ class NetworkRouteTests(unittest.TestCase):
         plan["ssids"] = [{"id": "guest", "name": "Guest Wi-Fi", "band": "2.4", "vlan": 20}]
         plan["access_points"][0]["ssid_ids"] = ["guest"]
         plan["equipment"] = [
-            {"id": "router", "kind": "router", "x": 0, "y": 0, "name": "Router",
+            {"id": "router", "kind": "router", "rack_id": "rack", "rack_u": 12, "x": 0, "y": 0, "name": "Router",
              "dhcp": {"gateway": "10.0.0.1/29", "dns": "1.1.1.1", "fallback_dns": "8.8.8.8"},
              "firewall": [{"action": "deny", "source_vlan": 20, "destination_vlan": 0,
                            "source_ip": "", "destination_ip": "10.0.0.4/29"}]},
-            {"id": "switch", "kind": "distribution_switch", "x": 0, "y": 1, "name": "Switch",
+            {"id": "switch", "kind": "distribution_switch", "rack_id": "rack", "rack_u": 14, "x": 0, "y": 0, "name": "Switch",
              "port_vlans": {"ETH1": [0, 20], "ETH24": []}},
             {"id": "phone", "kind": "phone", "x": 0, "y": 2, "name": "Client", "ssid_id": "guest",
              "reservation": {"router_id": "router", "ip": "10.0.0.2"}},
+            {"id": "rack", "kind": "rack", "x": 0, "y": 0, "name": "Rack"},
         ]
         headers = {"X-Teacher-Token": "teacher-token"}
         url = "/api/network/wifi-sites/network-settings"

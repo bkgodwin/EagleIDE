@@ -74,7 +74,7 @@
     return accessPoints.map(ap => {
       const radians = ap.angle * Math.PI / 180;
       const range = heat ? radius(band, ap) : Infinity;
-      return { ap, facingX: Math.cos(radians), facingY: Math.sin(radians), range,
+      return { ap, band, facingX: Math.cos(radians), facingY: Math.sin(radians), range,
         walls: nearby(segments, ap, range), objects: nearby(objects, ap, range), reference: referenceSignal(band, ap) };
     });
   }
@@ -107,15 +107,68 @@
     return ((Math.round(degrees / step) * step % 360) + 360) % 360;
   }
 
+  const CHANNEL_GROUPS = {
+    '2.4': [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]],
+    '5': [[36, 40, 44, 48], [149, 153, 157, 161], [165]],
+  };
+  const CHANNEL_DEFAULTS = { '2.4': [1, 6, 11], '5': [36, 44, 149, 157] };
+  const defaultRadios = (ordinal = 0) => Object.fromEntries(Object.entries(CHANNEL_DEFAULTS)
+    .map(([band, channels]) => [band, { channel: channels[ordinal % channels.length], width: 20 }]));
+  const radioWidths = (band, channel) => [20, 40, 80].filter(width => band === '2.4' ? width === 20 :
+    CHANNEL_GROUPS[band].some(block => block.includes(channel) && width <= block.length * 20));
+  const radioChannels = (band, width) => CHANNEL_GROUPS[band].flat().filter(channel => radioWidths(band, channel).includes(width));
+
+  function spectrum(band, radio) {
+    if (!radio) return null;
+    const { channel, width } = radio;
+    if (band === '2.4') return [2407 + channel * 5 - 10, 2407 + channel * 5 + 10];
+    const block = CHANNEL_GROUPS[band].find(group => group.includes(channel));
+    const count = width / 20;
+    const start = block[Math.floor(block.indexOf(channel) / count) * count];
+    return [5000 + start * 5 - 10, 5000 + start * 5 - 10 + width];
+  }
+
+  function interferencePlan(transmitters) {
+    const groups = [];
+    const keyIndex = new Map();
+    const member = transmitters.map(({ ap, band }) => {
+      const span = spectrum(band, ap.radios?.[band]);
+      if (!span) return -1;
+      const key = span.join(':');
+      if (!keyIndex.has(key)) {
+        keyIndex.set(key, groups.length);
+        groups.push(span);
+      }
+      return keyIndex.get(key);
+    });
+    const overlaps = groups.map(([low, high]) => groups.flatMap(([otherLow, otherHigh], index) => {
+      const amount = Math.min(high, otherHigh) - Math.max(low, otherLow);
+      return amount > 0 ? [{ index, loss: 12 * (1 - amount / Math.min(high - low, otherHigh - otherLow)) }] : [];
+    }));
+    return { member, overlaps };
+  }
+
   function estimateWith(transmitters) {
     // Reuse crossing arrays for heatmap samples. The probe copies its winning path.
     const crossings = [];
     const obstacles = [];
+    const { member, overlaps } = interferencePlan(transmitters);
+    const raw = new Float64Array(transmitters.length);
+    const groupBest = new Int16Array(overlaps.length);
+    const groupNext = new Int16Array(overlaps.length);
+    const groupCounts = new Uint16Array(overlaps.length);
+    for (const group of member) if (group >= 0) groupCounts[group] += 1;
+    const competitive = member.map(group => group >= 0 && (groupCounts[group] > 1 || overlaps[group].length > 1));
     return (point, detailed = false) => {
+      raw.fill(-Infinity);
+      groupBest.fill(-1);
+      groupNext.fill(-1);
+      const paths = detailed ? [] : null;
       let bestSignal = -Infinity;
       let best = null;
       let alternate = null;
-      for (const { ap, facingX, facingY, range, walls, objects, reference } of transmitters) {
+      for (let i = 0; i < transmitters.length; i += 1) {
+        const { ap, facingX, facingY, range, walls, objects, reference } = transmitters[i];
         const dx = point.x - ap.x;
         const dy = point.y - ap.y;
         const squared = dx * dx + dy * dy;
@@ -124,7 +177,7 @@
         const directionLoss = ap.mount === 'wall' && length > 0.01
           ? 9 * (1 - (dx * facingX + dy * facingY) / length) : 0;
         let signal = reference - 25 * Math.log10(Math.max(1, length)) - directionLoss;
-        const cutoff = detailed ? (alternate?.signal ?? -Infinity) : bestSignal;
+        const cutoff = detailed ? -Infinity : !competitive[i] && ap.interfererOnly ? Infinity : FADE_END;
         if (signal <= cutoff) continue;
         crossings.length = 0;
         obstacles.length = 0;
@@ -165,16 +218,43 @@
           if (signal <= cutoff) break;
         }
         if (signal <= cutoff) continue;
-        if (signal <= bestSignal) {
-          if (detailed) alternate = { ap, signal };
-          continue;
+        raw[i] = signal;
+        const group = member[i];
+        if (group !== -1) {
+          if (groupBest[group] === -1 || signal > raw[groupBest[group]]) {
+            groupNext[group] = groupBest[group];
+            groupBest[group] = i;
+          } else if (groupNext[group] === -1 || signal > raw[groupNext[group]]) {
+            groupNext[group] = i;
+          }
         }
-        bestSignal = signal;
-        if (detailed) {
-          if (best) alternate = { ap: best.ap, signal: best.signal };
-          const path = crossings.map((crossing, i) => ({ crossing, wall: obstacles[i] }));
+        if (detailed && !ap.interfererOnly) {
+          const path = crossings.map((crossing, j) => ({ crossing, wall: obstacles[j] }));
           path.sort((a, b) => a.crossing - b.crossing);
-          best = { ap, signal, distance: length, walls: path.filter(item => item.wall.loss > 0).map(item => item.wall.material) };
+          paths[i] = { ap, distance: length, walls: path.filter(item => item.wall.loss > 0).map(item => item.wall.material) };
+        }
+      }
+      for (let i = 0; i < transmitters.length; i += 1) {
+        const { ap } = transmitters[i];
+        const received = raw[i];
+        if (ap.interfererOnly || received <= bestSignal - (detailed ? 14 : 0)) continue;
+        let competing = -Infinity;
+        for (const overlap of overlaps[member[i]] || []) {
+          const head = groupBest[overlap.index];
+          const other = head === i ? groupNext[overlap.index] : head;
+          if (other !== -1) competing = Math.max(competing, raw[other] - overlap.loss);
+        }
+        // Model airtime contention as a bounded usable-signal penalty for teaching.
+        const penalty = Math.max(0, Math.min(12, (competing + 85) * .6, (competing - received + 22) * .52));
+        const signal = received - penalty;
+        if (signal > bestSignal) {
+          bestSignal = signal;
+          if (detailed) {
+            alternate = best;
+            best = { ...paths[i], signal, received, penalty };
+          }
+        } else if (detailed && signal > (alternate?.signal ?? -Infinity)) {
+          alternate = { ap, signal };
         }
       }
       return detailed && best ? { ...best, alternate } : detailed ? null : bestSignal;
@@ -272,7 +352,7 @@
 
   const model = {
     MATERIALS, MOUNTS, OPENINGS, OBSTACLES, LEVELS, gridStep, displayDistance, metersFrom,
-    roundDistance, distance, cameraCoverage, cameraHeading, coverageModel, signalLevel, signalColor, SAMPLES, PADDING,
+    defaultRadios, radioWidths, radioChannels, roundDistance, distance, cameraCoverage, cameraHeading, coverageModel, signalLevel, signalColor, SAMPLES, PADDING,
     tileLevel, tileSize, tileStep, tileBounds, tileHasCoverage, heatAreas, createHeatSource,
   };
   if (typeof module === 'object' && module.exports) module.exports = model;

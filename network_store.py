@@ -18,7 +18,7 @@ from network_content import DEVICE_PORTS, LABS, PORT_CAPABILITIES
 from wifi_cabling import CABLING_LIMITS, validate_cabling
 from wifi_site_structure import validate_structure
 from wifi_site_design import DESIGN_LIMITS, validate_design
-from wifi_site_network import NETWORK_LIMITS, validate_network
+from wifi_site_network import NETWORK_LIMITS, validate_network, validate_radios
 
 
 SCHEMA_VERSION = 2
@@ -26,7 +26,7 @@ MAX_DEVICES = 100
 MAX_LINKS = 200
 MAX_TOPOLOGY_BYTES = 512_000
 MAX_SAVED_TOPOLOGIES = 40
-WIFI_SCHEMA_VERSION = 11
+WIFI_SCHEMA_VERSION = 12
 MAX_WIFI_SITE_BYTES = 2_000_000
 WIFI_COORDINATE_LIMIT = 100_000_000_000  # Keep rounding within the browser's safe integer range.
 WIFI_LIMITS = {**CABLING_LIMITS, **DESIGN_LIMITS, **NETWORK_LIMITS, "walls": 1200, "access_points": 128, "labels": 320, "openings": 500, "saved": 40,
@@ -45,7 +45,7 @@ class WifiRevisionError(NetworkDataError):
     pass
 
 
-def validate_wifi_site(raw):
+def validate_wifi_site(raw, *, existing=None):
     """Normalize a single-floor plan in meters, including legacy bounded plans."""
     version = raw.get("schema_version") if isinstance(raw, dict) else None
     if type(version) is not int or not 1 <= version <= WIFI_SCHEMA_VERSION:
@@ -120,6 +120,10 @@ def validate_wifi_site(raw):
                 clean = {**point(item), "mount": mount, "name": label(item.get("name"), 60),
                          "angle": number(item.get("angle"), 0, 360, "access point direction") % 360,
                          "power_db": number(item.get("power_db", 0), -12, 6, "transmit power adjustment")}
+                try:
+                    clean["radios"] = validate_radios(item.get("radios"), len(plan[kind]))
+                except ValueError as exc:
+                    raise NetworkDataError(str(exc)) from exc
                 if "wall_id" in item or "t" in item:
                     wall_id = item.get("wall_id")
                     wall = walls.get(wall_id) if isinstance(wall_id, str) else None
@@ -136,11 +140,24 @@ def validate_wifi_site(raw):
         plan.update(validate_design(raw, seen=seen, number=number, point=point, safe_id=_safe_id))
         plan.update(validate_structure(raw, plan, limits=WIFI_LIMITS, seen=seen, number=number,
                                        point=point, safe_id=_safe_id))
-        plan.update(validate_cabling(raw, plan, number=number, label=label, point=point, safe_id=_safe_id, seen=seen))
+        plan.update(validate_cabling(raw, plan, number=number, label=label, point=point, safe_id=_safe_id, seen=seen,
+                                     legacy=version < 12, existing=existing))
         plan.update(validate_network(raw, plan, label=label, safe_id=_safe_id))
     except ValueError as exc:
         raise NetworkDataError(str(exc)) from exc
     return plan
+
+
+def _check_rack_moves(previous, site):
+    before = {item["id"]: item for item in previous["equipment"]}
+    old_cables = {wire["id"] for wire in previous["cables"]}
+    connected = {wire[end]["device_id"] for wire in site["cables"] if wire["id"] in old_cables for end in ("source", "target")}
+    for item in site["equipment"]:
+        old = before.get(item["id"])
+        if not old or not (old.get("rack_id") or item.get("rack_id") or item["kind"] == "rack"):
+            continue
+        if any(old.get(key) != item.get(key) for key in ("rack_id", "rack_u", "x", "y")) and item["id"] in connected:
+            raise NetworkDataError("Disconnect all cables before moving rack equipment")
 
 
 def migrate_topology(raw):
@@ -934,13 +951,28 @@ class NetworkStore:
 
     def save_wifi_site(self, email, site_id, raw, revision, *, available_scenarios=()):
         site_id = _safe_id(site_id)
-        site = validate_wifi_site(raw)
         if type(revision) is not int or revision < 0:
             raise NetworkDataError("A valid project revision is required")
         path = self._wifi_path(email)
         with self._wifi_lock(path):
             sites = self._read_wifi_sites(path)
             existing = sites.get(site_id)
+            compatibility = existing
+            if existing and existing.get("schema_version", 1) < 12:
+                compatibility = validate_wifi_site(existing)
+            elif existing is None and isinstance(raw, dict):
+                # Save a Copy can carry forward equipment from older projects owned by this account.
+                if any(isinstance(item, dict) and (item.get("legacy_length") or
+                       (item.get("kind") in ("router", "core_switch", "distribution_switch") and not item.get("rack_id")))
+                       for group in ("equipment", "cables") for item in (raw.get(group) if isinstance(raw.get(group), list) else [])):
+                    compatibility = {"equipment": [], "cables": []}
+                    for saved in sites.values():
+                        saved = validate_wifi_site(saved) if saved.get("schema_version", 1) < 12 else saved
+                        for group in compatibility:
+                            compatibility[group].extend(saved.get(group, []))
+            site = validate_wifi_site(raw, existing=compatibility or {})
+            if existing:
+                _check_rack_moves(compatibility, site)
             scenario_id = site.pop("scenario_id", None)
             if existing:
                 scenario_id = existing.get("scenario_id")

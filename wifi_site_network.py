@@ -13,6 +13,34 @@ MANAGED_SWITCHES = {"core_switch", "distribution_switch"}
 PREFIX = re.compile(r"0|[1-9][0-9]?")
 
 
+CHANNEL_GROUPS = {
+    "2.4": (tuple(range(1, 12)),),
+    "5": ((36, 40, 44, 48), (149, 153, 157, 161), (165,)),
+}
+CHANNEL_DEFAULTS = {"2.4": (1, 6, 11), "5": (36, 44, 149, 157)}
+
+
+def validate_radios(value, ordinal):
+    if value is None:
+        return {band: {"channel": channels[ordinal % len(channels)], "width": 20}
+                for band, channels in CHANNEL_DEFAULTS.items()}
+    if not isinstance(value, dict) or set(value) != set(CHANNEL_GROUPS):
+        raise ValueError("Choose radio settings for both Wi-Fi bands")
+    radios = {}
+    for band, blocks in CHANNEL_GROUPS.items():
+        radio = value[band]
+        if not isinstance(radio, dict):
+            raise ValueError("Invalid Wi-Fi radio")
+        channel, width = radio.get("channel"), radio.get("width")
+        if type(channel) is not int or type(width) is not int:
+            raise ValueError("Choose a listed Wi-Fi channel and width")
+        widths = (20,) if band == "2.4" else (20, 40, 80)
+        if width not in widths or not any(channel in block and width <= len(block) * 20 for block in blocks):
+            raise ValueError("Choose a listed Wi-Fi channel and width")
+        radios[band] = {"channel": channel, "width": width}
+    return radios
+
+
 def _list(value, limit, field):
     if not isinstance(value, list) or len(value) > limit:
         raise ValueError(f"Use up to {limit} {field}")

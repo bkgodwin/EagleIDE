@@ -33,7 +33,7 @@
     });
     const mobile = (id, name, x, y, network) => ({ ...device(id, 'phone', name, x, y), ssid_id: network });
     const windowCut = (id, wall_id, t, width) => ({ id, wall_id, t, width, kind: 'window', material: 'coated_glass' });
-    return {
+    const example = {
       ...plan, title: 'Northfield Learning Center', floor_locked: true, background_color: '#f6f4ed',
       surfaces: [
         polygon('landscape', '#e8ede0', [[-26, -3], [-20, -10], [39, -15], [102, -11], [116, 1], [116, 77],
@@ -291,5 +291,54 @@
           [point(75.1, 21.1), point(97.5, 21.1)], 'ethernet', '#316ac4'),
       ],
     };
+    const groups = [
+      ['main', 'Main IT Rack', 'core', ['router', 'core']],
+      ['west-idf', 'West IDF Rack', 'west-dist', ['west-dist']],
+      ['east-idf', 'East IDF Rack', 'east-dist', ['east-dist']],
+      ['athletics-idf', 'Athletics IDF Rack', 'annex-dist', ['annex-dist']],
+      ['pavilion-idf', 'Pavilion IDF Rack', 'pavilion-dist', ['pavilion-dist']],
+    ];
+    const terminations = new Map();
+    const oldPoint = new Map();
+    for (const [id, name, anchor, ids] of groups) {
+      const reference = example.equipment.find(item => item.id === anchor);
+      const rack = device('rack-' + id, 'rack', name, reference.x, reference.y);
+      const mount = (item, rack_u) => ({ ...item, x: rack.x, y: rack.y, rack_id: rack.id, rack_u });
+      example.equipment.push(rack, mount(device('panel-' + id, 'patch_panel', 'Building patch panel', rack.x, rack.y), 16),
+        mount(device('ups-' + id, 'ups', 'Battery backup', rack.x, rack.y), 1));
+      example.equipment = example.equipment.map(item => {
+        if (!ids.includes(item.id)) return item;
+        terminations.set(item.id, 'panel-' + id);
+        oldPoint.set(item.id, point(item.x, item.y));
+        return mount(item, item.kind === 'router' ? 12 : 14);
+      });
+      if (id === 'main') {
+        example.equipment.push(mount(device('ups-main-2', 'ups', 'Battery backup 2', rack.x, rack.y), 3),
+          mount({ ...device('campus-server', 'server', 'Campus services server', rack.x, rack.y), reservation: reservation(10) }, 8));
+      }
+    }
+    const patch = (...args) => ({ ...wire(...args), rack_patch: true });
+    const patchLeads = [patch('server-patch', 'Campus services', 'core', 'ETH1', 'campus-server', 'ETH1')];
+    example.cables = example.cables.map(item => {
+      if (item.id === 'core-fiber') return { ...item, waypoints: [], rack_patch: true };
+      if (item.source.device_id.startsWith('isp-')) {
+        const before = oldPoint.get(item.target.device_id);
+        return { ...item, waypoints: [...item.waypoints, before] };
+      }
+      const panel = terminations.get(item.source.device_id);
+      if (!panel || item.media !== 'ethernet') return item;
+      const number = item.source.port.slice(3);
+      patchLeads.push(patch('patch-' + item.id, item.label, item.source.device_id, item.source.port, panel, 'FRONT' + number,
+        [], 'ethernet', item.color));
+      return { ...item, source: { device_id: panel, port: 'BACK' + number } };
+    });
+    example.cables.push(...patchLeads);
+    const channel24 = [1, 6, 11, 1, 11, 6, 1, 6, 11, 1, 6, 11, 6, 11, 1, 6];
+    const channel5 = [36, 44, 149, 157, 44, 36, 149, 157, 36, 44, 149, 157, 36, 44, 149, 157];
+    example.access_points = example.access_points.map((item, i) => ({ ...item, radios: {
+      '2.4': { channel: channel24[i % channel24.length], width: 20 },
+      '5': { channel: channel5[i % channel5.length], width: 40 },
+    } }));
+    return example;
   };
 })();

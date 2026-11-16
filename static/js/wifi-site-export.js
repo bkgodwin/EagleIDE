@@ -98,7 +98,7 @@
     };
     const notes = plan.labels.map(note => ({ point: point(note), name: note.text }));
     const equipment = plan.equipment.map(item => ({ point: point(cabling.location(item)),
-      name: cabling.name(item), kind: item.kind, details: details(item),
+      name: cabling.name(item), kind: item.kind, details: details(item), mounted: Boolean(item.rack_id),
       ...(item.kind === 'poe_camera' ? cameraData(item) : {}) }));
     const passes = plan.pass_throughs.map(item => ({ point: point(cabling.location(item)),
       name: 'Concrete pass-through', kind: 'pass_through', details: [] }));
@@ -106,9 +106,12 @@
       const ssids = clientModel.apSsids(ap, plan.ssids).map(id => ssidById.get(id)).filter(Boolean);
       const powered = cabling.poweredAps.has(ap.id);
       return { point: point(ap), name: ap.name || (ap.mount === 'wall' ? 'Wall-mounted AP' : 'Ceiling-mounted AP'),
-        kind: 'access_point', details: powered ? ssids.map(ssid => `${ssid.name} (${ssid.band === 'both' ? '2.4 / 5' : ssid.band} GHz)`) : [], powered };
+        kind: 'access_point', radio_plan: ['2.4', '5'].map(band => {
+          const radio = ap.radios[band];
+          return `${band} GHz ch ${radio.channel} / ${radio.width} MHz`;
+        }).join(' · '), details: powered ? ssids.map(ssid => `${ssid.name} (${ssid.band === 'both' ? '2.4 / 5' : ssid.band} GHz)`) : [], powered };
     });
-    const cables = plan.cables.map(cable => {
+    const cables = plan.cables.filter(cable => !cable.rack_patch).map(cable => {
       const route = cabling.inspections.get(cable.id);
       return { name: cable.label, media: cable.media, color: cable.color,
         source: cabling.endName(cable.source), target: cabling.endName(cable.target), points: route.points.map(point),

@@ -15,9 +15,13 @@
   const apSsids = (ap, ssids) => ap.ssid_ids ?? ssids.slice(0, 1).map(ssid => ssid.id);
   const hasBand = (ssid, band) => ssid.band === 'both' || ssid.band === band;
 
-  function coverageAps(accessPoints, ssids, band, filter = '') {
-    const matching = new Set(ssids.filter(ssid => (!filter || ssid.id === filter) && hasBand(ssid, band)).map(ssid => ssid.id));
-    return accessPoints.filter(ap => apSsids(ap, ssids).some(id => matching.has(id)));
+  function coverageAps(accessPoints, ssids, band, filter = '', includeInterferers = false) {
+    const enabled = new Set(ssids.filter(ssid => hasBand(ssid, band)).map(ssid => ssid.id));
+    return accessPoints.flatMap(ap => {
+      const ids = apSsids(ap, ssids);
+      if (ids.some(id => enabled.has(id) && (!filter || id === filter))) return [ap];
+      return includeInterferers && ids.some(id => enabled.has(id)) ? [{ ...ap, interfererOnly: true }] : [];
+    });
   }
 
   function ipNumber(value) {
@@ -53,10 +57,10 @@
     return ip !== null && ip > pool.first && ip < pool.last && ip !== pool.gateway;
   }
 
-  function radio(signal, band) {
+  function radio(signal, band, width = 20) {
     if (signal < -90) return { speed: 0, loss: 1 };
     const quality = Math.min(1, (signal + 90) / 40);
-    const peak = band === '2.4' ? 200 : 600;
+    const peak = band === '2.4' ? 200 : 240 * (width / 20) ** .75;
     return { speed: Math.max(1, Math.round(peak * quality ** 2)), loss: 0.85 * (1 - quality) ** 3 };
   }
 
@@ -186,14 +190,14 @@
       if (ssid) {
         if (!surveys.has(ssid.id)) {
           surveys.set(ssid.id, ['5', '2.4'].filter(band => hasBand(ssid, band)).map(band => ({
-            band, estimate: coverageModel(plan.walls, coverageAps(accessPoints, ssids, band, ssid.id),
+            band, estimate: coverageModel(plan.walls, coverageAps(accessPoints, ssids, band, ssid.id, true),
               band, plan.openings, plan.decor),
           })));
         }
         for (const { band, estimate } of surveys.get(ssid.id)) {
           const result = estimate(device, true);
           if (!result) continue;
-          const { speed, loss } = radio(result.signal, band);
+          const { speed, loss } = radio(result.signal, band, result.ap.radios?.[band]?.width);
           if (speed > best.speed || (speed === best.speed && result.signal > (best.signal ?? -Infinity))) {
             best = { speed, loss, band, signal: result.signal, ap: speed ? result.ap : null, distance: result.distance };
           }
