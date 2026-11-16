@@ -431,7 +431,7 @@
     $('wifiSavedEmpty').hidden = sites.length > 0;
     $('wifiSavedSites').innerHTML = sites.map(item =>
       libraryRow(item.title || 'Untitled Site', '', `data-open-site="${escapeHtml(item.id)}"`,
-        { meta: formatTimestamp(item.updated_at), remove: `data-delete-site="${escapeHtml(item.id)}"` })
+        { meta: item.updated_at ? new Date(Number(item.updated_at) * 1000).toLocaleString() : '', remove: `data-delete-site="${escapeHtml(item.id)}"` })
     ).join('');
     const scenarios = data.scenarios || [];
     $('wifiScenariosFolder').hidden = !scenarios.length;
@@ -471,11 +471,14 @@
     return fromLibrary(button, async valid => {
       const access = await requestBootstrap();
       const returnFocus = scenarioId ? $('wifiScenariosFolder').querySelector('summary') : siteId ? null : button;
-      const [project] = await Promise.all([
-        scenarioId ? api(`/api/network/wifi-scenarios/${encodeURIComponent(scenarioId)}`)
-          : siteId ? api(`/api/network/wifi-sites/${encodeURIComponent(siteId)}`) : null,
+      const [saved] = await Promise.all([
+        siteId ? api(`/api/network/wifi-sites/${encodeURIComponent(siteId)}`) : null,
         window.EagleFeatures.load('wifiSite'),
       ]);
+      if (!valid()) return;
+      const project = scenarioId
+        ? await api(`/api/network/wifi-scenarios/${encodeURIComponent(scenarioId)}`, { method: 'POST' })
+        : saved;
       if (!valid()) return;
       window.WifiSite.open({
         api, authKey: currentAuthKey, canSave: access.can_save, limits: access.wifi_limits, catalog: access.wifi_cabling,
@@ -2404,6 +2407,12 @@
   }
 
   let teacherClassRequest = 0;
+  const scenarioWrites = new Map();
+
+  function countVisibleScenarios() {
+    const options = [...$('networkTeacherScenarioList').querySelectorAll('[data-teacher-scenario]')];
+    $('networkTeacherScenarioCount').textContent = `${options.filter(option => option.checked).length} of ${options.length} available`;
+  }
 
   async function openTeacherPanel() {
     const ctx = context();
@@ -2427,43 +2436,60 @@
     const classId = $('networkTeacherClassSelect').value || state.teacherClassId;
     if (!classId) return;
     const request = ++teacherClassRequest;
+    const account = currentAuthKey();
+    const valid = () => request === teacherClassRequest && account === currentAuthKey();
     state.teacherClassId = classId;
     $('networkTeacherAccessToggle').disabled = true;
     $('networkTeacherScenarios').hidden = $('networkTeacherLabHeading').hidden = true;
     $('networkTeacherLabList').replaceChildren();
     $('networkTeacherStatus').textContent = 'Loading class settings…';
     try {
+      await Promise.allSettled(scenarioWrites.get(`${account}:${classId}`) || []);
+      if (!valid()) return;
       const data = await api(`/api/network/teacher/classes/${encodeURIComponent(classId)}`);
-      if (request !== teacherClassRequest) return;
+      if (!valid()) return;
       $('networkTeacherAccessToggle').checked = !!data.enabled;
       $('networkTeacherAccessToggle').disabled = false;
       $('networkTeacherStatus').textContent = data.enabled ? `${data.class_name} can use Network Lab when it is globally enabled.` : `${data.class_name} cannot currently open Network Lab.`;
       renderTeacherScenarios(data.scenarios || []);
       $('networkTeacherLabHeading').hidden = false;
       renderTeacherLabs(data.labs || []);
-    } catch (error) { if (request === teacherClassRequest) $('networkTeacherStatus').textContent = error.message; }
+    } catch (error) { if (valid()) $('networkTeacherStatus').textContent = error.message; }
   }
   function renderTeacherScenarios(scenarios) {
     $('networkTeacherScenarios').hidden = !scenarios.length;
     $('networkTeacherScenarioList').innerHTML = scenarios.map(item => `<li>
       <label class="network-switch"><input type="checkbox" data-teacher-scenario="${escapeHtml(item.id)}" ${item.visible ? 'checked' : ''}>
-      <span><strong>${escapeHtml(item.title)}</strong><small>Show in this class</small></span></label></li>`).join('');
+      <span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.description)}</small></span></label></li>`).join('');
+    countVisibleScenarios();
   }
   async function setTeacherScenario(input) {
     const classId = state.teacherClassId;
     const request = teacherClassRequest;
+    const account = currentAuthKey();
+    const key = `${account}:${classId}`;
+    const valid = () => request === teacherClassRequest && account === currentAuthKey();
     const scenarioId = input.dataset.teacherScenario;
     const visible = input.checked;
     input.disabled = true;
+    const pending = scenarioWrites.get(key) || new Set();
+    scenarioWrites.set(key, pending);
+    const write = api(`/api/network/teacher/classes/${encodeURIComponent(classId)}/scenarios/${encodeURIComponent(scenarioId)}`,
+      { method: 'PUT', body: JSON.stringify({ visible }) });
+    pending.add(write);
     try {
-      await api(`/api/network/teacher/classes/${encodeURIComponent(classId)}/scenarios/${encodeURIComponent(scenarioId)}`,
-        { method: 'PUT', body: JSON.stringify({ visible }) });
-      if (request === teacherClassRequest) $('networkTeacherStatus').textContent = visible
-        ? 'Scenario shown for this class.' : 'Scenario hidden for this class. Saved projects are still available.';
+      await write;
+      if (valid()) $('networkTeacherStatus').textContent = visible
+        ? 'Scenario available to this class.' : 'Scenario hidden from this class. Students can reopen saved attempts.';
     } catch (error) {
       input.checked = !visible;
-      if (request === teacherClassRequest) $('networkTeacherStatus').textContent = error.message;
-    } finally { input.disabled = false; }
+      if (valid()) $('networkTeacherStatus').textContent = error.message;
+    } finally {
+      pending.delete(write);
+      if (!pending.size) scenarioWrites.delete(key);
+      input.disabled = false;
+      if (valid()) countVisibleScenarios();
+    }
   }
   function renderTeacherLabs(labs) {
     $('networkTeacherLabList').innerHTML = labs.map(lab => {

@@ -912,6 +912,26 @@ class NetworkStore:
             return {**validate_wifi_site(site), **{key: site[key] for key in ("id", "revision", "updated_at")}}
         return site
 
+    def _write_wifi_site(self, path, sites, site, site_id, revision):
+        if site_id not in sites and len(sites) >= WIFI_LIMITS["saved"]:
+            raise NetworkDataError(f"You may save at most {WIFI_LIMITS['saved']} Wi-Fi sites")
+        site.update(id=site_id, revision=revision, updated_at=time.time())
+        sites[site_id] = site
+        self._write_json(path, {"sites": sites}, compact=True)
+        return site
+
+    def start_wifi_scenario(self, email, scenario):
+        """Create a private attempt from the already validated built-in plan."""
+        path = self._wifi_path(email)
+        with self._wifi_lock(path):
+            sites = self._read_wifi_sites(path)
+            titles = {site["title"] for site in sites.values()}
+            name = scenario["title"][:100]
+            attempt = next(i for i in range(1, WIFI_LIMITS["saved"] + 2)
+                           if f"{name} — Attempt {i}" not in titles)
+            starter = {**scenario["site"], "scenario_id": scenario["id"], "title": f"{name} — Attempt {attempt}"}
+            return self._write_wifi_site(path, sites, starter, f"site-{uuid.uuid4().hex}", 1)
+
     def save_wifi_site(self, email, site_id, raw, revision, *, available_scenarios=()):
         site_id = _safe_id(site_id)
         site = validate_wifi_site(raw)
@@ -946,13 +966,7 @@ class NetworkStore:
                 if current_revision == revision + 1 and same_save:
                     return existing
                 raise WifiRevisionError("This project changed in another tab or was deleted. Save a copy to keep your edits.")
-            if existing is None and len(sites) >= WIFI_LIMITS["saved"]:
-                raise NetworkDataError(f"You may save at most {WIFI_LIMITS['saved']} Wi-Fi sites")
-            now = time.time()
-            site.update(id=site_id, revision=revision + 1, updated_at=now)
-            sites[site_id] = site
-            self._write_json(path, {"sites": sites}, compact=True)
-            return site
+            return self._write_wifi_site(path, sites, site, site_id, revision + 1)
 
     def delete_wifi_site(self, email, site_id):
         path = self._wifi_path(email)

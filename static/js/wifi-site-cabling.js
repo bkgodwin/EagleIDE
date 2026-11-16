@@ -435,6 +435,11 @@
       cones.forEach((cone, i) => cameraCones.set(cone.id, { ...cone, node: layer.children[i] }));
     }
 
+    function cameraOutlines() {
+      drawCameraCoverage();
+      return new Map([...cameraCones].map(([id, cone]) => [id, cone.points]));
+    }
+
     function cameraAim(camera, preview) {
       if (rotatingCone && (!preview || rotatingCone.id !== camera?.id)) {
         rotatingCone.node.setAttribute('points', conePoints(rotatingCone.points));
@@ -679,7 +684,7 @@
     return { init, reset, index, setTool, use, cancel, draw, overlay, hoverAt, pick, name, locationPoints, deviceStatus, updateBundleBadges,
       moveBend, setBend, editBends, pointForEdit, inspector, edit, removePlan, reroute, refreshDraft,
       hideMenu: () => { menu.hidden = true; }, clearHover: () => { hover = placementPoint = null; },
-      drawEquipment, drawCameraCoverage, cameraAim, wallField, bundleIds: number => segments[number]?.cableIds || [], bundleHas: (number, ids) => segments[number]?.cableIds.some(id => ids.has(id)) };
+      drawEquipment, drawCameraCoverage, cameraOutlines, cameraAim, wallField, bundleIds: number => segments[number]?.cableIds || [], bundleHas: (number, ids) => segments[number]?.cableIds.some(id => ids.has(id)) };
   }
 
   window.WifiSiteCabling = { create, icon, kinds: KINDS };

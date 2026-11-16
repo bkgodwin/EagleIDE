@@ -64,10 +64,10 @@ test('network feature loads in dependency order and deduplicates concurrent requ
   ]);
 
   assert.deepEqual(
-    scripts.map(script => script.src),
+    scripts.map(script => script.src.split('?')[0]),
     [
-      '/static/js/network-sim.js?v=20261113-design',
-      '/static/js/network-sim-advanced.js?v=20261113-hub',
+      '/static/js/network-sim.js',
+      '/static/js/network-sim-advanced.js',
     ],
   );
   assert.ok(scripts.every(script => script.dataset.loaded === 'true'));

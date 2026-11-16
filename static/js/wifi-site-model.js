@@ -236,8 +236,9 @@
     return areas.some(({ ap, range }) => inRange(ap, range, bounds));
   }
 
-  function createHeatSource({ walls, access_points, band, openings, decor }) {
-    const transmitters = transmittersFor(walls, access_points, band, true, openings, decor);
+  function createHeatSource({ walls, access_points, band, openings, decor, radios }) {
+    const layers = radios ?? [{ band, access_points }];
+    const transmitters = layers.flatMap(layer => transmittersFor(walls, layer.access_points, layer.band, true, openings, decor));
     return tile => {
       const bounds = tileBounds(tile, PADDING);
       const local = transmitters.filter(({ ap, range }) => inRange(ap, range, bounds)).map(transmitter => {
