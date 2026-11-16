@@ -146,7 +146,7 @@ Required runtime components:
 |       |-- wifi-site-worker.js  Wi-Fi coverage tile rendering off the UI thread
 |       |-- wifi-cabling-model.js Cable geometry, bundles, port occupancy, and PoE paths
 |       |-- wifi-site-cabling.js Equipment placement, route drafting, and cable inspector
-|       |-- wifi-site-racks.js Rack elevations, front patching, UPS estimates, and bill of materials
+|       |-- wifi-site-racks.js Zoomable rack elevations, mounting controls, front patching, and bill of materials
 |       |-- wifi-site-client-model.js Wireless association, IPv4 leasing and simulated packet routes
 |       |-- wifi-site-clients.js Client inspector and timed packet playback
 |       |-- wifi-site-network.js Infra Sim network settings in equipment inspectors

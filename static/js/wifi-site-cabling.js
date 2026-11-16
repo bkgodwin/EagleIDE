@@ -64,8 +64,7 @@
     }
 
     function equipmentSpecs(kind) {
-      if (kind === 'rack') return '16U rack · click a rack to install equipment';
-      if (catalog().equipment[kind]?.rack_units) return `${catalog().equipment[kind].rack_units}U · install in an equipment rack`;
+      if (kind === 'rack') return '16U rack · open it to install equipment';
       if (kind === 'phone') return 'Wi-Fi · automatically joins the strongest powered AP';
       if (kind === 'demarc') {
         const isp = catalog().isps[$('wifiEquipmentIsp').value];
@@ -122,7 +121,6 @@
       const mount = !penetration && kind.startsWith('ap-') ? kind.slice(3) : '';
       const profile = catalog().equipment[kind];
       const wallMount = penetration || mount === 'wall' || profile?.wall_mount;
-      if (profile?.rack_units) return null;
       const anchor = wallMount && model.closestWall(raw, plan().walls, Math.min(3, 19 / ctx.scale()), penetration);
       if (wallMount && !anchor) return null;
       const position = anchor ? { wall_id: anchor.wall_id, t: anchor.t } : ctx.snap(raw).point;
@@ -140,14 +138,8 @@
       return { group: 'equipment', item };
     }
 
-    function place(raw, hit) {
+    function place(raw) {
       const kind = $('wifiEquipmentType').value;
-      if (mode === 'equipment' && catalog().equipment[kind]?.rack_units) {
-        const rackId = hit || closestDevice(raw);
-        if (index().racks.has(rackId)) ctx.openRack(rackId, kind);
-        else ctx.hint('Select an equipment rack to install this device.');
-        return;
-      }
       if (mode === 'equipment' && kind === 'rack' && index().racks.size >= catalog().max_racks) {
         ctx.hint(`A site supports up to ${catalog().max_racks} racks.`);
         return;
@@ -295,7 +287,7 @@
     const runLength = points => points.slice(1).reduce((sum, point, i) => sum + model.distance(point, points[i]), 0);
 
     function use(raw, hit, shift) {
-      if (mode !== 'cable') { place(raw, hit); return; }
+      if (mode !== 'cable') { place(raw); return; }
       const data = index();
       const device = data.devices.has(hit) ? hit : !hit ? closestDevice(raw) : null;
       if (device) {
@@ -601,7 +593,7 @@
       $('wifiCableBundleChoice').focus();
     }
 
-    function inspector(kind, item) {
+    function inspector(kind, item, { inRack = false } = {}) {
       const data = index();
       if (kind === 'cables') {
         const result = data.inspections.get(item.id);
@@ -644,8 +636,8 @@
         ${ports.length ? `<div class="wifi-wire-summary"><strong>${used.length} of ${ports.length} ports connected</strong>
           ${used.length && !window.WifiSiteClientModel.managed(item) ? `<span>${used.map(port => e(port.id)).join(', ')}</span>` : ''}</div>` : ''}
         ${ctx.deviceInspector(item)}
-        ${item.kind === 'rack' || item.rack_id ? `<button class="wifi-control" type="button" data-wifi-open-rack="${e(item.rack_id || item.id)}">Open Rack</button>` : ''}
-        ${item.rack_id ? `<p>Rack position · U${item.rack_u}</p>` : `<details class="wifi-network-settings" data-wifi-config="placement"><summary>Position</summary>
+        ${!inRack && (item.kind === 'rack' || item.rack_id) ? `<button class="wifi-control" type="button" data-wifi-open-rack="${e(item.rack_id || item.id)}" data-wifi-rack-device="${item.rack_id ? e(item.id) : ''}">Open Rack</button>` : ''}
+        ${item.rack_id ? inRack ? '' : `<p>Rack position · U${item.rack_u}</p>` : `<details class="wifi-network-settings" data-wifi-config="placement"><summary>Position</summary>
           ${item.wall_id ? wallField(item) : ctx.pointFields(item)}</details>`}`;
     }
 
@@ -718,7 +710,8 @@
 
     function init() {
       document.querySelectorAll('[data-wifi-icon]').forEach(el => { el.innerHTML = icon(el.dataset.wifiIcon); });
-      $('wifiEquipmentType').innerHTML = choices([...model.TYPES.map(type => [type, catalog().equipment[type].name]),
+      const floorEquipment = model.TYPES.filter(type => !catalog().equipment[type].rack_units);
+      $('wifiEquipmentType').innerHTML = choices([...floorEquipment.map(type => [type, catalog().equipment[type].name]),
         ...Object.entries(ctx.apNames).map(([mount, name]) => [`ap-${mount}`, name])], 'rack');
       $('wifiEquipmentIsp').innerHTML = ispChoices('alderline');
       $('wifiEquipmentType').addEventListener('change', equipmentControls);

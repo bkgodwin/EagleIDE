@@ -110,7 +110,7 @@
   const fmt = meters => `${display(meters).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${current().units}`;
   const wires = window.WifiSiteCabling.create({
     catalog: () => options.catalog, limits: () => options.limits, getPlan: current, selected: () => selected, apNames: model.MOUNTS,
-    select: selectObject, openRack: (id, kind) => racks.open(id, kind), changeTool, add: addObjects, replace: replaceObject, draw: drawObjects, frame: scheduleScene,
+    select: selectObject, changeTool, add: addObjects, replace: replaceObject, draw: drawObjects, frame: scheduleScene,
     hint, escape, id, fmt, display, tidy: cleanText, toMeters: value => model.metersFrom(value, current().units),
     scale: () => camera.scale, snap: drawingPoint, line: lineSvg, dot, pointFields, marker, roundPoint,
     wallSpans: (walls, openings) => structure.wallSpans(walls, openings),
@@ -118,11 +118,12 @@
     deviceInspector: item => networkSettings.deviceInspector(item),
     exhaustedRouters: () => [...clients.network().routers.values()].filter(router => router.available === 0).map(router => router.id),
   });
-  const clients = window.WifiSiteClients.create({ plan: current, cabling: () => wires.index(), escape, selected: () => selected,
+  const clients = window.WifiSiteClients.create({ plan: current, cabling: () => wires.index(), escape, selected: inspectorId,
     networkInspector: (item, info) => networkSettings.clientInspector(item, info) });
   const racks = window.WifiSiteRacks.create({
     plan: current, data: () => wires.index(), catalog: () => options.catalog, escape, id,
-    add: addObjects, replace: replaceObject, configure: selectObject,
+    add: (kind, additions) => addObjects(kind, additions, { select: false }), replace: replaceObject,
+    inspector: $('wifiProperties'), renderInspector,
     removeCable: cable => update({ ...current(), cables: current().cables.filter(item => item.id !== cable) }),
   });
   const networkSettings = window.WifiSiteNetwork.create({
@@ -169,6 +170,7 @@
   }
 
   function hint(message) {
+    if (message && racks.isOpen()) racks.announce(message);
     const lockedHint = tool === 'select' ? 'Select or drag networking equipment and cables.' :
       tool === 'marquee' ? 'Drag a box to select networking objects.' : toolHints[tool];
     $('wifiToolHint').textContent = message || (floorLocked() ? `Floor plan locked. ${lockedHint}` : toolHints[tool]);
@@ -460,17 +462,6 @@
         return wall ? { ...ap, ...roundPoint(cableModel.pointAt(wall, ap.t)) } : ap;
       }) };
     }
-    if (next.equipment !== current().equipment) {
-      const data = wires.index();
-      for (const item of next.equipment) {
-        const old = data.devices.get(item.id);
-        if ((!item.rack_id && item.kind !== 'rack') || !old || !data.isConnected(item.id)) continue;
-        if (['x', 'y', 'rack_u', 'rack_id'].some(key => old[key] !== item[key])) {
-          hint('Disconnect all cables before moving rack equipment.');
-          return false;
-        }
-      }
-    }
     const vertexCount = next.surfaces.reduce((sum, item) => sum + item.points.length + item.holes.reduce((n, hole) => n + hole.length, 0), 0);
     if (vertexCount > options.limits.surface_vertices) { hint('This plan has reached the limit for surface corners.'); return false; }
     const error = structure.validate(next) || wires.index(next).error;
@@ -542,13 +533,14 @@
     return update({ ...current(), [kind]: current()[kind].map(object => object.id === item.id ? item : object) }, { inspector: refresh });
   }
 
-  function addObjects(kind, additions) {
+  function addObjects(kind, additions, { select = true } = {}) {
     const existing = current()[kind];
     const limit = options.limits[kind];
     if (existing.length + additions.length > limit) {
       hint(`This site can contain up to ${limit} ${kind.replace('_', ' ')}.`);
       return false;
     }
+    if (!select) return update({ ...current(), [kind]: [...existing, ...additions] });
     const previous = selected;
     selected = additions.at(-1).id;
     if (update({ ...current(), [kind]: [...existing, ...additions] })) {
@@ -562,11 +554,15 @@
   }
 
   function removeObject() {
-    const match = objectById(selected);
+    const objectId = inspectorId();
+    const match = objectById(objectId);
     if (!match) return;
-    const { next, attached } = wires.removePlan(new Set([selected]));
+    const { next, attached } = wires.removePlan(new Set([objectId]));
     if (attached && !window.confirm(`Delete this object and ${attached} attached ${attached === 1 ? 'item' : 'items'}? You can undo this change.`)) return;
-    if (update(next)) viewport.focus({ preventScroll: true });
+    if (update(next)) {
+      if (racks.isOpen()) racks.focusTools();
+      else viewport.focus({ preventScroll: true });
+    }
   }
 
   function updateToolOptions() {
@@ -627,6 +623,7 @@
     $('wifiFloorLock').title = locked ? 'Unlock the floor plan to edit its walls, notes, and furnishings' : 'Lock the floor plan while laying out the network';
     $('wifiFloorLockText').textContent = locked ? 'Floor plan locked' : 'Lock floor plan';
     for (const control of workspace.querySelectorAll('[data-wifi-floor-control]')) control.hidden = locked;
+    racks.refresh();
     if (inspector) renderInspector();
     else {
       renderObjectOptions();
@@ -674,24 +671,30 @@
       : { access_points: 'access_point', cables: 'cable', pass_throughs: 'pass' }[kind]);
   }
 
+  function inspectorId() {
+    return racks.isOpen() ? racks.inspectedId() : selected;
+  }
+
   function renderInspector() {
     renderObjectOptions();
-    const match = objectById(selected);
+    const inRack = racks.isOpen();
+    const match = objectById(inspectorId());
     const panel = $('wifiProperties');
     if (!match) {
-      panel.innerHTML = '<p>Select an object on the plan or from the list to edit it.</p>';
+      delete panel.dataset.objectId;
+      panel.innerHTML = inRack ? '' : '<p>Select an object on the plan or from the list to edit it.</p>';
       return;
     }
     const { kind, item } = match;
     const sameObject = panel.dataset.objectId === item.id;
     const openSections = sameObject ? [...panel.querySelectorAll('details[data-wifi-config][open]')]
-      .map(detail => detail.dataset.wifiConfig) : item.kind === 'router' ? ['dhcp'] : ['ports'];
+      .map(detail => detail.dataset.wifiConfig) : item.kind === 'router' ? ['dhcp'] : item.kind === 'rack' && inRack ? ['placement'] : ['ports'];
     const focusId = sameObject && panel.contains(document.activeElement) ? document.activeElement.id : '';
     panel.dataset.objectId = item.id;
-    renderObjectHeading(match);
+    if (!inRack) renderObjectHeading(match);
     let fields;
     if (wireKinds.includes(kind)) {
-      fields = wires.inspector(kind, item);
+      fields = wires.inspector(kind, item, { inRack });
     } else if (kind === 'openings') {
       fields = structure.inspector(item);
     } else if (kind === 'decor') {
@@ -715,7 +718,7 @@
       fields = `<label>Note text<input data-wifi-field="text" value="${escape(item.text)}" maxlength="160"></label>${pointFields(item)}`;
     }
     panel.innerHTML = fields + `<div class="wifi-object-actions">
-      <button class="wifi-control" id="wifiLocateObject" type="button">Locate</button>
+      ${inRack ? '' : '<button class="wifi-control" id="wifiLocateObject" type="button">Locate</button>'}
       ${kind === 'cables' || kind === 'pass_throughs' || kind === 'surfaces' || item.wall_id || item.rack_id || item.kind === 'rack' ? '' : '<button class="wifi-control" id="wifiDuplicateObject" type="button">Duplicate</button>'}
       <button class="wifi-control" id="wifiDeleteObject" type="button">Delete</button></div>`;
     for (const detail of panel.querySelectorAll('details[data-wifi-config]')) {
@@ -730,7 +733,7 @@
   }
 
   function editObject(input) {
-    const match = objectById(selected);
+    const match = objectById(inspectorId());
     if (!match) return;
     if (input.dataset.wifiOpening && match.kind === 'openings') { structure.edit(match.item, input); return; }
     if (input.id === 'wifiEstimateCoverage' && match.kind === 'access_points') {
@@ -740,7 +743,7 @@
     }
     if (input.dataset.wifiWireField) { wires.edit(match, input); return; }
     if (input.id === 'wifiCableBend') { wires.setBend(match.item, Number(input.value)); return; }
-    if (input.id === 'wifiPingTarget') { clients.setTarget(selected, input.value); return; }
+    if (input.id === 'wifiPingTarget') { clients.setTarget(match.item.id, input.value); return; }
     if (networkSettings.change(match.item, input)) return;
     if (!input.dataset.wifiField) return;
     const { kind, item } = match;
@@ -1860,7 +1863,7 @@
     $('wifiMaterials').addEventListener('click', racks.inspectMaterials);
     $('wifiProperties').addEventListener('click', event => {
       const control = event.target.closest('[data-wifi-open-rack]');
-      if (control) racks.open(control.dataset.wifiOpenRack);
+      if (control) racks.open(control.dataset.wifiOpenRack, control.dataset.wifiRackDevice);
     });
     $('wifiSiteTitle').addEventListener('input', event => {
       const title = cleanText(event.target.value, 'Untitled Wi-Fi Site');
@@ -1919,8 +1922,8 @@
       if (event.target.id === 'wifiDeleteObject') removeObject();
       if (event.target.id === 'wifiLocateObject') locateSelected();
       if (event.target.id === 'wifiDuplicateObject') duplicateSelected();
-      if (event.target.id === 'wifiPingToggle') clients.toggle(selected);
-      const match = objectById(selected);
+      if (event.target.id === 'wifiPingToggle') clients.toggle(inspectorId());
+      const match = objectById(inspectorId());
       if (match && event.target.dataset.wifiNetwork) networkSettings.click(match.item, event.target);
       if (match?.kind === 'cables' && event.target.id === 'wifiRerouteCable') wires.reroute(match.item);
       if (match?.kind === 'cables' && ['wifiAddCableBend', 'wifiRemoveCableBend'].includes(event.target.id)) {
