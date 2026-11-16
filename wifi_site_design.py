@@ -8,6 +8,9 @@ DECOR_TYPES = {
     'sofa', 'counter', 'tub', 'toilet', 'student_table', 'cafeteria_table', 'basketball_court', 'bus',
     'football_field', 'stadium_seating', 'tennis_court', 'lap_pool', 'fitness_station',
     'yoga_mat', 'ticket_gate', 'air_handler', 'pump_skid',
+    'cnc_mill', 'cnc_lathe', 'welding_cell', 'press_brake', 'assembly_conveyor',
+    'pallet_rack', 'steel_stock', 'forklift', 'telehandler', 'mobile_crane',
+    'semi_truck', 'switchgear', 'service_bay',
 }
 DESIGN_LIMITS = {'decor': 500, 'surfaces': 160, 'surface_vertices': 1600}
 _COLOR = re.compile(r'#[0-9a-fA-F]{6}\Z')

@@ -3,6 +3,7 @@
 import math
 
 from network_store import WIFI_SCHEMA_VERSION, validate_wifi_site
+from wifi_industrial import industrial_layout
 from wifi_school import school_layout
 from wifi_stadium import stadium_layout
 
@@ -396,6 +397,30 @@ SCENARIOS = {
                      'sections, sports courts, and a 25 m lap pool. Network closets are empty. The floor plan '
                      'starts locked for network layout and can be unlocked from the toolbar.',
         'site': _starter('Harborline Stadium & Sports Center', *stadium_layout(), floor_locked=True),
+    },
+    'rivermill-fabrication-works': {
+        'id': 'rivermill-fabrication-works',
+        'title': 'Rivermill Fabrication Works',
+        'description': 'Design a network for a two-shift machine and fabrication plant, a fleet garage, and a training center.',
+        'briefing': 'Rivermill makes pump frames and industrial skids to order. Steel arrives at the north receiving docks '
+                    'and is staged in the materials warehouse or outdoor stockyard. Forklifts carry cut stock through the '
+                    'central aisle to welding and CNC machining. Parts meet at assembly, pass inspection, and leave from '
+                    'the shipping docks. The detached fleet garage services the yard equipment. The training center '
+                    'runs apprenticeships and vendor courses from its own pedestrian entrance. The ISP enters at the main IT room.',
+        'traits': [
+            'Plan wired connections for office staff, CNC job terminals, assembly stations, and dock scanners.',
+            'Draw backbone paths from the main IT room to the Warehouse, Production, and Assembly IDFs. '
+            'Choose links to the detached Fleet and Training IDFs and document each building entry.',
+            'Keep production traffic separate from business services and training guests. Verify that each group can reach '
+            'the services it needs and that training guests cannot reach shop equipment.',
+            'Check Wi-Fi in rack aisles, loading lanes, and the outdoor yard and service pad. Compare coverage '
+            'on both sides of the concrete partitions and metal roll-up doors.',
+        ],
+        'plan_note': 'The single-story plant measures 168 × 92 m. Six receiving bays and seven shipping bays '
+                     'face the north truck apron. The garage and training center have separate routes from the plant. '
+                     'Machinery and vehicles are shown as floor-plan symbols. Network rooms start empty and '
+                     'the floor plan starts locked for network layout.',
+        'site': _starter('Rivermill Fabrication Works', *industrial_layout(), floor_locked=True),
     },
 }
 

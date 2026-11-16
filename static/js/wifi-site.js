@@ -19,7 +19,7 @@
     $('wifiCoverageStatus').hidden = !updating;
   });
   const endpoint = '/api/network/wifi-sites';
-  const schemaVersion = 9;
+  const schemaVersion = 10;
   const wireKinds = window.WifiSiteCabling.kinds;
   const floorKinds = ['walls', 'openings', 'labels', 'decor', 'surfaces'];
   const floorLayers = [...floorKinds, 'background', 'background_color'];
