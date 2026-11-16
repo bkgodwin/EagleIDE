@@ -11,6 +11,7 @@ DECOR_TYPES = {
     'cnc_mill', 'cnc_lathe', 'welding_cell', 'press_brake', 'assembly_conveyor',
     'pallet_rack', 'steel_stock', 'forklift', 'telehandler', 'mobile_crane',
     'semi_truck', 'switchgear', 'service_bay',
+    'hospital_bed', 'operating_table', 'ct_scanner', 'ambulance', 'helipad', 'diesel_generator',
 }
 DESIGN_LIMITS = {'decor': 500, 'surfaces': 160, 'surface_vertices': 1600}
 _COLOR = re.compile(r'#[0-9a-fA-F]{6}\Z')

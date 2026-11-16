@@ -3,6 +3,7 @@
 import math
 
 from network_store import WIFI_SCHEMA_VERSION, validate_wifi_site
+from wifi_hospital import hospital_layout
 from wifi_industrial import industrial_layout
 from wifi_motel import motel_layout
 from wifi_school import school_layout
@@ -445,6 +446,31 @@ SCENARIOS = {
                      'It starts locked with only the room phones and reception POS placed. The comms closet is empty '
                      'and all links are for you to design.',
         'site': _starter('Suntrail Motor Lodge', *motel_layout(), floor_locked=True),
+    },
+    'marshpoint-regional-hospital': {
+        'id': 'marshpoint-regional-hospital',
+        'title': 'Marshpoint Regional Hospital',
+        'description': 'Design a resilient network for a regional hospital and its disaster triage and command operations.',
+        'briefing': 'Marshpoint serves a coastal region from a single-story hospital. Ambulance crews bring patients '
+                    'to the emergency and trauma department, and a separate paved path links the ground helipad to the '
+                    'clinical transfer corridor. County emergency partners use the hospital’s command center during '
+                    'hurricanes, pandemics, and mass-casualty incidents, including terrorist attacks. The west surge '
+                    'intake can open while routine emergency, surgical, and inpatient care continues. An on-site '
+                    'diesel plant supports the hospital during utility outages.',
+        'traits': [
+            'Plan network links from the main IT room to the ED, surgery, acute ward, family care, and command closets. '
+            'Give emergency departments and command a second route that avoids the same corridor crossing.',
+            'Keep clinical systems, incident coordination, facilities monitoring, and public Wi-Fi on separate networks. '
+            'Document which network equipment and services need emergency power.',
+            'Verify reachability for ordinary care and a regional surge. Simulate the loss of one backbone link '
+            'and record which care and command services remain reachable.',
+            'Check Wi-Fi along the ambulance handover and helipad transfer routes, at covered surge intake, '
+            'and across the public concourse and family courtyard.',
+        ],
+        'plan_note': 'The single-story hospital measures 196 × 126 m. The ground helipad sits west of the building '
+                     'and the four-generator diesel plant is in the east service zone. The floor plan starts locked '
+                     'with empty network rooms so you can begin placing infrastructure.',
+        'site': _starter('Marshpoint Regional Hospital', *hospital_layout(), floor_locked=True),
     },
 }
 

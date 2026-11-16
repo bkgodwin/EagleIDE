@@ -226,6 +226,35 @@ class NetworkStoreTests(unittest.TestCase):
         self.assertEqual(pos["kind"], "pos_terminal")
         self.assertTrue(72.2 < pos["x"] < 84 and 40.8 < pos["y"] < 52.1)
 
+    def test_regional_hospital_starter_has_separate_arrivals_and_unwired_departments(self):
+        scenario = SCENARIOS["marshpoint-regional-hospital"]
+        site = validate_wifi_site(scenario["site"])
+        labels = {item["text"] for item in site["labels"]}
+        self.assertTrue({"Emergency department", "Trauma & resuscitation", "Surgical wing", "Acute inpatient ward",
+                         "Women’s care", "Pediatric care", "Mental health care", "Morgue", "Cafeteria",
+                         "Regional surge triage", "Disaster intake", "Emergency command center", "Disaster supplies",
+                         "Diesel power plant", "Ground helipad", "Ambulance bays", "Main lobby & reception",
+                         "Main IT / network room", "ED IDF", "Surgery IDF", "Ward IDF", "Family care IDF",
+                         "Command IDF"}.issubset(labels))
+        self.assertTrue(site["floor_locked"])
+        self.assertFalse(any(site[layer] for layer in ("equipment", "access_points", "cables", "pass_throughs")))
+
+        walls = {wall["id"]: wall for wall in site["walls"]}
+        self.assertEqual(walls["south-shell"]["b"], {"x": 196, "y": 126})
+        pad, = [item for item in site["decor"] if item["kind"] == "helipad"]
+        self.assertLess(pad["x"] + 12, walls["west-shell"]["a"]["x"])
+        self.assertEqual(pad["y"], 21)
+        emergency_entries = [round(item["t"] * 126, 1) for item in site["openings"]
+                             if item["wall_id"] == "west-shell" and item["kind"] == "door"]
+        self.assertEqual(emergency_entries, [21, 37, 77.7])
+        ambulances = [item for item in site["decor"] if item["kind"] == "ambulance"]
+        self.assertEqual(len(ambulances), 4)
+        self.assertTrue(all(item["x"] < 0 and 27.5 < item["y"] < 48.5 for item in ambulances))
+        generators = [item for item in site["decor"] if item["kind"] == "diesel_generator"]
+        self.assertEqual(len(generators), 4)
+        self.assertTrue(all(158 < item["x"] < 196 and 0 < item["y"] < 23.2 for item in generators))
+        self.assertEqual(sum(item["kind"] == "operating_table" for item in site["decor"]), 6)
+
     def test_infra_campus_example_can_be_saved_and_all_aps_are_wired(self):
         root = Path(__file__).resolve().parents[1]
         script = """
