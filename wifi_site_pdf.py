@@ -1,4 +1,4 @@
-"""Compose three print sheets with vector labels over bounded Infra Sim artwork."""
+"""Compose vector-labeled Infra Sim diagrams and paginated print schedules."""
 
 from __future__ import annotations
 
@@ -27,12 +27,24 @@ _FONT_LOCK = threading.Lock()
 _FONT, _BOLD = 'InfraPlan', 'InfraPlanBold'
 _INK, _MUTED, _RULE, _WASH = map(HexColor, ('#182d3e', '#425b6c', '#bac8cd', '#f1f5f6'))
 _NETWORK, _AP, _CAMERA = map(HexColor, ('#145370', '#146d67', '#28578e'))
-_MARGIN, _COLUMN, _COLUMN_GAP = 23, 218, 12
+_MARGIN = 23
+_TABLOID = (1224, 792)
+_SCHEDULE_TITLE = 'Cable schedule and device inventory'
+_SCHEDULE_GAP = 24
+_CABLE_COLUMNS = (134, 160, 160, 61, 62)
+_DEVICE_COLUMNS = (190, 115, 272)
 _SHEETS = ('Network layout', 'Wi-Fi coverage', 'Camera coverage')
 _GLYPHS = {
     'router': 'R', 'core_switch': 'S', 'distribution_switch': 'S', 'access_switch': 'S', 'keystone': 'J',
     'demarc': 'I', 'desktop': 'D', 'phone': 'M', 'voip_phone': 'V', 'pos_terminal': '$',
     'poe_camera': 'C', 'copy_machine': 'P', 'pass_through': 'T', 'access_point': 'A',
+}
+_DEVICE_TYPES = {
+    'router': 'Router', 'core_switch': 'Core switch', 'distribution_switch': 'Distribution switch',
+    'access_switch': 'Access switch', 'keystone': 'Keystone jack', 'demarc': 'ISP handoff',
+    'desktop': 'Desktop computer', 'phone': 'Wireless phone', 'voip_phone': 'VoIP phone',
+    'pos_terminal': 'POS terminal', 'poe_camera': 'PoE camera', 'copy_machine': 'Copy machine',
+    'pass_through': 'Concrete pass-through', 'access_point': 'Access point',
 }
 
 
@@ -198,7 +210,7 @@ class _Placement:
     def place(self, anchors, lines, color, style):
         width = max(pdfmetrics.stringWidth(text, font, size) for text, font, size, _ in lines) + 8
         height = sum(size + 2 for _, _, size, _ in lines) + 4
-        for gap in ((7, 16, 29) if style == 'full' else (5, 12, 23, 36, 54, 80, 115, 160)):
+        for gap in ((7, 16, 29, 42, 56) if style == 'full' else (5, 12, 23, 36, 54, 80, 115, 160)):
             for x, y in anchors:
                 for dx, dy in ((gap, -.5 * height), (-width - gap, -.5 * height), (-.5 * width, gap),
                                (-.5 * width, -height - gap), (gap, gap), (-width - gap, gap),
@@ -248,54 +260,33 @@ def _device_details(item, sheet):
     return item['details']
 
 
-def _section_rows(title, rows):
-    if rows:
-        return [(title, ()), *rows]
-    return []
-
-
-def _paginate(rows, height, columns):
-    sections = []
-    current, used = [], 0
-    section = ''
-    for i, (heading, lines) in enumerate(rows):
-        total = 17 if heading else sum(size + 2.5 for _, _, size, _ in lines) + 5
-        next_height = sum(line[2] + 2.5 for line in rows[i + 1][1]) + 5 if heading else 0
-        if used + total + next_height > height and current:
-            sections.append(current)
-            current, used = [], 0
-            if not heading:
-                current, used = [(f'{section} / CONTINUED', (), 17)], 17
-        if heading:
-            section = heading
-        current.append((heading, lines, total))
-        used += total
-    if current:
-        sections.append(current)
-    return sections if len(sections) <= columns else None
-
-
-def _arrange(sheet, frame, plot, notes, devices, cables, units, column_height, columns):
+def _arrange(sheet, frame, plot, notes, devices, cables):
     placement = _Placement(plot)
     for item in [*notes, *devices]:
         x, y = _map_point(frame, item['point'])
         placement.reserve(Box(x - 5, y - 5, 10, 10))
-    marks, note_rows, device_rows, wire_rows = [], [], [], []
-    for items, rows in ((notes, note_rows), (devices, device_rows)):
+    marks, note_refs = [], set()
+    name_counts = defaultdict(int)
+    for device in devices:
+        name_counts[device['name']] += 1
+    for items in ((notes, devices) if sheet == 0 else (devices, notes)):
         is_note = items is notes
         for item in items:
             title = item['name']
+            if not is_note and name_counts[title] > 1:
+                title = f"{item['ref']}  {title}"
             details = [] if is_note else _device_details(item, sheet)
             anchor = [_map_point(frame, item['point'])]
             color = _MUTED if is_note else _AP if item['kind'] == 'access_point' else _CAMERA if item['kind'] == 'poe_camera' else _NETWORK
             lines = _label_lines(title, details, 151)
-            mark = placement.place(anchor, lines, color, 'full') if len(lines) <= 6 else None
+            mark = placement.place(anchor, lines, color, 'full')
             if not mark:
                 ref = item['ref']
                 mark = placement.place(anchor, _label_lines(ref, [], 50, 7, color=color), color, 'tag')
                 if not mark:
                     return None
-                rows.append(('', _label_lines(f'{ref}  {title}', details, _COLUMN - 16, 8.5, 7.8, color=color)))
+                if is_note:
+                    note_refs.add(ref)
             marks.append(mark)
     for wire in cables:
         points = [_map_point(frame, point) for point in wire['points']]
@@ -304,48 +295,71 @@ def _arrange(sheet, frame, plot, notes, devices, cables, units, column_height, c
         if not mark:
             return None
         marks.append(mark)
-        title = wire['name'] or ('Fiber' if wire['media'] == 'fiber' else 'Ethernet')
-        length = f"{wire['length']:g} {units}"
-        details = [f"{wire['source']} → {wire['target']}", f"{wire['media'].title()}  ·  {length}"]
-        wire_rows.append(('', _label_lines(f"{wire['ref']}  {title}", details, _COLUMN - 16, 8.5, 7.8, color=ink)))
-    packed = _paginate(_section_rows('CABLE SCHEDULE', wire_rows) + _section_rows('DEVICE LABELS', device_rows)
-                       + _section_rows('PLAN NOTES', note_rows), column_height, columns)
-    return (marks, packed) if packed is not None else None
+    return marks, note_refs
 
 
-def _layout_sheet(index, paper, ratio, notes, devices, cables, units):
-    w, h = paper
-    plot_height = h - 2 * _MARGIN - 88
-    minimum = math.ceil(len(cables) * 24 / plot_height) if cables else 0
-    for columns in range(minimum, min(minimum + 3, 8) + 1):
-        plot_width = w - 2 * _MARGIN - columns * (_COLUMN + _COLUMN_GAP)
-        if plot_width < max(440, w * .46):
-            break
-        plot = Box(_MARGIN + 4, _MARGIN + 45, plot_width - 8, plot_height)
+def _layout(image_size, notes, equipment, aps, cables):
+    sheets = ([*equipment, *aps], aps, [item for item in equipment if item['kind'] == 'poe_camera'])
+    landscape_sizes = (_TABLOID, (1728, 1296), (2592, 1728), (3456, 2592), (4320, 3456))
+    ratio = image_size[0] / image_size[1]
+    best = None
+    fewest_references = float('inf')
+    for w, h in landscape_sizes:
+        paper = (h, w) if ratio < .76 else (w, h)
+        plot = Box(_MARGIN + 4, _MARGIN + 38, paper[0] - 2 * _MARGIN - 8, paper[1] - 2 * _MARGIN - 91)
         image_w = min(plot.w - 14, (plot.h - 14) * ratio)
         image_h = image_w / ratio
         frame = Box(plot.x + (plot.w - image_w) / 2, plot.y + (plot.h - image_h) / 2, image_w, image_h)
-        layers = _arrange(index, frame, plot, notes, devices, cables, units, plot_height, columns)
-        if layers is not None:
-            return frame, plot, layers
-    return None
-
-
-def _layout(image_size, notes, equipment, aps, cables, units):
-    sheets = ([*equipment, *aps], aps, [item for item in equipment if item['kind'] == 'poe_camera'])
-    landscape_sizes = ((1224, 792), (1728, 1296), (2592, 1728), (3456, 2592), (4320, 3456))
-    ratio = image_size[0] / image_size[1]
-    for w, h in landscape_sizes:
-        paper = (h, w) if ratio < .76 and not cables else (w, h)
-        layouts = []
+        layouts, note_refs = [], set()
         for index, devices in enumerate(sheets):
-            layout = _layout_sheet(index, paper, ratio, notes, devices, cables if index == 0 else [], units)
-            if layout is None:
+            layer = _arrange(index, frame, plot, notes, devices, cables if index == 0 else [])
+            if layer is None:
                 break
-            layouts.append(layout)
-        if len(layouts) == 3:
-            return paper, sheets, layouts
-    raise ValueError('This floor plan has too many labels to fit on three sheets')
+            marks, refs = layer
+            layouts.append(marks)
+            note_refs.update(refs)
+        if len(layouts) == len(sheets):
+            references = sum(mark.style == 'tag' for marks in layouts for mark in marks)
+            if references < fewest_references:
+                best = paper, frame, sheets, layouts, note_refs
+                fewest_references = references
+            if references == 0:
+                break
+    if best is None:
+        raise ValueError('This floor plan has too many overlapping labels to fit on three diagram sheets')
+    return best
+
+
+def _schedule_pages(rows, widths):
+    pages, page = [], []
+    height = _TABLOID[1] - 2 * _MARGIN - 104
+    used = 0
+    for row in rows:
+        cells = [tuple(line for value in values for line in _wrap(value, _FONT, 8.5, width - 12))
+                 for values, width in zip(row, widths)]
+        row_height = max(17, max(len(cell) for cell in cells) * 11 + 5)
+        if page and used + row_height > height:
+            pages.append(page)
+            page, used = [], 0
+        page.append((cells, row_height))
+        used += row_height
+    return [*pages, page]
+
+
+def _schedules(equipment, aps, notes, note_refs, cables, units):
+    cable_rows = []
+    for wire in cables:
+        media = wire['media'].title()
+        name = wire['name'] or media
+        cable_rows.append(([f"{wire['ref']}  {name}"], [wire['source']], [wire['target']],
+                           [media], [f"{wire['length']:g} {units}"]))
+    device_rows = []
+    for item in [*equipment, *aps]:
+        details = _device_details(item, 1) if item['kind'] == 'access_point' else item['details']
+        device_rows.append(([f"{item['ref']}  {item['name']}"], [_DEVICE_TYPES[item['kind']]], details))
+    device_rows.extend(([f"{note['ref']}  {note['name']}"], ['Plan label reference'], [])
+                       for note in notes if note['ref'] in note_refs)
+    return _schedule_pages(cable_rows, _CABLE_COLUMNS), _schedule_pages(device_rows, _DEVICE_COLUMNS)
 
 
 def _draw_line(canvas, text, x, y, font, size, color):
@@ -354,13 +368,13 @@ def _draw_line(canvas, text, x, y, font, size, color):
     canvas.drawString(x, y, _supported(text))
 
 
-def _draw_title(canvas, size, frame, paper, title, author, day, unit, world_width):
+def _draw_title(canvas, heading, page, count, paper, title, author, day):
     w, h = paper
     left, right = _MARGIN, w - _MARGIN
-    _draw_line(canvas, _SHEETS[size], left, h - _MARGIN - 12, _BOLD, 16, _INK)
+    _draw_line(canvas, heading, left, h - _MARGIN - 12, _BOLD, 16, _INK)
     canvas.setFont(_BOLD, 9)
     canvas.setFillColor(_MUTED)
-    canvas.drawRightString(right, h - _MARGIN - 11, f'SHEET {size + 1} / 3')
+    canvas.drawRightString(right, h - _MARGIN - 11, f'SHEET {page} / {count}')
     canvas.setStrokeColor(_RULE)
     canvas.setLineWidth(.65)
     canvas.line(left, h - _MARGIN - 22, right, h - _MARGIN - 22)
@@ -375,12 +389,14 @@ def _draw_title(canvas, size, frame, paper, title, author, day, unit, world_widt
         _draw_line(canvas, line, meta_x, _MARGIN + 18 - row * 9, _FONT, 8, _MUTED)
     _draw_line(canvas, day, right - 119, _MARGIN + 17, _FONT, 8.5, _MUTED)
 
+
+def _draw_scale(canvas, frame, paper, unit, world_width):
     points_per_unit = frame.w / world_width * (.3048 if unit == 'ft' else 1)
     desired = 92 / points_per_unit
     step = 10 ** math.floor(math.log10(desired))
     value = max(factor * step for factor in (1, 2, 5) if factor * step <= desired)
     length = value * points_per_unit
-    x, y = right - 128, _MARGIN + 7
+    x, y = paper[0] - _MARGIN - 128, _MARGIN + 7
     canvas.setStrokeColor(_INK)
     canvas.setLineWidth(.8)
     canvas.lines([(x, y, x + length, y), (x, y - 2, x, y + 3), (x + length, y - 2, x + length, y + 3)])
@@ -494,23 +510,32 @@ def _draw_marks(canvas, marks):
             y -= 2
 
 
-def _draw_index(canvas, plot, columns):
-    for i, entries in enumerate(columns):
-        x = plot.x + plot.w + 14 + i * (_COLUMN + _COLUMN_GAP)
-        y = plot.y + plot.h
+def _draw_schedule(canvas, entries, x, title, headings, widths, continued, empty):
+    top = _TABLOID[1] - _MARGIN - 41
+    _draw_line(canvas, f'{title} (continued)' if continued else title, x, top, _BOLD, 11, _INK)
+    top -= 9
+    width = sum(widths)
+    canvas.setFillColor(_WASH)
+    canvas.rect(x, top - 20, width, 20, stroke=0, fill=1)
+    start = x
+    for heading, column in zip(headings, widths):
+        _draw_line(canvas, heading, start + 6, top - 13, _BOLD, 8.5, _MUTED)
+        start += column
+    top -= 20
+    if not entries:
+        _draw_line(canvas, empty, x + 6, top - 14, _FONT, 8.5, _MUTED)
+    for cells, height in entries:
+        start = x
+        for lines, column in zip(cells, widths):
+            y = top - 11.5
+            for line in lines:
+                _draw_line(canvas, line, start + 6, y, _FONT, 8.5, _INK)
+                y -= 11
+            start += column
+        top -= height
         canvas.setStrokeColor(_RULE)
-        canvas.setLineWidth(.55)
-        canvas.line(x - 6, plot.y, x - 6, y)
-        for heading, lines, total in entries:
-            if heading:
-                _draw_line(canvas, heading, x, y - 9.5, _BOLD, 9, _MUTED)
-            else:
-                cursor = y
-                for text, font, size, color in lines:
-                    cursor -= size
-                    _draw_line(canvas, text, x, cursor, font, size, color)
-                    cursor -= 2.5
-            y -= total
+        canvas.setLineWidth(.35)
+        canvas.line(x, top, x + width, top)
 
 
 def render_plan_pdf(data, author):
@@ -530,14 +555,18 @@ def render_plan_pdf(data, author):
     world_width = _number(data.get('drawing_width', image.getSize()[0]), .01, 400_000_000_000)
     _load_fonts()
     notes, equipment, aps, cables = _read_annotations(data)
-    paper, devices, layouts = _layout(image.getSize(), notes, equipment, aps, cables, units)
+    paper, frame, devices, layouts, note_refs = _layout(image.getSize(), notes, equipment, aps, cables)
+    cable_pages, device_pages = _schedules(equipment, aps, notes, note_refs, cables, units)
+    schedule_count = max(len(cable_pages), len(device_pages))
+    sheet_count = len(_SHEETS) + schedule_count
     out = io.BytesIO()
     canvas = Canvas(out, pagesize=paper, pageCompression=1)
     canvas.setTitle(_supported(title))
     canvas.setAuthor(_supported(author))
     canvas.setCreator('EagleIDE Infra Sim')
-    for index, (frame, plot, (marks, columns)) in enumerate(layouts):
-        _draw_title(canvas, index, frame, paper, title, author, day, units, world_width)
+    for index, marks in enumerate(layouts):
+        _draw_title(canvas, _SHEETS[index], index + 1, sheet_count, paper, title, author, day)
+        _draw_scale(canvas, frame, paper, units, world_width)
         _draw_legend(canvas, index, paper, devices[index])
         canvas.drawImage(coverage if index == 1 else image, frame.x, frame.y, frame.w, frame.h)
         if index == 0:
@@ -546,7 +575,18 @@ def render_plan_pdf(data, author):
             _draw_cones(canvas, frame, devices[index])
         _draw_marks(canvas, marks)
         _draw_markers(canvas, frame, notes, devices[index])
-        _draw_index(canvas, plot, columns)
+        canvas.showPage()
+    canvas.setPageSize(_TABLOID)
+    for index in range(schedule_count):
+        _draw_title(canvas, _SCHEDULE_TITLE, len(_SHEETS) + index + 1, sheet_count, _TABLOID, title, author, day)
+        if index < len(cable_pages):
+            _draw_schedule(canvas, cable_pages[index], _MARGIN, 'Cable schedule',
+                           ('Reference / name', 'From', 'To', 'Media', 'Length'), _CABLE_COLUMNS,
+                           index > 0, 'No cables routed')
+        if index < len(device_pages):
+            _draw_schedule(canvas, device_pages[index], _MARGIN + sum(_CABLE_COLUMNS) + _SCHEDULE_GAP,
+                           'Device inventory', ('Reference / name', 'Type', 'Details'), _DEVICE_COLUMNS,
+                           index > 0, 'No devices placed')
         canvas.showPage()
     canvas.save()
     filename = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '-', title).strip(' .') or 'Infra Sim plan'

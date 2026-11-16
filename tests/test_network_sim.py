@@ -796,10 +796,10 @@ class NetworkRouteTests(unittest.TestCase):
             self.assertTrue(response.data.startswith(b'%PDF'))
             self.assertIn(b'/Author (Alice Example)', response.data)
             self.assertNotIn(b'Other person', response.data)
-        self.assertEqual(len(sheets), 4)
-        drawing, wifi, cameras = (' '.join(sheet) for sheet in sheets[:3])
+        self.assertEqual(len(sheets[:-1]), 4)
+        drawing, wifi, cameras, schedules = (' '.join(sheet) for sheet in sheets[:-1])
         for label in ('Network layout', 'North AP', 'Entry camera', 'Front desk mobile', 'IP 10.18.0.2/24',
-                      'Subnet 10.18.0.0/24', 'SSID Staff Wireless', 'CABLE SCHEDULE', 'W01', 'Hall ceiling drop'):
+                      'Subnet 10.18.0.0/24', 'SSID Staff Wireless', 'W01'):
             self.assertIn(label, drawing)
         for label in ('Wi-Fi coverage', 'North AP', 'Staff Wireless (5 GHz)', 'Guest Wireless (2.4 GHz)'):
             self.assertIn(label, wifi)
@@ -808,10 +808,28 @@ class NetworkRouteTests(unittest.TestCase):
         self.assertNotIn('Front desk mobile', wifi + cameras)
         self.assertNotIn('Entry camera', wifi)
         self.assertNotIn('North AP', cameras)
-        self.assertNotIn('CABLE SCHEDULE', wifi + cameras)
         for sheet in (drawing, wifi, cameras):
             self.assertIn('Reception', sheet)
             self.assertIn(' ft', sheet)
+            self.assertNotIn('Cable schedule', sheet)
+            self.assertNotIn('Device inventory', sheet)
+            self.assertNotIn('Hall ceiling drop', sheet)
+        for label in ('Cable schedule', 'Device inventory', 'W01', 'Hall ceiling drop', 'Lobby switch ETH1',
+                      'North AP ETH1', '35.4 ft', 'D01', 'Front desk mobile', 'Wireless phone',
+                      'IP 10.18.0.2/24', 'D02', 'Entry camera', 'A01', 'North AP', 'Staff Wireless (5 GHz)'):
+            self.assertIn(label, schedules)
+
+        sheets[:] = [[]]
+        dense = {**payload,
+                 'cables': [{**payload['cables'][0], 'name': f'Route {i:03}'} for i in range(48)],
+                 'equipment': [{**payload['equipment'][0], 'name': f'Client {i:03}'} for i in range(48)]}
+        with patch('wifi_site_pdf.Canvas', RecordingCanvas), self.client.post(url, json=dense, headers=headers) as response:
+            self.assertEqual(response.status_code, 200)
+        self.assertGreater(len(sheets[:-1]), 4)
+        self.assertIn('Route 000', ' '.join(sheets[3]))
+        self.assertIn('Client 000', ' '.join(sheets[3]))
+        self.assertIn('Route 047', ' '.join(text for page in sheets[4:-1] for text in page))
+        self.assertIn('Client 047', ' '.join(text for page in sheets[4:-1] for text in page))
         self.assertEqual(self.client.post(url, json={**payload, 'image': 'invalid'}, headers=headers).status_code, 400)
         bad = {**payload, 'notes': [{'point': [-1, .25], 'name': 'Outside'}]}
         self.assertEqual(self.client.post(url, json=bad, headers=headers).status_code, 400)
