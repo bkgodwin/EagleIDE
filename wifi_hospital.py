@@ -227,6 +227,7 @@ def hospital_layout():
     room('ED IDF', utility, 42, 72, 48, 81)
     rect('floor', office, 42, 81, 48, 90)
     row('desk', (3.5, 7.7, 12.1), 80.3)
+    row('hospital_bed', (3.2, 7.2, 11.2), 85.7, 90)
     row('hospital_bed', (19.1, 24.6), 82, 90)
     row('bench', (33, 37.3, 40), 87.4)
 
@@ -371,6 +372,8 @@ def hospital_layout():
     shape('pavement', '#bbc2bf', (-57, 7), (-27, 7), (-22, 12), (-22, 30), (-27, 35),
           (-57, 35), (-62, 30), (-62, 12))
     rect('sidewalk', '#d1d8d3', -23, 18.85, 0, 23.15)
+    for left, right in ((-21.2, -15.9), (-14.6, -9.3), (-8, -2.7)):
+        rect('sidewalk', '#eef0dd', left, 20.86, right, 21.14)
     place('helipad', -42, 21)
     notes.extend([(-56, 3.8, 'Ground helipad'), (-23, 15.1, 'Patient transfer walk')])
     shape('pavement', pavement, (-69, 54), (-31, 54), (-24, 47), (-24, 30), (-19, 27.5),
@@ -385,7 +388,7 @@ def hospital_layout():
         row('lamp', (-12.2, -3), y)
     row('bench', (-10.2, -6.8, -3.4), 80.7)
     rect('pavement', pavement, -24, 68.8, -13.3, 87)
-    notes.extend([(-21.3, 25.9, 'Ambulance bays'), (-60.9, 61, 'EMS vehicle approach'),
+    notes.extend([(-17.4, 28.2, 'Ambulance bays'), (-60.9, 61, 'EMS vehicle approach'),
                   (-15.5, 89, 'Covered surge arrival')])
 
     # Facilities vehicles and command staff use the east approach.

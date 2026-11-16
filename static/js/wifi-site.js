@@ -213,7 +213,7 @@
     }
   }
 
-  function startProject(plan, briefing) {
+  function startProject(plan, briefing, { sample = false } = {}) {
     const { id: siteId, revision, updated_at, scenario_briefing, ...layout } = plan;
     session = {
       id: siteId || id('site'), revision: revision || 0, plan: { ...blankPlan(), ...layout, schema_version: schemaVersion }, account,
@@ -231,9 +231,11 @@
     workspace.hidden = false;
     $('wifiScenarioButton').hidden = !session.briefing;
     $('wifiSaveSite').hidden = $('wifiCopySite').hidden = !options.canSave;
-    $('wifiCoverage').checked = $('wifiSnap').checked = $('wifiShowCables').checked = true;
+    $('wifiSnap').checked = $('wifiShowCables').checked = true;
+    $('wifiCoverage').checked = !sample;
     $('wifiCoverageSsid').value = '';
-    $('wifiShowCameras').checked = $('wifiShowLabels').checked = true;
+    $('wifiShowCameras').checked = true;
+    $('wifiShowLabels').checked = !sample;
     $('wifiCoverageOpacity').value = 75;
     syncLayers();
     $('wifiClearPaint').setAttribute('aria-pressed', 'false');
@@ -1919,7 +1921,8 @@
       options = config;
       account = options.authKey();
       initialize();
-      startProject(site || (sample ? window.wifiCampusExample(blankPlan()) : blankPlan()), briefing);
+      const example = sample && !site;
+      startProject(site || (example ? window.wifiCampusExample(blankPlan()) : blankPlan()), briefing, { sample: example });
     },
     hide, leave,
   };

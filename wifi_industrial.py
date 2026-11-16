@@ -217,8 +217,9 @@ def industrial_layout():
     ])
     for y in (73.6, 75.6, 77.3):
         row('student_table', (205.3, 208.6, 211.9), y)
-    row('table', (219, 223.9, 228.8), 73.5)
-    row('chair', (219, 223.9, 228.8), 74.5)
+    row('table', (219, 223.9), 73.5)
+    row('chair', (219, 223.9), 74.5)
+    place('cnc_lathe', 228.55, 73.6, 90)
     place('desk', 206.1, 70.4)
     place('desk', 206.7, 87.2)
     place('chair', 206.7, 88.1)
@@ -284,6 +285,8 @@ def industrial_layout():
     shape('landscape', lawn, (180, 65), (194, 65), (199, 73), (198, 76), (180, 76))
     shape('landscape', lawn, (190, 85), (198, 85), (198, 95), (226, 95), (232, 100), (190, 101))
     rect('sidewalk', walk, 202, 91, 232, 94.5)
+    for x in (176.8, 177.8, 178.8, 179.8, 180.8):
+        rect('sidewalk', '#f6f0d9', x, 78.45, x + .42, 82.35)
     notes.append((170, 79, 'Training walkway'))
     notes.append((202.3, 66.8, 'Detached training center'))
     for x, y in ((182.4, 71.3), (191.2, 72.2), (195.1, 88.8), (218, 97.9), (237.6, 89.1)):
