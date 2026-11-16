@@ -480,6 +480,8 @@ body.light-mode .network-hub {
 .network-student-status.is-in_progress { border-left-color: var(--columbia-blue); background: rgba(84,139,196,.1); }
 #networkTeacherClassSelect { min-width: 220px; min-height: 38px; border: 1px solid var(--theme-border-mid); border-radius: 0; background: var(--theme-input-bg); color: var(--theme-text); padding: 7px; }
 .network-teacher-scenarios { padding: 14px; margin: 0 0 18px; border: 1px solid var(--theme-border-mid); }
+.network-teacher-scenarios header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+#networkTeacherScenarioCount { color: var(--theme-text-dim); font-size: 12px; }
 .network-teacher-scenarios h3, .network-teacher-section-heading { margin: 0 0 8px; font-size: 16px; }
 .network-teacher-scenarios p { margin: 0 0 8px; color: var(--theme-text-dim); font-size: 13px; }
 .network-teacher-scenarios ul { list-style: none; margin: 0; padding: 0; }

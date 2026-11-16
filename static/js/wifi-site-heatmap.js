@@ -41,11 +41,14 @@
     }
 
     function setPlan(next) {
-      if (layout && layout.walls === next.walls && layout.openings === next.openings && layout.band === next.band
-          && layout.decor === next.decor && sameRadios(layout.access_points, next.access_points)) return;
+      if (layout === next || (layout && !layout.radios && !next.radios && layout.walls === next.walls
+          && layout.openings === next.openings && layout.band === next.band && layout.decor === next.decor
+          && sameRadios(layout.access_points, next.access_points))) return;
       layout = next;
       revision += 1;
-      areas = model.heatAreas(next.access_points, next.band);
+      areas = next.radios
+        ? next.radios.flatMap(layer => model.heatAreas(layer.access_points, layer.band))
+        : model.heatAreas(next.access_points, next.band);
       fallback = null;
       cache.clear();
       queue = [];
@@ -193,7 +196,7 @@
       pending = { ...job, key: tileKey(tile) };
       if (!worker && !workerFailed) {
         try {
-          const source = new Worker('/static/js/wifi-site-worker.js?v=20261115-infra-school');
+          const source = new Worker('/static/js/wifi-site-worker.js?v=20261115-infra-sheets');
           worker = source;
           source.onmessage = ({ data }) => { if (worker === source) tileReady(data); };
           source.onerror = () => {

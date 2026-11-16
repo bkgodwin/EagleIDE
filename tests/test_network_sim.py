@@ -11,6 +11,7 @@ import threading
 import unittest
 from itertools import combinations
 from pathlib import Path
+from unittest.mock import patch
 
 from flask import Flask
 from PIL import Image
@@ -20,6 +21,7 @@ from network_features import register
 from network_store import MAX_DEVICES, WIFI_SCHEMA_VERSION, NetworkDataError, NetworkStore, _stp_state, can_reach, can_reach_ipv6, grade_lab, migrate_topology, validate_topology, validate_wifi_site
 from wifi_cabling import CABLING_CATALOG, CABLING_LIMITS
 from wifi_scenarios import SCENARIOS
+from wifi_site_pdf import Canvas
 
 
 class NetworkStoreTests(unittest.TestCase):
@@ -703,6 +705,31 @@ class NetworkRouteTests(unittest.TestCase):
         self.assertEqual(self.client.put(settings_url, headers=teacher, json={"visible": True}).status_code, 200)
         self.assertEqual(self.client.get(scenario_url, headers=student).status_code, 200)
 
+    def test_starting_a_scenario_immediately_saves_separate_private_attempts(self):
+        scenario_id = "maple-lane-house"
+        url = f"/api/network/wifi-scenarios/{scenario_id}"
+        student = {"X-User-Token": "student-token"}
+        self.store.set_class_access("class-1", True)
+        self.assertEqual(self.client.post(url).status_code, 404)
+        first = self.client.post(url, headers=student)
+        second = self.client.post(url, headers=student)
+        self.assertEqual((first.status_code, second.status_code), (201, 201))
+        a, b = (response.json["data"]["site"] for response in (first, second))
+        self.assertNotEqual(a["id"], b["id"])
+        self.assertTrue(a["title"].endswith("Attempt 1"))
+        self.assertTrue(b["title"].endswith("Attempt 2"))
+        self.assertEqual((a["revision"], b["revision"]), (1, 1))
+        listing = self.client.get("/api/network/wifi-sites", headers=student).json["data"]
+        self.assertEqual([row["id"] for row in listing], [b["id"], a["id"]])
+        self.store.set_scenario_visibility("class-1", scenario_id, False)
+        self.assertEqual(self.client.post(url, headers=student).status_code, 404)
+        project = f"/api/network/wifi-sites/{a['id']}"
+        self.assertEqual(self.client.get(project, headers=student).status_code, 200)
+        modified = self.client.put(project, headers=student, json={"revision": 1, "site": {**a, "title": "My attempt"}})
+        self.assertEqual(modified.json["data"]["revision"], 2)
+        self.assertEqual(modified.json["data"]["scenario_id"], scenario_id)
+        self.assertEqual(self.client.get(project, headers={"X-Teacher-Token": "teacher-token"}).status_code, 404)
+
     def test_saved_scenario_briefing_remains_available_after_teacher_hides_starter(self):
         scenario_id = "port-adelaide-community-center"
         scenario_url = f"/api/network/wifi-scenarios/{scenario_id}"
@@ -733,10 +760,35 @@ class NetworkRouteTests(unittest.TestCase):
         image = io.BytesIO()
         Image.new('RGB', (180, 100), '#dbe5ec').save(image, 'JPEG')
         url = '/api/network/wifi-export.pdf'
-        payload = {'image': base64.b64encode(image.getvalue()).decode(), 'title': 'My civic plan',
-                   'date': '2026-11-13', 'author': 'Other person'}
+        encoded = base64.b64encode(image.getvalue()).decode()
+        payload = {
+            'image': encoded, 'coverage_image': encoded, 'title': 'My civic plan', 'units': 'ft',
+            'drawing_width': 180, 'date': '2026-11-13', 'author': 'Other person',
+            'notes': [{'point': [.1, .1], 'name': 'Reception'}],
+            'aps': [{'kind': 'access_point', 'point': [.25, .5], 'name': 'North AP', 'powered': True,
+                     'details': ['Staff Wireless (5 GHz)', 'Guest Wireless (2.4 GHz)']}],
+            'equipment': [
+                {'kind': 'phone', 'point': [.4, .4], 'name': 'Front desk mobile',
+                 'details': ['IP 10.18.0.2/24', 'Subnet 10.18.0.0/24', 'SSID Staff Wireless']},
+                {'kind': 'poe_camera', 'point': [.65, .6], 'name': 'Entry camera', 'powered': True,
+                 'cone': [[.65, .6], [.7, .8], [.8, .65]]},
+            ],
+            'cables': [{'name': 'Hall ceiling drop', 'media': 'ethernet', 'color': '#224488',
+                        'source': 'Lobby switch ETH1', 'target': 'North AP ETH1', 'length': 35.4,
+                        'points': [[.15, .45], [.25, .45], [.25, .5]]}],
+        }
+        sheets = [[]]
+
+        class RecordingCanvas(Canvas):
+            def drawString(self, x, y, text, *args, **kwargs):
+                sheets[-1].append(text)
+                super().drawString(x, y, text, *args, **kwargs)
+
+            def showPage(self):
+                super().showPage()
+                sheets.append([])
         headers = {'X-User-Token': 'student-token'}
-        with self.client.post(url, json=payload, headers=headers) as response:
+        with patch('wifi_site_pdf.Canvas', RecordingCanvas), self.client.post(url, json=payload, headers=headers) as response:
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.mimetype, 'application/pdf')
             self.assertIn('My civic plan.pdf', response.headers['Content-Disposition'])
@@ -744,7 +796,43 @@ class NetworkRouteTests(unittest.TestCase):
             self.assertTrue(response.data.startswith(b'%PDF'))
             self.assertIn(b'/Author (Alice Example)', response.data)
             self.assertNotIn(b'Other person', response.data)
+        self.assertEqual(len(sheets[:-1]), 4)
+        drawing, wifi, cameras, schedules = (' '.join(sheet) for sheet in sheets[:-1])
+        for label in ('Network layout', 'North AP', 'Entry camera', 'Front desk mobile', 'IP 10.18.0.2/24',
+                      'Subnet 10.18.0.0/24', 'SSID Staff Wireless', 'W01'):
+            self.assertIn(label, drawing)
+        for label in ('Wi-Fi coverage', 'North AP', 'Staff Wireless (5 GHz)', 'Guest Wireless (2.4 GHz)'):
+            self.assertIn(label, wifi)
+        self.assertIn('Camera coverage', cameras)
+        self.assertIn('Entry camera', cameras)
+        self.assertNotIn('Front desk mobile', wifi + cameras)
+        self.assertNotIn('Entry camera', wifi)
+        self.assertNotIn('North AP', cameras)
+        for sheet in (drawing, wifi, cameras):
+            self.assertIn('Reception', sheet)
+            self.assertIn(' ft', sheet)
+            self.assertNotIn('Cable schedule', sheet)
+            self.assertNotIn('Device inventory', sheet)
+            self.assertNotIn('Hall ceiling drop', sheet)
+        for label in ('Cable schedule', 'Device inventory', 'W01', 'Hall ceiling drop', 'Lobby switch ETH1',
+                      'North AP ETH1', '35.4 ft', 'D01', 'Front desk mobile', 'Wireless phone',
+                      'IP 10.18.0.2/24', 'D02', 'Entry camera', 'A01', 'North AP', 'Staff Wireless (5 GHz)'):
+            self.assertIn(label, schedules)
+
+        sheets[:] = [[]]
+        dense = {**payload,
+                 'cables': [{**payload['cables'][0], 'name': f'Route {i:03}'} for i in range(48)],
+                 'equipment': [{**payload['equipment'][0], 'name': f'Client {i:03}'} for i in range(48)]}
+        with patch('wifi_site_pdf.Canvas', RecordingCanvas), self.client.post(url, json=dense, headers=headers) as response:
+            self.assertEqual(response.status_code, 200)
+        self.assertGreater(len(sheets[:-1]), 4)
+        self.assertIn('Route 000', ' '.join(sheets[3]))
+        self.assertIn('Client 000', ' '.join(sheets[3]))
+        self.assertIn('Route 047', ' '.join(text for page in sheets[4:-1] for text in page))
+        self.assertIn('Client 047', ' '.join(text for page in sheets[4:-1] for text in page))
         self.assertEqual(self.client.post(url, json={**payload, 'image': 'invalid'}, headers=headers).status_code, 400)
+        bad = {**payload, 'notes': [{'point': [-1, .25], 'name': 'Outside'}]}
+        self.assertEqual(self.client.post(url, json=bad, headers=headers).status_code, 400)
         self.store.set_class_access('class-1', False)
         self.assertEqual(self.client.post(url, json=payload, headers=headers).status_code, 403)
 

@@ -318,18 +318,14 @@
     try {
       if (document.fonts?.status === 'loading') await document.fonts.ready;
       if (session !== project || current() !== plan || !sameAccount()) return;
-      const layers = ['wifiDecorLayer', 'wifiWalls', 'wifiOpenings', 'wifiMarkers', 'wifiEquipmentLayer'];
-      if ($('wifiShowCables').checked) layers.splice(3, 0, 'wifiWireLayer');
-      if ($('wifiShowCameras').checked) layers.unshift('wifiCameraLayer');
-      const image = await window.WifiSiteExport.render({ bounds: planExtents(plan), plan,
-        background: $('wifiBackgroundImage'), surfaces: $('wifiSurfaceLayer'), groups: layers.map($),
-        showDeviceLabels: $('wifiShowLabels').checked, opacity: Number($('wifiCoverageOpacity').value) / 100,
-        coverage: $('wifiCoverage').checked ? { walls: plan.walls, openings: plan.openings, band: plan.band,
-          access_points: transmittingAps(), decor: plan.decor } : null });
+      const drawing = await window.WifiSiteExport.render({ bounds: planExtents(plan), plan,
+        cabling: wires.index(plan), network: clients.network(), cameraOutlines: wires.cameraOutlines(),
+        background: $('wifiBackgroundImage'), surfaces: $('wifiSurfaceLayer'), decor: $('wifiDecorLayer'),
+        structure: [$('wifiWalls'), $('wifiOpenings')] });
       if (!sameAccount() || session !== project) return;
       const today = new Date();
       const date = [today.getFullYear(), today.getMonth() + 1, today.getDate()].map(value => String(value).padStart(2, '0')).join('-');
-      const pdf = await options.api('/api/network/wifi-export.pdf', { method: 'POST', body: JSON.stringify({ image, title: plan.title, date }) }, { download: true });
+      const pdf = await options.api('/api/network/wifi-export.pdf', { method: 'POST', body: JSON.stringify({ ...drawing, title: plan.title, date }) }, { download: true });
       if (session !== project || !sameAccount()) return;
       const url = URL.createObjectURL(pdf);
       const link = document.createElement('a');
@@ -337,7 +333,7 @@
       link.download = (plan.title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').replace(/^[ .]+|[ .]+$/g, '') || 'Infra Sim plan') + '.pdf';
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 30000);
-      hint('PDF downloaded.');
+      hint('Three-sheet PDF downloaded.');
     } catch (error) {
       if (session === project) hint(error.message || 'Could not export the floor plan.');
     } finally {

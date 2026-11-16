@@ -254,12 +254,18 @@ def register(
             return error
         return jsonify(ok=True, data=store.list_wifi_sites(current["email"]))
 
-    @app.get("/api/network/wifi-scenarios/<scenario_id>")
+    @app.route("/api/network/wifi-scenarios/<scenario_id>", methods=["GET", "POST"])
     def network_wifi_scenario(scenario_id):
         current = actor()
         if not may_open(current) or scenario_id not in available_scenarios(current):
             return jsonify(ok=False, error="This scenario is not available"), 404
         scenario = SCENARIOS[scenario_id]
+        if request.method == "POST":
+            try:
+                site = store.start_wifi_scenario(current["email"], scenario)
+            except NetworkDataError as exc:
+                return jsonify(ok=False, error=str(exc)), 400
+            return jsonify(ok=True, data={"site": site, "briefing": scenario_briefing(scenario)}), 201
         return jsonify(ok=True, data={"site": {**scenario["site"], "scenario_id": scenario_id},
                                      "briefing": scenario_briefing(scenario)})
 
@@ -268,15 +274,17 @@ def register(
         current = actor()
         if not may_open(current):
             return jsonify(ok=False, error="Infra Sim is disabled"), 403
-        request.max_content_length = MAX_EXPORT_BYTES + 4096
+        request.max_content_length = MAX_EXPORT_BYTES
         try:
             data = json_object()
             if data is None:
                 raise ValueError("A floor plan is required")
             author = (current["record"] or {}).get("name") or ("Administrator" if current["role"] == "admin" else "Guest")
-            pdf, filename = render_plan_pdf(data.get("image"), data.get("title"), author, data.get("date"))
+            pdf, filename = render_plan_pdf(data, author)
         except RequestEntityTooLarge:
             return jsonify(ok=False, error="The floor plan is too large to export"), 413
+        except RecursionError:
+            return jsonify(ok=False, error="Floor plan annotations are nested too deeply"), 400
         except ValueError as exc:
             return jsonify(ok=False, error=str(exc)), 400
         response = send_file(io.BytesIO(pdf), mimetype="application/pdf", as_attachment=True, download_name=filename, max_age=0)
