@@ -139,6 +139,7 @@ Required runtime components:
 |       |-- network-sim-advanced.js Diagnostics, capture, deterministic traffic, IPv6, routing, and canvas tools
 |       |-- network-sim-worker.js Seeded background-traffic generator running off the UI thread
 |       |-- wifi-site.js         Lazy floor plan editor, coverage controls, and project autosave
+|       |-- wifi-site-tutorials.js Illustrated in-app Infra Sim walkthroughs and tutorial navigation
 |       |-- wifi-site-model.js   Meter-based coverage estimates and signal probes
 |       |-- wifi-site-view.js    Wi-Fi camera, adaptive grid, and snapping geometry
 |       |-- wifi-site-heatmap.js  Viewport coverage tiles, cache, and worker scheduling

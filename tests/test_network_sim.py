@@ -271,7 +271,13 @@ class NetworkStoreTests(unittest.TestCase):
         self.assertGreaterEqual(len(site["access_points"]), 16)
         self.assertTrue(all(ap["id"] in ethernet_ends for ap in site["access_points"]))
         self.assertTrue(all(closet in {wall["id"] for wall in site["walls"]}
-                            for closet in ("west-idf-top", "east-idf-top", "annex-idf-top", "pavilion-idf-east")))
+                            for closet in ("west-idf-top", "east-idf-top", "annex-idf-east", "pavilion-idf-east")))
+        athletics = next(item for item in site["equipment"] if item["id"] == "annex-dist")
+        self.assertTrue(72 < athletics["x"] < 78.2 and 3 < athletics["y"] < 9.2)
+        athletics_door = next(item for item in site["openings"] if item["id"] == "annex-idf-door")
+        athletics_wall = next(wall for wall in site["walls"] if wall["id"] == athletics_door["wall_id"])
+        self.assertEqual(athletics_wall["a"], {"x": 72, "y": 9.2})
+        self.assertEqual(athletics_wall["b"], {"x": 78.2, "y": 9.2})
         self.assertTrue(any(ap["y"] < 0 for ap in site["access_points"]))
         self.assertEqual({item["kind"] for item in site["surfaces"]}, {"floor", "sidewalk", "pavement", "landscape"})
         self.assertTrue({"basketball_court", "welding_cell", "cnc_lathe", "switchgear",
@@ -282,7 +288,10 @@ class NetworkStoreTests(unittest.TestCase):
         wired_clients = {"poe_camera", "voip_phone", "pos_terminal", "copy_machine"}
         self.assertEqual({item["kind"] for item in site["equipment"] if item["id"] in ethernet_ends} & wired_clients,
                          wired_clients)
-        camera = next(item for item in site["equipment"] if item["kind"] == "poe_camera")
+        cameras = [item for item in site["equipment"] if item["kind"] == "poe_camera"]
+        self.assertEqual(len(cameras), 8)
+        self.assertTrue(all(item["id"] in ethernet_ends for item in cameras))
+        camera = next(item for item in cameras if item["id"] == "camera-reception")
         self.assertEqual((camera["angle"], camera["field_of_view"], camera["range"]), (171, 90, 6))
         with self.assertRaisesRegex(NetworkDataError, "camera field of view"):
             validate_wifi_site({**site, "equipment": [{**item, "field_of_view": 500} if item == camera else item
@@ -304,6 +313,9 @@ class NetworkStoreTests(unittest.TestCase):
             const cables = wiring.build(input, catalog, limits);
             assert.equal(cables.error, '');
             assert.equal(cables.poweredAps.size, input.access_points.length);
+            for (const camera of input.equipment.filter(item => item.kind === 'poe_camera')) {
+              assert.ok(cables.poweredDevices.has(camera.id));
+            }
             return build(input, cables, coverageModel);
           };
           const network = paths(plan);
