@@ -59,6 +59,7 @@ Required runtime components:
 |-- wifi_school.py                Alder Ridge school building, landscape, and furnishing schedule
 |-- wifi_stadium.py               Harborline sports site building, seating, plant, and grounds schedule
 |-- wifi_industrial.py            Rivermill plant, detached buildings, and outdoor material handling schedule
+|-- wifi_motel.py                 Suntrail motel courtyard, guest rooms, and endpoint schedule
 |-- eagle_lab_features.py        Native PVE lab auth, class rules, status probes, and routes
 |-- eagle_lab_store.py           Atomic lab catalog and encrypted PVE credentials
 |-- eagle_lab_gateway.py         PIN-gated launch capabilities, live authorization, and gateway lifecycle
@@ -235,7 +236,7 @@ Required runtime components:
 
 Network Lab shares one bootstrap and landing page for Packet Sim and Infra Sim. Bootstrap lists saved project metadata for the current account. Packet Sim practice labs open writable starters and public task guides; assignment progress and grading stay on the class lab routes.
 
-Built-in Infra Sim scenarios live in `wifi_scenarios.py`, with complex site geometry in `wifi_school.py`, `wifi_stadium.py`, and `wifi_industrial.py`. Keep starter layouts and briefs behind the scenario routes. The network catalog stores class visibility overrides; signed-in students can start a scenario when any eligible class shows it. Preserve scenario IDs on private saved work so students can continue after the starter is hidden.
+Built-in Infra Sim scenarios live in `wifi_scenarios.py`, with complex site geometry in `wifi_school.py`, `wifi_stadium.py`, `wifi_industrial.py`, and `wifi_motel.py`. Keep starter layouts and briefs behind the scenario routes. The network catalog stores class visibility overrides; signed-in students can start a scenario when any eligible class shows it. Preserve scenario IDs on private saved work so students can continue after the starter is hidden.
 
 `eagle_lab_features.py` registers the native Eagle Lab section independently of
 the generic external-tool gateway. It accepts RFC1918 IPv4 PVE endpoints only,

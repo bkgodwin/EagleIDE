@@ -192,6 +192,40 @@ class NetworkStoreTests(unittest.TestCase):
                         if item["x"] < 0 or (item["x"] > 168 and 27 < item["y"] < 69)}
         self.assertTrue({"mobile_crane", "telehandler", "forklift", "steel_stock"}.issubset(yard_symbols))
 
+    def test_motel_starter_has_inward_entries_and_only_the_requested_endpoints(self):
+        site = validate_wifi_site(SCENARIOS["suntrail-motor-lodge"]["site"])
+        labels = {item["text"] for item in site["labels"]}
+        room_numbers = set(range(101, 144))
+        self.assertEqual({int(text) for text in labels if text.isdecimal()}, room_numbers)
+        self.assertTrue({"Courtyard pool", "Reception", "Breakfast dining", "Buffet line",
+                         "Kitchen", "New wing hall", "Guest parking", "Comms closet"}.issubset(labels))
+        walls = {item["id"]: item for item in site["walls"]}
+        for bank, material, door_count in (
+            ("north-court", "brick", 12), ("east-court", "brick", 6),
+            ("south-court", "brick", 5), ("west-court", "brick", 8),
+            ("annex-north", "drywall", 6), ("annex-south", "drywall", 6),
+        ):
+            entry = bank + "-entries"
+            with self.subTest(bank=bank):
+                self.assertEqual(walls[entry]["material"], material)
+                self.assertEqual(sum(item["wall_id"] == entry and item["kind"] == "door"
+                                     for item in site["openings"]), door_count)
+
+        self.assertTrue(site["floor_locked"])
+        self.assertFalse(any(site[layer] for layer in ("access_points", "cables", "pass_throughs")))
+        devices = {item["id"]: item for item in site["equipment"]}
+        self.assertEqual(set(devices), {"reception-pos"} | {f"guest-phone-{number}" for number in room_numbers})
+        desks = {(item["x"], item["y"]) for item in site["decor"] if item["kind"] == "desk"}
+        for number in room_numbers:
+            phone = devices[f"guest-phone-{number}"]
+            self.assertEqual(phone["kind"], "voip_phone")
+            self.assertIn((phone["x"], phone["y"]), desks)
+        self.assertEqual(len(desks), len(room_numbers))
+        self.assertEqual(sum(item["kind"] == "bed" for item in site["decor"]), 55)
+        pos = devices["reception-pos"]
+        self.assertEqual(pos["kind"], "pos_terminal")
+        self.assertTrue(72.2 < pos["x"] < 84 and 40.8 < pos["y"] < 52.1)
+
     def test_infra_campus_example_can_be_saved_and_all_aps_are_wired(self):
         root = Path(__file__).resolve().parents[1]
         script = """
