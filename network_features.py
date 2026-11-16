@@ -17,6 +17,7 @@ from network_store import MAX_WIFI_SITE_BYTES, WIFI_LIMITS, NetworkDataError, Ne
 from wifi_cabling import CABLING_CATALOG
 from wifi_scenarios import SCENARIOS, scenario_briefing, scenario_summary
 from wifi_site_pdf import MAX_EXPORT_BYTES, render_plan_pdf
+from wifi_site_network import SERVER_SERVICES
 
 
 def register(
@@ -134,7 +135,7 @@ def register(
                 "scenarios": [scenario_summary(item) for scenario_id, item in SCENARIOS.items()
                               if scenario_id in allowed_scenarios],
                 "wifi_limits": WIFI_LIMITS,
-                "wifi_cabling": CABLING_CATALOG,
+                "wifi_cabling": {**CABLING_CATALOG, "server_services": SERVER_SERVICES},
                 "command_reference": COMMAND_REFERENCE,
                 "port_reference": PORT_REFERENCE,
                 "acronym_reference": ACRONYM_REFERENCE,

@@ -2,7 +2,8 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { build: cabling } = require('../static/js/wifi-cabling-model.js');
 const { coverageModel } = require('../static/js/wifi-site-model.js');
-const { INTERNET, INTERNET_IP, DEFAULT_SSID, DEFAULT_DHCP, coverageAps, dhcpPool, address, radio, build, ping } =
+const { INTERNET, INTERNET_IP, DEFAULT_SSID, DEFAULT_DHCP, coverageAps, dhcpPool, address, radio,
+  build, ping, serviceId, reachableServices } =
   require('../static/js/wifi-site-client-model.js');
 
 const eth = (count, extras = {}) => ({ prefix: 'ETH', count, media: 'ethernet', speed: 1000, ...extras });
@@ -13,7 +14,7 @@ const catalog = {
     desktop: { groups: [eth(1)] }, phone: { groups: [] }, access_point: { groups: [eth(1)], poe_draw: 20 },
     poe_camera: { groups: [eth(1)], poe_draw: 12 }, voip_phone: { groups: [eth(1)], poe_draw: 7 },
     pos_terminal: { groups: [eth(1)] }, copy_machine: { groups: [eth(1)] },
-    access_switch: { groups: [eth(8)] },
+    access_switch: { groups: [eth(8)] }, server: { groups: [eth(1)] },
   },
   isps: { primary: { name: 'Primary', speed: 300, media: 'ethernet', rtt_ms: 40 } },
   epsilon: .0002, crossing_tolerance: .075, pass_spacing: 6.096, pass_capacity: 10,
@@ -205,4 +206,50 @@ test('first-match firewall denies or allows routed requests while same-VLAN ping
   const allowed = ping(graph(plan), 'near', 'desktop', () => 1);
   assert.equal(allowed.stages.length, 10);
   assert.ok(allowed.rtt > 0);
+});
+
+test('service VMs share a wired host and lease independently on their configured VLANs', () => {
+  const plan = layout();
+  const router = plan.equipment.find(device => device.id === 'router');
+  const switchDevice = plan.equipment.find(device => device.id === 'switch');
+  switchDevice.port_vlans = { ETH1: [0, 20], ETH2: [0, 20], ETH4: [0, 20] };
+  plan.ssids = [DEFAULT_SSID, { id: 'guest', name: 'Guest', band: '5', vlan: 20 }];
+  plan.access_points[0].ssid_ids = ['default', 'guest'];
+  plan.equipment.find(device => device.id === 'near').ssid_id = 'guest';
+  const host = { id: 'server', kind: 'server', x: 12, y: 5, services: [
+    { kind: 'dns', vlan: 0, ip: '192.168.0.2' }, { kind: 'web', vlan: 20, ip: '' },
+  ] };
+  plan.equipment.push(host);
+  plan.cables.push(wire('host-link', end('switch', 'ETH4'), end(host.id)));
+
+  const dns = serviceId(host.id, 'dns'), web = serviceId(host.id, 'web');
+  const serviceKinds = (network, client) => reachableServices(network, client).map(service => service.kind);
+  let network = graph(plan);
+  assert.equal(network.clients.get(host.id).vlan, 0);
+  assert.equal(network.clients.get(web).vlan, 20);
+  assert.equal(address(network.clients.get(dns).lease.ip), '192.168.0.2');
+  assert.equal(network.clients.get(dns).lease.static, true);
+  assert.equal(network.clients.get(web).lease.static, false);
+  const addresses = [host.id, dns, web, 'desktop', 'near'].map(id => network.clients.get(id).lease.ip);
+  assert.equal(new Set(addresses).size, addresses.length);
+  assert.deepEqual(serviceKinds(network, 'desktop'), ['dns', 'web']);
+  const pingWeb = ping(network, 'desktop', web);
+  assert.ok(pingWeb.rtt > 0);
+  assert.ok(pingWeb.stages.every(stage => stage.points?.length && stage.media !== 'virtual'));
+
+  router.firewall = [{ action: 'deny', source_vlan: 20, destination_ip: '192.168.0.2' }];
+  network = graph(plan, network);
+  assert.deepEqual(serviceKinds(network, 'near'), ['web']);
+  assert.match(ping(network, 'near', dns, () => 1).reason, /firewall rule 1/);
+  assert.ok(ping(network, 'near', web, () => 1).rtt > 0);
+
+  switchDevice.port_vlans.ETH4 = [0];
+  network = graph(plan, network);
+  assert.equal(network.clients.get(web).lease, undefined);
+  assert.deepEqual(serviceKinds(network, 'desktop'), ['dns']);
+  plan.cables.pop();
+  network = graph(plan, network);
+  assert.equal(network.clients.get(dns).lease, undefined);
+  assert.deepEqual(serviceKinds(network, 'desktop'), []);
+  assert.notEqual(address(network.clients.get('desktop').lease.ip), '192.168.0.2');
 });

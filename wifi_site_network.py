@@ -1,4 +1,4 @@
-"""Validation for Infra Sim SSIDs, switch VLANs, and router settings."""
+"""Validation for Infra Sim SSIDs, VLANs, router settings, and service VMs."""
 
 import ipaddress
 import re
@@ -10,6 +10,18 @@ NETWORK_LIMITS = {"ssids": 64, "vlans": 64, "firewall_rules": 64}
 DEFAULT_SSID = {"id": "default", "name": "Default", "band": "both", "vlan": 0}
 DEFAULT_DHCP = {"gateway": "192.168.0.1/24", "dns": "1.1.1.1", "fallback_dns": "8.8.8.8"}
 MANAGED_SWITCHES = {"core_switch", "distribution_switch"}
+SERVER_SERVICES = {
+    "backup": "Backup",
+    "database": "Database",
+    "directory": "Directory services",
+    "dns": "DNS",
+    "file": "File sharing",
+    "mail": "Mail",
+    "monitoring": "Monitoring",
+    "ntp": "Time (NTP)",
+    "print": "Print",
+    "web": "Web",
+}
 PREFIX = re.compile(r"0|[1-9][0-9]?")
 
 
@@ -181,5 +193,29 @@ def validate_network(raw, plan, *, label, safe_id):
             raise ValueError("Use a unique usable IP address in the router's pool")
         occupied.add((router, ip))
         device["reservation"] = {"router_id": router, "ip": str(ip)}
+
+    service_ips = {ip for _, ip in occupied} | {gateway.ip for gateway in gateways.values()}
+    for item, device in zip(raw.get("equipment", []), plan["equipment"]):
+        if "services" not in item:
+            continue
+        if device["kind"] != "server":
+            raise ValueError("Service VMs require a rack server")
+        services, kinds = [], set()
+        for service in _list(item["services"], len(SERVER_SERVICES), "service VMs per server"):
+            kind = service.get("kind") if isinstance(service, dict) else None
+            if not isinstance(kind, str) or kind not in SERVER_SERVICES or kind in kinds:
+                raise ValueError("Choose distinct service types from the server catalog")
+            kinds.add(kind)
+            value = service.get("ip", "")
+            if value != "":
+                ip = _ip(value)
+                first = int(ip) >> 24
+                if not 1 <= first <= 223 or first == 127 or ip in service_ips:
+                    raise ValueError("Use a unique unicast IPv4 address for each service VM")
+                service_ips.add(ip)
+                value = str(ip)
+            services.append({"kind": kind, "vlan": vlan(service.get("vlan"), vlan_ids), "ip": value})
+        if services:
+            device["services"] = services
 
     return {"ssids": ssids, "vlans": vlans}

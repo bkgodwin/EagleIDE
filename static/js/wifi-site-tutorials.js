@@ -44,6 +44,7 @@
         '<strong>Connect the rear run.</strong> On the floor plan, give the remote device a label and use <strong>Cable</strong> to connect it to a rear port on the patch panel. In the rack view, hover over the matching front port to see the label.',
         '<strong>Patch the front.</strong> In the rack, choose <strong>Cable</strong> and pick Ethernet or SFP fiber. Zoom in with <strong>+</strong> and scroll as needed. Select two highlighted ports on different devices. The <strong>Patch cables</strong> list shows each connection and lets you disconnect it.',
         '<strong>Rearrange the rack.</strong> Return to <strong>Select</strong>, then drag a chassis to an open position or use its <strong>Mounting position</strong> menu. The cables stay connected and redraw at the new port positions. Choose <strong>Fit width</strong> to see the full width again.',
+        '<strong>Host services on a rack server.</strong> Select the server and enable a service under <strong>Service VMs</strong>. Choose its VLAN, leave IPv4 blank for DHCP or enter an address in a reachable router’s subnet, and choose <strong>Save VM</strong>. Add the VM’s VLAN to the switch port facing the server. Select a client to see its <strong>Reachable server services</strong> and ping their addresses.',
       ],
     },
     {

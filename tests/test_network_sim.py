@@ -831,8 +831,10 @@ class NetworkRouteTests(unittest.TestCase):
         self.assertIn('Route 047', ' '.join(text for page in sheets[4:-1] for text in page))
         self.assertIn('Client 047', ' '.join(text for page in sheets[4:-1] for text in page))
         sheets[:] = [[]]
-        rack_report = {**payload, "racks": [{
-            "name": "West IDF", "power": {"watts": 50, "minutes": 104, "overloaded": False},
+        rack_report = {**payload, "equipment": [*payload["equipment"], {
+            "name": "West IDF", "kind": "rack", "rack_id": "west-idf", "point": [.25, .25],
+        }], "racks": [{
+            "id": "west-idf", "name": "West IDF", "power": {"watts": 50, "minutes": 104, "overloaded": False},
             "devices": [
                 {"id": "panel", "kind": "patch_panel", "name": "Building header", "u": 16,
                  "ports": [{"id": "FRONT1", "connected": True, "destination": "North AP"}]},
@@ -847,6 +849,11 @@ class NetworkRouteTests(unittest.TestCase):
         with patch('wifi_site_pdf.Canvas', RecordingCanvas), self.client.post(url, json=rack_report, headers=headers) as response:
             self.assertEqual(response.status_code, 200)
         self.assertEqual(len(sheets[:-1]), 6)
+        for sheet in sheets[:3]:
+            diagram = ' '.join(sheet)
+            for label in ("Rack equipment", "D03  West IDF", "U16 Building header",
+                          "U14 Floor switch", "U1-U2 Battery backup"):
+                self.assertIn(label, diagram)
         for label in ("Rack elevation", "West IDF", "104 MIN", "FRONT1", "Patch to AP", "North AP"):
             self.assertIn(label, ' '.join(sheets[4]))
         for label in ("Bill of Materials", "32.81 ft", "Estimated total", "$391.80"):
@@ -928,6 +935,53 @@ class NetworkRouteTests(unittest.TestCase):
         self.assertEqual(relocated.status_code, 200, relocated.json)
         self.assertEqual(relocated.json["data"]["equipment"][2]["x"], 10)
         self.assertEqual(relocated.json["data"]["cables"], saved.json["data"]["cables"])
+
+    def test_infra_server_vms_persist_and_validate_addresses_types_and_vlans(self):
+        url = "/api/network/wifi-sites/service-lab"
+        headers = {"X-Teacher-Token": "teacher-token"}
+        plan = self.wifi_plan()
+        plan["vlans"] = [{"id": 20, "name": "Services"}]
+        plan["equipment"] = [
+            {"id": "rack", "kind": "rack", "x": 0, "y": 0},
+            {"id": "router", "kind": "router", "rack_id": "rack", "rack_u": 16},
+            {"id": "host", "kind": "server", "rack_id": "rack", "rack_u": 12, "services": [
+                {"kind": "dns", "vlan": 0},
+                {"kind": "web", "vlan": 20, "ip": " 192.168.0.21 "},
+            ]},
+            {"id": "client", "kind": "desktop", "x": 2, "y": 0,
+             "reservation": {"router_id": "router", "ip": "192.168.0.22"}},
+        ]
+        saved = self.client.put(url, headers=headers, json={"site": plan, "revision": 0})
+        self.assertEqual(saved.status_code, 200, saved.json)
+        self.assertEqual(self.client.get(url, headers=headers).json["data"]["equipment"][2]["services"], [
+            {"kind": "dns", "vlan": 0, "ip": ""},
+            {"kind": "web", "vlan": 20, "ip": "192.168.0.21"},
+        ])
+        for entry, reason in (
+            ({"kind": "unknown", "ip": ""}, "catalog"),
+            ({"kind": "dns", "ip": ""}, "distinct"),
+            ({"vlan": 30}, "defined VLAN"),
+            ({"ip": "127.0.0.1"}, "unicast IPv4"),
+            ({"ip": "192.168.0.1"}, "unique"),
+            ({"ip": "192.168.0.22"}, "unique"),
+        ):
+            with self.subTest(entry=entry):
+                bad = copy.deepcopy(plan)
+                bad["equipment"][2]["services"][1].update(entry)
+                invalid = self.client.put(url, headers=headers, json={"site": bad, "revision": 1})
+                self.assertEqual(invalid.status_code, 400, invalid.json)
+                self.assertIn(reason, invalid.json["error"])
+        bad = copy.deepcopy(plan)
+        bad["equipment"][3]["services"] = [{"kind": "dns", "vlan": 0}]
+        invalid = self.client.put(url, headers=headers, json={"site": bad, "revision": 1})
+        self.assertEqual(invalid.status_code, 400)
+        self.assertIn("rack server", invalid.json["error"])
+        old_editor = {**plan, "schema_version": 12}
+        old_editor["equipment"][2].pop("services")
+        stale = self.client.put(url, headers=headers, json={"site": old_editor, "revision": 1})
+        self.assertEqual(stale.status_code, 409)
+        self.assertEqual(validate_wifi_site(old_editor)["schema_version"], WIFI_SCHEMA_VERSION)
+        self.assertNotIn("services", validate_wifi_site(old_editor)["equipment"][2])
 
     def test_disabled_blocks_guest_but_admin_can_privately_preview(self):
         self.config_state["network_sim_enabled"] = False

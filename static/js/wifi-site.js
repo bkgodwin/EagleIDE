@@ -20,7 +20,7 @@
     $('wifiCoverageStatus').hidden = !updating;
   });
   const endpoint = '/api/network/wifi-sites';
-  const schemaVersion = 12;
+  const schemaVersion = 13;
   const wireKinds = window.WifiSiteCabling.kinds;
   const floorKinds = ['walls', 'openings', 'labels', 'decor', 'surfaces'];
   const floorLayers = [...floorKinds, 'background', 'background_color'];
@@ -118,7 +118,8 @@
     deviceInspector: item => networkSettings.deviceInspector(item),
     exhaustedRouters: () => [...clients.network().routers.values()].filter(router => router.available === 0).map(router => router.id),
   });
-  const clients = window.WifiSiteClients.create({ plan: current, cabling: () => wires.index(), escape, selected: inspectorId,
+  const serviceNames = () => options.catalog.server_services;
+  const clients = window.WifiSiteClients.create({ plan: current, cabling: () => wires.index(), escape, selected: inspectorId, serviceNames,
     networkInspector: (item, info) => networkSettings.clientInspector(item, info) });
   const racks = window.WifiSiteRacks.create({
     plan: current, data: () => wires.index(), catalog: () => options.catalog, escape, id,
@@ -128,7 +129,7 @@
   });
   const networkSettings = window.WifiSiteNetwork.create({
     plan: current, cabling: () => wires.index(), graph: clients.network, update, replace: replaceObject,
-    render: renderInspector, hint, escape, choices: choiceList, id, limits: () => options.limits,
+    render: renderInspector, hint, escape, choices: choiceList, id, limits: () => options.limits, serviceNames,
   });
   const structure = window.WifiSiteStructure.create({
     plan: current, project: () => session, walls: () => wires.index().walls, selected: () => selected,
@@ -688,7 +689,8 @@
     const { kind, item } = match;
     const sameObject = panel.dataset.objectId === item.id;
     const openSections = sameObject ? [...panel.querySelectorAll('details[data-wifi-config][open]')]
-      .map(detail => detail.dataset.wifiConfig) : item.kind === 'router' ? ['dhcp'] : item.kind === 'rack' && inRack ? ['placement'] : ['ports'];
+      .map(detail => detail.dataset.wifiConfig) : item.kind === 'router' ? ['dhcp'] : item.kind === 'rack' && inRack ? ['placement'] :
+        ['ports', 'service-vms', 'reachable-services'];
     const focusId = sameObject && panel.contains(document.activeElement) ? document.activeElement.id : '';
     panel.dataset.objectId = item.id;
     if (!inRack) renderObjectHeading(match);

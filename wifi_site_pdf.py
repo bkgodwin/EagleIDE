@@ -35,6 +35,10 @@ _SCHEDULE_TITLE = 'Cable schedule and device inventory'
 _SCHEDULE_GAP = 24
 _CABLE_COLUMNS = (134, 160, 160, 61, 62)
 _DEVICE_COLUMNS = (190, 115, 272)
+_RACK_COLUMN = 208
+_RACK_COLUMN_GAP = 12
+_RACK_ROW = 11
+_RACK_COLUMN_HEADER = 23
 _SHEETS = ('Network layout', 'Wi-Fi coverage', 'Camera coverage')
 _GLYPHS = {
     'router': 'R', 'core_switch': 'S', 'distribution_switch': 'S', 'access_switch': 'S', 'keystone': 'J',
@@ -139,6 +143,7 @@ def _read_annotations(data):
             details = [_text(value, 120) for value in _list(item.get('details', []), 4)]
             output.append(dict(ref=f'{prefix}{i:02}', name=_text(item.get('name'), 160), kind=kind,
                                point=_point(item.get('point')), details=details, powered=powered, mounted=mounted,
+                               rack_id=_text(item.get('rack_id', ''), 64) if kind == 'rack' else '',
                                radio_plan=_text(item.get('radio_plan', ''), 120),
                                cone=_points(item.get('cone', []), 256) if kind == 'poe_camera' else []))
     for i, item in enumerate(_list(data.get('cables', []), 512), 1):
@@ -256,6 +261,8 @@ def _wire_anchors(points):
 
 
 def _device_details(item, sheet):
+    if item['kind'] == 'rack':
+        return []
     if sheet == 1 and item['kind'] == 'access_point':
         radios = [item['radio_plan']] if item['radio_plan'] else []
         return radios + (item['details'] or (['No SSIDs enabled'] if item['powered'] else ['Not transmitting (no PoE)']))
@@ -279,7 +286,7 @@ def _arrange(sheet, frame, plot, notes, devices, cables):
         is_note = items is notes
         for item in items:
             title = item['name']
-            if not is_note and name_counts[title] > 1:
+            if not is_note and (name_counts[title] > 1 or item['kind'] == 'rack'):
                 title = f"{item['ref']}  {title}"
             details = [] if is_note else _device_details(item, sheet)
             anchor = [_map_point(frame, item['point'])]
@@ -304,8 +311,46 @@ def _arrange(sheet, frame, plot, notes, devices, cables):
     return marks, note_refs
 
 
-def _layout(image_size, notes, equipment, aps, cables):
-    sheets = ([*(item for item in equipment if not item['mounted']), *aps], aps, [item for item in equipment if item['kind'] == 'poe_camera'])
+def _rack_inventory(racks, equipment):
+    references = {item['rack_id']: item['ref'] for item in equipment if item['rack_id']}
+    inventory = []
+    for rack in racks:
+        title = rack['name'] or 'Equipment rack'
+        if rack['id'] and rack['id'] in references:
+            title = f"{references[rack['id']]}  {title}"
+        rows = []
+        for device in sorted(rack['gear'], key=lambda item: -item['u']):
+            start = device['u']
+            last = start + device['size'] - 1
+            units = f'U{start}' if start == last else f'U{start}-U{last}'
+            rows.append((units, _wrap(device['name'] or _DEVICE_TYPES[device['kind']], _FONT, 8, _RACK_COLUMN - 61)))
+        if not rows:
+            rows.append(('', ['Empty rack']))
+        heading = _wrap(title, _BOLD, 9, _RACK_COLUMN - 16)
+        height = _RACK_ROW * (len(heading) + sum(len(lines) for _, lines in rows)) + 13
+        inventory.append((heading, rows, height))
+    return inventory
+
+
+def _rack_columns(inventory, height):
+    columns, remaining = [], 0
+    capacity = height - _RACK_COLUMN_HEADER
+    for group in inventory:
+        needed = group[2]
+        if needed > capacity:
+            return None
+        if needed > remaining:
+            columns.append([])
+            remaining = capacity
+        columns[-1].append(group)
+        remaining -= needed
+    return columns
+
+
+def _layout(image_size, notes, equipment, aps, cables, inventory):
+    racks = [item for item in equipment if item['kind'] == 'rack']
+    sheets = ([*(item for item in equipment if not item['mounted']), *aps], [*aps, *racks],
+              [*(item for item in equipment if item['kind'] == 'poe_camera'), *racks])
     landscape_sizes = (_TABLOID, (1728, 1296), (2592, 1728), (3456, 2592), (4320, 3456))
     ratio = image_size[0] / image_size[1]
     best = None
@@ -313,6 +358,13 @@ def _layout(image_size, notes, equipment, aps, cables):
     for w, h in landscape_sizes:
         paper = (h, w) if ratio < .76 else (w, h)
         plot = Box(_MARGIN + 4, _MARGIN + 38, paper[0] - 2 * _MARGIN - 8, paper[1] - 2 * _MARGIN - 91)
+        columns = _rack_columns(inventory, plot.h)
+        if columns is None:
+            continue
+        directory_width = len(columns) * (_RACK_COLUMN + _RACK_COLUMN_GAP)
+        if directory_width > plot.w / 2:
+            continue
+        plot = Box(plot.x, plot.y, plot.w - directory_width, plot.h)
         image_w = min(plot.w - 14, (plot.h - 14) * ratio)
         image_h = image_w / ratio
         frame = Box(plot.x + (plot.w - image_w) / 2, plot.y + (plot.h - image_h) / 2, image_w, image_h)
@@ -327,7 +379,7 @@ def _layout(image_size, notes, equipment, aps, cables):
         if len(layouts) == len(sheets):
             references = sum(mark.style == 'tag' for marks in layouts for mark in marks)
             if references < fewest_references:
-                best = paper, frame, sheets, layouts, note_refs
+                best = paper, frame, sheets, layouts, note_refs, plot, columns
                 fewest_references = references
             if references == 0:
                 break
@@ -423,8 +475,33 @@ def _draw_legend(canvas, index, paper, devices):
         if not devices or not any(item['powered'] and item['details'] for item in devices):
             _draw_line(canvas, 'No access points are transmitting.', _MARGIN, y - 12, _FONT, 8, _MUTED)
     elif index == 2:
-        legend = 'Solid cones show powered cameras. Dashed cones mark unpowered previews.' if devices else 'No cameras are placed on this plan.'
+        legend = ('Solid cones show powered cameras. Dashed cones mark unpowered previews.'
+                  if any(item['kind'] == 'poe_camera' for item in devices) else 'No cameras are placed on this plan.')
         _draw_line(canvas, legend, x, y, _FONT, 8, _MUTED)
+
+
+def _draw_rack_inventory(canvas, plot, columns):
+    left = plot.x + plot.w + _RACK_COLUMN_GAP
+    top = plot.y + plot.h
+    for column in columns:
+        _draw_line(canvas, 'Rack equipment', left, top - 10, _BOLD, 11, _INK)
+        y = top - _RACK_COLUMN_HEADER
+        for heading, rows, height in column:
+            canvas.setFillColor(_WASH)
+            canvas.setStrokeColor(_RULE)
+            canvas.setLineWidth(.5)
+            canvas.roundRect(left, y - height + 5, _RACK_COLUMN, height - 5, 4, stroke=1, fill=1)
+            line_y = y - 12
+            for line in heading:
+                _draw_line(canvas, line, left + 8, line_y, _BOLD, 9, _NETWORK)
+                line_y -= _RACK_ROW
+            for units, lines in rows:
+                _draw_line(canvas, units, left + 8, line_y, _BOLD, 7.5, _MUTED)
+                for line in lines:
+                    _draw_line(canvas, line, left + 53, line_y, _FONT, 8, _INK)
+                    line_y -= _RACK_ROW
+            y -= height
+        left += _RACK_COLUMN + _RACK_COLUMN_GAP
 
 
 def _draw_cables(canvas, frame, wires):
@@ -611,7 +688,7 @@ def _read_racks(data):
         power = item["power"]
         if type(power.get("overloaded")) is not bool:
             raise ValueError("Invalid rack power status")
-        racks.append(dict(name=_text(item.get("name"), 60), gear=gear, patches=patches,
+        racks.append(dict(id=_text(item.get("id", ""), 64), name=_text(item.get("name"), 60), gear=gear, patches=patches,
                           watts=_number(power.get("watts"), 0, 20_000),
                           minutes=_number(power.get("minutes"), 0, 100_000), overloaded=power["overloaded"]))
     return racks
@@ -798,10 +875,11 @@ def render_plan_pdf(data, author):
     world_width = _number(data.get('drawing_width', image.getSize()[0]), .01, 400_000_000_000)
     _load_fonts()
     notes, equipment, aps, cables = _read_annotations(data)
-    paper, frame, devices, layouts, note_refs = _layout(image.getSize(), notes, equipment, aps, cables)
+    racks = _read_racks(data)
+    inventory = _rack_inventory(racks, equipment)
+    paper, frame, devices, layouts, note_refs, plot, columns = _layout(image.getSize(), notes, equipment, aps, cables, inventory)
     cable_pages, device_pages = _schedules(equipment, aps, notes, note_refs, cables, units)
     schedule_count = max(len(cable_pages), len(device_pages))
-    racks = _read_racks(data)
     costs = _cost_breakdown(data["bill"], units) if "bill" in data else None
     sheet_count = len(_SHEETS) + schedule_count + len(racks) + (costs is not None)
     out = io.BytesIO()
@@ -820,6 +898,7 @@ def render_plan_pdf(data, author):
             _draw_cones(canvas, frame, devices[index])
         _draw_marks(canvas, marks)
         _draw_markers(canvas, frame, notes, devices[index])
+        _draw_rack_inventory(canvas, plot, columns)
         canvas.showPage()
     canvas.setPageSize(_TABLOID)
     for index in range(schedule_count):

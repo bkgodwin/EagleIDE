@@ -99,6 +99,7 @@
     const notes = plan.labels.map(note => ({ point: point(note), name: note.text }));
     const equipment = plan.equipment.map(item => ({ point: point(cabling.location(item)),
       name: cabling.name(item), kind: item.kind, details: details(item), mounted: Boolean(item.rack_id),
+      ...(item.kind === 'rack' ? { rack_id: item.id } : {}),
       ...(item.kind === 'poe_camera' ? cameraData(item) : {}) }));
     const passes = plan.pass_throughs.map(item => ({ point: point(cabling.location(item)),
       name: 'Concrete pass-through', kind: 'pass_through', details: [] }));

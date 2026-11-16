@@ -12,6 +12,7 @@
   const isClient = device => CLIENTS.has(device?.kind);
   const managed = device => ['core_switch', 'distribution_switch'].includes(device.kind);
   const portVlans = (device, port) => device.port_vlans?.[port] ?? [0];
+  const serviceId = (hostId, kind) => `:vm:${hostId}:${kind}`;
   const apSsids = (ap, ssids) => ap.ssid_ids ?? ssids.slice(0, 1).map(ssid => ssid.id);
   const hasBand = (ssid, band) => ssid.band === 'both' || ssid.band === band;
 
@@ -31,6 +32,12 @@
   }
 
   const address = ip => [24, 16, 8, 0].map(shift => (ip >>> shift) & 255).join('.');
+
+  function serviceAddress(value) {
+    const ip = ipNumber(value);
+    const first = ip >>> 24;
+    return first > 0 && first < 224 && first !== 127 ? ip : null;
+  }
 
   function parseCidr(value, defaultPrefix = 32) {
     const parts = value.trim().split('/');
@@ -86,14 +93,15 @@
     if (vlan === null) return visited;
     for (const id of queue) {
       const device = network.devices.get(id);
-      if (id !== from && (isClient(device) || device.kind === 'router')) continue;
+      if (id !== from && (network.clients.has(id) || device.kind === 'router')) continue;
       for (const hop of network.links.get(id)) {
         if (hop.wan || visited.has(hop.to)) continue;
         const peer = network.devices.get(hop.to);
+        const endpoint = network.clients.get(hop.to);
         if ((managed(device) && !portVlans(device, hop.fromPort).includes(vlan)) ||
             (managed(peer) && !portVlans(peer, hop.toPort).includes(vlan)) ||
             (hop.media === 'wireless' && hop.vlan !== vlan) ||
-            (isClient(peer) && network.clients.get(peer.id).vlan !== vlan)) continue;
+            (endpoint && endpoint.vlan !== vlan)) continue;
         visited.set(hop.to, { previous: id, hop });
         queue.push(hop.to);
       }
@@ -113,12 +121,49 @@
   }
 
   function reversePath(hops) {
-    return [...hops].reverse().map(hop => ({ ...hop, points: [...hop.points].reverse() }));
+    return [...hops].reverse().map(hop => ({ ...hop, points: hop.points && [...hop.points].reverse() }));
+  }
+
+  function attachServices(network) {
+    const hosts = [...network.devices.values()].filter(device => device.kind === 'server' && device.services?.length);
+    if (!hosts.length) return;
+    const bridges = new Map(hosts.map(host => [host.id, `:bridge:${host.id}`]));
+    network.devices = new Map(network.devices);
+    // The host and guests share a virtual switch on the physical NIC. They remain separate VLAN endpoints.
+    network.links = new Map([...network.links].map(([id, hops]) => [bridges.get(id) ?? id, hops.map(hop =>
+      bridges.has(hop.to) ? { ...hop, to: bridges.get(hop.to) } : hop)]));
+    for (const host of hosts) {
+      const bridge = bridges.get(host.id);
+      const { speed } = network.clients.get(host.id);
+      const hop = { media: 'virtual', length: 0, speed };
+      const attach = id => {
+        network.links.set(id, [{ ...hop, to: bridge }]);
+        network.links.get(bridge).push({ ...hop, to: id });
+      };
+      network.devices.set(bridge, { id: bridge, kind: 'vm_bridge', hostId: host.id });
+      attach(host.id);
+      for (const service of host.services) {
+        const id = serviceId(host.id, service.kind);
+        network.services.set(id, { ...service, id, hostId: host.id, bridge });
+        network.devices.set(id, { id, kind: 'service_vm', hostId: host.id });
+        network.clients.set(id, { speed, vlan: service.vlan });
+        attach(id);
+      }
+    }
   }
 
   function leaseClients(network, prior) {
-    const { clients, devices, routers } = network;
+    const { clients, devices, routers, services } = network;
     const occupied = new Map([...routers.keys()].map(id => [id, new Set()]));
+    const bridgePaths = new Map();
+    // Keep configured VM addresses out of compatible DHCP pools, even while a guest is disconnected.
+    for (const service of services.values()) {
+      if (!service.ip) continue;
+      const ip = serviceAddress(service.ip);
+      for (const router of routers.values()) {
+        if (usable(router.pool, ip)) occupied.get(router.id).add(ip);
+      }
+    }
     for (const [id, client] of clients) {
       const reserved = devices.get(id).reservation;
       const router = routers.get(reserved?.router_id);
@@ -129,14 +174,28 @@
     }
     for (const [id, client] of clients) {
       if (!client.speed) continue;
-      client.paths = lanPaths(network, id, client.vlan);
+      const guest = services.get(id);
+      if (guest) {
+        // Guests on the same bridge and VLAN differ only by a local virtual hop.
+        const key = `${guest.bridge}:${client.vlan}`;
+        if (!bridgePaths.has(key)) bridgePaths.set(key, lanPaths(network, guest.bridge, client.vlan));
+        client.paths = bridgePaths.get(key);
+      } else {
+        client.paths = lanPaths(network, id, client.vlan);
+      }
       if (client.lease) {
         if (client.paths.has(client.lease.router)) client.router = routers.get(client.lease.router);
         continue;
       }
-      const router = [...client.paths.keys()].map(peer => routers.get(peer)).find(Boolean);
+      const staticIp = guest?.ip ? serviceAddress(guest.ip) : null;
+      const router = [...client.paths.keys()].map(peer => routers.get(peer))
+        .find(candidate => candidate && (!guest?.ip || usable(candidate.pool, staticIp)));
       if (!router) continue;
       client.router = router;
+      if (guest?.ip) {
+        client.lease = { ip: staticIp, router: router.id, static: true };
+        continue;
+      }
       router.waiting.push(client);
       const before = prior?.clients.get(id);
       const ip = before?.lease?.ip;
@@ -173,7 +232,8 @@
     const ssids = plan.ssids ?? [DEFAULT_SSID];
     const surveys = new Map();
     const clients = new Map(), routers = new Map();
-    const network = { devices, links, location, clients, routers };
+    const network = { devices, links, clients, routers, services: new Map(),
+      location: device => location(device?.hostId ? devices.get(device.hostId) : device) };
     for (const device of devices.values()) {
       if (device.kind === 'router') {
         const pool = dhcpPool(device.dhcp ?? DEFAULT_DHCP);
@@ -210,6 +270,7 @@
       links.get(device.id).push({ ...link, to: best.ap.id, points });
       links.get(best.ap.id).push({ ...link, to: device.id, points: [...points].reverse() });
     }
+    attachServices(network);
     leaseClients(network, prior);
     for (const client of clients.values()) {
       if (!client.lease || !client.router?.isp) continue;
@@ -235,9 +296,33 @@
   }
 
   function latency(hop) {
+    if (hop.media === 'virtual') return 0;
     if (hop.media === 'internet') return hop.rtt / 2;
     if (hop.media === 'wireless') return 1.4 + hop.length * .027 + Math.max(0, -hop.signal - 50) * .12;
     return (hop.media === 'fiber' ? .16 : .35) + hop.length * .003;
+  }
+
+  function clientRoute(network, source, target) {
+    const destination = network.clients.get(target);
+    if (!destination?.speed || !destination.lease) return {};
+    if (source.vlan === destination.vlan) return { outbound: path(source.paths, target) };
+    const router = source.router;
+    const returnPath = path(destination.paths, router?.id);
+    if (!returnPath) return {};
+    const outbound = path(source.paths, router.id);
+    const policyDrop = firewall(network.devices.get(router.id), { vlan: source.vlan, ip: source.lease.ip },
+      { vlan: destination.vlan, ip: destination.lease.ip });
+    if (!policyDrop) outbound.push(...reversePath(returnPath));
+    return { outbound, policyDrop };
+  }
+
+  function reachableServices(network, from) {
+    const source = network.clients.get(from);
+    if (!source?.speed || !source.lease) return [];
+    return [...network.services.values()].filter(service => {
+      const { outbound, policyDrop } = clientRoute(network, source, service.id);
+      return service.id !== from && outbound?.length && !policyDrop;
+    });
   }
 
   function ping(network, from, target, random = Math.random) {
@@ -250,16 +335,7 @@
     let outbound, policyDrop = 0;
     if (destination) {
       if (!destination.speed || !destination.lease) return drop('The target needs a connected IPv4 address.');
-      if (source.vlan === destination.vlan) outbound = path(source.paths, target);
-      else if (router) {
-        const destinationPath = path(destination.paths, router.id);
-        if (destinationPath) {
-          outbound = path(source.paths, router.id);
-          policyDrop = firewall(network.devices.get(router.id), { vlan: source.vlan, ip: source.lease.ip },
-            { vlan: destination.vlan, ip: destination.lease.ip });
-          if (!policyDrop) outbound.push(...reversePath(destinationPath));
-        }
-      }
+      ({ outbound, policyDrop } = clientRoute(network, source, target));
     } else if (target === INTERNET && source.upstream) {
       outbound = path(source.paths, router.id);
       policyDrop = firewall(network.devices.get(router.id), { vlan: source.vlan, ip: source.lease.ip },
@@ -275,6 +351,7 @@
     for (const reply of [false, true]) {
       const hops = reply ? [...outbound].reverse() : outbound;
       for (const hop of hops) {
+        if (hop.media === 'virtual') continue;
         const points = reply && hop.points ? [...hop.points].reverse() : hop.points;
         stages.push({ points, reply, media: hop.media, length: hop.length,
           duration: hop.media === 'internet' ? Math.min(650, Math.max(160, hop.rtt ?? 30)) / 2 : 0 });
@@ -290,7 +367,8 @@
   }
 
   const model = { INTERNET, INTERNET_IP, INTERVAL, RUN_TIME, DEFAULT_SSID, DEFAULT_DHCP, isClient, managed,
-    portVlans, apSsids, coverageAps, ipNumber, address, parseCidr, dhcpPool, usable, radio, build, ping };
+    portVlans, apSsids, coverageAps, ipNumber, address, serviceAddress, serviceId, reachableServices,
+    parseCidr, dhcpPool, usable, radio, build, ping };
   if (typeof module === 'object' && module.exports) module.exports = model;
   else root.WifiSiteClientModel = model;
 })(globalThis);
