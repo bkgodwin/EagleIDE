@@ -4,6 +4,7 @@ import math
 
 from network_store import WIFI_SCHEMA_VERSION, validate_wifi_site
 from wifi_industrial import industrial_layout
+from wifi_motel import motel_layout
 from wifi_school import school_layout
 from wifi_stadium import stadium_layout
 
@@ -183,7 +184,7 @@ def _community_center():
                                'access_points': [], 'decor': decor, 'surfaces': surfaces})
 
 
-def _starter(title, walls, rooms, furniture, surfaces=(), *, floor_locked=False):
+def _starter(title, walls, rooms, furniture, surfaces=(), equipment=(), *, floor_locked=False):
     """Build an unwired starter from meter-based wall and furnishing schedules."""
     def point(x, y):
         return {'x': x, 'y': y}
@@ -205,6 +206,7 @@ def _starter(title, walls, rooms, furniture, surfaces=(), *, floor_locked=False)
     return validate_wifi_site({
         'schema_version': WIFI_SCHEMA_VERSION, 'title': title, 'units': 'm', 'band': '5',
         'floor_locked': floor_locked, 'walls': segments, 'openings': openings, 'access_points': [],
+        'equipment': list(equipment),
         'labels': [{'id': f'room-{i}', **point(x, y), 'text': text}
                    for i, (x, y, text) in enumerate(rooms)],
         'decor': [{'id': f'fixture-{i}', **point(x, y), 'kind': kind, 'angle': angle}
@@ -421,6 +423,28 @@ SCENARIOS = {
                      'Machinery and vehicles are shown as floor-plan symbols. Network rooms start empty and '
                      'the floor plan starts locked for network layout.',
         'site': _starter('Rivermill Fabrication Works', *industrial_layout(), floor_locked=True),
+    },
+    'suntrail-motor-lodge': {
+        'id': 'suntrail-motor-lodge',
+        'title': 'Suntrail Motor Lodge',
+        'description': 'Retrofit a roadside motel with courtyard-facing rooms, an enclosed guest wing, and a breakfast room.',
+        'briefing': 'Suntrail is a single-story motor lodge built around drive-up parking and a small outdoor pool. '
+                    'The original brick rooms open directly onto the courtyard walks. A later addition added twelve rooms '
+                    'along an interior hall connected to reception. The owners are renovating in phases and want to keep '
+                    'the front desk and as many rooms open as possible. They have set a VoIP phone on every guest-room desk '
+                    'and a payment terminal at reception. Your job is to design the network that will put them into service.',
+        'traits': [
+            'Plan the provider entry and switching in the comms closet behind reception. Route power and data to the room '
+            'phones and connect the front-desk POS.',
+            'Compare a route along the covered courtyard walks with the interior hallway route in the addition. '
+            'Plan how each room bank can be brought online in phases.',
+            'Separate guest Wi-Fi, room voice, and reception payment traffic. Verify that each can reach the services it needs.',
+            'Check Wi-Fi inside closed guest rooms, along the exterior walks, in the breakfast dining room, and on the pool deck.',
+        ],
+        'plan_note': 'The plan has 43 furnished guestrooms, including single-bed rooms and two-bed suites. '
+                     'It starts locked with only the room phones and reception POS placed. The comms closet is empty '
+                     'and all links are for you to design.',
+        'site': _starter('Suntrail Motor Lodge', *motel_layout(), floor_locked=True),
     },
 }
 
