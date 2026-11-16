@@ -904,7 +904,6 @@ class NetworkRouteTests(unittest.TestCase):
         self.assertTrue(saved.json["data"]["cables"][1]["rack_patch"])
         for collection, index, key, value, error in (
             ("equipment", 2, "rack_u", 14, "overlap"),
-            ("equipment", 1, "rack_u", 15, "Disconnect"),
             ("equipment", 3, "rack_u", 16, "mounting position"),
             ("cables", 0, "target", {"device_id": "panel", "port": "FRONT2"}, "rear"),
             ("access_points", 0, "x", 90.01, "capacity reached"),
@@ -917,9 +916,18 @@ class NetworkRouteTests(unittest.TestCase):
                 response = self.client.put(url, headers=headers, json={"site": bad, "revision": 1})
                 self.assertEqual(response.status_code, 400, response.json)
                 self.assertIn(error, response.json["error"])
-        plan["cables"].pop()
         plan["equipment"][1]["rack_u"] = 15
-        self.assertEqual(self.client.put(url, headers=headers, json={"site": plan, "revision": 1}).status_code, 200)
+        plan["equipment"][2]["rack_u"] = 13
+        moved = self.client.put(url, headers=headers, json={"site": plan, "revision": 1})
+        self.assertEqual(moved.status_code, 200, moved.json)
+        self.assertEqual([item["rack_u"] for item in moved.json["data"]["equipment"][1:3]], [15, 13])
+        self.assertEqual(moved.json["data"]["cables"], saved.json["data"]["cables"])
+
+        plan["equipment"][0]["x"] = 10
+        relocated = self.client.put(url, headers=headers, json={"site": plan, "revision": 2})
+        self.assertEqual(relocated.status_code, 200, relocated.json)
+        self.assertEqual(relocated.json["data"]["equipment"][2]["x"], 10)
+        self.assertEqual(relocated.json["data"]["cables"], saved.json["data"]["cables"])
 
     def test_disabled_blocks_guest_but_admin_can_privately_preview(self):
         self.config_state["network_sim_enabled"] = False

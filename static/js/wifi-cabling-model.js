@@ -121,8 +121,6 @@
       const cable = cableAt(deviceId, port);
       return cable && (cable.source.device_id === deviceId ? cable.target : cable.source);
     };
-    const isConnected = id => wired.has(id) || (racks.get(id) || []).some(device => wired.has(device.id));
-
     function availableUnits(rackId, kind, ignore) {
       const size = catalog.equipment[kind].rack_units;
       const units = catalog.rack_units || 16;
@@ -374,7 +372,7 @@
       return { watts, units, overloaded, minutes: Math.round(minutes) };
     }
 
-    return { error, walls, devices, racks, rackPower, availableUnits, floorPorts, remoteEnd, isConnected, passages, ports, occupancy, usage, inspections, wired, powered, poweredDevices, poweredAps, poe, activeLinks,
+    return { error, walls, devices, racks, rackPower, availableUnits, floorPorts, remoteEnd, passages, ports, occupancy, usage, inspections, wired, powered, poweredDevices, poweredAps, poe, activeLinks,
       name, location, waypoint, route, endName, availablePorts, checkCable, status, channels };
   }
 

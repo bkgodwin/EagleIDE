@@ -21,11 +21,29 @@
       caption: 'The switch connects the desktop and supplies power and data to the access point.',
       steps: [
         '<strong>Place the devices.</strong> Use <strong>Equipment</strong> to place a rack, a desktop, and a ceiling AP. Click the rack and use <strong>Install Equipment</strong> to mount a Router, 24-port Switch, and Patch Panel in open slots.',
+        '<strong>Configure the rack.</strong> Click a chassis to open its settings beside the rack. Use <strong>+</strong> or <strong>−</strong> to resize the drawing, and <strong>Fit width</strong> to see both rails. Drag a chassis or use <strong>Mounting position</strong> to move it with its cables attached.',
         '<strong>Route building Ethernet.</strong> Choose <strong>Cable</strong> on the plan. Connect the desktop and AP to rear patch-panel ports by clicking each device, then the rack. Confirm the chosen port and press <strong>Connect</strong>.',
-        '<strong>Patch inside the rack.</strong> Open the rack and select its <strong>Cable</strong> tool. Patch router ETH1 to switch ETH1. Patch the two front panel ports to switch ETH2 and ETH3 to complete the desktop and AP circuits.',
+        '<strong>Patch inside the rack.</strong> Open the rack and select its <strong>Cable</strong> tool. Patch router ETH1 to switch ETH1. Hover a front patch-panel port to see the label of the device connected to its rear. Patch the two front ports to switch ETH2 and ETH3 to complete the desktop and AP circuits.',
         '<strong>Check the desktop.</strong> Use <strong>Select</strong> and click the desktop. Its inspector should show a DHCP address. Set <strong>Ping target</strong> to the router and press <strong>Start Ping</strong>.',
         '<strong>Try Wi-Fi.</strong> Place a Mobile Phone near the access point. Select it and check the associated AP, signal, and IPv4 address in its inspector.',
         '<strong>Add Internet service if needed.</strong> Place an ISP Demarcation on a wall. Start the cable at the handoff and click the rack. Confirm the selected router WAN port, connect, and try the simulated Internet ping.',
+      ],
+    },
+    {
+      title: 'Rack equipment',
+      intro: 'Mount equipment in a 16U rack, configure it beside the rack, and connect front patch cords to building runs.',
+      illustration: diagram(`<path class="wifi-guide-line" d="M140 72h28m144 0h27"/>
+        ${box(12, 46, 128, 'PoE switch', 'ETH2')}
+        ${box(168, 46, 144, 'Patch panel', 'FRONT1 → BACK1')}
+        ${box(339, 46, 129, 'Access point', 'Building run')}`),
+      caption: 'A front patch cord and its matching rear run carry traffic and PoE from the switch to the access point.',
+      steps: [
+        '<strong>Place and open a rack.</strong> Choose <strong>Equipment</strong> on the floor plan, select <strong>Equipment Rack</strong>, and place it. Switch to <strong>Select</strong> and click the rack.',
+        '<strong>Install equipment.</strong> Choose <strong>Install Equipment</strong>, select a device and an open mounting position, then click <strong>Install</strong>. Rack units count up from the bottom. A server or UPS occupies two units.',
+        '<strong>Edit settings alongside the rack.</strong> In <strong>Select</strong>, click a chassis to edit its label and available settings. Router DHCP, VLANs, and firewall settings and managed switch port settings open in the same window. Use <strong>Rack Settings</strong> to name or position the rack.',
+        '<strong>Connect the rear run.</strong> On the floor plan, give the remote device a label and use <strong>Cable</strong> to connect it to a rear port on the patch panel. In the rack view, hover over the matching front port to see the label.',
+        '<strong>Patch the front.</strong> In the rack, choose <strong>Cable</strong> and pick Ethernet or SFP fiber. Zoom in with <strong>+</strong> and scroll as needed. Select two highlighted ports on different devices. The <strong>Patch cables</strong> list shows each connection and lets you disconnect it.',
+        '<strong>Rearrange the rack.</strong> Return to <strong>Select</strong>, then drag a chassis to an open position or use its <strong>Mounting position</strong> menu. The cables stay connected and redraw at the new port positions. Choose <strong>Fit width</strong> to see the full width again.',
       ],
     },
     {

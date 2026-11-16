@@ -148,18 +148,6 @@ def validate_wifi_site(raw, *, existing=None):
     return plan
 
 
-def _check_rack_moves(previous, site):
-    before = {item["id"]: item for item in previous["equipment"]}
-    old_cables = {wire["id"] for wire in previous["cables"]}
-    connected = {wire[end]["device_id"] for wire in site["cables"] if wire["id"] in old_cables for end in ("source", "target")}
-    for item in site["equipment"]:
-        old = before.get(item["id"])
-        if not old or not (old.get("rack_id") or item.get("rack_id") or item["kind"] == "rack"):
-            continue
-        if any(old.get(key) != item.get(key) for key in ("rack_id", "rack_u", "x", "y")) and item["id"] in connected:
-            raise NetworkDataError("Disconnect all cables before moving rack equipment")
-
-
 def migrate_topology(raw):
     """Return a current-schema copy without mutating saved runtime data in place."""
     if not isinstance(raw, dict):
@@ -971,8 +959,6 @@ class NetworkStore:
                         for group in compatibility:
                             compatibility[group].extend(saved.get(group, []))
             site = validate_wifi_site(raw, existing=compatibility or {})
-            if existing:
-                _check_rack_moves(compatibility, site)
             scenario_id = site.pop("scenario_id", None)
             if existing:
                 scenario_id = existing.get("scenario_id")
