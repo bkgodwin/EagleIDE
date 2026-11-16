@@ -98,7 +98,7 @@ def motel_layout():
             x, y = point(desk_u, depth - .68)
             equipment.append({'id': f'guest-phone-{number}', 'kind': 'voip_phone',
                               'name': f'Room {number} phone', 'x': x, 'y': y})
-            notes.append((*point(span + .75, 1.65), str(number)))
+            notes.append((*point(span + .75, 2.9 if added else 1.65), str(number)))
             span = end
 
         entry_material = partition if added else masonry
@@ -181,7 +181,7 @@ def motel_layout():
     guest_bank('annex-north', (84, 47.6), (1, 0), (0, -1), 6.8, range(132, 138), widths, {134, 137}, added=True)
     guest_bank('annex-south', (84, 50.4), (1, 0), (0, 1), 6.8, range(138, 144), widths, {140, 143}, added=True)
     vertical('annex-hall-exit', 117.6, 47.6, 50.4, siding, door(49, 1.55, 'glass'))
-    room('New wing hall', '#d3e0e1', 84, 47.6, 117.6, 50.4, label=(90.7, 49.2))
+    room('New wing hall', '#d3e0e1', 84, 47.6, 117.6, 50.4, label=(88.9, 50.1))
     notes.extend([(92, 38.25, 'Later guest-wing addition'), (35.8, 62.55, 'Courtyard entrance')])
 
     # A small fenced pool sits on an island with a marked route to breakfast.
@@ -196,9 +196,9 @@ def motel_layout():
           (49.17, 30.27), (36.23, 30.27), (35.83, 29.87), (35.83, 25.08))
     for i, color in enumerate(('#c8e6e7', '#a8d5e0', '#90c5d7')):
         rect('pavement', color, 48.34 - i * .38, 25.55, 48.72 - i * .38, 28.25)
-    # Draw the low pool enclosure in the site layer. Leave a south gate.
+    # Draw the low pool enclosure with openings for both pedestrian approaches.
     fence = '#647076'
-    rect('pavement', fence, 31.25, 20.3, 54.7, 20.46)
+    rect('pavement', fence, 33.65, 20.3, 54.7, 20.46)
     rect('pavement', fence, 31.25, 20.3, 31.41, 36.5)
     rect('pavement', fence, 54.54, 20.3, 54.7, 36.5)
     rect('pavement', fence, 31.25, 36.34, 51.45, 36.5)
@@ -208,11 +208,14 @@ def motel_layout():
         place('bench', x, 33.1, 180)
     for x, y in ((30.25, 23.8), (55.4, 28.8), (30.5, 36), (55.4, 35)):
         place('tree', x, y)
+    rect('sidewalk', '#dfd7bd', 31.25, 17.65, 33.65, 20.3)
+    for y in (10.7, 11.6, 12.5, 13.4, 14.3, 15.2, 16.1, 17):
+        rect('pavement', stripe, 31.25, y, 33.65, y + .32)
     notes.append((37.5, 28.6, 'Courtyard pool'))
 
     # Head-in stalls face the room walks. The asphalt loop remains clear.
     parking_rows = (
-        (((12.1 + i * 2.68, 13.0) for i in range(23)), 0, {0, 3, 5, 7, 10, 12, 16, 20, 22}),
+        (((12.1 + i * 2.68, 13.0) for i in range(23) if i not in (7, 8)), 0, {0, 3, 5, 8, 10, 14, 18, 20}),
         (((13.0, 20.3 + i * 2.7) for i in range(9)), 270, {0, 2, 5, 6}),
         (((71, 20.3 + i * 2.7) for i in range(7)), 90, {1, 2, 4, 5}),
         (((19 + i * 2.7, 44.9) for i in range(6)), 180, {1, 3, 4}),

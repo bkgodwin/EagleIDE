@@ -257,7 +257,12 @@ def school_layout():
         if i:
             v(f'shop-support-divider-{i}', left, -9, 2, 'drywall')
         room(name, left, -9, right, 2, color)
-    for x in (113.0, 118.1, 123.2, 132.7, 137.2, 142.0):
+    place('welding_cell', 114.2, -21.3)
+    place('welding_cell', 122.5, -21.3)
+    place('press_brake', 120.5, -16.15)
+    place('table', 113.4, -16.4)
+    place('pallet_rack', 141.7, -3.45, 90)
+    for x in (132.7, 137.2, 142.0):
         for y in (-21.8, -17.0):
             place('table', x, y)
     for x in (112, 115.2, 118.4):

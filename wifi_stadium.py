@@ -136,6 +136,10 @@ def stadium_layout():
         place('pump_skid', x, -14.2)
         place('pump_skid', x, -4.5)
     row_symbols('pump_skid', (165, 171, 177, 183), -13.0)
+    for y in (-16.3, -10.8):
+        row_symbols('switchgear', (61.3, 69.2, 76.1), y)
+    place('pallet_rack', 203.7, -11.9, 90)
+    place('forklift', 191.6, -2.8, 180)
     for left in (31, 135):
         row_symbols('ticket_gate', (left + 5, left + 9, left + 13, left + 17, left + 21), -6.2)
         row_symbols('counter', (left + 4, left + 20.5), -17.8)

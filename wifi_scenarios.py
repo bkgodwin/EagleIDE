@@ -157,6 +157,9 @@ def _community_center():
     surface('east-lawn', 'landscape', '#dbead1', [(1576, 932), (1790, 932), (1790, 1280), (1515, 1280), (1515, 980)])
     surface('plaza-paving', 'pavement', '#d4cdc0', [(1550, 1005), (1712, 1005), (1754, 1061), (1754, 1242),
             (1693, 1281), (1550, 1281)])
+    surface('gym-floor', 'floor', '#eadcc4', [north_west, north_east, (1485, 365), (1517, 362),
+            (1558, 811), (1524, 814), (1540, 968), (1177, 1000), (1060, 1011), (805, 1034),
+            (694, 1043), small_store_corner, (660, 667)])
     surface('office-floor', 'floor', '#e1e9ef', [(1148, 1019), (1177, 1019), (1177, 1000), (1245, 994), (1245, 1099), (1148, 1095)])
     surface('meeting-floor', 'floor', '#e6e1ed', [(918, 1134), kitchen_corner, entry_corner, exterior_corner,
             (1054, 1249), (934, 1260), (934, 1224), (918, 1224)])
@@ -173,6 +176,9 @@ def _community_center():
         symbol('tree', p)
     for p, angle in (((1571, 1089), 90), ((1683, 1242), 0), ((1101, 1274), 0), ((1490, 1225), 90)):
         symbol('bench', p, angle)
+    symbol('basketball_court', (1080, 584), 355)
+    for y in (481, 542, 603, 664, 725, 786):
+        symbol('bench', (1488, y), 85)
     symbol('desk', (1208, 1026))
     symbol('chair', (1208, 1044))
     for p in ((988, 1185), (1319, 1045), (1372, 1045), (1318, 1178), (1370, 1178), (1599, 1155), (1676, 1155)):
@@ -182,10 +188,10 @@ def _community_center():
 
     return validate_wifi_site({'schema_version': WIFI_SCHEMA_VERSION, 'title': 'Port Adelaide Community Center',
                                'units': 'm', 'band': '5', 'walls': walls, 'openings': openings, 'labels': labels,
-                               'access_points': [], 'decor': decor, 'surfaces': surfaces})
+                               'floor_locked': True, 'access_points': [], 'decor': decor, 'surfaces': surfaces})
 
 
-def _starter(title, walls, rooms, furniture, surfaces=(), equipment=(), *, floor_locked=False):
+def _starter(title, walls, rooms, furniture, surfaces=(), equipment=()):
     """Build an unwired starter from meter-based wall and furnishing schedules."""
     def point(x, y):
         return {'x': x, 'y': y}
@@ -206,7 +212,7 @@ def _starter(title, walls, rooms, furniture, surfaces=(), equipment=(), *, floor
 
     return validate_wifi_site({
         'schema_version': WIFI_SCHEMA_VERSION, 'title': title, 'units': 'm', 'band': '5',
-        'floor_locked': floor_locked, 'walls': segments, 'openings': openings, 'access_points': [],
+        'floor_locked': True, 'walls': segments, 'openings': openings, 'access_points': [],
         'equipment': list(equipment),
         'labels': [{'id': f'room-{i}', **point(x, y), 'text': text}
                    for i, (x, y, text) in enumerate(rooms)],
@@ -239,11 +245,13 @@ def _coffee_shop():
         (1, 7.1, 'Indoor seating'), (15.8, 6.1, 'Patio seating'),
         (1, 12.7, 'Street entrance'), (1, -0.8, 'Delivery lane'),
     ]
-    seating = [(2.4, 8.5), (4.9, 8.5), (10.7, 8.5), (13, 8.5),
+    seating = [(10.7, 8.5), (13, 8.5),
                (17, 7.5), (19.5, 7.5), (17, 10), (19.5, 10)]
-    furniture = [('desk', 2, 5.6, 0), ('desk', 4.1, 5.6, 0), ('desk', 6.2, 5.6, 0),
+    furniture = [('counter', 2, 5.6, 0), ('counter', 3.82, 5.6, 0), ('counter', 5.64, 5.6, 0),
                  ('desk', 9.5, 2.3, 0), ('bench', 1.4, 2.1, 0), ('bench', 12.8, 6.9, 0),
-                 ('tree', 21.2, 10, 0), ('tree', 20.7, 4.3, 0), ('lamp', 15.7, 11.7, 0)]
+                 ('tree', 21.2, 10, 0), ('tree', 20.7, 4.3, 0), ('lamp', 15.7, 11.7, 0),
+                 ('cafeteria_table', 3.7, 8.8, 0), ('counter', 1.45, .46, 0),
+                 ('counter', 3.27, .46, 0), ('counter', 4.44, 2, 90)]
     for x, y in seating:
         furniture.extend([('table', x, y, 0), ('chair', x, y - .8, 180), ('chair', x, y + .8, 0)])
     surfaces = [
@@ -251,6 +259,7 @@ def _coffee_shop():
         ('floor', '#dbe3df', 0, 0, 7.5, 4), ('floor', '#dbe6ed', 7.5, 0, 10.9, 4),
         ('floor', '#e3e5ee', 10.9, 0, 15, 4), ('pavement', '#e4d9c9', 15, 5, 21, 11.8),
         ('sidewalk', '#e5e7e9', -1, 11, 21, 13.5), ('pavement', '#d6dce1', -1, -2, 15, 0),
+        ('sidewalk', '#e5e7e9', 15, 7.35, 16.45, 9.9), ('landscape', '#d4e2c6', 19.2, 3.25, 22.6, 5.6),
     ]
     return _starter('Juniper & Main Coffee', walls, rooms, furniture, surfaces)
 
@@ -298,7 +307,8 @@ def _three_bedroom_house():
         ('sofa', 2.83, 12.4, 0), ('table', 2.83, 11.08, 0), ('chair', 4.23, 11.46, 270),
         ('tub', 8.43, 8.67, 0), ('toilet', 7.66, 7.25, 90), ('counter', 9.15, 7.34, 90),
         ('counter', 10.93, 8.76, 0), ('bench', 11.03, 7.02, 0),
-        ('counter', 15.65, 6.98, 0), ('car', 13.94, 10.03, 0),
+        ('counter', 13.45, 7.02, 0), ('counter', 15.35, 7.02, 0), ('counter', 17.25, 7.02, 0),
+        ('car', 13.94, 10.03, 0), ('bench', -3.55, 10.95, 0),
         ('table', -2.4, 9.28, 0), ('chair', -2.95, 8.48, 180), ('chair', -1.85, 8.48, 180),
         ('chair', -2.95, 10.08, 0), ('chair', -1.85, 10.08, 0),
         ('tree', -3.4, 3.9, 0), ('tree', 2.5, 15.9, 0), ('lamp', 8.17, 13.7, 0),
@@ -308,29 +318,32 @@ def _three_bedroom_house():
         ('sidewalk', '#dfc9ad', -4.5, 7.32, 0, 11.5),
         ('sidewalk', '#e4ddd2', 8.05, 13.2, 11.46, 14.86), ('sidewalk', '#e4ddd2', 9.02, 14.86, 10.4, 18),
         ('pavement', '#cfd6db', 12.15, 13.2, 18.35, 18),
-        ('floor', '#ebe4d9', 0, 0, 12, 4.8), ('floor', '#dbe7ec', 0, 2.55, 2.4, 4.8),
+        ('floor', '#ebe4d9', 0, 0, 4.5, 4.8), ('floor', '#e6e8e2', 4.5, 0, 8.1, 4.8),
+        ('floor', '#e4e8ec', 8.1, 0, 12, 4.8), ('floor', '#dbe7ec', 0, 2.55, 2.4, 4.8),
         ('floor', '#e9dbc7', 0, 4.8, 12, 6.4), ('floor', '#eee4d6', 0, 6.4, 12, 13.2),
         ('floor', '#dbe7ec', 7.25, 6.4, 9.5, 9.15), ('floor', '#dae3e7', 9.5, 6.4, 12, 9.15),
         ('floor', '#d9dadd', 12, 6.6, 18.5, 13.2),
+        ('floor', '#c4cacf', 12.06, 6.65, 18.44, 7.75),
     ]
     return _starter('Maple Lane House', walls, rooms, furniture, surfaces)
 
 
+# Catalog order progresses from homes and small venues to complex campuses.
 SCENARIOS = {
-    'port-adelaide-community-center': {
-        'id': 'port-adelaide-community-center',
-        'title': 'Port Adelaide Community Center',
-        'description': 'Design the network for a concrete civic building that hosts public events and elections.',
-        'briefing': 'The City of Port Adelaide is renovating a 1950s reinforced concrete community center into a '
-                    'modern civic hub. It must support large public events, elections, and daily community use '
-                    'with reliable, high-speed connectivity.',
-        'traits': ['Renovation of a 1950s Cold War era concrete building',
-                   'Limited pathways between rooms; drop ceilings in most areas',
-                   'Public and administrative Wi-Fi expected',
-                   'Security and event reliability critical'],
-        'plan_note': 'Adapted from the Lefevre Community Stadium floor plan and scaled from its 38.3 m gym wall. '
-                     'Service rooms, parking, landscaping, and wall materials are modeled for this exercise.',
-        'site': _community_center(),
+    'maple-lane-house': {
+        'id': 'maple-lane-house',
+        'title': 'Maple Lane House',
+        'description': 'Plan a home network for three bedrooms, a garage, and a side deck.',
+        'briefing': 'A family in a single-story home wants reliable video calls from the desk in bedroom 2, '
+                    'streaming in the living room, and coverage on the side deck. The ISP enters in the laundry '
+                    'and mudroom. Plan wired drops for fixed equipment and a ceiling-mounted PoE camera '
+                    'covering the garage entrance from inside.',
+        'traits': ['Compare signal on both bands in the bedrooms, in the garage, and on the deck.',
+                   'Use the central hall and open living area when comparing AP locations.',
+                   'Check how brick, glass, and the garage door affect coverage.'],
+        'plan_note': 'The garage is 6.5 × 6.6 m with a 5 m overhead door aligned to the driveway. '
+                     'The laundry and mudroom connect the garage directly to the bedroom hall.',
+        'site': _three_bedroom_house(),
     },
     'juniper-main-coffee': {
         'id': 'juniper-main-coffee',
@@ -347,20 +360,42 @@ SCENARIOS = {
                      'has no door material. The public entrance and patio door are glass.',
         'site': _coffee_shop(),
     },
-    'maple-lane-house': {
-        'id': 'maple-lane-house',
-        'title': 'Maple Lane House',
-        'description': 'Plan a home network for three bedrooms, a garage, and a side deck.',
-        'briefing': 'A family in a single-story home wants reliable video calls from the desk in bedroom 2, '
-                    'streaming in the living room, and coverage on the side deck. The ISP enters in the laundry '
-                    'and mudroom. Plan wired drops for fixed equipment and a ceiling-mounted PoE camera '
-                    'covering the garage entrance from inside.',
-        'traits': ['Compare signal on both bands in the bedrooms, in the garage, and on the deck.',
-                   'Use the central hall and open living area when comparing AP locations.',
-                   'Check how brick, glass, and the garage door affect coverage.'],
-        'plan_note': 'The garage is 6.5 × 6.6 m with a 5 m overhead door aligned to the driveway. '
-                     'The laundry and mudroom connect the garage directly to the bedroom hall.',
-        'site': _three_bedroom_house(),
+    'port-adelaide-community-center': {
+        'id': 'port-adelaide-community-center',
+        'title': 'Port Adelaide Community Center',
+        'description': 'Design the network for a concrete civic building that hosts public events and elections.',
+        'briefing': 'The City of Port Adelaide is renovating a 1950s reinforced concrete community center into a '
+                    'modern civic hub. It must support large public events, elections, and daily community use '
+                    'with reliable, high-speed connectivity.',
+        'traits': ['Renovation of a 1950s Cold War era concrete building',
+                   'Limited pathways between rooms; drop ceilings in most areas',
+                   'Public and administrative Wi-Fi expected',
+                   'Security and event reliability critical'],
+        'plan_note': 'Adapted from the Lefevre Community Stadium floor plan and scaled from its 38.3 m gym wall. '
+                     'Service rooms, parking, landscaping, and wall materials are modeled for this exercise.',
+        'site': _community_center(),
+    },
+    'suntrail-motor-lodge': {
+        'id': 'suntrail-motor-lodge',
+        'title': 'Suntrail Motor Lodge',
+        'description': 'Retrofit a roadside motel with courtyard-facing rooms, an enclosed guest wing, and a breakfast room.',
+        'briefing': 'Suntrail is a single-story motor lodge built around drive-up parking and a small outdoor pool. '
+                    'The original brick rooms open directly onto the courtyard walks. A later addition added twelve rooms '
+                    'along an interior hall connected to reception. The owners are renovating in phases and want to keep '
+                    'the front desk and as many rooms open as possible. They have set a VoIP phone on every guest-room desk '
+                    'and a payment terminal at reception. Your job is to design the network that will put them into service.',
+        'traits': [
+            'Plan the provider entry and switching in the comms closet behind reception. Route power and data to the room '
+            'phones and connect the front-desk POS.',
+            'Compare a route along the covered courtyard walks with the interior hallway route in the addition. '
+            'Plan how each room bank can be brought online in phases.',
+            'Separate guest Wi-Fi, room voice, and reception payment traffic. Verify that each can reach the services it needs.',
+            'Check Wi-Fi inside closed guest rooms, along the exterior walks, in the breakfast dining room, and on the pool deck.',
+        ],
+        'plan_note': 'The plan has 43 furnished guestrooms, including single-bed rooms and two-bed suites. '
+                     'It starts locked with only the room phones and reception POS placed. The comms closet is empty '
+                     'and all links are for you to design.',
+        'site': _starter('Suntrail Motor Lodge', *motel_layout()),
     },
     'alder-ridge-high-school': {
         'id': 'alder-ridge-high-school',
@@ -377,29 +412,8 @@ SCENARIOS = {
                    'Keep reception and school operations separate from visitors. Check what remains online during after-hours events.'],
         'plan_note': 'The one-story main building is 155 m across. The 16 classrooms are 9 × 9.5 m, both gyms '
                      'contain 28 × 15 m courts, and the detached trades building is 40 × 28 m. '
-                     'Furniture and landscape features are shown. All network rooms and closets are empty.',
+                     'Furniture, trades fixtures, and landscape features are shown. All network rooms and closets are empty.',
         'site': _starter('Alder Ridge High School', *school_layout()),
-    },
-    'harborline-stadium': {
-        'id': 'harborline-stadium',
-        'title': 'Harborline Stadium & Sports Center',
-        'description': 'Plan matchday and everyday networks for an indoor football stadium, an attached sports center, and their outdoor plazas.',
-        'briefing': 'Harborline hosts football and community events in a concrete bowl with seating on every side. '
-                    'On match days, visitors arrive at the plaza and pass through screening before entering a continuous '
-                    'concourse. The press and announcer rooms overlook the field. The sports center opens daily for '
-                    'basketball, indoor tennis, fitness, lessons, and swimming. Its street entrance stays open when the '
-                    'fire doors to the stadium are closed. Delivery and team vehicles arrive through the service lanes.',
-        'traits': [
-            'Plan wired service for ticketing, concessions, broadcast, and facility operations. Keep public traffic separate.',
-            'Route from the main IT room to the West, North, East, and Sports center IDFs. Account for concrete barriers, '
-            'the length of the concourse, and the closed link between venues.',
-            'Check Wi-Fi at the four seating sides, concessions, entrance queues, the pool deck, and the outdoor fan park.',
-            'Keep the north mechanical plant and the pool filtration and dehumidification rooms accessible from their service routes.',
-        ],
-        'plan_note': 'The starter is drawn in meters on one plan level. It includes the playing field, raked seating '
-                     'sections, sports courts, and a 25 m lap pool. Network closets are empty. The floor plan '
-                     'starts locked for network layout and can be unlocked from the toolbar.',
-        'site': _starter('Harborline Stadium & Sports Center', *stadium_layout(), floor_locked=True),
     },
     'rivermill-fabrication-works': {
         'id': 'rivermill-fabrication-works',
@@ -423,29 +437,28 @@ SCENARIOS = {
                      'face the north truck apron. The garage and training center have separate routes from the plant. '
                      'Machinery and vehicles are shown as floor-plan symbols. Network rooms start empty and '
                      'the floor plan starts locked for network layout.',
-        'site': _starter('Rivermill Fabrication Works', *industrial_layout(), floor_locked=True),
+        'site': _starter('Rivermill Fabrication Works', *industrial_layout()),
     },
-    'suntrail-motor-lodge': {
-        'id': 'suntrail-motor-lodge',
-        'title': 'Suntrail Motor Lodge',
-        'description': 'Retrofit a roadside motel with courtyard-facing rooms, an enclosed guest wing, and a breakfast room.',
-        'briefing': 'Suntrail is a single-story motor lodge built around drive-up parking and a small outdoor pool. '
-                    'The original brick rooms open directly onto the courtyard walks. A later addition added twelve rooms '
-                    'along an interior hall connected to reception. The owners are renovating in phases and want to keep '
-                    'the front desk and as many rooms open as possible. They have set a VoIP phone on every guest-room desk '
-                    'and a payment terminal at reception. Your job is to design the network that will put them into service.',
+    'harborline-stadium': {
+        'id': 'harborline-stadium',
+        'title': 'Harborline Stadium & Sports Center',
+        'description': 'Plan matchday and everyday networks for an indoor football stadium, an attached sports center, and their outdoor plazas.',
+        'briefing': 'Harborline hosts football and community events in a concrete bowl with seating on every side. '
+                    'On match days, visitors arrive at the plaza and pass through screening before entering a continuous '
+                    'concourse. The press and announcer rooms overlook the field. The sports center opens daily for '
+                    'basketball, indoor tennis, fitness, lessons, and swimming. Its street entrance stays open when the '
+                    'fire doors to the stadium are closed. Delivery and team vehicles arrive through the service lanes.',
         'traits': [
-            'Plan the provider entry and switching in the comms closet behind reception. Route power and data to the room '
-            'phones and connect the front-desk POS.',
-            'Compare a route along the covered courtyard walks with the interior hallway route in the addition. '
-            'Plan how each room bank can be brought online in phases.',
-            'Separate guest Wi-Fi, room voice, and reception payment traffic. Verify that each can reach the services it needs.',
-            'Check Wi-Fi inside closed guest rooms, along the exterior walks, in the breakfast dining room, and on the pool deck.',
+            'Plan wired service for ticketing, concessions, broadcast, and facility operations. Keep public traffic separate.',
+            'Route from the main IT room to the West, North, East, and Sports center IDFs. Account for concrete barriers, '
+            'the length of the concourse, and the closed link between venues.',
+            'Check Wi-Fi at the four seating sides, concessions, entrance queues, the pool deck, and the outdoor fan park.',
+            'Keep the north mechanical plant and the pool filtration and dehumidification rooms accessible from their service routes.',
         ],
-        'plan_note': 'The plan has 43 furnished guestrooms, including single-bed rooms and two-bed suites. '
-                     'It starts locked with only the room phones and reception POS placed. The comms closet is empty '
-                     'and all links are for you to design.',
-        'site': _starter('Suntrail Motor Lodge', *motel_layout(), floor_locked=True),
+        'plan_note': 'The starter is drawn in meters on one plan level. It includes the playing field, raked seating '
+                     'sections, sports courts, and a 25 m lap pool. Network closets are empty. The floor plan '
+                     'starts locked for network layout and can be unlocked from the toolbar.',
+        'site': _starter('Harborline Stadium & Sports Center', *stadium_layout()),
     },
     'marshpoint-regional-hospital': {
         'id': 'marshpoint-regional-hospital',
@@ -470,7 +483,7 @@ SCENARIOS = {
         'plan_note': 'The single-story hospital measures 196 × 126 m. The ground helipad sits west of the building '
                      'and the four-generator diesel plant is in the east service zone. The floor plan starts locked '
                      'with empty network rooms so you can begin placing infrastructure.',
-        'site': _starter('Marshpoint Regional Hospital', *hospital_layout(), floor_locked=True),
+        'site': _starter('Marshpoint Regional Hospital', *hospital_layout()),
     },
 }
 

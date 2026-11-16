@@ -18,6 +18,7 @@ from PIL import Image
 from network_content import ACRONYM_REFERENCE, COMMAND_REFERENCE, DEVICE_PORTS, EXAMPLE_TOPOLOGIES, LABS, PORT_REFERENCE
 from network_features import register
 from network_store import MAX_DEVICES, WIFI_SCHEMA_VERSION, NetworkDataError, NetworkStore, _stp_state, can_reach, can_reach_ipv6, grade_lab, migrate_topology, validate_topology, validate_wifi_site
+from wifi_cabling import CABLING_CATALOG, CABLING_LIMITS
 from wifi_scenarios import SCENARIOS
 
 
@@ -255,7 +256,7 @@ class NetworkStoreTests(unittest.TestCase):
         self.assertTrue(all(158 < item["x"] < 196 and 0 < item["y"] < 23.2 for item in generators))
         self.assertEqual(sum(item["kind"] == "operating_table" for item in site["decor"]), 6)
 
-    def test_infra_campus_example_can_be_saved_and_all_aps_are_wired(self):
+    def test_infra_campus_example_has_powered_aps_isolated_guests_and_redundant_fiber(self):
         root = Path(__file__).resolve().parents[1]
         script = """
           global.window = global;
@@ -266,13 +267,15 @@ class NetworkStoreTests(unittest.TestCase):
         site = validate_wifi_site(raw)
         ethernet_ends = {cable[end]["device_id"] for cable in site["cables"] if cable["media"] == "ethernet"
                          for end in ("source", "target")}
-        self.assertGreaterEqual(len(site["access_points"]), 12)
+        self.assertTrue(site["floor_locked"])
+        self.assertGreaterEqual(len(site["access_points"]), 16)
         self.assertTrue(all(ap["id"] in ethernet_ends for ap in site["access_points"]))
         self.assertTrue(all(closet in {wall["id"] for wall in site["walls"]}
-                            for closet in ("west-idf-top", "east-idf-top", "annex-idf-top")))
+                            for closet in ("west-idf-top", "east-idf-top", "annex-idf-top", "pavilion-idf-east")))
         self.assertTrue(any(ap["y"] < 0 for ap in site["access_points"]))
         self.assertEqual({item["kind"] for item in site["surfaces"]}, {"floor", "sidewalk", "pavement", "landscape"})
-        self.assertTrue({"desk", "chair", "tree", "parking_bay"}.issubset(item["kind"] for item in site["decor"]))
+        self.assertTrue({"basketball_court", "welding_cell", "cnc_lathe", "switchgear",
+                         "desk", "chair", "tree", "parking_bay"}.issubset(item["kind"] for item in site["decor"]))
         self.assertTrue({"desktop", "phone"}.issubset(item["kind"] for item in site["equipment"]))
         self.assertTrue(all(item["id"] in ethernet_ends for item in site["equipment"] if item["kind"] == "desktop"))
         self.assertTrue(all(item["id"] not in ethernet_ends for item in site["equipment"] if item["kind"] == "phone"))
@@ -289,6 +292,32 @@ class NetworkStoreTests(unittest.TestCase):
                 wall = next(wall for wall in site["walls"] if wall["id"] == ap["wall_id"])
                 for axis in ("x", "y"):
                     self.assertAlmostEqual(ap[axis], wall["a"][axis] + ap["t"] * (wall["b"][axis] - wall["a"][axis]), places=4)
+
+        check_network = """
+          const assert = require('node:assert/strict');
+          const { readFileSync } = require('node:fs');
+          const { plan, catalog, limits } = JSON.parse(readFileSync(0, 'utf8'));
+          const wiring = require('./static/js/wifi-cabling-model');
+          const { coverageModel } = require('./static/js/wifi-site-model');
+          const { INTERNET, build, ping } = require('./static/js/wifi-site-client-model');
+          const paths = input => {
+            const cables = wiring.build(input, catalog, limits);
+            assert.equal(cables.error, '');
+            assert.equal(cables.poweredAps.size, input.access_points.length);
+            return build(input, cables, coverageModel);
+          };
+          const network = paths(plan);
+          for (const client of network.clients.values()) assert.ok(client.router && client.lease);
+          assert.ok(ping(network, 'phone-courtyard', INTERNET, () => 1).rtt > 0);
+          assert.match(ping(network, 'phone-courtyard', 'desktop-pavilion', () => 1).reason, /firewall/);
+          assert.ok(ping(network, 'phone-pavilion', 'desktop-media', () => 1).rtt > 0);
+          for (const disconnected of ['east-fiber', 'east-spare']) {
+            const cables = plan.cables.filter(cable => cable.id !== disconnected);
+            assert.ok(ping(paths({ ...plan, cables }), 'desktop-media', INTERNET, () => 1).rtt > 0);
+          }
+        """
+        subprocess.run(["node", "-e", check_network], cwd=root, timeout=10, check=True, text=True,
+                       input=json.dumps({"plan": site, "catalog": CABLING_CATALOG, "limits": CABLING_LIMITS}))
 
     def test_anchored_ap_follows_edited_wall_and_legacy_position_remains_valid(self):
         plan = {"schema_version": 5, "title": "Anchors", "units": "m", "band": "5",
@@ -617,6 +646,20 @@ class NetworkRouteTests(unittest.TestCase):
         self.config_state["network_sim_enabled"] = False
         self.assertEqual(self.client.get(practice_url).status_code, 403)
 
+    def test_scenario_catalog_orders_starters_by_scope_and_locks_their_floor_plans(self):
+        expected = [
+            "maple-lane-house", "juniper-main-coffee", "port-adelaide-community-center", "suntrail-motor-lodge",
+            "alder-ridge-high-school", "rivermill-fabrication-works", "harborline-stadium", "marshpoint-regional-hospital",
+        ]
+        teacher = {"X-Teacher-Token": "teacher-token"}
+        catalog = self.client.get("/api/network/bootstrap", headers=teacher).json["data"]["scenarios"]
+        self.assertEqual([item["id"] for item in catalog], expected)
+        for scenario_id in expected:
+            with self.subTest(scenario=scenario_id):
+                scenario = self.client.get(f"/api/network/wifi-scenarios/{scenario_id}", headers=teacher)
+                self.assertEqual(scenario.status_code, 200)
+                self.assertTrue(scenario.json["data"]["site"]["floor_locked"])
+
     def test_scenario_visibility_checks_class_ownership_and_student_access(self):
         scenario_id = "port-adelaide-community-center"
         scenario_url = f"/api/network/wifi-scenarios/{scenario_id}"
@@ -625,8 +668,8 @@ class NetworkRouteTests(unittest.TestCase):
         student = {"X-User-Token": "student-token"}
         self.store.set_class_access("class-1", True)
         self.assertEqual(self.client.get(scenario_url).status_code, 404)
-        row = self.client.get("/api/network/bootstrap", headers=student).get_json()["data"]["scenarios"][0]
-        self.assertEqual(row["id"], scenario_id)
+        catalog = self.client.get("/api/network/bootstrap", headers=student).get_json()["data"]["scenarios"]
+        row = next(item for item in catalog if item["id"] == scenario_id)
         self.assertNotIn("site", row)
         self.assertEqual(self.client.get(scenario_url, headers=student).status_code, 200)
         self.assertEqual(self.client.put(settings_url, headers=student, json={"visible": False}).status_code, 401)
@@ -635,9 +678,9 @@ class NetworkRouteTests(unittest.TestCase):
         self.assertEqual(self.client.put(settings_url, headers=teacher, json={"visible": "false"}).status_code, 400)
         self.assertEqual(self.client.put(settings_url, headers=teacher, json={"visible": False}).status_code, 200)
         classroom = self.client.get("/api/network/teacher/classes/class-1", headers=teacher).get_json()["data"]
-        self.assertFalse(classroom["scenarios"][0]["visible"])
+        self.assertFalse(next(item for item in classroom["scenarios"] if item["id"] == scenario_id)["visible"])
         visible = self.client.get("/api/network/bootstrap", headers=student).get_json()["data"]["scenarios"]
-        self.assertEqual({row["id"] for row in visible}, set(SCENARIOS) - {scenario_id})
+        self.assertEqual([row["id"] for row in visible], [key for key in SCENARIOS if key != scenario_id])
         self.assertEqual(self.client.get(scenario_url, headers=student).status_code, 404)
         self.assertEqual(self.client.get(scenario_url, headers=teacher).status_code, 200)
         self.students["student-token"]["class_ids"].append("class-2")
