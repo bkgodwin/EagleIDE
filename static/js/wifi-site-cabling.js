@@ -107,6 +107,7 @@
       menu.hidden = true;
       $('wifiEquipmentControls').hidden = mode !== 'equipment';
       $('wifiCableControls').hidden = mode !== 'cable';
+      if (mode !== 'cable') $('wifiCableConfirm').hidden = true;
       if (mode === 'equipment') equipmentControls();
       if (mode === 'cable') {
         $('wifiShowCables').checked = true;
@@ -151,6 +152,7 @@
       }
       const { group, item } = preview;
       if (ctx.add(group, [{ ...item, id: ctx.id(group === 'access_points' ? 'ap' : group === 'equipment' ? 'device' : 'pass') }])) {
+        if (mode === 'equipment') ctx.changeTool('select');
         ctx.hint(group === 'pass_throughs' ? 'Pass-through added · capacity 10 cables.'
           : group === 'access_points' ? 'Access point placed. Connect it to PoE to enable coverage.'
             : item.kind === 'phone' ? 'Phone placed. It joins the strongest powered access point in range.'
@@ -171,8 +173,9 @@
     const floorPortKey = end => end && `${end.device_id}:${end.port}`;
     function setDraftPort(role, value) {
       const [device_id, port] = value.split(':');
-      if (device_id && port) draft[role] = { device_id, port };
+      if (device_id && port && draft) draft[role] = { device_id, port };
       refreshDraft();
+      if (role === 'target' && !$('wifiCableConnect').disabled) ctx.focusPlan();
     }
 
     function chooseDevice(role, id) {
@@ -195,7 +198,9 @@
         const input = $(role === 'source' ? 'wifiCableFromPort' : 'wifiCableToPort');
         if (!input.disabled) {
           input.focus({ preventScroll: true });
-          try { input.showPicker?.(); } catch { /* Focus leaves the port menu keyboard-accessible. */ }
+          if (!ctx.showGuidedPicker(input)) {
+            try { input.showPicker?.(); } catch { /* The picker remains keyboard-accessible. */ }
+          }
         }
       }
     }
@@ -221,7 +226,7 @@
       $('wifiCableConnect').disabled = !ready || !!routeError?.error || atLimit;
       if (routeError?.error) ctx.hint(routeError.error);
       else if (atLimit) ctx.hint(`This site can contain up to ${limit().cables} cables.`);
-      else if (ready) ctx.hint(`${model.speedName(routeError.speed)} ${model.mediaName(media)} · ${ctx.fmt(routeError.length)} · ${draft.waypoints.length} bends`);
+      else if (ready) ctx.hint(`${model.speedName(routeError.speed)} ${model.mediaName(media)} · ${ctx.fmt(routeError.length)} · ${draft.waypoints.length} bends · Enter to connect`);
       else if (draft?.source) ctx.hint(`${draft.media === 'ethernet' ? `${ctx.fmt(runLength(draftPoints()))} / ${ctx.fmt(catalog().copper_limit)} · ` : ''}Add bends or choose a destination. Hold Shift for right angles.`);
       else ctx.hint('Select a source device on the plan or in the From menu.');
       ctx.frame();
@@ -315,15 +320,25 @@
       refreshDraft();
     }
 
+    function positionConfirm() {
+      const button = $('wifiCableConfirm');
+      const target = mode === 'cable' && !$('wifiCableConnect').disabled && draft?.target;
+      const point = target && index().location(index().devices.get(target.device_id));
+      button.hidden = !point || !ctx.placeConfirmation(button, point);
+    }
+
     function finish() {
-      if (!draft?.source || !draft?.target || index().checkCable(draft).error) return;
+      if (mode !== 'cable' || $('wifiCableConnect').disabled || !draft?.source || !draft?.target) return false;
+      const result = index().checkCable(draft);
+      if (result.error) return false;
       const { editing, ...cable } = draft;
-      if (editing && index().checkCable(draft).length <= catalog().copper_limit) delete cable.legacy_length;
+      if (editing && result.length <= catalog().copper_limit) delete cable.legacy_length;
       const saved = editing ? ctx.replace('cables', cable) : ctx.add('cables', [cable]);
-      if (!saved) return;
+      if (!saved) return false;
       ctx.changeTool('select');
       ctx.select(cable.id);
       ctx.hint('Cable connected. Select a bend to drag it or use Reroute in the inspector.');
+      return true;
     }
 
     function reroute(cable) {
@@ -713,7 +728,8 @@
       document.querySelectorAll('[data-wifi-icon]').forEach(el => { el.innerHTML = icon(el.dataset.wifiIcon); });
       const floorEquipment = model.TYPES.filter(type => !catalog().equipment[type].rack_units);
       $('wifiEquipmentType').innerHTML = choices([...floorEquipment.map(type => [type, catalog().equipment[type].name]),
-        ...Object.entries(ctx.apNames).map(([mount, name]) => [`ap-${mount}`, name])], 'rack');
+        ...Object.entries(ctx.apNames).map(([mount, name]) => [`ap-${mount}`, name])]
+        .sort((a, b) => a[1].localeCompare(b[1], undefined, { numeric: true })), 'rack');
       $('wifiEquipmentIsp').innerHTML = ispChoices('alderline');
       $('wifiEquipmentType').addEventListener('change', equipmentControls);
       $('wifiEquipmentIsp').addEventListener('change', equipmentControls);
@@ -730,6 +746,7 @@
       $('wifiCableUndoBend').addEventListener('click', () => { draft.waypoints.pop(); refreshDraft(); });
       $('wifiCableCancel').addEventListener('click', () => { cancel(); ctx.changeTool('select'); });
       $('wifiCableConnect').addEventListener('click', finish);
+      $('wifiCableConfirm').addEventListener('click', finish);
       $('wifiCableBundleChoice').addEventListener('change', event => {
         if (event.target.value) { menu.hidden = true; ctx.select(event.target.value); $('wifiViewport').focus({ preventScroll: true }); }
       });
@@ -737,7 +754,7 @@
     }
 
     return { init, reset, index, setTool, use, cancel, draw, overlay, hoverAt, pick, name, locationPoints, deviceStatus, updateBundleBadges,
-      moveBend, setBend, editBends, pointForEdit, inspector, edit, removePlan, reroute, refreshDraft,
+      moveBend, setBend, editBends, pointForEdit, inspector, edit, removePlan, reroute, refreshDraft, positionConfirm, finish,
       hideMenu: () => { menu.hidden = true; }, clearHover: () => { hover = placementPoint = null; },
       drawEquipment, drawCameraCoverage, cameraOutlines, cameraAim, wallField, bundleIds: number => segments[number]?.cableIds || [], bundleHas: (number, ids) => segments[number]?.cableIds.some(id => ids.has(id)) };
   }

@@ -340,7 +340,11 @@
       outbound = path(source.paths, router.id);
       policyDrop = firewall(network.devices.get(router.id), { vlan: source.vlan, ip: source.lease.ip },
         { vlan: null, ip: ipNumber(INTERNET_IP) });
-      if (!policyDrop) outbound.push({ media: 'internet', rtt: source.upstream.rtt ?? 30 });
+      if (!policyDrop) {
+        const wan = network.links.get(router.id)?.find(hop => hop.wan && hop.to === source.upstream.id);
+        if (wan) outbound.push({ ...wan, nat: true });
+        outbound.push({ media: 'internet', rtt: source.upstream.rtt ?? 30 });
+      }
     } else if (network.routers.has(target)) {
       outbound = path(source.paths, target);
       policyDrop = firewall(network.devices.get(target), { vlan: source.vlan, ip: source.lease.ip },
@@ -353,7 +357,7 @@
       for (const hop of hops) {
         if (hop.media === 'virtual') continue;
         const points = reply && hop.points ? [...hop.points].reverse() : hop.points;
-        stages.push({ points, reply, media: hop.media, length: hop.length,
+        stages.push({ points, reply, media: hop.media, length: hop.length, nat: Boolean(hop.nat),
           duration: hop.media === 'internet' ? Math.min(650, Math.max(160, hop.rtt ?? 30)) / 2 : 0 });
         if (hop.media === 'wireless' && random() < hop.loss) {
           return { stages, dropPoint: points.at(-1), rtt: null, reason: 'Wireless packet loss.' };

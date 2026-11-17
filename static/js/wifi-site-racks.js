@@ -197,6 +197,7 @@
       zoom = 1;
       media.value = 'ethernet';
       kindInput.innerHTML = options(Object.entries(ctx.catalog().equipment).filter(([, entry]) => entry.rack_units)
+        .sort((a, b) => a[1].name.localeCompare(b[1].name, undefined, { numeric: true }))
         .map(([kind, entry]) => [kind, `${entry.name} · ${entry.rack_units}U`]), 'patch_panel');
       unitInput.replaceChildren();
       returnFocus = document.activeElement?.matches('[data-wifi-open-rack]');

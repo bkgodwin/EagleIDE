@@ -45,7 +45,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js" integrity="sha384-44q2s9jxk8W5N9gAB0yn7UYLi9E2oVw8eHyaTZLkDS3WuZM/AttkAiVj6JoZuGS4" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js" integrity="sha384-jgkY4GMNWfQcLLIoP1vg3FWXflDrRhcSXGBW6ONIWC2SOIv5H1Pa57sXs+aomCuZ" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js" integrity="sha384-EO/jSdjpPTVnKfaKudbmOTZBYv471ACLOeLdy0zhCEJrQAtjgUSCbn/Cc+9QWjIx" crossorigin="anonymous"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261116-starter-repeat">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261116-infra-guidance">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -353,7 +353,7 @@
         <p class="network-guest-note" id="networkGuestNote" hidden>Sign in to save projects or open labs assigned to your class.</p>
         <div class="network-loading" id="networkLoading" role="status">Loading Network Lab…</div>
         <div class="network-hub-grid" id="networkHubTools" hidden>
-          <section class="network-hub-sim" aria-labelledby="packetSimHeading">
+          <section class="network-hub-sim" aria-labelledby="packetSimHeading" id="packetSimHub">
             <header class="network-hub-intro">
               <div class="network-hub-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="6" height="5" rx="1"/><rect x="15.5" y="15" width="6" height="5" rx="1"/><path d="M8.5 6.5H17a3 3 0 0 1 3 3v2m-3-2 3 3 2-3M15.5 17.5H7a3 3 0 0 1-3-3v-2"/></svg></div>
               <div><h2 id="packetSimHeading">Packet Sim</h2><p>Build a topology, configure devices, and trace packets.</p></div>
@@ -383,7 +383,7 @@
               <ul class="network-hub-list" id="networkExampleList"></ul>
             </details>
           </section>
-          <section class="network-hub-sim is-infra" aria-labelledby="infraSimHeading">
+          <section class="network-hub-sim is-infra" aria-labelledby="infraSimHeading" id="infraSimHub">
             <header class="network-hub-intro">
               <div class="network-hub-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 20V4h10v7H20v9H3.5Zm0-8h6m4-1v5m0 4h7.5M8 8h2m6 5h2"/></svg></div>
               <div><h2 id="infraSimHeading">Infra Sim</h2><p>Design floor plans, route cables, and check Wi-Fi coverage.</p></div>
@@ -657,6 +657,7 @@
           <button class="btn run" id="wifiCableConnect" type="button">Connect</button>
         </div>
       </div>
+      <p class="wifi-guest-workspace-note" id="wifiGuestWorkspaceNote" hidden>Guest session. Progress ends when you leave. Download Project to keep a copy of your design.</p>
       <div class="wifi-editor">
         <div class="wifi-plan">
           <p class="wifi-tool-hint" id="wifiToolHint" role="status"></p>
@@ -670,6 +671,7 @@
               <svg class="wifi-background-layer" id="wifiBackgroundLayer" aria-hidden="true"><image id="wifiBackgroundImage"/></svg>
               <svg class="wifi-surface-layer" id="wifiSurfaceLayer" aria-hidden="true"></svg>
             </div>
+            <button class="wifi-cable-confirm" id="wifiCableConfirm" type="button" aria-label="Confirm cable connection" title="Confirm cable connection (Enter)" hidden>✓</button>
             <div class="wifi-cable-menu" id="wifiCableBundleMenu" hidden>
               <label for="wifiCableBundleChoice" id="wifiCableBundleHeading"></label>
               <select id="wifiCableBundleChoice"></select>
@@ -741,13 +743,19 @@
             <button class="btn run" type="button" id="wifiStarterNext" hidden>Next lesson</button>
             <button class="wifi-control" type="button" id="wifiStarterRestart" hidden>Restart lesson</button>
           </div>
+          <aside class="wifi-starter-theory" id="wifiStarterTheory" aria-label="How it works" hidden></aside>
         </aside>
       </div>
       <dialog class="wifi-rack-dialog" id="wifiRackDialog" aria-labelledby="wifiRackTitle">
         <header><div><h2 id="wifiRackTitle"></h2><p class="wifi-rack-subtitle" id="wifiRackSubtitle"></p></div>
           <form method="dialog"><button type="submit" class="wifi-control" aria-label="Close rack">×</button></form></header>
-        <p class="wifi-starter-tip wifi-starter-rack-tip" id="wifiStarterRackTip" role="status" hidden></p>
+        <section class="wifi-starter-rack-guide" id="wifiStarterRackGuide" aria-label="Starter Lab checklist" hidden>
+          <strong id="wifiStarterRackHeading"></strong>
+          <ol id="wifiStarterRackChecks"></ol>
+          <p class="wifi-starter-tip wifi-starter-rack-tip" id="wifiStarterRackTip" role="status" hidden></p>
+        </section>
         <div id="wifiRackBody" class="wifi-rack-body"></div>
+        <aside class="wifi-starter-theory wifi-rack-theory" id="wifiStarterRackTheory" aria-label="How it works" hidden></aside>
       </dialog>
       <dialog class="wifi-rack-dialog wifi-materials-dialog" id="wifiMaterialsDialog" aria-labelledby="wifiMaterialsTitle">
         <header><h2 id="wifiMaterialsTitle">Bill of Materials</h2>
@@ -1389,8 +1397,11 @@
           </div>
           <div class="teacher-dash-scroll">
             <div class="network-teacher-access-card">
-              <div><strong>Class access</strong><span>School-wide Network Lab access must also be enabled. Assigning a Packet Sim lab automatically enables class access.</span></div>
-              <label class="network-switch"><input id="networkTeacherAccessToggle" type="checkbox" disabled><span>Allow this class</span></label>
+              <div><strong>Class access</strong><span>Each simulator also needs school-wide access. Assigning a Packet Sim lab enables Packet Sim for this class.</span></div>
+              <div class="network-access-modes">
+                <label class="network-switch"><input id="networkTeacherAccessToggle" type="checkbox" disabled><span>Packet Sim</span></label>
+                <label class="network-switch"><input id="networkTeacherInfraToggle" type="checkbox" disabled><span>Infra Sim</span></label>
+              </div>
             </div>
             <div class="network-teacher-save">
               <button class="btn run" id="networkTeacherSaveBtn" type="button" disabled>Save Settings</button>
@@ -2270,7 +2281,9 @@
           </section>
           <section class="admin-settings-pane" data-admin-settings-pane="network">
             <div class="admin-settings-pane-heading"><span class="admin-management-kicker">Optional learning app</span><h4>Network Lab</h4><p>Enable Packet Sim and Infra Sim.</p></div>
-            <label class="admin-setting-toggle"><input type="checkbox" id="networkSimEnabledModal"><span><strong>Enable Network Lab</strong><small>Guests may simulate without saving. Signed-in students also require access from at least one of their classes.</small></span></label>
+            <label class="admin-setting-toggle"><input type="checkbox" id="networkSimEnabledModal"><span><strong>Enable Packet Sim</strong><small>Students also need Packet Sim access in a class.</small></span></label>
+            <label class="admin-setting-toggle"><input type="checkbox" id="infraSimEnabledModal"><span><strong>Enable Infra Sim</strong><small>Students also need Infra Sim access in a class.</small></span></label>
+            <label class="admin-setting-toggle"><input type="checkbox" id="infraSimGuestEnabledModal"><span><strong>Allow guests in Infra Sim</strong><small>Guests can open Starter Labs and scenarios and download project files. Guest progress ends when they leave.</small></span></label>
             <div class="admin-wiki-settings-card">
               <div><strong>Private admin preview</strong><span>You can test the full simulator while it is disabled. Existing simulator data is preserved when the feature is turned off.</span></div>
               <button class="btn secondary" id="settingsOpenNetworkSimBtn" type="button">Open Simulator</button>
@@ -2466,7 +2479,7 @@
 
   <script src="/static/js/app.js"></script>
   <script src="/static/js/connection.js?v=20261011-files-5"></script>
-  <script src="/static/js/feature-loader.js?v=20261116-starter-repeat"></script>
+  <script src="/static/js/feature-loader.js?v=20261116-infra-guidance"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20261021-security-1"></script>
   <script src="/static/js/layout.js?v=20261011-files-5"></script>
@@ -2490,7 +2503,7 @@
   <script src="/static/js/workspace-history.js?v=20261109-history"></script>
   <script src="/static/js/teacher-assignments.js?v=20261109-history"></script>
   <script src="/static/js/editor-edit-menu.js?v=2"></script>
-  <script src="/static/js/app-core.js?v=20261116-class-settings"></script>
+  <script src="/static/js/app-core.js?v=20261116-infra-guidance"></script>
   <script src="/static/js/eagle-lab-access.js?v=20261103-lab-polish"></script>
   <script src="/static/js/step-mode.js?v=20261011-files-5"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20261021-security-1"></script>

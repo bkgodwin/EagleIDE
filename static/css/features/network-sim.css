@@ -453,6 +453,7 @@ body.light-mode .network-hub {
 
 .network-teacher-access-card { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 16px; border: 1px solid var(--theme-border-mid); border-left: 4px solid var(--columbia-blue); background: var(--theme-surface); }
 .network-teacher-access-card > div { display: grid; gap: 4px; }
+.network-teacher-access-card .network-access-modes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .network-teacher-access-card span { color: var(--theme-text-dim); font-size: 12px; }
 .network-switch { display: flex; align-items: center; gap: 8px; font-weight: 800; white-space: nowrap; }
 .network-switch input { width: 22px; height: 22px; }

@@ -121,6 +121,7 @@
         const point = dropping ? packet.dropPoint : position(stage.points, Math.max(0, elapsed / stage.duration));
         packet.node.setAttribute('transform', `translate(${point.x} ${point.y})`);
         packet.node.classList.toggle('is-reply', !!stage?.reply);
+        packet.node.classList.toggle('is-nat', !!stage?.nat);
         packet.node.classList.toggle('is-dropped', !!dropping);
         packet.node.style.opacity = dropping ? String(1 - elapsed / DROP_TIME) : '';
       }

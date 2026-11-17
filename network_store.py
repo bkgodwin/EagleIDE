@@ -1227,44 +1227,61 @@ class NetworkStore:
             self._write_json(path, data)
             return True
 
-    def class_access(self, class_id):
+    @staticmethod
+    def _class_modes(data, class_id):
+        key = str(class_id)
+        fallback = bool(data.get("class_access", {}).get(key, False))
+        override = data.get("class_modes", {}).get(key, {})
+        return {mode: override.get(mode, fallback) for mode in ("packet", "infra")}
+
+    def class_access(self, class_id, mode=None):
         with self._lock:
-            return bool(self._catalog().get("class_access", {}).get(str(class_id), False))
+            modes = self._class_modes(self._catalog(), class_id)
+            return modes[mode] if mode else any(modes.values())
+
+    def student_modes(self, class_ids):
+        with self._lock:
+            data = self._catalog()
+            modes = [self._class_modes(data, class_id) for class_id in class_ids]
+            return {key: any(item[key] for item in modes) for key in ("packet", "infra")}
 
     def set_class_access(self, class_id, enabled):
         with self._lock:
             data = self._catalog()
-            data.setdefault("class_access", {})[str(class_id)] = bool(enabled)
+            key = str(class_id)
+            data.setdefault("class_access", {})[key] = bool(enabled)
+            data.get("class_modes", {}).pop(key, None)
             self._write_json(self.catalog_path, data)
             return bool(enabled)
 
-    def class_settings(self, class_id, scenario_ids):
+    def class_settings(self, class_id, scenario_ids, *, modes=False):
         with self._lock:
-            return self._class_settings(self._catalog(), str(class_id), scenario_ids)
+            return self._class_settings(self._catalog(), str(class_id), scenario_ids, modes)
 
-    @staticmethod
-    def _class_settings(data, class_id, scenario_ids):
-        enabled = bool(data.get("class_access", {}).get(class_id, False))
+    def _class_settings(self, data, class_id, scenario_ids, modes=False):
+        access = self._class_modes(data, class_id)
         overrides = data.get("scenario_visibility", {}).get(class_id, {})
-        return enabled, {scenario_id: overrides.get(scenario_id, True) for scenario_id in scenario_ids}
+        return (access if modes else any(access.values())), {key: overrides.get(key, True) for key in scenario_ids}
 
-    def update_class_settings(self, class_id, scenario_ids, enabled, visibility):
+    def update_class_settings(self, class_id, scenario_ids, enabled, visibility, *, access=None):
         class_id = str(class_id)
         with self._lock:
             data = self._catalog()
             if enabled is not None:
                 data.setdefault("class_access", {})[class_id] = enabled
+                data.get("class_modes", {}).pop(class_id, None)
+            if access:
+                data.setdefault("class_modes", {}).setdefault(class_id, {}).update(access)
             if visibility:
                 data.setdefault("scenario_visibility", {}).setdefault(class_id, {}).update(visibility)
             self._write_json(self.catalog_path, data)
-            return self._class_settings(data, class_id, scenario_ids)
+            return self._class_settings(data, class_id, scenario_ids, access is not None)
 
     def student_scenarios(self, class_ids, scenario_ids):
         with self._lock:
             data = self._catalog()
-            enabled = data.get("class_access", {})
             overrides = data.get("scenario_visibility", {})
-            policies = [overrides.get(str(class_id), {}) for class_id in class_ids if enabled.get(str(class_id))]
+            policies = [overrides.get(str(class_id), {}) for class_id in class_ids if self._class_modes(data, class_id)["infra"]]
             return {scenario_id for scenario_id in scenario_ids if any(policy.get(scenario_id, True) for policy in policies)}
 
     def set_scenario_visibility(self, class_id, scenario_id, visible):
@@ -1294,7 +1311,7 @@ class NetworkStore:
             if not existing:
                 existing = {"class_id": class_id, "lab_id": lab_id, "assigned_by": str(teacher_email).lower(), "assigned_at": int(time.time())}
                 assignments.append(existing)
-                data.setdefault("class_access", {})[class_id] = True
+                data.setdefault("class_modes", {}).setdefault(class_id, {})["packet"] = True
                 self._write_json(self.catalog_path, data)
             return copy.deepcopy(existing)
 

@@ -13,7 +13,7 @@ from flask import jsonify, request, send_file
 from werkzeug.exceptions import RequestEntityTooLarge
 
 from network_content import ACRONYM_REFERENCE, COMMAND_REFERENCE, EXAMPLE_TOPOLOGIES, LABS, PORT_REFERENCE, example_summaries, lab_summary
-from network_store import (MAX_WIFI_SITE_BYTES, WIFI_LIMITS, NetworkDataError, NetworkStore, WifiAccessError,
+from network_store import (MAX_WIFI_SITE_BYTES, WIFI_LIMITS, WIFI_SCHEMA_VERSION, validate_wifi_site, NetworkDataError, NetworkStore, WifiAccessError,
                            WifiRevisionError, WifiStorageError, grade_lab, validate_topology)
 import wifi_starter_labs as starter
 from wifi_cabling import CABLING_CATALOG
@@ -52,32 +52,39 @@ def register(
             return {"role": "student", "email": str(fresh.get("email") or "").strip().lower(), "record": fresh}
         return {"role": "guest", "email": "", "record": None}
 
-    def globally_enabled():
-        return bool((config_provider() or {}).get("network_sim_enabled", False))
+    def global_modes():
+        config = config_provider() or {}
+        legacy = bool(config.get("network_sim_enabled", False))
+        explicit = {mode: config.get(f"{mode}_sim_enabled") for mode in ("packet", "infra")}
+        return {mode: value if type(value) is bool else legacy for mode, value in explicit.items()}
 
     def json_object():
         data = request.get_json(silent=True)
         return data if isinstance(data, dict) else None
 
-    def student_enabled(current):
-        return any(store.class_access(class_id) for class_id in get_user_class_ids(current.get("record")))
+    def allowed_modes(current):
+        role = current["role"]
+        if role == "admin":
+            return dict(packet=True, infra=True)
+        modes = global_modes()
+        if role == "student":
+            grants = store.student_modes(get_user_class_ids(current.get("record")))
+            return {mode: enabled and grants[mode] for mode, enabled in modes.items()}
+        if role == "guest":
+            modes["infra"] = modes["infra"] and (config_provider() or {}).get("infra_sim_guest_enabled", True) is not False
+        return modes
 
-    def may_open(current):
-        if current["role"] == "admin":
-            return True
-        if not globally_enabled():
-            return False
-        if current["role"] == "student":
-            return student_enabled(current)
-        return True
+    def may_open(current, mode=None):
+        modes = allowed_modes(current)
+        return modes[mode] if mode else any(modes.values())
 
     def recheck_wifi_access(original, scenario_id=None):
         current = actor()
-        return (current["role"] == original["role"] and current["email"] == original["email"] and may_open(current)
+        return (current["role"] == original["role"] and current["email"] == original["email"] and may_open(current, "infra")
                 and (scenario_id is None or scenario_id in available_scenarios(current)))
 
     def access_denied(current):
-        message = "Network Lab is disabled for your class" if current["role"] == "student" and globally_enabled() else "Network Lab is disabled"
+        message = "Network Lab is disabled for your class" if current["role"] == "student" and any(global_modes().values()) else "Network Lab is disabled"
         return jsonify(ok=False, error=message, enabled=False), 403
 
     @app.get("/api/network/access")
@@ -95,7 +102,7 @@ def register(
     def available_scenarios(current):
         if current["role"] == "student":
             return store.student_scenarios(get_user_class_ids(current.get("record")), SCENARIOS)
-        return SCENARIOS if current["role"] in ("admin", "teacher") else ()
+        return SCENARIOS if current["role"] in ("admin", "teacher", "guest") else ()
 
     def teacher_class(class_id):
         teacher = require_teacher(request)
@@ -113,20 +120,21 @@ def register(
         if current["role"] != "student":
             return False
         class_id = str(class_id or "")
-        if class_id not in get_user_class_ids(current.get("record")) or not store.class_access(class_id):
+        if class_id not in get_user_class_ids(current.get("record")) or not store.class_access(class_id, "packet"):
             return False
         return lab_id in {item.get("lab_id") for item in store.assignments_for_class(class_id)}
 
     @app.get("/api/network/bootstrap")
     def network_bootstrap():
         current = actor()
-        if not may_open(current):
+        modes = allowed_modes(current)
+        if not any(modes.values()):
             return access_denied(current)
         class_ids = get_user_class_ids(current.get("record")) if current["role"] == "student" else []
         assigned = []
-        if current["role"] == "student":
+        if current["role"] == "student" and modes["packet"]:
             for class_id in class_ids:
-                if not store.class_access(class_id):
+                if not store.class_access(class_id, "packet"):
                     continue
                 classroom = find_class(class_id) or {}
                 for assignment in store.assignments_for_class(class_id):
@@ -138,10 +146,10 @@ def register(
                             "class_name": classroom.get("name") or "Class",
                             "assigned_at": assignment.get("assigned_at"),
                         })
-        saved = [] if current["role"] == "guest" else store.list_topologies(current["email"])
+        saved = [] if current["role"] == "guest" or not modes["packet"] else store.list_topologies(current["email"])
         saved_sites, wifi_storage_available = [], True
         starter_progress = None
-        if current["role"] != "guest":
+        if current["role"] != "guest" and modes["infra"]:
             try:
                 saved_sites = store.list_wifi_sites(current["email"])
             except WifiStorageError:
@@ -150,27 +158,28 @@ def register(
                 starter_progress = store.wifi_starter_progress(current["email"])
             except WifiStorageError:
                 pass
-        allowed_scenarios = available_scenarios(current)
+        allowed_scenarios = available_scenarios(current) if modes["infra"] else ()
         return jsonify(
             ok=True,
             data={
-                "enabled": globally_enabled(),
-                "admin_preview": current["role"] == "admin" and not globally_enabled(),
+                "enabled": any(global_modes().values()),
+                "modes": modes,
+                "admin_preview": current["role"] == "admin" and not all(global_modes().values()),
                 "role": current["role"],
                 "can_save": current["role"] != "guest",
-                "examples": example_summaries(),
+                "examples": example_summaries() if modes["packet"] else [],
                 "assigned_labs": assigned,
                 "practice_labs": [{key: lab[key] for key in ("id", "title", "description", "level", "estimated_minutes")}
-                                  for lab in LABS.values()],
+                                  for lab in LABS.values()] if modes["packet"] else [],
                 "saved": saved,
                 "saved_sites": saved_sites,
-                "starter_labs": starter.catalog(),
+                "starter_labs": starter.catalog() if modes["infra"] else [],
                 "starter_progress": starter_progress,
                 "wifi_storage_available": wifi_storage_available,
                 "scenarios": [scenario_summary(item) for scenario_id, item in SCENARIOS.items()
                               if scenario_id in allowed_scenarios],
-                "wifi_limits": WIFI_LIMITS,
-                "wifi_cabling": {**CABLING_CATALOG, "server_services": SERVER_SERVICES},
+                "wifi_limits": WIFI_LIMITS if modes["infra"] else None,
+                "wifi_cabling": {**CABLING_CATALOG, "server_services": SERVER_SERVICES} if modes["infra"] else None,
                 "command_reference": COMMAND_REFERENCE,
                 "port_reference": PORT_REFERENCE,
                 "acronym_reference": ACRONYM_REFERENCE,
@@ -181,7 +190,7 @@ def register(
     @app.get("/api/network/examples/<example_id>")
     def network_example(example_id):
         current = actor()
-        if not may_open(current):
+        if not may_open(current, "packet"):
             return jsonify(ok=False, error="Packet Sim is disabled"), 403
         topology = EXAMPLE_TOPOLOGIES.get(str(example_id))
         if not topology:
@@ -194,7 +203,7 @@ def register(
         lab = LABS.get(str(lab_id))
         if not lab:
             return jsonify(ok=False, error="Lab not found"), 404
-        if not may_open(current):
+        if not may_open(current, "packet"):
             return jsonify(ok=False, error="Packet Sim is disabled"), 403
         class_id = str(request.args.get("class_id") or "")
         include_solution = current["role"] == "admin"
@@ -214,7 +223,7 @@ def register(
 
     @app.get("/api/network/practice-labs/<lab_id>")
     def network_practice_lab(lab_id):
-        if not may_open(actor()):
+        if not may_open(actor(), "packet"):
             return jsonify(ok=False, error="Packet Sim is disabled"), 403
         lab = LABS.get(lab_id)
         if not lab:
@@ -228,7 +237,7 @@ def register(
         current = actor()
         if current["role"] == "guest":
             return jsonify(ok=False, error="Sign in to save networks"), 401
-        if not may_open(current):
+        if not may_open(current, "packet"):
             return jsonify(ok=False, error="Packet Sim is disabled"), 403
         return jsonify(ok=True, data=store.list_topologies(current["email"]))
 
@@ -237,7 +246,7 @@ def register(
         current = actor()
         if current["role"] == "guest":
             return jsonify(ok=False, error="Sign in to open saved networks"), 401
-        if not may_open(current):
+        if not may_open(current, "packet"):
             return jsonify(ok=False, error="Packet Sim is disabled"), 403
         topology = store.get_topology(current["email"], topology_id)
         if not topology:
@@ -249,7 +258,7 @@ def register(
         current = actor()
         if current["role"] == "guest":
             return jsonify(ok=False, error="Guests cannot save networks"), 401
-        if not may_open(current):
+        if not may_open(current, "packet"):
             return jsonify(ok=False, error="Packet Sim is disabled"), 403
         payload = json_object()
         if payload is None:
@@ -265,7 +274,7 @@ def register(
         current = actor()
         if current["role"] == "guest":
             return jsonify(ok=False, error="Sign in to manage saved networks"), 401
-        if not may_open(current):
+        if not may_open(current, "packet"):
             return jsonify(ok=False, error="Packet Sim is disabled"), 403
         try:
             deleted = store.delete_topology(current["email"], topology_id)
@@ -279,12 +288,39 @@ def register(
         current = actor()
         if current["role"] == "guest":
             return None, (jsonify(ok=False, error="Sign in to save or open Wi-Fi sites"), 401)
-        if not may_open(current):
+        if not may_open(current, "infra"):
             return None, (jsonify(ok=False, error="Infra Sim is disabled"), 403)
         return current, None
 
+    @app.post("/api/network/wifi-starter/check")
+    def wifi_guest_starter_check():
+        current = actor()
+        if current["role"] != "guest" or not may_open(current, "infra"):
+            return access_denied(current)
+        request.max_content_length = MAX_WIFI_SITE_BYTES
+        try:
+            payload = json_object()
+            if not payload:
+                raise NetworkDataError("A Starter Labs plan is required")
+            site = validate_wifi_site(payload.get("site"), existing={})
+            progress = starter.guest_grade(site, payload.get("progress"), payload.get("evidence", []))
+        except RequestEntityTooLarge:
+            return jsonify(ok=False, error="Starter Labs request is too large"), 413
+        except (ValueError, RecursionError):
+            return jsonify(ok=False, error="The Starter Labs plan or progress is invalid"), 400
+        response = jsonify(ok=True, data={"progress": progress})
+        response.cache_control.no_store = True
+        return response
+
     @app.route("/api/network/wifi-starter", methods=["POST", "PUT"])
     def wifi_starter():
+        current = actor()
+        if current["role"] == "guest" and request.method == "POST":
+            if not may_open(current, "infra"):
+                return access_denied(current)
+            site = validate_wifi_site(starter.blank_site(WIFI_SCHEMA_VERSION))
+            return jsonify(ok=True, data={"site": site, "lessons": starter.LESSONS,
+                                         "progress": {**starter.initial_progress(), "can_restart": True}, "guest": True})
         current, error = wifi_account()
         if error:
             return error
@@ -301,7 +337,7 @@ def register(
                 else:
                     site = store.start_wifi_starter(current["email"], authorized=authorized)
                 data = dict(site={key: value for key, value in site.items() if not key.startswith("starter_")},
-                            lessons=starter.LESSONS, progress=starter.summary(site))
+                            lessons=starter.LESSONS, progress=starter.summary(site, refresh=True))
             else:
                 request.max_content_length = MAX_WIFI_SITE_BYTES
                 payload = json_object()
@@ -342,7 +378,7 @@ def register(
     @app.post("/api/network/wifi-project/validate")
     def wifi_project_validate():
         current = actor()
-        if not may_open(current):
+        if not may_open(current, "infra"):
             return access_denied(current)
         request.max_content_length = MAX_WIFI_SITE_BYTES
         try:
@@ -363,12 +399,10 @@ def register(
     @app.route("/api/network/wifi-scenarios/<scenario_id>", methods=["GET", "POST"])
     def network_wifi_scenario(scenario_id):
         current = actor()
-        if request.method == "POST" and current["role"] == "guest":
-            return jsonify(ok=False, error="Sign in to start a scenario attempt"), 401
-        if not may_open(current) or scenario_id not in available_scenarios(current):
+        if not may_open(current, "infra") or scenario_id not in available_scenarios(current):
             return jsonify(ok=False, error="This scenario is not available"), 404
         scenario = SCENARIOS[scenario_id]
-        if request.method == "POST":
+        if request.method == "POST" and current["role"] != "guest":
             try:
                 site = store.start_wifi_scenario(
                     current["email"], scenario, authorized=lambda: recheck_wifi_access(current, scenario_id))
@@ -385,7 +419,7 @@ def register(
     @app.post("/api/network/wifi-export.pdf")
     def network_wifi_export():
         current = actor()
-        if not may_open(current):
+        if not may_open(current, "infra"):
             return jsonify(ok=False, error="Infra Sim is disabled"), 403
         request.max_content_length = MAX_EXPORT_BYTES
         try:
@@ -448,7 +482,7 @@ def register(
     @app.get("/api/network/student/labs/<class_id>/<lab_id>")
     def network_student_lab_progress_get(class_id, lab_id):
         current = actor()
-        if not may_open(current) or not student_lab_access(current, class_id, lab_id):
+        if not may_open(current, "packet") or not student_lab_access(current, class_id, lab_id):
             return jsonify(ok=False, error="This lab is not assigned to you"), 403
         lab = LABS.get(lab_id)
         if not lab:
@@ -462,7 +496,7 @@ def register(
     @app.put("/api/network/student/labs/<class_id>/<lab_id>")
     def network_student_lab_progress_put(class_id, lab_id):
         current = actor()
-        if not may_open(current) or not student_lab_access(current, class_id, lab_id):
+        if not may_open(current, "packet") or not student_lab_access(current, class_id, lab_id):
             return jsonify(ok=False, error="This lab is not assigned to you"), 403
         payload = json_object()
         if payload is None:
@@ -530,11 +564,11 @@ def register(
             except WifiStorageError:
                 progress = None
             starter_roster.append({**student, "progress": progress})
-        enabled, visibility = store.class_settings(class_id, SCENARIOS)
+        access, visibility = store.class_settings(class_id, SCENARIOS, modes=True)
         scenarios = [{**scenario_summary(item), "visible": visibility[scenario_id]} for scenario_id, item in SCENARIOS.items()]
         response = jsonify(ok=True, data={"class_id": class_id, "class_name": classroom.get("name"),
-                                          "enabled": enabled, "globally_enabled": globally_enabled(),
-                                          "labs": labs, "scenarios": scenarios,
+                                          "enabled": any(access.values()), "access": access, "global_access": global_modes(),
+                                          "globally_enabled": any(global_modes().values()), "labs": labs, "scenarios": scenarios,
                                           "starter_labs": starter.catalog(), "starter_roster": starter_roster})
         response.cache_control.private = True
         response.cache_control.no_store = True
@@ -550,14 +584,17 @@ def register(
             return jsonify(ok=False, error="A JSON object is required"), 400
         enabled = data.get("enabled")
         visibility = data.get("scenario_visibility", {})
+        access = data.get("access", {})
         if (("enabled" in data and type(enabled) is not bool)
+                or not isinstance(access, dict)
+                or any(key not in ("packet", "infra") or type(value) is not bool for key, value in access.items())
                 or not isinstance(visibility, dict)
                 or any(key not in SCENARIOS or type(value) is not bool for key, value in visibility.items())
-                or (enabled is None and not visibility)):
+                or (enabled is None and not visibility and not access)):
             return jsonify(ok=False, error="Invalid class access or scenario settings"), 400
-        enabled, visibility = store.update_class_settings(class_id, SCENARIOS, enabled, visibility)
-        return jsonify(ok=True, data={"enabled": enabled, "globally_enabled": globally_enabled(),
-                                     "scenario_visibility": visibility})
+        access, visibility = store.update_class_settings(class_id, SCENARIOS, enabled, visibility, access=access)
+        return jsonify(ok=True, data={"enabled": any(access.values()), "access": access, "global_access": global_modes(),
+                                     "globally_enabled": any(global_modes().values()), "scenario_visibility": visibility})
 
     @app.put("/api/network/teacher/classes/<class_id>/scenarios/<scenario_id>")
     def network_teacher_scenario_visibility(class_id, scenario_id):
