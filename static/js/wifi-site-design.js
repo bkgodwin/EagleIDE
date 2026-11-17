@@ -90,6 +90,18 @@
       '<rect x="-4.26" y="-1.6" width="8.52" height="3.2" rx=".13" fill="#b8c5c5"/><rect x="-3.85" y="-1.22" width="7.25" height="2.44" rx=".14" fill="#7d9296"/><path fill="none" stroke="#dbe3e1" stroke-width=".14" d="M-3.44-.66h1.57m-1.57.46h1.57m-1.57.46h1.57m-1.57.46h1.57M-.9-1.19v2.38m2.51-2.38v2.38"/><rect x="1.87" y="-.56" width=".88" height="1.12" rx=".08" fill="#d5e1dd"/><path fill="none" stroke-width=".14" d="M3.76-.46v.92"/>'],
     bus: ['School bus', 2.55, 11.5, '<rect fill="#e8bf62" x="-1.24" y="-5.65" width="2.48" height="11.3" rx=".45"/><path fill="#d6e4ed" d="M-.94-4.65H.94v.65H-.94z"/><path fill="none" d="M-1.03-3.4v7.8m2.06-7.8v7.8M-.9 4.55H.9M-.7-5.28h.28m.84 0h.28"/>'],
     lamp: ['Lamp post', .75, .75, '<circle r=".34" fill="#f7ebbc"/><circle r=".11" fill="#677686"/><path fill="none" d="M-.24 0h.48M0-.24v.48"/>'],
+    cubicle: ['Office cubicle', 2.35, 2.35,
+      '<path fill="#eef1eb" stroke="none" d="M-1.11-1.11h2.22v2.22h-2.22z"/><path fill="none" stroke="#64828a" stroke-width=".16" d="M-1.09 1.08v-2.17h2.18V.28"/><path fill="#bcad98" d="M-.87-.88H.89v.55H-.31v.86h-.56z"/><rect x="-.12" y="-.09" width=".54" height=".57" rx=".12" fill="#9eb4bc"/>'],
+    conference_table: ['Conference table', 4.8, 2.4,
+      '<rect x="-2.02" y="-.65" width="4.04" height="1.3" rx=".27" fill="#cfbda7"/><path fill="none" stroke="#a08366" d="M-1.6 0h3.2"/><path fill="none" stroke="#77949e" stroke-width=".38" d="M-1.38-1h.45m.7 0h.45m.7 0h.45M-1.38 1h.45m.7 0h.45m.7 0h.45M-2.22-.2v.4m4.44-.4v.4"/>'],
+    banquet_table: ['Round banquet table', 2.65, 2.65,
+      '<circle r=".86" fill="#faf1dd"/><circle r=".24" fill="#bf9d8b" stroke="none"/><circle r="1.1" fill="none" stroke="#947e6e" stroke-width=".37" stroke-dasharray=".34 .524"/>'],
+    dumpster: ['Commercial waste container', 2.15, 1.47,
+      '<rect x="-1.03" y="-.70" width="2.06" height="1.4" rx=".11" fill="#789787"/><path fill="none" stroke="#415d4d" d="M-1.02.41h2.04M0-.69v1.1m-.75-.35h.48m.54 0h.48"/>'],
+    parking_row: ['Six-space parking row', 15, 5.2,
+      '<path fill="none" stroke="#fcf5e6" stroke-width=".14" d="M-7.5 2.6v-5.2h15v5.2M-5-2.6v5.2m2.5-5.2v5.2M0-2.6v5.2m2.5-5.2v5.2m2.5-5.2v5.2"/>'],
+    barrier_gate: ['Vehicle barrier gate', 4.5, .8,
+      '<rect x="-2.23" y="-.34" width=".56" height=".68" rx=".05" fill="#697b89"/><path d="M-1.68 0h3.9" stroke="#fff4db" stroke-width=".28"/><path d="M-1.68 0h3.9" stroke="#aa5548" stroke-width=".28" stroke-dasharray=".45 .43"/>'],
     parking_bay: ['Parking bay', 2.5, 5.2, '<path fill="none" stroke="#fff" d="M-1.25 2.6v-5.2h2.5v5.2"/>'],
   };
   const surfaces = { floor: 'Room floor', sidewalk: 'Sidewalk', pavement: 'Pavement', landscape: 'Landscape' };

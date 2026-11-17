@@ -27,7 +27,7 @@ test('nested walls create a hole in the surrounding room and polygon tool reject
   assert.equal(design.simple([p(0, 0), p(4, 0), p(4, 4), p(2, 2), p(0, 4)]), true);
 });
 
-test('scaled sports, industrial, and hospital symbols render when rotated', () => {
+test('scaled venue, industrial, hospital, and office symbols render when rotated', () => {
   const sizes = [
     ['football_field', 109.728, 48.768], ['stadium_seating', 14, 14],
     ['tennis_court', 23.77, 10.97], ['lap_pool', 25, 16],
@@ -35,6 +35,8 @@ test('scaled sports, industrial, and hospital symbols render when rotated', () =
     ['semi_truck', 2.65, 19.5], ['mobile_crane', 4.25, 15.8], ['service_bay', 7.8, 13.2],
     ['hospital_bed', 1.28, 2.46], ['operating_table', 1.52, 2.64], ['ct_scanner', 3.6, 4.25],
     ['ambulance', 2.68, 7.5], ['helipad', 24, 24], ['diesel_generator', 8.6, 3.3],
+    ['cubicle', 2.35, 2.35], ['conference_table', 4.8, 2.4], ['banquet_table', 2.65, 2.65],
+    ['dumpster', 2.15, 1.47], ['parking_row', 15, 5.2], ['barrier_gate', 4.5, .8],
   ];
   for (const [kind, width, height] of sizes) {
     const item = { kind, x: 0, y: 0, angle: 90 };

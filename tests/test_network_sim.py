@@ -164,6 +164,43 @@ class NetworkStoreTests(unittest.TestCase):
         self.assertEqual(sum(item["kind"] == "lap_pool" for item in site["decor"]), 1)
         self.assertGreaterEqual(sum(wall["material"] == "reinforced_concrete" for wall in site["walls"]), 12)
 
+    def test_office_park_starter_contains_the_campus_and_unwired_equipment(self):
+        scenario = SCENARIOS["briar-glen-insurance-campus"]
+        site = validate_wifi_site(scenario["site"])
+        self.assertTrue(site["floor_locked"])
+        self.assertEqual(site["units"], "m")
+        self.assertEqual(site["cables"], [])
+        self.assertEqual(site["access_points"], [])
+        walls = {wall["id"]: wall for wall in site["walls"]}
+        office_fronts = [walls[f"{key}-south-shell"] for key in "ABCD"]
+        for i, front in enumerate(office_fronts):
+            self.assertEqual(front["a"]["y"], 34)
+            self.assertGreaterEqual(front["b"]["x"] - front["a"]["x"], 60)
+            if i:
+                self.assertGreaterEqual(front["a"]["x"] - office_fronts[i - 1]["b"]["x"], 16)
+        self.assertLess(walls["plant-south"]["a"]["y"], 0)
+        self.assertGreater(walls["guard-north"]["a"]["y"], 34)
+        labels = [item["text"] for item in site["labels"]]
+        self.assertIn("Ballroom · 29 × 19 m", labels)
+        self.assertEqual(labels.count("Executive Assistant"), 2)
+        self.assertGreaterEqual(sum("IDC" in text for text in labels), 5)
+        self.assertGreaterEqual(sum(item["kind"] == "cubicle" for item in site["decor"]), 100)
+
+        equipment = site["equipment"]
+        racks = [item for item in equipment if item["kind"] == "rack"]
+        self.assertEqual(len(racks), 12)
+        self.assertEqual(len({rack["name"] for rack in racks}), 12)
+        for rack in racks:
+            self.assertTrue(76 < rack["x"] < 105 and 0 < rack["y"] < 14)
+            mounted = {item["rack_u"]: item["kind"] for item in equipment if item.get("rack_id") == rack["id"]}
+            self.assertEqual(mounted, {1: "ups", 3: "ups", 6: "server", 8: "server", 10: "server",
+                                       12: "server", 16: "patch_panel"})
+        cameras = [item for item in equipment if item["kind"] == "poe_camera"]
+        self.assertEqual({item["name"] for item in cameras}, {"Entry lane", "Exit lane"})
+        self.assertTrue(all(147 < item["x"] < 155 and 74 < item["y"] < 77 for item in cameras))
+        desktop, = [item for item in equipment if item["kind"] == "desktop"]
+        self.assertTrue(148 < desktop["x"] < 154 and 70 < desktop["y"] < 76.2)
+
     def test_industrial_starter_keeps_logistics_and_detached_buildings_at_scale(self):
         scenario = SCENARIOS["rivermill-fabrication-works"]
         site = validate_wifi_site(scenario["site"])
@@ -714,7 +751,8 @@ class NetworkRouteTests(unittest.TestCase):
     def test_scenario_catalog_orders_starters_by_scope_and_locks_their_floor_plans(self):
         expected = [
             "maple-lane-house", "juniper-main-coffee", "port-adelaide-community-center", "suntrail-motor-lodge",
-            "alder-ridge-high-school", "rivermill-fabrication-works", "harborline-stadium", "marshpoint-regional-hospital",
+            "alder-ridge-high-school", "rivermill-fabrication-works", "harborline-stadium",
+            "briar-glen-insurance-campus", "marshpoint-regional-hospital",
         ]
         teacher = {"X-Teacher-Token": "teacher-token"}
         catalog = self.client.get("/api/network/bootstrap", headers=teacher).json["data"]["scenarios"]
