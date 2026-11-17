@@ -45,7 +45,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js" integrity="sha384-44q2s9jxk8W5N9gAB0yn7UYLi9E2oVw8eHyaTZLkDS3WuZM/AttkAiVj6JoZuGS4" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js" integrity="sha384-jgkY4GMNWfQcLLIoP1vg3FWXflDrRhcSXGBW6ONIWC2SOIv5H1Pa57sXs+aomCuZ" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js" integrity="sha384-EO/jSdjpPTVnKfaKudbmOTZBYv471ACLOeLdy0zhCEJrQAtjgUSCbn/Cc+9QWjIx" crossorigin="anonymous"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261116-class-settings">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261116-starter-labs">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -393,6 +393,12 @@
                 <button class="btn run" id="networkWifiBtn" type="button">New Site</button>
               </div>
             </header>
+            <details class="network-hub-group network-hub-folder" id="wifiStarterFolder">
+              <summary>Starter Labs <span id="wifiStarterCount"></span></summary>
+              <p class="network-hub-empty" id="wifiStarterIntro"></p>
+              <button class="btn run" type="button" id="wifiStarterOpen" hidden>Start Starter Labs</button>
+              <ol class="wifi-starter-catalog" id="wifiStarterLessons"></ol>
+            </details>
             <section class="network-hub-group" id="wifiSavedSection" hidden>
               <h3>Saved Sites</h3>
               <ul class="network-hub-list" id="wifiSavedSites"></ul>
@@ -656,7 +662,7 @@
               <canvas class="wifi-heatmap" id="wifiHeatmap" aria-hidden="true"></canvas>
               <svg class="wifi-grid" id="wifiGrid" aria-hidden="true"></svg>
               <svg class="wifi-objects" id="wifiObjects" aria-hidden="true">
-                <g id="wifiSurfaceHitLayer"></g><g id="wifiCameraLayer"></g><g id="wifiDecorLayer"></g><g id="wifiWalls"></g><g id="wifiOpenings"></g><g id="wifiWireLayer"></g><g id="wifiMarkers"></g><g id="wifiEquipmentLayer"></g><g id="wifiOverlay"></g><g id="wifiPingLayer"></g>
+                <g id="wifiSurfaceHitLayer"></g><g id="wifiCameraLayer"></g><g id="wifiDecorLayer"></g><g id="wifiWalls"></g><g id="wifiOpenings"></g><g id="wifiWireLayer"></g><g id="wifiMarkers"></g><g id="wifiEquipmentLayer"></g><g id="wifiOverlay"></g><g id="wifiStarterGhost" pointer-events="none"></g><g id="wifiPingLayer"></g>
               </svg>
               <svg class="wifi-background-layer" id="wifiBackgroundLayer" aria-hidden="true"><image id="wifiBackgroundImage"/></svg>
               <svg class="wifi-surface-layer" id="wifiSurfaceLayer" aria-hidden="true"></svg>
@@ -720,10 +726,23 @@
             <span id="wifiCoverageStatus" class="wifi-coverage-status" hidden>Updating coverage…</span>
           </footer>
         </div>
+        <aside class="wifi-starter-checklist" id="wifiStarterChecklist" aria-labelledby="wifiStarterHeading" hidden>
+          <span class="wifi-starter-step" id="wifiStarterStep"></span>
+          <h2 id="wifiStarterHeading"></h2>
+          <p id="wifiStarterGoal"></p>
+          <ol id="wifiStarterChecks" aria-label="Lesson checklist"></ol>
+          <div class="wifi-starter-tip" id="wifiStarterTip" role="status" aria-live="polite"></div>
+          <div class="wifi-starter-actions">
+            <button class="wifi-control" type="button" id="wifiStarterHint" aria-pressed="true">Hide hint</button>
+            <button class="wifi-control" type="button" id="wifiStarterFit">Find target</button>
+            <button class="btn run" type="button" id="wifiStarterNext" hidden>Next lesson</button>
+          </div>
+        </aside>
       </div>
       <dialog class="wifi-rack-dialog" id="wifiRackDialog" aria-labelledby="wifiRackTitle">
         <header><div><h2 id="wifiRackTitle"></h2><p class="wifi-rack-subtitle" id="wifiRackSubtitle"></p></div>
           <form method="dialog"><button type="submit" class="wifi-control" aria-label="Close rack">×</button></form></header>
+        <p class="wifi-starter-tip wifi-starter-rack-tip" id="wifiStarterRackTip" role="status" hidden></p>
         <div id="wifiRackBody" class="wifi-rack-body"></div>
       </dialog>
       <dialog class="wifi-rack-dialog wifi-materials-dialog" id="wifiMaterialsDialog" aria-labelledby="wifiMaterialsTitle">
@@ -1379,6 +1398,11 @@
                 <span id="networkTeacherScenarioCount"></span></header>
               <p>Check each scenario students can start in this class. Every launch creates a private, auto-saved attempt.</p>
               <ul id="networkTeacherScenarioList"></ul>
+            </section>
+            <section class="network-teacher-scenarios" id="networkTeacherStarter" aria-labelledby="networkTeacherStarterTitle" hidden>
+              <header><h3 id="networkTeacherStarterTitle">Infra Sim Starter Labs</h3><span id="networkTeacherStarterCount"></span></header>
+              <p>Student progress through the shared Cedar Street studio project.</p>
+              <div id="networkTeacherStarterRoster"></div>
             </section>
             <h3 class="network-teacher-section-heading" id="networkTeacherLabHeading" hidden>Packet Sim Labs</h3>
             <div id="networkTeacherLabList" class="network-teacher-labs"></div>
@@ -2438,7 +2462,7 @@
 
   <script src="/static/js/app.js"></script>
   <script src="/static/js/connection.js?v=20261011-files-5"></script>
-  <script src="/static/js/feature-loader.js?v=20261116-class-settings"></script>
+  <script src="/static/js/feature-loader.js?v=20261116-starter-labs"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20261021-security-1"></script>
   <script src="/static/js/layout.js?v=20261011-files-5"></script>

@@ -20,6 +20,7 @@
     $('wifiCoverageStatus').hidden = !updating;
   });
   const endpoint = '/api/network/wifi-sites';
+  const starterEndpoint = '/api/network/wifi-starter';
   const schemaVersion = 13;
   const wireKinds = window.WifiSiteCabling.kinds;
   const floorKinds = ['walls', 'openings', 'labels', 'decor', 'surfaces'];
@@ -119,8 +120,10 @@
     exhaustedRouters: () => [...clients.network().routers.values()].filter(router => router.available === 0).map(router => router.id),
   });
   const serviceNames = () => options.catalog.server_services;
-  const clients = window.WifiSiteClients.create({ plan: current, cabling: () => wires.index(), escape, selected: inspectorId, serviceNames,
+  const clients = window.WifiSiteClients.create({ plan: current, cabling: () => wires.index(), escape, selected: inspectorId, serviceNames, onPacket: recordStarterPing,
     networkInspector: (item, info) => networkSettings.clientInspector(item, info) });
+  const starterGuide = window.WifiStarterGuide.create({ workspace, escape, fit, resolve: projectStarterGhost, icon: kind =>
+    window.WifiSiteCabling.icon(({ ap1: 'access_point', ap2: 'access_point', camera: 'poe_camera' })[kind] || kind) });
   const racks = window.WifiSiteRacks.create({
     plan: current, data: () => wires.index(), catalog: () => options.catalog, escape, id,
     add: (kind, additions) => addObjects(kind, additions, { select: false }), replace: replaceObject,
@@ -224,13 +227,13 @@
     }
   }
 
-  function startProject(plan, briefing, { sample = false, imported = false } = {}) {
+  function startProject(plan, briefing, { sample = false, imported = false, starter } = {}) {
     if (tutorialDialog.open) tutorialDialog.close();
     const { id: siteId, revision, updated_at, scenario_briefing, ...layout } = plan;
     session = {
       id: siteId || id('site'), revision: revision || 0, plan: { ...blankPlan(), ...layout, schema_version: schemaVersion,
         access_points: (layout.access_points || []).map((ap, i) => ({ radios: model.defaultRadios(i), ...ap })) }, account,
-      sequence: 0, savedSequence: 0, undo: [], redo: [], briefing: briefing || scenario_briefing,
+      sequence: 0, savedSequence: 0, starter, evidence: new Set(), undo: [], redo: [], briefing: briefing || scenario_briefing,
     };
     selected = previewAp = '';
     setSelection();
@@ -244,7 +247,9 @@
     library.hidden = true;
     workspace.hidden = false;
     $('wifiScenarioButton').hidden = !session.briefing;
-    $('wifiSaveSite').hidden = $('wifiCopySite').hidden = !options.canSave;
+    $('wifiSaveSite').hidden = !options.canSave;
+    $('wifiCopySite').hidden = !options.canSave || Boolean(starter);
+    starterGuide.open(starter);
     $('wifiSnap').checked = $('wifiShowCables').checked = true;
     $('wifiCoverage').checked = !sample;
     $('wifiCoverageSsid').value = '';
@@ -277,6 +282,27 @@
     scenarioDialog.showModal();
   }
 
+  function recordStarterEvent(name) {
+    if (!active() || !session.starter || !starterGuide.accepts(name) || session.evidence.has(name)) return;
+    session.evidence.add(name);
+    session.sequence += 1;
+    scheduleSave();
+  }
+
+  function recordStarterPing(source, target, packet) {
+    if (!session?.starter) return;
+    const seats = wires.index().devices;
+    const origin = seats.get(source), destination = seats.get(target);
+    if (origin?.kind === 'desktop' && destination?.kind === 'router' && packet.rtt !== null) {
+      recordStarterEvent('wired');
+    } else if (origin?.kind === 'phone') {
+      if (target === clientModel.INTERNET && packet.rtt !== null) recordStarterEvent('internet');
+      if (destination?.kind === 'desktop' && packet.rtt === null && /^Router firewall rule /.test(packet.reason)) {
+        recordStarterEvent('blocked');
+      }
+    }
+  }
+
   function scheduleSave() {
     if (!options.canSave || session.conflict || session.copying) return;
     const project = session;
@@ -294,16 +320,23 @@
     if (!dirty(project)) return Promise.resolve(true);
     project.pending = (async () => {
       while (dirty(project) && project.account === options.authKey()) {
-        const attempt = project.attempt ||= { sequence: project.sequence, plan: project.plan };
+        const attempt = project.attempt ||= {
+          sequence: project.sequence, plan: project.plan, evidence: [...project.evidence],
+        };
         if (session === project) status('Saving…');
         try {
-          const saved = await options.api(siteUrl(project.id) + '?summary=1', {
+          const saved = await options.api(project.starter ? starterEndpoint : siteUrl(project.id) + '?summary=1', {
             method: 'PUT', signal: AbortSignal.timeout(20000),
-            body: JSON.stringify({ site: attempt.plan, revision: project.revision }),
+            body: JSON.stringify({ site: attempt.plan, revision: project.revision, evidence: attempt.evidence }),
           });
           project.revision = saved.revision;
           project.savedSequence = attempt.sequence;
           project.attempt = null;
+          for (const event of attempt.evidence) project.evidence.delete(event);
+          if (session === project && project.account === options.authKey() && saved.progress) {
+            starterGuide.update(saved.progress);
+            scheduleScene();
+          }
           if (session === project && !dirty(project)) status('Saved', 'good');
         } catch (error) {
           project.conflict = error.status === 409;
@@ -379,6 +412,7 @@
       if (signal.aborted || session !== project || !sameAccount()) return;
       downloadBlob(pdf, filename(plan.title) + '.pdf');
       hint('PDF downloaded.');
+      recordStarterEvent('pdf');
     } catch (error) {
       if (!signal.aborted && session === project) hint(error.message || 'Could not export the floor plan.');
     } finally {
@@ -451,6 +485,7 @@
     if (session) clearTimeout(session.timer);
     cancelPdf();
     workspace.hidden = true;
+    starterGuide.close();
     session = null;
     clients.reset();
     setSelection();
@@ -1212,6 +1247,8 @@
       }
       drawGrid();
       layoutMarkerLabels();
+      starterGuide.draw(camera.scale);
+      starterGuide.schedule();
       drawOverlay();
       coverage.setView(camera, dimensions.width, dimensions.height, $('wifiCoverage').checked);
     });
@@ -1321,7 +1358,12 @@
   function fit() {
     if (!active()) return;
     dimensions = { width: viewport.clientWidth, height: viewport.clientHeight };
-    camera = view.fitCamera(planExtents(current()), dimensions.width, dimensions.height);
+    const bounds = planExtents(current());
+    const fitted = session.starter ? view.bounds([
+      { x: 0, y: 0 }, { x: 14, y: 10 },
+      ...(bounds ? [{ x: bounds.left, y: bounds.top }, { x: bounds.right, y: bounds.bottom }] : []),
+    ]) : bounds;
+    camera = view.fitCamera(fitted, dimensions.width, dimensions.height);
     scheduleScene();
   }
 
@@ -1423,7 +1465,21 @@
     return { point: { x: coordinate(result.point.x), y: coordinate(result.point.y) }, joined: result.joined };
   }
 
+  function projectStarterGhost(task, ghost) {
+    const project = ([x, y], concrete = false) => {
+      const point = cableModel.closestWall({ x, y }, current().walls, 1.5, concrete)?.point;
+      return point ? [point.x, point.y] : [x, y];
+    };
+    if (['door', 'pass', 'window', 'isp'].includes(task)) {
+      return { ...ghost, at: project(ghost.at, task === 'door' || task === 'pass') };
+    }
+    if (task === 'wall') return { ...ghost, points: ghost.points.map(point => project(point)) };
+    return ghost;
+  }
+
   function positionFor(raw, origin, shift = false) {
+    const guided = starterGuide.snap(raw, tool, camera.scale);
+    if (guided !== raw) return { point: roundPoint(guided), joined: true };
     if (['measure', 'probe', 'select', 'marquee', 'paint'].includes(tool)) {
       return { point: { x: coordinate(raw.x), y: coordinate(raw.y) }, joined: false };
     }
@@ -1493,6 +1549,7 @@
   }
 
   function useTool(point, hit, shift) {
+    point = starterGuide.snap(point, tool, camera.scale);
     if (tool === 'door' || tool === 'window') { structure.place(tool, point); return; }
     if (tool === 'background-scale') { structure.calibrationPoint(point); return; }
     if (wireTools.has(tool)) { wires.use(point, hit, shift); return; }
@@ -1536,6 +1593,8 @@
     } else if (tool === 'probe') {
       probe = { point };
       renderProbe();
+      const target = starterGuide.ghost()?.at;
+      if (target && probe.result && model.distance(point, { x: target[0], y: target[1] }) <= 1.5) recordStarterEvent('probe');
       showPanel('signal');
     }
     scheduleScene();
@@ -1944,7 +2003,10 @@
     $('wifiScenarioButton').addEventListener('click', () => showBriefing());
     $('wifiExportPdf').addEventListener('click', exportPdf);
     $('wifiDownloadProject').addEventListener('click', downloadProject);
-    $('wifiMaterials').addEventListener('click', racks.inspectMaterials);
+    $('wifiMaterials').addEventListener('click', () => {
+      racks.inspectMaterials();
+      if ($('wifiMaterialsDialog').open) recordStarterEvent('bill');
+    });
     $('wifiProperties').addEventListener('click', event => {
       const control = event.target.closest('[data-wifi-open-rack]');
       if (control) racks.open(control.dataset.wifiOpenRack, control.dataset.wifiRackDevice);
@@ -2055,12 +2117,12 @@
   }
 
   window.WifiSite = {
-    open(config, { site, sample, briefing, imported } = {}) {
+    open(config, { site, sample, briefing, imported, starter } = {}) {
       options = config;
       account = options.authKey();
       initialize();
       const example = sample && !site;
-      startProject(site || (example ? window.wifiCampusExample(blankPlan()) : blankPlan()), briefing, { sample: example, imported });
+      startProject(site || (example ? window.wifiCampusExample(blankPlan()) : blankPlan()), briefing, { sample: example, imported, starter });
     },
     canResume: () => active() && sameAccount(),
     resume() {

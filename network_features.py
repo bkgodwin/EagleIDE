@@ -15,6 +15,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 from network_content import ACRONYM_REFERENCE, COMMAND_REFERENCE, EXAMPLE_TOPOLOGIES, LABS, PORT_REFERENCE, example_summaries, lab_summary
 from network_store import (MAX_WIFI_SITE_BYTES, WIFI_LIMITS, NetworkDataError, NetworkStore, WifiAccessError,
                            WifiRevisionError, WifiStorageError, grade_lab, validate_topology)
+import wifi_starter_labs as starter
 from wifi_cabling import CABLING_CATALOG
 from wifi_scenarios import SCENARIOS, scenario_briefing, scenario_summary
 from wifi_site_pdf import MAX_EXPORT_BYTES, render_plan_pdf
@@ -139,11 +140,16 @@ def register(
                         })
         saved = [] if current["role"] == "guest" else store.list_topologies(current["email"])
         saved_sites, wifi_storage_available = [], True
+        starter_progress = None
         if current["role"] != "guest":
             try:
                 saved_sites = store.list_wifi_sites(current["email"])
             except WifiStorageError:
                 wifi_storage_available = False
+            try:
+                starter_progress = store.wifi_starter_progress(current["email"])
+            except WifiStorageError:
+                pass
         allowed_scenarios = available_scenarios(current)
         return jsonify(
             ok=True,
@@ -158,6 +164,8 @@ def register(
                                   for lab in LABS.values()],
                 "saved": saved,
                 "saved_sites": saved_sites,
+                "starter_labs": starter.catalog(),
+                "starter_progress": starter_progress,
                 "wifi_storage_available": wifi_storage_available,
                 "scenarios": [scenario_summary(item) for scenario_id, item in SCENARIOS.items()
                               if scenario_id in allowed_scenarios],
@@ -274,6 +282,43 @@ def register(
         if not may_open(current):
             return None, (jsonify(ok=False, error="Infra Sim is disabled"), 403)
         return current, None
+
+    @app.route("/api/network/wifi-starter", methods=["POST", "PUT"])
+    def wifi_starter():
+        current, error = wifi_account()
+        if error:
+            return error
+        authorized = lambda: recheck_wifi_access(current)
+        try:
+            if request.method == "POST":
+                site = store.start_wifi_starter(current["email"], authorized=authorized)
+                data = dict(site={key: value for key, value in site.items() if not key.startswith("starter_")},
+                            lessons=starter.LESSONS,
+                            progress=starter.summary(site["starter_progress"], site["updated_at"]))
+            else:
+                request.max_content_length = MAX_WIFI_SITE_BYTES
+                payload = json_object()
+                if payload is None:
+                    raise NetworkDataError("A JSON object is required")
+                site = store.save_wifi_starter(current["email"], payload.get("site"), payload.get("revision"),
+                                              payload.get("evidence", []), authorized=authorized)
+                data = dict(revision=site["revision"], progress=starter.summary(site["starter_progress"], site["updated_at"]))
+        except RequestEntityTooLarge:
+            return jsonify(ok=False, error="Starter Labs projects must be 2 MB or smaller"), 413
+        except RecursionError:
+            return jsonify(ok=False, error="Starter Labs data is nested too deeply"), 400
+        except WifiRevisionError as exc:
+            return jsonify(ok=False, error=str(exc)), 409
+        except WifiAccessError as exc:
+            return jsonify(ok=False, error=str(exc)), 403
+        except WifiStorageError as exc:
+            return jsonify(ok=False, error=str(exc)), 503
+        except NetworkDataError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+        response = jsonify(ok=True, data=data)
+        response.cache_control.private = True
+        response.cache_control.no_store = True
+        return response
 
     @app.get("/api/network/wifi-sites")
     def wifi_sites_list():
@@ -469,11 +514,22 @@ def register(
                 "roster_count": len(roster),
             }
             labs.append(item)
+        starter_roster = []
+        for student in roster:
+            try:
+                progress = store.wifi_starter_progress(student["email"])
+            except WifiStorageError:
+                progress = None
+            starter_roster.append({**student, "progress": progress})
         enabled, visibility = store.class_settings(class_id, SCENARIOS)
         scenarios = [{**scenario_summary(item), "visible": visibility[scenario_id]} for scenario_id, item in SCENARIOS.items()]
-        return jsonify(ok=True, data={"class_id": class_id, "class_name": classroom.get("name"),
-                                     "enabled": enabled, "globally_enabled": globally_enabled(),
-                                     "labs": labs, "scenarios": scenarios})
+        response = jsonify(ok=True, data={"class_id": class_id, "class_name": classroom.get("name"),
+                                          "enabled": enabled, "globally_enabled": globally_enabled(),
+                                          "labs": labs, "scenarios": scenarios,
+                                          "starter_labs": starter.catalog(), "starter_roster": starter_roster})
+        response.cache_control.private = True
+        response.cache_control.no_store = True
+        return response
 
     @app.put("/api/network/teacher/classes/<class_id>/settings")
     def network_teacher_class_settings_put(class_id):

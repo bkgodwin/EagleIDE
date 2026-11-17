@@ -15,6 +15,7 @@ from collections import deque
 from pathlib import Path
 
 from network_content import DEVICE_PORTS, LABS, PORT_CAPABILITIES
+import wifi_starter_labs as starter
 from wifi_cabling import CABLING_LIMITS, validate_cabling
 from wifi_site_structure import validate_structure
 from wifi_site_design import DESIGN_LIMITS, validate_design
@@ -934,6 +935,56 @@ class NetworkStore:
         if authorized is not None and not authorized():
             raise WifiAccessError("Your access to this project changed. Sign in or export a project file to keep your edits.")
 
+    def _wifi_starter_path(self, email):
+        return self.wifi_dir / f"{self._user_key('starter-labs:' + str(email).strip().lower())}.json"
+
+    def _wifi_account_paths(self, email):
+        return self._wifi_path(email), self._wifi_starter_path(email)
+
+    def start_wifi_starter(self, email, *, authorized=None):
+        path = self._wifi_starter_path(email)
+        with self._wifi_lock(path):
+            self._require_wifi_write(authorized)
+            sites = self._read_wifi_sites(path)
+            if starter.SITE_ID in sites:
+                return sites[starter.SITE_ID]
+            site = validate_wifi_site(starter.blank_site(WIFI_SCHEMA_VERSION))
+            site["starter_progress"] = starter.initial_progress()
+            return self._write_wifi_site(path, sites, site, starter.SITE_ID, 1)
+
+    def wifi_starter_progress(self, email):
+        path = self._wifi_starter_path(email)
+        with self._wifi_lock(path):
+            site = self._read_wifi_sites(path).get(starter.SITE_ID)
+        return starter.summary(site["starter_progress"], site["updated_at"]) if site else starter.summary(starter.initial_progress())
+
+    def save_wifi_starter(self, email, raw, revision, evidence, *, authorized=None):
+        if type(revision) is not int or revision < 1:
+            raise NetworkDataError("A valid Starter Labs revision is required")
+        valid_events = {item["event"] for lesson in starter.LESSONS for item in lesson["tasks"] if item["event"]}
+        if not isinstance(evidence, list) or len(evidence) > len(valid_events) or any(
+            not isinstance(event, str) or event not in valid_events for event in evidence
+        ):
+            raise NetworkDataError("Invalid Starter Labs activity")
+        evidence = sorted(set(evidence))
+        path = self._wifi_starter_path(email)
+        with self._wifi_lock(path):
+            self._require_wifi_write(authorized)
+            sites = self._read_wifi_sites(path)
+            previous = sites.get(starter.SITE_ID)
+            if not previous:
+                raise WifiRevisionError("Open Starter Labs before saving")
+            site = validate_wifi_site(raw, existing=previous)
+            site.pop("scenario_id", None)
+            if revision != previous["revision"]:
+                same = all(previous.get(key) == value for key, value in site.items())
+                if revision + 1 == previous["revision"] and same and previous.get("starter_evidence", []) == evidence:
+                    return previous
+                raise WifiRevisionError("Starter Labs changed in another tab. Reopen it to continue.")
+            site["starter_progress"] = starter.grade(site, previous["starter_progress"], evidence)
+            site["starter_evidence"] = evidence
+            return self._write_wifi_site(path, sites, site, starter.SITE_ID, revision + 1)
+
     def list_wifi_sites(self, email):
         path = self._wifi_path(email)
         with self._wifi_lock(path):
@@ -1054,11 +1105,11 @@ class NetworkStore:
             return True
 
     def delete_account_wifi(self, email):
-        path = self._wifi_path(email)
-        with self._wifi_lock(path):
-            if self.wifi_dir.is_symlink() or path.is_symlink() or path.resolve().parent != self.wifi_dir:
-                raise OSError("Infra Sim project storage failed containment")
-            path.unlink(missing_ok=True)
+        for path in self._wifi_account_paths(email):
+            with self._wifi_lock(path):
+                if self.wifi_dir.is_symlink() or path.is_symlink() or path.resolve().parent != self.wifi_dir:
+                    raise OSError("Infra Sim project storage failed containment")
+                path.unlink(missing_ok=True)
 
     def _catalog(self):
         return self._read_json(self.catalog_path, {"schema_version": SCHEMA_VERSION, "class_access": {}, "assignments": []})

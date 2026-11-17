@@ -786,6 +786,54 @@ class NetworkRouteTests(unittest.TestCase):
         forged = self.client.put(site_url, headers=other, json={"site": scenario["site"], "revision": 0})
         self.assertNotIn("scenario_id", forged.get_json()["data"])
 
+    def test_starter_labs_persist_progress_and_authorize_the_roster(self):
+        import wifi_starter_labs as starter
+
+        url = "/api/network/wifi-starter"
+        student = {"X-User-Token": "student-token"}
+        teacher = {"X-Teacher-Token": "teacher-token"}
+        self.assertEqual(self.client.post(url).status_code, 401)
+        self.assertEqual(self.client.post(url, headers=student).status_code, 403)
+        self.store.set_class_access("class-1", True)
+        opened = self.client.post(url, headers=student)
+        self.assertEqual(opened.status_code, 200)
+        self.assertTrue(opened.cache_control.no_store)
+        course = opened.json["data"]
+        self.assertEqual(len(course["lessons"]), len(starter.LESSONS))
+        self.assertEqual(self.client.post(url, headers=student).json["data"]["site"]["revision"], 1)
+        self.assertEqual(self.client.get("/api/network/wifi-sites", headers=student).json["data"], [])
+
+        def wall(id, a, b, material):
+            return dict(id=id, a=dict(zip(("x", "y"), a)), b=dict(zip(("x", "y"), b)), material=material)
+
+        site = course["site"]
+        site["starter_progress"] = {"completed": len(starter.LESSONS)}
+        site["walls"] = [wall(f"wall-{i}", a, b, "drywall") for i, (a, b) in enumerate(zip(starter.SHELL, starter.SHELL[1:]))]
+        saved = self.client.put(url, json={"site": site, "revision": 1, "evidence": ["pdf"]}, headers=student)
+        self.assertEqual(saved.status_code, 200, saved.json)
+        self.assertEqual(saved.json["data"]["progress"]["completed"], 0)
+        self.assertEqual(saved.json["data"]["progress"]["checked"], ["shell"])
+
+        site["walls"].append(wall("partition", *starter.WALL, "concrete"))
+        payload = {"site": site, "revision": 2}
+        saved = self.client.put(url, json=payload, headers=student)
+        self.assertEqual(saved.json["data"]["progress"]["completed"], 1)
+        self.assertEqual(self.client.put(url, json=payload, headers=student).json, saved.json)
+        self.assertEqual(self.client.put(url, json={**payload, "site": {**site, "title": "Conflict"}}, headers=student).status_code, 409)
+        resumed = self.client.post(url, headers=student).json["data"]
+        self.assertEqual(len(resumed["site"]["walls"]), 5)
+        self.assertEqual(resumed["progress"]["completed"], 1)
+        roster = self.client.get("/api/network/teacher/classes/class-1", headers=teacher).json["data"]["starter_roster"]
+        self.assertEqual(roster[0]["progress"]["completed"], 1)
+        self.assertNotIn("site", roster[0])
+        self.assertEqual(self.client.get("/api/network/teacher/classes/class-1", headers=student).status_code, 401)
+
+        self.store.set_class_access("class-1", False)
+        self.assertEqual(self.client.put(url, json={**payload, "revision": 3}, headers=student).status_code, 403)
+        email = self.students["student-token"]["email"]
+        self.store.delete_account_wifi(email)
+        self.assertEqual(self.store.wifi_starter_progress(email)["completed"], 0)
+
     def test_wifi_pdf_download_uses_authenticated_author_and_is_not_cached(self):
         self.store.set_class_access('class-1', True)
         self.students['student-token']['name'] = 'Alice Example'

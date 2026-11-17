@@ -627,9 +627,9 @@
         ${isp ? `<label>Provider<select data-wifi-wire-field="isp">${ispChoices(item.isp)}</select></label>
           <p>${e(isp.name)} · ${model.speedName(isp.speed)} ${model.mediaName(isp.media)}</p>` : ''}
         ${item.kind === 'poe_camera' ? `<div class="wifi-two-fields">
-          <label>Direction (°)<input type="number" min="0" max="360" step="1" data-wifi-field="angle" value="${item.angle}"></label>
-          <label>Field of view (°)<input type="number" min="15" max="160" step="1" data-wifi-field="field_of_view" value="${item.field_of_view}"></label></div>
-          <label>View range (${plan().units})<input type="number" step="any" data-wifi-field="range" value="${Number(ctx.display(item.range).toFixed(2))}"></label>
+          <label>Direction (°)<input type="number" min="0" max="360" step="1" data-wifi-wire-field="angle" value="${item.angle}"></label>
+          <label>Field of view (°)<input type="number" min="15" max="160" step="1" data-wifi-wire-field="field_of_view" value="${item.field_of_view}"></label></div>
+          <label>View range (${plan().units})<input type="number" step="any" data-wifi-wire-field="range" value="${Number(ctx.display(item.range).toFixed(2))}"></label>
           <p>Drag the aim handle on the plan or enter a direction above. Hold Shift while dragging to snap to 15°.</p>` : ''}
         ${item.kind === 'server' ? ctx.deviceInspector(item) : ''}
         ${client ? ctx.clientInspector(item) : deviceStatus(item.id)}

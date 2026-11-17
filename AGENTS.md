@@ -56,6 +56,7 @@ Required runtime components:
 |-- wifi_site_structure.py       Wall opening geometry and bounded raster background validation
 |-- wifi_site_network.py         Infra Sim SSID, VLAN, DHCP, reservation and firewall validation
 |-- wifi_scenarios.py             Built-in Infra Sim scenario catalog and starter validation
+|-- wifi_starter_labs.py          Guided course and saved-plan checkpoints
 |-- wifi_school.py                Alder Ridge school building, landscape, and furnishing schedule
 |-- wifi_stadium.py               Harborline sports site building, seating, plant, and grounds schedule
 |-- wifi_industrial.py            Rivermill plant, detached buildings, and outdoor material handling schedule
@@ -146,6 +147,7 @@ Required runtime components:
 |       |-- wifi-site-worker.js  Wi-Fi coverage tile rendering off the UI thread
 |       |-- wifi-cabling-model.js Cable geometry, bundles, port occupancy, and PoE paths
 |       |-- wifi-site-cabling.js Equipment placement, route drafting, and cable inspector
+|       |-- wifi-site-starter.js Starter Labs checklist, ghost geometry, and control highlights
 |       |-- wifi-site-racks.js Zoomable rack elevations, mounting controls, front patching, and bill of materials
 |       |-- wifi-site-client-model.js Wireless association, IPv4 leasing and simulated packet routes
 |       |-- wifi-site-clients.js Client inspector and timed packet playback
@@ -236,6 +238,8 @@ Required runtime components:
 `wiki_features.py` is also registered near the end of `app.py`. It adapts the existing in-memory admin, teacher, and student authentication to `WikiStore`. Keep public reads separate from protected mutations, require teacher ownership for every class feature or Lesson Material bookmark, and do not expose drafts through public routes.
 
 `network_features.py` is registered independently near the wiki module and adapts the same auth/class callbacks to `NetworkStore`. The global configuration switch and per-class access both apply to students; guests require only the global switch and cannot save; admins may privately preview while disabled. Built-in topology/lab content belongs in `network_content.py`, while all mutable data stays under `network_data/`. Wi-Fi sites use a separate project schema and revision-checked per-account files under `network_data/wifi/`.
+
+Starter Labs maintains one saved Cedar Street project per account, independent of general Saved Sites. Commit the plan and progress atomically under the same per-account lock. The server validates saved geometry and topology. Probe, ping, and export activities come from the editor and are constrained to the current lesson. Keep progress out of portable project files. Expose summaries only to owners of classes on the current roster, and clean up both Infra Sim project stores on account removal.
 
 Network Lab shares one landing page for Packet Sim and Infra Sim. The feature loader uses the lightweight access route to gate the launch buttons before loading the simulator. The bootstrap lists saved project metadata for the current account. Teacher class access and scenario changes save together in one catalog write. Infra Sim writes recheck access under the per-account store lock. Account deletion removes the private Infra Sim store, and authorized retention cleanup covers older deleted accounts. Portable project files validate through the same site schema and open as fresh drafts without a saved identifier or classroom association. Packet Sim practice labs open writable starters and public task guides; assignment progress and grading stay on the class lab routes.
 
