@@ -417,13 +417,29 @@ class GroupProjectTests(unittest.TestCase):
         selected = {"mode":"group","projectId":project["id"],"recipients":sorted(p["id"] for p in group["members"]),
                     "files":[{"id":file["id"],"revision":1,"path":"main.py"}]}
         payload = {"assignmentId":a["id"],"submissionKey":"group-attempt-1","groupSelection":selected}
+        marker = {"classId":self.class_one, "projectId":project["id"], "fileId":file["id"]}
+        sockets = []
+        for email, token in ((self.student_email, self.student_token), (self.missing_email, self.tokens[self.missing_email])):
+            socket = eagle.socketio.test_client(eagle.app)
+            self.addCleanup(lambda client=socket: client.disconnect() if client.is_connected() else None)
+            socket.emit("join_class_room", {"role":"student", "token":token, "class_id":self.class_one}, callback=True)
+            self.assertTrue(socket.emit("group_project_watch", marker, callback=True)["ok"])
+            sockets.append(socket)
+        # Lease renewal must not create another interval.
+        self.assertTrue(sockets[1].emit("group_project_watch", marker, callback=True)["ok"])
+        sockets[0].emit("group_project_unwatch")
         self.assertEqual(self.post("/api/assignments/submit",{**payload,"groupSelection":{**selected,"recipients":[]}}).status_code,409)
         with patch.object(eagle,"_save_assignment",return_value=False):
             self.assertEqual(self.post("/api/assignments/submit",payload).status_code,500)
         self.assertEqual(eagle._load_assignment(a["id"])["submissions"],[])
-        result = self.post("/api/assignments/submit",payload)
+        result = self.post("/api/assignments/submit",payload,self.missing_email)
         self.assertEqual(result.status_code,200,result.json)
-        self.assertEqual(self.post("/api/assignments/submit",payload).json["receipt"],result.json["receipt"])
+        self.assertEqual(self.post("/api/assignments/submit",payload,self.missing_email).json["receipt"],result.json["receipt"])
+        sockets[1].emit("group_project_unwatch")
+        summaries = self.get("/api/assignments").json["assignments"]
+        summary = next(row for row in summaries if row["id"] == a["id"])["studentSubmissionSummary"]
+        self.assertEqual(summary["groupSubmittedByName"], "Student Two")
+        self.assertEqual(summary["groupSubmittedAt"], result.json["receipt"]["submittedAtIso"])
         self.assertEqual(self.change(project, "rename", fileId=file["id"], path="renamed.py").status_code, 200)
         stale = self.post("/api/assignments/submit", {**payload, "submissionKey":"stale-path"})
         self.assertEqual(stale.status_code, 409, stale.json)
@@ -439,10 +455,18 @@ class GroupProjectTests(unittest.TestCase):
         self.assertEqual(review.json["content"],"# added\nprint('start')\n")
         self.assertEqual(review.json["contribution"]["spans"][0][:2],[0,23])
         self.assertEqual(review.json["contributors"][0]["name"],"Student One")
-        self.assertNotIn("contribution",self.client.get(path,headers=self.student_headers,query_string=args).json)
+        timeline = review.json["workTimeline"]
+        visits = timeline["visits"]
+        self.assertEqual([row["person"]["name"] for row in visits], ["Student One", "Student Two"])
+        self.assertEqual([row["openAtSubmission"] for row in visits], [False, True])
+        self.assertEqual(visits[1]["end"], timeline["capturedAt"])
+        student_preview = self.client.get(path, headers=self.student_headers, query_string=args).json
+        self.assertNotIn("contribution", student_preview)
+        self.assertNotIn("workTimeline", student_preview)
         self.settings(False)
         reread = self.client.get(path,headers=self.teacher_headers,query_string={**args,"studentEmail":self.missing_email})
         self.assertEqual(reread.json["contribution"],review.json["contribution"])
+        self.assertEqual(reread.json["workTimeline"], timeline)
 
     def test_group_turn_in_does_not_replace_a_partners_individual_work(self):
         a = self.create_assignment(active=True)

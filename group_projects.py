@@ -30,6 +30,7 @@ MAX_GLOBAL_BYTES = 2 * 1024 * 1024 * 1024
 MAX_PROJECTS = 40
 RECOVERY_SECONDS = 30 * 86400
 LEASE_SECONDS = 35
+MAX_FILE_VISITS = 512
 MAX_RANGES = 16000
 PALETTE_SIZE = 12
 _lock = RLock()
@@ -133,6 +134,17 @@ def database(eagle):
                     PRAGMA user_version = 4;
                     COMMIT;
                 """)
+            if version < 5:
+                db.executescript("""
+                    BEGIN;
+                    CREATE TABLE IF NOT EXISTS file_visits(
+                        id INTEGER PRIMARY KEY, file TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                        person TEXT NOT NULL, opened INTEGER NOT NULL, closed INTEGER NOT NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS visits_by_file ON file_visits(file, id);
+                    PRAGMA user_version = 5;
+                    COMMIT;
+                """)
             yield db
 
 
@@ -202,7 +214,7 @@ def identity(user):
 
 
 def name_of(user):
-    return str(user.get("name") or user.get("email") or "Student")[:120]
+    return str(user.get("name") or user.get("email") or "Student")[:241]
 
 
 def member_info(row):
@@ -610,6 +622,18 @@ def snapshot_for_submission(eagle, db, user, assignment, selection, *, content=T
         records.append(row)
     return project, records, recipients
 
+def file_timeline(db, file_id, captured_ms):
+    rows = db.execute("""SELECT id,person,opened,closed FROM file_visits WHERE file=?
+                         ORDER BY id DESC LIMIT ?""", (file_id, MAX_FILE_VISITS + 1)).fetchall()
+    return {
+        "capturedAt": captured_ms,
+        "truncated": len(rows) > MAX_FILE_VISITS,
+        "visits": [{"person": json.loads(row["person"]), "start": row["opened"],
+                    "end": min(row["closed"], captured_ms), "openAtSubmission": row["closed"] > captured_ms}
+                   for row in reversed(rows[:MAX_FILE_VISITS]) if row["opened"] <= captured_ms],
+    }
+
+
 def forget_account(eagle, email):
     if not (eagle.GROUP_PROJECTS_DIR / "index.sqlite3").exists():
         return
@@ -663,10 +687,10 @@ def class_changed(eagle, class_id, *, disabled=False, removed="", deleted=False)
                         else:
                             db.execute("UPDATE members SET state='removed' WHERE project=? AND email=?",
                                        (project["id"], removed))
-        for sid, watch in list(_watchers.items()):
-            if watch["classId"] == class_id and (not removed or watch["email"] == removed):
-                _watchers.pop(sid, None)
-                eagle.socketio.emit("group_project_access_changed", {"projectId": watch["projectId"]}, to=sid)
+                for sid, watch in list(_watchers.items()):
+                    if watch["classId"] == class_id and (not removed or watch["email"] == removed):
+                        end_watch(db, sid)
+                        eagle.socketio.emit("group_project_access_changed", {"projectId": watch["projectId"]}, to=sid)
 
 
 def socket_teacher(eagle, cls, email, token):
@@ -688,6 +712,14 @@ def watcher_valid(eagle, sid, watch, cls, active, students_open):
             eagle._student_tokens.active(watch["token"]))
 
 
+def end_watch(db, sid):
+    watch = _watchers.pop(sid, None)
+    if watch:
+        db.execute("UPDATE file_visits SET closed=MAX(opened,MIN(closed,?)) WHERE id=? AND file=?",
+                   (time_ns() // 1_000_000, watch["visitId"], watch["fileId"]))
+    return watch
+
+
 def live_viewers(eagle, db, project_id, file_id):
     project = project_record(db, project_id)
     cls = eagle._find_class_by_id(project["class_id"])
@@ -704,7 +736,7 @@ def live_viewers(eagle, db, project_id, file_id):
         if allowed and watcher_valid(eagle, sid, watch, cls, active, students_open):
             recipients[sid] = watch
         else:
-            _watchers.pop(sid, None)
+            end_watch(db, sid)
     return recipients
 
 
@@ -723,9 +755,9 @@ def presence(eagle, db, project_id, file_id):
 
 def close_watch(eagle, sid):
     with _lock:
-        watch = _watchers.pop(sid, None)
-        if watch:
+        if sid in _watchers:
             with database(eagle) as db:
+                watch = end_watch(db, sid)
                 presence(eagle, db, watch["projectId"], watch["fileId"])
 
 
@@ -1286,12 +1318,26 @@ def register(app, eagle):
                     raise ProjectError("Choose a project file")
                 old = _watchers.get(sid)
                 matching = (old and old["token"] == info["token"] and old["projectId"] == project["id"] and
-                            old["fileId"] == file_id)
-                if old and not matching:
-                    close_watch(eagle, sid)
+                            old["fileId"] == file_id and old["expires"] > monotonic())
+                person = member_info(member)
+                opened = time_ns() // 1_000_000
+                lease_end = opened + LEASE_SECONDS * 1_000
+                if matching:
+                    visit_id = old["visitId"]
+                    db.execute("UPDATE file_visits SET closed=MAX(closed,?) WHERE id=? AND file=?",
+                               (lease_end, visit_id, file_id))
+                else:
+                    if old:
+                        end_watch(db, sid)
+                        presence(eagle, db, old["projectId"], old["fileId"])
+                    visit_id = db.execute("INSERT INTO file_visits(file,person,opened,closed) VALUES (?,?,?,?)",
+                                          (file_id, json.dumps(person), opened, lease_end)).lastrowid
+                    db.execute("""DELETE FROM file_visits WHERE file=? AND id < (
+                                  SELECT id FROM file_visits WHERE file=? ORDER BY id DESC LIMIT 1 OFFSET ?)""",
+                               (file_id, file_id, MAX_FILE_VISITS))
                 _watchers[sid] = {"classId": project["class_id"], "projectId": project["id"], "fileId": file_id,
                                   "email": info["email"], "token": info["token"], "author": member["author"],
-                                  "role": info["role"], "person": member_info(member),
+                                  "role": info["role"], "person": person, "visitId": visit_id,
                                   "expires": monotonic() + LEASE_SECONDS, "cursorAt": old["cursorAt"] if matching else 0,
                                   "cursorVisible": bool(matching and old["cursorVisible"])}
                 return {"ok": True, "viewers": presence(eagle, db, project["id"], file_id),
@@ -1363,7 +1409,7 @@ def revoke_project_watches(eagle, db, project_id, email="", file_id=""):
     for sid, watch in list(_watchers.items()):
         if (watch["projectId"] == project_id and (not email or watch["email"] == email) and
                 (not file_id or watch["fileId"] == file_id)):
-            _watchers.pop(sid, None)
+            end_watch(db, sid)
             eagle.socketio.emit("group_project_access_changed", {"projectId": project_id, "fileId": file_id}, to=sid)
 
 def checked_run_file(eagle, db, email, target, *, content=False):

@@ -1949,6 +1949,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           await loadAssignments();
         });
         socket.on('assignment_workflow_updated', (msg) => {
+          const dashboard = document.getElementById('teacherDashboardModal');
+          if (TEACHER_TOKEN && dashboard?.style.display === 'flex' && dashboard.querySelector('#dash-reports.active')) {
+            window.AssignmentWorkflow?.refreshNotifications?.();
+          }
           if (msg?.classId && [currentTeacherClassId, activeAssignmentsClassId, getSelectedStudentClassId()].includes(msg.classId)) {
             loadAssignments(msg.assignmentId ? [msg.assignmentId] : []);
           }
@@ -3059,6 +3063,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
 
     function updateAuthUI({ refreshClasses = true } = {}) {
       window.TeacherAssignments?.setScope(JSON.stringify(assignmentManagerHeaders()));
+      window.AssignmentWorkflow?.setNotificationAccess?.(!!TEACHER_TOKEN && !isCoTeacher());
       const guestBadge = document.getElementById('guestBadge');
       const rightEdgeToggleBtn = document.getElementById('rightEdgeToggleBtn');
       const loginBtn = document.getElementById('loginBtn');
@@ -4205,6 +4210,16 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       const minimizedBar = document.getElementById('teacherDashMinimizedBar');
       if (minimizedBar) minimizedBar.hidden = true;
       modal.style.display = 'flex';
+      const dashboardNav = modal.querySelectorAll('.teacher-dash-navbtn');
+      const selectView = viewId => {
+        dashboardNav.forEach(button => {
+          const selected = button.dataset.view === viewId;
+          button.classList.toggle('active', selected);
+          if (selected) button.setAttribute('aria-current', 'page');
+          else button.removeAttribute('aria-current');
+        });
+        modal.querySelectorAll('.teacher-dash-view').forEach(pane => pane.classList.toggle('active', pane.id === viewId));
+      };
       if (!teacherDashListenersAttached) {
         teacherDashListenersAttached = true;
 
@@ -4227,9 +4242,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         modal.querySelectorAll('.teacher-dash-navbtn').forEach(btn => {
           btn.addEventListener('click', async () => {
             if (btn.dataset.view === 'dash-assignments' && !btn.classList.contains('active')) window.TeacherAssignments?.beginVisit();
-            modal.querySelectorAll('.teacher-dash-navbtn').forEach(b => b.classList.toggle('active', b === btn));
-            modal.querySelectorAll('.teacher-dash-view').forEach(v => v.classList.toggle('active', v.id === btn.dataset.view));
+            selectView(btn.dataset.view);
             if (btn.dataset.view === 'dash-reports') {
+              window.AssignmentWorkflow?.refreshNotifications?.();
               activateReportsRosterPane();
               populateTeacherReportsClassSelect();
               await refreshActiveStudentsForClass(currentTeacherClassId);
@@ -4339,12 +4354,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (targetView) {
         const viewEl = document.getElementById(targetView);
         const navBtn = modal.querySelector(`.teacher-dash-navbtn[data-view="${targetView}"]`);
-        if (viewEl && navBtn) {
-          modal.querySelectorAll('.teacher-dash-navbtn').forEach(b => b.classList.toggle('active', b === navBtn));
-          modal.querySelectorAll('.teacher-dash-view').forEach(v => v.classList.toggle('active', v === viewEl));
-        }
+        if (viewEl && navBtn) selectView(targetView);
       }
 
+      if (targetView === 'dash-reports') {
+        window.AssignmentWorkflow?.setNotificationAccess?.(!co && !!TEACHER_TOKEN);
+        window.AssignmentWorkflow?.refreshNotifications?.();
+      }
       if (targetView === 'dash-assignments' && preserveAssignmentVisit) {
         syncAssignmentAiPolling();
         return;
@@ -5080,11 +5096,16 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       if (!wrap) return;
       const canShowAiToggle = !!currentConfig?.ai_explainer_enabled;
       if (!teacherClasses.length) {
-        if (activeSelect) activeSelect.innerHTML = '';
-        wrap.innerHTML = '<div style="color:#888; font-size:12px; padding:8px 0;">No classes yet. Create one above to get started.</div>';
+        if (activeSelect) {
+          activeSelect.replaceChildren();
+          activeSelect.disabled = true;
+        }
+        wrap.innerHTML = isCoTeacher() ? '<p class="meta">No classes are available.</p>'
+          : '<p class="meta">Create a class to get a join code and manage your roster.</p>';
         return;
       }
       if (activeSelect) {
+        activeSelect.disabled = false;
         activeSelect.innerHTML = teacherClasses.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)} (${escapeHtml(c.join_code)})</option>`).join('');
       }
       const selectedClassId = currentTeacherClassId || teacherClasses[0]?.id;
@@ -5099,12 +5120,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           <div class="teacher-dash-class-card-header">
             <div>
               <div class="teacher-dash-class-name">${escapeHtml(activeClass.name)}</div>
-              <div class="teacher-dash-class-code">Join code: <strong>${escapeHtml(activeClass.join_code)}</strong> · ${activeClass.students?.length || 0} student(s)</div>
+              <div class="teacher-dash-class-code">
+                <span>Join code <strong>${escapeHtml(activeClass.join_code)}</strong></span>
+                <button class="btn secondary show-class-code-btn" type="button">Show large</button>
+                <button class="btn secondary copy-class-code-btn" type="button" data-code="${escapeHtml(activeClass.join_code)}">Copy code</button>
+              </div>
             </div>
-            <div style="display:flex; gap:6px; flex-wrap:wrap;">
-              <button class="btn secondary copy-class-code-btn" data-code="${escapeHtml(activeClass.join_code)}" style="font-size:12px;">Copy Join Code</button>
-              <button class="btn stop delete-class-btn" data-class="${escapeHtml(activeClass.id)}" data-name="${escapeHtml(activeClass.name)}" style="font-size:12px;">Delete</button>
-            </div>
+            <button class="btn stop delete-class-btn" type="button" data-class="${escapeHtml(activeClass.id)}" data-name="${escapeHtml(activeClass.name)}">Delete class</button>
           </div>
           <div class="teacher-dash-classroom-settings">
             <div class="teacher-dash-classroom-settings-title">Classroom features</div>
@@ -5145,7 +5167,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
               <button class="btn run open-class-wiki-btn" type="button">Open Wiki</button>
             </div>
           </section>
-          <div style="font-size:13px; font-weight:600; color:var(--columbia-blue); margin-bottom:6px;">Students</div>
+          <h3 class="teacher-class-roster-title">Students (${activeClass.students?.length || 0})</h3>
           ${activeClass.canManageClass !== false ? window.AssignmentWorkflow.windowForm(activeClass) : ''}
           <div class="class-students-scroll"><table class="scores-table class-students-table"><thead><tr><th>First name</th><th>Last name</th><th>Student ID</th><th>Presence</th><th>Open file</th><th>Accommodations</th><th>Actions</th></tr></thead><tbody>
           ${[...(activeClass.students || [])].sort(studentNameSort).map(student => `
@@ -5175,6 +5197,13 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         if (!data.ok) return alert(data.error);
         await loadTeacherClasses(); renderTeacherClassManagement();
       });
+      const showJoinCode = () => {
+        const dialog = document.getElementById('teacherJoinCodeDialog');
+        document.getElementById('teacherJoinCodeTitle').textContent = activeClass.name;
+        document.getElementById('teacherJoinCodeDisplay').textContent = activeClass.join_code;
+        if (!dialog.open) dialog.showModal();
+      };
+      wrap.querySelector('.show-class-code-btn')?.addEventListener('click', showJoinCode);
       wrap.querySelectorAll('.copy-class-code-btn').forEach(btn => btn.addEventListener('click', async () => {
         try {
           await navigator.clipboard.writeText(btn.dataset.code || '');
@@ -5182,7 +5211,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           btn.textContent = 'Copied';
           setTimeout(() => { btn.textContent = previous; }, 1400);
         } catch {
-          alert(`Join code: ${btn.dataset.code || ''}`);
+          showJoinCode();
         }
       }));
       wrap.querySelectorAll('.open-class-wiki-btn').forEach(btn => btn.addEventListener('click', async () => {
@@ -8780,10 +8809,15 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
                 <td>—</td><td>—</td><td>—</td><td>${!isCoTeacher() ? `<button type="button" class="btn secondary assignment-extend-student" data-email="${escapeHtml(student.email)}">Extend…</button>` : '—'}</td>
               </tr>`;
               const aiStatus = sub.aiGradingStatus || '';
+              const groupNames = sub.groupMode === 'group' ? sub.groupRecipients || [] : [];
+              const groupIndicator = groupNames.length ? `<details class="assignment-group-indicator">
+                <summary title="${escapeHtml(groupNames.join(', '))}">Group submission</summary>
+                <ul>${groupNames.map(name => `<li>${escapeHtml(name)}</li>`).join('')}</ul>
+              </details>` : '';
               return `
               <tr>
                 ${studentNameCells(student, sub.hasPastedText)}
-                <td>${sub.withdrawn ? 'Un-submitted' : '<span class="assignment-submitted-check" aria-label="Submitted">✓</span> Turned in'}${aiStatus ? `<div><span class="assignment-ai-status ${escapeHtml(aiStatus)}">${escapeHtml(aiStatus)}</span></div>` : ''}${sub.aiGradingError ? `<div class="assignment-not-turned-in">${escapeHtml(sub.aiGradingError)}</div>` : ''}</td>
+                <td>${sub.withdrawn ? 'Un-submitted' : '<span class="assignment-submitted-check" aria-label="Submitted">✓</span> Turned in'}${groupIndicator}${aiStatus ? `<div><span class="assignment-ai-status ${escapeHtml(aiStatus)}">${escapeHtml(aiStatus)}</span></div>` : ''}${sub.aiGradingError ? `<div class="assignment-not-turned-in">${escapeHtml(sub.aiGradingError)}</div>` : ''}</td>
                 <td>${window.AssignmentWorkflow.teacherFiles(assignment, sub)}</td>
                 <td>${assignment.allowFileSubmission === false ? '—' : `<input class="assignment-grade-input" type="number" min="0" max="${assignment.maxScore || 0}" step="0.01" value="${sub.codeScore ?? sub.score ?? ''}" data-email="${escapeHtml(sub.email)}" aria-label="Score for ${escapeHtml(sub.name || sub.email)}"><div class="meta" role="status">${sub.manualScoreOverride ? 'Manual override' : (sub.aiSuggestedScore !== null && sub.aiSuggestedScore !== undefined ? `${sub.gradingSource === 'external' ? 'External' : 'AI'} ${sub.aiSuggestedScore}` : '')}</div>`}</td>
                 <td>${assignmentScoreValue(sub) ?? '—'} / ${assignmentTotalMaxScore(assignment)}<div class="meta">${assignmentPercentValue(sub, assignment) ?? '—'}</div></td>

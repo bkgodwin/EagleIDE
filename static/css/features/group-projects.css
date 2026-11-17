@@ -142,3 +142,62 @@ body.light-mode :is(.group-modal, .group-editor-tools, .group-submission-preview
 body.light-mode :is(.group-modal, .group-editor-tools, .group-submission-preview) .btn.secondary:hover {
   background:var(--theme-btn-hover);
 }
+
+.assignment-group-indicator { margin-top: 5px; }
+.assignment-group-indicator summary {
+  width: fit-content;
+  padding: 3px 7px;
+  border: 1px solid var(--theme-border-mid);
+  border-radius: 6px;
+  background: var(--theme-panel);
+  color: var(--theme-text);
+  font-size: .78rem;
+  cursor: pointer;
+}
+.assignment-group-indicator ul { padding-left: 20px; margin: 5px 0 0; }
+.group-work-timeline {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--theme-border-mid);
+  border-radius: 8px;
+  background: var(--theme-panel);
+  color: var(--theme-text);
+}
+.group-work-timeline summary { cursor: pointer; font-weight: 700; }
+.group-work-timeline p { margin: 8px 0; font-size: .82rem; color: var(--theme-text-dim); }
+.group-timeline-lanes { position: relative; display: grid; gap: 6px; }
+.group-timeline-lane {
+  display: grid;
+  grid-template-columns: minmax(6rem, 30%) minmax(0, 1fr);
+  align-items: center;
+  font-size: .82rem;
+}
+.group-timeline-lane > span { padding-right: 8px; overflow-wrap: anywhere; }
+.group-timeline-track {
+  position: relative;
+  height: .9rem;
+  border-radius: 3px;
+  background: var(--theme-input-bg);
+}
+.group-timeline-visit {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+  background: var(--group-color);
+}
+.group-timeline-cursor {
+  position: absolute;
+  inset: 0 0 0 max(6rem, 30%);
+  pointer-events: none;
+}
+.group-timeline-cursor::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 clamp(0px, var(--timeline-position), calc(100% - 2px));
+  width: 2px;
+  background: var(--theme-text);
+}
+.group-timeline-seek { display: grid !important; gap: 4px; margin-top: 10px; font-size: .85rem; }
+.group-timeline-seek input[type=range] { margin: 0; padding: 0; accent-color: var(--columbia-blue); }
+.group-timeline-viewers { display: block; font-size: .875rem; overflow-wrap: anywhere; }

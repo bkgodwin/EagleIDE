@@ -197,6 +197,70 @@ class EagleLabRouteTests(unittest.TestCase):
         )
         self.assertEqual(revealed.get_json()["data"]["password"], "secret")
 
+    @patch("eagle_lab_features._probe", return_value={"status": "up"})
+    def test_student_hours_and_teacher_reservation_gate_catalog_credentials_and_sessions(self, _probe):
+        from datetime import datetime, timezone
+        from zoneinfo import ZoneInfo
+
+        self.config["eagle_lab_enabled"] = True
+        first = self.store.save_server({"hostname": "Student node", "ip": "10.0.0.2", "password": "one"})
+        second = self.store.save_server({"hostname": "Teacher node", "ip": "10.0.0.3", "password": "two"})
+        settings = {"enabled": True, "show_credentials": True, "server_ids": [first["id"], second["id"]],
+                    "student_hours": {"days": [0], "start": "08:00", "end": "09:00", "timeZone": "America/Chicago"}}
+        rule_path = "/api/eagle-lab/teacher/classes/class-a"
+        bootstrap = "/api/eagle-lab/bootstrap?class_id=class-a"
+        authorize = "/api/eagle-lab/gateway/authorize"
+        trusted = {"X-Lab-Gateway-Key": self.gateway.secret}
+        response = self.client.put(rule_path, headers=self.teacher_headers, json={
+            **settings, "student_hours": {**settings["student_hours"], "timeZone": "Not/A_Zone"},
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.client.put(rule_path, headers=self.teacher_headers, json=settings).status_code, 200)
+
+        def launch(server, headers):
+            return self.client.post(f"/api/eagle-lab/servers/{server['id']}/launch",
+                                    headers=headers, json={"class_id": "class-a"})
+
+        def session(server, headers):
+            ticket = launch(server, headers).json["data"]["ticket"]
+            return self.client.post(authorize, headers=trusted, json={
+                "server_id": server["id"], "ticket": ticket,
+            }).json["data"]["session"]
+
+        def credentials(server, headers):
+            return self.client.get(f"/api/eagle-lab/servers/{server['id']}/credentials?class_id=class-a", headers=headers)
+
+        zone = ZoneInfo("America/Chicago")
+        with patch("eagle_lab_store.datetime") as clock:
+            clock.now.return_value = datetime(2026, 7, 6, 13, 0, tzinfo=timezone.utc).astimezone(zone)
+            reserved_session = session(second, self.student_headers)
+            response = self.client.put(rule_path, headers=self.teacher_headers,
+                                       json={**settings, "teacher_server_id": second["id"]})
+            self.assertEqual(response.status_code, 200)
+            student_servers = self.client.get(bootstrap, headers=self.student_headers).json["data"]["servers"]
+            self.assertEqual([server["id"] for server in student_servers], [first["id"]])
+            self.assertEqual(credentials(second, self.student_headers).status_code, 403)
+            self.assertEqual(launch(second, self.student_headers).status_code, 403)
+            self.assertEqual(self.client.post(authorize, headers=trusted, json={
+                "server_id": second["id"], "session": reserved_session,
+            }).status_code, 403)
+            student_session = session(first, self.student_headers)
+            clock.now.return_value = datetime(2026, 7, 6, 14, 0, tzinfo=timezone.utc).astimezone(zone)
+            closed = self.client.get(bootstrap, headers=self.student_headers).json["data"]
+            self.assertEqual(closed["servers"], [])
+            self.assertIn("08:00", closed["hours_message"])
+            self.assertEqual(credentials(first, self.student_headers).status_code, 403)
+            self.assertEqual(launch(first, self.student_headers).status_code, 403)
+            self.assertEqual(self.client.post(authorize, headers=trusted, json={
+                "server_id": first["id"], "session": student_session,
+            }).status_code, 403)
+            teacher_servers = self.client.get(bootstrap, headers=self.teacher_headers).json["data"]["servers"]
+            self.assertEqual([server["id"] for server in teacher_servers if server["teacher_reserved"]], [second["id"]])
+            self.assertEqual(credentials(second, self.teacher_headers).status_code, 200)
+            self.assertEqual(launch(second, self.teacher_headers).status_code, 200)
+        self.store.delete_server(second["id"])
+        self.assertEqual(self.store.class_rule("class-a")["teacher_server_id"], "")
+
     def test_only_the_class_owner_can_change_rules(self):
         self.teacher["email"] = "other@example.com"
         response = self.client.put("/api/eagle-lab/teacher/classes/class-a", headers=self.teacher_headers, json={

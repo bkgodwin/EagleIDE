@@ -45,7 +45,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js" integrity="sha384-44q2s9jxk8W5N9gAB0yn7UYLi9E2oVw8eHyaTZLkDS3WuZM/AttkAiVj6JoZuGS4" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js" integrity="sha384-jgkY4GMNWfQcLLIoP1vg3FWXflDrRhcSXGBW6ONIWC2SOIv5H1Pa57sXs+aomCuZ" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js" integrity="sha384-EO/jSdjpPTVnKfaKudbmOTZBYv471ACLOeLdy0zhCEJrQAtjgUSCbn/Cc+9QWjIx" crossorigin="anonymous"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261116-infra-guidance">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261117-classroom-management">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -1187,8 +1187,8 @@
             <div class="teacher-dash-brand-sub">Dashboard</div>
           </div>
         </div>
-        <nav class="teacher-dash-nav">
-          <button class="teacher-dash-navbtn active" data-view="dash-reports">
+        <nav class="teacher-dash-nav" aria-label="Teacher dashboard">
+          <button class="teacher-dash-navbtn active" data-view="dash-reports" aria-current="page">
             <span class="navbtn-icon">📊</span><span>Reports</span>
           </button>
           <button class="teacher-dash-navbtn" data-view="dash-classes">
@@ -1229,16 +1229,24 @@
           <div class="teacher-dash-view-hdr">
             <h2 class="teacher-dash-view-title">Class Management</h2>
             <div class="teacher-dash-view-actions">
-              <input type="text" id="newClassNameInput" placeholder="New class name" style="padding:8px 12px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px; font-size:13px;">
-              <button class="btn run" id="createClassBtn">+ Create Class</button>
+              <input type="text" id="newClassNameInput" aria-label="New class name" placeholder="New class name">
+              <button class="btn run" id="createClassBtn" type="button">Create class</button>
             </div>
           </div>
           <div class="teacher-dash-scroll">
-            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
-              <label for="teacherClassesActiveSelect" style="font-size:12px; color:var(--theme-text-dim);">Active class</label>
-              <select id="teacherClassesActiveSelect" style="min-width:280px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;"></select>
+            <div class="teacher-class-picker">
+              <label for="teacherClassesActiveSelect">Active class</label>
+              <select id="teacherClassesActiveSelect"></select>
             </div>
             <div id="teacherClassList"></div>
+            <dialog id="teacherJoinCodeDialog" class="teacher-join-code-dialog" aria-labelledby="teacherJoinCodeTitle">
+              <form method="dialog">
+                <h3 id="teacherJoinCodeTitle"></h3>
+                <p>Class join code</p>
+                <strong id="teacherJoinCodeDisplay"></strong>
+                <button class="btn secondary" autofocus>Close</button>
+              </form>
+            </dialog>
           </div>
         </div>
 
@@ -1332,11 +1340,19 @@
           <div class="teacher-dash-view-hdr">
             <h2 class="teacher-dash-view-title">Class Reports</h2>
             <div class="teacher-dash-view-actions">
-              <label style="font-size:12px; color:var(--theme-text-dim);">Class</label>
-              <select id="teacherReportsClassSelect" style="min-width:220px; padding:8px; background:var(--theme-input-bg); color:var(--theme-text); border:1px solid var(--theme-border-mid); border-radius:8px;"></select>
+              <label for="teacherReportsClassSelect">Class</label>
+              <select id="teacherReportsClassSelect"></select>
             </div>
           </div>
           <div class="teacher-dash-scroll">
+            <section id="teacherNotifications" class="teacher-notifications" aria-labelledby="teacherNotificationsTitle" hidden>
+              <div class="teacher-notifications-header">
+                <div><h3 id="teacherNotificationsTitle">Notifications</h3><p>Extension requests from all your classes</p></div>
+                <button type="button" class="btn secondary" id="teacherNotificationsRefresh">Refresh</button>
+              </div>
+              <p id="teacherNotificationsStatus" class="teacher-notifications-status" role="status"></p>
+              <div id="teacherNotificationsList" class="assignment-request-list"></div>
+            </section>
             <div class="mastery-tabs">
               <button class="mastery-tab-btn active" data-pane="class-roster-pane">Roster View</button>
               <button class="mastery-tab-btn" data-pane="score-overview-pane">Score Overview</button>
@@ -1435,13 +1451,40 @@
             </div>
           </div>
           <div class="teacher-dash-scroll">
-            <div class="eagle-lab-teacher-settings">
-              <label class="admin-setting-toggle"><input id="eagleLabTeacherEnabled" type="checkbox"><span><strong>Allow Eagle Lab for this class</strong><small>The administrator must also enable Eagle Lab globally.</small></span></label>
+            <fieldset id="eagleLabTeacherRules" class="eagle-lab-teacher-settings" disabled aria-label="Class lab rules">
+              <label class="admin-setting-toggle"><input id="eagleLabTeacherEnabled" type="checkbox"><span><strong>Allow students to use Eagle Lab</strong><small>The administrator must also enable Eagle Lab globally.</small></span></label>
               <label class="admin-setting-toggle"><input id="eagleLabTeacherCredentials" type="checkbox"><span><strong>Show enrolled PVE credentials</strong><small>Students can reveal the saved username and password for servers assigned below.</small></span></label>
-              <div><strong>Available servers</strong><p>Select the locally hosted PVE servers this class may access.</p></div>
-              <div id="eagleLabTeacherServers" class="eagle-lab-teacher-server-list"></div>
+              <section class="eagle-lab-class-policy" aria-labelledby="eagleLabHoursTitle">
+                <h3 id="eagleLabHoursTitle">Student access hours</h3>
+                <label class="eagle-lab-checkbox"><input id="eagleLabTeacherLimitHours" type="checkbox"><span>Limit server access to class hours</span></label>
+                <fieldset id="eagleLabTeacherHours" class="eagle-lab-hours" hidden>
+                  <legend>Weekly schedule</legend>
+                  <div class="eagle-lab-hour-days">
+                    <label><input type="checkbox" value="0" aria-label="Monday">Mon</label>
+                    <label><input type="checkbox" value="1" aria-label="Tuesday">Tue</label>
+                    <label><input type="checkbox" value="2" aria-label="Wednesday">Wed</label>
+                    <label><input type="checkbox" value="3" aria-label="Thursday">Thu</label>
+                    <label><input type="checkbox" value="4" aria-label="Friday">Fri</label>
+                    <label><input type="checkbox" value="5" aria-label="Saturday">Sat</label>
+                    <label><input type="checkbox" value="6" aria-label="Sunday">Sun</label>
+                  </div>
+                  <div class="eagle-lab-form-grid eagle-lab-hour-fields">
+                    <label>Start<input id="eagleLabTeacherStart" type="time"></label>
+                    <label>End<input id="eagleLabTeacherEnd" type="time"></label>
+                    <label>Time zone<input id="eagleLabTeacherZone" type="text" maxlength="80" placeholder="America/Chicago"></label>
+                  </div>
+                </fieldset>
+              </section>
+              <section class="eagle-lab-class-policy" aria-labelledby="eagleLabServerAccessTitle">
+                <h3 id="eagleLabServerAccessTitle">Server assignments</h3>
+                <label for="eagleLabTeacherReserved">Reserve a teacher server</label>
+                <select id="eagleLabTeacherReserved" aria-describedby="eagleLabTeacherReservedHelp"></select>
+                <p id="eagleLabTeacherReservedHelp">This server is available to you and hidden from students in this class.</p>
+                <h4>Student servers</h4>
+                <div id="eagleLabTeacherServers" class="eagle-lab-teacher-server-list"></div>
+              </section>
               <div class="eagle-lab-teacher-actions"><button class="btn run" id="eagleLabTeacherSaveBtn" type="button">Save class rules</button><span id="eagleLabTeacherStatus" role="status"></span></div>
-            </div>
+            </fieldset>
           </div>
         </div>
 
@@ -2479,7 +2522,7 @@
 
   <script src="/static/js/app.js"></script>
   <script src="/static/js/connection.js?v=20261011-files-5"></script>
-  <script src="/static/js/feature-loader.js?v=20261117-residential"></script>
+  <script src="/static/js/feature-loader.js?v=20261117-classroom-management"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20261021-security-1"></script>
   <script src="/static/js/layout.js?v=20261011-files-5"></script>
@@ -2498,12 +2541,12 @@
   <script src="/static/js/group-project-ui.js?v=2"></script>
   <script src="/static/js/editor-annotations.js"></script>
   <script src="/static/js/workspace-markdown.js"></script>
-  <script src="/static/js/assignment-workflow.js?v=20261109-history"></script>
+  <script src="/static/js/assignment-workflow.js?v=20261117-classroom-management"></script>
   <script src="/static/js/assignment-development.js?v=20261109-history"></script>
   <script src="/static/js/workspace-history.js?v=20261109-history"></script>
   <script src="/static/js/teacher-assignments.js?v=20261109-history"></script>
   <script src="/static/js/editor-edit-menu.js?v=2"></script>
-  <script src="/static/js/app-core.js?v=20261116-infra-guidance"></script>
+  <script src="/static/js/app-core.js?v=20261117-classroom-management"></script>
   <script src="/static/js/eagle-lab-access.js?v=20261103-lab-polish"></script>
   <script src="/static/js/step-mode.js?v=20261011-files-5"></script>
   <script src="/static/js/lesson-plan-renderer.js?v=20261021-security-1"></script>
@@ -2516,7 +2559,7 @@
   <script src="/static/js/notebook-sync.js?v=20261011-notebook-topics-1"></script>
   <script src="/static/js/notebook-photos.js?v=20261011-notebook-topics-1"></script>
   <script src="/static/js/student-notebook.js?v=20261020-tool-storage-1"></script>
-  <script src="/static/js/student-dashboard.js?v=20261011-notebook-topics-1"></script>
+  <script src="/static/js/student-dashboard.js?v=20261117-classroom-management"></script>
 
 </body>
 </html>

@@ -7,6 +7,8 @@
   const date = value => value ? new Date(value).toLocaleString() : 'No due date';
   const size = bytes => Number(bytes) >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.ceil(Number(bytes || 0) / 1024)} KB`;
   const localZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const groupSubmissionCredit = (name, timestamp) =>
+    `Submitted by ${name || 'a group member'}${timestamp ? ` · ${date(timestamp)}` : ''}`;
   const submitted = a => !!a.studentSubmissionSummary?.submittedAt && !a.studentSubmissionSummary.withdrawn;
   let highlights = true;
   const editorMarks = [];
@@ -57,8 +59,9 @@
     return new Intl.DateTimeFormat(undefined, {dateStyle:'medium', timeStyle:'short', ...(zone ? {timeZone:zone} : {})}).format(new Date(value));
   }
 
-  async function confirmExtension(payload) {
+  async function confirmExtension(payload, valid = () => true) {
     const preview = await mutate('/api/assignments/extend-student', {...payload, action:'preview'});
+    if (!valid()) return false;
     const zone = preview.timeZone;
     return confirm(`Reopen through ${classDate(preview.extension.until, zone)}${zone ? ` (${zone})` : ''}?\n${preview.submissionWindowMessage || 'Submission is available through this deadline.'}`);
   }
@@ -84,6 +87,101 @@
     };
   }
 
+  function extensionRequestCard(row, valid, onDecision, finalized = false) {
+    const article = document.createElement('article');
+    article.className = 'assignment-request';
+    const pending = row.status === 'pending' && !finalized;
+    const days = row.days === 0 ? 'Rest of today’s school day' : `${row.days} school day${row.days === 1 ? '' : 's'} requested`;
+    article.innerHTML = `<div><strong>${esc(row.name)}</strong><time datetime="${esc(row.requestedAt)}">${esc(date(row.requestedAt))}</time></div>
+      ${row.assignmentName ? `<div class="teacher-notification-context">${esc(row.assignmentName)} · ${esc(row.className)}</div>` : ''}
+      <p>${esc(row.reason)}</p><small>${row.status === 'approved' ? `Approved through ${esc(date(row.until))}` : `${esc(days)}${row.status === 'denied' ? ' · Denied' : ''}`}</small>
+      ${pending ? `<form><label>Modify school days<input name="days" type="number" min="0" max="365" step="1" value="${row.days}" required></label><button type="submit" class="btn run">Accept</button><button type="button" class="btn secondary assignment-request-deny">Deny</button><span role="status"></span></form>` : ''}`;
+    if (!pending) return article;
+    const form = article.querySelector('form');
+    const input = form.elements.days;
+    const accept = form.querySelector('[type="submit"]');
+    input.oninput = () => {
+      accept.textContent = Number(input.value) === row.days ? 'Accept' : 'Approve modified days';
+    };
+    const decide = async action => {
+      if (!valid()) return;
+      const controls = [...form.querySelectorAll('button, input')];
+      const payload = {assignmentId:row.assignmentId, classId:row.classId,
+        studentEmail:row.studentEmail, requestId:row.id, days:Number(input.value)};
+      controls.forEach(control => {control.disabled = true;});
+      const status = form.querySelector('[role="status"]');
+      status.textContent = '';
+      try {
+        if (action === 'approve' && !await confirmExtension(payload, valid)) return;
+        if (!valid()) return;
+        const result = await mutate('/api/assignments/extend-student', {...payload, action});
+        if (!valid()) return;
+        await onDecision(result.request);
+      } catch(error) {
+        if (valid()) status.textContent = error.message;
+      } finally {
+        controls.forEach(control => {control.disabled = false;});
+      }
+    };
+    form.onsubmit = event => {event.preventDefault(); decide('approve');};
+    form.querySelector('.assignment-request-deny').onclick = () => decide('deny');
+    return article;
+  }
+
+  let notificationAuth = '', notificationLoad = 0;
+  const notificationCards = new Map();
+
+  function setNotificationAccess(allowed) {
+    const section = document.getElementById('teacherNotifications');
+    if (!section) return;
+    const next = allowed ? JSON.stringify(bridge?.managerHeaders()) : '';
+    section.hidden = !next;
+    if (next === notificationAuth) return;
+    notificationAuth = next;
+    notificationLoad++;
+    notificationCards.clear();
+    document.getElementById('teacherNotificationsList').replaceChildren();
+    document.getElementById('teacherNotificationsStatus').textContent = '';
+    document.getElementById('teacherNotificationsRefresh').onclick = () => refreshNotifications();
+  }
+
+  async function refreshNotifications(announcement = '') {
+    if (!notificationAuth) return;
+    const auth = notificationAuth, sequence = ++notificationLoad;
+    const authorized = () => auth === notificationAuth && auth === JSON.stringify(bridge.managerHeaders());
+    const valid = () => authorized() && sequence === notificationLoad;
+    const host = document.getElementById('teacherNotificationsList');
+    const status = document.getElementById('teacherNotificationsStatus');
+    if (!notificationCards.size) status.textContent = announcement || 'Loading extension requests…';
+    try {
+      const {requests} = await json('/api/assignments/extension-requests/pending', {
+        headers:bridge.managerHeaders(), cache:'no-store'
+      });
+      if (!valid()) return;
+      const pending = new Set(requests.map(row => row.id));
+      for (const [id, card] of notificationCards) {
+        if (!pending.has(id)) {card.remove(); notificationCards.delete(id);}
+      }
+      for (const [index, row] of requests.entries()) {
+        let card = notificationCards.get(row.id);
+        if (!card) {
+          card = extensionRequestCard(row, () => authorized() && card.isConnected, async result => {
+            card.remove();
+            notificationCards.delete(row.id);
+            await refreshNotifications(result?.status === 'approved' ? 'Extension approved.' : 'Extension denied.');
+            if (authorized()) bridge.reloadAssignments([row.assignmentId]);
+          });
+          notificationCards.set(row.id, card);
+        }
+        if (host.children[index] !== card) host.insertBefore(card, host.children[index] || null);
+      }
+      const count = requests.length ? `${requests.length} pending request${requests.length === 1 ? '' : 's'}.` : 'No pending extension requests.';
+      status.textContent = announcement ? `${announcement} ${count}` : count;
+    } catch(error) {
+      if (valid()) status.textContent = error.message;
+    }
+  }
+
   async function reviewExtensions(a) {
     const m = modal(`Extension requests · ${a.name}`, '<div class="assignment-request-list" aria-live="polite">Loading requests…</div>');
     const host = m.root.querySelector('.assignment-request-list');
@@ -92,32 +190,15 @@
     try {
       const {requests} = await json(`/api/assignments/extension-requests?${new URLSearchParams({assignmentId:a.id})}`, {headers});
       if (!valid()) return;
-      host.innerHTML = requests.map((row, index) => `<article class="assignment-request"><div><strong>${esc(row.name)}</strong><span>${esc(row.status)} · ${esc(date(row.requestedAt))}</span></div><p>${esc(row.reason)}</p>${row.status === 'pending' && !a.gradingCompletedAt
-        ? `<form data-request="${index}"><label>School days<input name="days" type="number" min="0" max="365" step="1" value="${row.days}" required></label><button type="submit" class="btn run">Approve</button><button type="button" class="btn secondary assignment-request-deny">Deny</button><span role="status"></span></form>`
-        : `<small>${row.status === 'approved' ? `Approved for ${row.approvedDays} school days · ${esc(date(row.until))}` : `${row.days} school days requested`}</small>`}</article>`).join('') || '<p>No extension requests yet.</p>';
-      host.querySelectorAll('form').forEach(form => {
-        const row = requests[Number(form.dataset.request)];
-        const decide = async action => {
-          if (!valid()) return;
-          const buttons = form.querySelectorAll('button');
-          buttons.forEach(button => button.disabled = true);
-          const payload = {assignmentId:a.id, studentEmail:row.studentEmail, requestId:row.id, days:Number(form.elements.days.value)};
-          try {
-            if (action === 'approve' && !await confirmExtension(payload)) return;
-            if (!valid()) return;
-            await mutate('/api/assignments/extend-student', {...payload, action});
-            if (!valid()) return;
-            form.replaceWith(Object.assign(document.createElement('p'), {textContent:action === 'approve' ? 'Extension approved' : 'Extension denied'}));
-            await bridge.reloadAssignments();
-          } catch(error) {
-            if (valid()) form.querySelector('[role="status"]').textContent = error.message;
-          } finally {
-            buttons.forEach(button => button.disabled = false);
-          }
-        };
-        form.onsubmit = event => { event.preventDefault(); decide('approve'); };
-        form.querySelector('.assignment-request-deny').onclick = () => decide('deny');
-      });
+      host.textContent = requests.length ? '' : 'No extension requests yet.';
+      for (const row of requests) {
+        const request = {...row, assignmentId:a.id, classId:a.targetClassId};
+        const card = extensionRequestCard(request, valid, async result => {
+          card.replaceWith(extensionRequestCard({...request, ...result}, valid, null, true));
+          await bridge.reloadAssignments([a.id]);
+        }, !!a.gradingCompletedAt);
+        host.append(card);
+      }
     } catch(error) {
       if (valid()) host.textContent = error.message;
     }
@@ -173,6 +254,7 @@
         ${mayAttempt && a.submissionWindowMessage ? `<p class="assignment-window-note ${a.submissionWindowOpen ? '' : 'is-closed'}">${esc(a.submissionWindowMessage)}</p>` : ''}
         ${a.submissionOverrideUntil ? `<p class="assignment-window-note">Open today until ${esc(classDate(a.submissionOverrideUntil,a.timeZone))}.</p>` : ''}
         ${mayAttempt && !a.submissionWindowOpen && a.nextWindowChangeAt ? `<p class="assignment-window-note">Next submission window ${esc(classDate(a.nextWindowChangeAt,a.timeZone))}.</p>` : ''}
+        ${s?.groupSubmittedByName && !s.withdrawn ? `<p class="group-submission-credit">${esc(groupSubmissionCredit(s.groupSubmittedByName, s.groupSubmittedAt))}</p>` : ''}
         ${s?.aiFeedback ? `<details class="assignment-feedback-details"><summary>View teacher feedback</summary>${bridge.feedback(s.aiFeedback, {audience:'student'})}</details>` : ''}
         <div class="assignment-actions">
           ${s ? `<button type="button" class="btn secondary view-student-submission-btn" data-id="${esc(id)}">View submission</button><button type="button" class="btn secondary view-score-report-btn" data-id="${esc(id)}">Score report</button>` : ''}
@@ -321,6 +403,66 @@
     };
   }
 
+  function renderWorkTimeline(preview, timeline) {
+    const details = document.createElement('details');
+    details.className = 'group-work-timeline';
+    details.innerHTML = '<summary>File activity timeline</summary>';
+    preview.append(details);
+    const visits = timeline?.visits || [];
+    if (!visits.length) {
+      const empty = document.createElement('p');
+      empty.textContent = 'No open-file activity was recorded for this version.';
+      details.append(empty);
+      return;
+    }
+    const times = [...new Set(visits.flatMap(visit => [visit.start, visit.end]).concat(timeline.capturedAt))].sort((a, b) => a - b);
+    const people = new Map();
+    for (const visit of visits) {
+      if (!people.has(visit.person.id)) people.set(visit.person.id, {person:visit.person, visits:[]});
+      people.get(visit.person.id).visits.push(visit);
+    }
+    const first = times[0];
+    const duration = Math.max(1, times.at(-1) - first);
+    const percent = time => (time - first) * 100 / duration;
+    details.insertAdjacentHTML('beforeend', `<p>${timeline.truncated ? 'Showing recent visits. ' : ''}Activity comes from the shared editor. A lost connection can take up to 35 seconds to register.</p>
+      <div class="group-timeline-lanes"></div>
+      <label class="group-timeline-seek">Move between activity changes<input type="range" min="0" max="${times.length - 1}" value="0" step="1"></label>
+      <output class="group-timeline-viewers"></output>`);
+    const lanes = details.querySelector('.group-timeline-lanes');
+    const cursor = document.createElement('span');
+    cursor.className = 'group-timeline-cursor';
+    cursor.setAttribute('aria-hidden', 'true');
+    for (const {person, visits:personVisits} of people.values()) {
+      const lane = document.createElement('div');
+      lane.className = 'group-timeline-lane';
+      lane.innerHTML = `<span>${esc(person.name)}</span><div class="group-timeline-track" aria-hidden="true"></div>`;
+      const track = lane.querySelector('.group-timeline-track');
+      for (const visit of personVisits) {
+        const bar = document.createElement('span');
+        bar.className = `group-timeline-visit group-color-${Number(person.color) || 0}`;
+        bar.style.left = `${percent(visit.start)}%`;
+        bar.style.width = `${percent(visit.end) - percent(visit.start)}%`;
+        track.append(bar);
+      }
+      lanes.append(lane);
+    }
+    lanes.append(cursor);
+    const input = details.querySelector('input');
+    const output = details.querySelector('output');
+    const update = () => {
+      const time = times[Number(input.value)];
+      cursor.style.setProperty('--timeline-position', `${percent(time)}%`);
+      const open = new Map(visits.filter(visit =>
+        visit.start <= time && (time < visit.end || (time === timeline.capturedAt && visit.openAtSubmission))
+      ).map(visit => [visit.person.id, visit.person.name]));
+      const message = open.size ? `Open by ${[...open.values()].join(', ')}` : 'No recorded viewers';
+      input.setAttribute('aria-valuetext', `${date(time)} · ${message}`);
+      output.textContent = `${date(time)} · ${message}`;
+    };
+    input.addEventListener('input', update);
+    update();
+  }
+
   async function loadSubmissionFiles(a, studentEmail, fileId, m, reviewRevision = null) {
     const teacher = !!studentEmail;
     const headers = teacher ? bridge.managerHeaders() : bridge.studentHeaders();
@@ -375,6 +517,7 @@
           objectUrl = URL.createObjectURL(blob); const img = document.createElement('img'); img.src = objectUrl; img.alt = f.name; preview.append(img);
         } else {const p = document.createElement('p'); p.textContent = result.message; preview.append(p);}
         if (result.kind !== 'text') contributions?.contributionControls(preview, null, null, teacher, f.contributors || []);
+        if (teacher && f.projectPath) renderWorkTimeline(preview, result.workTimeline);
         m.root.querySelectorAll('[data-submitted-file]').forEach(button => button.classList.toggle('active',button.dataset.submittedFile === f.id));
         if (revision && m.canPlay?.() && !f.projectPath) {
           const clip = {revision, attachment:f.id, legacyFallback:!!a.fileControl};
@@ -408,11 +551,11 @@
           control.innerHTML = teacher ? `<label>Submission version<select aria-label="Submission version"><option value="${esc(data.latestRevisionId || '')}">Latest submission</option>${data.history.map((h,i) => `<option value="${esc(h.revisionId)}">Previous ${i+1} · ${esc(h.submittedAt || 'Unknown time')}</option>`).join('')}</select></label>` : `<p>Submitted ${esc(data.submittedAt || '—')} · Read-only copy</p>`;
         }
         const select = control.querySelector('select'); if (select) {select.value = revision; select.onchange = () => load(select.value);}
-        if (data.groupRecipients?.length) {
+        control.querySelector('.group-submission-credit')?.remove();
+        if (data.groupMode === 'group' && data.groupRecipients?.length) {
           const credit = document.createElement('p');
           credit.className = 'group-submission-credit';
-          credit.textContent = `Turned in by ${data.groupSubmittedByName || 'a group member'} · Credit for ${data.groupRecipients.join(', ')}`;
-          control.querySelector('.group-submission-credit')?.remove();
+          credit.textContent = `${groupSubmissionCredit(data.groupSubmittedByName, data.submittedAtIso || data.submittedAt)} · ${data.groupRecipients.join(', ')}`;
           control.append(credit);
         }
         const files = m.root.querySelector('.assignment-submission-files');
@@ -883,7 +1026,7 @@
       };
     });
   }
-  window.AssignmentWorkflow = {modal, configure(value) {bridge = value; try {highlights=localStorage.getItem('eagleide-paste-highlights') !== '0';} catch {} if(document.body) setHighlights(highlights); window.eagleEditor?.on?.('beforeChange', (_cm,change) => {if(change.origin === 'setValue') clearEditorHighlights();});}, teacherToolbar, highlightSource, highlightEditor, card, bindStudent, submitDialog, openFiles, teacherFiles, bindTeacher, present, windowForm, bindClass, accommodationLabel,
+  window.AssignmentWorkflow = {modal, configure(value) {bridge = value; try {highlights=localStorage.getItem('eagleide-paste-highlights') !== '0';} catch {} if(document.body) setHighlights(highlights); window.eagleEditor?.on?.('beforeChange', (_cm,change) => {if(change.origin === 'setValue') clearEditorHighlights();});}, teacherToolbar, setNotificationAccess, refreshNotifications, groupSubmissionCredit, highlightSource, highlightEditor, card, bindStudent, submitDialog, openFiles, teacherFiles, bindTeacher, present, windowForm, bindClass, accommodationLabel,
     attachEditorDevelopment, syncEditorDevelopment, disposeEditorDevelopment, pauseEditorDevelopment, renderEditorFrame, mountReviewFiles, editFeedback, openDevelopment,
     focusStudentAssignment(assignment, email) {if(email!==account) {account=email;expanded.clear();} tab=(assignment.isPast ?? !assignment.active) ? 'past' : 'current'; expanded.add(assignment.id);},
     studentTab(email) {if (email !== account) {account=email; tab='current'; expanded.clear();} return tab;}};

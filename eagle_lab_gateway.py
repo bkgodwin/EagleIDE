@@ -101,7 +101,7 @@ class LabGateway:
             return None
         if not self.class_access(current, record["class_id"]):
             return None
-        if current["role"] != "admin" and server["id"] not in self.store.class_rule(record["class_id"])["server_ids"]:
+        if current["role"] != "admin" and server["id"] not in self.store.permitted_server_ids(self.store.class_rule(record["class_id"]), current["role"]):
             return None
         return server
 
@@ -128,8 +128,8 @@ class LabGateway:
             server = self.store.get_server(server_id)
             if not server or not self.class_access(current, class_id):
                 return jsonify(ok=False, error="Eagle Lab access required"), 403
-            if current["role"] != "admin" and server_id not in self.store.class_rule(class_id)["server_ids"]:
-                return jsonify(ok=False, error="Server is not assigned to this class"), 403
+            if current["role"] != "admin" and server_id not in self.store.permitted_server_ids(self.store.class_rule(class_id), current["role"]):
+                return jsonify(ok=False, error="Server is unavailable for this class"), 403
             headers = {key: request.headers[key] for key in AUTH_HEADERS if request.headers.get(key)}
             portal = self.portal
             if self.transport == "path":

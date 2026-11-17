@@ -10,7 +10,9 @@ import re
 import threading
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from cryptography.fernet import Fernet, InvalidToken
 from credential_security import hash_password, verify_password, ADMIN_HASH_SCHEME
@@ -46,6 +48,34 @@ def _text(value: object, limit: int, *, required: bool = False) -> str:
     if len(result) > limit:
         raise EagleLabDataError("A field is too long")
     return result
+
+
+def student_hours(value):
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise EagleLabDataError("Choose valid student access hours")
+    days, start, end, zone = (value.get(key) for key in ("days", "start", "end", "timeZone"))
+    if (not isinstance(days, list) or not 1 <= len(days) <= 7 or
+            any(type(day) is not int or not 0 <= day <= 6 for day in days) or
+            not all(isinstance(clock, str) and re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", clock)
+                    for clock in (start, end)) or start >= end or
+            not isinstance(zone, str) or not 1 <= len(zone) <= 80):
+        raise EagleLabDataError("Choose class days, a start time before the end time, and a time zone")
+    try:
+        ZoneInfo(zone)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise EagleLabDataError("Enter an IANA time zone, such as America/Chicago") from exc
+    return {"days": sorted(set(days)), "start": start, "end": end, "timeZone": zone}
+
+
+def within_student_hours(rule, now=None):
+    hours = rule["student_hours"]
+    if hours is None:
+        return True
+    zone = ZoneInfo(hours["timeZone"])
+    local = now.astimezone(zone) if now else datetime.now(zone)
+    return local.weekday() in hours["days"] and hours["start"] <= local.strftime("%H:%M") < hours["end"]
 
 
 class EagleLabStore:
@@ -233,6 +263,8 @@ class EagleLabStore:
             for rule in data["class_rules"].values():
                 if isinstance(rule, dict):
                     rule["server_ids"] = [item for item in rule.get("server_ids", []) if item != str(server_id)]
+                    if rule.get("teacher_server_id") == server_id:
+                        rule["teacher_server_id"] = ""
             self._write(data)
             return True
 
@@ -245,6 +277,8 @@ class EagleLabStore:
                 "enabled": bool(raw.get("enabled", False)),
                 "show_credentials": bool(raw.get("show_credentials", False)),
                 "server_ids": [item for item in raw.get("server_ids", []) if item in known],
+                "teacher_server_id": raw.get("teacher_server_id", "") if raw.get("teacher_server_id") in known else "",
+                "student_hours": student_hours(raw.get("student_hours")),
             }
 
     def set_class_rule(self, class_id: object, raw: dict) -> dict:
@@ -258,18 +292,33 @@ class EagleLabStore:
             known = {item.get("id") for item in data["servers"]}
             if any(item not in known for item in requested):
                 raise EagleLabDataError("A selected server no longer exists")
+            previous = data["class_rules"].get(str(class_id), {})
+            reserved = raw.get("teacher_server_id", previous.get("teacher_server_id", ""))
+            if not isinstance(reserved, str) or (reserved and reserved not in known):
+                raise EagleLabDataError("The selected teacher server no longer exists")
             rule = {
                 "enabled": raw.get("enabled", False),
                 "show_credentials": raw.get("show_credentials", False),
                 "server_ids": list(dict.fromkeys(requested)),
+                "teacher_server_id": reserved,
+                "student_hours": student_hours(raw.get("student_hours", previous.get("student_hours"))),
             }
             data["class_rules"][str(class_id)] = rule
             self._write(data)
             return copy.deepcopy(rule)
 
-    def servers_for_class(self, class_id: object) -> list[dict]:
-        rule = self.class_rule(class_id)
-        if not rule["enabled"]:
-            return []
-        allowed = set(rule["server_ids"])
+    @staticmethod
+    def permitted_server_ids(rule, role):
+        allowed = set(rule["server_ids"]) if rule["enabled"] or role == "teacher" else set()
+        reserved = rule.get("teacher_server_id", "")
+        if role == "teacher" and reserved:
+            allowed.add(reserved)
+        elif role == "student":
+            allowed.discard(reserved)
+            if not within_student_hours(rule):
+                allowed.clear()
+        return allowed
+
+    def servers_for_class(self, class_id: object, role="student", *, rule=None) -> list[dict]:
+        allowed = self.permitted_server_ids(rule if rule is not None else self.class_rule(class_id), role)
         return [item for item in self.list_servers() if item["id"] in allowed]

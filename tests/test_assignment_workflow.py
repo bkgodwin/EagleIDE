@@ -60,6 +60,42 @@ class AssignmentSubmissionTestCase(unittest.TestCase):
         return self.client.get('/api/assignments/submission-file', query_string=args,
                                headers=self.teacher_headers if teacher else self.student_headers)
 
+    def test_pending_extension_feed_covers_owned_classes_and_allows_decisions(self):
+        a = self.create_assignment(active=True)
+        b = self.create_assignment(class_id=self.class_two, name="Second period lab", active=True)
+        catalog = eagle._load_classes()
+        catalog["classes"][1]["students"] = [self.student_email]
+        catalog["classes"][0]["coteachers"] = [self.student_email]
+        eagle._save_classes(catalog)
+        users = eagle._load_users()
+        student = next(row for row in users["users"] if row["email"] == self.student_email)
+        student["class_ids"] = [self.class_one, self.class_two]
+        eagle._save_users(users)
+        endpoint = "/api/assignments/extension-requests"
+        for assignment in (a, b):
+            response = self.client.post(endpoint, headers=self.student_headers, json={
+                "assignmentId": assignment["id"], "days": 2, "reason": "I need time to test my work."
+            })
+            self.assertEqual(response.status_code, 200, response.json)
+        feed = endpoint + "/pending"
+        self.assertEqual(self.client.get(feed, headers=self.student_headers).status_code, 401)
+        self.assertEqual(self.client.get(feed, headers={"X-Teacher-Token": self.student_token}).status_code, 403)
+        response = self.client.get(feed, headers=self.teacher_headers)
+        self.assertEqual(response.headers["Cache-Control"], "private, no-store")
+        requests = response.json["requests"]
+        self.assertEqual({(row["name"], row["className"], row["assignmentName"]) for row in requests},
+                         {("Student One", "Period One", a["name"]), ("Student One", "Period Two", b["name"])})
+        for row in requests:
+            action = "approve" if row["assignmentId"] == b["id"] else "deny"
+            decision = self.client.post("/api/assignments/extend-student", headers=self.teacher_headers, json={
+                "assignmentId": row["assignmentId"], "classId": row["classId"], "studentEmail": row["studentEmail"],
+                "requestId": row["id"], "action": action, "days": 3,
+            })
+            self.assertEqual(decision.status_code, 200, decision.json)
+            if action == "approve":
+                self.assertEqual(decision.json["request"]["approvedDays"], 3)
+        self.assertEqual(self.client.get(feed, headers=self.teacher_headers).json["requests"], [])
+
     def test_weekday_extension_private_deadline_and_current_placement(self):
         a = self.update(self.create_assignment(active=True), dueAt='2026-10-09T20:00:00Z')
         self.configure_class({'extendedWeekdays': 2, 'noDueDate': False}, {'timeZone': 'America/Chicago'})

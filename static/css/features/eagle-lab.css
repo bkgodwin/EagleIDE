@@ -187,7 +187,7 @@ body.light-mode.eagle-lab-mode header.topbar.topbar-primary { background:#f7fafc
 .eagle-lab-workspace-toolbar strong { overflow-wrap:anywhere; }
 .eagle-lab-workspace-toolbar select { max-width:min(220px,70vw); border:1px solid var(--theme-border-mid); border-radius:5px; }
 .eagle-lab-clipboard-hint { min-width:160px; }
-.eagle-lab-teacher-settings { padding:20px; border:1px solid var(--theme-border-mid); border-radius:8px; background:var(--theme-panel); }
+.eagle-lab-teacher-settings { min-width:0; margin:0; padding:20px; border:1px solid var(--theme-border-mid); border-radius:8px; background:var(--theme-panel); }
 .eagle-lab-teacher-server { padding:16px; border-radius:6px; cursor:pointer; background:var(--theme-input-bg); }
 .eagle-lab-teacher-server:has(input:checked) { border-color:var(--lab-blue); box-shadow:inset 3px 0 var(--lab-blue); }
 .eagle-lab-teacher-server input,.eagle-lab-teacher-settings input[type=checkbox] { width:24px; height:24px; flex:none; accent-color:var(--lab-blue); }
@@ -305,3 +305,38 @@ body.light-mode.eagle-lab-mode header.topbar.topbar-primary { background:#f7fafc
 .lab-editor-attachments>div { display:flex; align-items:end; gap:10px; padding:12px; margin:8px 0; border:1px solid var(--theme-border-mid); border-radius:5px; }
 .lab-editor-attachments label { flex:1; min-width:0; }
 .lab-report-window header h2 { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+
+.eagle-lab-class-policy {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--theme-border-mid);
+  border-radius: 9px;
+  background: var(--theme-bg);
+}
+.eagle-lab-class-policy :is(h3, h4, p) { margin: 0; }
+.eagle-lab-class-policy h3 { font-size: 1rem; }
+.eagle-lab-class-policy h4 { margin-top: 8px; }
+.eagle-lab-class-policy p { font-size: .85rem; color: var(--theme-text-dim); }
+.eagle-lab-hours { min-width: 0; border: 1px solid var(--theme-border-mid); border-radius: 8px; padding: 10px; }
+.eagle-lab-hours legend { padding: 0 5px; }
+.eagle-lab-hour-days { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 10px; }
+.eagle-lab-hour-days label { display: inline-flex; align-items: center; gap: 4px; }
+.eagle-lab-hour-fields label { display: grid; gap: 5px; min-width: 0; }
+.eagle-lab-class-policy :is(select, input[type=time], input[type=text]) {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 8px;
+  border: 1px solid var(--theme-border-mid);
+  border-radius: 6px;
+  background: var(--theme-input-bg);
+  color: var(--theme-text);
+  font: inherit;
+}
+.eagle-lab-teacher-server-list { margin-top: 0; }
+.eagle-lab-teacher-server.is-reserved { opacity: .68; cursor: default; box-shadow: none; }
+.eagle-lab-teacher-server.is-reserved strong::after { content: " · Reserved for teacher"; font-size: .8rem; font-weight: 500; }
+@media (min-width: 960px) {
+  .eagle-lab-hour-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
