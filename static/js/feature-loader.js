@@ -13,7 +13,7 @@
     wifiSite: [
       '/static/css/features/wifi-site.css?v=20261116-infra-guidance',
       '/static/js/wifi-site-model.js?v=20261116-rack-radio',
-      '/static/js/wifi-site-design.js?v=20261115-hospital',
+      '/static/js/wifi-site-design.js?v=20261117-office-campus',
       '/static/js/wifi-site-view.js?v=20261116-infra-polish',
       '/static/js/wifi-site-heatmap.js?v=20261116-rack-radio',
       '/static/js/wifi-cabling-model.js?v=20261116-rack-workspace',

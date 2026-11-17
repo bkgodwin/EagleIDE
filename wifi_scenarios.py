@@ -6,6 +6,7 @@ from network_store import WIFI_SCHEMA_VERSION, validate_wifi_site
 from wifi_hospital import hospital_layout
 from wifi_industrial import industrial_layout
 from wifi_motel import motel_layout
+from wifi_office_park import OFFICE_PARK_TITLE, office_park_layout
 from wifi_school import school_layout
 from wifi_stadium import stadium_layout
 
@@ -459,6 +460,31 @@ SCENARIOS = {
                      'sections, sports courts, and a 25 m lap pool. Network closets are empty. The floor plan '
                      'starts locked for network layout and can be unlocked from the toolbar.',
         'site': _starter('Harborline Stadium & Sports Center', *stadium_layout()),
+    },
+    'briar-glen-insurance-campus': {
+        'id': 'briar-glen-insurance-campus',
+        'title': OFFICE_PARK_TITLE,
+        'description': 'Design a campus network for four insurance offices, a data center, an event venue, and a gated entrance.',
+        'briefing': 'Briar Glen Mutual is bringing claims, technology, training, and underwriting together on one '
+                    'campus. Staff come in from the south lot, while visitors check in at the guardhouse and '
+                    'continue to reception or the event ballroom. The Technology Center houses a twelve-rack '
+                    'data center. Facilities staff reach the detached mechanical plant from a service drive north '
+                    'of the park. The network must support confidential claims work, a busy annual meeting, '
+                    'building operations, and a staffed gate.',
+        'traits': [
+            'Design a fiber backbone from the Technology Center to the other office buildings, the guardhouse, '
+            'and the mechanical plant. Mark entries and routes, and check the 90 m copper limit for local drops.',
+            'Connect the preinstalled servers through their patch panels and switches. Leave room for expansion '
+            'and check the resulting load against each rack’s UPS capacity.',
+            'Separate claims and underwriting, servers, event guests, gate security, and building controls. '
+            'Check that the guard desktop can reach both cameras while event guests cannot.',
+            'Survey office cubicles, the ballroom, and the park paths. Compare coverage during an event with normal office use.',
+        ],
+        'plan_note': 'One level, drawn in meters. The office buildings span just over 300 m east to west. '
+                     'The data center starts with twelve 16U racks, four servers, one top patch panel, '
+                     'and two UPS units in each. The guardhouse starts with two PoE cameras and a desktop. '
+                     'The floor plan is locked and all cabling and switching are yours to design.',
+        'site': _starter(OFFICE_PARK_TITLE, *office_park_layout()),
     },
     'marshpoint-regional-hospital': {
         'id': 'marshpoint-regional-hospital',
