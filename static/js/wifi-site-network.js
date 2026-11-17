@@ -7,7 +7,7 @@
   const ADD = ':add';
   const bands = [['2.4', '2.4 GHz'], ['5', '5 GHz'], ['both', 'Both bands']];
 
-  function create({ plan, cabling, graph, update, replace, render, hint, escape, choices, id, limits, serviceNames }) {
+  function create({ plan, cabling, graph, update, replace, render, hint, escape, choices, id, limits, serviceNames, radioFields }) {
     let apEdit, portEdit, vlanEdit = ADD, ruleEdit;
 
     const option = (entries, value) => choices(entries.map(([key, name]) => [String(key), name]), String(value));
@@ -44,7 +44,24 @@
       </section>`;
     }
 
+    function homeWifiInspector(router) {
+      const ssids = plan().ssids.filter(ssid => ssid.vlan === 0);
+      const choice = apEdit?.ap === router.id ? apEdit.ssid : router.wifi_ssid ?? ssids[0]?.id ?? '';
+      const selected = ssids.find(ssid => ssid.id === choice);
+      return `<details class="wifi-network-settings" data-wifi-config="home-wifi"><summary>Built-in Wi-Fi</summary>
+        <p>Broadcasts one SSID on the same LAN as the four Ethernet ports.</p>
+        <label>Wi-Fi network<select id="wifiHomeSsid">${option([
+          ['', 'Wi-Fi off'], ...ssids.map(ssid => [ssid.id, ssid.name]), [ADD, 'Create SSID…'],
+        ], choice)}</select></label>
+        ${choice ? `<label>SSID name<input id="wifiHomeSsidName" maxlength="32" value="${escape(selected?.name ?? '')}"></label>
+          <label>Radio band<select id="wifiHomeSsidBand">${option(bands, selected?.band ?? 'both')}</select></label>
+          ${button('save-home-ssid', selected ? 'Save SSID' : 'Create and Broadcast')}` : ''}
+        ${choice && choice !== ADD ? radioFields(router) : ''}
+      </details>`;
+    }
+
     function routerInspector(router) {
+      const home = router.kind === 'home_router';
       const dhcp = router.dhcp ?? model.DEFAULT_DHCP;
       const rules = router.firewall ?? [];
       const { available, unassigned, pool } = graph().routers.get(router.id);
@@ -54,27 +71,27 @@
       const endpoint = (rule, side) => {
         const vid = rule[side + '_vlan'];
         const vlan = vid == null ? 'Any VLAN' : `VLAN ${vid}`;
-        return `${vlan} · ${rule[side + '_ip'] || 'Any IP'}`;
+        return `${home ? '' : vlan + ' · '}${rule[side + '_ip'] || 'Any IP'}`;
       };
       return `<details class="wifi-network-settings" data-wifi-config="dhcp"${available ? '' : ' open'}>
         <summary>DHCP</summary>
-        ${available ? `<p>${available} of ${pool.capacity} client addresses available · shared across VLANs</p>`
+        ${available ? `<p>${available} of ${pool.capacity} client addresses available${home ? '' : ' · shared across VLANs'}</p>`
           : `<p class="wifi-poe-warning" role="alert">DHCP pool exhausted.${unassigned ? ` ${unassigned} connected ${unassigned === 1 ? 'client is' : 'clients are'} waiting for an address.` : ''}</p>`}
         <label>Gateway and prefix<input id="wifiDhcpGateway" maxlength="18" value="${escape(dhcp.gateway)}" placeholder="192.168.0.1/24"></label>
         <div class="wifi-two-fields"><label>Primary DNS<input id="wifiDhcpDns" maxlength="15" value="${escape(dhcp.dns)}"></label>
         <label>Fallback DNS<input id="wifiDhcpFallback" maxlength="15" value="${escape(dhcp.fallback_dns)}"></label></div>
         ${button('save-dhcp', 'Save DHCP')}
       </details>
-      <details class="wifi-network-settings" data-wifi-config="vlans"><summary>VLANs</summary>
+      ${home ? homeWifiInspector(router) : `<details class="wifi-network-settings" data-wifi-config="vlans"><summary>VLANs</summary>
         <p>VLAN 0 is the untagged LAN. VLAN names are shared throughout this site.</p>
         <label>VLAN<select id="wifiRouterVlan">${option([[ADD, 'New VLAN…'], ...vlans().slice(1)], vlan?.id ?? ADD)}</select></label>
         <div class="wifi-two-fields"><label>Name<input id="wifiVlanName" maxlength="60" value="${escape(vlan?.name ?? '')}"></label>
         <label>VLAN ID<input id="wifiVlanId" type="number" min="1" max="4094" step="1" value="${vlan?.id ?? ''}"${vlan ? ' readonly' : ''}></label></div>
         <div class="wifi-object-actions">${button('save-vlan', vlan ? 'Save Name' : 'Add VLAN')}
           ${vlan ? button('remove-vlan', 'Remove VLAN') : ''}</div>
-      </details>
+      </details>`}
       <details class="wifi-network-settings" data-wifi-config="firewall"><summary>Firewall</summary>
-        <p>First matching rule wins. Unmatched router traffic is allowed. Same-VLAN traffic stays on the switch.</p>
+        <p>First matching rule wins. Unmatched router traffic is allowed. ${home ? 'Traffic within the home LAN stays on the switch.' : 'Same-VLAN traffic stays on the switch.'}</p>
         ${rules.length ? `<ol class="wifi-firewall-list">${rules.map((item, i) => `<li class="${editing?.index === i ? 'is-editing' : ''}">
           <strong class="wifi-rule-action wifi-rule-${item.action}">${i + 1} · ${item.action === 'allow' ? 'Allow' : 'Deny'}</strong>
           <p>From ${escape(endpoint(item, 'source'))}<br>To ${escape(endpoint(item, 'destination'))}</p>
@@ -86,8 +103,8 @@
           </div></li>`).join('')}</ol>` : '<p>No firewall rules.</p>'}
         <fieldset class="wifi-rule-editor"><legend>${editing ? `Edit rule ${editing.index + 1}` : 'New rule'}</legend>
           <label>Action<select id="wifiFirewallAction">${option([['allow', 'Allow'], ['deny', 'Deny']], rule?.action ?? 'allow')}</select></label>
-          <div class="wifi-two-fields"><label>Source VLAN<select id="wifiFirewallSourceVlan">${option([['', 'Any VLAN'], ...vlans()], rule?.source_vlan ?? '')}</select></label>
-          <label>Destination VLAN<select id="wifiFirewallDestinationVlan">${option([['', 'Any VLAN'], ...vlans()], rule?.destination_vlan ?? '')}</select></label></div>
+          ${home ? '' : `<div class="wifi-two-fields"><label>Source VLAN<select id="wifiFirewallSourceVlan">${option([['', 'Any VLAN'], ...vlans()], rule?.source_vlan ?? '')}</select></label>
+          <label>Destination VLAN<select id="wifiFirewallDestinationVlan">${option([['', 'Any VLAN'], ...vlans()], rule?.destination_vlan ?? '')}</select></label></div>`}
           <div class="wifi-two-fields"><label>Source IP or CIDR<input id="wifiFirewallSourceIp" maxlength="18" placeholder="Any" value="${escape(rule?.source_ip ?? '')}"></label>
           <label>Destination IP or CIDR<input id="wifiFirewallDestinationIp" maxlength="18" placeholder="Any" value="${escape(rule?.destination_ip ?? '')}"></label></div>
           <div class="wifi-object-actions">${button('save-rule', editing ? 'Save Rule' : 'Add Rule')}
@@ -129,7 +146,7 @@
       const lease = info.lease;
       const connected = lease && info.speed;
       const pool = lease && graph().routers.get(lease.router).pool;
-      return `${device.kind === 'phone' ? `<label>Wi-Fi SSID<select id="wifiPhoneSsid">${option([
+      return `${model.wirelessClient(device) ? `<label>Wi-Fi SSID<select id="wifiPhoneSsid">${option([
         ['', ssids.length ? `Default (${ssids[0].name})` : 'No SSIDs'], ...ssids.map(ssid => [ssid.id, ssid.name]),
       ], device.ssid_id ?? '')}</select></label>` : ''}
         <dl class="wifi-device-status">
@@ -167,7 +184,7 @@
     }
 
     function deviceInspector(device) {
-      if (device.kind === 'router') return routerInspector(device);
+      if (model.isRouter(device)) return routerInspector(device);
       if (device.kind === 'server') return serverInspector(device);
       return model.managed(device) ? switchInspector(device) : '';
     }
@@ -176,7 +193,7 @@
       const ip = row.querySelector('[data-wifi-service-ip]').value.trim();
       if (ip && model.serviceAddress(ip) === null) return hint('Enter a unicast IPv4 address or leave the field blank for DHCP.');
       if (ip && plan().equipment.some(item => item.reservation?.ip === ip ||
-          (item.kind === 'router' && (item.dhcp ?? model.DEFAULT_DHCP).gateway.split('/')[0] === ip) ||
+          (model.isRouter(item) && (item.dhcp ?? model.DEFAULT_DHCP).gateway.split('/')[0] === ip) ||
           item.services?.some(vm => vm.ip === ip && (item.id !== device.id || vm.kind !== kind)))) {
         return hint('That IPv4 address is already configured on this site.');
       }
@@ -194,6 +211,11 @@
         const next = { ...device, services };
         if (!services.length) delete next.services;
         replace('equipment', next);
+      } else if (input.id === 'wifiHomeSsid') {
+        apEdit = input.value === ADD ? { ap: device.id, ssid: ADD } : null;
+        if (apEdit) render();
+        else replace('equipment', { ...device, wifi_ssid: input.value });
+        $('wifiHomeSsid').focus({ preventScroll: true });
       } else if (input.id === 'wifiApSsid') {
         apEdit = { ap: device.id, ssid: input.value };
         render();
@@ -239,6 +261,9 @@
       if (!name || layout.ssids.some(ssid => ssid.name === name && ssid !== old)) return hint('Enter a unique SSID name.');
       if (!old && layout.ssids.length >= limits().ssids) return hint('The shared SSID list is full.');
       const ssid = { id: old?.id ?? id('ssid'), name, band: $('wifiSsidBand').value, vlan: Number($('wifiSsidVlan').value) };
+      if (ssid.vlan && layout.equipment.some(device => device.wifi_ssid === ssid.id)) {
+        return hint('Choose a different SSID on the residential router before assigning this SSID a VLAN.');
+      }
       const ssids = old ? layout.ssids.map(item => item === old ? ssid : item) : [...layout.ssids, ssid];
       const enabled = model.apSsids(ap, layout.ssids);
       const access_points = !old && enabled.length < 4 ? layout.access_points.map(item =>
@@ -247,13 +272,30 @@
       update({ ...layout, ssids, access_points });
     }
 
+    function saveHomeSsid(router) {
+      const layout = plan();
+      const old = layout.ssids.find(ssid => ssid.id === $('wifiHomeSsid').value);
+      const name = $('wifiHomeSsidName').value.trim().replace(/\s+/g, ' ');
+      if (!name || layout.ssids.some(ssid => ssid.name === name && ssid !== old)) return hint('Enter a unique SSID name.');
+      if (!old && layout.ssids.length >= limits().ssids) return hint('The shared SSID list is full.');
+      const ssid = { id: old?.id ?? id('ssid'), name, band: $('wifiHomeSsidBand').value, vlan: 0 };
+      const ssids = old ? layout.ssids.map(item => item === old ? ssid : item) : [...layout.ssids, ssid];
+      const equipment = layout.equipment.map(device => device === router ? { ...device, wifi_ssid: ssid.id } : device);
+      apEdit = null;
+      update({ ...layout, ssids, equipment });
+    }
+
     function removeSsid() {
       const layout = plan(), sid = $('wifiApSsid').value;
       if (!layout.ssids.some(ssid => ssid.id === sid)) return;
       const ssids = layout.ssids.filter(ssid => ssid.id !== sid);
       const access_points = layout.access_points.map(ap =>
         ({ ...ap, ssid_ids: model.apSsids(ap, layout.ssids).filter(id => id !== sid) }));
-      const equipment = layout.equipment.map(device => device.ssid_id === sid ? { ...device, ssid_id: '' } : device);
+      const equipment = layout.equipment.map(device => {
+        if (device.ssid_id === sid) return { ...device, ssid_id: '' };
+        if (device.wifi_ssid === sid) return { ...device, wifi_ssid: '' };
+        return device;
+      });
       apEdit = null;
       update({ ...layout, ssids, access_points, equipment });
     }
@@ -313,7 +355,7 @@
       for (const side of ['source', 'destination']) {
         const prefix = side === 'source' ? 'Source' : 'Destination';
         const ip = $(`wifiFirewall${prefix}Ip`).value.trim();
-        const vlan = $(`wifiFirewall${prefix}Vlan`).value;
+        const vlan = $(`wifiFirewall${prefix}Vlan`)?.value ?? '';
         const cidr = ip && model.parseCidr(ip);
         if (ip && !cidr) return hint(`Enter a valid ${side} IPv4 address or CIDR, or leave it blank for any address.`);
         rule[side + '_ip'] = cidr ? (cidr.prefix === 32 ? model.address(cidr.first) : `${model.address(cidr.first)}/${cidr.prefix}`) : '';
@@ -328,6 +370,7 @@
     function click(device, target) {
       const action = target.dataset.wifiNetwork;
       if (action === 'save-ssid') saveSsid(device);
+      else if (action === 'save-home-ssid') saveHomeSsid(device);
       else if (action === 'remove-ssid') removeSsid();
       else if (action === 'save-dhcp') saveDhcp(device);
       else if (action === 'save-vm') saveService(device, target.dataset.service, target.closest('.wifi-service-vm'));

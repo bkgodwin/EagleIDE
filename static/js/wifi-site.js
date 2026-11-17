@@ -142,7 +142,7 @@
   });
   const networkSettings = window.WifiSiteNetwork.create({
     plan: current, cabling: () => wires.index(), graph: clients.network, update, replace: replaceObject,
-    render: renderInspector, hint, escape, choices: choiceList, id, limits: () => options.limits, serviceNames,
+    render: renderInspector, hint, escape, choices: choiceList, id, limits: () => options.limits, serviceNames, radioFields,
   });
   const structure = window.WifiSiteStructure.create({
     plan: current, project: () => session, walls: () => wires.index().walls, selected: () => selected,
@@ -861,7 +861,7 @@
     const { kind, item } = match;
     const sameObject = panel.dataset.objectId === item.id;
     const openSections = sameObject ? [...panel.querySelectorAll('details[data-wifi-config][open]')]
-      .map(detail => detail.dataset.wifiConfig) : item.kind === 'router' ? ['dhcp'] : item.kind === 'rack' && inRack ? ['placement'] :
+      .map(detail => detail.dataset.wifiConfig) : clientModel.isRouter(item) ? ['dhcp'] : item.kind === 'rack' && inRack ? ['placement'] :
         ['ports', 'service-vms', 'reachable-services'];
     const focusId = sameObject && panel.contains(document.activeElement) ? document.activeElement.id : '';
     panel.dataset.objectId = item.id;
@@ -1480,18 +1480,16 @@
     if (clientModel.isClient(copy)) delete copy.reservation;
     if (kind === 'access_points' && item.mount === 'wall') {
       const anchored = anchorAccessPoint(copy, copy);
-      if (anchored === copy) { hint('Place the duplicate using Equipment → Wall access point.'); return; }
+      if (anchored === copy) { hint('Place the duplicate using Equipment → Wireless Access Point (Wall).'); return; }
       copy = anchored;
     }
     if (!item.a || model.distance(copy.a, copy.b) >= 0.05) addObjects(kind, [copy]);
   }
 
   function transmittingAps() {
-    const { wired, poweredAps } = wires.index();
-    if (previewAp !== selected || wired.has(previewAp)) previewAp = '';
-    const { access_points, ssids, band } = current();
-    const available = access_points.filter(ap => poweredAps.has(ap.id) || ap.id === previewAp);
-    return clientModel.coverageAps(available, ssids, band, $('wifiCoverageSsid').value, true);
+    const data = wires.index(), plan = current();
+    if (previewAp !== selected || data.wired.has(previewAp)) previewAp = '';
+    return clientModel.coverageAps(clientModel.radioSources(plan, data, previewAp), plan.ssids, plan.band, $('wifiCoverageSsid').value, true);
   }
 
   function refreshCoverage() {

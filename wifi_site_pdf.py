@@ -41,13 +41,17 @@ _RACK_COLUMN_GAP = 12
 _RACK_ROW = 11
 _RACK_COLUMN_HEADER = 23
 _SHEETS = ('Network layout', 'Wi-Fi coverage', 'Camera coverage')
+_RADIO_TYPES = {'access_point', 'home_router'}
 _GLYPHS = {
+    'home_router': 'R', 'smart_tv': 'TV', 'smart_speaker': 'SP', 'game_console': 'G', 'smart_light_switch': 'L',
     'router': 'R', 'core_switch': 'S', 'distribution_switch': 'S', 'access_switch': 'S', 'keystone': 'J',
     'demarc': 'I', 'desktop': 'D', 'phone': 'M', 'voip_phone': 'V', 'pos_terminal': '$',
     'poe_camera': 'C', 'copy_machine': 'P', 'pass_through': 'T', 'access_point': 'A',
     'rack': 'E', 'patch_panel': 'P', 'server': 'H', 'ups': 'U',
 }
 _DEVICE_TYPES = {
+    'home_router': 'Residential router', 'smart_tv': 'Smart TV', 'smart_speaker': 'Smart speaker',
+    'game_console': 'Game console', 'smart_light_switch': 'Smart light switch',
     'router': 'Router', 'core_switch': 'Core switch', 'distribution_switch': 'Distribution switch',
     'access_switch': 'Access switch', 'keystone': 'Keystone jack', 'demarc': 'ISP handoff',
     'desktop': 'Desktop computer', 'phone': 'Wireless phone', 'voip_phone': 'VoIP phone',
@@ -128,7 +132,7 @@ def _points(value, limit):
 def _read_annotations(data):
     notes, equipment, aps, cables = [], [], [], []
     for key, limit, output, prefix in (
-        ('notes', 320, notes, 'N'), ('equipment', 576, equipment, 'D'), ('aps', 128, aps, 'A'),
+        ('notes', 320, notes, 'N'), ('equipment', 576, equipment, 'D'), ('aps', 384, aps, 'A'),
     ):
         for i, item in enumerate(_list(data.get(key, []), limit), 1):
             if not isinstance(item, dict):
@@ -136,7 +140,7 @@ def _read_annotations(data):
             kind = item.get('kind', '')
             if key != 'notes' and (not isinstance(kind, str) or kind not in _GLYPHS):
                 raise ValueError('Unknown floor plan device')
-            if key == 'aps' and kind != 'access_point':
+            if key == 'aps' and kind not in _RADIO_TYPES:
                 raise ValueError('Only access points belong on the Wi-Fi sheet')
             powered, mounted = item.get('powered', False), item.get('mounted', False)
             if type(powered) is not bool or type(mounted) is not bool:
@@ -266,12 +270,12 @@ def _wire_anchors(points):
 def _device_details(item, sheet):
     if item['kind'] == 'rack':
         return []
-    if sheet == 1 and item['kind'] == 'access_point':
+    if sheet == 1 and item['kind'] in _RADIO_TYPES:
         radios = [item['radio_plan']] if item['radio_plan'] else []
         return radios + (item['details'] or (['No SSIDs enabled'] if item['powered'] else ['Not transmitting (no PoE)']))
     if sheet == 2:
         return [] if item['powered'] else ['Unpowered preview']
-    if item['kind'] == 'access_point':
+    if item['kind'] in _RADIO_TYPES:
         return []
     return item['details']
 
@@ -293,7 +297,7 @@ def _arrange(sheet, frame, plot, notes, devices, cables):
                 title = f"{item['ref']}  {title}"
             details = [] if is_note else _device_details(item, sheet)
             anchor = [_map_point(frame, item['point'])]
-            color = _MUTED if is_note else _AP if item['kind'] == 'access_point' else _CAMERA if item['kind'] == 'poe_camera' else _NETWORK
+            color = _MUTED if is_note else _AP if item['kind'] in _RADIO_TYPES else _CAMERA if item['kind'] == 'poe_camera' else _NETWORK
             lines = _label_lines(title, details, 151)
             mark = placement.place(anchor, lines, color, 'full')
             if not mark:
@@ -416,7 +420,7 @@ def _schedules(equipment, aps, notes, note_refs, cables, units):
                            [media], [f"{wire['length']:g} {units}"]))
     device_rows = []
     for item in [*equipment, *aps]:
-        details = _device_details(item, 1) if item['kind'] == 'access_point' else item['details']
+        details = _device_details(item, 1) if item['kind'] in _RADIO_TYPES else item['details']
         if item['services']:
             details = [*details, *item['services']]
         device_rows.append(([f"{item['ref']}  {item['name']}"], [_DEVICE_TYPES[item['kind']]], details))
@@ -565,11 +569,11 @@ def _draw_markers(canvas, frame, notes, devices):
     for item in devices:
         x, y = _map_point(frame, item['point'])
         kind = item['kind']
-        color = _AP if kind == 'access_point' else _CAMERA if kind == 'poe_camera' else _NETWORK
+        color = _AP if kind in _RADIO_TYPES else _CAMERA if kind == 'poe_camera' else _NETWORK
         canvas.setFillColor(color)
         canvas.setStrokeColor(white)
         canvas.setLineWidth(.6)
-        if kind == 'access_point':
+        if kind in _RADIO_TYPES:
             canvas.circle(x, y, 4.25, stroke=1, fill=1)
         else:
             canvas.roundRect(x - 4.25, y - 4.25, 8.5, 8.5, 1.6, stroke=1, fill=1)

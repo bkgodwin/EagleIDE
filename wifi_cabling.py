@@ -27,6 +27,9 @@ EQUIPMENT = {
         _group("ETH", 4), _group("SFP", 2, "fiber"), _group("WAN", 2, wan=True),
         _group("WAN-SFP", 2, "fiber", wan=True),
     ]},
+    "home_router": {"name": "Residential Router", "groups": [
+        _group("ETH", 4, speed=100), _group("WAN", 1, speed=100, wan=True),
+    ]},
     "core_switch": {"name": "48-port Core Switch", "poe_budget": 500, "rack_units": 1, "draw_w": 70,
                     "groups": [_group("ETH", 48, poe=True), _group("SFP", 4, "fiber")]},
     "distribution_switch": {"name": "24-port Switch", "poe_budget": 200, "rack_units": 1, "draw_w": 38,
@@ -46,9 +49,14 @@ EQUIPMENT = {
     "voip_phone": {"name": "VoIP Phone", "poe_draw": 7, "groups": [_group("ETH", 1)]},
     "pos_terminal": {"name": "POS Terminal", "groups": [_group("ETH", 1)]},
     "copy_machine": {"name": "Copy Machine", "groups": [_group("ETH", 1)]},
+    "smart_tv": {"name": "Smart TV", "groups": [_group("ETH", 1)]},
+    "smart_speaker": {"name": "Smart Speaker", "groups": []},
+    "game_console": {"name": "Game Console", "groups": [_group("ETH", 1)]},
+    "smart_light_switch": {"name": "Smart Light Switch", "wall_mount": True, "groups": []},
 }
 
-CLIENT_KINDS = {"server", "desktop", "phone", "poe_camera", "voip_phone", "pos_terminal", "copy_machine"}
+WIRELESS_CLIENT_KINDS = {"phone", "smart_tv", "smart_speaker", "game_console", "smart_light_switch"}
+CLIENT_KINDS = WIRELESS_CLIENT_KINDS | {"server", "desktop", "poe_camera", "voip_phone", "pos_terminal", "copy_machine"}
 
 ISPS = {
     "alderline": {"name": "Alderline Fiber", "media": "fiber", "speed": 10000, "rtt_ms": 18},
@@ -65,10 +73,11 @@ COST_ITEMS = {
     **{key: {"name": EQUIPMENT[key]["name"], "cents": cents, "unit": "each"}
        for key, cents in {
            "rack": 38000, "router": 37900, "core_switch": 109900, "distribution_switch": 69900,
-           "access_switch": 10900, "patch_panel": 17900, "ups": 27900, "server": 298500,
+           "access_switch": 10900, "home_router": 5900, "patch_panel": 17900, "ups": 27900, "server": 298500,
            "keystone": 850, "demarc": 15000, "access_point": 15900, "desktop": 82900,
            "phone": 49900, "poe_camera": 12900, "voip_phone": 9900, "pos_terminal": 33900,
-           "copy_machine": 139900,
+           "copy_machine": 139900, "smart_tv": 37900, "smart_speaker": 5900,
+           "game_console": 34900, "smart_light_switch": 2500,
        }.items()},
     "pass": {"name": "Firestop sleeve and materials", "cents": 4800, "unit": "each"},
     "ethernet": {"name": "Cat6 building cable", "cents": 78, "unit": "m"},

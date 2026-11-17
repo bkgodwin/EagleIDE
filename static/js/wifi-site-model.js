@@ -11,7 +11,7 @@
     wood: { name: 'Wood', color: '#966835', loss: { '2.4': 4, '5': 6 } },
     brick: { name: 'Brick', color: '#b34a4a', loss: { '2.4': 8, '5': 12 } },
   });
-  const MOUNTS = Object.freeze({ ceiling: 'Ceiling-mounted access point', wall: 'Wall-mounted access point' });
+  const MOUNTS = Object.freeze({ ceiling: 'Wireless Access Point (Ceiling)', wall: 'Wireless Access Point (Wall)' });
   const OPENINGS = {
     door: { none: { name: 'None (opening)', loss: { '2.4': 0, '5': 0 } }, wood: { name: 'Wood door', loss: { '2.4': 2, '5': 4 } }, glass: { name: 'Glass door', loss: { '2.4': 1, '5': 3 } },
       metal: { name: 'Metal door', loss: { '2.4': 5, '5': 8 } } },

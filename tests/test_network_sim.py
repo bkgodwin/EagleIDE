@@ -164,6 +164,42 @@ class NetworkStoreTests(unittest.TestCase):
         self.assertEqual(sum(item["kind"] == "lap_pool" for item in site["decor"]), 1)
         self.assertGreaterEqual(sum(wall["material"] == "reinforced_concrete" for wall in site["walls"]), 12)
 
+    def test_small_site_starters_include_the_requested_rooms_and_client_gear(self):
+        clinic = SCENARIOS["willow-creek-family-medicine"]["site"]
+        suite = SCENARIOS["lakeview-advisory-floor-12"]["site"]
+        home = SCENARIOS["cedar-court-smart-home"]["site"]
+        self.assertEqual(clinic["equipment"], [])
+        self.assertEqual(suite["equipment"], [])
+        names = {note["text"] for note in suite["labels"]}
+        self.assertEqual(len([name for name in names if name.startswith("Office ")]), 12)
+        self.assertTrue({"Meeting room", "Break room", "Reception", "Stair landing", "Elevator lobby", "Restrooms"} <= names)
+        names = {note["text"] for note in home["labels"]}
+        self.assertTrue({"Primary bedroom", "Bedroom 2", "Bedroom 3", "Bedroom 4", "Detached two-car garage",
+                         "Home office", "Game room"} <= names)
+        self.assertEqual({item["kind"] for item in home["equipment"]}, {
+            "smart_tv", "smart_speaker", "smart_light_switch", "game_console", "phone", "desktop", "poe_camera",
+        })
+        self.assertFalse(home["cables"] or home["access_points"])
+
+    def test_residential_configuration_validates_single_radio_and_ip_only_firewall(self):
+        plan = copy.deepcopy(SCENARIOS["cedar-court-smart-home"]["site"])
+        plan["vlans"] = [{"id": 20, "name": "Guest"}]
+        plan["ssids"].append({"id": "guest", "name": "Guest", "band": "5", "vlan": 20})
+        router = {"id": "home-router", "kind": "home_router", "x": 3, "y": 3,
+                  "wifi_ssid": "default", "firewall": [{"action": "deny", "source_ip": "192.168.0.2"}]}
+        plan["equipment"].append(router)
+        normalized = validate_wifi_site(plan)["equipment"][-1]
+        self.assertEqual(normalized["wifi_ssid"], "default")
+        self.assertEqual(normalized["firewall"][0]["source_ip"], "192.168.0.2")
+        self.assertIn("5", normalized["radios"])
+        router["wifi_ssid"] = "guest"
+        with self.assertRaisesRegex(NetworkDataError, "one untagged SSID"):
+            validate_wifi_site(plan)
+        router["wifi_ssid"] = "default"
+        router["firewall"][0]["source_vlan"] = 20
+        with self.assertRaisesRegex(NetworkDataError, "IP addresses only"):
+            validate_wifi_site(plan)
+
     def test_office_park_starter_contains_the_campus_and_unwired_equipment(self):
         scenario = SCENARIOS["briar-glen-insurance-campus"]
         site = validate_wifi_site(scenario["site"])
@@ -750,7 +786,8 @@ class NetworkRouteTests(unittest.TestCase):
 
     def test_scenario_catalog_orders_starters_by_scope_and_locks_their_floor_plans(self):
         expected = [
-            "maple-lane-house", "juniper-main-coffee", "port-adelaide-community-center", "suntrail-motor-lodge",
+            "maple-lane-house", "juniper-main-coffee", "willow-creek-family-medicine", "cedar-court-smart-home",
+            "lakeview-advisory-floor-12", "port-adelaide-community-center", "suntrail-motor-lodge",
             "alder-ridge-high-school", "rivermill-fabrication-works", "harborline-stadium",
             "briar-glen-insurance-campus", "marshpoint-regional-hospital",
         ]
@@ -994,7 +1031,9 @@ class NetworkRouteTests(unittest.TestCase):
             'drawing_width': 180, 'date': '2026-11-13', 'author': 'Other person',
             'notes': [{'point': [.1, .1], 'name': 'Reception'}],
             'aps': [{'kind': 'access_point', 'point': [.25, .5], 'name': 'North AP', 'powered': True,
-                     'details': ['Staff Wireless (5 GHz)', 'Guest Wireless (2.4 GHz)']}],
+                     'details': ['Staff Wireless (5 GHz)', 'Guest Wireless (2.4 GHz)']},
+                    {'kind': 'home_router', 'point': [.74, .25], 'name': 'Home gateway', 'powered': True,
+                     'details': ['House wireless (5 GHz)']}],
             'equipment': [
                 {'kind': 'phone', 'point': [.4, .4], 'name': 'Front desk mobile',
                  'details': ['IP 10.18.0.2/24', 'Subnet 10.18.0.0/24', 'SSID Staff Wireless']},
@@ -1031,7 +1070,8 @@ class NetworkRouteTests(unittest.TestCase):
         for label in ('Network layout', 'North AP', 'Entry camera', 'Front desk mobile', 'IP 10.18.0.2/24',
                       'Subnet 10.18.0.0/24', 'SSID Staff Wireless', 'W01'):
             self.assertIn(label, drawing)
-        for label in ('Wi-Fi coverage', 'North AP', 'Staff Wireless (5 GHz)', 'Guest Wireless (2.4 GHz)'):
+        for label in ('Wi-Fi coverage', 'North AP', 'Staff Wireless (5 GHz)', 'Guest Wireless (2.4 GHz)',
+                      'Home gateway', 'House wireless (5 GHz)'):
             self.assertIn(label, wifi)
         self.assertIn('Camera coverage', cameras)
         self.assertIn('Entry camera', cameras)

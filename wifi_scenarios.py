@@ -8,6 +8,7 @@ from wifi_industrial import industrial_layout
 from wifi_motel import motel_layout
 from wifi_office_park import OFFICE_PARK_TITLE, office_park_layout
 from wifi_school import school_layout
+from wifi_small_sites import clinic_layout, highrise_suite_layout, modern_house_layout
 from wifi_stadium import stadium_layout
 
 
@@ -360,6 +361,57 @@ SCENARIOS = {
         'plan_note': 'The furnished floor plan has no network equipment. The staff opening behind the counter '
                      'has no door material. The public entrance and patio door are glass.',
         'site': _coffee_shop(),
+    },
+    'willow-creek-family-medicine': {
+        'id': 'willow-creek-family-medicine',
+        'title': 'Willow Creek Family Medicine',
+        'description': 'Build a small network for one doctor, exam rooms, reception, and patient waiting.',
+        'briefing': 'One doctor, a medical assistant, and a receptionist share this neighborhood practice. '
+                    'Patients check in at the front desk, then move down the short clinical corridor to an exam '
+                    'room. Staff need a dependable connection for the appointment desk and exam-room computers. '
+                    'The practice also wants a separate Wi-Fi network for visitors.',
+        'traits': [
+            'Choose a location for the router or network closet near staff space and plan wired drops to reception and the exam rooms.',
+            'Keep patient Wi-Fi separate from staff devices and test that it cannot reach the practice computers.',
+            'Check signal in the waiting room, consultation room, and treatment room with the doors closed.',
+        ],
+        'plan_note': 'This furnished 20 × 13 m, single-doctor clinic opens with its floor plan locked and no network devices installed.',
+        'site': _starter('Willow Creek Family Medicine', *clinic_layout()),
+    },
+    'cedar-court-smart-home': {
+        'id': 'cedar-court-smart-home',
+        'title': 'Cedar Court Smart Home',
+        'description': 'Bring a four-bedroom home, media setup, and detached garage onto a home network.',
+        'briefing': 'A family has moved into a modern single-story house with an office, game room, and detached '
+                    'two-car garage. They have placed TVs, a game console, speakers, light switches, two '
+                    'desktops, phones, and PoE cameras. Work calls must stay reliable while the household streams '
+                    'video, and the garage lights and driveway camera need a dependable connection.',
+        'traits': [
+            'Choose a provider handoff and a router location. Try the Residential Router with an Ethernet WAN handoff and compare its 100 Mb/s links with your coverage needs.',
+            'Decide whether to cable the TVs and console or associate them with Wi-Fi. Join the speakers, phones, and wall switches to the SSID.',
+            'Plan PoE for the front and garage cameras. Check the path to the garage and compare signal inside the garage with the patio and game room.',
+            'Verify the office desktop can reach the Internet and test an IP firewall rule for a device that should stay local.',
+        ],
+        'plan_note': 'This four-bedroom plan includes a home office, a game room, and an 8 × 8.5 m detached garage. '
+                     'Clients and cameras are placed. The locked starter has no router, switches, access points, or cabling.',
+        'site': _starter('Cedar Court Smart Home', *modern_house_layout()),
+    },
+    'lakeview-advisory-floor-12': {
+        'id': 'lakeview-advisory-floor-12',
+        'title': 'Lakeview Advisory · Floor 12',
+        'description': 'Fit out a small firm’s new office suite on the twelfth floor of a high-rise.',
+        'briefing': 'Lakeview Advisory has leased the south wing of floor twelve for its new office. Clients '
+                    'arrive by elevator and check in at reception. Twelve private offices line the perimeter, '
+                    'and staff share a meeting room and break room. The building operator provides a riser '
+                    'handoff in the IT closet and manages the elevators and stairs.',
+        'traits': [
+            'Use the IT and riser closet for the handoff and plan wired drops to the twelve offices, meeting room, and reception.',
+            'Offer visitor Wi-Fi in reception and the meeting room and keep it separate from staff devices.',
+            'Compare signal near the reinforced stair and elevator core with signal in the perimeter offices. Keep tenant cable routes inside the suite.',
+        ],
+        'plan_note': 'This plan represents one level of the tower only. It includes the shared elevator lobby, '
+                     'stair landing, and restrooms. The furnished suite opens locked with an empty IT closet.',
+        'site': _starter('Lakeview Advisory · Floor 12', *highrise_suite_layout()),
     },
     'port-adelaide-community-center': {
         'id': 'port-adelaide-community-center',

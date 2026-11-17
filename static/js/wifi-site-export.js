@@ -93,6 +93,7 @@
       lines.push(`${serviceNames?.[vm.kind] ?? vm.kind} · ${address} · VLAN ${vm.vlan}`);
       hosted.set(vm.hostId, lines);
     }
+    const radioSources = clientModel.radioSources(plan, cabling);
     const cameraData = item => ({ cone: (cameraOutlines.get(item.id) || []).map(point),
       powered: cabling.poweredDevices.has(item.id) });
     const details = item => {
@@ -102,26 +103,27 @@
       const pool = lease && network.routers.get(lease.router).pool;
       const info = [lease ? `IP ${clientModel.address(lease.ip)}/${pool.prefix}` : 'IP unassigned',
         pool ? `Subnet ${clientModel.address(pool.first)}/${pool.prefix}` : 'Subnet unassigned'];
-      if (item.kind === 'phone') {
-        const ssid = item.ssid_id ? ssidById.get(item.ssid_id) : plan.ssids[0];
+      if (clientModel.wirelessClient(item) && !client.wired) {
+        const ssid = clientModel.clientSsid(item, plan.ssids);
         info.push(ssid ? `SSID ${ssid.name}${client.ap ? '' : ' (not associated)'}` : 'SSID unassigned');
       }
       return info;
     };
     const notes = plan.labels.map(note => ({ point: point(note), name: note.text }));
-    const equipment = plan.equipment.map(item => ({ point: point(cabling.location(item)),
+    const equipment = plan.equipment.filter(item => item.kind !== 'home_router').map(item => ({ point: point(cabling.location(item)),
       name: cabling.name(item), kind: item.kind, details: details(item), mounted: Boolean(item.rack_id),
       ...(item.kind === 'rack' ? { rack_id: item.id } : {}),
       ...(hosted.has(item.id) ? { services: hosted.get(item.id) } : {}),
       ...(item.kind === 'poe_camera' ? cameraData(item) : {}) }));
     const passes = plan.pass_throughs.map(item => ({ point: point(cabling.location(item)),
       name: 'Concrete pass-through', kind: 'pass_through', details: [] }));
-    const aps = plan.access_points.map(ap => {
+    const aps = [...plan.access_points, ...radioSources.filter(ap => ap.kind === 'home_router')].map(ap => {
       const ssids = clientModel.apSsids(ap, plan.ssids).map(id => ssidById.get(id)).filter(Boolean);
-      const powered = cabling.poweredAps.has(ap.id);
-      return { point: point(ap), name: ap.name || (ap.mount === 'wall' ? 'Wall-mounted AP' : 'Ceiling-mounted AP'),
-        kind: 'access_point', radio_plan: ['2.4', '5'].map(band => {
-          const radio = ap.radios[band];
+      const kind = ap.kind ?? 'access_point';
+      const powered = kind === 'home_router' || cabling.poweredAps.has(ap.id);
+      return { point: point(ap), name: cabling.name({ ...ap, kind }),
+        kind, radio_plan: ['2.4', '5'].map(band => {
+          const radio = ap.radios?.[band] ?? window.WifiSiteModel.defaultRadios()[band];
           return `${band} GHz ch ${radio.channel} / ${radio.width} MHz`;
         }).join(' · '), details: powered ? ssids.map(ssid => `${ssid.name} (${ssid.band === 'both' ? '2.4 / 5' : ssid.band} GHz)`) : [], powered };
     });
@@ -141,7 +143,7 @@
   async function render({ bounds, plan, cabling, network, cameraOutlines, background, surfaces, decor, structure, signal, serviceNames }) {
     const frame = layout(bounds, cameraOutlines);
     const data = annotations(frame, plan, cabling, network, cameraOutlines, serviceNames);
-    const radioAps = plan.access_points.filter(ap => cabling.poweredAps.has(ap.id));
+    const radioAps = window.WifiSiteClientModel.radioSources(plan, cabling);
     const radios = ['2.4', '5'].map(band => ({ band,
       access_points: window.WifiSiteClientModel.coverageAps(radioAps, plan.ssids, band) }))
       .filter(layer => layer.access_points.length);
