@@ -11,6 +11,7 @@ import re
 import threading
 import time
 import uuid
+from contextlib import ExitStack
 from collections import deque
 from pathlib import Path
 
@@ -941,6 +942,14 @@ class NetworkStore:
     def _wifi_account_paths(self, email):
         return self._wifi_path(email), self._wifi_starter_path(email)
 
+    @staticmethod
+    def _new_wifi_starter(attempt=1, best=0):
+        site = validate_wifi_site(starter.blank_site(WIFI_SCHEMA_VERSION))
+        return {**site, "starter_checkpoint": site,
+                "starter_progress": starter.initial_progress(),
+                "starter_attempt": attempt, "starter_best": best,
+                "starter_archive_id": f"site-{uuid.uuid4().hex}"}
+
     def start_wifi_starter(self, email, *, authorized=None):
         path = self._wifi_starter_path(email)
         with self._wifi_lock(path):
@@ -948,15 +957,58 @@ class NetworkStore:
             sites = self._read_wifi_sites(path)
             if starter.SITE_ID in sites:
                 return sites[starter.SITE_ID]
-            site = validate_wifi_site(starter.blank_site(WIFI_SCHEMA_VERSION))
-            site["starter_progress"] = starter.initial_progress()
-            return self._write_wifi_site(path, sites, site, starter.SITE_ID, 1)
+            return self._write_wifi_site(path, sites, self._new_wifi_starter(), starter.SITE_ID, 1)
 
     def wifi_starter_progress(self, email):
         path = self._wifi_starter_path(email)
         with self._wifi_lock(path):
             site = self._read_wifi_sites(path).get(starter.SITE_ID)
-        return starter.summary(site["starter_progress"], site["updated_at"]) if site else starter.summary(starter.initial_progress())
+        return starter.summary(site)
+
+    def reset_wifi_starter(self, email, scope, revision, lesson, *, authorized=None):
+        if scope not in ("course", "lesson") or type(revision) is not int or revision < 1:
+            raise NetworkDataError("Choose a Starter Labs attempt to restart")
+        if scope == "lesson" and (type(lesson) is not int or not 0 <= lesson < len(starter.LESSONS)):
+            raise NetworkDataError("Choose the current Starter Lab to restart")
+        path = self._wifi_starter_path(email)
+        archive_path = self._wifi_path(email)
+        locks = {self._wifi_lock(path)}
+        if scope == "course":
+            locks.add(self._wifi_lock(archive_path))
+        with ExitStack() as stack:
+            for lock in sorted(locks, key=id):
+                stack.enter_context(lock)
+            self._require_wifi_write(authorized)
+            sites = self._read_wifi_sites(path)
+            previous = sites.get(starter.SITE_ID)
+            marker = {"scope": scope, "revision": revision, "lesson": lesson}
+            if previous and previous.get("starter_reset") == marker:
+                return previous
+            if not previous or previous["revision"] != revision:
+                raise WifiRevisionError("Starter Labs changed in another tab. Reopen it to continue.")
+            progress = previous["starter_progress"]
+            if scope == "lesson":
+                checkpoint = previous.get("starter_checkpoint")
+                if checkpoint is None or progress["completed"] != lesson:
+                    raise WifiRevisionError("The current lesson changed. Continue from the saved checkpoint.")
+                site = {**checkpoint, **{k: v for k, v in previous.items() if k.startswith("starter_")}}
+                site["starter_progress"] = starter.checkpoint_progress(checkpoint, lesson)
+                site["starter_evidence"] = []
+            else:
+                attempts = self._read_wifi_sites(archive_path)
+                legacy_key = self._user_key(f"{email}:{previous['updated_at']}")
+                archive_id = previous.get("starter_archive_id", f"site-{legacy_key[:32]}")
+                if archive_id not in attempts:
+                    if len(attempts) >= WIFI_LIMITS["saved"]:
+                        raise NetworkDataError("Saved Sites is full. Free a slot to keep this attempt and start a new one.")
+                    archive = {key: value for key, value in previous.items() if not key.startswith("starter_")}
+                    attempt = previous.get("starter_attempt", 1)
+                    archive["title"] = f"{previous['title'][:82]} — Starter Labs attempt {attempt}"
+                    self._write_wifi_site(archive_path, attempts, archive, archive_id, 1)
+                site = self._new_wifi_starter(previous.get("starter_attempt", 1) + 1,
+                                              max(previous.get("starter_best", 0), progress["completed"]))
+            site["starter_reset"] = marker
+            return self._write_wifi_site(path, sites, site, starter.SITE_ID, revision + 1)
 
     def save_wifi_starter(self, email, raw, revision, evidence, *, authorized=None):
         if type(revision) is not int or revision < 1:
@@ -978,11 +1030,19 @@ class NetworkStore:
             site.pop("scenario_id", None)
             if revision != previous["revision"]:
                 same = all(previous.get(key) == value for key, value in site.items())
-                if revision + 1 == previous["revision"] and same and previous.get("starter_evidence", []) == evidence:
+                if (revision + 1 == previous["revision"] and same and not previous.get("starter_reset")
+                        and previous.get("starter_evidence", []) == evidence):
                     return previous
                 raise WifiRevisionError("Starter Labs changed in another tab. Reopen it to continue.")
-            site["starter_progress"] = starter.grade(site, previous["starter_progress"], evidence)
-            site["starter_evidence"] = evidence
+            progress = starter.grade(site, previous["starter_progress"], evidence)
+            checkpoint = previous.get("starter_checkpoint")
+            if progress["completed"] != previous["starter_progress"]["completed"]:
+                checkpoint = site.copy() if progress["completed"] < len(starter.LESSONS) else None
+            site.update(starter_progress=progress, starter_evidence=evidence,
+                        starter_checkpoint=checkpoint, starter_attempt=previous.get("starter_attempt", 1),
+                        starter_best=max(previous.get("starter_best", 0), progress["completed"]))
+            if previous.get("starter_archive_id"):
+                site["starter_archive_id"] = previous["starter_archive_id"]
             return self._write_wifi_site(path, sites, site, starter.SITE_ID, revision + 1)
 
     def list_wifi_sites(self, email):

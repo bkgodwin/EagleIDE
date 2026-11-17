@@ -834,6 +834,63 @@ class NetworkRouteTests(unittest.TestCase):
         self.store.delete_account_wifi(email)
         self.assertEqual(self.store.wifi_starter_progress(email)["completed"], 0)
 
+    def test_starter_lesson_restart_and_course_repeat_preserve_the_right_work(self):
+        import wifi_starter_labs as starter
+
+        self.store.set_class_access("class-1", True)
+        headers = {"X-User-Token": "student-token"}
+        url = "/api/network/wifi-starter"
+        course = self.client.post(url, headers=headers).json["data"]
+
+        def wall(id, a, b, material):
+            return dict(id=id, a=dict(zip(("x", "y"), a)), b=dict(zip(("x", "y"), b)), material=material)
+
+        site = course["site"]
+        site["walls"] = [wall(f"wall-{i}", a, b, "drywall") for i, (a, b) in enumerate(zip(starter.SHELL, starter.SHELL[1:]))]
+        site["walls"].append(wall("partition", *starter.WALL, "concrete"))
+        result = self.client.put(url, headers=headers, json={"site": site, "revision": 1})
+        self.assertEqual(result.json["data"]["progress"]["completed"], 1)
+        self.assertTrue(result.json["data"]["progress"]["can_restart"])
+
+        site["openings"] = [{"id": "door", "wall_id": "partition", "kind": "door", "material": "wood", "t": 0.6, "width": 1}]
+        partial = {"site": site, "revision": 2}
+        result = self.client.put(url, headers=headers, json=partial)
+        self.assertEqual(result.json["data"]["progress"]["checked"], ["door"])
+        self.assertEqual(self.client.post(url, headers=headers,
+                                         json={"reset": "lesson", "revision": 3, "lesson": 0}).status_code, 409)
+        restart = {"reset": "lesson", "revision": 3, "lesson": 1}
+        restored = self.client.post(url, headers=headers, json=restart)
+        self.assertEqual(restored.status_code, 200, restored.json)
+        self.assertEqual(restored.json["data"]["site"]["openings"], [])
+        self.assertEqual(len(restored.json["data"]["site"]["walls"]), 5)
+        self.assertEqual(restored.json["data"]["progress"]["completed"], 1)
+        self.assertEqual(self.client.post(url, headers=headers, json=restart).json, restored.json)
+        self.assertEqual(self.client.put(url, headers=headers, json={**partial, "revision": 3}).status_code, 409)
+
+        repeat = {"reset": "course", "revision": 4}
+        repeated = self.client.post(url, headers=headers, json=repeat)
+        self.assertEqual(repeated.status_code, 200, repeated.json)
+        reply = repeated.json["data"]
+        self.assertEqual(reply["site"]["walls"], [])
+        self.assertEqual(reply["progress"]["completed"], 0)
+        self.assertEqual(reply["progress"]["best_completed"], 1)
+        self.assertEqual(reply["progress"]["attempt"], 2)
+        self.assertEqual(self.client.post(url, headers=headers, json=repeat).json, repeated.json)
+
+        saved = self.client.get("/api/network/wifi-sites", headers=headers).json["data"]
+        self.assertEqual(len(saved), 1)
+        self.assertIn("Starter Labs attempt 1", saved[0]["title"])
+        archive = self.client.get(f"/api/network/wifi-sites/{saved[0]['id']}", headers=headers).json["data"]
+        self.assertEqual(len(archive["walls"]), 5)
+        self.assertFalse(any(key.startswith("starter_") for key in archive))
+        roster = self.client.get("/api/network/teacher/classes/class-1", headers={"X-Teacher-Token": "teacher-token"}).json["data"]["starter_roster"]
+        self.assertEqual(roster[0]["progress"]["best_completed"], 1)
+        with patch.dict("network_store.WIFI_LIMITS", {"saved": 1}):
+            full = self.client.post(url, headers=headers, json={"reset": "course", "revision": 5})
+        self.assertEqual(full.status_code, 400, full.json)
+        self.assertIn("Saved Sites is full", full.json["error"])
+        self.assertEqual(self.client.post(url, headers=headers).json["data"], reply)
+
     def test_wifi_pdf_download_uses_authenticated_author_and_is_not_cached(self):
         self.store.set_class_access('class-1', True)
         self.students['student-token']['name'] = 'Alice Example'

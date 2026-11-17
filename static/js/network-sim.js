@@ -430,12 +430,17 @@
     const lessons = data.starter_labs || [], progress = data.starter_progress;
     const completed = progress?.completed || 0;
     $('wifiStarterFolder').hidden = !lessons.length;
-    $('wifiStarterCount').textContent = data.can_save && progress ? `${completed} of ${lessons.length} complete` : '';
+    const attempt = progress?.attempt || 1;
+    $('wifiStarterCount').textContent = data.can_save && progress ?
+      `${attempt > 1 ? 'Attempt ' + attempt + ' · ' : ''}${completed} of ${lessons.length} complete` : '';
     $('wifiStarterIntro').textContent = data.can_save
       ? 'Design and connect Cedar Street Community Studio. Each lesson continues on the same saved plan.'
       : 'Sign in to start the guided studio project and save progress.';
     const button = $('wifiStarterOpen');
     button.hidden = !data.can_save;
+    const repeat = $('wifiStarterRepeat');
+    repeat.hidden = !data.can_save || !progress?.revision;
+    repeat.dataset.revision = progress?.revision ?? '';
     button.textContent = completed === lessons.length ? 'Open finished studio' :
       progress?.updated_at ? 'Continue Starter Labs' : 'Start Starter Labs';
     $('wifiStarterLessons').innerHTML = lessons.map((entry, i) => `<li>
@@ -470,7 +475,7 @@
     }
   }
 
-  function openInfra(button, { sample = false, siteId = '', scenarioId = '', file, starter = false } = {}) {
+  function openInfra(button, { sample = false, siteId = '', scenarioId = '', file, starter = false, repeatRevision } = {}) {
     return fromLibrary(button, async valid => {
       const access = await requestBootstrap();
       if (!valid()) return;
@@ -484,7 +489,10 @@
       let project = scenarioId
         ? await api(`/api/network/wifi-scenarios/${encodeURIComponent(scenarioId)}`, { method: 'POST' })
         : saved;
-      if (starter) project = await api('/api/network/wifi-starter', { method: 'POST' });
+      if (starter) project = await api('/api/network/wifi-starter', {
+        method: 'POST',
+        ...(repeatRevision ? { body: JSON.stringify({ reset: 'course', revision: repeatRevision }) } : {}),
+      });
       if (file) {
         const body = await file.text();
         if (!valid()) return;
@@ -2534,19 +2542,22 @@
     section.hidden = !lessons.length;
     if (!lessons.length) return;
     const started = roster.filter(student => student.progress?.updated_at).length;
-    const completed = roster.filter(student => student.progress?.completed === lessons.length).length;
+    const completed = roster.filter(student => student.progress?.best_completed === lessons.length).length;
     $('networkTeacherStarterCount').textContent = `${started} started · ${completed} finished`;
     $('networkTeacherStarterRoster').innerHTML = roster.length ? `<div class="wifi-starter-roster-table"><table>
       <thead><tr><th scope="col">Student</th><th scope="col">Progress</th><th scope="col">Current lesson</th><th scope="col">Last saved</th></tr></thead>
       <tbody>${roster.map(({ name, progress }) => {
         const count = progress?.completed || 0;
         const current = lessons[count];
+        const best = progress?.best_completed ?? count;
         const state = !progress ? 'Unavailable' : !progress.updated_at ? 'Not started' :
           current ? `${current.title} · ${progress.checked.length}/${current.task_count} checks` : 'Finished';
         const time = progress?.updated_at ? new Date(progress.updated_at * 1000).toLocaleString() : '—';
         return `<tr><th scope="row">${escapeHtml(name)}</th><td><details><summary>${count}/${lessons.length} complete</summary>
           <ol>${lessons.map((entry, i) => `<li>${escapeHtml(entry.title)} <small>${i < count ? 'Complete' : i === count && progress?.updated_at ? 'Current' : 'Pending'}</small></li>`).join('')}</ol>
-          </details></td><td>${escapeHtml(state)}</td><td>${escapeHtml(time)}</td></tr>`;
+          </details>${best > count ? `<small>Best ${best}/${lessons.length} complete</small>` : ''}
+          </td><td>${escapeHtml(state)}${progress?.attempt > 1 ? `<br><small>Attempt ${progress.attempt}</small>` : ''}</td>
+          <td>${escapeHtml(time)}</td></tr>`;
       }).join('')}</tbody></table></div>` : '<p>No students are enrolled in this class.</p>';
   }
 
@@ -2692,6 +2703,12 @@
     $('networkStarterBtn')?.addEventListener('click', openStarter);
     $('networkWifiBtn')?.addEventListener('click', event => openInfra(event.currentTarget));
     $('wifiStarterOpen')?.addEventListener('click', event => openInfra(event.currentTarget, { starter: true }));
+    $('wifiStarterRepeat')?.addEventListener('click', event => {
+      const button = event.currentTarget;
+      if (window.confirm('Start over from lesson 1? Your current studio will be kept in Saved Sites.')) {
+        openInfra(button, { starter: true, repeatRevision: Number(button.dataset.revision) });
+      }
+    });
     $('wifiSampleSite')?.addEventListener('click', event => openInfra(event.currentTarget, { sample: true }));
     $('wifiOpenFile')?.addEventListener('click', () => $('wifiProjectFile').click());
     $('wifiProjectFile')?.addEventListener('change', event => {

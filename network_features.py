@@ -291,10 +291,17 @@ def register(
         authorized = lambda: recheck_wifi_access(current)
         try:
             if request.method == "POST":
-                site = store.start_wifi_starter(current["email"], authorized=authorized)
+                if request.is_json:
+                    request.max_content_length = 4096
+                    payload = json_object()
+                    if not payload or "reset" not in payload:
+                        raise NetworkDataError("Choose a Starter Labs reset action")
+                    site = store.reset_wifi_starter(current["email"], payload.get("reset"), payload.get("revision"),
+                                                   payload.get("lesson"), authorized=authorized)
+                else:
+                    site = store.start_wifi_starter(current["email"], authorized=authorized)
                 data = dict(site={key: value for key, value in site.items() if not key.startswith("starter_")},
-                            lessons=starter.LESSONS,
-                            progress=starter.summary(site["starter_progress"], site["updated_at"]))
+                            lessons=starter.LESSONS, progress=starter.summary(site))
             else:
                 request.max_content_length = MAX_WIFI_SITE_BYTES
                 payload = json_object()
@@ -302,9 +309,9 @@ def register(
                     raise NetworkDataError("A JSON object is required")
                 site = store.save_wifi_starter(current["email"], payload.get("site"), payload.get("revision"),
                                               payload.get("evidence", []), authorized=authorized)
-                data = dict(revision=site["revision"], progress=starter.summary(site["starter_progress"], site["updated_at"]))
+                data = dict(revision=site["revision"], progress=starter.summary(site))
         except RequestEntityTooLarge:
-            return jsonify(ok=False, error="Starter Labs projects must be 2 MB or smaller"), 413
+            return jsonify(ok=False, error="Starter Labs request is too large"), 413
         except RecursionError:
             return jsonify(ok=False, error="Starter Labs data is nested too deeply"), 400
         except WifiRevisionError as exc:
@@ -313,6 +320,8 @@ def register(
             return jsonify(ok=False, error=str(exc)), 403
         except WifiStorageError as exc:
             return jsonify(ok=False, error=str(exc)), 503
+        except OSError:
+            return jsonify(ok=False, error="Starter Labs could not be saved. Try again."), 503
         except NetworkDataError as exc:
             return jsonify(ok=False, error=str(exc)), 400
         response = jsonify(ok=True, data=data)

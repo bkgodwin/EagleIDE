@@ -3,7 +3,7 @@
   'use strict';
 
   const $ = id => document.getElementById(id);
-  function create({ workspace, escape, fit, icon, resolve }) {
+  function create({ workspace, escape, fit, locate, icon, resolve, recheck, reset }) {
     const panel = $('wifiStarterChecklist');
     const rack = $('wifiRackDialog');
     const layer = $('wifiStarterGhost');
@@ -12,7 +12,8 @@
     const checks = $('wifiStarterChecks');
     const toggle = $('wifiStarterHint');
     const next = $('wifiStarterNext');
-    let course, progress, index, showHint, focused, slot, rackLink, rackLinkKey, frame = 0, ghostSignature;
+    const restart = $('wifiStarterRestart');
+    let course, progress, index, showHint, busy, focused, slot, rackLink, rackLinkKey, frame = 0, ghostSignature;
 
     const lesson = () => course?.[index];
     const done = id => index < progress.completed || progress.checked.includes(id);
@@ -77,7 +78,9 @@
           ports[0].ownerSVGElement.append(rackLink);
         }
       }
-      const rackMessage = showHint && task ? task.hint : lesson() && !task ? 'Lesson complete. Close the rack to continue.' : '';
+      const rackMessage = showHint && task ? task.hint : lesson() && !task
+        ? index < progress.completed ? 'Lesson complete. Close the rack to continue.' : 'Close the rack to check this lesson.'
+        : '';
       rackTip.hidden = !rack.open || !rackMessage;
       if (!rackTip.hidden && rackTip.textContent !== rackMessage) rackTip.textContent = rackMessage;
     }
@@ -92,20 +95,26 @@
       const step = lesson();
       const task = pending();
       panel.hidden = false;
-      $('wifiStarterStep').textContent = step ? `Lesson ${index + 1} of ${course.length}` : 'Starter Labs complete';
+      const attempt = progress.attempt > 1 ? ` · Attempt ${progress.attempt}` : '';
+      $('wifiStarterStep').textContent = (step ? `Lesson ${index + 1} of ${course.length}` : 'Starter Labs complete') + attempt;
       $('wifiStarterHeading').textContent = step?.title || 'Studio ready';
       $('wifiStarterGoal').textContent = step?.goal || 'Your studio is saved. Try a scenario or start your own design from Network Lab.';
       checks.innerHTML = step?.tasks.map(item => `<li data-checked="${done(item.id)}"${item === task ? ' aria-current="step"' : ''}>
         <span aria-hidden="true">${done(item.id) ? '✓' : '○'}</span><span><span class="sr-only">${done(item.id) ? 'Complete. ' : ''}</span>${escape(item.label)}</span></li>`).join('') || '';
       hint.hidden = !showHint || !step;
-      const message = task?.hint || 'Lesson complete. Continue on the same plan.';
+      const finished = index < progress.completed;
+      const message = task?.hint || (finished ? 'Lesson complete. Continue on the same plan.' : 'The checklist is ready. Check this lesson to record your work.');
       if (hint.textContent !== message) hint.textContent = message;
       toggle.hidden = !step || !task;
       toggle.textContent = showHint ? 'Hide hint' : 'Show hint';
       toggle.setAttribute('aria-pressed', String(showHint));
       $('wifiStarterFit').hidden = !task?.ghost || ['unit', 'rack-link'].includes(task.ghost.kind);
       next.hidden = Boolean(task) || !step;
-      next.textContent = index + 1 === course.length ? 'Finish Starter Labs' : 'Next lesson';
+      next.textContent = !finished ? 'Check lesson' : index + 1 === course.length ? 'Finish Starter Labs' : 'Next lesson';
+      next.disabled = busy;
+      restart.hidden = step ? !progress.can_restart || finished : false;
+      restart.disabled = busy;
+      restart.textContent = step ? 'Restart lesson' : 'Repeat Starter Labs';
       guidance();
     }
 
@@ -116,6 +125,7 @@
       progress = data.progress;
       index = progress.completed;
       showHint = true;
+      busy = false;
       render();
     }
 
@@ -133,7 +143,8 @@
 
     function update(data) {
       if (!course || !data) return;
-      const changed = data.completed !== progress.completed || data.checked.join() !== progress.checked.join();
+      const changed = data.completed !== progress.completed || data.checked.join() !== progress.checked.join()
+        || data.can_restart !== progress.can_restart;
       progress = data;
       if (changed) render();
     }
@@ -172,15 +183,39 @@
       return target ? { x: target[0], y: target[1] } : point;
     }
 
-    next.addEventListener('click', () => {
-      if (!course || index >= progress.completed) return;
+    next.addEventListener('click', async () => {
+      if (!course || busy || pending()) return;
+      if (index >= progress.completed) {
+        const shown = course;
+        busy = next.disabled = true;
+        await recheck();
+        if (course === shown) {
+          busy = false;
+          render();
+        }
+        return;
+      }
       index += 1;
       showHint = true;
       render();
       fit();
     });
+    restart.addEventListener('click', async () => {
+      if (!course || busy || restart.hidden) return;
+      const step = lesson();
+      const message = step ? 'Restore the floor plan from the start of this lesson? Earlier lessons will stay complete.'
+        : 'Start over from lesson 1? Your current studio will be kept in Saved Sites.';
+      if (!window.confirm(message)) return;
+      const shown = course;
+      busy = restart.disabled = true;
+      await reset(step ? 'lesson' : 'course', step ? index : null);
+      if (course === shown) {
+        busy = false;
+        render();
+      }
+    });
     toggle.addEventListener('click', () => { showHint = !showHint; render(); });
-    $('wifiStarterFit').addEventListener('click', fit);
+    $('wifiStarterFit').addEventListener('click', () => locate(geometry(pending())));
     for (const event of ['click', 'change', 'toggle']) workspace.addEventListener(event, schedule, true);
     rack.addEventListener('close', schedule);
     return {

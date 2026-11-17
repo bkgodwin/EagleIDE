@@ -45,7 +45,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js" integrity="sha384-44q2s9jxk8W5N9gAB0yn7UYLi9E2oVw8eHyaTZLkDS3WuZM/AttkAiVj6JoZuGS4" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js" integrity="sha384-jgkY4GMNWfQcLLIoP1vg3FWXflDrRhcSXGBW6ONIWC2SOIv5H1Pa57sXs+aomCuZ" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js" integrity="sha384-EO/jSdjpPTVnKfaKudbmOTZBYv471ACLOeLdy0zhCEJrQAtjgUSCbn/Cc+9QWjIx" crossorigin="anonymous"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261116-starter-labs">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261116-starter-repeat">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -396,7 +396,10 @@
             <details class="network-hub-group network-hub-folder" id="wifiStarterFolder">
               <summary>Starter Labs <span id="wifiStarterCount"></span></summary>
               <p class="network-hub-empty" id="wifiStarterIntro"></p>
-              <button class="btn run" type="button" id="wifiStarterOpen" hidden>Start Starter Labs</button>
+              <div class="wifi-starter-library-actions">
+                <button class="btn run" type="button" id="wifiStarterOpen" hidden>Start Starter Labs</button>
+                <button class="btn secondary" type="button" id="wifiStarterRepeat" hidden>Repeat Starter Labs</button>
+              </div>
               <ol class="wifi-starter-catalog" id="wifiStarterLessons"></ol>
             </details>
             <section class="network-hub-group" id="wifiSavedSection" hidden>
@@ -736,6 +739,7 @@
             <button class="wifi-control" type="button" id="wifiStarterHint" aria-pressed="true">Hide hint</button>
             <button class="wifi-control" type="button" id="wifiStarterFit">Find target</button>
             <button class="btn run" type="button" id="wifiStarterNext" hidden>Next lesson</button>
+            <button class="wifi-control" type="button" id="wifiStarterRestart" hidden>Restart lesson</button>
           </div>
         </aside>
       </div>
@@ -2462,7 +2466,7 @@
 
   <script src="/static/js/app.js"></script>
   <script src="/static/js/connection.js?v=20261011-files-5"></script>
-  <script src="/static/js/feature-loader.js?v=20261116-starter-labs"></script>
+  <script src="/static/js/feature-loader.js?v=20261116-starter-repeat"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20261021-security-1"></script>
   <script src="/static/js/layout.js?v=20261011-files-5"></script>

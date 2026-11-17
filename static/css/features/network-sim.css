@@ -543,7 +543,7 @@ body.light-mode .network-hub {
   .network-packet-token { animation-duration: .01ms; }
 }
 
-#wifiStarterFolder > .btn { margin: 6px 0 8px; }
+.wifi-starter-library-actions { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 8px; }
 .wifi-starter-catalog { margin: 0; padding: 0 0 0 24px; }
 .wifi-starter-catalog li { padding: 5px 2px 5px 0; border-bottom: 1px solid var(--border-color, #7891ab66); }
 .wifi-starter-catalog li:last-child { border-bottom: 0; }

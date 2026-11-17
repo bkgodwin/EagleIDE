@@ -122,7 +122,8 @@
   const serviceNames = () => options.catalog.server_services;
   const clients = window.WifiSiteClients.create({ plan: current, cabling: () => wires.index(), escape, selected: inspectorId, serviceNames, onPacket: recordStarterPing,
     networkInspector: (item, info) => networkSettings.clientInspector(item, info) });
-  const starterGuide = window.WifiStarterGuide.create({ workspace, escape, fit, resolve: projectStarterGhost, icon: kind =>
+  const starterGuide = window.WifiStarterGuide.create({ workspace, escape, fit, locate: locateStarterTarget,
+    recheck: checkStarterLesson, reset: resetStarter, resolve: projectStarterGhost, icon: kind =>
     window.WifiSiteCabling.icon(({ ap1: 'access_point', ap2: 'access_point', camera: 'poe_camera' })[kind] || kind) });
   const racks = window.WifiSiteRacks.create({
     plan: current, data: () => wires.index(), catalog: () => options.catalog, escape, id,
@@ -348,6 +349,40 @@
       return !dirty(project);
     })().finally(() => { project.pending = null; });
     return project.pending;
+  }
+
+  function checkStarterLesson() {
+    if (!active() || !session.starter) return Promise.resolve(false);
+    session.sequence += 1;
+    return flushSave();
+  }
+
+  async function resetStarter(scope, lesson) {
+    const project = session;
+    if (!project?.starter || project.resetting || !sameAccount()) return false;
+    project.resetting = true;
+    try {
+      if (!(await flushSave(project)) || session !== project || !sameAccount()) return false;
+      workspace.inert = true;
+      clients.suspend();
+      cancelPdf(project);
+      status(scope === 'course' ? 'Starting a new attempt…' : 'Restoring lesson checkpoint…');
+      const data = await options.api(starterEndpoint, {
+        method: 'POST', signal: AbortSignal.timeout(20000),
+        body: JSON.stringify({ reset: scope, revision: project.revision, lesson }),
+      });
+      if (session !== project || !sameAccount()) return false;
+      workspace.inert = false;
+      hide();
+      startProject(data.site, null, { starter: data });
+      return true;
+    } catch (error) {
+      if (session === project && sameAccount()) status(error.message, 'error');
+      return false;
+    } finally {
+      project.resetting = false;
+      workspace.inert = false;
+    }
   }
 
   function saveNow() {
@@ -1382,6 +1417,17 @@
     scheduleScene();
   }
 
+  function locateStarterTarget(ghost) {
+    if (ghost?.kind === 'point') {
+      const [x, y] = ghost.at;
+      camera = view.placeWorldPoint({ x, y }, center(), camera.scale);
+      scheduleScene();
+    } else {
+      fit();
+    }
+    viewport.focus({ preventScroll: true });
+  }
+
   function locateSelected() {
     const match = objectById(selected);
     if (!match) return;
@@ -1865,7 +1911,7 @@
   }
 
   function keyboard(event) {
-    if (!active() || !document.body.classList.contains('network-mode')) return;
+    if (!active() || workspace.inert || !document.body.classList.contains('network-mode')) return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
       event.preventDefault();
       if (options.canSave) saveNow();

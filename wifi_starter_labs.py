@@ -56,12 +56,12 @@ def lesson(id, title, goal, *tasks):
 
 
 LESSONS = (
-    lesson("outline", "Draw the studio", "Build a 14 m by 10 m studio with two rooms.",
-           task("shell", "Draw the exterior walls.", "Choose Room. Keep Drywall selected and click opposite corners of the ghost rectangle.",
+    lesson("outline", "Draw the studio", "Draw a 14 m by 10 m room with Room, then divide it with Wall.",
+           task("shell", "Draw the exterior walls.", "Open Draw and choose Room. Keep Drywall selected and click the two numbered corners in order.",
                 "#wifiMaterial", tool("room"), ghost=path(*SHELL)),
            task("wall", "Add a concrete partition.", "Choose Wall and set Material to Concrete. Draw between the two ghost endpoints, then press Escape.",
                 "#wifiMaterial", tool("wall"), ghost=path(*WALL))),
-    lesson("finish", "Finish the floor plan", "Give the workshop and office openings, notes, and furniture.",
+    lesson("finish", "Finish the floor plan", "Use Draw and Design to add openings, labels, furniture, and a floor fill.",
            task("door", "Add a door in the partition.", "Choose Door and click the ghost at the partition. An open doorway or a wood door both work.",
                 tool("door"), ghost=at((8, 6), "Door")),
            task("window", "Add a workshop window.", "Choose Window and click the ghost on the upper exterior wall.",
@@ -72,7 +72,7 @@ LESSONS = (
                 "#wifiDecorType", tool("decor"), ghost=at((3, 2), "Desk", "desk")),
            task("fill", "Color the workshop floor.", "Choose Paint Bucket and any fill color. Click inside the workshop at the ghost.",
                 "#wifiFillColor", tool("paint"), ghost=at((4, 5), "Workshop floor"))),
-    lesson("rack", "Install an equipment rack", "Protect the plan and mount the core network gear.",
+    lesson("rack", "Install an equipment rack", "Lock the drawing, then use the rack’s front view to mount the network gear.",
            task("lock", "Lock the floor plan.", "Click Lock floor plan to protect the walls and finishes while you wire.",
                 "#wifiFloorLock"),
            equip("rack", "equipment rack", "Equipment Rack", RACK),
@@ -82,25 +82,25 @@ LESSONS = (
            equip("desktop", "desktop", "Desktop", PC),
            equip("ap1", "workshop AP", "Ceiling access point", AP1),
            equip("ap2", "office AP", "Ceiling access point", AP2)),
-    lesson("runs", "Run building Ethernet", "Terminate room cables at the back of the patch panel.",
+    lesson("runs", "Run building Ethernet", "Use Cable on the floor plan to terminate room runs at the back of the patch panel.",
            task("pass", "Add a concrete pass-through.", "Choose Pass-through and click the ghost on the concrete partition.",
                 tool("pass"), ghost=at(PASS, "Pass-through", "pass")),
            run("pc-run", "desktop", 1, PC, PASS, RACK), run("ap1-run", "workshop AP", 2, AP1, PASS, RACK),
            run("ap2-run", "office AP", 3, AP2, RACK)),
-    lesson("patch", "Patch the rack", "Complete the room circuits and add the router uplink.",
+    lesson("patch", "Patch the rack", "Use Cable inside the rack to connect front ports and add a fiber uplink.",
            patch("pc-patch", "panel FRONT1", "switch ETH2"), patch("ap1-patch", "panel FRONT2", "switch ETH3"),
            patch("ap2-patch", "panel FRONT3", "switch ETH4"), patch("uplink", "router SFP1", "switch SFP1", "SFP fiber")),
-    lesson("dhcp", "Configure and test the wired network", "Give the workstation a subnet and prove it can reach the router.",
+    lesson("dhcp", "Configure and test the wired network", "Configure DHCP in the router and test the gateway from the desktop inspector.",
            task("gateway", "Set the gateway to 10.20.30.1/24.", "Select the router in the rack. Open DHCP, set Gateway and prefix to 10.20.30.1/24, and save.",
                 "#wifiDhcpGateway", '[data-wifi-config="dhcp"] summary'),
            task("wired", "Ping the router from the desktop.", "Close the rack. Select the desktop, choose the router in Ping target, then Start Ping. Look for a reply.",
                 "#wifiPingToggle", ghost=at(PC, "Test from desktop"), event="wired")),
-    lesson("vlan", "Set up the guest VLAN", "Carry guest traffic over the switch and router uplink.",
+    lesson("vlan", "Set up the guest VLAN", "Use tagged switch ports to carry Guest VLAN 20 alongside the default network.",
            task("guest", "Create Guest VLAN 20.", "Open the router’s VLANs. Add a VLAN named Guest with ID 20.",
                 "#wifiVlanId", '[data-wifi-config="vlans"] summary'),
            task("tagged", "Tag SFP1, ETH3, and ETH4 with VLAN 20.", "In the switch’s Switch ports, check Guest under Additional tagged VLANs on each port. Keep Default as the access VLAN.",
                 '[data-wifi-config="ports"] summary')),
-    lesson("wifi", "Configure guest Wi-Fi", "Broadcast a guest SSID and separate the AP radio channels.",
+    lesson("wifi", "Configure guest Wi-Fi", "Share one SSID across both APs, choose separate channels, and associate a phone.",
            task("ssid", "Broadcast Studio Guest from both APs.", "At the workshop AP add Studio Guest on 5 GHz and VLAN 20. At the office AP select it and enable Broadcast on this AP.",
                 "#wifiApSsid", ghost=path(AP1, AP2)),
            task("channels", "Use channels 36 and 149 at 20 MHz.", "Set the workshop AP’s 5 GHz radio to 36 and the office AP’s to 149. Keep both widths at 20 MHz.",
@@ -109,18 +109,18 @@ LESSONS = (
            task("join", "Join Studio Guest on the phone.", "Select the phone and choose Studio Guest in Wi-Fi SSID. Look for an associated AP.",
                 "#wifiPhoneSsid", ghost=at(PHONE, "Guest phone"))),
     lesson("survey", "Survey Wi-Fi coverage", "Measure usable signal in the workshop.",
-           task("probe", "Check signal near the partition.", "Open View and choose Check Signal. Click the ghost and read the usable dBm and any interference penalty.",
+           task("probe", "Check signal near the partition.", "In Wi-Fi, enable coverage and choose 5 GHz and Studio Guest. Then open View, choose Check Signal, and click the ghost. Compare usable dBm with the received signal and any interference penalty.",
                 tool("probe"), ghost=at((7, 5), "Check signal"), event="probe")),
-    lesson("camera", "Connect and aim a camera", "Power a camera and check its field of view.",
+    lesson("camera", "Connect and aim a camera", "Complete the camera’s PoE path, then use its aim handle and coverage cone.",
            equip("camera", "PoE camera", "PoE Camera", CAM),
            run("cam-run", "camera", 4, CAM, RACK), patch("cam-patch", "panel FRONT4", "switch ETH5"),
            task("aim", "Aim across the office.", "Select the camera and set Direction to about 135°, or drag its aim handle along the dashed line. Toggle Camera coverage in View to inspect the cone.",
                 '[data-wifi-wire-field="angle"]', ghost=path(CAM, (8, 5)))),
-    lesson("services", "Host a network service", "Install a rack server and enable a web VM.",
+    lesson("services", "Host a network service", "Open the server’s Service VMs panel to give the Web VM its own DHCP address.",
            mount("server", "Rack Server", 8), patch("server-patch", "server ETH1", "switch ETH6"),
            task("vm", "Enable the Web VM.", "Select the rack server and open Service VMs. Enable Web on Default. Leave IPv4 blank for DHCP.",
                 '[data-wifi-service-toggle="web"]', '[data-wifi-config="service-vms"] summary')),
-    lesson("handoff", "Connect Internet and verify isolation", "Give guests Internet access and protect the workstation.",
+    lesson("handoff", "Connect Internet and verify isolation", "Connect an ISP handoff to WAN, then use two ping tests to verify what the firewall allows.",
            task("isp", "Place an ISP handoff.", "Choose Equipment and ISP Demarcation. Keep the default fiber provider and click the ghost on the exterior wall.",
                 "#wifiEquipmentType", tool("equipment"), ghost=at(ISP, "ISP handoff", "demarc")),
            task("wan", "Connect the handoff to the router.", "Choose Cable. Click the ISP handoff, then the rack. Confirm the offered router WAN port and Connect.",
@@ -131,7 +131,7 @@ LESSONS = (
                 "#wifiPingToggle", ghost=at(PHONE, "Test guest Internet"), event="internet"),
            task("blocked", "Verify that the guest cannot ping the desktop.", "Stop the previous ping. Choose the desktop as the phone’s target, then Start Ping. Look for the firewall denial.",
                 "#wifiPingToggle", ghost=at(PHONE, "Test guest isolation"), event="blocked")),
-    lesson("export", "Review and deliver the design", "Check the project budget and export the handover sheets.",
+    lesson("export", "Review and deliver the design", "Compare the itemized costs in Bill of Materials and download the network handover PDF.",
            task("bill", "Open the Bill of Materials.", "Review device and cable subtotals. Close the bill before exporting.", "#wifiMaterials", event="bill"),
            task("pdf", "Export a PDF of the design.", "Click Export PDF. Check the plan, coverage, rack, and cost sheets in the download.", "#wifiExportPdf", event="pdf")),
 )
@@ -271,8 +271,20 @@ def initial_progress():
     return dict(version=VERSION, completed=0, checked=[], events=[])
 
 
-def summary(progress, updated=None):
-    return {key: progress[key] for key in ("version", "completed", "checked")} | {"updated_at": updated}
+def summary(site):
+    progress = site["starter_progress"] if site else initial_progress()
+    result = {key: progress[key] for key in ("version", "completed", "checked")}
+    if site:
+        result.update(updated_at=site["updated_at"], revision=site["revision"],
+                      attempt=site.get("starter_attempt", 1),
+                      best_completed=max(site.get("starter_best", 0), progress["completed"]),
+                      can_restart=site.get("starter_checkpoint") is not None)
+    return result
+
+
+def checkpoint_progress(site, completed):
+    checks = Studio(site).checks(LESSONS[completed]["id"])
+    return dict(version=VERSION, completed=completed, checked=[key for key, value in checks.items() if value], events=[])
 
 
 def grade(site, previous, evidence):
