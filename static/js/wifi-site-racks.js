@@ -235,7 +235,7 @@
       const ports = new Map();
       const rails = Array.from({ length: units }, (_, i) => {
         const y = face.top + i * face.unit;
-        return `<rect x="37" y="${y}" width="826" height="${face.unit}" fill="${i % 2 ? '#172638' : '#1a2a3d'}"/>
+        return `<rect data-rack-unit-number="${units - i}" x="37" y="${y}" width="826" height="${face.unit}" fill="${i % 2 ? '#172638' : '#1a2a3d'}"/>
           <path d="M37 ${y}H870" stroke="#425972"/>
           <text class="wifi-rack-unit-number" x="30" y="${y + 27}" text-anchor="end" fill="#c9d6e5">U${units - i}</text>
           <path d="M41 ${y + 8}h6m-6 14h6m-6 14h6m815-28h6m-6 14h6m-6 14h6" stroke="#7d91a8" stroke-width="2"/>`;
@@ -254,7 +254,7 @@
           const portNum = (port.wan ? port.media === 'fiber' ? 'WF' : 'W' : port.media === 'fiber' ? 'S' : '') + (port.id.match(/\d+$/)?.[0] || port.id);
           const x = port.x, y = port.y;
           return `<g class="wifi-rack-port${chosen ? ' is-active' : ''}${mode === 'cable' && valid ? ' is-available' : ''}"
-            data-rack-port="${escape(key)}" data-rack-tooltip="${escape(descriptor)}" aria-label="${escape(descriptor)}"
+            data-rack-port="${escape(key)}" data-rack-x="${x}" data-rack-y="${y}" data-rack-tooltip="${escape(descriptor)}" aria-label="${escape(descriptor)}"
             ${mode === 'cable' ? `role="button" tabindex="${valid || chosen ? 0 : -1}" aria-disabled="${!valid && !chosen}"` : ''}>
             <rect class="wifi-rack-port-hit" x="${x - 10}" y="${y - 9}" width="20" height="20" fill="transparent"/>
             <rect class="wifi-rack-jack" x="${x - 8}" y="${y - 7}" width="16" height="13" rx="2" fill="#101e2c" stroke="${indicator}"/>
@@ -267,7 +267,7 @@
             </g>`;
         }).join('');
         const label = device.name.length > 24 ? device.name.slice(0, 23) + '…' : device.name;
-        return `<g class="wifi-rack-gear${selected === device.id ? ' is-selected' : ''}" data-rack-device="${escape(device.id)}"
+        return `<g class="wifi-rack-gear${selected === device.id ? ' is-selected' : ''}" data-rack-device="${escape(device.id)}" data-rack-profile="${device.kind}"
             ${mode === 'inspect' ? `role="button" tabindex="0" aria-label="${escape(device.name)} at U${device.u}" aria-pressed="${selected === device.id}"` : ''}>
           <rect class="wifi-rack-chassis" x="${face.left}" y="${y + 1}" width="${face.right - face.left}"
             height="${height - 2}" rx="4" fill="${color}" stroke="#8499af"/>

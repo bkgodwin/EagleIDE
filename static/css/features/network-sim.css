@@ -542,3 +542,15 @@ body.light-mode .network-hub {
 @media (prefers-reduced-motion: reduce) {
   .network-packet-token { animation-duration: .01ms; }
 }
+
+.wifi-starter-library-actions { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 8px; }
+.wifi-starter-catalog { margin: 0; padding: 0 0 0 24px; }
+.wifi-starter-catalog li { padding: 5px 2px 5px 0; border-bottom: 1px solid var(--border-color, #7891ab66); }
+.wifi-starter-catalog li:last-child { border-bottom: 0; }
+.wifi-starter-catalog small { float: right; margin-left: 7px; opacity: .75; }
+.wifi-starter-catalog small[data-current="true"] { opacity: 1; font-weight: 700; }
+.wifi-starter-roster-table { overflow-x: auto; }
+.wifi-starter-roster-table table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
+.wifi-starter-roster-table :is(th, td) { padding: 7px 8px; vertical-align: top; border-bottom: 1px solid var(--border-color, #7891ab66); }
+.wifi-starter-roster-table td ol { margin: 5px 0; padding-inline-start: 18px; }
+.wifi-starter-roster-table td ol small { color: var(--text-muted, #63798d); }

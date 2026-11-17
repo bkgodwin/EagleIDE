@@ -26,7 +26,7 @@
     return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
   }
 
-  function create({ plan, cabling, escape, selected, networkInspector, serviceNames }) {
+  function create({ plan, cabling, escape, selected, networkInspector, serviceNames, onPacket }) {
     const layer = document.getElementById('wifiPingLayer');
     const preferences = new Map(), summaries = new Map(), packets = new Set();
     let graph, sources, run, timer, frame;
@@ -148,6 +148,7 @@
         duration: stage.duration || weights[i] * scale }));
       packets.add({ node, start: performance.now(), stages, dropPoint: packet.dropPoint });
       if (!frame) frame = requestAnimationFrame(paint);
+      onPacket?.(id, target, packet);
       refresh();
     }
 
