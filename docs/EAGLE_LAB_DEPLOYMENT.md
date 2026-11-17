@@ -55,9 +55,12 @@ workflows are not covered by the browser fixture.
 3. Set an optional **4–12 digit student server PIN**. Blank on edit preserves it;
    Remove existing PIN clears it. Only password hashes are stored. Provide each
    student/group only its assigned PIN.
-4. The class owner enables access in Dashboard → Eagle Lab, selects the servers,
-   and decides whether students can reveal credentials. Admin and owning teacher
-   access does not require a student PIN.
+4. In Dashboard → Eagle Lab, the class owner selects student servers and decides
+   whether students can reveal credentials. Use **Student access hours** to set
+   meeting days and a daily start and end time in the class time zone. Use
+   **Reserve a teacher server** to hide one enrolled server from students in that
+   class and make it available to the owner. Admins and owning teachers bypass
+   student hours and PINs.
 5. Students select a server, enter its PIN, and Connect. The embedded workspace
    provides Exit, Credentials, clipboard hints and continuous lab report windows.
    Reports autosave independently of console traffic.
@@ -73,7 +76,8 @@ PINs, class grants or PVE settings; stale lists are rejected for a reload.
 The launch ticket expires after 60 seconds and is exchanged once by POST. Proxy
 sessions last at most four hours and never outlive the EagleIDE login. Editing a
 server/PIN, removing class access, global disablement, or revoking the EagleIDE
-login stops delivery. Active transfers and WebSockets recheck within about two
+login stops delivery. Scheduled closing and teacher reservations revoke
+student relay access, including launches awaiting exchange. Active transfers and WebSockets recheck within about two
 seconds plus the bounded authorization timeout. Exit revokes that user's node
 sessions. PVE authentication and native permissions remain in force.
 

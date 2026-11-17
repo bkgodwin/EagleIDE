@@ -259,7 +259,9 @@
             </header>
             <p class="student-past-task">${escapeHtml(assignment.task || '(No task description)')}</p>
             ${submission ? `
-              <div class="student-past-meta">Submitted ${escapeHtml(submission.submittedAt || '—')} · ${escapeHtml(submission.fileName || 'submission')}</div>
+              <div class="student-past-meta">${submission.groupSubmittedByName && !submission.withdrawn
+                ? escapeHtml(window.AssignmentWorkflow.groupSubmissionCredit(submission.groupSubmittedByName, submission.groupSubmittedAt))
+                : `Submitted ${escapeHtml(submission.submittedAt || '—')}`} · ${escapeHtml(submission.fileName || 'submission')}</div>
               ${submission.aiFeedback ? `<details class="student-past-feedback assignment-feedback-details"><summary>View teacher feedback</summary>${renderAssignmentFeedback(submission.aiFeedback)}</details>` : ''}
               ${codePreview ? `<details class="student-past-code"><summary>View preserved submission</summary><pre><code>${escapeHtml(codePreview)}${String(submission.code || '').length > codePreview.length ? '\n…' : ''}</code></pre></details>` : '<div class="student-past-meta">No code file was submitted.</div>'}
               <button class="btn secondary student-past-view-btn" type="button" data-index="${index}">View submission</button>

@@ -10417,6 +10417,9 @@ def _student_assignment_payload(assignment: dict, student_email: str, *, include
         summary = {
             "submittedAt": submission.get("submittedAt"),
             "withdrawn": bool(submission.get("withdrawn")),
+            **({"groupSubmittedByName": submission.get("groupSubmittedByName"),
+                "groupSubmittedAt": submission.get("submittedAtIso") or submission.get("submittedAt")}
+               if submission.get("groupMode") == "group" else {}),
             "files": assignment_workflow.public_files(submission),
             "fileSubmissionCount": submission.get("fileSubmissionCount", 0),
             "quizSubmissionCount": submission.get("quizSubmissionCount", 0),

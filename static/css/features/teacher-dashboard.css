@@ -330,12 +330,13 @@
     .teacher-dash-class-card-header {
       display: flex;
       justify-content: space-between;
-      align-items: flex-start;
+      align-items: center;
+      flex-wrap: wrap;
       gap: 12px;
       margin-bottom: 12px;
     }
-    .teacher-dash-class-name { font-size: 15px; font-weight: 700; color: var(--theme-text); }
-    .teacher-dash-class-code { font-size: 12px; color: var(--theme-text-dim); margin-top: 2px; }
+    .teacher-dash-class-name { font-size: 1.125rem; font-weight: 700; color: var(--theme-text); }
+    .teacher-dash-class-code { font-size: 12px; color: var(--theme-text-dim); margin-top: 6px; }
     .teacher-dash-student-row {
       display: flex;
       flex-direction: column;
@@ -515,4 +516,90 @@
   font-size: 11px;
   color: var(--theme-text-dim);
   line-height: 1.25;
+}
+
+#teacherDashboardModal .teacher-dash-navbtn[hidden] { display: none; }
+#teacherDashboardModal .teacher-dash-navbtn:focus-visible {
+  outline: 2px solid var(--columbia-blue);
+  outline-offset: -2px;
+}
+#teacherDashboardModal .teacher-dash-navbtn.active {
+  box-shadow: inset 3px 0 var(--columbia-blue);
+}
+#teacherDashboardModal :is(.teacher-dash-view-actions, .teacher-class-picker) {
+  max-width: 100%;
+  min-width: 0;
+}
+#teacherDashboardModal :is(#newClassNameInput, #teacherClassesActiveSelect, #teacherReportsClassSelect) {
+  width: min(16rem, 100%);
+  min-width: 0;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid var(--theme-border-mid);
+  border-radius: 8px;
+  background: var(--theme-input-bg);
+  color: var(--theme-text);
+  font: inherit;
+}
+.teacher-class-picker, .teacher-dash-class-code {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.teacher-class-picker { margin-bottom: 14px; }
+.teacher-dash-class-code strong { margin-left: 4px; font-family: var(--font-mono, monospace); color: var(--theme-text); }
+.teacher-dash-class-code .btn { min-height: 34px; }
+.teacher-class-roster-title { margin: 18px 0 10px; color: var(--theme-text); font-size: 1rem; }
+
+.teacher-join-code-dialog {
+  box-sizing: border-box;
+  width: min(56rem, calc(100% - 24px));
+  max-height: calc(100% - 24px);
+  padding: clamp(16px, 5vw, 64px);
+  border: 1px solid var(--theme-border-mid);
+  border-radius: 16px;
+  background: var(--theme-bg);
+  color: var(--theme-text);
+  text-align: center;
+}
+.teacher-join-code-dialog::backdrop { background: rgb(0 0 0 / 72%); }
+.teacher-join-code-dialog form { display: grid; justify-items: center; gap: 12px; margin: 0; }
+.teacher-join-code-dialog p { margin: 0; color: var(--theme-text-dim); }
+.teacher-join-code-dialog h3 { margin: 0; font-size: clamp(1.2rem, 4vw, 2rem); overflow-wrap: anywhere; }
+#teacherJoinCodeDisplay {
+  max-width: 100%;
+  font: 800 clamp(2rem, 10vw, 8rem)/1.16 var(--font-mono, monospace);
+  letter-spacing: .055em;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.teacher-notifications {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding: clamp(12px, 2.5vw, 20px);
+  border: 1px solid var(--theme-border-mid);
+  border-radius: 12px;
+  background: var(--theme-panel);
+  color: var(--theme-text);
+}
+.teacher-notifications[hidden] { display: none; }
+.teacher-notifications-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.teacher-notifications-header h3 { margin: 0 0 4px; font-size: 1.05rem; }
+.teacher-notifications p { margin: 0; }
+.teacher-notifications-header p, .teacher-notifications-status, .teacher-notification-context { color: var(--theme-text-dim); font-size: .875rem; }
+.teacher-notifications-status:empty { display: none; }
+.teacher-notifications .assignment-request-list { grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); }
+.teacher-notifications .assignment-request { align-content: start; min-width: 0; }
+.teacher-notifications .assignment-request > div { overflow-wrap: anywhere; }
+.teacher-notifications .assignment-request form input {
+  box-sizing: border-box;
+  min-height: 35px;
+  padding: 6px 8px;
+  border: 1px solid var(--theme-border-mid);
+  border-radius: 6px;
+  background: var(--theme-bg);
+  color: var(--theme-text);
 }

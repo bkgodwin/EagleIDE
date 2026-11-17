@@ -33,7 +33,35 @@ try{
   console.log('Student surfaces verified.');
   await student.locator('#ideViewBtn').click();await student.evaluate(()=>EagleIDE.getContext().setEditorSnapshot({code:'print("Lab UI smoke test")',language:'python',fileName:'lab-smoke.py',draft:true}));await student.locator('#runBtn').click();await student.locator('#output').filter({hasText:'Lab UI smoke test'}).waitFor();await student.locator('#eagleLabViewBtn').click();
   const {context:teacherContext,page:teacher}=await account({teacherToken:'agenda-teacher',currentTeacher:{email:'teacher@example.test',role:'teacher'}});
-  await teacher.locator('#ideViewBtn').click();await teacher.locator('#roleMenuBtn').click();await teacher.locator('#teacherDashboardBtn').click();await teacher.locator('[data-view="dash-eagle-lab"]').click();await teacher.locator('[data-teacher-server]').first().waitFor();
+  const assignments = (await (await studentContext.request.get(base + '/api/assignments', {
+    headers:{'X-User-Token':'agenda-student'},
+  })).json()).assignments;
+  const reportAssignment = assignments.find(item => item.assignmentType === 'lab_report');
+  const request = await studentContext.request.post(base + '/api/assignments/extension-requests', {
+    headers:{'X-User-Token':'agenda-student'},
+    data:{assignmentId:reportAssignment.id, days:1, reason:'The server was busy during class.'},
+  });
+  assert.equal(request.status(), 200);
+  await teacher.locator('#ideViewBtn').click();await teacher.locator('#roleMenuBtn').click();await teacher.locator('#teacherDashboardBtn').click();
+  const notice = teacher.locator('#teacherNotifications .assignment-request');
+  await notice.getByText('The server was busy during class.').waitFor();
+  assert.match(await notice.innerText(), /Jamie Lee[\s\S]*Your first self hosted service[\s\S]*Period 2/);
+  await notice.getByLabel('Modify school days').fill('2');
+  await notice.getByRole('button', {name:'Approve modified days'}).click();
+  await teacher.getByText('No pending extension requests.', {exact:false}).waitFor();
+  await teacher.locator('[data-view="dash-classes"]').click();
+  await teacher.getByRole('button', {name:'Show large'}).click();
+  const joinCode = teacher.locator('#teacherJoinCodeDisplay');
+  await joinCode.waitFor();
+  assert.equal(await joinCode.innerText(), 'AGENDA');
+  assert.ok(await joinCode.evaluate(el => parseFloat(getComputedStyle(el).fontSize) >= 72));
+  await teacher.keyboard.press('Escape');
+  await teacher.setViewportSize({width:390,height:844});
+  await teacher.getByRole('button', {name:'Show large'}).click();
+  await inBounds(teacher, '#teacherJoinCodeDialog');
+  await teacher.keyboard.press('Escape');
+  await teacher.setViewportSize({width:1440,height:1000});
+  await teacher.locator('[data-view="dash-eagle-lab"]').click();await teacher.locator('[data-teacher-server]').first().waitFor();
   await teacher.locator('#eagleLabTeacherCredentials').check();await teacher.locator('[data-teacher-server]').last().uncheck();await teacher.locator('#eagleLabTeacherRefreshBtn').click();await teacher.getByText('Unsaved changes · refresh keeps your edits',{exact:true}).waitFor();assert.equal(await teacher.locator('#eagleLabTeacherCredentials').isChecked(),true);assert.equal(await teacher.locator('[data-teacher-server]').last().isChecked(),false);
   await teacher.locator('#eagleLabTeacherClassSelect').selectOption('agenda-section');await teacher.waitForFunction(()=>EagleLab.getState().teacherClassId==='agenda-section');assert.equal(await teacher.locator('#eagleLabTeacherCredentials').isChecked(),false);
   await teacher.locator('#eagleLabTeacherClassSelect').selectOption('agenda-class');await teacher.waitForFunction(()=>EagleLab.getState().teacherClassId==='agenda-class');assert.equal(await teacher.locator('#eagleLabTeacherCredentials').isChecked(),true);await screenshot(teacher,'lab-teacher-rules');
@@ -41,7 +69,28 @@ try{
   await teacher.route('**/api/eagle-lab/teacher/classes/agenda-class',async route=>{if(route.request().method()==='PUT')await savingGate;await route.continue();});
   await teacher.locator('#eagleLabTeacherSaveBtn').click();await teacher.waitForFunction(()=>EagleLab.getState().teacherSaving);await teacher.locator('#eagleLabTeacherCredentials').uncheck();releaseSave();await teacher.getByText('Saved. Newer edits are still unsaved.',{exact:true}).waitFor();assert.equal(await teacher.locator('#eagleLabTeacherCredentials').isChecked(),false);await teacher.unroute('**/api/eagle-lab/teacher/classes/agenda-class');
   await teacher.locator('#eagleLabTeacherSaveBtn').click();await teacher.getByText('Class access saved.',{exact:true}).waitFor();
-  console.log('Teacher draft retention verified.');
+  const reserved = await teacher.locator('[data-teacher-server]').first().getAttribute('data-teacher-server');
+  await teacher.locator('#eagleLabTeacherReserved').selectOption(reserved);
+  await teacher.locator('#eagleLabTeacherSaveBtn').click();
+  await teacher.getByText('Class access saved.', {exact:true}).waitFor();
+  await student.locator('#eagleLabRefreshBtn').click();
+  await student.waitForFunction(() => document.querySelectorAll('[data-lab-server]').length === 1);
+  assert.equal(await student.locator(`[data-lab-server="${reserved}"]`).count(), 0);
+  await teacher.locator('#eagleLabTeacherLimitHours').check();
+  const excludedHour = (new Date().getUTCHours() + 12) % 24;
+  const hour = String(excludedHour).padStart(2, '0');
+  await teacher.locator('#eagleLabTeacherStart').fill(`${hour}:00`);
+  await teacher.locator('#eagleLabTeacherEnd').fill(`${hour}:01`);
+  await teacher.locator('#eagleLabTeacherZone').fill('UTC');
+  await teacher.locator('#eagleLabTeacherSaveBtn').click();
+  await teacher.getByText('Class access saved.', {exact:true}).waitFor();
+  await student.locator('#eagleLabRefreshBtn').click();
+  await student.locator('#eagleLabStatus').getByText(/Lab servers open during class/).waitFor();
+  await student.locator('[data-lab-report]').first().waitFor();
+  await teacher.locator('#eagleLabTeacherLimitHours').uncheck();
+  await teacher.locator('#eagleLabTeacherSaveBtn').click();
+  await teacher.getByText('Class access saved.', {exact:true}).waitFor();
+  console.log('Teacher notifications, join code, lab policies and draft retention verified.');
   await teacher.locator('[data-view="dash-assignments"]').click();await teacher.locator('#newAssignmentBtn').click();await teacher.locator('#modalAssignmentType').selectOption('lab_report');await teacher.locator('.lab-composer-preview').waitFor();assert.equal(await teacher.locator('.assignment-composer>.modal-content').evaluate(el=>getComputedStyle(el).display),'grid');await teacher.locator('#modalAssignmentName').fill('Browser-built hosting report '+Date.now());await teacher.locator('#modalAssignmentTask').fill('Test your app with {curl http://127.0.0.1:8000}.');
   await teacher.locator('#composer-tab-questions').click();await teacher.locator('#addQuestionBtn').click();await teacher.locator('.lab-section-editor').waitFor();
   await teacher.locator('.lab-section-editor select[name=type]').selectOption('procedure');await teacher.locator('.lab-section-editor textarea[name=question]').fill('Use {pwd} to check your project directory.');await teacher.locator('.lab-section-editor textarea[name=steps]').fill('Create the site directory.\nStart the server.\nCheck the response.');

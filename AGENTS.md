@@ -251,7 +251,11 @@ probes their HTTPS version route server-side, and requires both the off-by-defau
 global switch and a class-owner rule for student access. Admins enroll servers;
 teachers can assign enrolled servers only to classes they own. Credentials are
 encrypted by `EagleLabStore` and are returned only for an authorized assigned
-server when the class rule permits them and the server PIN is unlocked.
+server when the class rule permits them and the server PIN is unlocked. Class
+owners can set a weekly student server schedule with an IANA time zone and
+reserve one enrolled server for teacher use in that class. The gateway checks
+both rules for launches and active sessions. Class lab reports stay available
+outside server hours under their own assignment rules.
 `eagle_lab_gateway.py` issues one-use 60-second POST launches and four-hour
 capability sessions bound to the originating EagleIDE session, actor, class,
 server, and server revision. PIN hashes use the existing versioned password
@@ -352,6 +356,12 @@ lock/unlock, delete, assignment-setting, and lesson-plan sharing/source controls
 
 All Ollama generation goes through the shared in-memory AI dispatcher in `app.py`. It keeps the configured concurrency full while healthy, queues excess interactive and background work, applies a global cooldown when Ollama reports overload, and retries overloaded requests. Assignment grading adds a durable submission-status layer with teacher queue inspection and cancellation; do not bypass the dispatcher with direct Ollama HTTP calls.
 
+The default teacher Reports view lists pending extension requests across all
+classes the teacher owns. Refreshing the feed preserves edits to pending forms.
+Accepting, changing the approved school days, and denying share the existing
+request-ID-checked assignment endpoint. Class join codes can be projected from
+Class Management in a native dialog.
+
 ### Group projects
 
 Group projects are opt-in per class and separate from file-copy sharing. The
@@ -383,6 +393,14 @@ account, project and file. A stale draft is offered
 for recovery when the revision journal cannot reconcile it. CodeMirror marks
 are viewport-bounded. Server-authenticated contributors and surviving ranges
 are separate from paste evidence.
+
+Group submission snapshots preserve file-open intervals from authorized shared
+editor sessions in teacher-only sidecars beside the protected attachments.
+Heartbeats renew the existing interval and explicit unwatch closes it. A lost
+connection can extend the interval through the 35-second lease. Keep the latest
+512 visits per file, clip the snapshot at submission time, and copy it with an
+immutable quiz resubmission. Source contributions remain UTF-16 spans. Students
+receive submitter credit and the original group file submission timestamp.
 
 Project reads and tree mutations use stable IDs and bounded storage. Tree
 revisions order path and structure changes independently of text revisions.

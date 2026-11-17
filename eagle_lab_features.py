@@ -11,7 +11,7 @@ from pathlib import Path
 
 from flask import jsonify, request
 
-from eagle_lab_store import EagleLabDataError, EagleLabStore
+from eagle_lab_store import EagleLabDataError, EagleLabStore, within_student_hours
 from eagle_lab_gateway import LabGateway, AUTH_HEADERS
 
 
@@ -187,14 +187,22 @@ def register(
             message = "Eagle Lab is disabled for this class" if global_enabled() else "Eagle Lab is disabled"
             return jsonify(ok=False, error=message, enabled=False), 403
         rule = store.class_rule(class_id) if current["role"] != "admin" else {"enabled": True, "show_credentials": True, "server_ids": [item["id"] for item in store.list_servers()]}
-        servers = store.list_servers() if current["role"] == "admin" else store.servers_for_class(class_id)
-        if current["role"] == "student":
+        role = current["role"]
+        servers = store.list_servers() if role == "admin" else store.servers_for_class(class_id, role, rule=rule)
+        hours_message = ""
+        if role == "student":
             servers = [{key: value for key, value in server.items() if key != "username"} for server in servers]
+            if not within_student_hours(rule):
+                hours = rule["student_hours"]
+                hours_message = f"Lab servers open during class, {hours['start']}–{hours['end']} ({hours['timeZone']})."
+        elif role == "teacher":
+            servers = [{**server, "teacher_reserved": server["id"] == rule["teacher_server_id"]} for server in servers]
         return jsonify(ok=True, data={
             "enabled": global_enabled(),
             "admin_preview": current["role"] == "admin" and not global_enabled(),
             "role": current["role"],
             "class_id": class_id,
+            "hours_message": hours_message,
             "show_credentials": bool(rule.get("show_credentials")) or current["role"] in {"admin", "teacher"},
             "gateway_configured": gateway.configured,
             "gateway_transport": gateway.transport,
@@ -207,11 +215,12 @@ def register(
         class_id = str(request.args.get("class_id") or "").strip()
         if current["role"] == "guest" or not class_access(current, class_id):
             return jsonify(ok=False, error="Eagle Lab access required"), 403
-        rule = store.class_rule(class_id) if current["role"] != "admin" else {"server_ids": [item["id"] for item in store.list_servers()], "show_credentials": True}
-        if server_id not in set(rule.get("server_ids", [])):
-            return jsonify(ok=False, error="This server is not assigned to the class"), 403
-        if current["role"] == "student" and not rule.get("show_credentials"):
-            return jsonify(ok=False, error="Credentials are hidden for this class"), 403
+        if current["role"] != "admin":
+            rule = store.class_rule(class_id)
+            if server_id not in store.permitted_server_ids(rule, current["role"]):
+                return jsonify(ok=False, error="This server is unavailable for this class"), 403
+            if current["role"] == "student" and not rule["show_credentials"]:
+                return jsonify(ok=False, error="Credentials are hidden for this class"), 403
         auth_headers = {key: request.headers[key] for key in AUTH_HEADERS if request.headers.get(key)}
         if current["role"] == "student" and not gateway.pin_unlocked(server_id, auth_headers, class_id):
             return jsonify(ok=False, error="Unlock this server with its PIN first"), 403

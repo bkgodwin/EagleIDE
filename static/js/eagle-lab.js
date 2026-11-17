@@ -84,13 +84,14 @@
     const servers=state.bootstrap?.servers || [], query=state.search.trim().toLowerCase();
     const filtered=servers.filter(item=>`${item.hostname} ${item.ip}`.toLowerCase().includes(query));
     const up=servers.filter(item=>item.status==='up').length;
-    $('eagleLabStatus').textContent=`${servers.length} server${servers.length===1?'':'s'} · ${up} up`;
+    const hoursMessage=state.bootstrap?.hours_message;
+    $('eagleLabStatus').textContent=hoursMessage || `${servers.length} server${servers.length===1?'':'s'} · ${up} up`;
     $('eagleLabServerGrid').innerHTML=filtered.map(server=>`
       <button class="eagle-lab-server-card is-${esc(server.status || 'down')}" type="button" data-lab-server="${esc(server.id)}">
         <div class="eagle-lab-server-top"><span class="eagle-lab-server-icon" aria-hidden="true">▤</span><div><h3>${esc(server.hostname)}</h3><span class="eagle-lab-address">${esc(server.ip)}:${Number(server.port)||8006}</span></div><span class="eagle-lab-state ${esc(server.status)}">● ${esc(server.status || 'unknown')}</span></div>
         <p class="eagle-lab-server-reason">${esc(server.status_reason || 'Status unavailable.')}</p>
-        <div class="eagle-lab-card-action"><span>Server details &amp; connect</span><span>→</span></div>
-      </button>`).join('') || '<div class="eagle-lab-empty">No matching servers are available for this class.</div>';
+        <div class="eagle-lab-card-action"><span>${server.teacher_reserved ? 'Reserved for teacher' : 'Server details &amp; connect'}</span><span>→</span></div>
+      </button>`).join('') || `<div class="eagle-lab-empty">${esc(hoursMessage || 'No matching servers are available for this class.')}</div>`;
   }
   async function loadReports() {
     const ctx=context(),classId=state.classId;
@@ -113,7 +114,7 @@
     const server=(state.bootstrap?.servers||[]).find(item=>item.id===serverId); if(!server) return;
     const detailSession=sessionKey(),detailClass=state.classId;
     let credentials=null;
-    if(state.bootstrap?.show_credentials && !server.pin_required) {
+    if(state.bootstrap?.show_credentials && (!server.pin_required || state.bootstrap.role !== 'student')) {
       try {credentials=await api(`/api/eagle-lab/servers/${encodeURIComponent(serverId)}/credentials?class_id=${encodeURIComponent(state.classId||'')}`);} catch(error) {credentials={error:error.message};}
     }
     if(detailSession!==sessionKey()||detailClass!==state.classId)return;
@@ -124,7 +125,7 @@
       <div class="eagle-lab-detail-grid"><div class="eagle-lab-detail-item"><span>Address</span><code>${esc(server.ip)}:${Number(server.port)||8006}</code></div><div class="eagle-lab-detail-item"><span>Status</span><strong>${esc(server.status||'unknown')}</strong></div>
       ${credentials && !credentials.error ? `<div class="eagle-lab-detail-item"><span>Username</span><div class="eagle-lab-secret-row"><code>${esc(credentials.username)}</code><button class="btn secondary" data-copy="${esc(credentials.username)}" type="button">Copy</button></div></div><div class="eagle-lab-detail-item"><span>Password</span><div class="eagle-lab-secret-row"><code data-secret>••••••••</code><button class="btn secondary" data-reveal="${esc(credentials.password)}" type="button">Reveal</button><button class="btn secondary" data-copy="${esc(credentials.password)}" type="button">Copy</button></div></div>` : ''}</div>
       ${credentials?.error?`<p class="meta">${esc(credentials.error)}</p>`:''}<p>${esc(server.notes||'')}</p>
-      ${server.pin_required?'<label>Server PIN<input data-lab-pin type="password" inputmode="numeric" maxlength="12" autocomplete="off" placeholder="Enter the PIN assigned by your administrator"></label>':''}
+      ${server.pin_required && state.bootstrap?.role === 'student'?'<label>Server PIN<input data-lab-pin type="password" inputmode="numeric" maxlength="12" autocomplete="off" placeholder="Enter the PIN assigned by your administrator"></label>':''}
       <p data-connect-status role="status"></p>
       <div class="modal-actions"><button class="btn run" data-connect type="button">Connect to PVE</button><button class="btn secondary" data-close type="button">Close</button></div></div>`;
     document.body.append(modal);state.detail={root:modal,session:detailSession};modal.showModal();
@@ -238,14 +239,41 @@
 
   function captureTeacherDraft(){
     if(!state.teacherClassId||!state.teacherData)return;
-    state.teacherDrafts.set(state.teacherClassId,{enabled:$('eagleLabTeacherEnabled').checked,show_credentials:$('eagleLabTeacherCredentials').checked,server_ids:[...document.querySelectorAll('[data-teacher-server]:checked')].map(item=>item.dataset.teacherServer),version:++state.teacherVersion});
+    if (state.teacherClassId !== $('eagleLabTeacherClassSelect').value) return;
+    const schedule = $('eagleLabTeacherHours');
+    schedule.hidden = !$('eagleLabTeacherLimitHours').checked;
+    const teacherServer = $('eagleLabTeacherReserved').value;
+    const serverOptions = [...document.querySelectorAll('[data-teacher-server]')];
+    serverOptions.forEach(input => {
+      input.disabled = input.dataset.teacherServer === teacherServer;
+      input.closest('.eagle-lab-teacher-server').classList.toggle('is-reserved', input.disabled);
+    });
+    state.teacherDrafts.set(state.teacherClassId, {
+      enabled:$('eagleLabTeacherEnabled').checked,
+      show_credentials:$('eagleLabTeacherCredentials').checked,
+      server_ids:serverOptions.filter(input => input.checked).map(input => input.dataset.teacherServer),
+      teacher_server_id:teacherServer,
+      limitHours:!schedule.hidden,
+      hours:{
+        days:[...schedule.querySelectorAll('input[type="checkbox"]:checked')].map(input => Number(input.value)),
+        start:$('eagleLabTeacherStart').value,
+        end:$('eagleLabTeacherEnd').value,
+        timeZone:$('eagleLabTeacherZone').value.trim(),
+      },
+      version:++state.teacherVersion,
+    });
     $('eagleLabTeacherStatus').textContent='Unsaved changes · refresh keeps your edits';
   }
   async function openTeacherPanel(){
     const classId=populateClassSelect($('eagleLabTeacherClassSelect'),$('eagleLabTeacherClassSelect')?.value||preferredClassId());
     const request=state.teacherLoad=(state.teacherLoad||0)+1, original=sessionKey();
-    if(!classId){$('eagleLabTeacherStatus').textContent='Create or select a class first.';return;}
+    if (!classId) {
+      $('eagleLabTeacherRules').disabled = true;
+      $('eagleLabTeacherStatus').textContent = 'Create a class before setting lab rules.';
+      return;
+    }
     state.teacherSession=original;
+    if (state.teacherClassId !== classId) $('eagleLabTeacherRules').disabled = true;
     $('eagleLabTeacherStatus').textContent='Refreshing server availability…';
     try{const data=await api(`/api/eagle-lab/teacher/classes/${encodeURIComponent(classId)}`);if(request!==state.teacherLoad||original!==sessionKey()||$('eagleLabTeacherClassSelect').value!==classId)return;state.teacherData=data;state.teacherClassId=classId;renderTeacher();}catch(error){if(request===state.teacherLoad)$('eagleLabTeacherStatus').textContent=error.message;}
   }
@@ -253,15 +281,39 @@
     const data=state.teacherData||{},draft=state.teacherDrafts.get(state.teacherClassId),rule=draft||data.rule||{};
     $('eagleLabTeacherEnabled').checked=!!rule.enabled;$('eagleLabTeacherCredentials').checked=!!rule.show_credentials;
     $('eagleLabTeacherServers').innerHTML=(data.servers||[]).map(server=>`<label class="eagle-lab-teacher-server"><input type="checkbox" data-teacher-server="${esc(server.id)}" ${(rule.server_ids||[]).includes(server.id)?'checked':''}><span class="eagle-lab-teacher-server-icon" aria-hidden="true">▤</span><span><strong>${esc(server.hostname)}</strong><small>${esc(server.ip)}:${Number(server.port)||8006}</small></span><span class="eagle-lab-state ${esc(server.status||'checking')}">${esc(server.status||'checking')}</span></label>`).join('')||'<p>No servers have been enrolled by the administrator.</p>';
-    $('eagleLabTeacherStatus').textContent=draft?'Unsaved changes · refresh keeps your edits':data.globally_enabled?'Choose the servers students in this class can use.':'Eagle Lab is globally disabled; these rules will be retained.';
+    const reserved = $('eagleLabTeacherReserved');
+    reserved.innerHTML = '<option value="">None</option>' + (data.servers || []).map(server =>
+      `<option value="${esc(server.id)}">${esc(server.hostname)} · ${esc(server.ip)}</option>`).join('');
+    reserved.value = rule.teacher_server_id || '';
+    for (const input of $('eagleLabTeacherServers').querySelectorAll('[data-teacher-server]')) {
+      input.disabled = input.dataset.teacherServer === reserved.value;
+      input.closest('.eagle-lab-teacher-server').classList.toggle('is-reserved', input.disabled);
+    }
+    const hours = draft?.hours || rule.student_hours || {
+      days:[0,1,2,3,4], start:'08:00', end:'15:00',
+      timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+    };
+    const schedule = $('eagleLabTeacherHours');
+    schedule.hidden = !(draft ? draft.limitHours : rule.student_hours);
+    $('eagleLabTeacherLimitHours').checked = !schedule.hidden;
+    for (const input of schedule.querySelectorAll('input[type="checkbox"]')) {
+      input.checked = hours.days.includes(Number(input.value));
+    }
+    $('eagleLabTeacherStart').value = hours.start;
+    $('eagleLabTeacherEnd').value = hours.end;
+    $('eagleLabTeacherZone').value = hours.timeZone;
+    $('eagleLabTeacherRules').disabled = false;
+    $('eagleLabTeacherStatus').textContent=draft?'Unsaved changes · refresh keeps your edits':data.globally_enabled?'':'Eagle Lab is globally disabled. You can still save class rules.';
   }
   async function saveTeacher(){
     if(state.teacherSaving||!state.teacherClassId||state.teacherClassId!==$('eagleLabTeacherClassSelect').value)return;
     captureTeacherDraft();const classId=state.teacherClassId,draft=state.teacherDrafts.get(classId),original=sessionKey();
-    const payload={enabled:draft.enabled,show_credentials:draft.show_credentials,server_ids:draft.server_ids};
+    const payload = {enabled:draft.enabled, show_credentials:draft.show_credentials,
+      server_ids:draft.server_ids, teacher_server_id:draft.teacher_server_id,
+      student_hours:draft.limitHours ? draft.hours : null};
     state.teacherSaving=true;$('eagleLabTeacherSaveBtn').disabled=true;$('eagleLabTeacherStatus').textContent='Saving class access…';
     try{const result=await api(`/api/eagle-lab/teacher/classes/${encodeURIComponent(classId)}`,{method:'PUT',body:JSON.stringify(payload)});if(original!==sessionKey())return;if(state.teacherDrafts.get(classId)?.version===draft.version)state.teacherDrafts.delete(classId);if(state.teacherClassId===classId){state.teacherData.rule=result.rule;renderTeacher();$('eagleLabTeacherStatus').textContent=state.teacherDrafts.has(classId)?'Saved. Newer edits are still unsaved.':'Class access saved.';}window.EagleLabAccess?.refresh?.(null,true);}
-    catch(error){if(original===sessionKey())$('eagleLabTeacherStatus').textContent=error.message;}
+    catch(error){if(original===sessionKey() && $('eagleLabTeacherClassSelect').value===classId) $('eagleLabTeacherStatus').textContent=error.message;}
     finally{state.teacherSaving=false;$('eagleLabTeacherSaveBtn').disabled=false;}
   }
 
@@ -320,6 +372,8 @@
       state.uiSession=sessionKey();state.labLoad++;state.teacherLoad=(state.teacherLoad||0)+1;
       state.bootstrap=null;state.assignments=[];state.adminServers=[];state.classId='';
       state.teacherData=null;state.teacherDrafts.clear();state.teacherClassId='';
+      if ($('eagleLabTeacherRules')) $('eagleLabTeacherRules').disabled = true;
+      $('eagleLabTeacherReserved')?.replaceChildren();
       ['eagleLabServerGrid','eagleLabReportList','eagleLabAdminServers','eagleLabTeacherServers'].forEach(id=>$(id)?.replaceChildren());
       ['eagleLabTeacherEnabled','eagleLabTeacherCredentials'].forEach(id=>{if($(id))$(id).checked=false;});
     });
@@ -357,7 +411,10 @@
     $('eagleLabAdminServers')?.addEventListener('change',event=>{const select=event.target.closest('[data-admin-position]');if(select)reorderAdminServer(select.dataset.adminPosition,Number(select.value));});
     window.addEventListener('eagle-context-updated',()=>{if(state.editorSession!==sessionKey()&&$('eagleLabServerDialog')?.open){$('eagleLabServerDialog').close();resetAdminForm();}});
     $('eagleLabTeacherClassSelect')?.addEventListener('change',()=>openTeacherPanel());
-    ['eagleLabTeacherEnabled','eagleLabTeacherCredentials','eagleLabTeacherServers'].forEach(id=>$(id)?.addEventListener('change',captureTeacherDraft));$('eagleLabTeacherRefreshBtn')?.addEventListener('click',openTeacherPanel);$('eagleLabTeacherSaveBtn')?.addEventListener('click',saveTeacher);
+    $('eagleLabTeacherRules')?.addEventListener('change',captureTeacherDraft);
+    $('eagleLabTeacherHours')?.addEventListener('input',captureTeacherDraft);
+    $('eagleLabTeacherRefreshBtn')?.addEventListener('click',openTeacherPanel);
+    $('eagleLabTeacherSaveBtn')?.addEventListener('click',saveTeacher);
     window.addEventListener('eagle-context-updated',()=>{if(state.report&&state.report.session!==sessionKey()){state.report.cancel();state.report=null;}if(state.teacherSession!==sessionKey()){state.teacherDrafts.clear();state.teacherData=null;state.teacherClassId='';state.teacherSession=sessionKey();}if(!sessionKey()){state.bootstrap=null;state.assignments=[];state.adminServers=[];state.teacherData=null;document.querySelectorAll('.eagle-lab-detail').forEach(item=>item.closest('.modal')?.remove());}});
     [$('wikiViewBtn'),$('ideViewBtn'),$('networkViewBtn')].forEach(button=>button?.addEventListener('click',()=>state.report?.save?.()));window.addEventListener('eagle-context-updated',()=>{refreshAvailability();const ctx=context(),scope=JSON.stringify([sessionKey(),ctx.currentStudentClassId,ctx.currentTeacherClassId]);if(document.body.classList.contains('eagle-lab-mode')&&state.contextScope!==scope){state.contextScope=scope;state.classId=populateClassSelect($('eagleLabClassSelect'),preferredClassId());loadLab();}});window.addEventListener('pagehide',()=>state.report?.save?.());
   }

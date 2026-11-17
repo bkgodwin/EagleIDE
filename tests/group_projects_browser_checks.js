@@ -359,9 +359,21 @@ async function main() {
     await alice.getByRole('button',{name:'Turn in files',exact:true}).click();
     await alice.getByRole('heading',{name:'Files turned in',exact:true}).waitFor();
     await alice.getByRole('button',{name:'Done',exact:true}).click();
+    await alice.locator(`.student-assignment-card[data-assignment-id="${server.assignment}"] .group-submission-credit`)
+      .filter({hasText:/Submitted by Alice ·/}).waitFor({state:'attached'});
     await teacher.evaluate(() => openTeacherDashboard('dash-assignments'));
     await teacher.locator(`.assignment-title-row[data-id="${server.assignment}"]`).click();
+    const groupBadges = teacher.locator('.assignment-group-indicator summary');
+    await groupBadges.first().waitFor();
+    assert.equal(await groupBadges.count(), 4);
+    assert.match(await groupBadges.first().getAttribute('title'), /Alice.*Ben.*Carmen.*Devon/);
     await teacher.locator('.assignment-view-file').first().click();
+    const timeline = teacher.locator('.group-work-timeline');
+    await timeline.getByText('File activity timeline', {exact:true}).click();
+    const scrubber = timeline.getByRole('slider');
+    await scrubber.press('End');
+    assert.match(await timeline.locator('output').innerText(), /Open by .*Alice/);
+    assert.match(await timeline.locator('output').innerText(), /Open by .*Ben/);
     const toggle = teacher.getByLabel('Highlight contributions',{exact:true});
     await toggle.check();
     const colors = teacher.locator('.assignment-file-source .group-contribution');

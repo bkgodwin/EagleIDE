@@ -477,6 +477,7 @@ def prune_history(eagle, assignment, previous):
                     target.unlink()
                     if "contributors" in f:
                         _contribution_file(target).unlink(missing_ok=True)
+                        _timeline_file(target).unlink(missing_ok=True)
                 except OSError:
                     eagle.app.logger.warning("Could not remove an expired submission snapshot")
                     continue
@@ -613,7 +614,11 @@ def _contribution_file(target):
     return target.with_name(f".{target.name}.contributors.json")
 
 
-def _project_bundle(eagle, assignment, staging, records):
+def _timeline_file(target):
+    return target.with_name(f".{target.name}.timeline.json")
+
+
+def _project_bundle(eagle, assignment, staging, records, timelines, submitted_at):
     files = []
     for index, row in enumerate(records):
         name = Path(row["path"]).name
@@ -626,11 +631,12 @@ def _project_bundle(eagle, assignment, staging, records):
         target.write_bytes(content)
         authors = json.loads(row["authors"])
         _contribution_file(target).write_text(row["spans"], encoding="utf-8")
+        _timeline_file(target).write_text(json.dumps(timelines[row["id"]], ensure_ascii=False), encoding="utf-8")
         files.append({"id": uuid.uuid4().hex, "name": name, "size": len(content),
                       "sourceFilePath": "", "path": target.name, "projectPath": row["path"],
                       "pasteRanges": json.loads(row["paste"]), "contributors": authors})
     bundle = {"revisionId": uuid.uuid4().hex, "files": files, "submittedAt": eagle._current_timestamp(),
-              "submittedAtIso": iso(datetime.now(timezone.utc)), "submittedFileName": files[0]["name"], "sourceFilePath": ""}
+              "submittedAtIso": iso(submitted_at), "submittedFileName": files[0]["name"], "sourceFilePath": ""}
     bundle["code"] = grading_code(eagle, assignment, bundle, staging=staging)
     return bundle
 
@@ -661,6 +667,10 @@ def submit_project(eagle, user, data, key):
                 return _submission_receipt(retry)
             with group_projects.database(eagle) as db:
                 project, records, users = group_projects.snapshot_for_submission(eagle, db, user, assignment, selection)
+                submitted_at = datetime.now(timezone.utc)
+                captured_ms = int(submitted_at.timestamp() * 1_000)
+                timelines = {record["id"]: group_projects.file_timeline(db, record["id"], captured_ms)
+                             for record in records}
             if not assignment.get("allowFileSubmission", True):
                 raise group_projects.ProjectError("This assignment uses questions only")
             if len(records) > 1 and not assignment.get("allowMultiFileSubmission"):
@@ -687,7 +697,7 @@ def submit_project(eagle, user, data, key):
             with tempfile.TemporaryDirectory(prefix=".turn-in-", dir=root) as temporary:
                 staging = Path(temporary) / "bundle"
                 staging.mkdir()
-                bundle = _project_bundle(eagle, assignment, staging, records)
+                bundle = _project_bundle(eagle, assignment, staging, records, timelines, submitted_at)
                 # The protected bundle is immutable and shared by the individual
                 # grading records. History pruning already checks all references.
                 destination = eagle._assignment_submission_directory(assignment) / f"group--{bundle['revisionId']}"
@@ -759,6 +769,8 @@ def clone_revision(eagle, assignment, previous):
             shutil.copyfile(source, target)
             if "contributors" in record and _contribution_file(source).is_file():
                 shutil.copyfile(_contribution_file(source), _contribution_file(target))
+            if "contributors" in record and _timeline_file(source).is_file():
+                shutil.copyfile(_timeline_file(source), _timeline_file(target))
             copied.append({**record, "path": target.relative_to(eagle.ASSIGNMENT_SUBMISSIONS_DIR.resolve()).as_posix()})
         return {"revisionId": destination.name, "files": copied, "submissionPath": copied[0]["path"],
                 "revisionDirectory": destination.relative_to(eagle.ASSIGNMENT_SUBMISSIONS_DIR.resolve()).as_posix()}
@@ -812,9 +824,10 @@ def register(app, eagle):
         assignment = eagle._load_assignment(str(data.get("assignmentId") or ""))
         if not assignment:
             return None, (jsonify(ok=False, error="Assignment not found"), 404)
-        if actor is not None and not eagle._assignment_access(actor, assignment, owner_only=True):
-            return None, (jsonify(ok=False, error="Only the class owner may manage extensions"), 403)
         cls = eagle._find_class_by_id(assignment.get("targetClassId")) or {}
+        if actor is not None and (cls.get("teacher_email", "").lower() != actor["email"] or
+                                  not eagle._assignment_access(actor, assignment, owner_only=True)):
+            return None, (jsonify(ok=False, error="Only the class owner may manage extensions"), 403)
         if email and email not in cls.get("students", []):
             return None, (jsonify(ok=False, error="Student is not in this class"), 404 if actor else 403)
         return assignment, None
@@ -822,6 +835,35 @@ def register(app, eagle):
     def extension_update(assignment):
         class_id = assignment.get("targetClassId")
         eagle.socketio.emit("assignment_workflow_updated", {"classId": class_id, "assignmentId": assignment["id"]}, to=f"class_{class_id}")
+
+    @app.get("/api/assignments/extension-requests/pending")
+    def pending_extension_requests():
+        actor = eagle._assignment_actor(request)
+        if not actor:
+            return jsonify(ok=False, error="Teacher authentication required"), 401
+        if actor.get("is_coteacher"):
+            return jsonify(ok=False, error="Only class owners may manage extensions"), 403
+        with eagle._assignment_lock:
+            classes = {cls["id"]: cls for cls in eagle._get_teacher_classes(actor["email"])}
+            rosters = {key: {email.lower() for email in cls.get("students", [])}
+                       for key, cls in classes.items()}
+            names = {user["email"].lower(): group_projects.name_of(user)
+                     for user in eagle._load_users().get("users", [])}
+            rows = []
+            for assignment in eagle._list_assignments() if classes else []:
+                class_id = assignment.get("targetClassId")
+                if (class_id not in classes or assignment.get("gradingCompletedAt") or
+                        not assignment.get("releasedAt") or not eagle._assignment_access(actor, assignment, owner_only=True)):
+                    continue
+                for email, row in (assignment.get("extensionRequests") or {}).items():
+                    if email in rosters[class_id] and isinstance(row, dict) and row.get("status") == "pending":
+                        rows.append({**row, "studentEmail": email, "name": names.get(email, email),
+                                     "classId": class_id, "className": classes[class_id]["name"],
+                                     "assignmentId": assignment["id"], "assignmentName": assignment["name"]})
+        rows.sort(key=lambda row: (row["requestedAt"], row["id"]))
+        response = jsonify(ok=True, requests=rows)
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
 
     @app.route("/api/assignments/extension-requests", methods=["GET", "POST"])
     def extension_requests():
@@ -968,6 +1010,7 @@ def register(app, eagle):
         history = [{"revisionId": s.get("revisionId"), "submittedAt": s.get("submittedAt"), "files": public_files(s)} for s in latest.get("history", [])] if actor else []
         return jsonify(ok=True, files=public_files(sub), revisionId=sub.get("revisionId"), submittedAt=sub.get("submittedAt"), history=history,
                        groupRecipients=sub.get("groupRecipients", []), groupSubmittedByName=sub.get("groupSubmittedByName", ""),
+                       groupMode=sub.get("groupMode"), submittedAtIso=sub.get("submittedAtIso"),
                        latestRevisionId=latest.get("revisionId"), quizResponses=sub.get("quizResponses", []) if actor else [{"questionId": r.get("questionId"), "answer": r.get("answer")} for r in sub.get("quizResponses", [])])
 
     @app.get("/api/assignments/submission-file")
@@ -993,6 +1036,11 @@ def register(app, eagle):
                 with _contribution_file(target).open(encoding="utf-8") as handle:
                     spans = json.loads(handle.read(1024 * 1024))
                 contributor_data["contribution"]["spans"] = spans if isinstance(spans, list) else []
+            except (OSError, ValueError):
+                pass
+            try:
+                with _timeline_file(target).open(encoding="utf-8") as handle:
+                    contributor_data["workTimeline"] = json.loads(handle.read(512 * 1024))
             except (OSError, ValueError):
                 pass
         try:
