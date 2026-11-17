@@ -9,6 +9,9 @@ const { INTERNET, INTERNET_IP, DEFAULT_SSID, DEFAULT_DHCP, coverageAps, dhcpPool
 const eth = (count, extras = {}) => ({ prefix: 'ETH', count, media: 'ethernet', speed: 1000, ...extras });
 const catalog = {
   equipment: {
+    home_router: { groups: [eth(4, { speed: 100 }), eth(1, { prefix: 'WAN', speed: 100, wan: true })] },
+    smart_tv: { groups: [eth(1)] }, game_console: { groups: [eth(1)] },
+    smart_speaker: { groups: [] }, smart_light_switch: { groups: [] },
     router: { groups: [eth(4), eth(1, { prefix: 'WAN', wan: true })] },
     distribution_switch: { groups: [eth(24, { poe: true })], poe_budget: 200 },
     desktop: { groups: [eth(1)] }, phone: { groups: [] }, access_point: { groups: [eth(1)], poe_draw: 20 },
@@ -49,6 +52,44 @@ function graph(plan, prior) {
   assert.equal(data.error, '');
   return build(plan, data, coverageModel, prior);
 }
+
+test('a residential router bridges wired and Wi-Fi clients and caps both at 100 Mb/s', () => {
+  const plan = layout();
+  plan.access_points = [];
+  const home = { id: 'home', kind: 'home_router', x: 3, y: 2, wifi_ssid: 'default' };
+  plan.equipment = [home, plan.equipment.find(device => device.id === 'isp'),
+    { id: 'tv', kind: 'smart_tv', x: 3, y: 3 },
+    { id: 'console', kind: 'game_console', x: 4, y: 3 },
+    { id: 'speaker', kind: 'smart_speaker', x: 3.5, y: 2.5 },
+    { id: 'light', kind: 'smart_light_switch', wall_id: 'wall', t: .75 },
+    { id: 'camera', kind: 'poe_camera', x: 3, y: 1 },
+  ];
+  plan.cables = [
+    wire('wan', end('home', 'WAN1'), end('isp', 'ISP')),
+    wire('tv-wire', end('home', 'ETH1'), end('tv')),
+    wire('camera-wire', end('home', 'ETH2'), end('camera')),
+  ];
+  const network = graph(plan);
+  for (const id of ['tv', 'console', 'speaker', 'light']) {
+    const client = network.clients.get(id);
+    assert.equal(client.lease.router, 'home');
+    assert.equal(client.upstream.speed, 100);
+    assert.equal(client.speed, 100);
+    assert.equal(Boolean(client.wired), id === 'tv');
+    assert.ok(ping(network, id, 'home', () => 1).rtt);
+  }
+  assert.equal(network.clients.get('camera').speed, 0);
+  assert.ok(ping(network, 'tv', 'speaker', () => 1).rtt);
+  assert.ok(ping(network, 'speaker', INTERNET, () => 1).stages.some(stage => stage.nat));
+
+  home.firewall = [{ action: 'deny', destination_ip: INTERNET_IP }];
+  assert.match(ping(graph(plan), 'light', INTERNET, () => 1).reason, /firewall/);
+  assert.ok(ping(graph(plan), 'light', 'tv', () => 1).rtt);
+  plan.cables.splice(1, 1);
+  assert.equal(graph(plan).clients.get('tv').ap.id, 'home');
+  home.wifi_ssid = '';
+  assert.equal(graph(plan).clients.get('tv').speed, 0);
+});
 
 test('wired clients get DHCP, while the camera and desk phone need PoE', () => {
   const plan = layout();

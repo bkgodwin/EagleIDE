@@ -68,9 +68,9 @@
       const info = data.clients.get(device.id);
       const { speed, upstream, signal, ap, band } = info;
       const internet = upstream ? `${speedName(upstream.speed)} · ${upstream.provider}` : 'Disconnected';
-      const uplink = speed ? speedName(speed) : 'Disconnected';
+      const uplink = speed ? `${speedName(speed)}${model.wirelessClient(device) ? (info.wired ? ' · Ethernet' : ' · Wi-Fi') : ''}` : 'Disconnected';
       const targets = [...data.devices.values()].filter(other => other.id !== device.id &&
-        (model.isClient(other) || other.kind === 'router'));
+        (model.isClient(other) || model.isRouter(other)));
       const services = model.reachableServices(data, device.id).map(vm => ({
         id: vm.id, name: serviceNames()?.[vm.kind] ?? vm.kind, host: cabling().name(data.devices.get(vm.hostId)),
         ip: model.address(data.clients.get(vm.id).lease.ip), vlan: vm.vlan,
@@ -83,7 +83,7 @@
       const target = options.some(([id]) => id === preferred) ? preferred : model.INTERNET;
       return `<dl class="wifi-device-status"><div><dt>Uplink</dt><dd>${uplink}</dd></div>
         <div><dt>Internet</dt><dd>${escape(internet)}</dd></div>
-        ${device.kind === 'phone' ? `<div><dt>Signal</dt><dd>${signal === undefined ? 'No signal' : `${Math.round(signal)} dBm · ${window.WifiSiteModel.signalLevel(signal).label}`}</dd></div>
+        ${model.wirelessClient(device) && !info.wired ? `<div><dt>Signal</dt><dd>${signal === undefined ? 'No signal' : `${Math.round(signal)} dBm · ${window.WifiSiteModel.signalLevel(signal).label}`}</dd></div>
           <div><dt>Wi-Fi</dt><dd>${ap ? `${escape(cabling().name(data.devices.get(ap.id)))} · ${band} GHz` : 'Not associated'}</dd></div>` : ''}</dl>
         ${networkInspector(device, info)}
         <details class="wifi-network-settings" data-wifi-config="reachable-services">

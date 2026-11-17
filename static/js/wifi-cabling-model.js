@@ -3,8 +3,10 @@
   'use strict';
 
   const COLORS = { ethernet: '#0879b3', fiber: '#982fba' };
-  const TYPES = ['router', 'core_switch', 'distribution_switch', 'access_switch', 'keystone', 'demarc', 'rack', 'patch_panel', 'ups', 'server', 'desktop', 'phone', 'poe_camera', 'voip_phone', 'pos_terminal', 'copy_machine'];
-  const CLIENTS = new Set(['server', 'desktop', 'phone', 'poe_camera', 'voip_phone', 'pos_terminal', 'copy_machine']);
+  const TYPES = ['router', 'home_router', 'core_switch', 'distribution_switch', 'access_switch', 'keystone', 'demarc', 'rack', 'patch_panel', 'ups', 'server', 'desktop', 'phone', 'poe_camera', 'voip_phone', 'pos_terminal', 'copy_machine', 'smart_tv', 'smart_speaker', 'game_console', 'smart_light_switch'];
+  const WIRELESS_CLIENTS = new Set(['phone', 'smart_tv', 'smart_speaker', 'game_console', 'smart_light_switch']);
+  const CLIENTS = new Set([...WIRELESS_CLIENTS, 'server', 'desktop', 'poe_camera', 'voip_phone', 'pos_terminal', 'copy_machine']);
+  const isRouter = device => device?.kind === 'router' || device?.kind === 'home_router';
   const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
   const isConcrete = wall => ['concrete', 'reinforced_concrete'].includes(wall?.material);
   const portKey = ({ device_id, port }) => `${device_id}:${port}`;
@@ -139,7 +141,7 @@
       const device = devices.get(deviceId);
       const counterpart = devices.get(counterpartId);
       if (!device || deviceId === counterpartId) return [];
-      if (counterpart && device.kind === 'demarc' && counterpart.kind !== 'router') return [];
+      if (counterpart && device.kind === 'demarc' && !isRouter(counterpart)) return [];
       return ports.get(deviceId).filter(port => {
         if (port.media !== media) return false;
         if (counterpart && device.kind !== 'demarc' && !!port.wan !== (counterpart.kind === 'demarc')) return false;
@@ -430,7 +432,7 @@
     return visible;
   }
 
-  const model = { limitRoute, COLORS, TYPES, CLIENTS, distance, portKey, mediaName, speedName, cableName, pointAt, closestWall, build, bundledSegments };
+  const model = { limitRoute, COLORS, TYPES, CLIENTS, WIRELESS_CLIENTS, isRouter, distance, portKey, mediaName, speedName, cableName, pointAt, closestWall, build, bundledSegments };
   if (typeof module === 'object' && module.exports) module.exports = model;
   else root.WifiCablingModel = model;
 })(globalThis);

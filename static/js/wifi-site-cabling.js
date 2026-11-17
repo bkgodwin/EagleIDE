@@ -6,6 +6,11 @@
   const model = window.WifiCablingModel;
   const KINDS = ['equipment', 'pass_throughs', 'cables'];
   const ICONS = {
+    home_router: '<path d="M5 13V5m14 8V5M9 8a5 5 0 0 1 6 0m-4 2a1.8 1.8 0 0 1 2 0"/><rect x="2" y="13" width="20" height="7" rx="2"/><path d="M6 16.5h.1m3 0h.1m3 0h.1m3 0h.1"/>',
+    smart_tv: '<rect x="2" y="4" width="20" height="13" rx="1.5"/><path d="M6 20l2-3m10 3-2-3m-8-5a5 5 0 0 1 8 0m-5 2h2"/>',
+    smart_speaker: '<rect x="6" y="3" width="12" height="18" rx="5"/><path d="M8 8h8m-6 5h.1m4 0h.1m-4 3h.1m4 0h.1"/>',
+    game_console: '<path d="M8 8h8c3 0 4 2 5 7 .5 3-1.5 4-3 3l-2-2H8l-2 2c-1.5 1-3.5 0-3-3 1-5 2-7 5-7Z"/><path d="M8 10v4m-2-2h4m6-1h.1m2 2h.1"/>',
+    smart_light_switch: '<rect x="6" y="2" width="12" height="20" rx="2"/><rect x="9" y="6" width="6" height="12" rx="1"/><path d="M11 9h2"/>',
     router: '<path d="M5 9V4m14 5V4"/><rect x="2" y="9" width="20" height="11" rx="2.5"/><path d="M6 14h.1m3 0h.1m3 2h6m-2-2 2 2-2 2"/>',
     core_switch: '<rect x="2" y="3.5" width="20" height="17" rx="2.5"/><path d="M2 12h20M6 8h1m3 0h1m3 0h1m3 0h1M6 16h1m3 0h1m3 0h1m3 0h1"/>',
     distribution_switch: '<rect x="2" y="5.5" width="20" height="13" rx="2.5"/><path d="M5.5 10h2v3h-2zm4 0h2v3h-2zm4 0h2v3h-2zM19 10h.1m0 4h.1"/>',
@@ -65,7 +70,7 @@
 
     function equipmentSpecs(kind) {
       if (kind === 'rack') return '16U rack · open it to install equipment';
-      if (kind === 'phone') return 'Wi-Fi · automatically joins the strongest powered AP';
+
       if (kind === 'demarc') {
         const isp = catalog().isps[$('wifiEquipmentIsp').value];
         return isp ? `${model.speedName(isp.speed)} ${model.mediaName(isp.media)} to the router WAN` : '';
@@ -73,9 +78,12 @@
       if (kind === 'keystone') return 'Wall mount · rear termination and front patch port';
       const { groups, poe_budget, poe_draw, mount } = catalog().equipment[kind];
       const specs = groups.map(group => {
-        const role = group.wan ? ' WAN' : kind === 'router' ? ' LAN' : '';
+        const role = group.wan ? ' WAN' : model.isRouter({ kind }) ? ' LAN' : '';
         return `${group.count} × ${model.speedName(group.speed)} ${model.mediaName(group.media)}${role}${group.poe ? ' with PoE' : ''}`;
       });
+      if (kind === 'home_router') specs.push('Built-in Wi-Fi · 1 SSID · no PoE');
+      if (model.WIRELESS_CLIENTS.has(kind)) specs.push(groups.length ? 'Wired or Wi-Fi' : 'Wi-Fi only');
+      if (kind === 'smart_light_switch') specs.push('Wall mount');
       if (mount === 'ceiling') specs.push('Ceiling mount');
       if (poe_draw) specs.push(`${poe_draw} W PoE required`);
       if (poe_budget) specs.push(`${poe_budget} W PoE budget`);
@@ -136,6 +144,10 @@
       const item = { ...position, kind, name: anchor ? '' : `${profile.name} ${count}` };
       if (kind === 'poe_camera') Object.assign(item, { angle: 0, field_of_view: 90, range: 10 });
       if (kind === 'demarc') item.isp = $('wifiEquipmentIsp').value;
+      if (kind === 'home_router') {
+        item.wifi_ssid = plan().ssids.find(ssid => ssid.vlan === 0)?.id ?? '';
+        item.radios = window.WifiSiteModel.defaultRadios(plan().access_points.length + count - 1);
+      }
       return { group: 'equipment', item };
     }
 
@@ -155,7 +167,7 @@
         if (mode === 'equipment') ctx.changeTool('select');
         ctx.hint(group === 'pass_throughs' ? 'Pass-through added · capacity 10 cables.'
           : group === 'access_points' ? 'Access point placed. Connect it to PoE to enable coverage.'
-            : item.kind === 'phone' ? 'Phone placed. It joins the strongest powered access point in range.'
+            : model.WIRELESS_CLIENTS.has(item.kind) ? 'Device placed. Select it to see its connection and choose a Wi-Fi network.'
               : `${catalog().equipment[item.kind].name} placed. Use Cable to connect its ports.`);
       }
     }

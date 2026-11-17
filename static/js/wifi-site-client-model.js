@@ -8,13 +8,28 @@
   const RUN_TIME = 60_000;
   const DEFAULT_SSID = { id: 'default', name: 'Default', band: 'both', vlan: 0 };
   const DEFAULT_DHCP = { gateway: '192.168.0.1/24', dns: '1.1.1.1', fallback_dns: '8.8.8.8' };
-  const { CLIENTS } = typeof module === 'object' && module.exports ? require('./wifi-cabling-model.js') : root.WifiCablingModel;
+  const { CLIENTS, WIRELESS_CLIENTS, isRouter } = typeof module === 'object' && module.exports ? require('./wifi-cabling-model.js') : root.WifiCablingModel;
   const isClient = device => CLIENTS.has(device?.kind);
+  const wirelessClient = device => WIRELESS_CLIENTS.has(device?.kind);
+  const clientSsid = (device, ssids) => device.ssid_id ? ssids.find(ssid => ssid.id === device.ssid_id) : ssids[0];
   const managed = device => ['core_switch', 'distribution_switch'].includes(device.kind);
   const portVlans = (device, port) => device.port_vlans?.[port] ?? [0];
   const serviceId = (hostId, kind) => `:vm:${hostId}:${kind}`;
   const apSsids = (ap, ssids) => ap.ssid_ids ?? ssids.slice(0, 1).map(ssid => ssid.id);
   const hasBand = (ssid, band) => ssid.band === 'both' || ssid.band === band;
+
+  function radioSources(plan, cables, preview = '') {
+    const accessPoints = plan.access_points.filter(ap => cables.poweredAps.has(ap.id) || ap.id === preview);
+    const defaultSsid = (plan.ssids ?? [DEFAULT_SSID]).find(ssid => ssid.vlan === 0)?.id;
+    for (const device of plan.equipment ?? []) {
+      if (device.kind !== 'home_router') continue;
+      const ssid = device.wifi_ssid ?? defaultSsid;
+      const linkLimit = cables.ports.get(device.id).find(port => !port.wan).speed;
+      accessPoints.push({ ...device, ...cables.location(device), mount: 'table', angle: 0, power_db: 0,
+        ssid_ids: ssid ? [ssid] : [], linkLimit });
+    }
+    return accessPoints;
+  }
 
   function coverageAps(accessPoints, ssids, band, filter = '', includeInterferers = false) {
     const enabled = new Set(ssids.filter(ssid => hasBand(ssid, band)).map(ssid => ssid.id));
@@ -81,7 +96,7 @@
         visited.add(link.to);
         const peer = network.devices.get(link.to);
         if (managed(peer)) return portVlans(peer, link.toPort)[0] ?? null;
-        if (peer.kind === 'router') return 0;
+        if (isRouter(peer)) return 0;
         if (peer.kind === 'keystone' || peer.kind === 'access_switch') queue.push(peer.id);
       }
     }
@@ -101,6 +116,7 @@
         if ((managed(device) && !portVlans(device, hop.fromPort).includes(vlan)) ||
             (managed(peer) && !portVlans(peer, hop.toPort).includes(vlan)) ||
             (hop.media === 'wireless' && hop.vlan !== vlan) ||
+            (peer.kind === 'home_router' && vlan !== 0) ||
             (endpoint && endpoint.vlan !== vlan)) continue;
         visited.set(hop.to, { previous: id, hop });
         queue.push(hop.to);
@@ -226,26 +242,27 @@
   }
 
   function build(plan, cables, coverageModel, prior) {
-    const { devices, location, poweredAps, activeLinks } = cables;
+    const { devices, location, activeLinks } = cables;
     const links = new Map([...activeLinks].map(([id, edges]) => [id, [...edges]]));
-    const accessPoints = plan.access_points.filter(ap => poweredAps.has(ap.id));
+    const accessPoints = radioSources(plan, cables);
     const ssids = plan.ssids ?? [DEFAULT_SSID];
     const surveys = new Map();
     const clients = new Map(), routers = new Map();
     const network = { devices, links, clients, routers, services: new Map(),
       location: device => location(device?.hostId ? devices.get(device.hostId) : device) };
     for (const device of devices.values()) {
-      if (device.kind === 'router') {
+      if (isRouter(device)) {
         const pool = dhcpPool(device.dhcp ?? DEFAULT_DHCP);
         const { isp } = cables.status(device.id);
         routers.set(device.id, { id: device.id, pool, isp, waiting: [], unassigned: 0 });
       }
       if (!isClient(device)) continue;
-      if (device.kind !== 'phone') {
-        clients.set(device.id, { speed: cables.status(device.id).speed, vlan: wiredVlan(network, device.id) });
+      const cableSpeed = cables.status(device.id).speed;
+      if (cableSpeed || !wirelessClient(device)) {
+        clients.set(device.id, { speed: cableSpeed, wired: Boolean(cableSpeed), vlan: wiredVlan(network, device.id) });
         continue;
       }
-      const ssid = device.ssid_id ? ssids.find(item => item.id === device.ssid_id) : ssids[0];
+      const ssid = clientSsid(device, ssids);
       let best = { speed: 0 };
       if (ssid) {
         if (!surveys.has(ssid.id)) {
@@ -255,11 +272,12 @@
           })));
         }
         for (const { band, estimate } of surveys.get(ssid.id)) {
-          const result = estimate(device, true);
+          const result = estimate(location(device), true);
           if (!result) continue;
-          const { speed, loss } = radio(result.signal, band, result.ap.radios?.[band]?.width);
+          const link = radio(result.signal, band, result.ap.radios?.[band]?.width);
+          const speed = Math.min(link.speed, result.ap.linkLimit ?? Infinity);
           if (speed > best.speed || (speed === best.speed && result.signal > (best.signal ?? -Infinity))) {
-            best = { speed, loss, band, signal: result.signal, ap: speed ? result.ap : null, distance: result.distance };
+            best = { speed, loss: link.loss, band, signal: result.signal, ap: speed ? result.ap : null, distance: result.distance };
           }
         }
       }
@@ -370,7 +388,7 @@
     return { stages, dropPoint: null, rtt: 2 * outbound.reduce((sum, hop) => sum + latency(hop), 0) };
   }
 
-  const model = { INTERNET, INTERNET_IP, INTERVAL, RUN_TIME, DEFAULT_SSID, DEFAULT_DHCP, isClient, managed,
+  const model = { INTERNET, INTERNET_IP, INTERVAL, RUN_TIME, DEFAULT_SSID, DEFAULT_DHCP, isClient, isRouter, wirelessClient, clientSsid, radioSources, managed,
     portVlans, apSsids, coverageAps, ipNumber, address, serviceAddress, serviceId, reachableServices,
     parseCidr, dhcpPool, usable, radio, build, ping };
   if (typeof module === 'object' && module.exports) module.exports = model;

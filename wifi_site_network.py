@@ -3,7 +3,7 @@
 import ipaddress
 import re
 
-from wifi_cabling import _ports, CLIENT_KINDS
+from wifi_cabling import _ports, CLIENT_KINDS, WIRELESS_CLIENT_KINDS
 
 
 NETWORK_LIMITS = {"ssids": 64, "vlans": 64, "firewall_rules": 64}
@@ -125,6 +125,8 @@ def validate_network(raw, plan, *, label, safe_id):
         ssid_ids.add(ssid_id)
         names.add(name)
     default = [ssids[0]["id"]] if ssids else []
+    untagged = {ssid["id"] for ssid in ssids if ssid["vlan"] == 0}
+    home_default = next((ssid["id"] for ssid in ssids if ssid["vlan"] == 0), "")
     for item, ap in zip(raw["access_points"], plan["access_points"]):
         enabled = _list(item.get("ssid_ids", default), 4, "SSIDs on each AP")
         if any(not isinstance(sid, str) or sid not in ssid_ids for sid in enabled) or len(set(enabled)) != len(enabled):
@@ -134,7 +136,16 @@ def validate_network(raw, plan, *, label, safe_id):
     gateways = {}
     for item, device in zip(raw.get("equipment", []), plan["equipment"]):
         kind = device["kind"]
-        if kind == "router":
+        if kind in ("router", "home_router"):
+            home = kind == "home_router"
+            if home:
+                sid = item.get("wifi_ssid", home_default)
+                if not isinstance(sid, str) or (sid and sid not in untagged):
+                    raise ValueError("Residential routers broadcast one untagged SSID")
+                device["wifi_ssid"] = sid
+                device["radios"] = validate_radios(item.get("radios"), len(plan["access_points"]))
+                if item.get("port_vlans"):
+                    raise ValueError("Residential router ports do not support VLAN tags")
             dhcp = item.get("dhcp", DEFAULT_DHCP)
             if not isinstance(dhcp, dict):
                 raise ValueError("Invalid DHCP settings")
@@ -154,6 +165,8 @@ def validate_network(raw, plan, *, label, safe_id):
                 clean = {"action": action}
                 for side in ("source", "destination"):
                     vid, address = rule.get(f"{side}_vlan"), rule.get(f"{side}_ip", "")
+                    if home and vid is not None:
+                        raise ValueError("Residential firewall rules use IP addresses only")
                     clean[f"{side}_vlan"] = None if vid is None else vlan(vid, vlan_ids)
                     if address == "":
                         clean[f"{side}_ip"] = ""
@@ -173,10 +186,10 @@ def validate_network(raw, plan, *, label, safe_id):
                 if len(set(values)) != len(values):
                     raise ValueError("Select distinct VLANs for each port")
                 device["port_vlans"][port] = values
-        elif kind == "phone":
+        elif kind in WIRELESS_CLIENT_KINDS:
             choice = item.get("ssid_id", "")
             if not isinstance(choice, str) or (choice and choice not in ssid_ids):
-                raise ValueError("Select a shared SSID for the phone")
+                raise ValueError("Select a shared SSID for the wireless client")
             device["ssid_id"] = choice
 
     occupied = set()
