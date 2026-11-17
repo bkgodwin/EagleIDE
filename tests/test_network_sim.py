@@ -633,6 +633,55 @@ class NetworkRouteTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_packet_and_infra_access_are_independent_by_class_and_school(self):
+        teacher = {"X-Teacher-Token": "teacher-token"}
+        student = {"X-User-Token": "student-token"}
+        admin = {"X-Admin-Token": "admin-token"}
+        settings = "/api/network/teacher/classes/class-1/settings"
+        bootstrap = "/api/network/bootstrap"
+        packet = "/api/network/examples/simple-lan"
+        infra = "/api/network/wifi-starter"
+        saved = self.client.put(settings, headers=teacher, json={"access": {"packet": True, "infra": False}})
+        self.assertEqual(saved.json["data"]["access"], {"packet": True, "infra": False})
+        self.assertEqual(self.client.get(bootstrap, headers=student).json["data"]["modes"], {"packet": True, "infra": False})
+        self.assertEqual(self.client.get(packet, headers=student).status_code, 200)
+        self.assertEqual(self.client.post(infra, headers=student).status_code, 403)
+        saved = self.client.put(settings, headers=teacher, json={"access": {"packet": False, "infra": True}})
+        self.assertEqual(saved.json["data"]["access"], {"packet": False, "infra": True})
+        self.assertEqual(self.client.get(packet, headers=student).status_code, 403)
+        self.assertEqual(self.client.post(infra, headers=student).status_code, 200)
+        self.config_state.update(packet_sim_enabled=True, infra_sim_enabled=False)
+        self.assertEqual(self.client.get(bootstrap, headers=student).status_code, 403)
+        self.assertEqual(self.client.get(packet, headers=teacher).status_code, 200)
+        self.assertEqual(self.client.post(infra, headers=teacher).status_code, 403)
+        self.assertEqual(self.client.post(infra, headers=admin).status_code, 200)
+
+    def test_guest_starter_checks_are_transient_and_respect_guest_toggle(self):
+        url = "/api/network/wifi-starter"
+        course = self.client.post(url).json["data"]
+        site = course["site"]
+        site["walls"] = [
+            {"id": str(i), "a": {"x": ax, "y": ay}, "b": {"x": bx, "y": by}, "material": material}
+            for i, (ax, ay, bx, by, material) in enumerate([
+                (0, 0, 14, 0, "drywall"), (14, 0, 14, 10, "drywall"),
+                (14, 10, 0, 10, "drywall"), (0, 10, 0, 0, "drywall"), (8, 0, 8, 10, "concrete"),
+            ])
+        ]
+        payload = {"site": site, "progress": course["progress"]}
+        result = self.client.post(url + "/check", json=payload)
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json["data"]["progress"]["completed"], 1)
+        self.assertTrue(result.cache_control.no_store)
+        self.assertEqual(self.client.post(url).json["data"]["progress"]["completed"], 0)
+        self.assertEqual(self.client.put(url, json=payload).status_code, 401)
+        self.assertFalse(self.store._wifi_path("").exists())
+        self.config_state["infra_sim_guest_enabled"] = False
+        self.assertEqual(self.client.get("/api/network/bootstrap").json["data"]["modes"], {"packet": True, "infra": False})
+        self.assertEqual(self.client.post(url, json=payload).status_code, 403)
+        self.assertEqual(self.client.post(url + "/check", json=payload).status_code, 403)
+        self.assertEqual(self.client.post("/api/network/wifi-scenarios/maple-lane-house").status_code, 404)
+        self.assertEqual(self.client.post(url, headers={"X-Teacher-Token": "teacher-token"}).status_code, 200)
+
     def test_guests_can_open_when_enabled_but_cannot_save(self):
         response = self.client.get("/api/network/bootstrap")
         self.assertEqual(response.status_code, 200)
@@ -712,7 +761,7 @@ class NetworkRouteTests(unittest.TestCase):
         teacher = {"X-Teacher-Token": "teacher-token"}
         student = {"X-User-Token": "student-token"}
         self.store.set_class_access("class-1", True)
-        self.assertEqual(self.client.get(scenario_url).status_code, 404)
+        self.assertEqual(self.client.get(scenario_url).status_code, 200)
         catalog = self.client.get("/api/network/bootstrap", headers=student).get_json()["data"]["scenarios"]
         row = next(item for item in catalog if item["id"] == scenario_id)
         self.assertNotIn("site", row)
@@ -741,7 +790,9 @@ class NetworkRouteTests(unittest.TestCase):
         url = f"/api/network/wifi-scenarios/{scenario_id}"
         student = {"X-User-Token": "student-token"}
         self.store.set_class_access("class-1", True)
-        self.assertEqual(self.client.post(url).status_code, 401)
+        guest = self.client.post(url)
+        self.assertEqual(guest.status_code, 200)
+        self.assertIn("briefing", guest.json["data"])
         self.assertFalse(self.store._wifi_path("").exists())
         first = self.client.post(url, headers=student)
         second = self.client.post(url, headers=student)
@@ -792,7 +843,9 @@ class NetworkRouteTests(unittest.TestCase):
         url = "/api/network/wifi-starter"
         student = {"X-User-Token": "student-token"}
         teacher = {"X-Teacher-Token": "teacher-token"}
-        self.assertEqual(self.client.post(url).status_code, 401)
+        guest = self.client.post(url)
+        self.assertEqual(guest.status_code, 200)
+        self.assertTrue(guest.json["data"]["guest"])
         self.assertEqual(self.client.post(url, headers=student).status_code, 403)
         self.store.set_class_access("class-1", True)
         opened = self.client.post(url, headers=student)
@@ -1229,7 +1282,9 @@ class NetworkRouteTests(unittest.TestCase):
         self.store.delete_account_wifi("student@example.com")
         self.assertEqual(self.store.list_wifi_sites("student@example.com"), [])
         self.assertTrue(self.store.get_wifi_site("teacher@example.com", "keep"))
-        with patch.object(self.store, "class_access", side_effect=[True, False]):
+        with patch.object(self.store, "student_modes", side_effect=[
+            {"packet": True, "infra": True}, {"packet": True, "infra": False},
+        ]):
             revoked = self.client.put(url, headers=headers, json={"site": self.wifi_plan(), "revision": 0})
         self.assertEqual(revoked.status_code, 403)
         self.assertFalse(path.exists())

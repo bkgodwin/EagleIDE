@@ -72,6 +72,9 @@ DEFAULT_CONFIG = {
     # Optional network simulator. Teachers can further restrict enabled access
     # class-by-class; admins may privately preview it while this is disabled.
     "network_sim_enabled": False,
+    "packet_sim_enabled": None,
+    "infra_sim_enabled": None,
+    "infra_sim_guest_enabled": True,
 
     # Optional native Eagle Lab. Admin enrollment and teacher class rules are
     # stored separately, and existing deployments remain disabled by default.

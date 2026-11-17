@@ -111,7 +111,15 @@
   const fmt = meters => `${display(meters).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${current().units}`;
   const wires = window.WifiSiteCabling.create({
     catalog: () => options.catalog, limits: () => options.limits, getPlan: current, selected: () => selected, apNames: model.MOUNTS,
-    select: selectObject, changeTool, add: addObjects, replace: replaceObject, draw: drawObjects, frame: scheduleScene,
+    select: selectObject, changeTool, focusPlan: () => viewport.focus({ preventScroll: true }),
+    showGuidedPicker: select => starterGuide.showPicker(select),
+    placeConfirmation(button, point) {
+      const { x, y } = view.worldToScreen(camera, point);
+      if (x < 0 || y < 0 || x > dimensions.width || y > dimensions.height) return false;
+      button.style.left = `${Math.max(4, Math.min(dimensions.width - 36, x + 15))}px`;
+      button.style.top = `${Math.max(4, Math.min(dimensions.height - 35, y - 39))}px`;
+      return true;
+    }, add: addObjects, replace: replaceObject, draw: drawObjects, frame: scheduleScene,
     hint, escape, id, fmt, display, tidy: cleanText, toMeters: value => model.metersFrom(value, current().units),
     scale: () => camera.scale, snap: drawingPoint, line: lineSvg, dot, pointFields, marker, roundPoint,
     wallSpans: (walls, openings) => structure.wallSpans(walls, openings),
@@ -123,7 +131,8 @@
   const clients = window.WifiSiteClients.create({ plan: current, cabling: () => wires.index(), escape, selected: inspectorId, serviceNames, onPacket: recordStarterPing,
     networkInspector: (item, info) => networkSettings.clientInspector(item, info) });
   const starterGuide = window.WifiStarterGuide.create({ workspace, escape, fit, locate: locateStarterTarget,
-    recheck: checkStarterLesson, reset: resetStarter, resolve: projectStarterGhost, icon: kind =>
+    recheck: checkStarterLesson, reset: resetStarter, resolve: projectStarterGhost,
+    selectedId: inspectorId, findTarget: findStarterDevice, icon: kind =>
     window.WifiSiteCabling.icon(({ ap1: 'access_point', ap2: 'access_point', camera: 'poe_camera' })[kind] || kind) });
   const racks = window.WifiSiteRacks.create({
     plan: current, data: () => wires.index(), catalog: () => options.catalog, escape, id,
@@ -236,6 +245,8 @@
         access_points: (layout.access_points || []).map((ap, i) => ({ radios: model.defaultRadios(i), ...ap })) }, account,
       sequence: 0, savedSequence: 0, starter, evidence: new Set(), undo: [], redo: [], briefing: briefing || scenario_briefing,
     };
+    if (starter?.guest) session.guestCheckpoint = { plan: session.plan, progress: starter.progress };
+    $('wifiGuestWorkspaceNote').hidden = options.canSave;
     selected = previewAp = '';
     setSelection();
     clients.reset();
@@ -305,15 +316,16 @@
   }
 
   function scheduleSave() {
-    if (!options.canSave || session.conflict || session.copying) return;
+    if ((!options.canSave && !session.starter?.guest) || session.conflict || session.copying) return;
     const project = session;
     clearTimeout(project.timer);
-    status('Unsaved changes');
+    status(project.starter?.guest ? 'Checking lesson…' : 'Unsaved changes');
     project.timer = setTimeout(() => flushSave(project), 650);
   }
 
   function flushSave(project = session) {
-    if (!project || !options.canSave || project.account !== options.authKey()) return Promise.resolve(false);
+    if (!project || (!options.canSave && !project.starter?.guest) || project.account !== options.authKey()) return Promise.resolve(false);
+    const guest = project.starter?.guest;
     clearTimeout(project.timer);
     if (project.copyPending) return project.copyPending.then(saved => saved && flushSave(project));
     if (project.conflict) return Promise.resolve(false);
@@ -324,13 +336,21 @@
         const attempt = project.attempt ||= {
           sequence: project.sequence, plan: project.plan, evidence: [...project.evidence],
         };
-        if (session === project) status('Saving…');
+        if (session === project) status(guest ? 'Checking lesson…' : 'Saving…');
         try {
-          const saved = await options.api(project.starter ? starterEndpoint : siteUrl(project.id) + '?summary=1', {
-            method: 'PUT', signal: AbortSignal.timeout(20000),
-            body: JSON.stringify({ site: attempt.plan, revision: project.revision, evidence: attempt.evidence }),
+          const data = { site: attempt.plan, evidence: attempt.evidence };
+          if (guest) data.progress = project.starter.progress;
+          else data.revision = project.revision;
+          const url = guest ? starterEndpoint + '/check' : project.starter ? starterEndpoint : siteUrl(project.id) + '?summary=1';
+          const saved = await options.api(url, {
+            method: guest ? 'POST' : 'PUT', signal: AbortSignal.timeout(20000), body: JSON.stringify(data),
           });
-          project.revision = saved.revision;
+          if (guest) {
+            if (saved.progress.completed > project.starter.progress.completed) {
+              project.guestCheckpoint = { plan: attempt.plan, progress: saved.progress };
+            }
+            project.starter.progress = saved.progress;
+          } else project.revision = saved.revision;
           project.savedSequence = attempt.sequence;
           project.attempt = null;
           for (const event of attempt.evidence) project.evidence.delete(event);
@@ -338,11 +358,11 @@
             starterGuide.update(saved.progress);
             scheduleScene();
           }
-          if (session === project && !dirty(project)) status('Saved', 'good');
+          if (session === project && !dirty(project)) status(guest ? 'Guest practice' : 'Saved', 'good');
         } catch (error) {
           project.conflict = error.status === 409;
           if (!project.conflict && error.status >= 400 && error.status < 500) project.attempt = null;
-          if (session === project) status(`Save failed. ${error.message}`, 'error');
+          if (session === project) status(`${guest ? 'Check failed' : 'Save failed'}. ${error.message}`, 'error');
           return false;
         }
       }
@@ -367,10 +387,20 @@
       clients.suspend();
       cancelPdf(project);
       status(scope === 'course' ? 'Starting a new attempt…' : 'Restoring lesson checkpoint…');
-      const data = await options.api(starterEndpoint, {
-        method: 'POST', signal: AbortSignal.timeout(20000),
-        body: JSON.stringify({ reset: scope, revision: project.revision, lesson }),
-      });
+      let data;
+      if (project.starter.guest && scope === 'lesson') {
+        if (project.starter.progress.completed !== lesson) {
+          status('The current lesson changed. Continue from the saved task.', 'error');
+          return false;
+        }
+        const checkpoint = project.guestCheckpoint;
+        data = { ...project.starter, site: checkpoint.plan, progress: checkpoint.progress };
+      } else {
+        data = await options.api(starterEndpoint, {
+          method: 'POST', signal: AbortSignal.timeout(20000),
+          ...(project.starter.guest ? {} : { body: JSON.stringify({ reset: scope, revision: project.revision, lesson }) }),
+        });
+      }
       if (session !== project || !sameAccount()) return false;
       workspace.inert = false;
       hide();
@@ -1282,6 +1312,7 @@
       }
       drawGrid();
       layoutMarkerLabels();
+      wires.positionConfirm();
       starterGuide.draw(camera.scale);
       starterGuide.schedule();
       drawOverlay();
@@ -1511,7 +1542,20 @@
     return { point: { x: coordinate(result.point.x), y: coordinate(result.point.y) }, joined: result.joined };
   }
 
+  function findStarterDevice({ kind, point }) {
+    const [x, y] = point;
+    const data = wires.index();
+    return [...data.devices.values()].filter(item => item.kind === kind)
+      .map(item => ({ id: item.id, distance: model.distance(data.location(item), { x, y }) }))
+      .filter(item => item.distance <= 1.5).sort((a, b) => a.distance - b.distance)[0]?.id;
+  }
+
   function projectStarterGhost(task, ghost) {
+    if (task === 'desktop') {
+      const [x, y] = ghost.at;
+      const desk = current().decor.find(item => item.kind === 'desk' && model.distance(item, { x, y }) <= 1.05);
+      if (desk) return { ...ghost, at: [desk.x, desk.y] };
+    }
     const project = ([x, y], concrete = false) => {
       const point = cableModel.closestWall({ x, y }, current().walls, 1.5, concrete)?.point;
       return point ? [point.x, point.y] : [x, y];
@@ -1723,7 +1767,7 @@
   }
 
   function pointerDown(event) {
-    if ((event.button !== 0 && event.button !== 1) || event.target.closest('.wifi-float, #wifiCableBundleMenu')) return;
+    if ((event.button !== 0 && event.button !== 1) || event.target.closest('.wifi-float, #wifiCableBundleMenu, #wifiCableConfirm, .wifi-starter-picker')) return;
     const screen = screenPoint(event);
     if (event.pointerType === 'touch') {
       if (touches.size >= 2) return;
@@ -1920,6 +1964,11 @@
     }
     if (scenarioDialog.open || tutorialDialog.open || $('wifiRackDialog').open || $('wifiMaterialsDialog').open) return;
     const typing = event.target.matches('input,textarea,select');
+    if (event.defaultPrevented) return;
+    if (event.key === 'Enter' && !typing && !event.target.closest('button,summary,[role="option"]') && wires.finish()) {
+      event.preventDefault();
+      return;
+    }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !typing) {
       event.preventDefault();
       history(!event.shiftKey);
@@ -2010,7 +2059,7 @@
       if (!menu || event.target.closest('[data-wifi-panel-button]')) closeToolMenus();
       else closeToolMenus(menu);
     });
-    $('wifiDecorType').innerHTML = choiceList(Object.entries(design.symbols).map(([kind, info]) => [kind, info[0]]), 'tree');
+    $('wifiDecorType').innerHTML = choiceList(Object.entries(design.symbols).map(([kind, info]) => [kind, info[0]]).sort((a, b) => a[1].localeCompare(b[1])), 'tree');
     $('wifiDecorType').addEventListener('change', scheduleScene);
     $('wifiSnap').addEventListener('change', scheduleScene);
     $('wifiSurfaceType').innerHTML = choiceList(Object.entries(design.surfaces).filter(([kind]) => kind !== 'floor'), 'sidewalk');

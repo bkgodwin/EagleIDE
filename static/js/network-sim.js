@@ -371,6 +371,8 @@
     $('networkLoading').hidden = true;
     $('networkPreviewWarning').hidden = !data.admin_preview;
     $('networkGuestNote').hidden = data.role !== 'guest';
+    $('packetSimHub').hidden = data.modes?.packet === false;
+    $('infraSimHub').hidden = data.modes?.infra === false;
     $('networkWifiBtn').disabled = !data.wifi_limits;
     $('wifiSampleSite').disabled = !data.wifi_limits;
     renderLibrary(data);
@@ -435,9 +437,9 @@
       `${attempt > 1 ? 'Attempt ' + attempt + ' · ' : ''}${completed} of ${lessons.length} complete` : '';
     $('wifiStarterIntro').textContent = data.can_save
       ? 'Design and connect Cedar Street Community Studio. Each lesson continues on the same saved plan.'
-      : 'Sign in to start the guided studio project and save progress.';
+      : 'Follow the studio lessons as a guest. Progress ends when you leave the editor. Download Project to keep your design.';
     const button = $('wifiStarterOpen');
-    button.hidden = !data.can_save;
+    button.hidden = !lessons.length;
     const repeat = $('wifiStarterRepeat');
     repeat.hidden = !data.can_save || !progress?.revision;
     repeat.dataset.revision = progress?.revision ?? '';
@@ -479,6 +481,10 @@
     return fromLibrary(button, async valid => {
       const access = await requestBootstrap();
       if (!valid()) return;
+      if (access.modes?.infra === false) throw new Error('Infra Sim is disabled for this account.');
+      if (!access.can_save && (starter || scenarioId) && !window.confirm(
+        'This is a guest session. Progress ends when you leave the editor. You can download your project and open that file later. Continue?'
+      )) return;
       const returnFocus = scenarioId ? $('wifiScenariosFolder').querySelector('summary') : siteId ? null : button;
       if (file && file.size > access.wifi_limits.project_bytes) throw new Error('Project files must be 2 MB or smaller.');
       const [saved] = await Promise.all([
@@ -2431,6 +2437,8 @@
   let savedTeacherSettings;
   let teacherWriteInProgress = false;
 
+  const teacherAccessInputs = { packet: 'networkTeacherAccessToggle', infra: 'networkTeacherInfraToggle' };
+
   function teacherScenarioInputs() {
     return [...$('networkTeacherScenarioList').querySelectorAll('[data-teacher-scenario]')];
   }
@@ -2443,8 +2451,9 @@
   function teacherSettingsChanges() {
     const changes = {};
     if (!savedTeacherSettings) return changes;
-    const enabled = $('networkTeacherAccessToggle').checked;
-    if (enabled !== savedTeacherSettings.enabled) changes.enabled = enabled;
+    const access = Object.fromEntries(Object.entries(teacherAccessInputs)
+      .map(([mode, id]) => [mode, $(id).checked]).filter(([mode, checked]) => checked !== savedTeacherSettings.access[mode]));
+    if (Object.keys(access).length) changes.access = access;
     const visibility = Object.fromEntries(teacherScenarioInputs()
       .filter(input => input.checked !== savedTeacherSettings.scenario_visibility[input.dataset.teacherScenario])
       .map(input => [input.dataset.teacherScenario, input.checked]));
@@ -2459,7 +2468,7 @@
     select.disabled = !select.options.length || locked;
     $('networkTeacherRefreshBtn').disabled = select.disabled;
     $('networkTeacherSaveBtn').disabled = $('networkTeacherDiscardBtn').disabled = !dirty || teacherWriteInProgress;
-    $('networkTeacherAccessToggle').disabled = !savedTeacherSettings || teacherWriteInProgress;
+    for (const id of Object.values(teacherAccessInputs)) $(id).disabled = !savedTeacherSettings || teacherWriteInProgress;
     teacherScenarioInputs().forEach(input => { input.disabled = teacherWriteInProgress; });
     $('networkTeacherLabList').querySelectorAll('[data-teacher-lab]').forEach(button => { button.disabled = locked; });
     countVisibleScenarios();
@@ -2467,12 +2476,13 @@
   }
 
   function showSavedTeacherSettings(message = '') {
-    const { enabled, globally_enabled, scenario_visibility } = savedTeacherSettings;
-    $('networkTeacherAccessToggle').checked = enabled;
+    const { access, global_access, scenario_visibility } = savedTeacherSettings;
+    for (const [mode, id] of Object.entries(teacherAccessInputs)) $(id).checked = access[mode];
     teacherScenarioInputs().forEach(input => { input.checked = scenario_visibility[input.dataset.teacherScenario]; });
-    const access = enabled ? (globally_enabled ? 'Students in this class can open Network Lab.'
-      : 'Class access is enabled. An administrator must enable Network Lab school-wide.') : 'Class access is disabled.';
-    $('networkTeacherStatus').textContent = message ? `${message} ${access}` : access;
+    const summary = [['packet', 'Packet Sim'], ['infra', 'Infra Sim']].map(([mode, name]) =>
+      `${name} ${access[mode] && global_access[mode] ? 'available' : access[mode] ? 'awaiting administrator access' : 'off for this class'}`
+    ).join(' · ');
+    $('networkTeacherStatus').textContent = message ? `${message} ${summary}` : summary;
     updateTeacherSettingsControls();
   }
 
@@ -2495,7 +2505,7 @@
       teacherClassRequest += 1;
       state.teacherClassId = '';
       savedTeacherSettings = null;
-      $('networkTeacherAccessToggle').checked = false;
+      for (const id of Object.values(teacherAccessInputs)) $(id).checked = false;
       $('networkTeacherScenarioList').replaceChildren();
       $('networkTeacherStarter').hidden = $('networkTeacherScenarios').hidden = $('networkTeacherLabHeading').hidden = true;
       $('networkTeacherStatus').textContent = '';
@@ -2516,7 +2526,7 @@
     const valid = () => request === teacherClassRequest && account === currentAuthKey();
     state.teacherClassId = classId;
     savedTeacherSettings = null;
-    $('networkTeacherAccessToggle').checked = false;
+    for (const id of Object.values(teacherAccessInputs)) $(id).checked = false;
     $('networkTeacherScenarioList').replaceChildren();
     $('networkTeacherStarter').hidden = $('networkTeacherScenarios').hidden = $('networkTeacherLabHeading').hidden = true;
     $('networkTeacherLabList').replaceChildren();
@@ -2526,8 +2536,8 @@
       const data = await api(`/api/network/teacher/classes/${encodeURIComponent(classId)}`, { cache: 'no-store' });
       if (!valid()) return;
       savedTeacherSettings = {
-        enabled: data.enabled,
-        globally_enabled: data.globally_enabled,
+        access: data.access,
+        global_access: data.global_access,
         scenario_visibility: Object.fromEntries(data.scenarios.map(item => [item.id, item.visible])),
       };
       renderTeacherScenarios(data.scenarios);
@@ -2776,7 +2786,7 @@
     $('networkCommandModal')?.addEventListener('click', event => { if (event.target === $('networkCommandModal')) $('networkCommandModal').style.display = 'none'; });
     $('networkTeacherClassSelect')?.addEventListener('change', loadTeacherClass);
     $('networkTeacherRefreshBtn')?.addEventListener('click', loadTeacherClass);
-    $('networkTeacherAccessToggle')?.addEventListener('change', teacherSettingsChanged);
+    for (const id of Object.values(teacherAccessInputs)) $(id)?.addEventListener('change', teacherSettingsChanged);
     $('networkTeacherSaveBtn')?.addEventListener('click', saveTeacherSettings);
     $('networkTeacherDiscardBtn')?.addEventListener('click', () => showSavedTeacherSettings('Changes discarded.'));
     $('networkTeacherScenarioList')?.addEventListener('change', event => {

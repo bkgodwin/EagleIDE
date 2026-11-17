@@ -4021,7 +4021,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       // Registration setting
       document.getElementById('registrationEnabledModal').checked = currentConfig?.registration_enabled !== false;
       document.getElementById('guestIdeAccessEnabledModal').checked = currentConfig?.guest_ide_access_enabled !== false;
-      document.getElementById('networkSimEnabledModal').checked = !!currentConfig?.network_sim_enabled;
+      document.getElementById('networkSimEnabledModal').checked = !!(currentConfig?.packet_sim_enabled ?? currentConfig?.network_sim_enabled);
+      document.getElementById('infraSimEnabledModal').checked = !!(currentConfig?.infra_sim_enabled ?? currentConfig?.network_sim_enabled);
+      document.getElementById('infraSimGuestEnabledModal').checked = currentConfig?.infra_sim_guest_enabled !== false;
       document.getElementById('eagleLabEnabledModal').checked = !!currentConfig?.eagle_lab_enabled;
       document.getElementById('pythonMemoryLimitModal').value = Number(currentConfig?.python_memory_limit_mb || 750);
       document.getElementById('pythonExecutionTimeoutModal').value = Number(currentConfig?.python_execution_timeout_seconds || 30);
@@ -4551,7 +4553,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       
       const registration_enabled = document.getElementById('registrationEnabledModal').checked;
       const guest_ide_access_enabled = document.getElementById('guestIdeAccessEnabledModal').checked;
-      const network_sim_enabled = document.getElementById('networkSimEnabledModal').checked;
+      const packet_sim_enabled = document.getElementById('networkSimEnabledModal').checked;
+      const infra_sim_enabled = document.getElementById('infraSimEnabledModal').checked;
+      const infra_sim_guest_enabled = document.getElementById('infraSimGuestEnabledModal').checked;
       const eagle_lab_enabled = document.getElementById('eagleLabEnabledModal').checked;
       const status = document.getElementById('adminSettingsStatus');
       if (status) status.textContent = 'Saving…';
@@ -4580,7 +4584,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         python_max_concurrent_runs,
         python_module_access,
         python_execution_timeout_seconds,
-        network_sim_enabled,
+        network_sim_enabled: packet_sim_enabled || infra_sim_enabled,
+        packet_sim_enabled,
+        infra_sim_enabled,
+        infra_sim_guest_enabled,
         eagle_lab_enabled,
         guest_ide_access_enabled
       });

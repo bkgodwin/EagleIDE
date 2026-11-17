@@ -343,6 +343,9 @@ except Exception:
         "registration_enabled": True,
         "guest_ide_access_enabled": True,
         "network_sim_enabled": False,
+        "packet_sim_enabled": None,
+        "infra_sim_enabled": None,
+        "infra_sim_guest_enabled": True,
         "eagle_lab_enabled": False,
         "python_memory_limit_mb": 750,
         "python_execution_timeout_seconds": 30,
@@ -599,6 +602,9 @@ def _configured_ai_timeout(cfg: Optional[Dict[str, Any]] = None) -> int:
 
 def _normalize_config_partial(partial: Dict[str, Any]) -> Dict[str, Any]:
     normalized = dict(partial or {})
+    for key in ("packet_sim_enabled", "infra_sim_enabled", "infra_sim_guest_enabled"):
+        if key in normalized and type(normalized[key]) is not bool:
+            raise ValueError("Simulator access must be enabled or disabled with a checkbox")
     if "python_execution_timeout_seconds" in normalized:
         value = normalized["python_execution_timeout_seconds"]
         try:

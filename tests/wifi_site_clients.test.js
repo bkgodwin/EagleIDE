@@ -109,10 +109,15 @@ test('ping traverses cable bends, returns in reverse, and counts request and rep
   assert.deepEqual(replyLoss.dropPoint, { x: 57, y: 2 });
 });
 
-test('Internet ping leaves and returns at the router and requires an ISP handoff', () => {
+test('Internet ping follows the physical ISP handoff and marks translated traffic in both directions', () => {
   const plan = layout(), network = graph(plan);
   const local = ping(network, 'desktop', 'router'), internet = ping(network, 'desktop', INTERNET);
-  assert.equal(internet.rtt, local.rtt + 40);
+  const translated = internet.stages.filter(stage => stage.nat);
+  assert.deepEqual(translated.map(stage => stage.reply), [false, true]);
+  assert.deepEqual(translated[0].points, [{ x: 5, y: 2 }, { x: 2, y: 0 }]);
+  assert.deepEqual(translated[1].points, [...translated[0].points].reverse());
+  assert.ok(internet.rtt > local.rtt + 40);
+  assert.ok(local.stages.every(stage => !stage.nat));
   const transit = internet.stages.filter(stage => stage.media === 'internet');
   assert.deepEqual(transit.map(stage => stage.reply), [false, true]);
   assert.ok(transit.every(stage => !stage.points && stage.duration > 0));

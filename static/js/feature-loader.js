@@ -7,27 +7,27 @@
     externalToolsAdmin: ['/static/js/external-tools-admin.js?v=20261020-storage-1'],
     eagleLab: ['/static/js/lab-report-content.js?v=20261103', '/static/js/eagle-lab.js?v=20261103', '/static/js/lab-manual.js?v=20261103', '/static/js/lab-report-editor.js?v=20261103'],
     network: [
-      '/static/js/network-sim.js?v=20261116-starter-repeat',
+      '/static/js/network-sim.js?v=20261116-infra-guidance',
       '/static/js/network-sim-advanced.js?v=20261113-hub',
     ],
     wifiSite: [
-      '/static/css/features/wifi-site.css?v=20261116-starter-labs',
+      '/static/css/features/wifi-site.css?v=20261116-infra-guidance',
       '/static/js/wifi-site-model.js?v=20261116-rack-radio',
       '/static/js/wifi-site-design.js?v=20261115-hospital',
       '/static/js/wifi-site-view.js?v=20261116-infra-polish',
       '/static/js/wifi-site-heatmap.js?v=20261116-rack-radio',
       '/static/js/wifi-cabling-model.js?v=20261116-rack-workspace',
-      '/static/js/wifi-site-client-model.js?v=20261116-server-vms',
+      '/static/js/wifi-site-client-model.js?v=20261116-infra-guidance',
       '/static/js/wifi-site-network.js?v=20261116-server-vms',
-      '/static/js/wifi-site-clients.js?v=20261116-starter-labs',
-      '/static/js/wifi-site-racks.js?v=20261116-starter-labs',
-      '/static/js/wifi-site-cabling.js?v=20261116-starter-labs',
+      '/static/js/wifi-site-clients.js?v=20261116-infra-guidance',
+      '/static/js/wifi-site-racks.js?v=20261116-infra-guidance',
+      '/static/js/wifi-site-cabling.js?v=20261116-infra-guidance',
       '/static/js/wifi-site-structure.js?v=20261115-stadium',
       '/static/js/wifi-site-example.js?v=20261116-infra-polish',
       '/static/js/wifi-site-export.js?v=20261116-infra-polish',
       '/static/js/wifi-site-tutorials.js?v=20261116-infra-polish',
-      '/static/js/wifi-site-starter.js?v=20261116-starter-repeat',
-      '/static/js/wifi-site.js?v=20261116-starter-repeat',
+      '/static/js/wifi-site-starter.js?v=20261116-infra-guidance',
+      '/static/js/wifi-site.js?v=20261116-infra-guidance',
     ],
     wikiTools: [
       '/static/css/features/wiki-tools.css?v=20260921-1',
@@ -53,7 +53,8 @@
     if (ctx.WIKI_MANAGER_TOKEN) headers['X-Wiki-Manager-Token'] = ctx.WIKI_MANAGER_TOKEN;
     if (ctx.TEACHER_TOKEN) headers['X-Teacher-Token'] = ctx.TEACHER_TOKEN;
     if (ctx.USER_TOKEN) headers['X-User-Token'] = ctx.USER_TOKEN;
-    const key = JSON.stringify([headers, ctx.currentConfig?.network_sim_enabled,
+    const key = JSON.stringify([headers, ctx.currentConfig?.network_sim_enabled, ctx.currentConfig?.packet_sim_enabled,
+      ctx.currentConfig?.infra_sim_enabled, ctx.currentConfig?.infra_sim_guest_enabled,
       ctx.studentClasses?.map(item => item.id)]);
     if (key === networkAccessKey && (!force || networkAccessRequest)) return;
     if (key !== networkAccessKey) showNetworkLaunchers(false);
