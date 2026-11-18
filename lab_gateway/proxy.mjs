@@ -2,6 +2,7 @@ import http from 'node:http';
 import https from 'node:https';
 import {gunzipSync, inflateSync, brotliDecompressSync} from 'node:zlib';
 import {bridgeSource} from './bridges.mjs';
+import {consoleKeyboardSource} from './console-keyboard.mjs';
 import {pathRuntimeSource} from './path-runtime.mjs';
 import {rewritePathContent} from './path-rewrite.mjs';
 
@@ -141,7 +142,8 @@ export function createGateway({domain, portalOrigin, authorize, upstreamRequest 
       }
       if(upstreamPath==='/_eagle/bridge.js') {
         res.writeHead(200,{'Content-Type':'text/javascript; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
-        return res.end(pathMode?pathRuntimeSource({...profileFor(access),prefix:pathParts(req).prefix,origin:access.portal_origin,upstreamOrigin:`https://${access.server.ip}:${access.server.port}`,clipboardKey:access.clipboard_key}):bridgeSource('PVEAuthCookie_'+access.server.id));
+        const bridge = pathMode ? pathRuntimeSource({...profileFor(access),prefix:pathParts(req).prefix,origin:access.portal_origin,upstreamOrigin:`https://${access.server.ip}:${access.server.port}`,clipboardKey:access.clipboard_key}) : bridgeSource('PVEAuthCookie_'+access.server.id);
+        return res.end(bridge + consoleKeyboardSource());
       }
       if(!['GET','HEAD','POST','PUT','DELETE','OPTIONS'].includes(req.method))return fail(res,405,'Method not supported.');
       if(Number(req.headers['content-length']||0)>MAX_UPLOAD)return fail(res,413,'Upload exceeds the 2 GiB lab gateway limit.');

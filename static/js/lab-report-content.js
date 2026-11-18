@@ -56,23 +56,134 @@
     return ()=>{closed=true;queue.length=0;abort.abort();observer?.disconnect();urls.forEach(url=>URL.revokeObjectURL(url));urls.clear();root.removeEventListener('click',copy);};
   }
   function floating(root) {
-    const panel=root.querySelector('.lab-report-window'), handle=root.querySelector('[data-float-move]'), resize=root.querySelector('[data-float-resize]');
-    if(!panel?.getBoundingClientRect)return ()=>{};
-    let minimized=false,drag=null;
-    function bounds(){const v=window.visualViewport;return{x:v?.offsetLeft||0,y:v?.offsetTop||0,w:v?.width||innerWidth,h:v?.height||innerHeight};}
-    function place(left,top,width,height){const b=bounds();width=Math.min(Math.max(280,width),b.w-16);height=Math.min(Math.max(minimized?64:200,height),b.h-16);panel.style.width=width+'px';panel.style.height=height+'px';panel.style.left=Math.max(b.x+8,Math.min(left,b.x+b.w-width-8))+'px';panel.style.top=Math.max(b.y+8,Math.min(top,b.y+b.h-height-8))+'px';}
-    function clamp(){const r=panel.getBoundingClientRect();place(r.left,r.top,r.width,r.height);}
-    function start(event,mode){if(event.button!==0)return;event.preventDefault();const r=panel.getBoundingClientRect();drag={x:event.clientX,y:event.clientY,r,mode};event.currentTarget.setPointerCapture(event.pointerId);panel.classList.add('is-dragging');}
-    function move(event){if(!drag)return;const {x,y,r,mode}=drag,dx=event.clientX-x,dy=event.clientY-y;place(r.left+(mode==='move'?dx:0),r.top+(mode==='move'?dy:0),r.width+(mode==='resize'?dx:0),r.height+(mode==='resize'?dy:0));}
-    function end(){drag=null;panel.classList.remove('is-dragging');}
-    for(const [control,mode] of [[handle,'move'],[resize,'resize']]){
-      control?.addEventListener('pointerdown',event=>start(event,mode));control?.addEventListener('pointermove',move);control?.addEventListener('pointerup',end);control?.addEventListener('pointercancel',end);
-      control?.addEventListener('keydown',event=>{const delta={ArrowLeft:[-16,0],ArrowRight:[16,0],ArrowUp:[0,-16],ArrowDown:[0,16]}[event.key];if(!delta)return;event.preventDefault();const r=panel.getBoundingClientRect();place(r.left+(mode==='move'?delta[0]:0),r.top+(mode==='move'?delta[1]:0),r.width+(mode==='resize'?delta[0]:0),r.height+(mode==='resize'?delta[1]:0));});
+    const panel = root.querySelector('.lab-report-window');
+    const handle = root.querySelector('[data-float-move]');
+    const resize = root.querySelector('[data-float-resize]');
+    const minimize = root.querySelector('[data-float-minimize]');
+    const tile = root.querySelector('[data-float-restore]');
+    const viewport = window.visualViewport;
+    const margin = 8, tileSize = 48;
+    let minimized = false, expanded, drag, moved = false;
+
+    function bounds() {
+      return {
+        left: (viewport?.offsetLeft || 0) + margin,
+        top: (viewport?.offsetTop || 0) + margin,
+        width: (viewport?.width || innerWidth) - margin * 2,
+        height: (viewport?.height || innerHeight) - margin * 2,
+      };
     }
-    const minimize=root.querySelector('[data-float-minimize]');let expandedHeight=0;
-    if(minimize)minimize.onclick=()=>{const r=panel.getBoundingClientRect();if(!minimized)expandedHeight=r.height;minimized=!minimized;panel.classList.toggle('is-minimized',minimized);minimize.textContent=minimized?'Expand':'Minimize';minimize.setAttribute('aria-expanded',String(!minimized));place(r.left,r.top,r.width,minimized?Math.max(72,panel.querySelector('header').getBoundingClientRect().height+2):expandedHeight);};
-    clamp();window.addEventListener('resize',clamp);window.visualViewport?.addEventListener('resize',clamp);window.visualViewport?.addEventListener('scroll',clamp);
-    return ()=>{window.removeEventListener('resize',clamp);window.visualViewport?.removeEventListener('resize',clamp);window.visualViewport?.removeEventListener('scroll',clamp);};
+
+    function place({left, top, width, height}, topRight = false) {
+      const area = bounds();
+      if (minimized && tile) width = height = Math.min(tileSize, area.width, area.height);
+      else {
+        width = Math.min(Math.max(280, width), area.width);
+        height = Math.min(Math.max(minimized ? 64 : 200, height), area.height);
+      }
+      const right = area.left + area.width - width;
+      const bottom = area.top + area.height - height;
+      Object.assign(panel.style, {
+        width: width + 'px',
+        height: height + 'px',
+        left: (topRight ? right : Math.max(area.left, Math.min(left, right))) + 'px',
+        top: (topRight ? area.top : Math.max(area.top, Math.min(top, bottom))) + 'px',
+      });
+    }
+
+    function clamp() { place(panel.getBoundingClientRect()); }
+
+    function restore(topRight = false) {
+      const {left, top, width, height} = panel.getBoundingClientRect();
+      const focusButton = minimized || topRight;
+      const size = minimized ? expanded : {width, height};
+      minimized = false;
+      panel.classList.remove('is-minimized');
+      minimize.textContent = 'Minimize';
+      minimize.setAttribute('aria-expanded', 'true');
+      place({left, top, width: size.width, height: size.height}, topRight);
+      if (focusButton) minimize.focus({preventScroll: true});
+    }
+
+    function start(event) {
+      if (drag || event.button !== 0 || event.isPrimary === false) return;
+      moved = false;
+      const control = event.target.closest('button, input, textarea, select, a, label, [contenteditable]');
+      const grip = control === handle || control === resize;
+      const restoreTile = tile && control === tile;
+      if (!grip && !restoreTile && (control || !tile)) return;
+      // Leave touch scrolling to the report body and keep clicks on the restore button native.
+      if (grip || (event.pointerType === 'mouse' && !restoreTile)) event.preventDefault();
+      drag = {
+        id: event.pointerId, x: event.clientX, y: event.clientY,
+        rect: panel.getBoundingClientRect(), resize: control === resize,
+      };
+    }
+
+    function adjust(rect, dx, dy, resizing) {
+      const {left, top, width, height} = rect;
+      place(resizing ? {left, top, width: width + dx, height: height + dy}
+        : {left: left + dx, top: top + dy, width, height});
+    }
+
+    function move(event) {
+      if (drag?.id !== event.pointerId) return;
+      const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
+      if (!moved) {
+        if (Math.hypot(dx, dy) < 5) return;
+        moved = true;
+        panel.setPointerCapture(event.pointerId);
+        panel.classList.add('is-dragging');
+      }
+      adjust(drag.rect, dx, dy, drag.resize);
+    }
+
+    function end(event) {
+      if (drag?.id !== event.pointerId) return;
+      drag = null;
+      panel.classList.remove('is-dragging');
+    }
+
+    panel.addEventListener('pointerdown', start);
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+    panel.addEventListener('lostpointercapture', end);
+    for (const control of [handle, resize, tile].filter(Boolean)) {
+      control.addEventListener('keydown', event => {
+        const delta = {ArrowLeft: [-16, 0], ArrowRight: [16, 0], ArrowUp: [0, -16], ArrowDown: [0, 16]}[event.key];
+        if (!delta) return;
+        event.preventDefault();
+        adjust(panel.getBoundingClientRect(), ...delta, control === resize);
+      });
+    }
+    if (tile) tile.onclick = event => { if (!moved || event.detail === 0) restore(); };
+    minimize.onclick = () => {
+      if (minimized) { restore(); return; }
+      const rect = expanded = panel.getBoundingClientRect();
+      minimized = true;
+      panel.classList.add('is-minimized');
+      minimize.setAttribute('aria-expanded', 'false');
+      if (tile) {
+        place({left: rect.right - tileSize, top: rect.top});
+        tile.focus({preventScroll: true});
+      } else {
+        minimize.textContent = 'Expand';
+        place({left: rect.left, top: rect.top, width: rect.width, height: Math.max(72, panel.querySelector('header').offsetHeight + 2)});
+      }
+    };
+    clamp();
+    window.addEventListener('resize', clamp);
+    viewport?.addEventListener('resize', clamp);
+    viewport?.addEventListener('scroll', clamp);
+    return {restore, dispose() {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+      window.removeEventListener('resize', clamp);
+      viewport?.removeEventListener('resize', clamp);
+      viewport?.removeEventListener('scroll', clamp);
+    }};
   }
   window.LabReportContent={render,mount,floating,headers};
   window.addEventListener('eagle-context-updated',()=>{if(cacheSession!==identity()){imageCache.clear();cacheSession=identity();}});

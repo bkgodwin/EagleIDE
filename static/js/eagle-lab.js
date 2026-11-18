@@ -17,12 +17,26 @@
     return result;
   }
   async function api(url, options = {}) {
-    const requestSession=sessionKey();
-    const response = await fetch(url, { cache:'no-store', signal:typeof AbortSignal!=='undefined'?AbortSignal.timeout(15000):undefined, ...options, headers:{...headers(!!options.body), ...(options.headers || {})} });
-    const data = await response.json().catch(() => ({}));
-    if(requestSession!==sessionKey())throw new Error('Your session changed. Reopen Eagle Lab.');
-    if (!response.ok || !data.ok) { const error = new Error(data.error || `Request failed (${response.status})`); error.status=response.status; error.data=data.data; throw error; }
-    return data.data !== undefined ? data.data : data;
+    const requestSession = sessionKey();
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    const timeout = controller && setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch(url, { cache:'no-store', signal:controller?.signal, ...options, headers:{...headers(!!options.body), ...(options.headers || {})} });
+      const data = await response.json().catch(() => ({}));
+      if (requestSession !== sessionKey()) throw new Error('Your session changed. Reopen Eagle Lab.');
+      if (!response.ok || !data.ok) {
+        const error = new Error(data.error || `Request failed (${response.status})`);
+        error.status = response.status;
+        error.data = data.data;
+        throw error;
+      }
+      return data.data !== undefined ? data.data : data;
+    } catch (error) {
+      if (controller?.signal.aborted) throw new Error('The request timed out. Please try again.');
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
   function classes() {
     const ctx=context();
@@ -321,20 +335,26 @@
   async function openReportById(assignmentId, assignmentHint=null){
     const reportSession=sessionKey();
     if(state.reportOpening)return;
-    if(state.report?.root?.isConnected){if(state.report.assignmentId===assignmentId){state.report.root.querySelector('textarea,input')?.focus();return;}if(!await state.report.close())return;}
+    if (state.report?.root.isConnected && state.report.assignmentId === assignmentId) {
+      state.report.restore();
+      return;
+    }
     state.reportOpening=true;
     const assignment=assignmentHint||state.assignments.find(item=>item.id===assignmentId)||{id:assignmentId,name:'Lab Report',task:''};
     try{
+      if (state.report?.root.isConnected && !await state.report.close()) return;
+      if (reportSession !== sessionKey()) return;
       const [quizData,draft]=await Promise.all([api(`/api/quiz/${encodeURIComponent(assignmentId)}`),api(`/api/lab-reports/${encodeURIComponent(assignmentId)}/draft`)]);
       if(reportSession!==sessionKey())return;
       const questions=quizData.quiz?.questions||[], saved=Object.fromEntries((quizData.savedResponses||[]).map(item=>[item.questionId,item.answer])), drafted=Object.fromEntries((draft.responses||[]).map(item=>[item.questionId,item.answer]));
       const answers={...saved,...drafted},overlay=document.createElement('div');overlay.className='lab-report-overlay';
       const content=window.LabReportContent, prose=value=>content?.render(value)||`<div class="lab-report-prose">${esc(value)}</div>`;
-      overlay.innerHTML=`<section class="lab-report-window" role="dialog" aria-modal="false" aria-label="${esc(assignment.name)}"><header><div><span class="lab-report-eyebrow">LAB REPORT · AUTOSAVE</span><h2>${esc(assignment.name)}</h2><span class="lab-report-save-state" role="status">${draft.updated_at?'Draft restored':'Ready'}</span></div><div class="lab-report-window-tools"><button class="btn secondary" data-float-move type="button" aria-label="Move report with arrow keys" title="Drag to move · arrow keys to move">⠿</button><button class="btn secondary" data-float-minimize type="button" aria-expanded="true">Minimize</button><button class="btn secondary" data-report-close type="button" aria-label="Close report">✕</button></div></header><div class="lab-report-page"><p class="lab-report-hint">Keep this window open while you work. Drag the grip to move it or use Minimize to see more of your console.</p><div class="lab-report-description">${prose(assignment.task||'')}</div>${questions.map((question,index)=>`<section class="lab-report-question"><div class="lab-report-question-meta"><span>SECTION ${index+1} · ${esc(question.type==='procedure'?'CHECKLIST':question.type==='fill_blank'?'SHORT ANSWER':'WRITTEN RESPONSE')}</span><span>${Number(question.points)||0} points</span></div><div class="lab-report-prompt" id="report-label-${index}">${prose(question.question||'')}</div>${question.type==='procedure'?`<p class="lab-report-check-hint">Select every checkbox in this checklist to receive credit for this section.</p><div class="lab-report-procedure">${(question.steps||[]).map((step,i)=>`<div class="lab-report-check-row"><input type="checkbox" aria-label="Section ${index+1}, step ${i+1}" data-report-question="${esc(question.id)}" data-step="${i}" ${Array.isArray(answers[question.id])&&answers[question.id][i]?'checked':''}><div>${prose(step)}</div></div>`).join('')}</div>`:question.type==='fill_blank'?`<input type="text" aria-labelledby="report-label-${index}" placeholder="Your answer" maxlength="20000" data-report-question="${esc(question.id)}" value="${esc(answers[question.id]||'')}" autocomplete="off">`:`<textarea aria-labelledby="report-label-${index}" maxlength="20000" placeholder="Record your observations…" data-report-question="${esc(question.id)}">${esc(answers[question.id]||'')}</textarea>`}</section>`).join('')}</div><div class="lab-report-actions"><span data-copy-status role="status" aria-live="polite"></span><button class="btn secondary" data-report-close type="button">Close for now</button><button class="btn run" data-report-submit type="button">Submit report</button></div><button type="button" class="lab-report-resize" data-float-resize aria-label="Resize report with arrow keys" title="Drag or use arrow keys to resize">◢</button></section>`;
+      overlay.innerHTML=`<section class="lab-report-window has-report-drag" role="dialog" aria-modal="false" aria-label="${esc(assignment.name)}"><header><div><span class="lab-report-eyebrow">LAB REPORT · AUTOSAVE</span><h2>${esc(assignment.name)}</h2><span class="lab-report-save-state" role="status">${draft.updated_at?'Draft restored':'Ready'}</span></div><div class="lab-report-window-tools"><button class="btn secondary" data-float-move type="button" aria-label="Move report with arrow keys" title="Drag to move · arrow keys to move">⠿</button><button class="btn secondary" data-float-minimize type="button" aria-expanded="true">Minimize</button><button class="btn secondary" data-report-close type="button" aria-label="Close report">✕</button></div></header><div class="lab-report-page"><p class="lab-report-hint">Drag the window to move it. Minimize it to see more of your console.</p><div class="lab-report-description">${prose(assignment.task||'')}</div>${questions.map((question,index)=>`<section class="lab-report-question"><div class="lab-report-question-meta"><span>SECTION ${index+1} · ${esc(question.type==='procedure'?'CHECKLIST':question.type==='fill_blank'?'SHORT ANSWER':'WRITTEN RESPONSE')}</span><span>${Number(question.points)||0} points</span></div><div class="lab-report-prompt" id="report-label-${index}">${prose(question.question||'')}</div>${question.type==='procedure'?`<p class="lab-report-check-hint">Select every checkbox in this checklist to receive credit for this section.</p><div class="lab-report-procedure">${(question.steps||[]).map((step,i)=>`<div class="lab-report-check-row"><input type="checkbox" aria-label="Section ${index+1}, step ${i+1}" data-report-question="${esc(question.id)}" data-step="${i}" ${Array.isArray(answers[question.id])&&answers[question.id][i]?'checked':''}><div>${prose(step)}</div></div>`).join('')}</div>`:question.type==='fill_blank'?`<input type="text" aria-labelledby="report-label-${index}" placeholder="Your answer" maxlength="20000" data-report-question="${esc(question.id)}" value="${esc(answers[question.id]||'')}" autocomplete="off">`:`<textarea aria-labelledby="report-label-${index}" maxlength="20000" placeholder="Record your observations…" data-report-question="${esc(question.id)}">${esc(answers[question.id]||'')}</textarea>`}</section>`).join('')}</div><div class="lab-report-actions"><p data-report-status role="status"></p><span data-copy-status role="status" aria-live="polite"></span><button class="btn secondary" data-report-close type="button">Close for now</button><button class="btn run" data-report-submit type="button">Submit report</button></div><button type="button" class="lab-report-resize" data-float-resize aria-label="Resize report with arrow keys" title="Drag or use arrow keys to resize">◢</button><button type="button" class="lab-report-restore" data-float-restore aria-label="Restore ${esc(assignment.name)}" title="Restore report"><span aria-hidden="true">▤</span></button></section>`;
       document.body.append(overlay);let revision=Number(draft.revision||0),timer=null,saveChain=Promise.resolve(),conflicted=false;const saveState=overlay.querySelector('.lab-report-save-state');
-      const disposeContent=content?.mount(overlay,{assignmentId,student:true}),disposeFloating=content?.floating(overlay);
-      const dispose=()=>{disposeContent?.();disposeFloating?.();overlay.remove();};
+      const disposeContent=content?.mount(overlay,{assignmentId,student:true}),floating=content?.floating(overlay);
+      const dispose=()=>{clearTimeout(timer);disposeContent?.();floating?.dispose();overlay.remove();};
       let savedOkay=true,submitting=false,editVersion=0,savedVersion=0;
+      const conflictMessage = 'Draft changed in another session. You can submit the answers shown here.';
       const save=()=>{
         if(conflicted||submitting||!overlay.isConnected||reportSession!==sessionKey())return Promise.resolve(false);
         clearTimeout(timer);
@@ -342,25 +362,81 @@
         const responses=reportResponses(questions,overlay,true).responses,version=editVersion;
         saveState.textContent='Saving…';
         saveChain=saveChain.then(async()=>{
-          if(reportSession!==sessionKey())return false;
+          if(conflicted||!overlay.isConnected||reportSession!==sessionKey())return false;
           if(version<=savedVersion)return true;
+          let nextRevision;
           try{
             const result=await api(`/api/lab-reports/${encodeURIComponent(assignmentId)}/draft`,{method:'PUT',body:JSON.stringify({revision,responses})});
-            revision=result.revision;savedVersion=version;savedOkay=version===editVersion;
-            saveState.textContent=savedOkay?'Saved':'Unsaved';return true;
+            nextRevision = result.revision;
           }catch(error){
-            savedOkay=false;
-            if(error.status===409){conflicted=true;saveState.textContent='Open in another session — reload before continuing';}
-            else saveState.textContent=error.message;
-            return false;
+            const current = error.status === 409 ? error.data : null;
+            const currentAnswers = new Map(current?.responses?.map(item => [item.questionId, item.answer]));
+            // A write can succeed even when its response never reaches the browser.
+            if (current && currentAnswers.size === responses.length &&
+                responses.every(item => JSON.stringify(currentAnswers.get(item.questionId)) === JSON.stringify(item.answer))) {
+              nextRevision = current.revision;
+            } else {
+              savedOkay = false;
+              conflicted = error.status === 409;
+              saveState.textContent = conflicted ? conflictMessage : error.message;
+              return false;
+            }
           }
+          revision = nextRevision;
+          savedVersion = version;
+          savedOkay = version === editVersion;
+          saveState.textContent = savedOkay ? 'Saved' : 'Unsaved';
+          return true;
         });
         return saveChain;
       };
-      overlay.querySelector('.lab-report-page').addEventListener('input',()=>{editVersion++;savedOkay=false;clearTimeout(timer);saveState.textContent='Unsaved';timer=setTimeout(save,700);});overlay.querySelector('.lab-report-page').addEventListener('change',()=>{editVersion++;savedOkay=false;clearTimeout(timer);saveState.textContent='Unsaved';timer=setTimeout(save,250);});
+      const page = overlay.querySelector('.lab-report-page');
+      const submitButton = overlay.querySelector('[data-report-submit]');
+      const submitStatus = overlay.querySelector('[data-report-status]');
+      function edited(delay) {
+        editVersion++;
+        savedOkay = false;
+        submitStatus.textContent = '';
+        clearTimeout(timer);
+        saveState.textContent = conflicted ? conflictMessage : 'Unsaved';
+        if (!conflicted) timer = setTimeout(save, delay);
+      }
+      page.addEventListener('input', () => edited(700));
+      page.addEventListener('change', () => edited(250));
       const close=async()=>{if(submitting)return false;if(!await save()||!savedOkay)return false;dispose();if(state.report?.root===overlay)state.report=null;return true;};overlay.querySelectorAll('[data-report-close]').forEach(button=>button.onclick=close);
-      overlay.querySelector('[data-report-submit]').onclick=async()=>{if(submitting||conflicted||reportSession!==sessionKey())return;const result=reportResponses(questions,overlay,false);if(result.missing.length){alert(`Complete every response and procedure step before submitting. Missing: ${result.missing.join(', ')}`);return;}if(!confirm('Submit this lab report?'))return;submitting=true;overlay.querySelectorAll('textarea,input,[data-report-submit]').forEach(field=>field.disabled=true);clearTimeout(timer);await saveChain;if(reportSession!==sessionKey()){submitting=false;return;}try{await api('/api/quiz/submit',{method:'POST',body:JSON.stringify({assignmentId,quizResponses:result.responses,closedByStudent:false})});dispose();state.report=null;await loadReports();alert('Lab report submitted.');}catch(error){saveState.textContent=error.message;submitting=false;overlay.querySelectorAll('textarea,input,[data-report-submit]').forEach(field=>field.disabled=false);}};
-      state.report={root:overlay,assignmentId,save,close,dirty:()=>!savedOkay,session:reportSession,cancel:()=>{clearTimeout(timer);dispose();}};
+      submitButton.onclick = async () => {
+        if (submitting || reportSession !== sessionKey()) return;
+        const {responses, missing} = reportResponses(questions, overlay, false);
+        if (missing.length) {
+          submitStatus.textContent = `Complete every response and checklist step in sections ${missing.join(', ')}.`;
+          return;
+        }
+        if (!confirm('Submit the answers shown in this lab report?')) return;
+        // Give autosave a chance to preserve the latest edits if final submission fails.
+        // A draft conflict or failed draft write must never veto an explicit submission.
+        const pendingSave = save();
+        submitting = true;
+        const fields = overlay.querySelectorAll('textarea,input,[data-report-submit]');
+        fields.forEach(field => field.disabled = true);
+        submitStatus.textContent = 'Submitting…';
+        try {
+          await pendingSave;
+          if (!overlay.isConnected || reportSession !== sessionKey()) return;
+          await api('/api/quiz/submit', {method:'POST', body:JSON.stringify({assignmentId,quizResponses:responses,closedByStudent:false})});
+        } catch (error) {
+          if (!overlay.isConnected || reportSession !== sessionKey()) return;
+          submitting = false;
+          fields.forEach(field => field.disabled = false);
+          submitStatus.textContent = `Could not submit. ${error.message}`;
+          if (!savedOkay && !conflicted) timer = setTimeout(save, 700);
+          return;
+        }
+        dispose();
+        state.report = null;
+        alert('Lab report submitted.');
+        await loadReports();
+      };
+      state.report={root:overlay,assignmentId,save,close,restore:()=>floating?.restore(true),dirty:()=>!savedOkay,session:reportSession,cancel:dispose};
     }catch(error){alert(error.message||'Could not open the lab report.');}finally{state.reportOpening=false;}
   }
 

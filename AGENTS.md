@@ -68,6 +68,7 @@ Required runtime components:
 |-- lab_gateway/                 Isolated Node HTTP/WebSocket relay and PVE browser compatibility bridges
 |   |-- front.mjs                Fixed loopback Flask/Socket.IO forwarding on the existing public listener
 |   |-- path-runtime.mjs         Opaque PVE URL, virtual cookie/storage and scoped clipboard bridges
+|   |-- console-keyboard.mjs     iPad hardware focus and modifier compatibility in the console frames
 |   `-- path-rewrite.mjs         Prefix rewriting for PVE documents, styles and console modules
 |-- lab_reports.py               Account-isolated autosave drafts for continuous lab reports
 |-- lab_report_media.py          Bounded private report illustrations and class-checked reads
@@ -285,7 +286,8 @@ Keep inline noVNC module imports prefix-scoped as well as external modules, and
 allow the console clients' Cache-Control header in opaque CORS preflights.
 WebSocket wrappers must return native instances: noVNC validates immediate
 prototype properties. Ctrl+C must reach xterm's PTY as ETX, without clipboard
-interception. Server enrollment/editing uses a native modal dialog; enrollment
+interception. On iPad, console-scoped Command shortcuts also send Control chords.
+Server enrollment/editing uses a native modal dialog; enrollment
 always resets fields and editing preserves blank passwords/PINs. Admin-only
 server-order saves atomically permute the existing catalog list, preserving
 credentials, revisions and class grants. Student filtering retains that order.
@@ -306,8 +308,10 @@ refresh and late saves must retain newer edits.
 
 Reports and the Lab Manual are nonmodal, movable, resizable windows with pointer
 capture, keyboard controls, visualViewport clamping, and minimization. Keep the
-background interactive and retain dirty report close/unload protections. Report
-text is escaped; `{text}` creates a copy button, never executable markup.
+background interactive and retain dirty report close/unload protections. Autosave
+conflicts preserve both drafts and allow explicit submission of the answers shown
+in the open window. Report text is escaped; `{text}` creates a copy button, never
+executable markup.
 `lab_report_media.py` stores immutable metadata-free JPEGs below
 `assignments/.lab-report-media/<hashed author>/`. Uploads require current class
 author access (including current CoTeachers), accept static JPEG/PNG up to 5 MB

@@ -6,6 +6,7 @@ import {readFileSync} from 'node:fs';
 import {resolve,extname,isAbsolute,sep} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {spawnSync} from 'node:child_process';
+import {setTimeout as delay} from 'node:timers/promises';
 import {createGateway} from '../lab_gateway/proxy.mjs';
 
 const moduleAt=value=>isAbsolute(value)?pathToFileURL(value).href:value;
@@ -16,6 +17,7 @@ const xterm=resolve(process.env.EAGLE_LAB_XTERM_ROOT),novnc=resolve(process.env.
 const generated=spawnSync(process.env.EAGLE_LAB_TEST_PYTHON||'python',[root+'tests/eagle_lab_test_certificate.py'],{encoding:'utf8'});
 assert.equal(generated.status,0,generated.stderr);const tls=JSON.parse(generated.stdout);
 const pathMode=process.env.EAGLE_LAB_TEST_TRANSPORT!=='origin';
+const ipad=process.env.EAGLE_LAB_TEST_IPAD==='1';
 const id='a'.repeat(32),session='s'.repeat(43),prefix=pathMode?`/_eagle/lab/${id}/${session}/`:'/';
 const seen=[],input=[],keys=[],sockets=new Set();let portalOrigin,proxyOrigin,relay,allowed=true;
 const listen=server=>new Promise(resolve=>server.listen(0,'127.0.0.1',()=>resolve(server.address().port)));
@@ -82,28 +84,65 @@ proxyOrigin=pathMode?portalOrigin:`https://s-${id}.pve.school.test:${await liste
 // Seed only the session's fake PVE cookie, never an EagleIDE login.
 if(pathMode)await new Promise((resolve,reject)=>{const req=https.request({hostname:'127.0.0.1',port:portal.address().port,path:prefix+'_eagle/state',rejectUnauthorized:false,method:'POST',headers:{Host:new URL(portalOrigin).host,Origin:'null'}},res=>{res.resume();res.on('end',()=>res.statusCode===200?resolve():reject(Error('State seed failed')));});req.on('error',reject);req.end(JSON.stringify({cookie:'PVEAuthCookie=fixture-cookie'}));});
 let browser,page;const diagnostics=[];
+async function waitFor(check, message) {
+  const until = Date.now() + 3000;
+  while (!check() && Date.now() < until) await delay(20);
+  assert.ok(check(), message);
+}
 try{
-  browser=await chromium.launch({headless:true,args:['--no-proxy-server','--host-resolver-rules=MAP *.school.test 127.0.0.1']});
-  page=await browser.newPage({ignoreHTTPSErrors:true,viewport:{width:1280,height:1400}});const errors=[];
+  browser=await chromium.launch({headless:true,executablePath:process.env.EAGLE_LAB_BROWSER,args:['--no-proxy-server','--host-resolver-rules=MAP *.school.test 127.0.0.1']});
+  page=await browser.newPage({ignoreHTTPSErrors:true,viewport:{width:1280,height:1400},hasTouch:ipad});const errors=[];
+  if(ipad)await page.addInitScript(()=>Object.defineProperties(navigator,{
+    platform:{get:()=>'MacIntel'},maxTouchPoints:{get:()=>5},
+  }));
   if(!pathMode)await page.context().addCookies([{name:'__Host-EagleLab',value:session,url:proxyOrigin,secure:true,httpOnly:true,sameSite:'None'},{name:'PVEAuthCookie_'+id,value:'fixture-cookie',url:proxyOrigin,secure:true,sameSite:'None'}]);
   page.on('console',message=>{if(['warning','error'].includes(message.type()))diagnostics.push(message.text());});
   page.on('requestfailed',request=>diagnostics.push(request.url()+': '+request.failure()?.errorText));
   page.on('pageerror',error=>errors.push(error.message));await page.goto(portalOrigin);
   const lxc=page.frames().find(frame=>frame.url().includes('console=lxc'));
-  await lxc.waitForFunction(()=>window.state===window.states?.connected);
-  await lxc.locator('.xterm-helper-textarea').focus();await page.keyboard.type('sleep 60');await page.keyboard.press('Enter');await page.keyboard.press('Control+c');
-  await lxc.waitForFunction(()=>window.term?.buffer.active.getLine(window.term.buffer.active.cursorY)?.translateToString().includes('shell ready'));
-  assert.ok(input.includes('0:1:\x03'),'Ctrl+C must reach the PTY as ETX');
   const vm=page.frames().find(frame=>frame.url().includes('console=kvm'));
+  await lxc.waitForFunction(()=>window.state===window.states?.connected);
+  // Both clients focus themselves when they connect. Finish connecting before directing keys to the terminal.
   await vm.waitForFunction(()=>document.documentElement.classList.contains('noVNC_connected'));
+  await lxc.locator('.xterm-helper-textarea').focus();await page.keyboard.type('sleep 60');await page.keyboard.press('Enter');await page.keyboard.press('Control+c');
+  await waitFor(()=>input.includes('0:1:\x03'),'Ctrl+C must reach the PTY as ETX');
+  await lxc.waitForFunction(()=>window.term?.buffer.active.getLine(window.term.buffer.active.cursorY)?.translateToString().includes('shell ready'));
+  if(ipad){
+    await page.locator('body').click({position:{x:2,y:2}});
+    await lxc.locator('.xterm-screen').tap({position:{x:15,y:15}});
+    assert.equal(await lxc.evaluate(()=>document.activeElement.classList.contains('xterm-helper-textarea')),true);
+    const start = input.length;
+    for (const modifier of ['Control', 'Meta']) {
+      for (const key of ['o', 'x', 'c', 'w']) await page.keyboard.press(`${modifier}+${key}`);
+    }
+    await lxc.evaluate(()=>{
+      const event=new KeyboardEvent('keydown',{key:'c',code:'Enter',ctrlKey:true,bubbles:true,cancelable:true});
+      Object.defineProperty(event,'keyCode',{value:13});
+      document.activeElement.dispatchEvent(event);
+    });
+    const expected = ['\x0f','\x18','\x03','\x17','\x0f','\x18','\x03','\x17','\x03'].map(key => '0:1:' + key);
+    await waitFor(()=>input.length>=start+expected.length,'Both modifier keys must send terminal shortcuts after tapping to focus');
+    assert.deepEqual(input.slice(start,start+expected.length),expected);
+  }
   const canvas=vm.locator('#noVNC_container canvas');await canvas.waitFor();await canvas.click({position:{x:10,y:10}});await page.keyboard.press('Control+c');
   await vm.waitForFunction(()=>{const canvas=document.querySelector('#noVNC_container canvas');return canvas?.width===64&&canvas?.height===48;});
-  assert.ok(keys.some(event=>event.key===0xffe3&&event.down),'VM receives Ctrl press');assert.ok(keys.some(event=>event.key===99&&event.down),'VM receives C press');
+  await waitFor(()=>keys.some(event=>event.key===0xffe3&&event.down)&&keys.some(event=>event.key===99&&event.down),'VM receives Ctrl+C');
+  if(ipad){
+    await waitFor(()=>keys.some(event=>event.key===0xffe3&&!event.down),'The physical Control key has released');
+    const start = keys.length;
+    await canvas.tap({position:{x:10,y:10}});
+    for (const key of ['o', 'x', 'c']) await page.keyboard.press(`Meta+${key}`);
+    await waitFor(()=>keys.length>=start+12,'Command chords reach the VM as complete Control presses and releases');
+    const expected = ['o','x','c'].flatMap(key=>[
+      {key:0xffe3,down:1},{key:key.charCodeAt(0),down:1},{key:key.charCodeAt(0),down:0},{key:0xffe3,down:0},
+    ]);
+    assert.deepEqual(keys.slice(start,start+expected.length),expected);
+  }
   assert.ok(seen.some(item=>item.url.includes('/termproxy')&&item.headers['cache-control']==='no-cache'));
   assert.ok(seen.some(item=>item.url.includes('/vncproxy')&&item.headers['cache-control']==='no-cache'));
   assert.equal(seen.some(item=>item.url.includes('/_eagle/')),false,'session prefix must be removed exactly once');
   if(process.env.EAGLE_LAB_SCREENSHOT)await page.screenshot({path:process.env.EAGLE_LAB_SCREENSHOT});
   allowed=false;await lxc.waitForFunction(()=>window.state===window.states?.disconnected);
-  assert.deepEqual(errors,[]);console.log('PASS: official PVE xterm LXC PTY, typed commands, Ctrl+C ETX, official patched noVNC RFB rendering/keyboard, CORS and revocation.');
+  assert.deepEqual(errors,[]);console.log(`PASS: official PVE xterm and noVNC keyboard, CORS and revocation (${ipad?'iPad emulation':'desktop'}, ${pathMode?'path':'origin'} transport).`);
 }catch(error){console.error(JSON.stringify({diagnostics,requests:seen.map(item=>item.url),input},null,2));for(const frame of page?.frames()||[]){console.error(frame.url(),await frame.locator('body').innerText().catch(()=>''));}throw error;}
 finally{await browser?.close();for(const socket of sockets)socket.terminate();ws.close();for(const server of [front,portal,pve,relay]){server.closeAllConnections();server.close();}}

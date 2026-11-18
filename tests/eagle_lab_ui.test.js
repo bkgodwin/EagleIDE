@@ -18,9 +18,9 @@ test('native lab view is lazy loaded and keeps only the Eagle Lab name', () => {
 
 test('lab reports render one continuous page and autosave with revision guards', () => {
   assert.match(lab, /class="lab-report-page"/);
-  assert.match(lab, /setTimeout\(save,700\)/);
+  assert.match(lab, /page\.addEventListener\('input', \(\) => edited\(700\)\)/);
   assert.match(lab, /method:'PUT'.*revision,responses/);
-  assert.match(lab, /error\.status===409/);
+  assert.match(lab, /error\.status === 409/);
   assert.match(lab, /question\.type==='procedure'/);
   assert.match(lab, /question\.type==='fill_blank'/);
 });
@@ -32,8 +32,8 @@ test('teacher composer exposes only report controls for lab report assignments',
   assert.match(core, /showAddQuestionModal\([^\n]+lab_report/);
 });
 
-function reportFixture(writeDraft) {
-  const events = {}, closeButtons = [{}, {}], submit = {}, status = {};
+function reportFixture(writeDraft, submitReport = () => { throw new Error('Unexpected submission'); }) {
+  const events = {}, closeButtons = [{}, {}], submit = {}, status = {}, submitStatus = {};
   const field = { value: 'My observation' };
   const page = { addEventListener(name, callback) { events[name] = callback; } };
   const overlay = {
@@ -42,9 +42,10 @@ function reportFixture(writeDraft) {
       if (selector === '.lab-report-save-state') return status;
       if (selector === '.lab-report-page') return page;
       if (selector === '[data-report-submit]') return submit;
+      if (selector === '[data-report-status]') return submitStatus;
       return field;
     },
-    querySelectorAll() { return closeButtons; },
+    querySelectorAll(selector) { return selector === '[data-report-close]' ? closeButtons : [submit, field]; },
     remove() { this.isConnected = false; },
   };
   const ctx = { USER_TOKEN: 'session-one', currentConfig: { eagle_lab_enabled: true } };
@@ -53,7 +54,8 @@ function reportFixture(writeDraft) {
   const sandbox = {
     window: { EagleIDE: { getContext: () => ctx }, addEventListener(name, fn) { (windowEvents[name] ||= []).push(fn); } },
     document: {
-      getElementById: () => null, addEventListener() {},
+      getElementById: id => id === 'eagleLabReportList' ? {addEventListener() {}, replaceChildren() {}} : null,
+      addEventListener() {},
       createElement: () => overlay,
       body: { append(element) { element.isConnected = true; }, classList: { contains: () => false } },
       querySelectorAll: () => [],
@@ -67,6 +69,7 @@ function reportFixture(writeDraft) {
         sent.push(body);
         return writeDraft(body);
       }
+      if (url === '/api/quiz/submit') return submitReport(body);
       const data = url.startsWith('/api/quiz/')
         ? { ok: true, quiz: { questions: [{ id: 'q1', type: 'written', question: 'Observation', points: 5 }] } }
         : { ok: true, data: { revision: 0, responses: [{ questionId: 'q1', answer: 'Restored observation' }] } };
@@ -74,7 +77,7 @@ function reportFixture(writeDraft) {
     },
   };
   vm.runInNewContext(lab, sandbox);
-  return { api: sandbox.window.EagleLab, overlay, field, status, events, closeButtons, ctx, windowEvents, sent };
+  return { api: sandbox.window.EagleLab, overlay, field, status, events, closeButtons, submit, submitStatus, ctx, windowEvents, sent };
 }
 
 test('failed autosave keeps report edits and the report window open', async () => {
@@ -119,4 +122,58 @@ test('account changes cancel the old report before another draft request can be 
   assert.equal(fixture.overlay.isConnected, false);
   assert.equal(fixture.api.getState().report, null);
   assert.equal(fixture.sent.length, 0);
+});
+
+test('a conflicting draft still allows submission and a failed submission can be retried', async () => {
+  const submitted = [];
+  const fixture = reportFixture(
+    async () => ({ok: false, status: 409, json: async () => ({
+      ok: false, data: {revision: 2, responses: [{questionId: 'q1', answer: 'Other session'}]},
+    })}),
+    async body => {
+      submitted.push(body);
+      return submitted.length === 1
+        ? {ok: false, status: 503, json: async () => ({ok: false, error: 'Try again shortly.'})}
+        : {ok: true, json: async () => ({ok: true})};
+    },
+  );
+  await fixture.api.openReportById('assignment', { name: 'Lab report' });
+  fixture.events.input();
+  assert.equal(await fixture.api.getState().report.save(), false);
+  assert.match(fixture.status.textContent, /another session/);
+  await fixture.submit.onclick();
+  assert.match(fixture.submitStatus.textContent, /Could not submit. Try again shortly/);
+  assert.equal(fixture.field.disabled, false);
+  assert.equal(fixture.overlay.isConnected, true);
+
+  fixture.field.value = 'Latest observation';
+  fixture.events.input();
+  await fixture.submit.onclick();
+  assert.equal(submitted[1].quizResponses[0].answer, 'Latest observation');
+  assert.equal(fixture.overlay.isConnected, false);
+  assert.equal(fixture.sent.length, 1);
+});
+
+test('a draft save whose response was lost recovers from the matching server revision', async () => {
+  let saved;
+  const fixture = reportFixture(async body => {
+    if (!saved) {
+      saved = {revision: 1, responses: body.responses};
+      throw new Error('Lost response');
+    }
+    if (body.revision === 0) {
+      return {ok: false, status: 409, json: async () => ({ok: false, data: saved})};
+    }
+    return {ok: true, json: async () => ({ok: true, data: {revision: 2}})};
+  });
+  await fixture.api.openReportById('assignment', { name: 'Lab report' });
+  const report = fixture.api.getState().report;
+  fixture.events.input();
+  assert.equal(await report.save(), false);
+  assert.equal(await report.save(), true);
+  assert.equal(report.dirty(), false);
+  fixture.field.value = 'Next edit';
+  fixture.events.input();
+  assert.equal(await report.save(), true);
+  assert.equal(fixture.sent.at(-1).revision, 1);
 });
