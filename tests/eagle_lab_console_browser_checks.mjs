@@ -10,7 +10,8 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {createGateway} from '../lab_gateway/proxy.mjs';
 
 const moduleAt=value=>isAbsolute(value)?pathToFileURL(value).href:value;
-const {chromium}=await import(moduleAt(process.env.EAGLE_LAB_PLAYWRIGHT_MODULE||'playwright'));
+const playwright=await import(moduleAt(process.env.EAGLE_LAB_PLAYWRIGHT_MODULE||'playwright'));
+const engine=process.env.EAGLE_LAB_TEST_ENGINE||'chromium';
 const {WebSocketServer}=await import(moduleAt(process.env.EAGLE_LAB_WS_MODULE||'ws'));
 const root=fileURLToPath(new URL('../',import.meta.url));
 const xterm=resolve(process.env.EAGLE_LAB_XTERM_ROOT),novnc=resolve(process.env.EAGLE_LAB_NOVNC_ROOT);
@@ -19,7 +20,7 @@ assert.equal(generated.status,0,generated.stderr);const tls=JSON.parse(generated
 const pathMode=process.env.EAGLE_LAB_TEST_TRANSPORT!=='origin';
 const ipad=process.env.EAGLE_LAB_TEST_IPAD==='1';
 const id='a'.repeat(32),session='s'.repeat(43),prefix=pathMode?`/_eagle/lab/${id}/${session}/`:'/';
-const seen=[],input=[],keys=[],sockets=new Set();let portalOrigin,proxyOrigin,relay,allowed=true;
+const seen=[],input=[],keys=[],vmClipboard=[],sockets=new Set();let portalOrigin,proxyOrigin,relay,allowed=true;
 const listen=server=>new Promise(resolve=>server.listen(0,'127.0.0.1',()=>resolve(server.address().port)));
 const template=(base,name)=>readFileSync(resolve(base,name),'utf8').replaceAll('[% nodename %]','pve').replaceAll('[% username %]','fixture@pve').replaceAll('[% token %]','fixture-csrf');
 const json=(res,data)=>{res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify({data}));};
@@ -63,7 +64,14 @@ pve.on('upgrade',(req,socket,head)=>{
           if(type===2){if(buffer.length<4)return;length=4+buffer.readUInt16BE(2)*4;}
           if(type===6){if(buffer.length<8)return;length=8+buffer.readUInt32BE(4);}
           if(!length)throw Error('Unexpected RFB client message '+type);if(buffer.length<length)return;
-          if(type===4)keys.push({down:buffer[1],key:buffer.readUInt32BE(4)});
+          if(type===4){
+            keys.push({down:buffer[1],key:buffer.readUInt32BE(4)});
+            if(buffer[1]&&buffer.readUInt32BE(4)===99){
+              const text=Buffer.from('Copied inside the VM'),header=Buffer.alloc(8);
+              header[0]=3;header.writeUInt32BE(text.length,4);client.send(Buffer.concat([header,text]));
+            }
+          }
+          if(type===6)vmClipboard.push(buffer.subarray(8,length).toString());
           if(type===3&&buffer[1]===0)framebuffer();buffer=buffer.subarray(length);
         }
       }
@@ -73,10 +81,18 @@ pve.on('upgrade',(req,socket,head)=>{
 const pvePort=await listen(pve);
 const portal=https.createServer(tls,(req,res)=>{
   if(pathMode&&req.url.startsWith(prefix))return relay.emit('request',req,res);
+  if(req.url.startsWith('/static/js/')){
+    res.writeHead(200,{'Content-Type':'text/javascript'});
+    return res.end(readFileSync(resolve(root,req.url.slice(1)),'utf8'));
+  }
+  if(req.url==='/fixture.js'){
+    res.writeHead(200,{'Content-Type':'text/javascript'});
+    return res.end(`window.EagleLab.getState().workspace={root:document.body,session:'fixture-student',transport:'${pathMode?'path':'origin'}',clipboardOrigin:'${pathMode?'null':proxyOrigin}',clipboardKey:'fixture',clipboardTimes:[]};document.querySelector('#instructions').innerHTML=LabReportContent.render('Run {hostname}');LabReportContent.mount(document.querySelector('#instructions'));`);
+  }
   const sandbox='allow-scripts allow-forms'+(pathMode?'':' allow-same-origin');
-  res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(`<html><body><iframe title="LXC console" sandbox="${sandbox}" style="width:100%;height:600px" src="${proxyOrigin}${prefix}?console=lxc&xtermjs=1&node=pve&vmid=100"></iframe><iframe title="VM console" sandbox="${sandbox}" style="width:100%;height:600px" src="${proxyOrigin}${prefix}?console=kvm&novnc=1&node=pve&vmid=101"></iframe></body></html>`);
+  res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(`<html><head><script>window.EagleIDE={getContext:()=>({USER_TOKEN:'fixture-student',currentConfig:{eagle_lab_enabled:true}})}</script></head><body><div id="instructions"></div><script src="/static/js/lab-report-content.js"></script><script src="/static/js/eagle-lab.js"></script><script src="/fixture.js"></script><iframe title="LXC console" sandbox="${sandbox}" style="width:100%;height:600px" src="${proxyOrigin}${prefix}?console=lxc&xtermjs=1&node=pve&vmid=100"></iframe><iframe title="VM console" sandbox="${sandbox}" style="width:100%;height:600px" src="${proxyOrigin}${prefix}?console=kvm&novnc=1&node=pve&vmid=101"></iframe></body></html>`);
 });
-portalOrigin=`https://ide.school.test:${await listen(portal)}`;
+portalOrigin=`https://${engine==='webkit'?'127.0.0.1':'ide.school.test'}:${await listen(portal)}`;
 relay=createGateway({transport:pathMode?'path':'origin',domain:'pve.school.test',portalOrigin,recheckMs:50,authorize:async body=>allowed&&body.server_id===id&&body.session===session?{session,portal_origin:portalOrigin,clipboard_key:'fixture',server:{id,ip:'10.0.0.10',port:8006,allow_self_signed:true}}:null,upstreamRequest:(options,callback)=>http.request({...options,hostname:'127.0.0.1',port:pvePort},callback)});
 portal.on('upgrade',(req,socket,head)=>relay.emit('upgrade',req,socket,head));
 const front=https.createServer(tls,(req,res)=>relay.emit('request',req,res));front.on('upgrade',(req,socket,head)=>relay.emit('upgrade',req,socket,head));
@@ -90,7 +106,7 @@ async function waitFor(check, message) {
   assert.ok(check(), message);
 }
 try{
-  browser=await chromium.launch({headless:true,executablePath:process.env.EAGLE_LAB_BROWSER,args:['--no-proxy-server','--host-resolver-rules=MAP *.school.test 127.0.0.1']});
+  browser=await playwright[engine].launch(engine==='webkit'?{headless:true}:{headless:true,executablePath:process.env.EAGLE_LAB_BROWSER,args:['--no-proxy-server','--host-resolver-rules=MAP *.school.test 127.0.0.1']});
   page=await browser.newPage({ignoreHTTPSErrors:true,viewport:{width:1280,height:1400},hasTouch:ipad});const errors=[];
   if(ipad)await page.addInitScript(()=>Object.defineProperties(navigator,{
     platform:{get:()=>'MacIntel'},maxTouchPoints:{get:()=>5},
@@ -104,9 +120,52 @@ try{
   await lxc.waitForFunction(()=>window.state===window.states?.connected);
   // Both clients focus themselves when they connect. Finish connecting before directing keys to the terminal.
   await vm.waitForFunction(()=>document.documentElement.classList.contains('noVNC_connected'));
+  // Exercise instruction copy even when WebKit denies asynchronous system clipboard reads.
+  await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{
+    readText:()=>Promise.reject(Error('Clipboard read denied')),
+    writeText:()=>Promise.reject(Error('Clipboard write denied')),
+  }}));
+  await page.locator('[data-lab-copy="hostname"]').click();
+  for(const shortcut of ['Control+v','Control+Shift+v',...(ipad?['Meta+v','Meta+Shift+v']:[])]){
+    const before=input.length;
+    await lxc.locator('.xterm-helper-textarea').focus();
+    await page.keyboard.press(shortcut);
+    await waitFor(()=>input.slice(before).some(message=>message==='0:8:hostname'),shortcut+' pastes the copied instruction exactly once');
+    assert.equal(input.slice(before).filter(message=>message==='0:8:hostname').length,1);
+  }
+  await lxc.evaluate(()=>{
+    const data=new DataTransfer();data.setData('text/plain','native paste');
+    term.textarea.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));
+  });
+  await waitFor(()=>input.includes('0:12:native paste'),'native paste events reach the shell');
   await lxc.locator('.xterm-helper-textarea').focus();await page.keyboard.type('sleep 60');await page.keyboard.press('Enter');await page.keyboard.press('Control+c');
   await waitFor(()=>input.includes('0:1:\x03'),'Ctrl+C must reach the PTY as ETX');
   await lxc.waitForFunction(()=>window.term?.buffer.active.getLine(window.term.buffer.active.cursorY)?.translateToString().includes('shell ready'));
+  await lxc.getByRole('button',{name:'Select text',exact:true}).click();
+  await lxc.locator('.xterm-screen').scrollIntoViewIfNeeded();
+  const screen=await lxc.locator('.xterm-screen').boundingBox();
+  const rowHeight=await lxc.evaluate(()=>document.querySelector('.xterm-screen').getBoundingClientRect().height/term.rows);
+  await page.mouse.move(screen.x+16,screen.y+rowHeight*2.5);
+  await page.mouse.down();await page.mouse.move(screen.x+120,screen.y+rowHeight*2.5,{steps:6});await page.mouse.up();
+  assert.ok(await lxc.evaluate(()=>term.getSelection().length>0),JSON.stringify({screen,...await lxc.evaluate(()=>({
+    selection:term.getSelectionPosition(),viewport:term.buffer.active.viewportY,
+    lines:Array.from({length:3},(_,i)=>term.buffer.active.getLine(i)?.translateToString()),
+    active:document.activeElement.className,
+  }))}));
+  await lxc.getByRole('button',{name:'Copy',exact:true}).click();
+  await lxc.getByText('Copied for Eagle Lab',{exact:true}).waitFor();
+  const copied=await page.evaluate(()=>LabReportContent.readClipboard());
+  assert.equal(copied,await lxc.evaluate(()=>term.getSelection()));
+  if(ipad && engine==='chromium'){
+    const touch=await page.context().newCDPSession(page);
+    await touch.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:screen.x+24,y:screen.y+rowHeight*2.5}]});
+    await touch.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:screen.x+90,y:screen.y+rowHeight*2.5}]});
+    await touch.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+    assert.ok(await lxc.evaluate(()=>term.getSelection().length>0),'touch drag selects shell text');
+    await touch.detach();
+  }
+  await lxc.getByRole('button',{name:'Select text',exact:true}).click();
+  await lxc.evaluate(()=>term.clearSelection());
   if(ipad){
     await page.locator('body').click({position:{x:2,y:2}});
     await lxc.locator('.xterm-screen').tap({position:{x:15,y:15}});
@@ -127,6 +186,14 @@ try{
   const canvas=vm.locator('#noVNC_container canvas');await canvas.waitFor();await canvas.click({position:{x:10,y:10}});await page.keyboard.press('Control+c');
   await vm.waitForFunction(()=>{const canvas=document.querySelector('#noVNC_container canvas');return canvas?.width===64&&canvas?.height===48;});
   await waitFor(()=>keys.some(event=>event.key===0xffe3&&event.down)&&keys.some(event=>event.key===99&&event.down),'VM receives Ctrl+C');
+  await page.waitForFunction(async()=>await LabReportContent.readClipboard()==='Copied inside the VM');
+  await page.locator('[data-lab-copy="hostname"]').click();
+  const pasteKeys=keys.length;
+  await canvas.click({position:{x:10,y:10}});await page.keyboard.press(ipad?'Meta+Shift+v':'Control+v');
+  await waitFor(()=>vmClipboard.includes('hostname'),'VM receives copied instructions through the guest clipboard');
+  await waitFor(()=>keys.slice(pasteKeys).some(event=>event.key===(ipad?86:118)&&event.down),'VM receives the requested paste shortcut');
+  if(ipad)assert.ok(keys.slice(pasteKeys).some(event=>event.key===0xffe1&&event.down),'Shift+paste also reaches GUI terminal emulators');
+  await waitFor(()=>keys.at(-1)?.key===0xffe3&&!keys.at(-1)?.down,'paste modifiers are released');
   if(ipad){
     await waitFor(()=>keys.some(event=>event.key===0xffe3&&!event.down),'The physical Control key has released');
     const start = keys.length;
@@ -142,7 +209,8 @@ try{
   assert.ok(seen.some(item=>item.url.includes('/vncproxy')&&item.headers['cache-control']==='no-cache'));
   assert.equal(seen.some(item=>item.url.includes('/_eagle/')),false,'session prefix must be removed exactly once');
   if(process.env.EAGLE_LAB_SCREENSHOT)await page.screenshot({path:process.env.EAGLE_LAB_SCREENSHOT});
+  assert.deepEqual(errors,[]);
   allowed=false;await lxc.waitForFunction(()=>window.state===window.states?.disconnected);
-  assert.deepEqual(errors,[]);console.log(`PASS: official PVE xterm and noVNC keyboard, CORS and revocation (${ipad?'iPad emulation':'desktop'}, ${pathMode?'path':'origin'} transport).`);
+  console.log(`PASS: official PVE clipboard, selection, keyboard and revocation (${engine}, ${ipad?'iPad emulation':'desktop'}, ${pathMode?'path':'origin'}).`);
 }catch(error){console.error(JSON.stringify({diagnostics,requests:seen.map(item=>item.url),input},null,2));for(const frame of page?.frames()||[]){console.error(frame.url(),await frame.locator('body').innerText().catch(()=>''));}throw error;}
 finally{await browser?.close();for(const socket of sockets)socket.terminate();ws.close();for(const server of [front,portal,pve,relay]){server.closeAllConnections();server.close();}}

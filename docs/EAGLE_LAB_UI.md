@@ -11,17 +11,31 @@ Choose a class, search the assigned server cards, and open a server's details to
 connect. Refresh updates the catalog without reloading an open PVE console.
 Reports open directly from the Lab page as well as the console toolbar.
 
-Reports float above the workspace without blocking it. Drag the grip, use its
-arrow-key controls, drag the bottom corner to resize, or minimize the panel.
+Reports float above the workspace with translucent backgrounds. Drag any
+non-interactive surface with a mouse, trackpad or one finger. Use two fingers
+to scroll the report page on touch screens. Focus the window and use arrow keys
+to move it, drag the bottom corner to resize, or use the square corner button
+to minimize it. The 48px square restores the window. **Open report** also expands
+the existing window and places it at the top right.
 Viewport/keyboard changes keep controls on screen. Close saves pending work;
 a failed save keeps the report open. Every procedure checkbox must be selected
 for credit. Server-side draft/final response validation and scoring still apply.
 
 Highlighted report text copies to the clipboard on click or keyboard activation.
-If browser clipboard permission is unavailable, the text remains selectable.
+If browser clipboard permission is unavailable, the copied text stays available
+inside the current Eagle Lab session. Paste it with Ctrl+V, Cmd+V, either modifier
+with Shift+V, or the console's **Paste** button. **Select text** enables shell
+text selection with a touch drag or trackpad; **Copy** copies the highlighted text.
+Copy shortcuts also copy selected shell text. Ctrl+C interrupts when no shell
+text is selected.
 The report retains the same revision conflict and account isolation controls.
 
 ## Teacher workflow
+
+Teachers can open their class reports from the Lab page or console toolbar,
+work through them, and resume their own autosaved practice. **Reset my practice**
+clears their practice responses. Student drafts and submitted work remain private
+to the student workflow. Teachers have no submission action in practice.
 
 Class access changes remain in memory per class and session until saved. Refresh
 and class switches preserve them; signing out clears them. If you continue
@@ -55,7 +69,8 @@ when preparing a separate class report. No auth token enters an image URL.
 ## Lab Manual
 
 The manual opens from the Lab page or console toolbar and can stay beside a
-report. Search or select chapters for Linux commands, Proxmox host commands,
+report. It shares the report's translucent design, drag/resize behavior and
+minimized restore square. Search or select chapters for Linux commands, Proxmox host commands,
 Proxmox vocabulary, IP addressing and ports, LXC/VM creation and backups, and
 hosting Python apps or static websites. Commands copy without executing.
 Examples identify whether they run inside the guest or on the PVE host and use
@@ -97,5 +112,7 @@ For full browser verification start `python tests/lesson_plan_browser_fixture.py
 selects a private scratch screenshot directory. All accounts, files and report
 images in this fixture are temporary. The synthetic gateway checks in
 `eagle_lab_browser_checks.mjs` separately cover console isolation and revocation.
+Set `EAGLE_LAB_TEST_ENGINE=webkit` to run the report/manual touch regression
+with an installed Playwright WebKit browser and iPad input emulation.
 Test a real classroom PVE deployment separately for its console latency and
 available bandwidth; the synthetic fixtures do not measure production throughput.

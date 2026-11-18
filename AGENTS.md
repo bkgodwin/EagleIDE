@@ -67,8 +67,9 @@ Required runtime components:
 |-- eagle_lab_gateway.py         PIN-gated launch capabilities, live authorization, and gateway lifecycle
 |-- lab_gateway/                 Isolated Node HTTP/WebSocket relay and PVE browser compatibility bridges
 |   |-- front.mjs                Fixed loopback Flask/Socket.IO forwarding on the existing public listener
-|   |-- path-runtime.mjs         Opaque PVE URL, virtual cookie/storage and scoped clipboard bridges
-|   |-- console-keyboard.mjs     iPad hardware focus and modifier compatibility in the console frames
+|   |-- path-runtime.mjs         Opaque PVE URL and virtual cookie/storage bridges
+|   |-- clipboard.mjs            Session-keyed parent clipboard requests for either relay transport
+|   |-- console-keyboard.mjs     Console paste, text selection, focus and iPad modifier compatibility
 |   `-- path-rewrite.mjs         Prefix rewriting for PVE documents, styles and console modules
 |-- lab_reports.py               Account-isolated autosave drafts for continuous lab reports
 |-- lab_report_media.py          Bounded private report illustrations and class-checked reads
@@ -286,7 +287,9 @@ Keep inline noVNC module imports prefix-scoped as well as external modules, and
 allow the console clients' Cache-Control header in opaque CORS preflights.
 WebSocket wrappers must return native instances: noVNC validates immediate
 prototype properties. Ctrl+C must reach xterm's PTY as ETX, without clipboard
-interception. On iPad, console-scoped Command shortcuts also send Control chords.
+interception when no shell text is selected. Console paste shortcuts use xterm's
+paste API. Selected shell text copies through the session-keyed parent broker.
+On iPad, other console-scoped Command shortcuts also send Control chords.
 Server enrollment/editing uses a native modal dialog; enrollment
 always resets fields and editing preserves blank passwords/PINs. Admin-only
 server-order saves atomically permute the existing catalog list, preserving
@@ -296,7 +299,9 @@ credentials, revisions and class grants. Student filtering retains that order.
 `assignments/.lab-reports/`. Assignment metadata remains in the existing additive
 assignment schema with `assignmentType: "lab_report"`; existing assignments
 default to `standard`. A successful final quiz submission deletes only that
-student's draft. Preserve written, fill-blank, and fixed-length boolean procedure
+student's draft. Teacher practice uses a separate account namespace, class-owner
+authorization, revision-checked saves and reset through the preview route. It
+never creates a submission. Preserve written, fill-blank, and fixed-length boolean procedure
 validation on both draft and final submission routes.
 
 `/api/eagle-lab/access` checks navigation entitlement without probing PVE. Students
@@ -307,8 +312,10 @@ to update catalog status. Teacher class-rule drafts are session/class scoped;
 refresh and late saves must retain newer edits.
 
 Reports and the Lab Manual are nonmodal, movable, resizable windows with pointer
-capture, keyboard controls, visualViewport clamping, and minimization. Keep the
-background interactive and retain dirty report close/unload protections. Autosave
+capture, keyboard controls, visualViewport clamping, and minimization. The
+48px restore tiles and shared controls support touch, trackpad and mouse.
+One finger drags non-interactive window surfaces; two fingers scroll their pages.
+Keep the background interactive and retain dirty report close/unload protections. Autosave
 conflicts preserve both drafts and allow explicit submission of the answers shown
 in the open window. Report text is escaped; `{text}` creates a copy button, never
 executable markup.

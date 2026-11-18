@@ -5,7 +5,7 @@ export function pathRuntimeSource(config) {
 
 function runtime(config) {
   'use strict';
-  const {prefix,origin,upstreamOrigin,clipboardKey}=config;
+  const {prefix,origin,upstreamOrigin}=config;
   const NativeXHR=window.XMLHttpRequest,open=NativeXHR.prototype.open,send=NativeXHR.prototype.send;
   const cookie=new Map(Object.entries(config.cookies||{}));
   const maps={local:new Map(Object.entries(config.local||{})),session:new Map(Object.entries(config.session||{}))};
@@ -63,21 +63,4 @@ function runtime(config) {
   const rewrite=element=>{if(element.nodeType!==1)return;for(const attribute of ['src','href','action','poster']){const value=element.getAttribute(attribute);if(value){const mapped=urlFor(value);if(mapped!==value)nativeSet.call(element,attribute,mapped);}}};
   new MutationObserver(changes=>{for(const change of changes){if(change.type==='attributes')rewrite(change.target);else change.addedNodes.forEach(element=>{rewrite(element);element.querySelectorAll?.('[src],[href],[action],[poster]').forEach(rewrite);});}}).observe(document,{childList:true,subtree:true,attributes:true,attributeFilter:['src','href','action','poster']});
   const nativeWindowOpen=window.open.bind(window);window.open=(url,...args)=>nativeWindowOpen(urlFor(url),...args);
-  // Clipboard authority belongs to the parent EagleIDE page, never the opaque PVE document.
-  const pending=new Map(),relayed=new Map();let serial=0;
-  const broker=window.top===window?window.opener:window.top;
-  function clipboard(method,text){return new Promise((resolve,reject)=>{
-    if(!broker)return reject(new Error('Open this console through Eagle Lab to use the clipboard.'));
-    const id=crypto.randomUUID?.()||String(Date.now())+'-'+(++serial);
-    const timer=setTimeout(()=>{pending.delete(id);reject(new Error('Clipboard request timed out'));},10000);
-    pending.set(id,{resolve,reject,timer});broker.postMessage({type:'eagle-lab-clipboard',key:clipboardKey,id,method,text},'*');
-  });}
-  window.addEventListener('message',event=>{
-    const data=event.data;if(!data||data.key!==clipboardKey)return;
-    if(data.type==='eagle-lab-clipboard'&&window.top!==window&&event.source!==window.top){relayed.set(data.id,event.source);window.top.postMessage(data,'*');return;}
-    if(data.type!=='eagle-lab-clipboard-result'||event.source!==broker)return;
-    if(relayed.has(data.id)){relayed.get(data.id).postMessage(data,'*');relayed.delete(data.id);return;}
-    const item=pending.get(data.id);if(!item)return;clearTimeout(item.timer);pending.delete(data.id);data.error?item.reject(new Error(data.error)):item.resolve(data.text);
-  });
-  Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:text=>clipboard('writeText',String(text)),readText:()=>clipboard('readText')}});
 }

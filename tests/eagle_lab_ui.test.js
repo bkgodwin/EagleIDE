@@ -43,6 +43,7 @@ function reportFixture(writeDraft, submitReport = () => { throw new Error('Unexp
       if (selector === '.lab-report-page') return page;
       if (selector === '[data-report-submit]') return submit;
       if (selector === '[data-report-status]') return submitStatus;
+      if (selector === '[data-report-reset]') return null;
       return field;
     },
     querySelectorAll(selector) { return selector === '[data-report-close]' ? closeButtons : [submit, field]; },

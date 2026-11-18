@@ -5,6 +5,21 @@
   const ctx = () => window.EagleIDE?.getContext?.() || {};
   const identity = () => ctx().ADMIN_TOKEN || ctx().TEACHER_TOKEN || ctx().USER_TOKEN || '';
   const imageCache=new Map();let cacheSession='';
+  let copiedText = null, clipboardSession = '';
+  async function writeClipboard(text) {
+    copiedText = String(text).slice(0, 1000000);
+    clipboardSession = identity();
+    try { await navigator.clipboard.writeText(copiedText); }
+    catch { return false; }
+    return true;
+  }
+  async function readClipboard() {
+    try { return await navigator.clipboard.readText(); }
+    catch (error) {
+      if (clipboardSession === identity() && copiedText !== null) return copiedText;
+      throw error;
+    }
+  }
   function headers(student=false) { const c=ctx(); return c.ADMIN_TOKEN?{'X-Admin-Token':c.ADMIN_TOKEN}:c.TEACHER_TOKEN?{[student&&c.currentTeacher?.is_coteacher?'X-User-Token':'X-Teacher-Token']:c.TEACHER_TOKEN}:{'X-User-Token':c.USER_TOKEN||''}; }
   function render(value) {
     const text=String(value || ''), pattern=/!\[([^\]\n]{0,200})\]\(lab-image:([a-f0-9]{32})\)|\{([^{}]{1,8000})\}/g;
@@ -49,7 +64,7 @@
       const button=event.target.closest?.('[data-lab-copy]');if(!button||!root.contains(button))return;
       event.preventDefault(); // A copy command inside a checklist must not toggle its checkbox.
       const status=root.querySelector('[data-copy-status]');
-      try{await navigator.clipboard.writeText(button.dataset.labCopy);if(status)status.textContent='Copied to clipboard';button.classList.add('is-copied');button.title='Copied to clipboard';}
+      try{const system=await writeClipboard(button.dataset.labCopy);if(status)status.textContent=system?'Copied to clipboard':'Copied for Eagle Lab';button.classList.add('is-copied');button.title='Copied for Eagle Lab';}
       catch{if(status)status.textContent='Clipboard unavailable. Select the highlighted text and copy it.';button.title='Select this text and copy it manually';}
     }
     root.addEventListener('click',copy);
@@ -57,13 +72,13 @@
   }
   function floating(root) {
     const panel = root.querySelector('.lab-report-window');
-    const handle = root.querySelector('[data-float-move]');
     const resize = root.querySelector('[data-float-resize]');
     const minimize = root.querySelector('[data-float-minimize]');
     const tile = root.querySelector('[data-float-restore]');
     const viewport = window.visualViewport;
     const margin = 8, tileSize = 48;
-    let minimized = false, expanded, drag, moved = false;
+    const page = root.querySelector('.lab-report-page');
+    let minimized = false, expanded, drag, moved = false, touchScroll;
 
     function bounds() {
       return {
@@ -99,7 +114,6 @@
       const size = minimized ? expanded : {width, height};
       minimized = false;
       panel.classList.remove('is-minimized');
-      minimize.textContent = 'Minimize';
       minimize.setAttribute('aria-expanded', 'true');
       place({left, top, width: size.width, height: size.height}, topRight);
       if (focusButton) minimize.focus({preventScroll: true});
@@ -109,9 +123,9 @@
       if (drag || event.button !== 0 || event.isPrimary === false) return;
       moved = false;
       const control = event.target.closest('button, input, textarea, select, a, label, [contenteditable]');
-      const grip = control === handle || control === resize;
+      const grip = control === resize;
       const restoreTile = tile && control === tile;
-      if (!grip && !restoreTile && (control || !tile)) return;
+      if (!grip && !restoreTile && control) return;
       // Leave touch scrolling to the report body and keep clicks on the restore button native.
       if (grip || (event.pointerType === 'mouse' && !restoreTile)) event.preventDefault();
       drag = {
@@ -149,14 +163,58 @@
     window.addEventListener('pointerup', end);
     window.addEventListener('pointercancel', end);
     panel.addEventListener('lostpointercapture', end);
-    for (const control of [handle, resize, tile].filter(Boolean)) {
+    let touchButton, touchButtonPoint, touchActivatedAt = -1000;
+    panel.addEventListener('pointerdown', event => {
+      if (event.pointerType === 'mouse') touchActivatedAt = -1000;
+      touchButton = event.pointerType === 'touch' ? event.target.closest('button') : null;
+      touchButtonPoint = {x:event.clientX,y:event.clientY};
+    });
+    panel.addEventListener('pointerup', event => {
+      if (!touchButton || moved || event.pointerType !== 'touch' ||
+          Math.hypot(event.clientX-touchButtonPoint.x,event.clientY-touchButtonPoint.y)>5) return;
+      const button = touchButton;
+      touchButton = null;
+      if (button.disabled) return;
+      event.preventDefault();
+      touchActivatedAt = performance.now();
+      button.click();
+    });
+    panel.addEventListener('click', event => {
+      // A touch tap may deliver its compatibility click after a window changes size.
+      if (event.isTrusted && event.detail > 0 &&
+          performance.now()-touchActivatedAt<600) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    },true);
+    for (const control of [panel, resize, tile].filter(Boolean)) {
       control.addEventListener('keydown', event => {
+        if (event.target !== control) return;
         const delta = {ArrowLeft: [-16, 0], ArrowRight: [16, 0], ArrowUp: [0, -16], ArrowDown: [0, 16]}[event.key];
         if (!delta) return;
         event.preventDefault();
         adjust(panel.getBoundingClientRect(), ...delta, control === resize);
       });
     }
+    // Native vertical touch panning cancels pointer drags. Scroll the page explicitly
+    // with two fingers so a one-finger drag works on every non-interactive surface.
+    function scrollStart(event) {
+      if (event.touches.length !== 2) return;
+      drag = null;
+      panel.classList.remove('is-dragging');
+      touchScroll = {y:(event.touches[0].clientY + event.touches[1].clientY) / 2, top:page.scrollTop};
+    }
+    function scrollMove(event) {
+      if (!touchScroll || event.touches.length !== 2) return;
+      event.preventDefault();
+      const y = (event.touches[0].clientY + event.touches[1].clientY) / 2;
+      page.scrollTop = touchScroll.top + touchScroll.y - y;
+    }
+    function scrollEnd() { touchScroll = null; }
+    page.addEventListener('touchstart', scrollStart, {passive:true});
+    page.addEventListener('touchmove', scrollMove, {passive:false});
+    page.addEventListener('touchend', scrollEnd);
+    page.addEventListener('touchcancel', scrollEnd);
     if (tile) tile.onclick = event => { if (!moved || event.detail === 0) restore(); };
     minimize.onclick = () => {
       if (minimized) { restore(); return; }
@@ -168,7 +226,6 @@
         place({left: rect.right - tileSize, top: rect.top});
         tile.focus({preventScroll: true});
       } else {
-        minimize.textContent = 'Expand';
         place({left: rect.left, top: rect.top, width: rect.width, height: Math.max(72, panel.querySelector('header').offsetHeight + 2)});
       }
     };
@@ -185,6 +242,9 @@
       viewport?.removeEventListener('scroll', clamp);
     }};
   }
-  window.LabReportContent={render,mount,floating,headers};
+  window.LabReportContent={render,mount,floating,headers,writeClipboard,readClipboard};
+  window.addEventListener('eagle-context-updated',()=>{
+    if(clipboardSession!==identity()){copiedText=null;clipboardSession='';}
+  });
   window.addEventListener('eagle-context-updated',()=>{if(cacheSession!==identity()){imageCache.clear();cacheSession=identity();}});
 })();

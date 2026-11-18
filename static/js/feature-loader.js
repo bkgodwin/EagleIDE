@@ -5,7 +5,7 @@
   const definitions = {
     adminCleanup: ['/static/js/admin-cleanup.js?v=20261109-history'],
     externalToolsAdmin: ['/static/js/external-tools-admin.js?v=20261020-storage-1'],
-    eagleLab: ['/static/js/lab-report-content.js?v=20261118', '/static/js/eagle-lab.js?v=20261118', '/static/js/lab-manual.js?v=20261118', '/static/js/lab-report-editor.js?v=20261103'],
+    eagleLab: ['/static/js/lab-report-content.js?v=20261118-input', '/static/js/eagle-lab.js?v=20261118-input', '/static/js/lab-manual.js?v=20261118-input', '/static/js/lab-report-editor.js?v=20261103'],
     network: [
       '/static/js/network-sim.js?v=20261116-infra-guidance',
       '/static/js/network-sim-advanced.js?v=20261113-hub',

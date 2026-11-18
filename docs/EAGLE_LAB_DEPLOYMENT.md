@@ -62,7 +62,7 @@ workflows are not covered by the browser fixture.
    class and make it available to the owner. Admins and owning teachers bypass
    student hours and PINs.
 5. Students select a server, enter its PIN, and Connect. The embedded workspace
-   provides Exit, Credentials, clipboard hints and continuous lab report windows.
+   provides Exit, Credentials, the Lab Manual and continuous lab report windows.
    Reports autosave independently of console traffic.
 
 Enrollment opens a blank dialog with the standard port/username defaults. Edit
@@ -89,15 +89,20 @@ change a PVE password a student already knows.
 ## Clipboard and consoles
 
 The opaque PVE window delegates text copy/paste through a session-keyed broker
-in the EagleIDE page. Public HTTPS, focus and browser clipboard permission are
-required; school device policy still applies. No EagleIDE account data is sent
+in the EagleIDE page. Public HTTPS and current-session authority are required.
+System clipboard reads use browser permission. Text copied from an instruction
+or console remains available within the lab session when the browser denies
+system access. School device policy still applies. No EagleIDE account data is sent
 to PVE.
 
-- Host/LXC terminals: select xterm.js and use Ctrl+Shift+C / Ctrl+Shift+V (Cmd on
-  macOS where supported) for copy/paste. Click inside the terminal before typing.
-  Ctrl+C sends the normal interrupt to the foreground program.
+- Host/LXC terminals accept Ctrl+V / Cmd+V and either modifier with Shift+V.
+  Console **Copy**, **Paste**, and **Select text** buttons support touch and
+  pointer input. Ctrl+C sends the normal interrupt when no shell text is selected.
 - Graphical VMs: use noVNC's clipboard panel when the PVE version and guest
-  support it. Guest clipboard integration remains a guest/PVE capability. A
+  support it. The console's Paste button transfers text to the guest clipboard
+  and sends Ctrl+V. Shift+V shortcuts retain Shift for guest terminal emulators.
+  Received guest clipboard text is available to Eagle Lab.
+  Guest clipboard integration remains a guest/PVE capability. A
   configured serial terminal is an alternative for text work.
 - WSS console connections preserve binary frames, subprotocols and query tickets
   through the existing public address. SPICE requires its external native client;
@@ -188,5 +193,8 @@ Install `ws` alongside the browser tooling; `EAGLE_LAB_WS_MODULE` optionally
 selects its module entry point. Run both `EAGLE_LAB_TEST_TRANSPORT=path` and
 `origin`. The fixture verifies API preflights, terminal authentication/input and
 Ctrl+C ETX, real noVNC framebuffer rendering and keyboard events, and revocation.
+Set `EAGLE_LAB_TEST_IPAD=1` to exercise both keyboard modifiers and touch.
+Set `EAGLE_LAB_TEST_ENGINE=webkit` with an installed Playwright WebKit browser
+to check the Safari engine on loopback in path mode.
 Client sources and tooling remain development-only, outside tracked assets;
 no PVE node, account or guest is contacted.

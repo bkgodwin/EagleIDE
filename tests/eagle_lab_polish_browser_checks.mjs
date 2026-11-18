@@ -4,14 +4,51 @@ import {mkdirSync} from 'node:fs';
 import {isAbsolute,join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 const module=process.env.EAGLE_LAB_PLAYWRIGHT_MODULE||'playwright';
-const {chromium}=await import(isAbsolute(module)?pathToFileURL(module).href:module);
+const {chromium,webkit}=await import(isAbsolute(module)?pathToFileURL(module).href:module);
 const base=process.env.EAGLE_LAB_TEST_URL,output=process.env.EAGLE_LAB_SCREENSHOT_DIR;
 if(!/^http:\/\/127\.0\.0\.1:\d+$/.test(base||''))throw Error('Use the isolated --lab fixture URL');
-const browser=await chromium.launch({headless:true,executablePath:process.env.EAGLE_LAB_BROWSER});
+const webkitMode=process.env.EAGLE_LAB_TEST_ENGINE==='webkit';
+const browser=await (webkitMode?webkit:chromium).launch(webkitMode?{headless:true}:{headless:true,executablePath:process.env.EAGLE_LAB_BROWSER});
 const errors=[];
 async function account(session){const context=await browser.newContext({viewport:{width:1440,height:1000}});await context.grantPermissions(['clipboard-read','clipboard-write']);await context.addInitScript(value=>sessionStorage.setItem('eagle-auth-session-v1',JSON.stringify(value)),session);const page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));page.on('dialog',dialog=>dialog.accept());await page.goto(base,{waitUntil:'networkidle'});return {context,page};}
 async function screenshot(page,name){if(output){mkdirSync(output,{recursive:true});await page.screenshot({path:join(output,name+'.png')});}}
 async function inBounds(page,selector){assert.ok(await page.locator(selector).evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0&&r.top>=0&&r.right<=innerWidth+1&&r.bottom<=innerHeight+1;}),selector+' must stay on screen');}
+if(webkitMode){
+  try{
+    const context=await browser.newContext({viewport:{width:1024,height:1366},hasTouch:true,isMobile:true});
+    await context.addInitScript(()=>sessionStorage.setItem('eagle-auth-session-v1',JSON.stringify({
+      teacherToken:'agenda-teacher',currentTeacher:{email:'teacher@example.test',role:'teacher'},
+    })));
+    const page=await context.newPage();
+    page.on('dialog',dialog=>dialog.accept());
+    await page.goto(base,{waitUntil:'networkidle'});
+    await page.locator('#eagleLabViewBtn').tap();
+    await page.getByRole('button',{name:/Your first self hosted service/}).tap();
+    const report=page.locator('.lab-report-window');
+    await report.locator('[data-report-question="notes"]').fill('WebKit teacher practice');
+    assert.equal(await report.locator('[data-report-submit]').count(),0);
+    await report.getByRole('button',{name:'Minimize report'}).tap();
+    await report.getByRole('button',{name:/Restore Your first/}).waitFor();
+    await page.evaluate(()=>EagleLab.openReportById(EagleLab.getState().report.assignmentId));
+    assert.equal((await report.boundingBox()).y,8);
+    assert.equal(await report.locator('[data-report-question="notes"]').inputValue(),'WebKit teacher practice');
+    await report.getByRole('button',{name:'Reset my practice'}).tap();
+    await report.getByText('Practice reset',{exact:true}).waitFor();
+    await report.getByRole('button',{name:'Close for now'}).tap();
+    await report.waitFor({state:'detached'});
+    await page.locator('#eagleLabManualBtn').tap();
+    const manual=page.locator('.lab-manual-window');
+    await manual.getByRole('button',{name:'Minimize Lab Manual'}).tap();
+    await manual.getByRole('button',{name:'Restore Lab Manual'}).tap();
+    await manual.locator('input').fill('network');
+    await manual.locator('[data-chapter="network"]').tap();
+    await manual.locator('.lab-copy-text').first().tap();
+    assert.equal(await page.evaluate(()=>LabReportContent.readClipboard()),'ip -br addr');
+    await manual.getByRole('button',{name:'Close Lab Manual'}).tap();
+    await context.close();
+    console.log('PASS: WebKit iPad touch controls, teacher practice/reset, manual and command copy.');
+  }finally{await browser.close();}
+}else{
 try{
   const {context:studentContext,page:student}=await account({userToken:'agenda-student',currentUser:{email:'student@example.test',role:'student'}});
   await student.locator('#eagleLabViewBtn').waitFor({state:'visible'});await student.locator('#eagleLabViewBtn').click();await student.locator('[data-lab-server]').first().waitFor();
@@ -21,9 +58,9 @@ try{
   await student.locator('[data-lab-copy="hostname"]').click();assert.equal(await student.evaluate(()=>navigator.clipboard.readText()),'hostname');
   await student.locator('[data-report-question="notes"]').fill('The guest has a private IPv4 address.');
   await student.locator('#eagleLabSearch').fill('02');assert.equal(await student.locator('[data-lab-server]').count(),1,'background remains interactive');
-  await student.locator('[data-float-move]').press('ArrowLeft');await student.locator('[data-float-resize]').press('ArrowLeft');await inBounds(student,'.lab-report-window');
+  await student.locator('.lab-report-window').press('ArrowLeft');await student.locator('[data-float-resize]').press('ArrowLeft');await inBounds(student,'.lab-report-window');
   assert.ok(await student.locator('[data-step="0"]').evaluate(el=>el.getBoundingClientRect().width>=24));
-  await student.locator('[data-float-minimize]').click();assert.equal(await student.locator('.lab-report-page').isVisible(),false);await student.locator('[data-float-minimize]').click();assert.equal(await student.locator('[data-report-question="notes"]').inputValue(),'The guest has a private IPv4 address.');
+  await student.locator('[data-float-minimize]').click();assert.equal(await student.locator('.lab-report-page').isVisible(),false);await student.locator('[data-float-restore]').click();assert.equal(await student.locator('[data-report-question="notes"]').inputValue(),'The guest has a private IPv4 address.');
   await student.getByRole('button',{name:'Close for now'}).click();await student.locator('.lab-report-overlay').waitFor({state:'detached'});
   await student.locator('#eagleLabManualBtn').click();await student.locator('.lab-manual-window').waitFor();await student.locator('.lab-manual-search input').fill('network');await student.locator('[data-chapter="network"]').click();await student.locator('.lab-copy-text').first().click();assert.equal(await student.evaluate(()=>navigator.clipboard.readText()),'ip -br addr');await screenshot(student,'lab-manual-dark');
   await student.setViewportSize({width:390,height:844});await inBounds(student,'.lab-manual-window');await screenshot(student,'lab-manual-mobile');await student.locator('[data-manual-close]').click();
@@ -33,6 +70,24 @@ try{
   console.log('Student surfaces verified.');
   await student.locator('#ideViewBtn').click();await student.evaluate(()=>EagleIDE.getContext().setEditorSnapshot({code:'print("Lab UI smoke test")',language:'python',fileName:'lab-smoke.py',draft:true}));await student.locator('#runBtn').click();await student.locator('#output').filter({hasText:'Lab UI smoke test'}).waitFor();await student.locator('#eagleLabViewBtn').click();
   const {context:teacherContext,page:teacher}=await account({teacherToken:'agenda-teacher',currentTeacher:{email:'teacher@example.test',role:'teacher'}});
+  await teacher.locator('#eagleLabViewBtn').click();
+  await teacher.getByRole('button',{name:/Your first self hosted service/}).click();
+  const practice=teacher.locator('.lab-report-window');
+  assert.equal(await practice.locator('[data-report-submit]').count(),0);
+  await practice.locator('[data-report-question="notes"]').fill('Private teacher practice');
+  await practice.getByRole('button',{name:'Close for now'}).click();
+  await practice.waitFor({state:'detached'});
+  await teacher.getByRole('button',{name:/Your first self hosted service/}).click();
+  assert.equal(await practice.locator('[data-report-question="notes"]').inputValue(),'Private teacher practice');
+  await screenshot(teacher,'lab-teacher-practice');
+  await practice.getByRole('button',{name:'Reset my practice'}).click();
+  await practice.getByText('Practice reset',{exact:true}).waitFor();
+  assert.equal(await practice.locator('[data-report-question="notes"]').inputValue(),'');
+  await practice.getByRole('button',{name:'Close for now'}).click();
+  await practice.waitFor({state:'detached'});
+  await student.getByRole('button',{name:/Your first self hosted service/}).click();
+  assert.equal(await student.locator('[data-report-question="notes"]').inputValue(),'The guest has a private IPv4 address.');
+  await student.getByRole('button',{name:'Close for now'}).click();
   const assignments = (await (await studentContext.request.get(base + '/api/assignments', {
     headers:{'X-User-Token':'agenda-student'},
   })).json()).assignments;
@@ -107,3 +162,4 @@ try{
   await teacherContext.request.put(base+'/api/eagle-lab/teacher/classes/agenda-class',{headers:{'X-Teacher-Token':'agenda-teacher'},data:{...rule,enabled:false}});await student.evaluate(()=>EagleLabAccess.refresh(null,true));assert.equal(await student.locator('#eagleLabViewBtn').isVisible(),false);
   assert.deepEqual(errors,[]);await studentContext.close();await teacherContext.close();console.log('PASS: real student/teacher UI, background interaction, clipboard, floating viewport bounds, manual, class draft retention, live editor, protected image upload/read, section editing, publishing and entitlement hiding.');
 }finally{await browser.close();}
+}
