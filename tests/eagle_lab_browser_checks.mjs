@@ -21,7 +21,7 @@ const nodeHost='s-'+id+'.'+domain;
 const questions=[{id:'written',type:'written',question:'Record your observations',points:5},{id:'blank',type:'fill_blank',question:'Management port',points:2},{id:'steps',type:'procedure',question:'Complete the procedure',steps:['Sign in','Inspect the VM'],points:3}];
 const assignment={id:assignmentId,name:'Virtualization lab report',task:'Inspect the assigned node and record the results.',assignmentType:'lab_report',targetClassId:'class-a',quiz:{questions}};
 const server={id,hostname:'PVE Lab 01',ip:'10.40.0.10',port:8006,status:'up',status_reason:'PVE management responded with HTTP 200.',pin_required:true};
-let allowed=true,draft={revision:0,responses:[]},unlocked=false,portalOrigin,proxyOrigin;
+let allowed=true,draft={revision:0,responses:[]},unlocked=false,portalOrigin,proxyOrigin,submission;
 const tickets=new Set(),sessions=new Set(),seen=[];
 const listen=server=>new Promise(resolve=>server.listen(0,'127.0.0.1',()=>resolve(server.address().port)));
 const json=(res,data,status=200)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
@@ -76,8 +76,13 @@ const portal=https.createServer(tls,async(req,res)=>{
     if(req.url.startsWith('/api/eagle-lab/bootstrap'))return json(res,{ok:true,data:{role:'student',servers:[server],show_credentials:true,gateway_configured:true}});
     if(req.url==='/api/assignments')return json(res,{ok:true,assignments:[assignment]});
     if(req.url==='/api/quiz/'+assignmentId)return json(res,{ok:true,quiz:{questions},savedResponses:[]});
+    if(req.url==='/api/quiz/submit'){
+      submission=await body(req);
+      assignment.studentSubmissionSummary={submittedAt:Date.now()};
+      return json(res,{ok:true});
+    }
     if(req.url==='/api/lab-reports/'+assignmentId+'/draft'){
-      if(req.method==='PUT'){const next=await body(req);if(next.revision!==draft.revision)return json(res,{ok:false,error:'Conflict'},409);draft={revision:draft.revision+1,responses:next.responses,updated_at:Date.now()};}
+      if(req.method==='PUT'){const next=await body(req);if(next.revision!==draft.revision)return json(res,{ok:false,error:'Conflict',data:draft},409);draft={revision:draft.revision+1,responses:next.responses,updated_at:Date.now()};}
       return json(res,{ok:true,data:draft});
     }
     if(req.url===`/api/eagle-lab/servers/${id}/launch`){const data=await body(req);if(data.pin!=='1234')return json(res,{ok:false,error:'Incorrect server PIN'},403);const ticket=randomBytes(32).toString('base64url');tickets.add(ticket);unlocked=true;return json(res,{ok:true,data:{url:pathMode?portalOrigin+`/_eagle/lab/${id}/launch`:proxyOrigin+'/_eagle/launch',ticket,transport:pathMode?'path':'origin',clipboard_key:clipboardKey}});}
@@ -147,16 +152,62 @@ try{
   await page.evaluate(()=>document.body.classList.add('light-mode'));
   assert.equal(await page.locator('.lab-report-window').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(240, 242, 245)');
   await page.evaluate(()=>document.body.classList.remove('light-mode'));
+
+  const report = page.locator('.lab-report-window');
+  async function drag(from, dx, dy) {
+    const {x, y, width, height} = await from.boundingBox();
+    await page.mouse.move(x + width / 2, y + height / 2);
+    await page.mouse.down();
+    await page.mouse.move(x + width / 2 + dx, y + height / 2 + dy, {steps: 8});
+    await page.mouse.up();
+  }
+  const initial = await report.boundingBox();
+  await drag(report.locator('.lab-report-hint'), -190, 65);
+  const moved = await report.boundingBox();
+  assert.equal(moved.x, initial.x - 190);
+  assert.equal(moved.y, initial.y + 65);
+  await report.getByRole('button', {name:'Minimize'}).click();
+  const tile = report.getByRole('button', {name:'Restore Virtualization lab report'});
+  await tile.waitFor();
+  const minimized = await report.boundingBox();
+  assert.equal(minimized.width, 48);
+  assert.equal(minimized.height, 48);
+  assert.ok(Number(await report.evaluate(element => getComputedStyle(element).opacity)) < 1);
+  await drag(tile, -180, 96);
+  assert.equal((await report.boundingBox()).x, minimized.x - 180);
+  await tile.waitFor();
+  await tile.click();
+  await report.getByRole('button', {name:'Minimize'}).click();
+  await page.getByRole('button', {name:'Open report',exact:true}).click();
+  const restored = await report.boundingBox();
+  assert.equal(restored.x + restored.width, 1440 - 8);
+  assert.equal(restored.y, 8);
+  assert.equal(restored.width, initial.width);
+  assert.equal(restored.height, initial.height);
+  assert.equal(await page.locator('textarea[data-report-question="written"]').inputValue(),'Observations from outside the LAN');
   if(process.env.EAGLE_LAB_SCREENSHOT)await page.screenshot({path:process.env.EAGLE_LAB_SCREENSHOT});
   await page.setViewportSize({width:390,height:844});
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Mobile page must not overflow');
-  await page.getByRole('button',{name:'Close for now'}).click();
-  await page.locator('.lab-report-overlay').waitFor({state:'detached'});
+  await page.waitForFunction(()=>{
+    const {left,right}=document.querySelector('.lab-report-window').getBoundingClientRect();
+    return left>=8&&right<=innerWidth-8;
+  });
+  await report.getByRole('button', {name:'Submit report'}).click();
+  await report.getByText(/Complete every response/).waitFor();
+  draft = {...draft, revision:draft.revision + 1, responses:[]};
+  await report.locator('[data-report-question="steps"][data-step="1"]').check();
+  await report.getByText(/Draft changed in another session/).waitFor();
+  page.once('dialog', dialog => dialog.accept());
+  await report.getByRole('button', {name:'Submit report'}).click();
+  await report.waitFor({state:'detached'});
+  assert.equal(submission.assignmentId, assignmentId);
+  assert.equal(submission.quizResponses[0].answer, 'Observations from outside the LAN');
+  assert.deepEqual(submission.quizResponses[2].answer, [true, true]);
   allowed=false;await consoleFrame.getByText('Disconnected',{exact:true}).waitFor();
   assert.equal(seen.some(headers=>headers['x-user-token']),false);
   assert.equal(seen.some(headers=>headers.cookie?.includes('EagleIDEPrivate')),false);
   assert.deepEqual(failures,[]);
-  console.log('PASS: PIN denial/unlock, isolated embedded login, clipboard paste, nested binary VM console, report autosave/reopen, mobile bounds, and live revocation.');
+  console.log('PASS: PIN denial/unlock, isolated embedded login, clipboard paste, nested VM console, report autosave, drag/minimize/restore, mobile bounds, submission after conflict, and live revocation.');
 }finally{
   await browser?.close();for(const server of [front,portal,pve,relay]){server.closeAllConnections();server.close();}
 }
