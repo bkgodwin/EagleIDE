@@ -203,5 +203,59 @@ def register(app, eagle, *, base_dir: Path):
             return jsonify(ok=False, error=str(exc)), 400
         return jsonify(ok=True, data=saved)
 
+    def teacher_for_report(assignment):
+        teacher = eagle._require_teacher(request)
+        if not teacher:
+            return None, (jsonify(ok=False, error="Teacher login required"), 401)
+        if not assignment or assignment.get("assignmentType") != "lab_report":
+            return None, (jsonify(ok=False, error="Lab report assignment not found"), 404)
+        if not eagle._class_dashboard_access(teacher["email"], assignment.get("targetClassId")):
+            return None, (jsonify(ok=False, error="Class teacher access required"), 403)
+        return teacher, None
+
+    @app.get("/api/lab-reports/teacher")
+    def teacher_reports():
+        teacher = eagle._require_teacher(request)
+        if not teacher:
+            return jsonify(ok=False, error="Teacher login required"), 401
+        class_id = str(request.args.get("class_id") or "")
+        if not eagle._class_dashboard_access(teacher["email"], class_id):
+            return jsonify(ok=False, error="Class teacher access required"), 403
+        assignments = [
+            {key: assignment.get(key) for key in ("id", "name", "task", "targetClassId", "assignmentType")}
+            for assignment in eagle._list_assignments()
+            if assignment.get("assignmentType") == "lab_report" and assignment.get("targetClassId") == class_id
+        ]
+        return jsonify(ok=True, assignments=assignments)
+
+    @app.route("/api/lab-reports/<assignment_id>/preview", methods=["GET", "PUT"])
+    def teacher_preview(assignment_id):
+        with eagle._assignment_lock:
+            assignment = eagle._load_assignment(assignment_id)
+            teacher, error = teacher_for_report(assignment)
+            if error:
+                return error
+            # Teacher practice never shares a student's draft or creates a submission.
+            account = "teacher:" + teacher["email"].strip().lower()
+            try:
+                if request.method == "GET":
+                    quiz = copy.deepcopy(assignment.get("quiz") or {})
+                    for question in quiz.get("questions", []):
+                        question.pop("acceptedAnswers", None)
+                        question.pop("correctAnswer", None)
+                    return jsonify(ok=True, quiz=quiz, draft=store.get(assignment["id"], account),
+                                   name=assignment.get("name"), task=assignment.get("task"))
+                data = request.get_json(silent=True)
+                if not isinstance(data, dict) or type(data.get("revision")) is not int:
+                    return jsonify(ok=False, error="A draft revision and responses are required"), 400
+                responses = _clean_responses(assignment, data.get("responses"))
+                saved = store.save(assignment["id"], account, responses, data["revision"])
+                return jsonify(ok=True, data=saved)
+            except ValueError as exc:
+                current = getattr(exc, "current", None)
+                if current is not None:
+                    return jsonify(ok=False, error=str(exc), data=current), 409
+                return jsonify(ok=False, error=str(exc)), 400
+
     app.extensions["lab_report_drafts"] = store
     return store

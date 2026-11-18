@@ -293,6 +293,51 @@ class AssignmentWorkflowTestCase(unittest.TestCase):
         self.assertTrue(summary["quizComplete"])
         self.assertEqual(summary["quizAnsweredCount"], 2)
 
+    def test_teacher_lab_practice_is_private_resettable_and_cannot_submit(self):
+        eagle.ASSIGNMENTS_DIR = self.assignments_dir.resolve()
+        response = self.client.post("/api/assignments/create", headers=self.teacher_headers, json={
+            "name": "Teacher practice", "classId": self.class_one, "assignmentType": "lab_report",
+            "quiz": {"questions": [
+                {"id": "notes", "type": "written", "question": "Observations", "points": 2},
+                {"id": "port", "type": "fill_blank", "question": "Port", "points": 1, "acceptedAnswers": ["8000"]},
+            ]},
+        })
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        assignment_id = response.json["assignment"]["id"]
+        url = f"/api/lab-reports/{assignment_id}/preview"
+        with patch.object(eagle._lab_report_drafts, "base_dir", self.root / "private-drafts"):
+            student = eagle._lab_report_drafts.save(assignment_id, self.student_email,
+                [{"questionId": "notes", "answer": "Student work", "questionType": "written"}], 0)
+            listed = self.client.get("/api/lab-reports/teacher?class_id=" + self.class_one, headers=self.teacher_headers)
+            self.assertEqual([row["id"] for row in listed.json["assignments"]], [assignment_id])
+            preview = self.client.get(url, headers=self.teacher_headers)
+            self.assertEqual(preview.status_code, 200)
+            self.assertEqual(preview.json["draft"]["responses"], [])
+            self.assertNotIn("acceptedAnswers", preview.get_data(as_text=True))
+            self.assertNotIn("Student work", preview.get_data(as_text=True))
+            self.assertEqual(preview.headers["Cache-Control"], "private, no-store")
+            saved = self.client.put(url, headers=self.teacher_headers,
+                json={"revision": 0, "responses": [{"questionId": "notes", "answer": "My teaching notes"}]})
+            self.assertEqual(saved.status_code, 200, saved.get_data(as_text=True))
+            self.assertEqual(self.client.get(url, headers=self.teacher_headers).json["draft"]["responses"][0]["answer"],
+                             "My teaching notes")
+            self.assertEqual(self.client.put(url, headers=self.teacher_headers,
+                json={"revision": 0, "responses": []}).status_code, 409)
+            self.assertEqual(self.client.put(url, headers=self.teacher_headers,
+                json={"revision": 1, "responses": []}).json["data"]["responses"], [])
+            self.assertEqual(eagle._lab_report_drafts.get(assignment_id, self.student_email), student)
+            self.assertEqual(eagle._load_assignment(assignment_id).get("submissions", []), [])
+            self.assertEqual(self.client.post("/api/quiz/submit", headers=self.teacher_headers,
+                json={"assignmentId": assignment_id, "quizResponses": []}).status_code, 401)
+            for method in ("get", "put"):
+                self.assertEqual(getattr(self.client, method)(url, headers=self.student_headers).status_code, 401)
+            with patch.object(eagle, "_class_dashboard_access", return_value=None):
+                self.assertEqual(self.client.get(url, headers=self.teacher_headers).status_code, 403)
+                self.assertEqual(self.client.put(url, headers=self.teacher_headers,
+                    json={"revision": 2, "responses": []}).status_code, 403)
+                self.assertEqual(self.client.get("/api/lab-reports/teacher?class_id=" + self.class_one,
+                    headers=self.teacher_headers).status_code, 403)
+
     def test_lab_report_assignment_autosaves_continuous_responses_and_clears_draft_on_submit(self):
         original_draft_dir = eagle._lab_report_drafts.base_dir
         eagle._lab_report_drafts.base_dir = self.root / "lab-report-drafts"

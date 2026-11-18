@@ -109,9 +109,10 @@
   }
   async function loadReports() {
     const ctx=context(),classId=state.classId;
-    if((!ctx.USER_TOKEN&&!ctx.currentTeacher?.is_coteacher) || (ctx.TEACHER_TOKEN&&!ctx.currentTeacher?.is_coteacher) || ctx.ADMIN_TOKEN) {state.assignments=[];renderReports();return;}
+    if((!ctx.USER_TOKEN&&!ctx.TEACHER_TOKEN) || ctx.ADMIN_TOKEN) {state.assignments=[];renderReports();return;}
     try {
-      const result=await api('/api/assignments');
+      const teacher = ctx.TEACHER_TOKEN && !ctx.currentTeacher?.is_coteacher;
+      const result=await api(teacher ? `/api/lab-reports/teacher?class_id=${encodeURIComponent(classId)}` : '/api/assignments');
       if(classId!==state.classId)return;
       const list=Array.isArray(result.assignments) ? result.assignments : [];
       state.assignments=list.filter(item=>item.assignmentType==='lab_report' && (!state.classId || item.targetClassId===state.classId));
@@ -175,10 +176,10 @@
     const root=document.createElement('section'),frameName='eagle-pve-'+server.id+'-'+Date.now();
     root.className='eagle-lab-workspace';root.setAttribute('aria-label','PVE management workspace');
     const sandbox='allow-scripts allow-forms allow-downloads allow-modals allow-popups allow-pointer-lock'+(launch.transport==='path'?'':' allow-same-origin');
-    root.innerHTML=`<header class="eagle-lab-workspace-toolbar"><button class="btn secondary" data-workspace-manual type="button">Lab Manual</button><button class="btn secondary" data-workspace-exit type="button">← Eagle Lab</button><strong>${esc(server.hostname)}</strong><span class="eagle-lab-clipboard-hint">Terminal: Ctrl+C interrupts · Ctrl+Shift+C / Ctrl+Shift+V copy/paste · VM: noVNC clipboard</span>${credentials?'<button class="btn secondary" data-workspace-credentials type="button">Credentials</button>':''}<select data-workspace-report aria-label="Lab report"><option value="">Choose lab report</option>${state.assignments.map(item=>`<option value="${esc(item.id)}">${esc(item.name)}</option>`).join('')}</select><button class="btn secondary" data-workspace-open-report type="button">Open report</button></header>
+    root.innerHTML=`<header class="eagle-lab-workspace-toolbar"><button class="btn secondary" data-workspace-manual type="button">Lab Manual</button><button class="btn secondary" data-workspace-exit type="button">← Eagle Lab</button><strong>${esc(server.hostname)}</strong>${credentials?'<button class="btn secondary" data-workspace-credentials type="button">Credentials</button>':''}<select data-workspace-report aria-label="Lab report"><option value="">Choose lab report</option>${state.assignments.map(item=>`<option value="${esc(item.id)}">${esc(item.name)}</option>`).join('')}</select><button class="btn secondary" data-workspace-open-report type="button">Open report</button></header>
       <iframe name="${esc(frameName)}" title="${esc(server.hostname)} management interface" sandbox="${sandbox}" allow="clipboard-read *; clipboard-write *; fullscreen *" allowfullscreen referrerpolicy="no-referrer"></iframe>`;
     document.body.append(root);
-    state.workspace={root,serverId:server.id,session:originalSession,transport:launch.transport,clipboardKey:launch.clipboard_key,clipboardTimes:[]};
+    state.workspace={root,serverId:server.id,session:originalSession,transport:launch.transport,clipboardOrigin:launch.transport==='path'?'null':new URL(launch.url).origin,clipboardKey:launch.clipboard_key,clipboardTimes:[]};
     root.querySelector('[data-workspace-manual]').onclick=()=>window.LabManual?.open();
     root.querySelector('[data-workspace-exit]').onclick=()=>closeWorkspace();
     root.querySelector('[data-workspace-credentials]')?.addEventListener('click',()=>{
@@ -340,21 +341,26 @@
       return;
     }
     state.reportOpening=true;
+    const teacherPreview = !!(context().TEACHER_TOKEN && !context().currentTeacher?.is_coteacher);
+    const draftUrl = `/api/lab-reports/${encodeURIComponent(assignmentId)}/${teacherPreview ? 'preview' : 'draft'}`;
     const assignment=assignmentHint||state.assignments.find(item=>item.id===assignmentId)||{id:assignmentId,name:'Lab Report',task:''};
     try{
       if (state.report?.root.isConnected && !await state.report.close()) return;
       if (reportSession !== sessionKey()) return;
-      const [quizData,draft]=await Promise.all([api(`/api/quiz/${encodeURIComponent(assignmentId)}`),api(`/api/lab-reports/${encodeURIComponent(assignmentId)}/draft`)]);
+      const [quizData,draft] = teacherPreview
+        ? await api(draftUrl).then(data => { assignment.name=data.name; assignment.task=data.task; return [data,data.draft]; })
+        : await Promise.all([api(`/api/quiz/${encodeURIComponent(assignmentId)}`),api(draftUrl)]);
       if(reportSession!==sessionKey())return;
       const questions=quizData.quiz?.questions||[], saved=Object.fromEntries((quizData.savedResponses||[]).map(item=>[item.questionId,item.answer])), drafted=Object.fromEntries((draft.responses||[]).map(item=>[item.questionId,item.answer]));
       const answers={...saved,...drafted},overlay=document.createElement('div');overlay.className='lab-report-overlay';
       const content=window.LabReportContent, prose=value=>content?.render(value)||`<div class="lab-report-prose">${esc(value)}</div>`;
-      overlay.innerHTML=`<section class="lab-report-window has-report-drag" role="dialog" aria-modal="false" aria-label="${esc(assignment.name)}"><header><div><span class="lab-report-eyebrow">LAB REPORT · AUTOSAVE</span><h2>${esc(assignment.name)}</h2><span class="lab-report-save-state" role="status">${draft.updated_at?'Draft restored':'Ready'}</span></div><div class="lab-report-window-tools"><button class="btn secondary" data-float-move type="button" aria-label="Move report with arrow keys" title="Drag to move · arrow keys to move">⠿</button><button class="btn secondary" data-float-minimize type="button" aria-expanded="true">Minimize</button><button class="btn secondary" data-report-close type="button" aria-label="Close report">✕</button></div></header><div class="lab-report-page"><p class="lab-report-hint">Drag the window to move it. Minimize it to see more of your console.</p><div class="lab-report-description">${prose(assignment.task||'')}</div>${questions.map((question,index)=>`<section class="lab-report-question"><div class="lab-report-question-meta"><span>SECTION ${index+1} · ${esc(question.type==='procedure'?'CHECKLIST':question.type==='fill_blank'?'SHORT ANSWER':'WRITTEN RESPONSE')}</span><span>${Number(question.points)||0} points</span></div><div class="lab-report-prompt" id="report-label-${index}">${prose(question.question||'')}</div>${question.type==='procedure'?`<p class="lab-report-check-hint">Select every checkbox in this checklist to receive credit for this section.</p><div class="lab-report-procedure">${(question.steps||[]).map((step,i)=>`<div class="lab-report-check-row"><input type="checkbox" aria-label="Section ${index+1}, step ${i+1}" data-report-question="${esc(question.id)}" data-step="${i}" ${Array.isArray(answers[question.id])&&answers[question.id][i]?'checked':''}><div>${prose(step)}</div></div>`).join('')}</div>`:question.type==='fill_blank'?`<input type="text" aria-labelledby="report-label-${index}" placeholder="Your answer" maxlength="20000" data-report-question="${esc(question.id)}" value="${esc(answers[question.id]||'')}" autocomplete="off">`:`<textarea aria-labelledby="report-label-${index}" maxlength="20000" placeholder="Record your observations…" data-report-question="${esc(question.id)}">${esc(answers[question.id]||'')}</textarea>`}</section>`).join('')}</div><div class="lab-report-actions"><p data-report-status role="status"></p><span data-copy-status role="status" aria-live="polite"></span><button class="btn secondary" data-report-close type="button">Close for now</button><button class="btn run" data-report-submit type="button">Submit report</button></div><button type="button" class="lab-report-resize" data-float-resize aria-label="Resize report with arrow keys" title="Drag or use arrow keys to resize">◢</button><button type="button" class="lab-report-restore" data-float-restore aria-label="Restore ${esc(assignment.name)}" title="Restore report"><span aria-hidden="true">▤</span></button></section>`;
+      overlay.innerHTML=`<section class="lab-report-window has-report-drag" role="dialog" tabindex="0" title="Drag to move · arrow keys move the focused window" aria-modal="false" aria-label="${esc(assignment.name)}"><header><div><span class="lab-report-eyebrow">LAB REPORT · AUTOSAVE</span><h2>${esc(assignment.name)}</h2><span class="lab-report-save-state" role="status">${draft.updated_at?'Draft restored':'Ready'}</span></div><div class="lab-report-window-tools"><button class="btn secondary" data-report-close type="button" aria-label="Close report">✕</button><button class="btn secondary lab-report-minimize" data-float-minimize type="button" aria-label="Minimize report" title="Minimize report" aria-expanded="true"><span aria-hidden="true">▤</span></button></div></header><div class="lab-report-page"><p class="lab-report-hint">Drag to move. On a touch screen, use two fingers to scroll.${teacherPreview ? ' Your practice answers save automatically.' : ''}</p><div class="lab-report-description">${prose(assignment.task||'')}</div>${questions.map((question,index)=>`<section class="lab-report-question"><div class="lab-report-question-meta"><span>SECTION ${index+1} · ${esc(question.type==='procedure'?'CHECKLIST':question.type==='fill_blank'?'SHORT ANSWER':'WRITTEN RESPONSE')}</span><span>${Number(question.points)||0} points</span></div><div class="lab-report-prompt" id="report-label-${index}">${prose(question.question||'')}</div>${question.type==='procedure'?`<p class="lab-report-check-hint">Select every checkbox in this checklist to receive credit for this section.</p><div class="lab-report-procedure">${(question.steps||[]).map((step,i)=>`<div class="lab-report-check-row"><input type="checkbox" aria-label="Section ${index+1}, step ${i+1}" data-report-question="${esc(question.id)}" data-step="${i}" ${Array.isArray(answers[question.id])&&answers[question.id][i]?'checked':''}><div>${prose(step)}</div></div>`).join('')}</div>`:question.type==='fill_blank'?`<input type="text" aria-labelledby="report-label-${index}" placeholder="Your answer" maxlength="20000" data-report-question="${esc(question.id)}" value="${esc(answers[question.id]||'')}" autocomplete="off">`:`<textarea aria-labelledby="report-label-${index}" maxlength="20000" placeholder="Record your observations…" data-report-question="${esc(question.id)}">${esc(answers[question.id]||'')}</textarea>`}</section>`).join('')}</div><div class="lab-report-actions"><p data-report-status role="status"></p><span data-copy-status role="status" aria-live="polite"></span><button class="btn secondary" data-report-close type="button">Close for now</button>${teacherPreview ? '<button class="btn secondary" data-report-reset type="button">Reset my practice</button>' : '<button class="btn run" data-report-submit type="button">Submit report</button>'}</div><button type="button" class="lab-report-resize" data-float-resize aria-label="Resize report with arrow keys" title="Drag or use arrow keys to resize">◢</button><button type="button" class="lab-report-restore" data-float-restore aria-label="Restore ${esc(assignment.name)}" title="Restore report"><span aria-hidden="true">▤</span></button></section>`;
       document.body.append(overlay);let revision=Number(draft.revision||0),timer=null,saveChain=Promise.resolve(),conflicted=false;const saveState=overlay.querySelector('.lab-report-save-state');
-      const disposeContent=content?.mount(overlay,{assignmentId,student:true}),floating=content?.floating(overlay);
+      const disposeContent=content?.mount(overlay,{assignmentId,student:!teacherPreview}),floating=content?.floating(overlay);
       const dispose=()=>{clearTimeout(timer);disposeContent?.();floating?.dispose();overlay.remove();};
       let savedOkay=true,submitting=false,editVersion=0,savedVersion=0;
-      const conflictMessage = 'Draft changed in another session. You can submit the answers shown here.';
+      const conflictMessage = teacherPreview ? 'Practice changed in another session. Reset my practice starts again.'
+        : 'Draft changed in another session. You can submit the answers shown here.';
       const save=()=>{
         if(conflicted||submitting||!overlay.isConnected||reportSession!==sessionKey())return Promise.resolve(false);
         clearTimeout(timer);
@@ -366,7 +372,7 @@
           if(version<=savedVersion)return true;
           let nextRevision;
           try{
-            const result=await api(`/api/lab-reports/${encodeURIComponent(assignmentId)}/draft`,{method:'PUT',body:JSON.stringify({revision,responses})});
+            const result=await api(draftUrl,{method:'PUT',body:JSON.stringify({revision,responses})});
             nextRevision = result.revision;
           }catch(error){
             const current = error.status === 409 ? error.data : null;
@@ -404,7 +410,7 @@
       page.addEventListener('input', () => edited(700));
       page.addEventListener('change', () => edited(250));
       const close=async()=>{if(submitting)return false;if(!await save()||!savedOkay)return false;dispose();if(state.report?.root===overlay)state.report=null;return true;};overlay.querySelectorAll('[data-report-close]').forEach(button=>button.onclick=close);
-      submitButton.onclick = async () => {
+      if (submitButton) submitButton.onclick = async () => {
         if (submitting || reportSession !== sessionKey()) return;
         const {responses, missing} = reportResponses(questions, overlay, false);
         if (missing.length) {
@@ -436,6 +442,32 @@
         alert('Lab report submitted.');
         await loadReports();
       };
+      const resetButton = overlay.querySelector('[data-report-reset]');
+      if (resetButton) resetButton.onclick = async () => {
+        if (submitting || !confirm('Reset your practice answers for this report?')) return;
+        submitting = true;
+        clearTimeout(timer);
+        const fields = overlay.querySelectorAll('textarea,input,[data-report-reset]');
+        fields.forEach(field => field.disabled = true);
+        try {
+          await saveChain;
+          if (reportSession !== sessionKey() || !overlay.isConnected) return;
+          if (conflicted) revision = (await api(draftUrl)).draft.revision;
+          const reset = await api(draftUrl, {method:'PUT',body:JSON.stringify({revision,responses:[]})});
+          revision = reset.revision;
+          overlay.querySelectorAll('[data-report-question]').forEach(field => {
+            if (field.type === 'checkbox') field.checked = false;
+            else field.value = '';
+          });
+          editVersion++;
+          savedVersion = editVersion;
+          savedOkay = true;
+          conflicted = false;
+          saveState.textContent = 'Practice reset';
+          submitStatus.textContent = '';
+        } catch (error) { submitStatus.textContent = error.message; }
+        finally { submitting=false; fields.forEach(field => field.disabled=false); }
+      };
       state.report={root:overlay,assignmentId,save,close,restore:()=>floating?.restore(true),dirty:()=>!savedOkay,session:reportSession,cancel:dispose};
     }catch(error){alert(error.message||'Could not open the lab report.');}finally{state.reportOpening=false;}
   }
@@ -461,16 +493,16 @@
     });
     window.addEventListener('message',async event=>{
       const data=event.data,workspace=state.workspace;
-      if(!workspace||workspace.transport!=='path'||!workspace.root.isConnected||event.origin!=='null'||!data||data.type!=='eagle-lab-clipboard'||data.key!==workspace.clipboardKey||typeof data.id!=='string'||data.id.length>100||!['readText','writeText'].includes(data.method))return;
+      if(!workspace||!workspace.root.isConnected||event.origin!==workspace.clipboardOrigin||!data||data.type!=='eagle-lab-clipboard'||data.key!==workspace.clipboardKey||typeof data.id!=='string'||data.id.length>100||!['readText','writeText'].includes(data.method))return;
       workspace.clipboardTimes=workspace.clipboardTimes.filter(time=>Date.now()-time<2000);
       if(workspace.clipboardTimes.length>=8)return;workspace.clipboardTimes.push(Date.now());
       const result={type:'eagle-lab-clipboard-result',key:workspace.clipboardKey,id:data.id};
       try{
-        if(!document.hasFocus()||workspace.session!==sessionKey())throw new Error('Focus the Eagle Lab window to use the clipboard.');
+        if(document.hidden||workspace.session!==sessionKey())throw new Error('Focus the Eagle Lab window to use the clipboard.');
         if(data.method==='writeText'){
           if(typeof data.text!=='string'||data.text.length>1000000)throw new Error('Clipboard text is too large.');
-          await navigator.clipboard.writeText(data.text);
-        }else {result.text=await navigator.clipboard.readText();if(result.text.length>1000000)throw new Error('Clipboard text is too large.');}
+          await window.LabReportContent.writeClipboard(data.text);
+        }else {result.text=await window.LabReportContent.readClipboard();if(result.text.length>1000000)throw new Error('Clipboard text is too large.');}
       }catch(error){result.error=error.message||'Clipboard permission is required.';}
       if(state.workspace===workspace&&workspace.session===sessionKey())event.source?.postMessage(result,'*');
     });

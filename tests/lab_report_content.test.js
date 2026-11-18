@@ -16,6 +16,21 @@ test('report copy commands preserve exact text and never turn HTML or remote ima
   assert.match(image,/alt="&lt;unsafe&gt;"/);
 });
 
+test('instruction clipboard survives denied browser permission and clears on account changes',async()=>{
+  const events={},ctx={USER_TOKEN:'first'};
+  const sandbox={
+    window:{EagleIDE:{getContext:()=>ctx},addEventListener:(name,callback)=>(events[name] ||= []).push(callback)},
+    navigator:{clipboard:{writeText:async()=>{throw Error('Denied');},readText:async()=>{throw Error('Denied');}}},
+  };
+  vm.runInNewContext(source('lab-report-content.js'),sandbox);
+  const clipboard=sandbox.window.LabReportContent;
+  assert.equal(await clipboard.writeClipboard('printf "hello"\n'),false);
+  assert.equal(await clipboard.readClipboard(),'printf "hello"\n');
+  ctx.USER_TOKEN='second';
+  events['eagle-context-updated'].forEach(callback=>callback());
+  await assert.rejects(clipboard.readClipboard(),/Denied/);
+});
+
 test('availability rejects a stale account response and deduplicates in-flight reads',async()=>{
   const events={},button={},requests=[];
   let resolveOld;

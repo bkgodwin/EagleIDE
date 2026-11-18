@@ -105,7 +105,7 @@ const proxyPort=await listen(front);proxyOrigin=pathMode?portalOrigin:`https://$
 let browser;
 try{
   browser=await chromium.launch({headless:true,executablePath:process.env.EAGLE_LAB_BROWSER,args:['--no-proxy-server','--host-resolver-rules=MAP *.school.test 127.0.0.1']});
-  const context=await browser.newContext({ignoreHTTPSErrors:true,viewport:{width:1440,height:1000}});
+  const context=await browser.newContext({ignoreHTTPSErrors:true,viewport:{width:1440,height:1000},hasTouch:true});
   await context.grantPermissions(['clipboard-read','clipboard-write']);
   const page=await context.newPage();const failures=[];
   page.on('pageerror',error=>failures.push(error.message));
@@ -148,9 +148,9 @@ try{
   await page.getByRole('button',{name:'Open report',exact:true}).click();
   assert.equal(await page.locator('textarea[data-report-question="written"]').inputValue(),'Observations from outside the LAN');
   assert.equal(await page.locator('[data-report-question="steps"][data-step="0"]').isChecked(),true);
-  assert.equal(await page.locator('.lab-report-window').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(20, 20, 20)');
+  assert.match(await page.locator('.lab-report-window').evaluate(el=>getComputedStyle(el).backgroundColor),/0\.89/);
   await page.evaluate(()=>document.body.classList.add('light-mode'));
-  assert.equal(await page.locator('.lab-report-window').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(240, 242, 245)');
+  assert.match(await page.locator('.lab-report-window').evaluate(el=>getComputedStyle(el).backgroundColor),/0\.89/);
   await page.evaluate(()=>document.body.classList.remove('light-mode'));
 
   const report = page.locator('.lab-report-window');
@@ -166,7 +166,18 @@ try{
   const moved = await report.boundingBox();
   assert.equal(moved.x, initial.x - 190);
   assert.equal(moved.y, initial.y + 65);
-  await report.getByRole('button', {name:'Minimize'}).click();
+  const touch=await context.newCDPSession(page);
+  async function touchDrag(locator,dx,dy){
+    const box=await locator.boundingBox(),x=box.x+box.width/2,y=box.y+box.height/2;
+    await touch.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y}]});
+    await touch.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:x+dx,y:y+dy}]});
+    await touch.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+  }
+  await touchDrag(report.locator('.lab-report-hint'),40,30);
+  const touchMoved=await report.boundingBox();
+  assert.equal(touchMoved.x,moved.x+40);
+  assert.equal(touchMoved.y,moved.y+30);
+  await report.getByRole('button', {name:'Minimize report'}).click();
   const tile = report.getByRole('button', {name:'Restore Virtualization lab report'});
   await tile.waitFor();
   const minimized = await report.boundingBox();
@@ -175,9 +186,10 @@ try{
   assert.ok(Number(await report.evaluate(element => getComputedStyle(element).opacity)) < 1);
   await drag(tile, -180, 96);
   assert.equal((await report.boundingBox()).x, minimized.x - 180);
+  await touchDrag(tile,-40,10);
   await tile.waitFor();
   await tile.click();
-  await report.getByRole('button', {name:'Minimize'}).click();
+  await report.getByRole('button', {name:'Minimize report'}).click();
   await page.getByRole('button', {name:'Open report',exact:true}).click();
   const restored = await report.boundingBox();
   assert.equal(restored.x + restored.width, 1440 - 8);
@@ -185,6 +197,13 @@ try{
   assert.equal(restored.width, initial.width);
   assert.equal(restored.height, initial.height);
   assert.equal(await page.locator('textarea[data-report-question="written"]').inputValue(),'Observations from outside the LAN');
+  const reportPage=report.locator('.lab-report-page'),pageBox=await reportPage.boundingBox();
+  const points=[{x:pageBox.x+100,y:pageBox.y+160},{x:pageBox.x+180,y:pageBox.y+160}];
+  await touch.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:points});
+  await touch.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:points.map(point=>({...point,y:point.y-70}))});
+  await touch.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+  assert.ok(await reportPage.evaluate(el=>el.scrollTop>0),'two-finger touch scrolls the report page');
+  assert.equal((await report.boundingBox()).y,8,'scrolling keeps the window in place');
   if(process.env.EAGLE_LAB_SCREENSHOT)await page.screenshot({path:process.env.EAGLE_LAB_SCREENSHOT});
   await page.setViewportSize({width:390,height:844});
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Mobile page must not overflow');
@@ -203,6 +222,18 @@ try{
   assert.equal(submission.assignmentId, assignmentId);
   assert.equal(submission.quizResponses[0].answer, 'Observations from outside the LAN');
   assert.deepEqual(submission.quizResponses[2].answer, [true, true]);
+  await page.locator('[data-workspace-manual]').click();
+  const manual=page.locator('.lab-manual-window');
+  await manual.getByRole('button',{name:'Minimize Lab Manual'}).tap();
+  const manualTile=manual.getByRole('button',{name:'Restore Lab Manual'});
+  await manualTile.waitFor();
+  const manualSmall=await manual.boundingBox();
+  assert.equal(manualSmall.width,48);
+  await touchDrag(manualTile,30,40);
+  await page.locator('[data-workspace-manual]').click();
+  assert.equal((await manual.boundingBox()).y,8);
+  await manual.getByRole('button',{name:'Close Lab Manual'}).click();
+  await touch.detach();
   allowed=false;await consoleFrame.getByText('Disconnected',{exact:true}).waitFor();
   assert.equal(seen.some(headers=>headers['x-user-token']),false);
   assert.equal(seen.some(headers=>headers.cookie?.includes('EagleIDEPrivate')),false);
