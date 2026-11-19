@@ -16,6 +16,8 @@
   const portVlans = (device, port) => device.port_vlans?.[port] ?? [0];
   const serviceId = (hostId, kind) => `:vm:${hostId}:${kind}`;
   const apSsids = (ap, ssids) => ap.ssid_ids ?? ssids.slice(0, 1).map(ssid => ssid.id);
+  const rateLimit = value => value > 0 ? value : Infinity;
+  const routedLimit = (device, vlan) => rateLimit(device.vlan_limits?.[vlan]);
   const hasBand = (ssid, band) => ssid.band === 'both' || ssid.band === band;
 
   function radioSources(plan, cables, preview = '') {
@@ -243,7 +245,10 @@
 
   function build(plan, cables, coverageModel, prior) {
     const { devices, location, activeLinks } = cables;
-    const links = new Map([...activeLinks].map(([id, edges]) => [id, [...edges]]));
+    const links = new Map([...activeLinks].map(([id, edges]) => [id, edges.map(hop => ({
+      ...hop, speed: Math.min(hop.speed, rateLimit(devices.get(id).port_limits?.[hop.fromPort]),
+        rateLimit(devices.get(hop.to).port_limits?.[hop.toPort])),
+    }))]));
     const accessPoints = radioSources(plan, cables);
     const ssids = plan.ssids ?? [DEFAULT_SSID];
     const surveys = new Map();
@@ -281,6 +286,7 @@
           }
         }
       }
+      best.speed = Math.min(best.speed, rateLimit(best.ap?.ssid_limits?.[ssid?.id]));
       clients.set(device.id, { ...best, vlan: ssid?.vlan ?? null });
       if (!best.ap) continue;
       const points = [location(device), location(best.ap)];
@@ -291,10 +297,14 @@
     attachServices(network);
     leaseClients(network, prior);
     for (const client of clients.values()) {
-      if (!client.lease || !client.router?.isp) continue;
-      const isp = client.router.isp;
+      if (!client.lease || !client.router) continue;
       const route = path(client.paths, client.router.id);
-      client.upstream = { ...isp, speed: Math.min(isp.speed, ...route.map(hop => hop.speed)) };
+      client.speed = Math.min(client.speed, ...route.map(hop => hop.speed));
+      if (client.router.isp) {
+        const isp = client.router.isp;
+        client.upstream = { ...isp, speed: Math.min(isp.speed, client.speed,
+          routedLimit(devices.get(client.router.id), client.vlan)) };
+      }
     }
     return network;
   }
@@ -332,6 +342,20 @@
       { vlan: destination.vlan, ip: destination.lease.ip });
     if (!policyDrop) outbound.push(...reversePath(returnPath));
     return { outbound, policyDrop };
+  }
+
+  function routeSpeed(network, source, target, outbound) {
+    const destination = network.clients.get(target);
+    const caps = [source.speed, ...outbound.map(hop => hop.speed ?? Infinity)];
+    if (target === INTERNET) caps.push(source.upstream?.speed ?? 0);
+    if (destination) {
+      caps.push(destination.speed);
+      if (source.vlan !== destination.vlan) {
+        const router = network.devices.get(source.router.id);
+        caps.push(routedLimit(router, source.vlan), routedLimit(router, destination.vlan));
+      }
+    }
+    return Math.min(...caps);
   }
 
   function reachableServices(network, from) {
@@ -385,7 +409,7 @@
         return { stages, dropPoint: stages.at(-1).points.at(-1), rtt: null, reason: `Router firewall rule ${policyDrop} denied the request.` };
       }
     }
-    return { stages, dropPoint: null, rtt: 2 * outbound.reduce((sum, hop) => sum + latency(hop), 0) };
+    return { stages, dropPoint: null, bandwidth: routeSpeed(network, source, target, outbound), rtt: 2 * outbound.reduce((sum, hop) => sum + latency(hop), 0) };
   }
 
   const model = { INTERNET, INTERNET_IP, INTERVAL, RUN_TIME, DEFAULT_SSID, DEFAULT_DHCP, isClient, isRouter, wirelessClient, clientSsid, radioSources, managed,

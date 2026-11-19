@@ -22,6 +22,11 @@
         || candidates.find(port => occupancy.has(`${device.id}:${port.id}`)) || candidates[0];
     }
 
+    const bandwidthField = (field, key, value, label = 'Bandwidth limit (Mb/s)') =>
+      `<label>${label}<input type="number" min="0" max="10000" step="1" value="${value ?? 0}"
+        id="${field === 'ssid_limits' ? 'wifiSsidLimit' : field === 'port_limits' ? 'wifiPortLimit' : 'wifiVlanLimit-' + key}"
+        data-wifi-rate-field="${field}" data-wifi-rate-key="${escape(String(key))}"></label>`;
+
     function apInspector(ap) {
       const { ssids } = plan();
       const enabled = model.apSsids(ap, ssids);
@@ -30,15 +35,23 @@
       const selected = settings?.id ?? ADD;
       const on = enabled.includes(selected);
       return `<section class="wifi-network-settings">
+        <h3>Wi-Fi networks on this AP</h3>
+        <div class="wifi-ssid-list" role="group" aria-label="Networks on this AP">
+          ${ssids.map(ssid => button('pick-ssid', escape(ssid.name),
+            ` data-ssid="${escape(ssid.id)}" aria-pressed="${selected === ssid.id}"`)).join('')}
+          ${button('new-ssid', '+ Create SSID', ` aria-pressed="${selected === ADD}"`)}
+        </div>
         <label>Shared SSID<select id="wifiApSsid">${option([...ssids.map(ssid => [ssid.id,
           `${ssid.name}${enabled.includes(ssid.id) ? ' · On' : ''}`]), [ADD, 'Add SSID…']], selected)}</select></label>
-        <p>${enabled.length} of 4 SSIDs enabled on this AP</p>
+        <p>${enabled.length} of 4 SSIDs enabled. Select a network to edit it, or choose Create SSID.</p>
         ${settings ? `<label class="wifi-estimate-toggle"><input type="checkbox" id="wifiApSsidEnabled"${checked(on)}
           ${!on && enabled.length >= 4 ? ' disabled' : ''}> Broadcast on this AP</label>` : ''}
         <label>SSID name<input id="wifiSsidName" maxlength="32" value="${escape(settings?.name ?? '')}"></label>
         <div class="wifi-two-fields"><label>Radio band<select id="wifiSsidBand">${option(bands, settings?.band ?? 'both')}</select></label>
         <label>VLAN ID<select id="wifiSsidVlan">${vlanSelect(settings?.vlan ?? 0)}</select></label></div>
-        <div class="wifi-object-actions">${button('save-ssid', settings ? 'Save SSID' : 'Add SSID')}
+        ${settings ? bandwidthField('ssid_limits', settings.id, ap.ssid_limits?.[settings.id], 'Per-client limit on this AP (Mb/s)') +
+          '<p>0 means unlimited. Each client on this SSID is limited in both directions.</p>' : ''}
+        <div class="wifi-object-actions">${button('save-ssid', settings ? 'Save SSID' : 'Create and Broadcast')}
         ${settings ? button('remove-ssid', 'Remove SSID') : ''}</div>
         ${settings ? '' : '<p>New SSIDs join the shared list. This AP broadcasts the new SSID if it has a free slot.</p>'}
       </section>`;
@@ -56,6 +69,7 @@
         ${choice ? `<label>SSID name<input id="wifiHomeSsidName" maxlength="32" value="${escape(selected?.name ?? '')}"></label>
           <label>Radio band<select id="wifiHomeSsidBand">${option(bands, selected?.band ?? 'both')}</select></label>
           ${button('save-home-ssid', selected ? 'Save SSID' : 'Create and Broadcast')}` : ''}
+        ${selected ? bandwidthField('ssid_limits', selected.id, router.ssid_limits?.[selected.id], 'Per-client Wi-Fi limit (Mb/s)') : ''}
         ${choice && choice !== ADD ? radioFields(router) : ''}
       </details>`;
     }
@@ -80,7 +94,7 @@
         <label>Gateway and prefix<input id="wifiDhcpGateway" maxlength="18" value="${escape(dhcp.gateway)}" placeholder="192.168.0.1/24"></label>
         <div class="wifi-two-fields"><label>Primary DNS<input id="wifiDhcpDns" maxlength="15" value="${escape(dhcp.dns)}"></label>
         <label>Fallback DNS<input id="wifiDhcpFallback" maxlength="15" value="${escape(dhcp.fallback_dns)}"></label></div>
-        ${button('save-dhcp', 'Save DHCP')}
+        <p class="wifi-settings-feedback" role="status">Changes save automatically when you leave a valid field.</p>
       </details>
       ${home ? homeWifiInspector(router) : `<details class="wifi-network-settings" data-wifi-config="vlans"><summary>VLANs</summary>
         <p>VLAN 0 is the untagged LAN. VLAN names are shared throughout this site.</p>
@@ -90,6 +104,11 @@
         <div class="wifi-object-actions">${button('save-vlan', vlan ? 'Save Name' : 'Add VLAN')}
           ${vlan ? button('remove-vlan', 'Remove VLAN') : ''}</div>
       </details>`}
+      <details class="wifi-network-settings" data-wifi-config="bandwidth"><summary>Routed bandwidth</summary>
+        <p>Caps each routed connection for the selected VLAN in both directions. Local traffic stays on the LAN. 0 means unlimited.</p>
+        ${(home ? [[0, 'Home LAN']] : vlans()).map(([vid, name]) =>
+          bandwidthField('vlan_limits', String(vid), router.vlan_limits?.[vid], name + ' · limit (Mb/s)')).join('')}
+      </details>
       <details class="wifi-network-settings" data-wifi-config="firewall"><summary>Firewall</summary>
         <p>First matching rule wins. Unmatched router traffic is allowed. ${home ? 'Traffic within the home LAN stays on the switch.' : 'Same-VLAN traffic stays on the switch.'}</p>
         ${rules.length ? `<ol class="wifi-firewall-list">${rules.map((item, i) => `<li class="${editing?.index === i ? 'is-editing' : ''}">
@@ -122,6 +141,8 @@
       const cable = connected(port);
       const peer = cable && (cable.source.device_id === device.id ? cable.target : cable.source);
       return `<details class="wifi-network-settings" data-wifi-config="ports"><summary>Switch ports</summary>
+        <p>Click a front-panel port in the rack or choose it below. ${model.managed(device) ? 'The access VLAN carries untagged traffic. Add tags to carry extra VLANs.' : 'Set a bandwidth limit for this port.'}</p>
+        <details class="wifi-port-picker"><summary>Choose another port · ${escape(port.id)}</summary>
         <div class="wifi-port-grid" role="group" aria-label="Switch port">
           ${data.ports.get(device.id).map(candidate => {
             const used = Boolean(connected(candidate));
@@ -129,15 +150,18 @@
               id="wifiPort-${escape(candidate.id)}" aria-pressed="${candidate === port}"
               aria-label="${escape(candidate.id)} · ${used ? 'Connected' : 'Free'}" data-connected="${used}"`);
           }).join('')}
-        </div>
+        </div></details>
         <div class="wifi-wire-summary"><strong>${escape(port.id)} · ${window.WifiCablingModel.speedName(port.speed)}${port.poe ? ' · PoE' : ''}</strong>
           <span>${peer ? `Connected to ${escape(data.endName(peer))}` : 'Free port'}</span></div>
-        <label>Access VLAN<select id="wifiPortAccess">${option([['', 'Disabled'], ...vlans()], enabled[0] ?? '')}</select></label>
-        ${enabled.length ? `<fieldset class="wifi-tagged-vlans"><legend>Additional tagged VLANs</legend>
+        <h3>${escape(port.id)} configuration</h3>
+        ${bandwidthField('port_limits', port.id, device.port_limits?.[port.id], 'Port limit (Mb/s)')}
+        <p>0 means unlimited up to the physical port speed. Changes save automatically.</p>
+        ${model.managed(device) ? `<label>Access VLAN<select id="wifiPortAccess">${option([['', 'Disabled'], ...vlans()], enabled[0] ?? '')}</select></label>
+        ${enabled.length ? `<fieldset class="wifi-tagged-vlans"><legend>Tagged VLANs on this port</legend>
           ${vlans().filter(([vid]) => vid !== enabled[0]).map(([vid, label]) =>
             `<label class="wifi-estimate-toggle"><input type="checkbox" id="wifiTagged-${vid}" data-wifi-port-vlan="${vid}"
             ${checked(enabled.includes(vid))}> ${escape(label)}</label>`).join('') || '<p>Add site VLANs in the router settings.</p>'}
-          </fieldset>` : '<p>This port carries no VLAN traffic.</p>'}
+          </fieldset>` : '<p>This port carries no VLAN traffic.</p>'}` : ''}
       </details>`;
     }
 
@@ -186,7 +210,7 @@
     function deviceInspector(device) {
       if (model.isRouter(device)) return routerInspector(device);
       if (device.kind === 'server') return serverInspector(device);
-      return model.managed(device) ? switchInspector(device) : '';
+      return model.managed(device) || device.kind === 'access_switch' ? switchInspector(device) : '';
     }
 
     function saveService(device, kind, row) {
@@ -204,7 +228,19 @@
 
     function change(device, input) {
       const { ssids } = plan();
-      if (input.dataset.wifiServiceToggle) {
+      if (input.dataset.wifiRateField) {
+        const rate = Number(input.value);
+        const valid = input.value.trim() !== '' && Number.isInteger(rate) && rate >= 0 && rate <= 10000;
+        input.setCustomValidity(valid ? '' : 'Enter a whole Mb/s value from 0 to 10000.');
+        if (!valid) { input.reportValidity(); return true; }
+        const field = input.dataset.wifiRateField, key = input.dataset.wifiRateKey;
+        const limits = { ...device[field] };
+        if (rate) limits[key] = rate;
+        else delete limits[key];
+        replace(device.mount ? 'access_points' : 'equipment', { ...device, [field]: limits });
+      } else if (['wifiDhcpGateway', 'wifiDhcpDns', 'wifiDhcpFallback'].includes(input.id)) {
+        saveDhcp(device, input);
+      } else if (input.dataset.wifiServiceToggle) {
         const kind = input.dataset.wifiServiceToggle;
         const services = (device.services ?? []).filter(vm => vm.kind !== kind);
         if (input.checked) services.push({ kind, vlan: graph().clients.get(device.id).vlan ?? 0, ip: '' });
@@ -289,8 +325,11 @@
       const layout = plan(), sid = $('wifiApSsid').value;
       if (!layout.ssids.some(ssid => ssid.id === sid)) return;
       const ssids = layout.ssids.filter(ssid => ssid.id !== sid);
-      const access_points = layout.access_points.map(ap =>
-        ({ ...ap, ssid_ids: model.apSsids(ap, layout.ssids).filter(id => id !== sid) }));
+      const access_points = layout.access_points.map(ap => {
+        const limits = { ...ap.ssid_limits };
+        delete limits[sid];
+        return { ...ap, ssid_limits: limits, ssid_ids: model.apSsids(ap, layout.ssids).filter(id => id !== sid) };
+      });
       const equipment = layout.equipment.map(device => {
         if (device.ssid_id === sid) return { ...device, ssid_id: '' };
         if (device.wifi_ssid === sid) return { ...device, wifi_ssid: '' };
@@ -300,11 +339,16 @@
       update({ ...layout, ssids, access_points, equipment });
     }
 
-    function saveDhcp(router) {
+    function saveDhcp(router, input) {
       const dhcp = { gateway: $('wifiDhcpGateway').value.trim(), dns: $('wifiDhcpDns').value.trim(),
         fallback_dns: $('wifiDhcpFallback').value.trim() };
       const pool = model.dhcpPool(dhcp);
-      if (!pool) return hint('Enter a usable IPv4 gateway with a prefix that leaves room for clients, and two IPv4 DNS addresses.');
+      const error = !pool ? 'Enter a valid gateway with a subnet prefix and two IPv4 DNS addresses.' : '';
+      if (input) {
+        input.setCustomValidity(error);
+        if (error) { input.reportValidity(); return; }
+      }
+      if (error) return hint(error);
       const layout = plan();
       if (layout.equipment.some(item => item.services?.some(vm => vm.ip === model.address(pool.gateway)))) {
         return hint('A service VM already uses that gateway address. Change the VM address first.');
@@ -340,9 +384,9 @@
       const layout = plan(), vid = vlanEdit;
       const inUse = layout.ssids.some(ssid => ssid.vlan === vid) || layout.equipment.some(item =>
         Object.values(item.port_vlans || {}).some(tags => tags.includes(vid)) ||
-        item.services?.some(vm => vm.vlan === vid) ||
+        item.services?.some(vm => vm.vlan === vid) || item.vlan_limits?.[vid] ||
         item.firewall?.some(rule => rule.source_vlan === vid || rule.destination_vlan === vid));
-      if (inUse) return hint('This VLAN is in use. Check SSIDs, switch ports, service VMs, and firewall rules.');
+      if (inUse) return hint('This VLAN is in use. Check SSIDs, switch ports, service VMs, bandwidth limits, and firewall rules.');
       vlanEdit = ADD;
       if (update({ ...layout, vlans: layout.vlans.filter(vlan => vlan.id !== vid) })) hint('VLAN removed.');
     }
@@ -369,7 +413,10 @@
 
     function click(device, target) {
       const action = target.dataset.wifiNetwork;
-      if (action === 'save-ssid') saveSsid(device);
+      if (action === 'pick-ssid' || action === 'new-ssid') {
+        apEdit = { ap: device.id, ssid: action === 'new-ssid' ? ADD : target.dataset.ssid };
+        render();
+      } else if (action === 'save-ssid') saveSsid(device);
       else if (action === 'save-home-ssid') saveHomeSsid(device);
       else if (action === 'remove-ssid') removeSsid();
       else if (action === 'save-dhcp') saveDhcp(device);
@@ -401,7 +448,16 @@
       }
     }
 
-    return { apInspector, deviceInspector, clientInspector, change, click,
+    function inspectPort(device, port) {
+      if (!model.managed(device)) return;
+      portEdit = { device: device.id, port };
+      render();
+      const section = document.querySelector('#wifiProperties [data-wifi-config="ports"]');
+      if (section) section.open = true;
+      $('wifiPortAccess')?.focus({ preventScroll: true });
+    }
+
+    return { apInspector, deviceInspector, clientInspector, change, click, inspectPort,
       reset: () => { apEdit = portEdit = ruleEdit = null; vlanEdit = ADD; } };
   }
 

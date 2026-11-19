@@ -124,6 +124,18 @@ def validate_network(raw, plan, *, label, safe_id):
         ssids.append({"id": ssid_id, "name": name, "band": band, "vlan": vlan(entry.get("vlan"), vlan_ids)})
         ssid_ids.add(ssid_id)
         names.add(name)
+    def rate_limits(item, field, keys):
+        value = item.get(field, {})
+        if not isinstance(value, dict) or any(key not in keys for key in value):
+            raise ValueError("Choose an existing port, SSID, or VLAN for the bandwidth limit")
+        result = {}
+        for key, rate in value.items():
+            if type(rate) is not int or not 0 <= rate <= 10000:
+                raise ValueError("Bandwidth limits must be whole Mb/s values from 0 to 10000")
+            if rate:
+                result[key] = rate
+        return result
+
     default = [ssids[0]["id"]] if ssids else []
     untagged = {ssid["id"] for ssid in ssids if ssid["vlan"] == 0}
     home_default = next((ssid["id"] for ssid in ssids if ssid["vlan"] == 0), "")
@@ -132,6 +144,8 @@ def validate_network(raw, plan, *, label, safe_id):
         if any(not isinstance(sid, str) or sid not in ssid_ids for sid in enabled) or len(set(enabled)) != len(enabled):
             raise ValueError("Select distinct, shared SSIDs for each AP")
         ap["ssid_ids"] = list(enabled)
+        if "ssid_limits" in item:
+            ap["ssid_limits"] = rate_limits(item, "ssid_limits", ssid_ids)
 
     gateways = {}
     for item, device in zip(raw.get("equipment", []), plan["equipment"]):
@@ -143,6 +157,8 @@ def validate_network(raw, plan, *, label, safe_id):
                 if not isinstance(sid, str) or (sid and sid not in untagged):
                     raise ValueError("Residential routers broadcast one untagged SSID")
                 device["wifi_ssid"] = sid
+                if "ssid_limits" in item:
+                    device["ssid_limits"] = rate_limits(item, "ssid_limits", untagged)
                 device["radios"] = validate_radios(item.get("radios"), len(plan["access_points"]))
                 if item.get("port_vlans"):
                     raise ValueError("Residential router ports do not support VLAN tags")
@@ -175,17 +191,24 @@ def validate_network(raw, plan, *, label, safe_id):
                         clean[f"{side}_ip"] = str(cidr.ip if cidr.network.prefixlen == 32 else cidr.network)
                 rules.append(clean)
             device["firewall"] = rules
+            if "vlan_limits" in item:
+                device["vlan_limits"] = rate_limits(item, "vlan_limits", {"0"} if home else {str(vid) for vid in vlan_ids})
         elif kind in MANAGED_SWITCHES:
             entries = item.get("port_vlans", {})
             ports = _ports(device)
             if not isinstance(entries, dict) or any(port not in ports for port in entries):
                 raise ValueError("Select a switch port")
+            if "port_limits" in item:
+                device["port_limits"] = rate_limits(item, "port_limits", set(ports))
             device["port_vlans"] = {}
             for port, members in entries.items():
                 values = [vlan(value, vlan_ids) for value in _list(members, len(vlan_ids), "VLANs per port")]
                 if len(set(values)) != len(values):
                     raise ValueError("Select distinct VLANs for each port")
                 device["port_vlans"][port] = values
+        elif kind == "access_switch":
+            if "port_limits" in item:
+                device["port_limits"] = rate_limits(item, "port_limits", set(_ports(device)))
         elif kind in WIRELESS_CLIENT_KINDS:
             choice = item.get("ssid_id", "")
             if not isinstance(choice, str) or (choice and choice not in ssid_ids):

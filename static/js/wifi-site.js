@@ -138,6 +138,7 @@
     plan: current, data: () => wires.index(), catalog: () => options.catalog, escape, id,
     add: (kind, additions) => addObjects(kind, additions, { select: false }), replace: replaceObject,
     inspector: $('wifiProperties'), renderInspector,
+    inspectPort: (device, port) => networkSettings.inspectPort(device, port), guidance: () => starterGuide.schedule(),
     removeCable: cable => update({ ...current(), cables: current().cables.filter(item => item.id !== cable) }),
   });
   const networkSettings = window.WifiSiteNetwork.create({
@@ -613,6 +614,7 @@
 
   function selectObject(objectId) {
     if (!selectable(objectId)) objectId = '';
+    if (selected === objectId && openPanel === 'object' && !selection.size) return;
     const hadPreview = !!previewAp;
     if (selected !== objectId) previewAp = '';
     setSelection();
@@ -1963,6 +1965,14 @@
     if (scenarioDialog.open || tutorialDialog.open || $('wifiRackDialog').open || $('wifiMaterialsDialog').open) return;
     const typing = event.target.matches('input,textarea,select');
     if (event.defaultPrevented) return;
+    if (event.key === 'Enter' && event.target.matches('input[data-wifi-field="text"]')) {
+      event.preventDefault();
+      event.target.dispatchEvent(new Event('change', { bubbles: true }));
+      changeTool('select');
+      selectObject('');
+      viewport.focus({ preventScroll: true });
+      return;
+    }
     if (event.key === 'Enter' && !typing && !event.target.closest('button,summary,[role="option"]') && wires.finish()) {
       event.preventDefault();
       return;
@@ -2091,6 +2101,29 @@
         }
         viewport.focus({ preventScroll: true });
       });
+    });
+    $('wifiGuestDismiss').addEventListener('click', () => { $('wifiGuestWorkspaceNote').hidden = true; });
+    $('wifiToolbarToggle').addEventListener('click', event => {
+      const collapsed = workspace.toggleAttribute('data-tools-collapsed');
+      event.currentTarget.setAttribute('aria-expanded', String(!collapsed));
+      event.currentTarget.textContent = collapsed ? 'Show tools' : 'Hide tools';
+      resizeViewport();
+    });
+    const showInstructions = () => {
+      $('wifiHintRow').hidden = !$('wifiShowInstructions').checked;
+      resizeViewport();
+    };
+    $('wifiShowInstructions').addEventListener('change', showInstructions);
+    $('wifiHintDismiss').addEventListener('click', () => { $('wifiShowInstructions').checked = false; showInstructions(); });
+    $('wifiShowFooter').addEventListener('change', event => {
+      workspace.toggleAttribute('data-footer-collapsed', !event.target.checked);
+      resizeViewport();
+    });
+    $('wifiPropertiesToggle').addEventListener('click', event => {
+      const collapsed = panels.object.toggleAttribute('data-properties-collapsed');
+      event.currentTarget.setAttribute('aria-expanded', String(!collapsed));
+      event.currentTarget.setAttribute('aria-label', collapsed ? 'Expand object properties' : 'Collapse object properties');
+      event.currentTarget.textContent = collapsed ? '+' : '−';
     });
     $('wifiSiteBack').addEventListener('click', async () => { if (await leave()) options.onBack(); });
     $('wifiScenarioButton').addEventListener('click', () => showBriefing());

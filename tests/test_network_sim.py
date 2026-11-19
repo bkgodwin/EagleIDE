@@ -181,6 +181,41 @@ class NetworkStoreTests(unittest.TestCase):
         })
         self.assertFalse(home["cables"] or home["access_points"])
 
+    def test_bandwidth_limits_round_trip_and_reject_invalid_targets_or_rates(self):
+        plan = copy.deepcopy(SCENARIOS["cedar-court-smart-home"]["site"])
+        plan["access_points"] = [{"id": "limited-ap", "name": "Limited AP", "x": 4, "y": 4, "mount": "ceiling", "angle": 0,
+                                 "power_db": 0, "ssid_limits": {"default": 20}}]
+        plan["equipment"] += [
+            {"id": "rate-rack", "kind": "rack", "x": 5, "y": 5},
+            {"id": "rate-switch", "kind": "distribution_switch", "rack_id": "rate-rack", "rack_u": 14,
+             "port_limits": {"ETH1": 100}},
+            {"id": "rate-router", "kind": "router", "rack_id": "rate-rack", "rack_u": 12,
+             "vlan_limits": {"0": 50}},
+        ]
+        saved = self.store.save_wifi_site("rates@example.com", "limited-site", plan, 0)
+        opened = self.store.get_wifi_site("rates@example.com", "limited-site")
+        self.assertEqual(opened["access_points"][0]["ssid_limits"], {"default": 20})
+        self.assertEqual(opened["equipment"][-2]["port_limits"], {"ETH1": 100})
+        self.assertEqual(opened["equipment"][-1]["vlan_limits"], {"0": 50})
+        for rate in (-1, True, 1.5, 10001, "20"):
+            with self.subTest(rate=rate):
+                plan["access_points"][0]["ssid_limits"] = {"default": rate}
+                with self.assertRaises(NetworkDataError):
+                    validate_wifi_site(plan)
+        plan["access_points"][0]["ssid_limits"] = {"missing": 20}
+        with self.assertRaises(NetworkDataError):
+            validate_wifi_site(plan)
+        plan["access_points"][0]["ssid_limits"] = {"default": 0}
+        plan["equipment"][-2]["port_limits"] = {"ETH49": 100}
+        with self.assertRaises(NetworkDataError):
+            validate_wifi_site(plan)
+        plan["equipment"][-2]["port_limits"] = {}
+        plan["equipment"][-1]["vlan_limits"] = {"20": 50}
+        with self.assertRaises(NetworkDataError):
+            validate_wifi_site(plan)
+        plan["equipment"][-1]["vlan_limits"] = {"0": 0}
+        self.assertEqual(validate_wifi_site(plan)["access_points"][0]["ssid_limits"], {})
+
     def test_residential_configuration_validates_single_radio_and_ip_only_firewall(self):
         plan = copy.deepcopy(SCENARIOS["cedar-court-smart-home"]["site"])
         plan["vlans"] = [{"id": 20, "name": "Guest"}]

@@ -20,7 +20,7 @@
         ${box(340, 81, 128, 'Access point', 'Ethernet + PoE')}`),
       caption: 'The switch connects the desktop and supplies power and data to the access point.',
       steps: [
-        '<strong>Place the devices.</strong> Use <strong>Equipment</strong> to place a rack, a desktop, and a ceiling AP. Click the rack and use <strong>Install Equipment</strong> to mount a Router, 24-port Switch, and Patch Panel in open slots.',
+        '<strong>Place the devices.</strong> Use <strong>Equipment</strong> to place a rack, a desktop, and a ceiling AP. Click the rack and select an empty rack unit, then use <strong>Install Equipment</strong> in the right panel to mount a Router, 24-port Switch, and Patch Panel.',
         '<strong>Configure the rack.</strong> Click a chassis to open its settings beside the rack. Use <strong>+</strong> or <strong>−</strong> to resize the drawing, and <strong>Fit width</strong> to see both rails. Drag a chassis or use <strong>Mounting position</strong> to move it with its cables attached.',
         '<strong>Route building Ethernet.</strong> Choose <strong>Cable</strong> on the plan. Connect the desktop and AP to rear patch-panel ports by clicking each device, then the rack. Confirm the chosen port and press <strong>Connect</strong>.',
         '<strong>Patch inside the rack.</strong> Open the rack and select its <strong>Cable</strong> tool. Patch router ETH1 to switch ETH1. Hover a front patch-panel port to see the label of the device connected to its rear. Patch the two front ports to switch ETH2 and ETH3 to complete the desktop and AP circuits.',
@@ -40,7 +40,7 @@
       caption: 'A front patch cord and its matching rear run carry traffic and PoE from the switch to the access point.',
       steps: [
         '<strong>Place and open a rack.</strong> Choose <strong>Equipment</strong> on the floor plan, select <strong>Equipment Rack</strong>, and place it. Switch to <strong>Select</strong> and click the rack.',
-        '<strong>Install equipment.</strong> Choose <strong>Install Equipment</strong>, select a device and an open mounting position, then click <strong>Install</strong>. Rack units count up from the bottom. A server or UPS occupies two units.',
+        '<strong>Install equipment.</strong> Click an empty unit such as <strong>U14</strong>. In its right panel, choose <strong>Install Equipment</strong>, select a device, then click <strong>Install</strong>. Rack units count up from the bottom. A server or UPS occupies two units.',
         '<strong>Edit settings alongside the rack.</strong> In <strong>Select</strong>, click a chassis to edit its label and available settings. Router DHCP, VLANs, and firewall settings and managed switch port settings open in the same window. Use <strong>Rack Settings</strong> to name or position the rack.',
         '<strong>Connect the rear run.</strong> On the floor plan, give the remote device a label and use <strong>Cable</strong> to connect it to a rear port on the patch panel. In the rack view, hover over the matching front port to see the label.',
         '<strong>Patch the front.</strong> In the rack, choose <strong>Cable</strong> and pick Ethernet or SFP fiber. Zoom in with <strong>+</strong> and scroll as needed. Select two highlighted ports on different devices. The <strong>Patch cables</strong> list shows each connection and lets you disconnect it.',
@@ -96,7 +96,8 @@
       steps: [
         '<strong>Create a VLAN.</strong> Select the router, expand <strong>VLANs</strong>, and choose <strong>New VLAN…</strong>. Enter a name and unused ID, then press <strong>Add VLAN</strong>. VLAN 0 is the default untagged LAN.',
         '<strong>Assign a client port.</strong> Select a managed switch and open <strong>Switch ports</strong>. Choose the port connected to the client and set its <strong>Access VLAN</strong>.',
-        '<strong>Carry the VLAN to the router.</strong> On switch uplinks and AP links, use <strong>Additional tagged VLANs</strong> for any VLANs the port needs beyond its access VLAN. Match the allowed VLANs at both ends of switch-to-switch links.',
+        '<strong>Carry the VLAN to the router.</strong> On switch uplinks and AP links, use <strong>Tagged VLANs on this port</strong> for any VLANs the port needs beyond its access VLAN. Match the allowed VLANs at both ends of switch-to-switch links.',
+        '<strong>Set a traffic limit.</strong> On a switch port, set <strong>Port limit (Mb/s)</strong>. On a router, open <strong>Routed bandwidth</strong> to cap connections on a VLAN. A value of 0 leaves the link unrestricted.',
         '<strong>Verify the result.</strong> Select the client and check its VLAN and IPv4 address. If it has no address, trace its port assignments back to the router and check the router’s DHCP pool.',
         '<strong>Set access rules when needed.</strong> Use the router’s <strong>Firewall</strong> to control traffic between VLANs. Rules are checked in order. Traffic within the same VLAN stays on the switch.',
       ],
@@ -112,7 +113,8 @@
       caption: 'A powered access point can broadcast multiple SSIDs, each mapped to a VLAN.',
       steps: [
         '<strong>Start with a powered AP.</strong> Connect the access point by Ethernet to a PoE switch. Create the intended VLAN on the router first if you need one.',
-        '<strong>Add or edit the network.</strong> Select the AP. Under <strong>Shared SSID</strong>, choose <strong>Add SSID…</strong> or an existing name. Set <strong>SSID name</strong>, <strong>Radio band</strong>, and <strong>VLAN ID</strong>, then choose <strong>Add SSID</strong> or <strong>Save SSID</strong>.',
+        '<strong>Limit guest clients.</strong> Select the SSID and set <strong>Per-client limit on this AP (Mb/s)</strong>. Use the same limit on each AP that serves that SSID. This caps each client in both directions while signal strength stays the same.',
+        '<strong>Add or edit the network.</strong> Select the AP. Under <strong>Shared SSID</strong>, choose <strong>Add SSID…</strong> or an existing name. Set <strong>SSID name</strong>, <strong>Radio band</strong>, and <strong>VLAN ID</strong>, then choose <strong>Create and Broadcast</strong> or <strong>Save SSID</strong>.',
         '<strong>Choose which APs broadcast it.</strong> Select the shared SSID on each AP and set <strong>Broadcast on this AP</strong>. The AP switch port and the uplinks must carry the SSID’s VLAN.',
         '<strong>Verify association and coverage.</strong> Select a mobile phone and set its <strong>Wi-Fi SSID</strong>. Check its AP and IPv4 address. Open <strong>Wi-Fi</strong> and filter by SSID and band to review its coverage.',
       ],
