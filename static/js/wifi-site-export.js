@@ -125,7 +125,7 @@
         kind, radio_plan: ['2.4', '5'].map(band => {
           const radio = ap.radios?.[band] ?? window.WifiSiteModel.defaultRadios()[band];
           return `${band} GHz ch ${radio.channel} / ${radio.width} MHz`;
-        }).join(' · '), details: powered ? ssids.map(ssid => `${ssid.name} (${ssid.band === 'both' ? '2.4 / 5' : ssid.band} GHz)`) : [], powered };
+        }).join(' · '), details: powered ? ssids.map(ssid => `${ssid.name} (${ssid.band === 'both' ? '2.4 / 5' : ssid.band} GHz)${ap.ssid_limits?.[ssid.id] ? ` · ${ap.ssid_limits[ssid.id]} Mb/s per client` : ''}`) : [], powered };
     });
     const cables = plan.cables.filter(cable => !cable.rack_patch).map(cable => {
       const route = cabling.inspections.get(cable.id);

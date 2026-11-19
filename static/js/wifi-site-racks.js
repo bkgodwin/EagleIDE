@@ -115,17 +115,18 @@
     const { escape, inspector } = ctx;
     const inspectorHome = inspector.parentElement;
     const endKey = end => cableModel.portKey(end);
-    let rackId, mode, selected, source, zoom, drag, dragFrame, returnFocus;
+    let rackId, mode, selected, selectedSlot, source, zoom, drag, dragFrame, returnFocus;
+    let compact = false, slotLayout = new Map();
     let message = '';
 
     body.innerHTML = `<div class="wifi-rack-toolbar">
       <div class="wifi-rack-tools" role="group" aria-label="Rack tools">
         <button class="wifi-control" type="button" data-rack-mode="inspect">Select</button>
-        <button class="wifi-control" type="button" data-rack-mode="install">Install Equipment</button>
         <button class="wifi-control" type="button" data-rack-mode="cable">Cable</button>
         <button class="wifi-control" type="button" data-rack-settings>Rack Settings</button>
       </div>
       <div class="wifi-rack-zoom" role="group" aria-label="Rack zoom">
+        <label class="wifi-toggle"><input type="checkbox" data-rack-compact> Collapse empty slots</label>
         <button class="wifi-control" type="button" data-rack-zoom="out" aria-label="Zoom out">−</button>
         <output aria-label="Rack zoom level" data-rack-scale></output>
         <button class="wifi-control" type="button" data-rack-zoom="in" aria-label="Zoom in">+</button>
@@ -149,6 +150,11 @@
           </div>
           <label data-rack-mount>Mounting position<select data-rack-move aria-label="Mounting position"></select></label>
           <div data-rack-properties></div>
+        </section>
+        <section data-rack-slot-details hidden>
+          <h3 data-rack-slot-heading></h3>
+          <p>Select equipment to install with its bottom at this unit.</p>
+          <button class="wifi-control" type="button" data-rack-mode="install">Install Equipment</button>
         </section>
         <section data-rack-install hidden>
           <h3>Install equipment</h3>
@@ -192,7 +198,7 @@
       rackId = id;
       mode = 'inspect';
       selected = data.devices.get(deviceId)?.rack_id === id ? deviceId : null;
-      source = null;
+      source = selectedSlot = null;
       message = '';
       zoom = 1;
       media.value = 'ethernet';
@@ -232,31 +238,45 @@
     });
 
     function renderFace(sheet, units) {
-      const height = units * face.unit + face.top * 2;
+      const occupied = new Set(sheet.devices.flatMap(device =>
+        Array.from({ length: device.size }, (_, i) => device.u + i)));
+      let bottom = face.top;
+      slotLayout = new Map();
+      for (let u = units; u >= 1; u -= 1) {
+        const height = compact && !occupied.has(u) ? 13 : face.unit;
+        slotLayout.set(u, { y: bottom, height });
+        bottom += height;
+      }
+      const height = bottom + face.top;
       const ports = new Map();
       const rails = Array.from({ length: units }, (_, i) => {
-        const y = face.top + i * face.unit;
-        return `<rect data-rack-unit-number="${units - i}" x="37" y="${y}" width="826" height="${face.unit}" fill="${i % 2 ? '#172638' : '#1a2a3d'}"/>
+        const unit = units - i, { y, height } = slotLayout.get(unit);
+        const empty = !occupied.has(unit);
+        return `<rect data-rack-unit-number="${unit}" x="37" y="${y}" width="826" height="${height}" fill="${selectedSlot === unit ? '#5a3d46' : i % 2 ? '#172638' : '#1a2a3d'}"
+          ${empty && mode !== 'cable' ? ` data-rack-slot="${unit}" role="button" tabindex="0" aria-label="U${unit} open slot" aria-pressed="${selectedSlot === unit}"` : ''}/>
           <path d="M37 ${y}H870" stroke="#425972"/>
-          <text class="wifi-rack-unit-number" x="30" y="${y + 27}" text-anchor="end" fill="#c9d6e5">U${units - i}</text>
-          <path d="M41 ${y + 8}h6m-6 14h6m-6 14h6m815-28h6m-6 14h6m-6 14h6" stroke="#7d91a8" stroke-width="2"/>`;
+          <text class="wifi-rack-unit-number" x="30" y="${y + Math.min(27, height - 2)}" text-anchor="end" fill="#c9d6e5">U${units - i}</text>
+          ${height === face.unit ? `<path d="M41 ${y + 8}h6m-6 14h6m-6 14h6m815-28h6m-6 14h6m-6 14h6" stroke="#7d91a8" stroke-width="2"/>` : ''}`;
       }).join('');
       const devices = sheet.devices.map(device => {
-        const y = slotY(units, device, device.size);
+        const originalY = slotY(units, device, device.size);
+        const y = slotLayout.get(device.u + device.size - 1).y;
         const height = device.size * face.unit;
         const [color, ink, badge] = hardware[device.kind];
         const rows = portPositions(device, units).map(port => {
           const key = endKey({ device_id: device.id, port: port.id });
-          ports.set(key, port);
           const chosen = source && endKey(source) === key;
           const valid = port.media === media.value && !port.connected && !port.wan && source?.device_id !== device.id;
           const descriptor = `${device.name} · ${port.id}${port.rearLabel ? ' · Rear to ' + port.rearLabel : ''}${port.peer ? ' · Patched to ' + port.peer : ''}`;
           const indicator = port.connected ? '#8ef0b5' : port.destination ? '#ffd182' : '#889fb2';
           const portNum = (port.wan ? port.media === 'fiber' ? 'WF' : 'W' : port.media === 'fiber' ? 'S' : '') + (port.id.match(/\d+$/)?.[0] || port.id);
+          port = { ...port, y: port.y + slotLayout.get(device.u + device.size - 1).y - originalY };
+          ports.set(key, port);
           const x = port.x, y = port.y;
           return `<g class="wifi-rack-port${chosen ? ' is-active' : ''}${mode === 'cable' && valid ? ' is-available' : ''}"
             data-rack-port="${escape(key)}" data-rack-x="${x}" data-rack-y="${y}" data-rack-tooltip="${escape(descriptor)}" aria-label="${escape(descriptor)}"
-            ${mode === 'cable' ? `role="button" tabindex="${valid || chosen ? 0 : -1}" aria-disabled="${!valid && !chosen}"` : ''}>
+            ${mode === 'cable' ? `role="button" tabindex="${valid || chosen ? 0 : -1}" aria-disabled="${!valid && !chosen}"` :
+              ['core_switch', 'distribution_switch'].includes(device.kind) ? 'role="button" tabindex="0"' : ''}>
             <rect class="wifi-rack-port-hit" x="${x - 10}" y="${y - 9}" width="20" height="20" fill="transparent"/>
             <rect class="wifi-rack-jack" x="${x - 8}" y="${y - 7}" width="16" height="13" rx="2" fill="#101e2c" stroke="${indicator}"/>
             ${port.media === 'fiber'
@@ -333,12 +353,18 @@
           move.innerHTML = options(unitOptions(available, catalog.equipment[device.kind].rack_units), device.rack_u);
         }
       }
+      const slotDetails = $('[data-rack-slot-details]');
+      slotDetails.hidden = !selectedSlot || mode === 'cable';
+      $('[data-rack-slot-heading]').textContent = selectedSlot ? `U${selectedSlot} · Open slot` : '';
       install.hidden = mode !== 'install';
       if (mode === 'install') {
         const available = data.availableUnits(rackId, kindInput.value);
-        unitInput.innerHTML = available.length ? options(unitOptions(available, catalog.equipment[kindInput.value].rack_units), unitInput.value)
+        unitInput.innerHTML = available.length ? options(unitOptions(available, catalog.equipment[kindInput.value].rack_units), selectedSlot)
           : '<option>No space available</option>';
-        unitInput.disabled = $('[data-rack-add]').disabled = !available.length;
+        const fits = available.includes(selectedSlot);
+        unitInput.disabled = !available.length;
+        $('[data-rack-add]').disabled = !fits;
+        if (!fits) message = 'This device does not fit here. Choose another open slot or bottom unit.';
       }
       $('.wifi-rack-patching').hidden = mode !== 'cable';
       $('[data-rack-cancel-cable]').disabled = !source;
@@ -395,6 +421,8 @@
     }
 
     function select(id, nextMode = 'inspect') {
+      if (selected === id && mode === nextMode) return;
+      if (id) selectedSlot = null;
       selected = id;
       mode = nextMode;
       source = null;
@@ -440,11 +468,18 @@
     }
 
     body.addEventListener('click', event => {
-      const control = event.target.closest('button, [data-rack-port], [data-rack-device]');
+      const control = event.target.closest('button, [data-rack-port], [data-rack-device], [data-rack-slot]');
       if (!control) return;
-      const { rackMode, rackDevice, rackPort, rackZoom, rackRemoveCable } = control.dataset;
-      if (rackMode) {
-        select(selected, rackMode);
+      const { rackMode, rackDevice, rackPort, rackZoom, rackRemoveCable, rackSlot } = control.dataset;
+      if (rackSlot) {
+        selectedSlot = Number(rackSlot);
+        selected = source = null;
+        mode = 'inspect';
+        message = '';
+        refresh();
+        ctx.renderInspector();
+      } else if (rackMode) {
+        select(null, rackMode);
       } else if (control.hasAttribute('data-rack-settings')) {
         select(rackId);
       } else if (control.hasAttribute('data-rack-overview')) {
@@ -477,13 +512,24 @@
         patchPort(rackPort);
       } else if (mode === 'inspect') {
         const gear = rackDevice || control.closest('[data-rack-device]')?.dataset.rackDevice;
-        if (gear) select(gear);
+        if (gear) {
+          select(gear);
+          if (rackPort) ctx.inspectPort(ctx.data().devices.get(gear), rackPort.split(':')[1]);
+        }
       }
     });
 
     body.addEventListener('change', event => {
       const input = event.target;
-      if (input === kindInput || input === media) {
+      if (input.hasAttribute('data-rack-compact')) {
+        compact = input.checked;
+        refresh();
+        ctx.guidance();
+      } else if (input === unitInput) {
+        selectedSlot = Number(unitInput.value);
+        message = '';
+        refresh();
+      } else if (input === kindInput || input === media) {
         source = null;
         message = '';
         refresh();
@@ -528,13 +574,16 @@
       const { svg, unit, size, units, startY, x, y, available } = drag;
       const rect = view.getBoundingClientRect();
       const drop = svg.querySelector('.wifi-rack-drop');
-      const next = unit - Math.round((rackY(svg, x, y) - startY) / face.unit);
+      const desiredY = slotLayout.get(unit + size - 1).y + rackY(svg, x, y) - startY;
+      const next = Array.from({ length: units - size + 1 }, (_, i) => i + 1)
+        .reduce((best, u) => Math.abs(slotLayout.get(u + size - 1).y - desiredY) <
+          Math.abs(slotLayout.get(best + size - 1).y - desiredY) ? u : best, unit);
       const inside = x >= rect.left && x < rect.left + view.clientWidth && y >= rect.top && y < rect.top + view.clientHeight;
       drag.valid = inside && available.includes(next);
       drag.next = next;
       const withinSlots = inside && next >= 1 && next + size - 1 <= units;
       drop.setAttribute('visibility', withinSlots ? 'visible' : 'hidden');
-      drop.setAttribute('y', slotY(units, { u: next }, size) + 2);
+      drop.setAttribute('y', slotLayout.get(next + size - 1)?.y + 2);
       drop.setAttribute('height', size * face.unit - 4);
       drop.classList.toggle('is-valid', drag.valid);
       announce(drag.valid ? `Release to mount at U${next}.` : 'Drag to an open mounting position.');

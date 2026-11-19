@@ -60,7 +60,16 @@
     }
 
     function contextControl(item, scope) {
+      if (item.ghost?.kind === 'unit' && rack.open) {
+        const slot = rack.querySelector(`[data-rack-slot="${item.ghost.unit}"]`);
+        if (slot && slot.getAttribute('aria-pressed') !== 'true') return slot;
+        const installer = rack.querySelector('[data-rack-install]');
+        if (installer?.hidden) return rack.querySelector('[data-rack-mode="install"]');
+      }
+      if (!rack.open && item.target && selectedId() === findTarget(item.target) &&
+          $('wifiObjectPanel').hasAttribute('data-properties-collapsed')) return $('wifiPropertiesToggle');
       const required = item.focus.find(selector => selector.startsWith('[data-wifi-tool="'));
+      if (required && !rack.open && workspace.hasAttribute('data-tools-collapsed')) return $('wifiToolbarToggle');
       if (required && !rack.open && !workspace.querySelector(`${required}[aria-pressed="true"]`)) {
         return locateControl(scope, required);
       }
@@ -69,6 +78,12 @@
         const chassis = rack.querySelector(`[data-rack-profile="${item.rack}"]`);
         if (chassis && !chassis.classList.contains('is-selected')) {
           return rack.querySelector('[data-rack-mode="inspect"][aria-pressed="false"]') || chassis;
+        }
+        if (item.id.startsWith('tag-')) {
+          const port = item.id.slice(4);
+          if (rack.querySelector(`#wifiPort-${port}[aria-pressed="false"]`)) {
+            return rack.querySelector(`[data-rack-profile="${item.rack}"] [data-rack-port$=":${port}"]`);
+          }
         }
       }
       if (item.target && !rack.open) {
@@ -95,6 +110,11 @@
         if (visible(name) && name.value.trim().toLowerCase() === 'guest') {
           return id.value !== '20' ? id : scope.querySelector('[data-wifi-network="save-vlan"]');
         }
+      }
+      if (item.id.startsWith('limit-')) {
+        const guest = [...scope.querySelectorAll('[data-wifi-network="pick-ssid"]')]
+          .find(button => button.textContent.trim() === 'Studio Guest');
+        if (guest?.getAttribute('aria-pressed') === 'false') return guest;
       }
       const nextChoice = choices.find(({select, option}) => select.value !== option.value);
       if (nextChoice) return nextChoice.select;

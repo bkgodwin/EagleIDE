@@ -166,6 +166,28 @@ test('Internet ping follows the physical ISP handoff and marks translated traffi
   assert.equal(ping(graph(plan), 'desktop', INTERNET).rtt, null);
 });
 
+test('port, SSID, and routed VLAN limits apply at their intended points without changing signal', () => {
+  const plan = layout();
+  const before = graph(plan);
+  const switchDevice = plan.equipment.find(item => item.id === 'switch');
+  const router = plan.equipment.find(item => item.id === 'router');
+  switchDevice.port_limits = { ETH3: 25 };
+  router.vlan_limits = { 0: 10 };
+  plan.access_points[0].ssid_limits = { default: 20 };
+  const network = graph(plan);
+  assert.equal(network.clients.get('desktop').speed, 25);
+  assert.equal(network.clients.get('desktop').upstream.speed, 10);
+  assert.equal(network.clients.get('near').speed, 20);
+  assert.equal(network.clients.get('near').upstream.speed, 10);
+  assert.equal(network.clients.get('near').signal, before.clients.get('near').signal);
+  assert.equal(ping(network, 'desktop', 'near', () => 1).bandwidth, 20);
+  assert.equal(ping(network, 'near', INTERNET, () => 1).bandwidth, 10);
+  switchDevice.port_limits = { ETH3: 0 };
+  router.vlan_limits = {};
+  plan.access_points[0].ssid_limits = {};
+  assert.equal(graph(plan).clients.get('desktop').speed, before.clients.get('desktop').speed);
+});
+
 test('SSID and radio filters agree with association, while switch port VLANs gate DHCP', () => {
   const plan = layout();
   plan.ssids = [DEFAULT_SSID, { id: 'guest', name: 'Guest', band: '2.4', vlan: 20 }];

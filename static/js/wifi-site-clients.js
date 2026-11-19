@@ -46,8 +46,9 @@
       if (!summary) return '';
       const { sent, received, total, min, max, reason } = summary;
       const loss = sent ? Math.round(100 * (sent - received) / sent) : 0;
+      const capacity = summary.bandwidth ? ` · Path limit ${speedName(summary.bandwidth)}` : '';
       const time = received ? ` · RTT ${(total / received).toFixed(1)} ms avg (${min.toFixed(1)}–${max.toFixed(1)} ms)` : '';
-      return `${received} arrived · ${sent - received} dropped (${loss}%) · ${sent} sent${time}${reason ? ` · Last drop: ${reason}` : ''}`;
+      return `${received} arrived · ${sent - received} dropped (${loss}%) · ${sent} sent${time}${capacity}${reason ? ` · Last drop: ${reason}` : ''}`;
     }
 
     function refresh() {
@@ -132,6 +133,7 @@
       const { id, target, summary } = run;
       const packet = model.ping(network(), id, target);
       summary.sent += 1;
+      summary.bandwidth = packet.bandwidth;
       if (packet.rtt !== null) {
         summary.received += 1;
         summary.total += packet.rtt;
