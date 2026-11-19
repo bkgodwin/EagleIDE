@@ -20,6 +20,7 @@ from wifi_cabling import CABLING_CATALOG
 from wifi_scenarios import SCENARIOS, scenario_briefing, scenario_summary
 from wifi_site_pdf import MAX_EXPORT_BYTES, render_plan_pdf
 from wifi_site_network import SERVER_SERVICES
+from wifi_lab_features import register as register_guided_labs
 
 
 def register(
@@ -124,6 +125,9 @@ def register(
             return False
         return lab_id in {item.get("lab_id") for item in store.assignments_for_class(class_id)}
 
+    guided_labs = register_guided_labs(app, store, actor=actor, may_open=may_open, teacher_class=teacher_class,
+                                        get_user_class_ids=get_user_class_ids, find_class=find_class)
+
     @app.get("/api/network/bootstrap")
     def network_bootstrap():
         current = actor()
@@ -158,6 +162,14 @@ def register(
                 starter_progress = store.wifi_starter_progress(current["email"])
             except WifiStorageError:
                 pass
+        assigned_infra_labs, labs_available = [], True
+        if current["role"] == "student" and modes["infra"]:
+            try:
+                assigned_infra_labs = guided_labs.student_catalog(current["email"], [
+                    {**(find_class(key) or {}), "id": key} for key in class_ids if find_class(key)
+                ])
+            except WifiStorageError:
+                labs_available = False
         allowed_scenarios = available_scenarios(current) if modes["infra"] else ()
         return jsonify(
             ok=True,
@@ -175,6 +187,8 @@ def register(
                 "saved_sites": saved_sites,
                 "starter_labs": starter.catalog() if modes["infra"] else [],
                 "starter_progress": starter_progress,
+                "infra_labs": assigned_infra_labs,
+                "infra_labs_available": labs_available,
                 "wifi_storage_available": wifi_storage_available,
                 "scenarios": [scenario_summary(item) for scenario_id, item in SCENARIOS.items()
                               if scenario_id in allowed_scenarios],
@@ -564,12 +578,16 @@ def register(
             except WifiStorageError:
                 progress = None
             starter_roster.append({**student, "progress": progress})
+        try:
+            infra_labs = guided_labs.class_report(class_id, roster)
+        except WifiStorageError:
+            infra_labs = None
         access, visibility = store.class_settings(class_id, SCENARIOS, modes=True)
         scenarios = [{**scenario_summary(item), "visible": visibility[scenario_id]} for scenario_id, item in SCENARIOS.items()]
         response = jsonify(ok=True, data={"class_id": class_id, "class_name": classroom.get("name"),
                                           "enabled": any(access.values()), "access": access, "global_access": global_modes(),
                                           "globally_enabled": any(global_modes().values()), "labs": labs, "scenarios": scenarios,
-                                          "starter_labs": starter.catalog(), "starter_roster": starter_roster})
+                                          "starter_labs": starter.catalog(), "starter_roster": starter_roster, "infra_labs": infra_labs})
         response.cache_control.private = True
         response.cache_control.no_store = True
         return response

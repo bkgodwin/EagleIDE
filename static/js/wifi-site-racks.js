@@ -196,6 +196,7 @@
       const data = ctx.data();
       if (data.devices.get(id)?.kind !== 'rack') return;
       rackId = id;
+      dialog.dataset.rackId = id;
       mode = 'inspect';
       selected = data.devices.get(deviceId)?.rack_id === id ? deviceId : null;
       source = selectedSlot = null;

@@ -3,7 +3,7 @@
   'use strict';
 
   const $ = id => document.getElementById(id);
-  function create({ workspace, escape, fit, locate, icon, resolve, recheck, reset, findTarget, selectedId }) {
+  function create({ workspace, escape, fit, locate, icon, resolve, recheck, reset, findTarget, selectedId, onQuiz }) {
     const panel = $('wifiStarterChecklist');
     const rack = $('wifiRackDialog');
     const layer = $('wifiStarterGhost');
@@ -22,7 +22,7 @@
     const toggle = $('wifiStarterHint');
     const next = $('wifiStarterNext');
     const restart = $('wifiStarterRestart');
-    let course, progress, index, showHint, busy, guest, focused, slot, rackLink, rackLinkKey, frame = 0, ghostSignature;
+    let course, progress, index, showHint, busy, guest, assessed, labTitle, focused, slot, rackLink, rackLinkKey, frame = 0, ghostSignature;
 
     const lesson = () => course?.[index];
     const done = id => index < progress.completed || progress.checked.includes(id);
@@ -53,13 +53,26 @@
     function recommendation(item, select) {
       const choice = item?.choices?.find(entry => select.matches(entry.selector));
       if (!choice) return null;
-      return [...select.options].find(option => !option.disabled && (
+      const device = choice.target && findTarget(choice.target);
+      return [...select.options].find(option => !option.disabled && (!choice.target || option.value.startsWith(device + ':')) && (
         choice.value !== null ? option.value === choice.value :
           choice.suffix ? option.value.endsWith(choice.suffix) : option.textContent.trim().startsWith(choice.label)
       ));
     }
 
     function contextControl(item, scope) {
+      if (rack.open && !item.rack_position && !item.rack && !['unit', 'rack-link'].includes(item.ghost?.kind)) {
+        return rack.querySelector('header button');
+      }
+      if (item.rack_position) {
+        const rackId = findTarget({ kind: 'rack', point: item.rack_position });
+        if (!rack.open) {
+          const select = workspace.querySelector('[data-wifi-tool="select"]');
+          if (select.getAttribute('aria-pressed') !== 'true') return workspace.hasAttribute('data-tools-collapsed') ? $('wifiToolbarToggle') : select;
+          return workspace.querySelector(`[data-wifi-object="${CSS.escape(rackId ?? '')}"] .wifi-gear-rack`);
+        }
+        if (rack.dataset.rackId !== rackId) return rack.querySelector('header button');
+      }
       if (item.ghost?.kind === 'unit' && rack.open) {
         const slot = rack.querySelector(`[data-rack-slot="${item.ghost.unit}"]`);
         if (slot && slot.getAttribute('aria-pressed') !== 'true') return slot;
@@ -79,14 +92,16 @@
         if (chassis && !chassis.classList.contains('is-selected')) {
           return rack.querySelector('[data-rack-mode="inspect"][aria-pressed="false"]') || chassis;
         }
-        if (item.id.startsWith('tag-')) {
-          const port = item.id.slice(4);
+        if (item.port || item.id.startsWith('tag-')) {
+          const port = item.port || item.id.slice(4);
           if (rack.querySelector(`#wifiPort-${port}[aria-pressed="false"]`)) {
             return rack.querySelector(`[data-rack-profile="${item.rack}"] [data-rack-port$=":${port}"]`);
           }
         }
       }
       if (item.target && !rack.open) {
+        const select = workspace.querySelector('[data-wifi-tool="select"]');
+        if (select.getAttribute('aria-pressed') !== 'true') return workspace.hasAttribute('data-tools-collapsed') ? $('wifiToolbarToggle') : select;
         const id = findTarget(item.target);
         if (id && id !== selectedId()) {
           return workspace.querySelector(`[data-wifi-object="${CSS.escape(id)}"] .wifi-marker`);
@@ -113,11 +128,30 @@
       }
       if (item.id.startsWith('limit-')) {
         const guest = [...scope.querySelectorAll('[data-wifi-network="pick-ssid"]')]
-          .find(button => button.textContent.trim() === 'Studio Guest');
+          .find(button => button.textContent.trim() === (item.ssid_name || 'Studio Guest'));
         if (guest?.getAttribute('aria-pressed') === 'false') return guest;
       }
       const nextChoice = choices.find(({select, option}) => select.value !== option.value);
       if (nextChoice) return nextChoice.select;
+      if (rack.open && item.ghost?.kind === 'rack-link') {
+        const cable = rack.querySelector('[data-rack-mode="cable"]');
+        if (cable.getAttribute('aria-pressed') !== 'true') return cable;
+        const ports = item.ghost.ends.map(([profile, port]) => rack.querySelector(
+          `[data-rack-profile="${profile}"] [data-rack-port$=":${port}"]`));
+        if (ports.every(Boolean)) return ports[0].classList.contains('is-active') ? ports[1] : ports[0];
+      }
+      for (const [selector, expected] of Object.entries(item.checks || {})) {
+        const checkbox = scope.querySelector(selector);
+        if (visible(checkbox) && checkbox.checked !== expected) return checkbox;
+      }
+      if (item.fields) {
+        for (const [selector, expected] of Object.entries(item.fields)) {
+          const input = scope.querySelector(selector);
+          if (visible(input) && input.value.trim() !== expected) return input;
+        }
+        const action = item.action && scope.querySelector(item.action);
+        if (visible(action) && !action.disabled) return action;
+      }
       const target = item.focus.map(selector => locateControl(scope, selector)).find(Boolean);
       if (target && (target.tagName !== 'SELECT' || !target.disabled)) return target;
       if (!rack.open && (['unit', 'rack-link'].includes(item.ghost?.kind) || item.focus.some(selector => selector.includes('rack')))) {
@@ -227,7 +261,8 @@
         }
       }
       const rackMessage = showHint && task ? task.hint : lesson() && !task
-        ? index < progress.completed ? 'Lesson complete. Close the rack to continue.' : 'Close the rack to check this lesson.'
+        ? index < progress.completed ? 'Section complete. Close the rack to continue.' : assessed
+          ? 'Close the rack and choose Answer question to continue.' : 'Close the rack to check this lesson.'
         : '';
       rackTip.hidden = !rack.open || !rackMessage;
       if (!rackTip.hidden && rackTip.textContent !== rackMessage) rackTip.textContent = rackMessage;
@@ -246,9 +281,9 @@
       const task = pending();
       panel.hidden = false;
       const attempt = progress.attempt > 1 ? ` · Attempt ${progress.attempt}` : '';
-      $('wifiStarterStep').textContent = (step ? `Lesson ${index + 1} of ${course.length}` : 'Starter Labs complete') + attempt;
-      $('wifiStarterHeading').textContent = step?.title || 'Studio ready';
-      $('wifiStarterGoal').textContent = step?.goal || (guest
+      $('wifiStarterStep').textContent = (step ? `${assessed ? labTitle + ' · Section' : 'Lesson'} ${index + 1} of ${course.length}` : assessed ? labTitle : 'Starter Labs complete') + attempt;
+      $('wifiStarterHeading').textContent = step?.title || (assessed ? progress.assessment.submitted ? 'Lab submitted' : 'Ready to submit' : 'Studio ready');
+      $('wifiStarterGoal').textContent = step?.goal || (assessed ? progress.assessment.submitted ? 'Review the score and feedback below. Start another attempt if your allowance permits.' : 'Review the objective and question totals below, then submit this attempt for grading.' : guest
         ? 'Download a copy of your studio before leaving, or repeat the lessons.'
         : 'Your studio is saved. Try a scenario or start your own design from Network Lab.');
       checks.innerHTML = step?.tasks.map(item => `<li data-checked="${done(item.id)}"${item === task ? ' aria-current="step"' : ''}>
@@ -263,16 +298,18 @@
       }
       hint.hidden = !showHint || !step;
       const finished = index < progress.completed;
-      const message = task?.hint || (finished ? 'Lesson complete. Continue on the same plan.' : 'The checklist is ready. Check this lesson to record your work.');
+      const message = task?.hint || (finished ? 'Section complete. Continue on the same plan.' : assessed
+        ? 'Section objectives complete. Answer the concept check to continue.' : 'The checklist is ready. Check this lesson to record your work.');
       if (hint.textContent !== message) hint.textContent = message;
       toggle.hidden = !step || !task;
       toggle.textContent = showHint ? 'Hide hint' : 'Show hint';
       toggle.setAttribute('aria-pressed', String(showHint));
       $('wifiStarterFit').hidden = !task?.ghost || ['unit', 'rack-link'].includes(task.ghost.kind);
       next.hidden = Boolean(task) || !step;
-      next.textContent = !finished ? 'Check lesson' : index + 1 === course.length ? 'Finish Starter Labs' : 'Next lesson';
+      next.textContent = !finished ? assessed && progress.quiz ? 'Answer question' : 'Check lesson' :
+        index + 1 === course.length ? assessed ? 'Finish lab' : 'Finish Starter Labs' : assessed ? 'Next section' : 'Next lesson';
       next.disabled = busy;
-      restart.hidden = step ? !progress.can_restart || finished : false;
+      restart.hidden = assessed || (step ? !progress.can_restart || finished : false);
       restart.disabled = busy;
       restart.textContent = step ? 'Restart lesson' : 'Repeat Starter Labs';
       guidance();
@@ -283,8 +320,10 @@
       if (!data) return;
       course = data.lessons;
       guest = data.guest;
+      assessed = data.assessment;
+      labTitle = data.lab_title || 'Lab';
       progress = data.progress;
-      index = progress.completed;
+      index = assessed && progress.assessment.submitted ? course.length : progress.completed;
       showHint = true;
       busy = false;
       render();
@@ -308,8 +347,10 @@
     function update(data) {
       if (!course || !data) return;
       const changed = data.completed !== progress.completed || data.checked.join() !== progress.checked.join()
-        || data.can_restart !== progress.can_restart;
+        || data.can_restart !== progress.can_restart || Boolean(data.quiz) !== Boolean(progress.quiz)
+        || data.assessment?.submitted !== progress.assessment?.submitted;
       progress = data;
+      if (assessed && data.assessment.submitted) index = course.length;
       if (changed) render();
     }
 
@@ -349,6 +390,7 @@
 
     next.addEventListener('click', async () => {
       if (!course || busy || pending()) return;
+      if (assessed && progress.quiz && index === progress.completed) { onQuiz(); return; }
       if (index >= progress.completed) {
         const shown = course;
         busy = next.disabled = true;

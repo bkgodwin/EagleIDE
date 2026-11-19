@@ -412,6 +412,17 @@
         { meta: formatTimestamp(item.updated_at), remove: `data-delete-saved="${escapeHtml(item.id)}"` })
     ).join('');
     renderStarterCatalog(data);
+    $('wifiLabsFolder').hidden = data.role === 'guest';
+    const infraLabs = data.infra_labs || [];
+    $('wifiLabsCount').textContent = infraLabs.length ? String(infraLabs.length) : '';
+    $('wifiLabsEmpty').hidden = infraLabs.length > 0;
+    $('wifiLabsEmpty').textContent = data.infra_labs_available === false ? 'Lab work is temporarily unavailable. Try again later.' :
+      data.role === 'student' ? 'Your teacher has not assigned a lab yet.' : 'Assign or preview labs from your class dashboard.';
+    $('wifiLabsList').innerHTML = infraLabs.map(lab => `<li class="network-hub-row">
+      <button class="network-hub-row-open" type="button" data-wifi-lab="${escapeHtml(lab.id)}" data-class-id="${escapeHtml(lab.class_id)}" data-title="${escapeHtml(lab.title)}">
+      <span class="network-hub-row-main"><strong>${escapeHtml(lab.title)}</strong><small>${escapeHtml(lab.description)}</small>
+      <small>${escapeHtml(lab.class_name)} · ${lab.attempts}/${lab.allowance || 'Unlimited'} submissions${lab.latest ? ' · Latest ' + lab.latest.score + '%' : ''}</small></span>
+      <span>${lab.submitted ? 'Review' : lab.started ? 'Continue' : 'Start'}</span></button></li>`).join('');
     const sites = data.saved_sites || [];
     const sitesAvailable = data.wifi_storage_available !== false;
     $('wifiSavedSection').hidden = !data.can_save;
@@ -477,7 +488,7 @@
     }
   }
 
-  function openInfra(button, { sample = false, siteId = '', scenarioId = '', file, starter = false, repeatRevision } = {}) {
+  function openInfra(button, { sample = false, siteId = '', scenarioId = '', file, starter = false, repeatRevision, guidedLab } = {}) {
     return fromLibrary(button, async valid => {
       const access = await requestBootstrap();
       if (!valid()) return;
@@ -495,6 +506,11 @@
       let project = scenarioId
         ? await api(`/api/network/wifi-scenarios/${encodeURIComponent(scenarioId)}`, { method: 'POST' })
         : saved;
+      if (guidedLab) {
+        project = await api(`/api/network/wifi-labs/${encodeURIComponent(guidedLab.id)}?class_id=${encodeURIComponent(guidedLab.classId)}`, { method: 'POST' });
+        project.endpoint = `/api/network/wifi-labs/${encodeURIComponent(guidedLab.id)}?class_id=${encodeURIComponent(guidedLab.classId)}`;
+        project.lab_title = guidedLab.title;
+      }
       if (starter) project = await api('/api/network/wifi-starter', {
         method: 'POST',
         ...(repeatRevision ? { body: JSON.stringify({ reset: 'course', revision: repeatRevision }) } : {}),
@@ -505,11 +521,12 @@
         project = await api('/api/network/wifi-project/validate', { method: 'POST', body });
       }
       if (!valid()) return;
+      if (guidedLab && access.role !== 'student') $('teacherDashboardModal').style.display = 'none';
       window.WifiSite.open({
         api, authKey: currentAuthKey, canSave: access.can_save, limits: access.wifi_limits, catalog: access.wifi_cabling,
         makeId, escapeHtml, onBack: () => returnToLibrary(returnFocus),
-      }, { site: scenarioId || starter ? project.site : project, sample, imported: Boolean(file),
-        briefing: scenarioId ? project.briefing : null, starter: starter ? project : null });
+      }, { site: scenarioId || starter || guidedLab ? project.site : project, sample, imported: Boolean(file),
+        briefing: scenarioId ? project.briefing : null, starter: starter || guidedLab ? project : null });
     });
   }
 
@@ -2471,6 +2488,10 @@
     for (const id of Object.values(teacherAccessInputs)) $(id).disabled = !savedTeacherSettings || teacherWriteInProgress;
     teacherScenarioInputs().forEach(input => { input.disabled = teacherWriteInProgress; });
     $('networkTeacherLabList').querySelectorAll('[data-teacher-lab]').forEach(button => { button.disabled = locked; });
+    $('networkTeacherInfraLabList').querySelectorAll('input').forEach(input => { input.disabled = locked; });
+    $('networkTeacherInfraLabList').querySelectorAll('[data-infra-lab-save], [data-infra-lab-preview], [data-infra-lab-reset]').forEach(button => {
+      button.disabled = locked || (button.hasAttribute('data-infra-lab-reset') && button.closest('tr').querySelector('td:nth-child(5)')?.textContent === 'Not started');
+    });
     countVisibleScenarios();
     return dirty;
   }
@@ -2507,6 +2528,7 @@
       savedTeacherSettings = null;
       for (const id of Object.values(teacherAccessInputs)) $(id).checked = false;
       $('networkTeacherScenarioList').replaceChildren();
+      $('networkTeacherInfraLabList').replaceChildren();
       $('networkTeacherStarter').hidden = $('networkTeacherScenarios').hidden = $('networkTeacherLabHeading').hidden = true;
       $('networkTeacherStatus').textContent = '';
       $('networkTeacherLabList').innerHTML = '<div class="network-objectives-empty">Create a class to manage labs and scenarios.</div>';
@@ -2528,6 +2550,7 @@
     savedTeacherSettings = null;
     for (const id of Object.values(teacherAccessInputs)) $(id).checked = false;
     $('networkTeacherScenarioList').replaceChildren();
+    $('networkTeacherInfraLabList').replaceChildren();
     $('networkTeacherStarter').hidden = $('networkTeacherScenarios').hidden = $('networkTeacherLabHeading').hidden = true;
     $('networkTeacherLabList').replaceChildren();
     $('networkTeacherStatus').textContent = 'Loading class settings…';
@@ -2542,6 +2565,7 @@
       };
       renderTeacherScenarios(data.scenarios);
       renderTeacherStarter(data.starter_labs || [], data.starter_roster || []);
+      renderTeacherInfraLabs(data.infra_labs);
       $('networkTeacherLabHeading').hidden = false;
       renderTeacherLabs(data.labs || []);
       showSavedTeacherSettings();
@@ -2569,6 +2593,55 @@
           </td><td>${escapeHtml(state)}${progress?.attempt > 1 ? `<br><small>Attempt ${progress.attempt}</small>` : ''}</td>
           <td>${escapeHtml(time)}</td></tr>`;
       }).join('')}</tbody></table></div>` : '<p>No students are enrolled in this class.</p>';
+  }
+
+  function renderTeacherInfraLabs(labs) {
+    const host = $('networkTeacherInfraLabList');
+    if (!labs) { host.innerHTML = '<p role="status">Lab records are temporarily unavailable.</p>'; return; }
+    host.innerHTML = labs.map(lab => `<article class="network-teacher-lab">
+      <div><h3>${escapeHtml(lab.title)}</h3><p>${escapeHtml(lab.description)}</p>
+        <label class="network-switch"><input type="checkbox" data-infra-lab-assigned="${escapeHtml(lab.id)}"${lab.assigned ? ' checked' : ''}> Assigned to this class</label>
+        <label>Allowed submissions<input type="number" min="0" max="2147483647" step="1" data-infra-lab-allowance="${escapeHtml(lab.id)}" value="${lab.submissions}"></label>
+        <div class="wifi-starter-library-actions"><button class="btn run" type="button" data-infra-lab-save="${escapeHtml(lab.id)}">Save Lab Settings</button>
+        <button class="btn secondary" type="button" data-infra-lab-preview="${escapeHtml(lab.id)}" data-title="${escapeHtml(lab.title)}">Preview Lab</button></div>
+      </div>
+      <details class="network-student-progress"><summary>Student scores and attempts</summary>
+        <div class="network-student-results-scroll"><table><thead><tr><th>Student</th><th>Latest score</th><th>Best score</th><th>Submissions</th><th>Current progress</th><th>Attempts</th></tr></thead>
+        <tbody>${lab.students.map(student => `<tr><th scope="row">${escapeHtml(student.name)}</th>
+          <td>${student.latest ? student.latest.score + '%' : '—'}</td><td>${student.best == null ? '—' : student.best + '%'}</td>
+          <td>${student.attempts} / ${lab.submissions || 'Unlimited'}</td><td>${student.started ? student.completed + '/5 sections' : 'Not started'}</td>
+          <td><button class="btn secondary" type="button" data-infra-lab-reset="${escapeHtml(lab.id)}" data-email="${escapeHtml(student.email)}"${!student.started ? ' disabled' : ''}>Reset Attempts</button></td></tr>`).join('')}
+        </tbody></table></div>
+      </details>
+    </article>`).join('');
+    updateTeacherSettingsControls();
+  }
+
+  async function editInfraLab(button) {
+    const classId = state.teacherClassId, request = teacherClassRequest, account = currentAuthKey();
+    const valid = () => request === teacherClassRequest && account === currentAuthKey();
+    const labId = button.dataset.infraLabSave || button.dataset.infraLabReset;
+    const host = $('networkTeacherInfraLabList');
+    let path = `/api/network/teacher/classes/${encodeURIComponent(classId)}/infra-labs/${encodeURIComponent(labId)}`;
+    let method = 'PUT', data;
+    if (button.dataset.infraLabReset) {
+      if (!window.confirm('Reset this student’s attempts, submitted scores, and question answers? Their design will be kept.')) return;
+      path += '/reset'; method = 'POST'; data = { email: button.dataset.email };
+    } else {
+      const allowance = host.querySelector(`[data-infra-lab-allowance="${labId}"]`);
+      if (!allowance.reportValidity() || allowance.value === '') return;
+      data = { assigned: host.querySelector(`[data-infra-lab-assigned="${labId}"]`).checked, submissions: Number(allowance.value) };
+    }
+    teacherWriteInProgress = true;
+    updateTeacherSettingsControls();
+    try {
+      await api(path, { method, body: JSON.stringify(data) });
+      if (valid()) { teacherWriteInProgress = false; await loadTeacherClass(); }
+    } catch (error) {
+      if (valid()) $('networkTeacherStatus').textContent = error.message;
+    } finally {
+      if (valid()) { teacherWriteInProgress = false; updateTeacherSettingsControls(); }
+    }
   }
 
   function renderTeacherScenarios(scenarios) {
@@ -2789,6 +2862,22 @@
     for (const id of Object.values(teacherAccessInputs)) $(id)?.addEventListener('change', teacherSettingsChanged);
     $('networkTeacherSaveBtn')?.addEventListener('click', saveTeacherSettings);
     $('networkTeacherDiscardBtn')?.addEventListener('click', () => showSavedTeacherSettings('Changes discarded.'));
+    $('networkTeacherInfraLabList')?.addEventListener('click', event => {
+      const button = event.target.closest('button');
+      if (button?.dataset.infraLabPreview) {
+        const classId = state.teacherClassId, request = teacherClassRequest, account = currentAuthKey();
+        (async () => {
+          if (window.WifiSite && !await window.WifiSite.leave()) return;
+          await show();
+          if (request !== teacherClassRequest || account !== currentAuthKey()) return;
+          openInfra(button, { guidedLab: { id: button.dataset.infraLabPreview, classId, title: button.dataset.title } });
+        })().catch(error => { $('networkTeacherStatus').textContent = error.message; });
+      } else if (button?.dataset.infraLabSave || button?.dataset.infraLabReset) editInfraLab(button);
+    });
+    $('wifiLabsList')?.addEventListener('click', event => {
+      const button = event.target.closest('[data-wifi-lab]');
+      if (button) openInfra(button, { guidedLab: { id: button.dataset.wifiLab, classId: button.dataset.classId, title: button.dataset.title } });
+    });
     $('networkTeacherScenarioList')?.addEventListener('change', event => {
       if (event.target.matches('[data-teacher-scenario]')) teacherSettingsChanged();
     });

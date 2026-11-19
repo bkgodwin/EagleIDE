@@ -940,7 +940,8 @@ class NetworkStore:
         return self.wifi_dir / f"{self._user_key('starter-labs:' + str(email).strip().lower())}.json"
 
     def _wifi_account_paths(self, email):
-        return self._wifi_path(email), self._wifi_starter_path(email)
+        labs = self.wifi_dir / f"{self._user_key('guided-labs:' + str(email).strip().lower())}.json"
+        return self._wifi_path(email), self._wifi_starter_path(email), labs
 
     @staticmethod
     def _new_wifi_starter(attempt=1, best=0):

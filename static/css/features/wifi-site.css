@@ -851,3 +851,32 @@ body:not(.light-mode) .wifi-rule-deny { color: #ffa9a1; }
 @media (prefers-reduced-motion: reduce) {
   #wifiWorkspace [data-wifi-starter-focus], .wifi-starter-picker button[data-recommended] { animation: none; }
 }
+
+.wifi-lab-assessment { border-top: 1px solid var(--wifi-guide); margin-top: 12px; padding-top: 10px; }
+.wifi-lab-assessment > button { margin: 4px 0; }
+.wifi-lab-assessment > button:disabled { opacity: .5; cursor: not-allowed; }
+.wifi-lab-assessment summary { cursor: pointer; }
+.wifi-lab-quiz {
+  width: min(600px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  overflow: auto;
+  padding: 18px;
+  border: 2px solid var(--wifi-guide);
+  border-radius: 10px;
+  color: var(--wifi-text);
+  background: var(--wifi-surface);
+  font: 14px/1.5 system-ui, sans-serif;
+}
+.wifi-lab-quiz::backdrop { background: #07121ccc; }
+.wifi-lab-quiz header, .wifi-lab-quiz footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.wifi-lab-quiz h2 { margin: 0 0 12px; font-size: 19px; }
+.wifi-lab-quiz fieldset { border: 0; padding: 0; margin: 8px 0; }
+.wifi-lab-quiz legend { font-weight: 700; margin-bottom: 12px; }
+.wifi-lab-quiz fieldset > label {
+  display: grid; grid-template-columns: auto 1fr; align-items: start; gap: 10px;
+  padding: 10px; margin: 7px 0; border: 1px solid var(--wifi-edge); border-radius: 6px; cursor: pointer;
+}
+.wifi-lab-quiz fieldset > label:has(input:checked) { background: var(--wifi-raised); border-color: var(--wifi-guide); }
+.wifi-lab-quiz input { margin-top: 4px; }
+.wifi-lab-feedback:not(:empty) { padding: 10px; margin: 10px 0; border-inline-start: 4px solid var(--wifi-guide); background: var(--wifi-raised); }
+.wifi-lab-feedback[data-correct="true"] { border-color: #2c9b6a; }
