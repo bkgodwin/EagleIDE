@@ -311,7 +311,11 @@
       shortcut.onclick = () => { detail.querySelector('#assignment-tab-grading').click(); detail.querySelector('#assignment-tab-grading').focus(); };
       commonActions.prepend(shortcut);
     }
-    if (tools) submissionsPanel.append(tools);
+    if (tools) {
+      const gradeReport = assignment.assignmentType === 'lab_report' && tools.querySelector('.assignment-grade-question');
+      if (gradeReport) commonActions.prepend(gradeReport);
+      if (tools.children.length) submissionsPanel.append(tools);
+    }
     if (development) { const watch = development.querySelector('.assignment-development-open'); if (watch) commonActions.append(watch); }
     exportBar.classList.add('assignment-export-tools');
     submissionsPanel.querySelector('.assignment-section-heading').append(exportBar);

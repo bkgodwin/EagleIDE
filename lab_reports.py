@@ -116,7 +116,7 @@ def _clean_responses(assignment: dict, raw: object) -> list[dict]:
     questions = {
         str(item.get("id") or ""): item
         for item in ((assignment.get("quiz") or {}).get("questions") or [])
-        if isinstance(item, dict) and item.get("id")
+        if isinstance(item, dict) and item.get("id") and item.get("type") != "text_box"
     }
     if not isinstance(raw, list) or len(raw) > len(questions):
         raise ValueError("Invalid lab report responses")

@@ -6,6 +6,32 @@
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
   const state = { initialized:false, bootstrap:null, classId:'', search:'', assignments:[], adminServers:[], adminOrdering:false, adminSaving:false, teacherData:null, teacherClassId:'', teacherDrafts:new Map(), teacherVersion:0, teacherSaving:false, labLoad:0, reportOpening:false, report:null, workspace:null };
 
+  const clipboardPreference = 'eagle-lab-clipboard-controls';
+  let clipboardControls = window.matchMedia?.('(any-pointer: coarse)').matches ?? false;
+  try {
+    const saved = localStorage.getItem(clipboardPreference);
+    if (saved !== null) clipboardControls = saved === 'true';
+  } catch {}
+
+  function sendClipboardPreference(workspace, target) {
+    target.postMessage({type:'eagle-lab-clipboard-controls', key:workspace.clipboardKey, visible:clipboardControls},
+      workspace.clipboardOrigin === 'null' ? '*' : workspace.clipboardOrigin);
+  }
+
+  function attachWorkspaceClipboardToggle(workspace) {
+    const button = workspace.root.querySelector('[data-workspace-clipboard]');
+    button.setAttribute('aria-pressed', String(clipboardControls));
+    button.onclick = () => {
+      clipboardControls = !clipboardControls;
+      button.setAttribute('aria-pressed', String(clipboardControls));
+      try { localStorage.setItem(clipboardPreference, String(clipboardControls)); } catch {}
+      for (const target of workspace.clipboardWindows) {
+        if (target.closed) workspace.clipboardWindows.delete(target);
+        else sendClipboardPreference(workspace, target);
+      }
+    };
+  }
+
   function context() { return window.EagleIDE?.getContext?.() || {}; }
   function sessionKey() { const ctx=context(); return ctx.ADMIN_TOKEN || ctx.TEACHER_TOKEN || ctx.USER_TOKEN || ''; }
   function headers(json = false) {
@@ -176,10 +202,11 @@
     const root=document.createElement('section'),frameName='eagle-pve-'+server.id+'-'+Date.now();
     root.className='eagle-lab-workspace';root.setAttribute('aria-label','PVE management workspace');
     const sandbox='allow-scripts allow-forms allow-downloads allow-modals allow-popups allow-pointer-lock'+(launch.transport==='path'?'':' allow-same-origin');
-    root.innerHTML=`<header class="eagle-lab-workspace-toolbar"><button class="btn secondary" data-workspace-manual type="button">Lab Manual</button><button class="btn secondary" data-workspace-exit type="button">← Eagle Lab</button><strong>${esc(server.hostname)}</strong>${credentials?'<button class="btn secondary" data-workspace-credentials type="button">Credentials</button>':''}<select data-workspace-report aria-label="Lab report"><option value="">Choose lab report</option>${state.assignments.map(item=>`<option value="${esc(item.id)}">${esc(item.name)}</option>`).join('')}</select><button class="btn secondary" data-workspace-open-report type="button">Open report</button></header>
+    root.innerHTML=`<header class="eagle-lab-workspace-toolbar"><button class="btn secondary" data-workspace-manual type="button">Lab Manual</button><button class="btn secondary" data-workspace-exit type="button">← Eagle Lab</button><strong>${esc(server.hostname)}</strong>${credentials?'<button class="btn secondary" data-workspace-credentials type="button">Credentials</button>':''}<button class="btn secondary" data-workspace-clipboard type="button">Clipboard controls</button><div class="eagle-lab-workspace-reports"><select data-workspace-report aria-label="Lab report"><option value="">Choose lab report</option>${state.assignments.map(item=>`<option value="${esc(item.id)}">${esc(item.name)}</option>`).join('')}</select><button class="btn secondary" data-workspace-open-report type="button">Open report</button></div></header>
       <iframe name="${esc(frameName)}" title="${esc(server.hostname)} management interface" sandbox="${sandbox}" allow="clipboard-read *; clipboard-write *; fullscreen *" allowfullscreen referrerpolicy="no-referrer"></iframe>`;
     document.body.append(root);
-    state.workspace={root,serverId:server.id,session:originalSession,transport:launch.transport,clipboardOrigin:launch.transport==='path'?'null':new URL(launch.url).origin,clipboardKey:launch.clipboard_key,clipboardTimes:[]};
+    state.workspace={root,serverId:server.id,session:originalSession,transport:launch.transport,clipboardOrigin:launch.transport==='path'?'null':new URL(launch.url).origin,clipboardKey:launch.clipboard_key,clipboardTimes:[],clipboardWindows:new Set()};
+    attachWorkspaceClipboardToggle(state.workspace);
     root.querySelector('[data-workspace-manual]').onclick=()=>window.LabManual?.open();
     root.querySelector('[data-workspace-exit]').onclick=()=>closeWorkspace();
     root.querySelector('[data-workspace-credentials]')?.addEventListener('click',()=>{
@@ -332,7 +359,7 @@
     finally{state.teacherSaving=false;$('eagleLabTeacherSaveBtn').disabled=false;}
   }
 
-  function reportResponses(questions, root, partial=true){const responses=[],missing=[];questions.forEach((question,index)=>{let answer;if(question.type==='procedure'){answer=(question.steps||[]).map((_,step)=>!!root.querySelector(`[data-report-question="${CSS.escape(question.id)}"][data-step="${step}"]`)?.checked);if(!partial&&!answer.every(Boolean))missing.push(index+1);}else{answer=root.querySelector(`[data-report-question="${CSS.escape(question.id)}"]`)?.value||'';if(!partial&&!answer.trim())missing.push(index+1);}responses.push({questionId:question.id,questionType:question.type,answer});});return{responses,missing};}
+  function reportResponses(questions, root, partial=true){const responses=[],missing=[];questions.forEach((question,index)=>{if(question.type==='text_box')return;let answer;if(question.type==='procedure'){answer=(question.steps||[]).map((_,step)=>!!root.querySelector(`[data-report-question="${CSS.escape(question.id)}"][data-step="${step}"]`)?.checked);if(!partial&&!answer.every(Boolean))missing.push(index+1);}else{answer=root.querySelector(`[data-report-question="${CSS.escape(question.id)}"]`)?.value||'';if(!partial&&!answer.trim())missing.push(index+1);}responses.push({questionId:question.id,questionType:question.type,answer});});return{responses,missing};}
   async function openReportById(assignmentId, assignmentHint=null){
     const reportSession=sessionKey();
     if(state.reportOpening)return;
@@ -354,9 +381,9 @@
       const questions=quizData.quiz?.questions||[], saved=Object.fromEntries((quizData.savedResponses||[]).map(item=>[item.questionId,item.answer])), drafted=Object.fromEntries((draft.responses||[]).map(item=>[item.questionId,item.answer]));
       const answers={...saved,...drafted},overlay=document.createElement('div');overlay.className='lab-report-overlay';
       const content=window.LabReportContent, prose=value=>content?.render(value)||`<div class="lab-report-prose">${esc(value)}</div>`;
-      overlay.innerHTML=`<section class="lab-report-window has-report-drag" role="dialog" tabindex="0" title="Drag to move · arrow keys move the focused window" aria-modal="false" aria-label="${esc(assignment.name)}"><header><div><span class="lab-report-eyebrow">LAB REPORT · AUTOSAVE</span><h2>${esc(assignment.name)}</h2><span class="lab-report-save-state" role="status">${draft.updated_at?'Draft restored':'Ready'}</span></div><div class="lab-report-window-tools"><button class="btn secondary" data-report-close type="button" aria-label="Close report">✕</button><button class="btn secondary lab-report-minimize" data-float-minimize type="button" aria-label="Minimize report" title="Minimize report" aria-expanded="true"><span aria-hidden="true">▤</span></button></div></header><div class="lab-report-page"><p class="lab-report-hint">Drag to move. On a touch screen, use two fingers to scroll.${teacherPreview ? ' Your practice answers save automatically.' : ''}</p><div class="lab-report-description">${prose(assignment.task||'')}</div>${questions.map((question,index)=>`<section class="lab-report-question"><div class="lab-report-question-meta"><span>SECTION ${index+1} · ${esc(question.type==='procedure'?'CHECKLIST':question.type==='fill_blank'?'SHORT ANSWER':'WRITTEN RESPONSE')}</span><span>${Number(question.points)||0} points</span></div><div class="lab-report-prompt" id="report-label-${index}">${prose(question.question||'')}</div>${question.type==='procedure'?`<p class="lab-report-check-hint">Select every checkbox in this checklist to receive credit for this section.</p><div class="lab-report-procedure">${(question.steps||[]).map((step,i)=>`<div class="lab-report-check-row"><input type="checkbox" aria-label="Section ${index+1}, step ${i+1}" data-report-question="${esc(question.id)}" data-step="${i}" ${Array.isArray(answers[question.id])&&answers[question.id][i]?'checked':''}><div>${prose(step)}</div></div>`).join('')}</div>`:question.type==='fill_blank'?`<input type="text" aria-labelledby="report-label-${index}" placeholder="Your answer" maxlength="20000" data-report-question="${esc(question.id)}" value="${esc(answers[question.id]||'')}" autocomplete="off">`:`<textarea aria-labelledby="report-label-${index}" maxlength="20000" placeholder="Record your observations…" data-report-question="${esc(question.id)}">${esc(answers[question.id]||'')}</textarea>`}</section>`).join('')}</div><div class="lab-report-actions"><p data-report-status role="status"></p><span data-copy-status role="status" aria-live="polite"></span><button class="btn secondary" data-report-close type="button">Close for now</button>${teacherPreview ? '<button class="btn secondary" data-report-reset type="button">Reset my practice</button>' : '<button class="btn run" data-report-submit type="button">Submit report</button>'}</div><button type="button" class="lab-report-resize" data-float-resize aria-label="Resize report with arrow keys" title="Drag or use arrow keys to resize">◢</button><button type="button" class="lab-report-restore" data-float-restore aria-label="Restore ${esc(assignment.name)}" title="Restore report"><span aria-hidden="true">▤</span></button></section>`;
+      overlay.innerHTML=`<section class="lab-report-window has-report-drag" role="dialog" tabindex="0" title="Drag to move · arrow keys move the focused window" aria-modal="false" aria-label="${esc(assignment.name)}"><header><div><span class="lab-report-eyebrow">LAB REPORT · AUTOSAVE</span><h2>${esc(assignment.name)}</h2><span class="lab-report-save-state" role="status">${draft.updated_at?'Draft restored':'Ready'}</span></div><div class="lab-report-window-tools"><button class="btn secondary" data-report-close type="button" aria-label="Close report">✕</button><button class="btn secondary lab-report-minimize" data-float-minimize type="button" aria-label="Minimize report" title="Minimize report" aria-expanded="true"><span aria-hidden="true">▤</span></button></div></header><div class="lab-report-page"><p class="lab-report-hint">Drag to move. On a touch screen, use two fingers to scroll.${teacherPreview ? ' Your practice answers save automatically.' : ''}</p><div class="lab-report-description">${prose(assignment.task||'')}</div>${content.sections(questions,{answers})}</div><div class="lab-report-actions"><p data-report-status role="status"></p><span data-copy-status role="status" aria-live="polite"></span><button class="btn secondary" data-report-close type="button">Close for now</button>${teacherPreview ? '<button class="btn secondary" data-report-reset type="button">Reset my practice</button>' : '<button class="btn run" data-report-submit type="button">Submit report</button>'}</div><button type="button" class="lab-report-resize" data-float-resize aria-label="Resize report with arrow keys" title="Drag or use arrow keys to resize">◢</button><button type="button" class="lab-report-restore" data-float-restore aria-label="Restore ${esc(assignment.name)}" title="Restore report"><span aria-hidden="true">▤</span></button></section>`;
       document.body.append(overlay);let revision=Number(draft.revision||0),timer=null,saveChain=Promise.resolve(),conflicted=false;const saveState=overlay.querySelector('.lab-report-save-state');
-      const disposeContent=content?.mount(overlay,{assignmentId,student:!teacherPreview}),floating=content?.floating(overlay);
+      const disposeContent=content?.mount(overlay,{assignmentId,student:!teacherPreview}),floating=content?.floating(overlay,{topRightOffset:()=> (state.workspace?.root.querySelector('.eagle-lab-workspace-toolbar')?.getBoundingClientRect().bottom || 0) + 8});
       const dispose=()=>{clearTimeout(timer);disposeContent?.();floating?.dispose();overlay.remove();};
       let savedOkay=true,submitting=false,editVersion=0,savedVersion=0;
       const conflictMessage = teacherPreview ? 'Practice changed in another session. Reset my practice starts again.'
@@ -469,6 +496,7 @@
         finally { submitting=false; fields.forEach(field => field.disabled=false); }
       };
       state.report={root:overlay,assignmentId,save,close,restore:()=>floating?.restore(true),dirty:()=>!savedOkay,session:reportSession,cancel:dispose};
+      if(state.workspace)state.report.restore();
     }catch(error){alert(error.message||'Could not open the lab report.');}finally{state.reportOpening=false;}
   }
 
@@ -493,7 +521,16 @@
     });
     window.addEventListener('message',async event=>{
       const data=event.data,workspace=state.workspace;
-      if(!workspace||!workspace.root.isConnected||event.origin!==workspace.clipboardOrigin||!data||data.type!=='eagle-lab-clipboard'||data.key!==workspace.clipboardKey||typeof data.id!=='string'||data.id.length>100||!['readText','writeText'].includes(data.method))return;
+      if(!workspace||!workspace.root.isConnected||workspace.session!==sessionKey()||event.origin!==workspace.clipboardOrigin||!data||data.key!==workspace.clipboardKey)return;
+      if(data.type==='eagle-lab-clipboard-controls-ready' && event.source){
+        const consoles=workspace.clipboardWindows ??= new Set();
+        for(const target of consoles) if(target.closed) consoles.delete(target);
+        if(consoles.size>=16) consoles.delete(consoles.values().next().value);
+        consoles.add(event.source);
+        sendClipboardPreference(workspace,event.source);
+        return;
+      }
+      if(data.type!=='eagle-lab-clipboard'||typeof data.id!=='string'||data.id.length>100||!['readText','writeText'].includes(data.method))return;
       workspace.clipboardTimes=workspace.clipboardTimes.filter(time=>Date.now()-time<2000);
       if(workspace.clipboardTimes.length>=8)return;workspace.clipboardTimes.push(Date.now());
       const result={type:'eagle-lab-clipboard-result',key:workspace.clipboardKey,id:data.id};

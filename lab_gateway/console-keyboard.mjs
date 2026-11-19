@@ -1,11 +1,13 @@
-export function consoleKeyboardSource() {
-  return `(${installConsoleKeyboard.toString()})();`;
+export function consoleKeyboardSource(config) {
+  return `(${installConsoleKeyboard.toString()})(${JSON.stringify(config)});`;
 }
 
-function installConsoleKeyboard() {
+function installConsoleKeyboard({clipboardKey, portalOrigin}) {
   const appleMobile = /iPad|iPhone|iPod/i.test(navigator.userAgent)
     || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
+  const broker = window.top === window ? window.opener : window.top;
+  let controlsVisible = matchMedia('(any-pointer: coarse)').matches;
   const terminalInput = '.xterm-helper-textarea';
   const vmCanvas = '#noVNC_container canvas';
   const vmInput = '#noVNC_keyboardinput';
@@ -86,11 +88,26 @@ function installConsoleKeyboard() {
     navigator.clipboard.writeText(text).then(()=>show('Copied for Eagle Lab')).catch(error=>show(error.message));
   },true);
 
+  window.addEventListener('message', event => {
+    const message = event.data;
+    if (event.source !== broker || event.origin !== portalOrigin || message?.key !== clipboardKey
+        || message.type !== 'eagle-lab-clipboard-controls' || typeof message.visible !== 'boolean') return;
+    controlsVisible = message.visible;
+    if (toolbar) toolbar.hidden = !controlsVisible;
+    if (!controlsVisible) {
+      selecting = false;
+      selectionDrag = null;
+      document.body.classList.remove('eagle-console-select');
+      toolbar?.querySelector('[aria-pressed]')?.setAttribute('aria-pressed', 'false');
+    }
+  });
+
   function mount() {
     if (toolbar || !document.querySelector(`.xterm, ${vmCanvas}`)) return;
     const style = document.createElement('style');
     style.textContent = `
       .eagle-console-tools { position:fixed;right:8px;top:8px;z-index:10000;display:flex;align-items:center;gap:4px;max-width:calc(100% - 16px);flex-wrap:wrap;padding:4px;background:#18202fee;color:#fff;border:1px solid #778399;border-radius:6px;font:12px/1.4 sans-serif; }
+      .eagle-console-tools[hidden] { display:none; }
       .eagle-console-tools button { min-height:36px;padding:4px 10px;border:1px solid #7b8da8;border-radius:4px;background:#26354a;color:#fff;cursor:pointer;touch-action:manipulation;font:inherit; }
       .eagle-console-tools button[aria-pressed=true] { background:#226bb8; }
       .eagle-console-status:empty { display:none; }
@@ -103,6 +120,7 @@ function installConsoleKeyboard() {
     document.head.append(style);
     toolbar = document.createElement('div');
     toolbar.className = 'eagle-console-tools';
+    toolbar.hidden = !controlsVisible;
     toolbar.setAttribute('aria-label', 'Console clipboard');
     const buttons = terminal() ? ['Copy','Paste','Select text'] : ['Copy','Paste'];
     for (const label of buttons) {
@@ -127,6 +145,7 @@ function installConsoleKeyboard() {
     status.setAttribute('role','status');
     toolbar.append(status);
     document.body.append(toolbar);
+    broker?.postMessage({type:'eagle-lab-clipboard-controls-ready', key:clipboardKey}, portalOrigin);
     // noVNC writes received guest clipboard text directly into this field.
     const clipboard = document.querySelector('#noVNC_clipboard_text');
     const value = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value');

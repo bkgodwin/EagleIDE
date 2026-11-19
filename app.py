@@ -9953,19 +9953,24 @@ def _normalize_assignment_schema(assignment: dict) -> dict:
     normalized["aiGradingRubricAcceptedAt"] = str(normalized.get("aiGradingRubricAcceptedAt") or "").strip()
     quiz = normalized.get("quiz")
     if isinstance(quiz, dict):
+        question_types = {"multiple_choice", "written", "multiple_choice_code", "written_code", "fill_blank", "procedure"}
+        if normalized["assignmentType"] == "lab_report":
+            question_types.add("text_box")
         questions = []
         for q in (quiz.get("questions") or []):
             if not isinstance(q, dict):
                 continue
             qn = dict(q)
             q_type = str(qn.get("type") or "written").strip()
-            if q_type not in {"multiple_choice", "written", "multiple_choice_code", "written_code", "fill_blank", "procedure"}:
+            if q_type not in question_types:
                 q_type = "written"
             qn["type"] = q_type
             qn["question"] = str(qn.get("question") or "").strip()
             try:
                 qn["points"] = max(0, int(qn.get("points", 0)))
             except Exception:
+                qn["points"] = 0
+            if q_type == "text_box":
                 qn["points"] = 0
             if q_type in {"multiple_choice", "multiple_choice_code"}:
                 options = [str(opt or "").strip() for opt in (qn.get("options") or [])]
@@ -10036,10 +10041,14 @@ def _lab_report_quiz_error(quiz: object) -> str:
         return ""
     if not isinstance(quiz, dict) or not isinstance(quiz.get("questions", []), list):
         return "Lab report sections must be a question list"
-    allowed = {"written", "fill_blank", "procedure"}
+    allowed = {"written", "fill_blank", "procedure", "text_box"}
     for question in quiz.get("questions", []):
         if not isinstance(question, dict) or str(question.get("type") or "written") not in allowed:
-            return "Lab reports support written responses, fill-in-the-blank responses, and procedure checklists only"
+            return "Lab reports support written responses, fill-in-the-blank responses, procedure checklists, and text boxes"
+        if question.get("type") == "text_box":
+            text = question.get("question")
+            if not isinstance(text, str) or not text.strip() or len(text) > 20_000:
+                return "Every text box needs content of at most 20,000 characters"
         if question.get("type") == "fill_blank":
             answers = question.get("acceptedAnswers")
             if not isinstance(answers, list) or not answers or len(answers) > 20 or any(not isinstance(item, str) or not item.strip() or len(item) > 500 for item in answers):
@@ -10101,7 +10110,10 @@ def _assignment_effective_payload(assignment: dict) -> dict:
 
 
 def _assignment_quiz_complete(assignment: dict, submission: Optional[dict]) -> tuple[bool, int, int]:
-    questions = [q for q in ((assignment.get("quiz") or {}).get("questions") or []) if isinstance(q, dict)]
+    questions = [
+        q for q in ((assignment.get("quiz") or {}).get("questions") or [])
+        if isinstance(q, dict) and q.get("type") != "text_box"
+    ]
     if not questions:
         return True, 0, 0
     response_by_id = {
@@ -13015,7 +13027,7 @@ def _submit_quiz_locked():
         return jsonify(ok=False, error="No quiz for this assignment"), 404
 
     quiz_score = 0
-    questions = {q.get("id"): q for q in quiz.get("questions", [])}
+    questions = {q.get("id"): q for q in quiz.get("questions", []) if q.get("type") != "text_box"}
     if not isinstance(quiz_responses, list) or len(quiz_responses) > len(questions):
         return jsonify(ok=False, error="Invalid question responses"), 400
     clean_responses, seen = [], set()
@@ -13040,10 +13052,7 @@ def _submit_quiz_locked():
         clean_responses.append({"questionId": identity, "answer": answer, "questionType": question.get("type")})
     quiz_responses = clean_responses
     for response in quiz_responses:
-        question_id = response.get("questionId")
-        question = next((q for q in quiz.get("questions", []) if q.get("id") == question_id), None)
-        if not question:
-            continue
+        question = questions[response["questionId"]]
         if question.get("type") in {"multiple_choice", "multiple_choice_code"}:
             if response.get("answer") == question.get("correctAnswer"):
                 response["isCorrect"] = True

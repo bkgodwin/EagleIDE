@@ -798,9 +798,9 @@ def override_score(eagle):
         question = next((q for q in (assignment.get("quiz") or {}).get("questions", []) if q.get("id") == data.get("questionId")), None)
         sub = next((s for s in assignment.get("submissions", []) if s.get("email", "").lower() == email), None)
         response = next((r for r in (sub or {}).get("quizResponses", []) if r.get("questionId") == data.get("questionId")), None)
-        if not question or not sub or response is None or sub.get("withdrawn"):
+        if not question or question.get("type") == "text_box" or not sub or response is None or sub.get("withdrawn"):
             return jsonify(ok=False, error="Current submission or question not found"), 404
-        if data.get("revisionId") and data["revisionId"] != sub.get("revisionId"):
+        if "revisionId" in data and (data.get("revisionId") or None) != (sub.get("revisionId") or None):
             return jsonify(ok=False, error="A newer submission arrived. Reopen grading before saving."), 409
         score = data.get("manualScore")
         if score is not None and (isinstance(score, bool) or not isinstance(score, (int, float)) or not 0 <= score <= question.get("points", 0) or not math.isfinite(score)):

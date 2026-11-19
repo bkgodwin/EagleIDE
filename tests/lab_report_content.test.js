@@ -16,6 +16,18 @@ test('report copy commands preserve exact text and never turn HTML or remote ima
   assert.match(image,/alt="&lt;unsafe&gt;"/);
 });
 
+test('a text box displays multiline commands and interleaves private images without collecting answers',()=>{
+  const sandbox={window:{addEventListener(){}}};
+  vm.runInNewContext(source('lab-report-content.js'),sandbox);
+  const id='a'.repeat(32);
+  const html=sandbox.window.LabReportContent.sections([{id:'intro', type:'text_box', points:0,
+    question:'Before ![Diagram](lab-image:'+id+') between {\nfirst line\n\nsecond line\n} after'}]);
+  assert.match(html,/Before .*data-report-image="a{32}".* between .*data-lab-copy="&#10;first line&#10;&#10;second line&#10;".* after/s);
+  assert.doesNotMatch(html,/data-report-question|<textarea|<input|points/);
+  const embedded = sandbox.window.LabReportContent.render('{one\n![Diagram](lab-image:'+id+')two}');
+  assert.match(embedded,/data-lab-copy="one&#10;two".*<code>one\n<\/code>.*data-report-image="a{32}".*<code>two<\/code>/s);
+});
+
 test('instruction clipboard survives denied browser permission and clears on account changes',async()=>{
   const events={},ctx={USER_TOKEN:'first'};
   const sandbox={

@@ -6,6 +6,7 @@ const vm = require('node:vm');
 
 const root = path.join(__dirname, '..');
 const lab = fs.readFileSync(path.join(root, 'static/js/eagle-lab.js'), 'utf8');
+const content = fs.readFileSync(path.join(root, 'static/js/lab-report-content.js'), 'utf8');
 const core = fs.readFileSync(path.join(root, 'static/js/app-core.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 
@@ -22,7 +23,7 @@ test('lab reports render one continuous page and autosave with revision guards',
   assert.match(lab, /method:'PUT'.*revision,responses/);
   assert.match(lab, /error\.status === 409/);
   assert.match(lab, /question\.type==='procedure'/);
-  assert.match(lab, /question\.type==='fill_blank'/);
+  assert.match(content, /question\.type === 'fill_blank'/);
 });
 
 test('teacher composer exposes only report controls for lab report assignments', () => {
@@ -72,11 +73,14 @@ function reportFixture(writeDraft, submitReport = () => { throw new Error('Unexp
       }
       if (url === '/api/quiz/submit') return submitReport(body);
       const data = url.startsWith('/api/quiz/')
-        ? { ok: true, quiz: { questions: [{ id: 'q1', type: 'written', question: 'Observation', points: 5 }] } }
+        ? { ok: true, quiz: { questions: [{ id: 'intro', type: 'text_box', question: 'Display-only text', points: 0 }, { id: 'q1', type: 'written', question: 'Observation', points: 5 }] } }
         : { ok: true, data: { revision: 0, responses: [{ questionId: 'q1', answer: 'Restored observation' }] } };
       return { ok: true, json: async () => data };
     },
   };
+  vm.runInNewContext(content, sandbox);
+  sandbox.window.LabReportContent.mount = () => {};
+  sandbox.window.LabReportContent.floating = () => {};
   vm.runInNewContext(lab, sandbox);
   return { api: sandbox.window.EagleLab, overlay, field, status, events, closeButtons, submit, submitStatus, ctx, windowEvents, sent };
 }
@@ -110,7 +114,7 @@ test('edits made during a draft write remain dirty and closing saves the newest 
   await saving;
   assert.equal(fixture.api.getState().report.dirty(), true);
   await fixture.closeButtons[0].onclick();
-  assert.equal(fixture.sent.at(-1).responses[0].answer, 'Newer observation');
+  assert.deepEqual(fixture.sent.at(-1).responses, [{questionId:'q1',questionType:'written',answer:'Newer observation'}]);
   assert.equal(fixture.sent.at(-1).revision, 1);
   assert.equal(fixture.overlay.isConnected, false);
 });
