@@ -8681,7 +8681,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       list.innerHTML = classAssignments.map(a => `
         <section class="assignment-list-item" data-name="${escapeHtml(a.name).replace(/"/g, '&quot;')}" data-status="${a.gradingCompletedAt ? 'complete' : a.active ? 'open' : 'locked'}">
           <button type="button" class="assignment-title-row" data-id="${escapeHtml(a.id || a.name)}" aria-expanded="${currentAdminAssignmentName === (a.id || a.name)}" aria-controls="assignmentWorkspace">
-            <span class="assignment-library-card-top"><span class="assignment-state is-${a.gradingCompletedAt ? 'complete' : a.active ? 'open' : 'locked'}">${a.gradingCompletedAt ? 'Complete' : a.active ? 'Open' : 'Locked'}</span><span class="assignment-library-kind">${a.allowFileSubmission === false ? 'Quiz' : 'Files'}${a.allowFileSubmission !== false && a.quiz?.questions?.length ? ' + quiz' : ''}</span></span>
+            <span class="assignment-library-card-top"><span class="assignment-state is-${a.gradingCompletedAt ? 'complete' : a.active ? 'open' : 'locked'}">${a.gradingCompletedAt ? 'Complete' : a.active ? 'Open' : 'Locked'}</span><span class="assignment-library-kind">${a.assignmentType === 'lab_report' ? 'Lab report' : a.allowFileSubmission === false ? 'Quiz' : 'Files'}${a.allowFileSubmission !== false && a.quiz?.questions?.length ? ' + quiz' : ''}</span></span>
             <strong>${escapeHtml(a.name)}</strong>
             <span class="assignment-library-card-meta">${a.dueAt ? `Due ${escapeHtml(assignmentDueLabel(a.dueAt))}` : 'No due date'}</span>
             <span class="assignment-library-card-meta">${(a.submissions || []).filter(sub => !sub.withdrawn).length} turned in <span aria-hidden="true">·</span> ${(a.allowFileSubmission === false ? 0 : (a.maxScore || 0)) + (a.quiz?.totalPoints || 0)} points${!isCoTeacher() && a.pendingExtensionRequests ? ` · ${a.pendingExtensionRequests} extension request${a.pendingExtensionRequests === 1 ? '' : 's'}` : ''}</span>
@@ -8825,7 +8825,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
                   ${!isCoTeacher() ? `<button type="button" class="btn secondary assignment-extend-student" data-email="${escapeHtml(sub.email)}">Extend…</button>` : ''}
                   <button class="btn secondary open-submission-btn" data-email="${escapeHtml(sub.email)}">Review</button>
                   ${assignment.allowFileSubmission === false || gradingMode === 'external' ? '' : `<button class="btn secondary ai-grade-submission-btn" data-email="${escapeHtml(sub.email)}" ${['queued', 'running'].includes(aiStatus) || aiGradingDisabled || sub.withdrawn || !(sub.hasGradableFiles ?? sub.code) ? 'disabled' : ''} ${aiGradingDisabled ? 'title="Accept a current beta rubric before grading"' : ''}>AI Grade</button>`}
-                  ${assignment.quiz?.questions?.length ? `<button class="btn secondary grade-quiz-btn" data-email="${escapeHtml(sub.email)}">Grade Quiz</button>` : ''}
+                  ${assignment.quiz?.questions?.length ? `<button class="btn secondary grade-quiz-btn" data-email="${escapeHtml(sub.email)}">${assignment.assignmentType === 'lab_report' ? 'Grade report' : 'Grade Quiz'}</button>` : ''}
                   ${assignment.quiz?.questions?.length ? `<button class="btn secondary reset-quiz-counter-btn" data-email="${escapeHtml(sub.email)}">Reset Attempts</button>` : ''}
                   <button type="button" class="btn secondary assignment-edit-feedback" data-email="${escapeHtml(sub.email)}">Edit feedback</button>
                   ${!isCoTeacher() && !sub.withdrawn && (assignment.maxFileSubmissions > 0 || assignment.quizSettings?.maxSubmissions > 0) ? `<button type="button" class="btn secondary assignment-unsubmit" data-email="${escapeHtml(sub.email)}">Un-submit</button>` : ''}
@@ -9205,8 +9205,9 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
                   q.type === 'written_code' ? 'Written Response (Code Reading)' :
                   q.type === 'fill_blank' ? 'Fill in the Blank' :
                   q.type === 'procedure' ? 'Procedure Checklist' :
+                  q.type === 'text_box' ? 'Text box' :
                   'Written Response'
-                }, ${q.points} pts)</span>
+                }${q.type === 'text_box' ? '' : `, ${q.points} pts`})</span>
                 <div style="color:#ddd; margin-top:8px;">${escapeHtml(modal.querySelector('#modalAssignmentType')?.value==='lab_report'&&window.LabReportEditor?window.LabReportEditor.summary(q.question):q.question)}</div>
                 ${(q.type === 'multiple_choice_code' || q.type === 'written_code') ? `
                   <div class="question-code-panel" style="margin-top:10px; max-height:180px;">${renderCodeSnippetBlock(q.codeSnippet || '', q.codeLanguage || 'python')}</div>
@@ -9216,7 +9217,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
             </div>
           </div>
         `).join('');
-        list.querySelectorAll('[data-edit-report]').forEach(button=>button.onclick=()=>window.LabReportEditor?.open({questions:quizQuestions,onChange:renderQuizQuestions,counter:questionIdCounter,index:Number(button.dataset.editReport),classId:modal.querySelector('#modalAssignmentClassId')?.value||''}));
+        list.querySelectorAll('[data-edit-report]').forEach(button=>button.onclick=()=>window.LabReportEditor?.open({questions:quizQuestions,onChange:renderQuizQuestions,counter:questionIdCounter,index:Number(button.dataset.editReport),assignmentId:existingAssignment?.id,classId:modal.querySelector('#modalAssignmentClassId')?.value||''}));
         list.querySelectorAll('[data-move-report]').forEach(button=>button.onclick=()=>{const i=Number(button.dataset.moveReport);if(i>0){[quizQuestions[i-1],quizQuestions[i]]=[quizQuestions[i],quizQuestions[i-1]];renderQuizQuestions();}});
         list.querySelectorAll('.btn-delete-question').forEach(btn => btn.addEventListener('click', () => {
           quizQuestions.splice(parseInt(btn.dataset.idx, 10), 1);
@@ -9231,7 +9232,7 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       });
       renderQuizQuestions();
       window.TeacherAssignments?.enhanceComposer(modal);
-      const enhanceLabComposer=async()=>{if(modal.querySelector('#modalAssignmentType').value!=='lab_report')return;await window.EagleFeatures?.load?.('eagleLab');if(modal.isConnected){window.LabReportEditor?.attachComposer(modal,()=>quizQuestions);renderQuizQuestions();}};
+      const enhanceLabComposer=async()=>{if(modal.querySelector('#modalAssignmentType').value!=='lab_report')return;await window.EagleFeatures?.load?.('eagleLab');if(modal.isConnected){window.LabReportEditor?.attachComposer(modal,()=>quizQuestions,existingAssignment?.id);renderQuizQuestions();}};
       modal.querySelector('#modalAssignmentType').addEventListener('change',enhanceLabComposer);
       enhanceLabComposer();
       modal.querySelector('.modal-exit-btn')?.addEventListener('click', () => modal.remove());
@@ -9255,8 +9256,12 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           alert('Please enter an assignment name.');
           return;
         }
-        if (assignmentType === 'lab_report' && quizQuestions.some(question => !['written', 'fill_blank', 'procedure'].includes(question.type))) {
-          alert('Lab reports can only contain written responses, fill-in-the-blank responses, and procedure checklists. Remove incompatible questions before saving.');
+        if (assignmentType === 'lab_report' && quizQuestions.some(question => !['written', 'fill_blank', 'procedure', 'text_box'].includes(question.type))) {
+          alert('Lab reports support written responses, fill-in-the-blank responses, procedure checklists, and text boxes. Remove incompatible questions before saving.');
+          return;
+        }
+        if (assignmentType === 'standard' && quizQuestions.some(question => question.type === 'text_box')) {
+          alert('Remove text boxes before saving this as a standard assignment.');
           return;
         }
         const payload = {
@@ -10004,16 +10009,24 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
       }
     }
 
-    function openQuizGradingModal(assignmentReference, studentEmail) {
+    async function openQuizGradingModal(assignmentReference, studentEmail) {
       const { assignment, submission } = getSubmissionForAssignment(assignmentReference, studentEmail);
       if (!assignment || !submission) return;
-      const questionsById = new Map((assignment.quiz?.questions || []).map(q => [q.id, q]));
+      const lab = assignment.assignmentType === 'lab_report';
+      const auth = JSON.stringify(assignmentManagerHeaders());
+      if (lab) {
+        try { await window.EagleFeatures.load('eagleLab'); }
+        catch { alert('Could not open lab report grading.'); return; }
+        if (auth !== JSON.stringify(assignmentManagerHeaders())) return;
+      }
+      const labContent = lab ? window.LabReportContent : null;
+      const questionsById = new Map((assignment.quiz?.questions || []).map((q, index) => [q.id, {...q, number:index+1}]));
       const quizResponses = submission.quizResponses || [];
       const modal = document.createElement('div');
       modal.className = 'modal glass-modal';
       modal.innerHTML = `
         <div class="modal-content" style="max-width:1100px; max-height:90vh; overflow:auto;">
-          <h3>Grade Quiz Responses</h3>
+          <h3>${lab ? 'Grade Lab Report' : 'Grade Quiz Responses'}</h3>
           <div style="margin-bottom:10px; color:#aaa;">${escapeHtml(assignment.name)} · ${escapeHtml(submission.name || submission.email || studentEmail)}</div>
           <div id="quizGradeBody">
             ${quizResponses.map((resp, idx) => {
@@ -10023,10 +10036,10 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
               const answer = resp.answer ?? '';
               return `
                 <div style="border:1px solid var(--theme-border-mid); border-radius:8px; padding:12px; margin-bottom:12px;">
-                  <div style="font-weight:700; color:var(--columbia-blue); margin-bottom:6px;">Question ${idx + 1} (${maxPts} pts)</div>
+                  <div style="font-weight:700; color:var(--columbia-blue); margin-bottom:6px;">${lab ? 'Section ' + (q.number ?? idx + 1) : 'Question ' + (idx + 1)} (${maxPts} pts)</div>
                   ${q.type === 'written_code' || q.type === 'multiple_choice_code' ? `<div class="question-code-panel" style="margin-bottom:10px; max-height:220px;">${renderCodeSnippetBlock(q.codeSnippet || '', q.codeLanguage || 'python')}</div>` : ''}
-                  <div style="margin-bottom:8px; color:#ddd;">${escapeHtml(q.question || 'Question')}</div>
-                  <div style="margin-bottom:8px;"><strong>Student Answer:</strong> ${q.type === 'procedure' ? `<ul>${(q.steps || []).map((step, stepIndex) => `<li>${Array.isArray(answer) && answer[stepIndex] ? '☑' : '☐'} ${escapeHtml(step)}</li>`).join('')}</ul>` : isWritten ? `<div style="margin-top:6px; padding:8px; background:#111; border:1px solid #333; border-radius:6px; white-space:pre-wrap;">${escapeHtml(answer)}</div>` : escapeHtml(String(answer))}</div>
+                  <div style="margin-bottom:8px;">${labContent ? labContent.render(q.question) : escapeHtml(q.question || 'Question')}</div>
+                  <div style="margin-bottom:8px;"><strong>Student Answer:</strong> ${q.type === 'procedure' ? `<ul>${(q.steps || []).map((step, stepIndex) => `<li>${Array.isArray(answer) && answer[stepIndex] ? '☑' : '☐'} ${labContent ? labContent.render(step) : escapeHtml(step)}</li>`).join('')}</ul>` : isWritten ? `<div style="margin-top:6px; padding:8px; background:#111; border:1px solid #333; border-radius:6px; white-space:pre-wrap;">${escapeHtml(answer)}</div>` : escapeHtml(String(answer))}</div>
                   <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
                     <label style="margin:0;">Score</label>
                     <input type="number" class="quiz-manual-score" data-question-id="${escapeHtml(resp.questionId)}" data-max="${maxPts}" value="${resp.manualScore ?? resp.pointsEarned ?? ''}" min="0" max="${maxPts}" style="width:120px;">
@@ -10043,7 +10056,16 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
         </div>
       `;
       document.body.appendChild(modal);
+      const cleanupLabContent = labContent?.mount(modal, {assignmentId:assignment.id, classId:assignment.targetClassId});
+      const remove = () => {
+        cleanupLabContent?.();
+        window.removeEventListener('eagle-context-updated', accountChanged);
+        modal.remove();
+      };
+      const accountChanged = () => { if (auth !== JSON.stringify(assignmentManagerHeaders())) remove(); };
+      window.addEventListener('eagle-context-updated', accountChanged);
       const saveManual = async (questionId, value, statusEl) => {
+        if (auth !== JSON.stringify(assignmentManagerHeaders())) return;
         const max = parseInt(modal.querySelector(`.quiz-manual-score[data-question-id="${CSS.escape(questionId)}"]`)?.dataset.max || '0', 10);
         const parsed = value === '' ? null : Number(value);
         if (value !== '' && (!Number.isFinite(parsed) || parsed < 0 || parsed > max)) {
@@ -10107,8 +10129,8 @@ const INPUT_TOKEN = "[[_IDE_INPUT_]]";
           statusEl.textContent = 'Network error';
         }
       }));
-      modal.querySelector('.modal-close-quiz-grade')?.addEventListener('click', () => modal.remove());
-      modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+      modal.querySelector('.modal-close-quiz-grade')?.addEventListener('click', remove);
+      modal.addEventListener('click', (e) => { if (e.target === modal) remove(); });
     }
 
     function populateSubmissionScoringPanel(assignment, submission, revisionId) {

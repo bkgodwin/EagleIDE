@@ -290,6 +290,9 @@ prototype properties. Ctrl+C must reach xterm's PTY as ETX, without clipboard
 interception when no shell text is selected. Console paste shortcuts use xterm's
 paste API. Selected shell text copies through the session-keyed parent broker.
 On iPad, other console-scoped Command shortcuts also send Control chords.
+The console toolbar’s Clipboard controls toggle saves a device preference and
+updates open console controls through the existing session-keyed parent broker.
+Keep keyboard shortcuts independent of the buttons’ visibility.
 Server enrollment/editing uses a native modal dialog; enrollment
 always resets fields and editing preserves blank passwords/PINs. Admin-only
 server-order saves atomically permute the existing catalog list, preserving
@@ -302,7 +305,9 @@ default to `standard`. A successful final quiz submission deletes only that
 student's draft. Teacher practice uses a separate account namespace, class-owner
 authorization, revision-checked saves and reset through the preview route. It
 never creates a submission. Preserve written, fill-blank, and fixed-length boolean procedure
-validation on both draft and final submission routes.
+validation on both draft and final submission routes. Display-only text boxes
+are part of report ordering and media authorization. They carry zero points
+and are excluded from answer payloads, completion counts and grading.
 
 `/api/eagle-lab/access` checks navigation entitlement without probing PVE. Students
 see only enabled, enrolled classes in the lab selector. Status refreshes share
@@ -312,7 +317,8 @@ to update catalog status. Teacher class-rule drafts are session/class scoped;
 refresh and late saves must retain newer edits.
 
 Reports and the Lab Manual are nonmodal, movable, resizable windows with pointer
-capture, keyboard controls, visualViewport clamping, and minimization. The
+capture for mouse and pen, an explicit touch gesture path, keyboard controls,
+visualViewport clamping, and minimization. The
 48px restore tiles and shared controls support touch, trackpad and mouse.
 One finger drags non-interactive window surfaces; two fingers scroll their pages.
 Keep the background interactive and retain dirty report close/unload protections. Autosave
@@ -327,13 +333,16 @@ Each author has 100 images / 50 MB. Referenced reads require the original class,
 current membership or staff authority, and the assignment's actual image token;
 IDs alone grant no student access. No remote images or HTML are rendered.
 Image tokens remain additive plain assignment text. The section editor exposes
-image descriptions/removal without exposing token identifiers. The shared
+image descriptions/removal and movable image markers without exposing token
+identifiers. Live previews retain loaded image nodes during text edits. The shared
 renderer lazily loads two images per window, releases object URLs, and bounds
 its account-scoped preview blob cache to 12 items / 12 MB. Preserve auth headers
 instead of putting tokens into image URLs. Full UI verification uses
 `tests/lesson_plan_browser_fixture.py --lab` and
 `tests/eagle_lab_polish_browser_checks.mjs`; media authorization/quota tests live
-in `tests/test_lab_report_media.py`. See `docs/EAGLE_LAB_UI.md` for workflows.
+in `tests/test_lab_report_media.py`. The teacher assignment workspace reuses the
+revision-checked quiz scoring route for Lab Reports, with a roster view and
+progress filters for each written section. See `docs/EAGLE_LAB_UI.md` for workflows.
 
 Authentication uses ephemeral in-memory token maps. Protected HTTP requests pass one of `X-Admin-Token`, `X-Teacher-Token`, or `X-User-Token`. Socket events carry the corresponding token in their payload and join role-specific rooms. Preserve authorization and class-ownership checks on every new route or event.
 

@@ -395,6 +395,7 @@ class LabReportDraftTests(unittest.TestCase):
 
     def test_lab_response_schema_accepts_all_supported_controls(self):
         assignment = {"quiz": {"questions": [
+            {"id": "intro", "type": "text_box"},
             {"id": "written", "type": "written"},
             {"id": "blank", "type": "fill_blank"},
             {"id": "steps", "type": "procedure", "steps": ["One", "Two"]},
@@ -407,6 +408,8 @@ class LabReportDraftTests(unittest.TestCase):
         self.assertEqual([item["questionType"] for item in cleaned], ["written", "fill_blank", "procedure"])
         with self.assertRaises(ValueError):
             _clean_responses(assignment, [{"questionId": "steps", "answer": [True]}])
+        with self.assertRaisesRegex(ValueError, "belong to this assignment"):
+            _clean_responses(assignment, [{"questionId": "intro", "answer": "Impossible response"}])
 
 
 if __name__ == "__main__":

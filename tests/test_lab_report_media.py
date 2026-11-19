@@ -65,7 +65,7 @@ class LabReportMediaTests(unittest.TestCase):
         url='/api/lab-reports/images/'+image_id+'?assignment_id=report'
         student={'X-User-Token':'student'}
         self.assertEqual(self.client.get(url,headers=student).status_code,404)
-        self.assignment['quiz']['questions']=[{'question':'Look at ![Example](lab-image:'+image_id+')'}]
+        self.assignment['quiz']['questions']=[{'type':'text_box','question':'Look at ![Example](lab-image:'+image_id+')'}]
         self.assertEqual(self.client.get(url).status_code,403)
         with self.client.get(url,headers=student) as response:
             self.assertEqual(response.status_code,200)

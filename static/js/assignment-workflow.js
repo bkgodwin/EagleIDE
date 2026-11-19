@@ -32,8 +32,13 @@
     const cm = window.eagleEditor;
     cm?.operation(() => (ranges || []).forEach(([start,end]) => editorMarks.push(cm.markText(cm.posFromIndex(start),cm.posFromIndex(end),{className:'assignment-pasted-text'}))));
   }
+  const responseQuestions = a => (a.quiz?.questions || []).filter(question => question.type !== "text_box");
   function teacherToolbar(a, owner) {
-    return `<div class="assignment-review-tools">${owner ? `<button type="button" class="btn secondary assignment-extension-requests">Extension requests${a.pendingExtensionRequests ? ` <span class="assignment-request-count">${a.pendingExtensionRequests}</span>` : ''}</button><button type="button" class="btn secondary assignment-extend">Grant extension</button>` : ''}${a.quiz?.questions?.some(q => ['written','written_code'].includes(q.type)) ? '<button type="button" class="btn secondary assignment-grade-question">Grade written responses by question</button>' : ''}<label><input type="checkbox" class="assignment-paste-toggle" ${highlights ? 'checked' : ''}> Highlight pasted text</label></div>`;
+    const lab = a.assignmentType === 'lab_report';
+    const gradeLabel = lab ? 'Grade report by question' : 'Grade written responses by question';
+    const gradeButton = a.quiz?.questions?.some(q => ['written','written_code'].includes(q.type))
+      ? `<button type="button" class="btn ${lab ? 'run' : 'secondary'} assignment-grade-question">${gradeLabel}</button>` : '';
+    return `<div class="assignment-review-tools">${owner ? `<button type="button" class="btn secondary assignment-extension-requests">Extension requests${a.pendingExtensionRequests ? ` <span class="assignment-request-count">${a.pendingExtensionRequests}</span>` : ''}</button><button type="button" class="btn secondary assignment-extend">Grant extension</button>` : ''}${gradeButton}${lab ? '' : `<label><input type="checkbox" class="assignment-paste-toggle" ${highlights ? 'checked' : ''}> Highlight pasted text</label>`}</div>`;
   }
   function extendStudent(a, email = '') {
     const roster = bridge.roster(a.targetClassId);
@@ -241,7 +246,7 @@
     const s = a.studentSubmissionSummary, id = a.id || a.name;
     const past = a.isPast ?? !a.active;
     const mayAttempt = !past || a.deadlineOpen;
-    const total = s?.totalScore ?? s?.codeScore;
+    const total = s?.totalScore ?? s?.codeScore, responseCount = responseQuestions(a).length;
     return `<details class="assignment-card student-assignment-card ${past ? 'is-past' : ''}" data-assignment-id="${esc(id)}" ${expanded.has(id) ? 'open' : ''}>
       <summary><span class="assignment-title-copy"><strong>${submitted(a) ? '<span class="assignment-submitted-check" aria-label="Submitted">✓</span> ' : ''}${esc(a.name)}</strong><span class="assignment-title-due">${a.dueAt ? `Due ${esc(classDate(a.dueAt, a.timeZone))}` : 'No due date'}</span></span>${s ? `<span class="assignment-card-state">${s.withdrawn ? 'Un-submitted by teacher' : total != null ? `${esc(total)} / ${bridge.maxScore(a)}` : 'Submitted'}</span>` : ''}</summary>
       <div class="assignment-card-body">
@@ -249,7 +254,7 @@
         ${a.controlledFilePath ? `<button type="button" class="btn secondary assignment-open-controlled" data-path="${esc(a.controlledFilePath)}">Open original assignment file</button>` : ''}
         <div class="task assignment-markdown" data-assignment-markdown="${esc(id)}">${esc(a.task || '(No task description)')}</div>
         <div class="meta">Maximum score: ${bridge.maxScore(a)}${a.maxFileSubmissions ? ` · File attempts: ${s?.fileSubmissionCount || 0} / ${a.maxFileSubmissions}` : ''}</div>
-        ${a.quiz?.questions?.length ? `<div class="meta">Questions: ${s?.quizAnsweredCount || 0} / ${a.quiz.questions.length} answered${a.quizSettings?.maxSubmissions ? ` · Quiz attempts: ${s?.quizSubmissionCount || 0} / ${a.quizSettings.maxSubmissions}` : ''}</div>` : ''}
+        ${responseCount ? `<div class="meta">Questions: ${s?.quizAnsweredCount || 0} / ${responseCount} answered${a.quizSettings?.maxSubmissions ? ` · Quiz attempts: ${s?.quizSubmissionCount || 0} / ${a.quizSettings.maxSubmissions}` : ''}</div>` : ''}
         ${(a.skillTags || []).length ? `<div class="skill-tags">${a.skillTags.map(tag => `<span class="skill-chip">${esc(tag)}</span>`).join('')}</div>` : ''}
         ${mayAttempt && a.submissionWindowMessage ? `<p class="assignment-window-note ${a.submissionWindowOpen ? '' : 'is-closed'}">${esc(a.submissionWindowMessage)}</p>` : ''}
         ${a.submissionOverrideUntil ? `<p class="assignment-window-note">Open today until ${esc(classDate(a.submissionOverrideUntil,a.timeZone))}.</p>` : ''}
@@ -301,7 +306,7 @@
       ${multi ? `<div class="assignment-file-choices">${files.map(f => `<label><input type="checkbox" name="workspaceFile" value="${esc(f.path)}" ${f.path === selected ? 'checked' : ''}><span>${esc(f.path)}</span><small>${size(f.size)}</small></label>`).join('') || '<p>No workspace files yet. You can upload attachments below.</p>'}</div>` : `<label for="assignmentFileSelect">Workspace file</label><select id="assignmentFileSelect"><option value="">Choose a file or upload below</option>${files.map(f => `<option value="${esc(f.path)}" ${f.path === selected ? 'selected' : ''}>${esc(f.path)}</option>`).join('')}</select>`}
       <label class="assignment-upload-label">${multi ? 'Add attachments' : 'Or upload a file'}<input type="file" id="assignmentUploadFiles" ${multi ? 'multiple' : ''}></label>
       <small>${multi ? 'Up to 20 files and 25 MB total. ' : ''}Uploads may total up to 15 MB.</small>
-      ${a.quiz?.questions?.length ? `<p class="meta">Questions answered ${a.studentSubmissionSummary?.quizAnsweredCount || 0} of ${a.quiz.questions.length}. ${a.studentSubmissionSummary?.quizComplete ? 'Answers are saved.' : 'You can finish the questions after turning in your files.'}</p>` : ''}
+      ${responseQuestions(a).length ? `<p class="meta">Questions answered ${a.studentSubmissionSummary?.quizAnsweredCount || 0} of ${responseQuestions(a).length}. ${a.studentSubmissionSummary?.quizComplete ? 'Answers are saved.' : 'You can finish the questions after turning in your files.'}</p>` : ''}
       <p class="assignment-selected-files" aria-live="polite"></p><p class="assignment-dialog-status" role="status"></p><div class="modal-actions">${window.GroupProjectUI?.canSubmit(a) ? '<button type="button" class="btn secondary assignment-submit-group">Choose group files</button>' : ''}<button type="button" class="btn run assignment-submit-selected">Turn in</button></div></div><div class="assignment-submission-receipt" hidden></div>`, 'assignment-submit-dialog');
     const status = m.root.querySelector('[role="status"]'), button = m.root.querySelector('.assignment-submit-selected');
     const groupButton = m.root.querySelector('.assignment-submit-group');
@@ -571,32 +576,84 @@
     await load(reviewRevision || '');
   }
 
-  function gradeByQuestion(a) {
-    const questions = (a.quiz?.questions || []).filter(q => ['written','written_code'].includes(q.type));
+  async function gradeByQuestion(a) {
+    const lab = a.assignmentType === 'lab_report';
+    const questions = (a.quiz?.questions || []).map((q, index) => ({...q, number:index+1}))
+      .filter(q => ['written','written_code'].includes(q.type));
     if (!questions.length) return;
     const headers = JSON.stringify(bridge.managerHeaders());
+    if (lab && !window.LabReportContent) {
+      try { await window.EagleFeatures.load('eagleLab'); }
+      catch { alert('Could not open lab report grading.'); return; }
+      if (headers !== JSON.stringify(bridge.managerHeaders())) return;
+    }
+    const content = lab ? window.LabReportContent : null;
     const roster = [...bridge.roster(a.targetClassId)].sort((x,y) => String(x.last_name || '').localeCompare(String(y.last_name || '')) || String(x.first_name ?? x.name ?? '').localeCompare(String(y.first_name ?? y.name ?? '')));
-    const m = modal(`${a.name} · Written responses`, '<div class="question-grading-nav"><button type="button" class="btn secondary question-previous">← Previous</button><label>Question<select class="question-select"></select></label><button type="button" class="btn secondary question-next">Next →</button></div><div class="question-grading-prompt"></div><div class="question-grading-responses"></div>', 'question-grading-dialog');
-    const select = m.root.querySelector('.question-select');
-    select.innerHTML = questions.map((q,i) => `<option value="${i}">Question ${i+1} · ${esc(q.question.slice(0,70))}</option>`).join('');
+    const m = modal(`${a.name} · ${lab ? 'Grade by question' : 'Written responses'}`, `
+      <div class="question-grading-nav">
+        <button type="button" class="btn secondary question-previous">← Previous</button>
+        <label>${lab ? 'Report section' : 'Question'}<select class="question-select"></select></label>
+        <button type="button" class="btn secondary question-next">Next →</button>
+      </div>
+      <div class="question-grading-prompt"></div>
+      ${lab ? '<div class="question-grading-review"><p class="question-grading-progress" role="status"></p><label>Show<select class="question-grading-filter"><option value="all">Entire class</option><option value="ungraded">Needs grading</option><option value="graded">Graded</option><option value="missing">No response</option></select></label></div>' : ''}
+      <div class="question-grading-responses"></div><p class="question-grading-empty" hidden></p>`, 'question-grading-dialog');
+    const select = m.root.querySelector('.question-select'), filter = m.root.querySelector('.question-grading-filter');
+    const next = m.root.querySelector('.question-next'), previous = m.root.querySelector('.question-previous');
+    const host = m.root.querySelector('.question-grading-responses'), prompt = m.root.querySelector('.question-grading-prompt');
+    const empty = m.root.querySelector('.question-grading-empty'), progress = m.root.querySelector('.question-grading-progress');
+    select.innerHTML = questions.map((q,i) => `<option value="${i}">${lab ? 'Section '+q.number : 'Question '+(i+1)} · ${esc((lab ? window.LabReportEditor.summary(q.question) : q.question).slice(0,70))}</option>`).join('');
+    if (content) m.cleanups.push(content.mount(prompt, {assignmentId:a.id, classId:a.targetClassId, livePreview:true}));
     const pending = new Set();
     const submissions = new Map((a.submissions || []).map(s => [s.email?.toLowerCase(),s]));
-    let changed = false;
-    m.beforeClose = () => !m.root.querySelector('[data-score-dirty="true"]') || confirm('Discard unsaved scores?');
-    m.cleanups.push(() => {Promise.allSettled([...pending]).then(() => {if(changed && headers === JSON.stringify(bridge.managerHeaders())) bridge.reloadAssignments();});});
+    let changed = false, selected = 0, selectedFilter = 'all';
+    const dirty = () => !!host.querySelector('[data-score-dirty="true"]');
+    m.beforeClose = () => !dirty() || confirm('Discard unsaved scores?');
+    const closeOnAccountChange = () => {
+      if (headers === JSON.stringify(bridge.managerHeaders())) return;
+      m.beforeClose = null;
+      m.close();
+    };
+    window.addEventListener('eagle-context-updated', closeOnAccountChange);
+    m.cleanups.push(() => {
+      window.removeEventListener('eagle-context-updated', closeOnAccountChange);
+      Promise.allSettled([...pending]).then(() => {
+        if (changed && headers === JSON.stringify(bridge.managerHeaders())) bridge.reloadAssignments([a.id]);
+      });
+    });
+    function syncNav() {
+      select.disabled = !!pending.size;
+      previous.disabled = select.disabled || selected === 0;
+      next.disabled = select.disabled || selected === questions.length - 1;
+    }
+    function updateProgress() {
+      if (!lab) return;
+      const rows = [...host.children];
+      let graded = 0, answered = 0;
+      for (const row of rows) {
+        const status = row.dataset.gradeStatus;
+        if (status !== 'missing') answered++;
+        if (status === 'graded') graded++;
+        row.hidden = selectedFilter !== 'all' && status !== selectedFilter && row.dataset.scoreDirty !== 'true';
+      }
+      progress.textContent = `${graded} of ${answered} responses graded · ${rows.length - answered} without a response`;
+      empty.hidden = rows.some(row => !row.hidden);
+      empty.textContent = rows.length ? 'No students match this filter.' : 'No students are enrolled in this class.';
+    }
     const render = () => {
-      const index = Number(select.value), q = questions[index];
-      m.root.querySelector('.question-previous').disabled = index === 0;
-      m.root.querySelector('.question-next').disabled = index === questions.length - 1;
-      m.root.querySelector('.question-grading-prompt').innerHTML = `<h4>${esc(q.question)}</h4><span>${q.points} points · ${index+1} of ${questions.length}</span>${q.codeSnippet ? `<pre>${esc(q.codeSnippet)}</pre>` : ''}`;
-      const host = m.root.querySelector('.question-grading-responses');
+      const q = questions[selected];
+      syncNav();
+      prompt.innerHTML = content
+        ? `<p class="meta">Section ${q.number} · ${q.points} points</p>${content.render(q.question)}`
+        : `<h4>${esc(q.question)}</h4><span>${q.points} points · ${selected+1} of ${questions.length}</span>${q.codeSnippet ? `<pre>${esc(q.codeSnippet)}</pre>` : ''}`;
       host.textContent = '';
       for (const student of roster) {
         const candidate = submissions.get(student.email?.toLowerCase());
         const sub = candidate?.withdrawn ? null : candidate;
-        const response = sub?.quizResponses?.find(r => r.questionId === q.id);
+        const response = sub?.quizResponses?.find(r => r.questionId === q.id && (!lab || String(r.answer ?? '').trim()));
         const row = document.createElement('section'); row.className = 'question-grading-row';
-        row.innerHTML = `<h5>${esc([student.first_name ?? student.name,student.last_name].filter(Boolean).join(' ') || student.email)}</h5><pre class="question-grading-answer">${esc(response ? response.answer ?? '' : 'Not submitted')}</pre>${response ? `<div class="question-score-options"><button type="button" class="btn secondary" data-score="0">0</button><button type="button" class="btn secondary" data-score="${q.points/2}">Half · ${q.points/2}</button><button type="button" class="btn secondary" data-score="${q.points}">Full · ${q.points}</button><label>Score<input type="number" min="0" max="${q.points}" step="any" value="${response.manualScore ?? response.pointsEarned ?? ''}" aria-label="Score for ${esc(student.name || student.email)}"></label><button type="button" class="btn secondary question-score-save">Save</button><span role="status"></span></div>` : ''}`;
+        row.innerHTML = `<h5>${esc([student.first_name ?? student.name,student.last_name].filter(Boolean).join(' ') || student.email)}</h5><pre class="question-grading-answer">${esc(response ? response.answer ?? '' : lab ? 'No response' : 'Not submitted')}</pre>${response ? `<div class="question-score-options"><button type="button" class="btn secondary" data-score="0">0</button><button type="button" class="btn secondary" data-score="${q.points/2}">Half · ${q.points/2}</button><button type="button" class="btn secondary" data-score="${q.points}">Full · ${q.points}</button><label>Score<input type="number" min="0" max="${q.points}" step="any" value="${response.manualScore ?? response.pointsEarned ?? ''}" aria-label="Score for ${esc(student.name || student.email)}"></label><button type="button" class="btn secondary question-score-save">Save</button><span role="status"></span></div>` : ''}`;
+        row.dataset.gradeStatus = !response ? 'missing' : response.manualScore != null || response.aiScore != null ? 'graded' : 'ungraded';
         host.append(row);
         if (!response) continue;
         const input = row.querySelector('input'), status = row.querySelector('[role="status"]');
@@ -608,23 +665,19 @@
           if (headers !== JSON.stringify(bridge.managerHeaders())) {status.textContent='Account changed. Reopen grading.'; return;}
           if (score === null || !Number.isFinite(score) || score < 0 || score > q.points) {status.textContent=`Enter 0 to ${q.points}.`; return;}
           const controls = row.querySelectorAll('button,input'); controls.forEach(el => el.disabled=true); status.textContent='Saving…';
-          select.disabled=true;
-          m.root.querySelector('.question-previous').disabled=true;
-          m.root.querySelector('.question-next').disabled=true;
-          const job = mutate('/api/quiz/score-question',{assignmentId:a.id,studentEmail:student.email,questionId:q.id,manualScore:score,revisionId:sub.revisionId});
+          const job = mutate('/api/quiz/score-question',{assignmentId:a.id,studentEmail:student.email,questionId:q.id,manualScore:score,revisionId:sub.revisionId ?? null});
           pending.add(job);
+          syncNav();
           try {
             const result = await job; changed=true;
             response.manualScore=score; response.pointsEarned=result.pointsEarned; sub.quizScore=result.quizScore; sub.totalScore=result.totalScore;
-            input.value=String(score); row.dataset.scoreDirty='false'; selection(); status.textContent='Saved';
+            input.value=String(score); row.dataset.scoreDirty='false'; row.dataset.gradeStatus='graded';
+            selection(); status.textContent='Saved'; updateProgress();
+            if (row.hidden) filter?.focus();
           } catch(error) {status.textContent=error.message;}
           finally {
             pending.delete(job); controls.forEach(el => el.disabled=false);
-            if (!pending.size) {
-              select.disabled=false;
-              m.root.querySelector('.question-previous').disabled=Number(select.value) === 0;
-              m.root.querySelector('.question-next').disabled=Number(select.value) === questions.length - 1;
-            }
+            syncNav();
           }
         };
         row.querySelectorAll('[data-score]').forEach(button => button.onclick = () => save(Number(button.dataset.score)));
@@ -632,12 +685,19 @@
         input.onkeydown = event => {if(event.key === 'Enter') {event.preventDefault(); row.querySelector('.question-score-save').click();}};
         input.oninput = () => {row.dataset.scoreDirty='true'; status.textContent='Unsaved score — choose Save';};
       }
+      updateProgress();
     };
-    const confirmDrafts = () => !m.root.querySelector('[data-score-dirty="true"]') || confirm('Discard unsaved scores for this question?');
-    let selected = 0;
-    select.onchange = () => {if(!confirmDrafts()) {select.value=String(selected); return;} selected=Number(select.value); render();};
-    m.root.querySelector('.question-previous').onclick = () => {if(confirmDrafts()) {select.value=String(--selected); render();}};
-    m.root.querySelector('.question-next').onclick = () => {if(confirmDrafts()) {select.value=String(++selected); render();}};
+    const confirmDrafts = () => !dirty() || confirm('Discard unsaved scores for this question?');
+    const navigate = index => {
+      if (!confirmDrafts()) { select.value = String(selected); return; }
+      selected = index;
+      select.value = String(index);
+      render();
+    };
+    select.onchange = () => navigate(Number(select.value));
+    previous.onclick = () => navigate(selected - 1);
+    next.onclick = () => navigate(selected + 1);
+    if (filter) filter.onchange = () => { selectedFilter = filter.value; updateProgress(); };
     render();
   }
 

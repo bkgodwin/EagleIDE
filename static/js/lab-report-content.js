@@ -21,21 +21,76 @@
     }
   }
   function headers(student=false) { const c=ctx(); return c.ADMIN_TOKEN?{'X-Admin-Token':c.ADMIN_TOKEN}:c.TEACHER_TOKEN?{[student&&c.currentTeacher?.is_coteacher?'X-User-Token':'X-Teacher-Token']:c.TEACHER_TOKEN}:{'X-User-Token':c.USER_TOKEN||''}; }
-  function render(value) {
-    const text=String(value || ''), pattern=/!\[([^\]\n]{0,200})\]\(lab-image:([a-f0-9]{32})\)|\{([^{}]{1,8000})\}/g;
-    let html='', offset=0;
-    for (const match of text.matchAll(pattern)) {
-      html+=esc(text.slice(offset,match.index));
-      html+=match[2] ? `<figure class="lab-report-image" data-report-image="${match[2]}"><span role="status">Image loading…</span><img alt="${esc(match[1] || 'Lab illustration')}" hidden decoding="async"></figure>` : `<button type="button" class="lab-copy-text" data-lab-copy="${esc(match[3])}" title="Copy to clipboard"><code>${esc(match[3])}</code><span aria-hidden="true">⧉</span></button>`;
-      offset=match.index+match[0].length;
-    }
-    return `<div class="lab-report-prose">${html+esc(text.slice(offset))}</div>`;
+  const imagePattern = /!\[([^\]\n]{0,200})\]\(lab-image:([a-f0-9]{32})\)/g;
+  const contentPattern = new RegExp(imagePattern.source + '|' + /\{([^{}]{1,20000})\}/.source, 'g');
+
+  function imageMarkup([, alt, id]) {
+    return `<figure class="lab-report-image" data-report-image="${id}"><span role="status">Image loading…</span><img alt="${esc(alt || 'Lab illustration')}" hidden decoding="async"></figure>`;
   }
-  function mount(root, {assignmentId='',classId='',student=false}={}) {
-    const original=identity(), abort=new AbortController(), urls=new Map(), queue=[];
+
+  function copyMarkup(text) {
+    const attribute = value => esc(value).replace(/\r/g, '&#13;').replace(/\n/g, '&#10;');
+    const button = (value, label) => `<button type="button" class="lab-copy-text" data-lab-copy="${attribute(value)}" title="Copy to clipboard">${label}<span aria-hidden="true">⧉</span></button>`;
+    const images = [...text.matchAll(imagePattern)];
+    if (!images.length) return button(text, `<code>${esc(text)}</code>`);
+    const code = value => value ? `<code>${esc(value)}</code>` : '';
+    let html = '', offset = 0;
+    for (const image of images) {
+      html += code(text.slice(offset, image.index)) + imageMarkup(image);
+      offset = image.index + image[0].length;
+    }
+    html += code(text.slice(offset));
+    const copyText = text.replace(imagePattern, '');
+    return `<div class="lab-copy-with-images">${copyText.trim() ? button(copyText, 'Copy text') : ''}<div>${html}</div></div>`;
+  }
+
+  function render(value) {
+    const text = String(value || '');
+    let html = '', offset = 0;
+    for (const match of text.matchAll(contentPattern)) {
+      html += esc(text.slice(offset, match.index));
+      html += match[2] ? imageMarkup(match) : copyMarkup(match[3]);
+      offset = match.index + match[0].length;
+    }
+    return `<div class="lab-report-prose">${html + esc(text.slice(offset))}</div>`;
+  }
+  function sections(questions, {answers={}, preview=false, previewId="preview"}={}) {
+    const labels = {written:'Written response', fill_blank:'Short answer', procedure:'Checklist'};
+    return questions.map((question, index) => {
+      if (question.type === 'text_box') {
+        return `<section class="lab-report-question lab-report-text-box">${render(question.question)}</section>`;
+      }
+      const label = `report-label-${preview ? previewId + "-" : ""}${index}`;
+      const field = `data-report-question="${esc(question.id)}" ${preview ? 'disabled' : ''}`;
+      const answer = answers[question.id];
+      let control;
+      if (question.type === 'procedure') {
+        control = '<p class="lab-report-check-hint">Select every checkbox in this checklist to receive credit for this section.</p>';
+        control += (question.steps || []).map((step, i) =>
+          `<div class="lab-report-check-row"><input type="checkbox" aria-label="Section ${index+1}, step ${i+1}" ${field} data-step="${i}" ${Array.isArray(answer) && answer[i] ? 'checked' : ''}>${render(step)}</div>`
+        ).join('');
+      } else if (question.type === 'fill_blank') {
+        control = `<input type="text" aria-labelledby="${label}" placeholder="Your answer" maxlength="20000" ${field} value="${esc(answer)}" autocomplete="off">`;
+      } else {
+        control = `<textarea aria-labelledby="${label}" maxlength="20000" placeholder="Record your observations…" ${field}>\n${esc(answer)}</textarea>`;
+      }
+      return `<section class="lab-report-question">
+        <div class="lab-report-question-meta"><span>Section ${index+1} · ${labels[question.type] || labels.written}</span><span>${Number(question.points) || 0} points</span></div>
+        <div class="lab-report-prompt" id="${label}">${render(question.question)}</div>${control}
+      </section>`;
+    }).join('');
+  }
+
+  function mount(root, {assignmentId='',classId='',student=false,livePreview=false}={}) {
+    const original=identity(), abort=new AbortController(), urls=new Map(), figures=new Set(), queue=[];
+    const requested = new WeakSet();
     let active=0,closed=false;
     const observer=typeof IntersectionObserver==='function'?new IntersectionObserver(entries=>{
-      for(const entry of entries) if(entry.isIntersecting && !entry.target.dataset.queued) {entry.target.dataset.queued='1';queue.push(entry.target);}
+      for(const entry of entries) if(entry.isIntersecting && figures.has(entry.target) && !requested.has(entry.target)) {
+        requested.add(entry.target);
+        observer.unobserve(entry.target);
+        queue.push(entry.target);
+      }
       drain();
     },{rootMargin:'120px'}):null;
     async function load(figure) {
@@ -49,17 +104,36 @@
           if(!response.ok)throw Error('Image unavailable. Reopen the report to retry.');
           blob=await response.blob();
         }
-        if(closed||original!==identity()||!root.isConnected)return;
+        if(closed||original!==identity()||!root.contains(figure))return;
         imageCache.delete(key);imageCache.set(key,{blob,at:Date.now()});
         let bytes=[...imageCache.values()].reduce((sum,item)=>sum+item.blob.size,0);
         for(const [old,item] of imageCache){if(imageCache.size<=12&&bytes<=12*1024*1024)break;bytes-=item.blob.size;imageCache.delete(old);}
-        if(urls.size>=20){const [old,url]=urls.entries().next().value;URL.revokeObjectURL(url);urls.delete(old);old.querySelector('img').hidden=true;old.querySelector('span').textContent='Reopen report to load this image.';}
+        if(urls.size>=20){const [old,url]=urls.entries().next().value;URL.revokeObjectURL(url);urls.delete(old);old.querySelector('img').hidden=true;const status=old.querySelector('span');status.hidden=false;status.textContent='Reopen report to load this image.';}
         const url=URL.createObjectURL(blob);urls.set(figure,url);
         const image=figure.querySelector('img');image.src=url;image.hidden=false;figure.querySelector('span').hidden=true;
       } catch(error) {if(!closed)figure.querySelector('span').textContent=error.message;}
     }
-    function drain(){while(!closed&&active<2&&queue.length){const figure=queue.shift();active++;load(figure).finally(()=>{active--;drain();});}}
-    root.querySelectorAll('[data-report-image]').forEach(figure=>{if(observer)observer.observe(figure);else{queue.push(figure);drain();}});
+    function drain(){while(!closed&&active<2&&queue.length){const figure=queue.shift();if(!figures.has(figure))continue;active++;load(figure).finally(()=>{active--;drain();});}}
+    function syncImages() {
+      const current = new Set(root.querySelectorAll('[data-report-image]'));
+      for (const figure of figures) {
+        if (current.has(figure)) continue;
+        observer?.unobserve(figure);
+        if (urls.has(figure)) URL.revokeObjectURL(urls.get(figure));
+        urls.delete(figure);
+        figures.delete(figure);
+      }
+      for (const figure of current) {
+        if (figures.has(figure)) continue;
+        figures.add(figure);
+        if (observer) observer.observe(figure);
+        else queue.push(figure);
+      }
+      drain();
+    }
+    syncImages();
+    const previewObserver = livePreview ? new MutationObserver(syncImages) : null;
+    previewObserver?.observe(root, {childList:true});
     async function copy(event) {
       const button=event.target.closest?.('[data-lab-copy]');if(!button||!root.contains(button))return;
       event.preventDefault(); // A copy command inside a checklist must not toggle its checkbox.
@@ -68,9 +142,9 @@
       catch{if(status)status.textContent='Clipboard unavailable. Select the highlighted text and copy it.';button.title='Select this text and copy it manually';}
     }
     root.addEventListener('click',copy);
-    return ()=>{closed=true;queue.length=0;abort.abort();observer?.disconnect();urls.forEach(url=>URL.revokeObjectURL(url));urls.clear();root.removeEventListener('click',copy);};
+    return ()=>{closed=true;queue.length=0;abort.abort();observer?.disconnect();previewObserver?.disconnect();urls.forEach(url=>URL.revokeObjectURL(url));urls.clear();root.removeEventListener('click',copy);};
   }
-  function floating(root) {
+  function floating(root, {topRightOffset = () => 0} = {}) {
     const panel = root.querySelector('.lab-report-window');
     const resize = root.querySelector('[data-float-resize]');
     const minimize = root.querySelector('[data-float-minimize]');
@@ -96,13 +170,15 @@
         width = Math.min(Math.max(280, width), area.width);
         height = Math.min(Math.max(minimized ? 64 : 200, height), area.height);
       }
+      const anchor = topRight ? Math.max(area.top, topRightOffset()) : area.top;
+      if (topRight) height = Math.min(height, Math.max(Math.min(200,area.height), area.height + area.top - anchor));
       const right = area.left + area.width - width;
       const bottom = area.top + area.height - height;
       Object.assign(panel.style, {
         width: width + 'px',
         height: height + 'px',
         left: (topRight ? right : Math.max(area.left, Math.min(left, right))) + 'px',
-        top: (topRight ? area.top : Math.max(area.top, Math.min(top, bottom))) + 'px',
+        top: (topRight ? Math.min(bottom, anchor) : Math.max(area.top, Math.min(top, bottom))) + 'px',
       });
     }
 
@@ -119,18 +195,22 @@
       if (focusButton) minimize.focus({preventScroll: true});
     }
 
+    function dragControl(target) {
+      const control = target.closest('button, input, textarea, select, a, label, [contenteditable]');
+      const grip = !!resize && control === resize;
+      const restoreTile = !!tile && control === tile;
+      return !control || grip || restoreTile ? {resize:grip, restoreTile} : null;
+    }
+
     function start(event) {
-      if (drag || event.button !== 0 || event.isPrimary === false) return;
+      if (drag || event.pointerType === 'touch' || event.button !== 0 || event.isPrimary === false) return;
       moved = false;
-      const control = event.target.closest('button, input, textarea, select, a, label, [contenteditable]');
-      const grip = control === resize;
-      const restoreTile = tile && control === tile;
-      if (!grip && !restoreTile && control) return;
-      // Leave touch scrolling to the report body and keep clicks on the restore button native.
-      if (grip || (event.pointerType === 'mouse' && !restoreTile)) event.preventDefault();
+      const grip = dragControl(event.target);
+      if (!grip) return;
+      if (!grip.restoreTile) event.preventDefault();
       drag = {
-        id: event.pointerId, x: event.clientX, y: event.clientY,
-        rect: panel.getBoundingClientRect(), resize: control === resize,
+        id:event.pointerId, x:event.clientX, y:event.clientY,
+        rect:panel.getBoundingClientRect(), resize:grip.resize,
       };
     }
 
@@ -196,25 +276,57 @@
         adjust(panel.getBoundingClientRect(), ...delta, control === resize);
       });
     }
-    // Native vertical touch panning cancels pointer drags. Scroll the page explicitly
-    // with two fingers so a one-finger drag works on every non-interactive surface.
-    function scrollStart(event) {
-      if (event.touches.length !== 2) return;
-      drag = null;
-      panel.classList.remove('is-dragging');
-      touchScroll = {y:(event.touches[0].clientY + event.touches[1].clientY) / 2, top:page.scrollTop};
+    // WebKit can cancel touch pointers as it takes over a scroll gesture. Handle
+    // these drags in the touch stream and cancel the native pan on the first move.
+    let touchDrag;
+    function startTouch(event) {
+      if (event.touches.length === 2 && event.target.closest('.lab-report-page')) {
+        touchDrag = null;
+        panel.classList.remove('is-dragging');
+        touchScroll = {y:touchCenter(event), top:page.scrollTop};
+        return;
+      }
+      if (event.touches.length !== 1) return;
+      moved = false;
+      const grip = dragControl(event.target);
+      if (!grip) return;
+      const touch = event.changedTouches[0];
+      touchDrag = {
+        id:touch.identifier, x:touch.clientX, y:touch.clientY,
+        rect:panel.getBoundingClientRect(), resize:grip.resize,
+      };
     }
-    function scrollMove(event) {
-      if (!touchScroll || event.touches.length !== 2) return;
+    function touchCenter(event) {
+      return (event.touches[0].clientY + event.touches[1].clientY) / 2;
+    }
+    function moveTouch(event) {
+      if (touchScroll && event.touches.length === 2) {
+        event.preventDefault();
+        page.scrollTop = touchScroll.top + touchScroll.y - touchCenter(event);
+        return;
+      }
+      if (!touchDrag || event.touches.length !== 1) return;
+      const touch = event.touches[0];
+      if (touch.identifier !== touchDrag.id) return;
       event.preventDefault();
-      const y = (event.touches[0].clientY + event.touches[1].clientY) / 2;
-      page.scrollTop = touchScroll.top + touchScroll.y - y;
+      const dx = touch.clientX - touchDrag.x, dy = touch.clientY - touchDrag.y;
+      if (!moved && Math.hypot(dx, dy) < 5) return;
+      moved = true;
+      panel.classList.add('is-dragging');
+      adjust(touchDrag.rect, dx, dy, touchDrag.resize);
     }
-    function scrollEnd() { touchScroll = null; }
-    page.addEventListener('touchstart', scrollStart, {passive:true});
-    page.addEventListener('touchmove', scrollMove, {passive:false});
-    page.addEventListener('touchend', scrollEnd);
-    page.addEventListener('touchcancel', scrollEnd);
+    function endTouch(event) {
+      if (touchDrag && Array.from(event.changedTouches).some(touch => touch.identifier === touchDrag.id)) {
+        if (moved && event.cancelable) event.preventDefault();
+        touchDrag = null;
+        panel.classList.remove('is-dragging');
+      }
+      if (event.touches.length < 2) touchScroll = null;
+    }
+    panel.addEventListener('touchstart', startTouch, {passive:true});
+    panel.addEventListener('touchmove', moveTouch, {passive:false});
+    panel.addEventListener('touchend', endTouch, {passive:false});
+    panel.addEventListener('touchcancel', endTouch);
     if (tile) tile.onclick = event => { if (!moved || event.detail === 0) restore(); };
     minimize.onclick = () => {
       if (minimized) { restore(); return; }
@@ -242,7 +354,7 @@
       viewport?.removeEventListener('scroll', clamp);
     }};
   }
-  window.LabReportContent={render,mount,floating,headers,writeClipboard,readClipboard};
+  window.LabReportContent={render,sections,imagePattern,mount,floating,headers,writeClipboard,readClipboard};
   window.addEventListener('eagle-context-updated',()=>{
     if(clipboardSession!==identity()){copiedText=null;clipboardSession='';}
   });

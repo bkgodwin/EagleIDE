@@ -97,6 +97,14 @@ def main():
             client.post('/api/assignments/update', headers={'X-Teacher-Token': 'agenda-teacher'},
                 json={'assignmentId': assignment['id'], 'active': True, 'dueAt': due.isoformat()})
         if args.lab:
+            second_student = {**student, 'email': 'second@example.test', 'name': 'Taylor Morgan'}
+            users = eagle._load_users()
+            users['users'].append(second_student)
+            eagle._save_users(users)
+            classes = eagle._load_classes()
+            classes['classes'][0]['students'].append(second_student['email'])
+            eagle._save_classes(classes)
+            eagle._student_tokens['agenda-second-student'] = second_student
             import eagle_lab_features
             eagle_lab_features._probe = lambda _: {'status':'up', 'status_reason':'Fixture node is ready.'}
             eagle._update_config({'eagle_lab_enabled': True})

@@ -1,68 +1,295 @@
 /* Teacher report sections use the same renderer as the student report. */
 (function () {
   'use strict';
-  const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const content=()=>window.LabReportContent;
-  function preview(name,task,questions){return `<span class="lab-report-eyebrow">STUDENT PREVIEW</span><h2>${esc(name||'Untitled report')}</h2>${content().render(task)}${questions.map((q,i)=>`<section class="lab-report-question"><div class="lab-report-question-meta"><span>SECTION ${i+1}</span><span>${Number(q.points)||0} points</span></div>${content().render(q.question)}${q.type==='procedure'?`<p class="lab-report-check-hint">Select every checkbox in this checklist to receive credit for this section.</p>${(q.steps||[]).map(step=>`<div class="lab-report-check-row"><input type="checkbox" disabled aria-label="Preview checklist">${content().render(step)}</div>`).join('')}`:q.type==='fill_blank'?'<input type="text" placeholder="Student answer" disabled>':'<textarea placeholder="Student observations" disabled></textarea>'}</section>`).join('')}`;}
-  const imagePattern=/!\[([^\]\n]{0,200})\]\(lab-image:([a-f0-9]{32})\)/g;
-  function summary(text){return String(text||'').replace(imagePattern,'[Image]');}
-  function imageTools(container,textarea,getClassId,onChange,onImage=null){
-    const tools=document.createElement('div');tools.className='lab-editor-image-tools';tools.innerHTML='<button class="btn secondary" type="button">Add image</button><input type="file" accept="image/jpeg,image/png" hidden><span role="status">JPEG / PNG · up to 5 MB</span>';
-    (textarea.closest('label')||textarea).after(tools);
-    tools.querySelector('button').onclick=()=>tools.querySelector('input').click();
-    tools.querySelector('input').onchange=async event=>{
-      const input=event.target,file=input.files[0];if(!file)return;
-      const status=tools.querySelector('[role=status]');if(file.size>5*1024*1024){status.textContent='Choose an image smaller than 5 MB.';return;}
-      const identity=JSON.stringify(content().headers()),classId=getClassId();
-      status.textContent='Uploading image…';input.disabled=true;
-      try{const data=new FormData();data.append('image',file);const response=await fetch(`/api/lab-reports/images?class_id=${encodeURIComponent(classId||'')}`,{method:'POST',headers:content().headers(),body:data,signal:AbortSignal.timeout(30000)}),result=await response.json();if(!response.ok||!result.ok)throw Error(result.error||'Image upload failed');if(!container.isConnected||identity!==JSON.stringify(content().headers())||getClassId()!==classId)return;
-        const alt=file.name.replace(/\.[^.]+$/,'').replace(/[\]\n]/g,' ').slice(0,200),token=`\n![${alt}](lab-image:${result.data.id})\n`;
-        if(onImage){onImage({id:result.data.id,alt});status.textContent='Image attached. Add a description below.';return;}
-        textarea.setRangeText(token,textarea.selectionStart,textarea.selectionEnd,'end');textarea.dispatchEvent(new Event('input',{bubbles:true}));status.textContent='Image added. You can edit its description between [brackets].';onChange?.();
-      }catch(error){status.textContent=error.message;}finally{input.disabled=false;input.value='';}
+  const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const content = () => window.LabReportContent;
+  const imageMarker = index => '⟦Image ' + index + '⟧';
+  const markerPattern = /⟦Image (\d+)⟧/g;
+  const imageToken = (id, alt) => '![' + alt.replace(/[\]\r\n]/g, ' ') + '](lab-image:' + id + ')';
+  const lines = field => field.value.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+
+  function summary(text) {
+    return String(text || '').replace(content().imagePattern, '[Image]');
+  }
+
+  function createPreview(box, assignmentId) {
+    let classId, cleanup, previous;
+    return {
+      update(name, task, questions, nextClassId) {
+        const html = '<span class="lab-report-eyebrow">STUDENT PREVIEW</span><h2>' + esc(name || 'Untitled report')
+          + '</h2>' + content().render(task) + content().sections(questions, {preview:true, previewId:box.className});
+        if (html === previous && classId === nextClassId) return;
+        const sameClass = classId === nextClassId;
+        const currentImages = new Map();
+        if (sameClass) {
+          for (const figure of box.querySelectorAll('[data-report-image]')) {
+            const key = figure.dataset.reportImage, matches = currentImages.get(key) || [];
+            matches.push(figure);
+            currentImages.set(key, matches);
+          }
+        } else {
+          cleanup?.();
+          cleanup = null;
+        }
+        const template = document.createElement('template');
+        template.innerHTML = html;
+        for (const figure of template.content.querySelectorAll('[data-report-image]')) {
+          const existing = currentImages.get(figure.dataset.reportImage)?.shift();
+          if (!existing) continue;
+          existing.querySelector('img').alt = figure.querySelector('img').alt;
+          figure.replaceWith(existing);
+        }
+        const scrollTop = box.scrollTop;
+        box.replaceChildren(template.content);
+        box.scrollTop = scrollTop;
+        previous = html;
+        classId = nextClassId;
+        cleanup ||= content().mount(box, {assignmentId, classId, livePreview:true});
+      },
+      dispose() {
+        cleanup?.();
+        cleanup = null;
+        classId = previous = undefined;
+        box.replaceChildren();
+      },
     };
   }
-  function attachComposer(modal,getQuestions){
-    if(modal.labPreviewRefresh)return;
-    const box=document.createElement('aside');box.className='lab-composer-preview';box.setAttribute('aria-label','Live lab report preview');modal.querySelector('.modal-content').append(box);
-    const classId=()=>modal.querySelector('#modalAssignmentClassId')?.value||'';
-    const task=modal.querySelector('#modalAssignmentTask');
-    imageTools(modal,task,classId);
-    let cleanup=null,timer=null;
-    const refresh=()=>{
-      const enabled=modal.querySelector('#modalAssignmentType').value==='lab_report';
-      modal.classList.toggle('is-lab-composer',enabled);box.hidden=!enabled;
-      const tab=modal.querySelector('#composer-tab-questions');
-      if(tab){const label=[...tab.childNodes].find(node=>node.nodeType===3);if(label)label.textContent=enabled?'Report sections':'Skills & questions';}
-      const heading=modal.querySelector('#composer-pane-questions h4');if(heading)heading.textContent=enabled?'Build your report sections':'Connect skills and add a quiz';
-      const attempts=modal.querySelector('#modalAssignmentMaxQuizSubmissions')?.previousElementSibling;if(attempts)attempts.textContent=enabled?'Maximum report submissions (0 = unlimited)':'Quiz Max Submissions (0 = unlimited)';
-      const save=modal.querySelector('.modal-save-btn');if(save&&!/Save/.test(save.textContent))save.textContent=enabled?'Create report':'Create Assignment';
-      if(!enabled){cleanup?.();return;}
-      cleanup?.();box.innerHTML=preview(modal.querySelector('#modalAssignmentName').value,task.value,getQuestions());cleanup=content().mount(box,{classId:classId()});
+
+  function imageTools(container, textarea, getClassId, onImage) {
+    const tools = document.createElement('div');
+    tools.className = 'lab-editor-image-tools';
+    tools.innerHTML = '<button class="btn secondary" type="button">Add image</button><input type="file" accept="image/jpeg,image/png" hidden><span role="status">JPEG / PNG · up to 5 MB</span>';
+    (textarea.closest('label') || textarea).after(tools);
+    const button = tools.querySelector('button'), input = tools.querySelector('input'), status = tools.querySelector('[role=status]');
+    button.onclick = () => input.click();
+    input.onchange = async () => {
+      const file = input.files[0];
+      if (!file) return;
+      if (file.size > 5 * 1024 * 1024) {
+        status.textContent = 'Choose an image smaller than 5 MB.';
+        input.value = '';
+        return;
+      }
+      const headers = content().headers(), classId = getClassId();
+      status.textContent = 'Uploading image…';
+      button.disabled = true;
+      try {
+        const data = new FormData();
+        data.append('image', file);
+        const response = await fetch('/api/lab-reports/images?class_id=' + encodeURIComponent(classId), {
+          method:'POST', headers, body:data, signal:AbortSignal.timeout(30000),
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw Error(result.error || 'Image upload failed');
+        if (!container.isConnected || JSON.stringify(headers) !== JSON.stringify(content().headers()) || getClassId() !== classId) return;
+        const alt = file.name.replace(/\.[^.]+$/, '').replace(/[\]\r\n]/g, ' ').slice(0,200);
+        status.textContent = onImage({id:result.data.id, alt});
+      } catch (error) {
+        status.textContent = error.message;
+      } finally {
+        button.disabled = false;
+        input.value = '';
+      }
     };
-    modal.labPreviewRefresh=refresh;
-    modal.addEventListener('input',()=>{clearTimeout(timer);timer=setTimeout(refresh,180);});modal.addEventListener('change',refresh);
-    const original=JSON.stringify(content().headers()),changed=()=>{if(original!==JSON.stringify(content().headers()))modal.remove();};window.addEventListener('eagle-context-updated',changed);
-    const observer=new MutationObserver(()=>{if(!modal.isConnected){clearTimeout(timer);cleanup?.();window.removeEventListener('eagle-context-updated',changed);observer.disconnect();}});observer.observe(document.body,{childList:true});refresh();
   }
-  function open({questions,onChange,counter,index=-1,classId=''}){
-    const existing=questions[index]||{type:'written',question:'',points:10,steps:[],acceptedAnswers:[]};
-    const images=[...String(existing.question||'').matchAll(imagePattern)].map(match=>({id:match[2],alt:match[1]}));
-    const text=String(existing.question||'').replace(imagePattern,'').trim();
-    const modal=document.createElement('div');modal.className='modal glass-modal lab-section-editor';modal.style.display='flex';
-    modal.innerHTML=`<section class="modal-content" role="dialog" aria-modal="true" aria-label="${index<0?'Add':'Edit'} report section"><header class="workspace-modal-header"><div><span class="lab-report-eyebrow">REPORT BUILDER</span><h3>${index<0?'Add':'Edit'} section</h3></div><button type="button" class="btn secondary" data-cancel>Cancel</button></header><div class="lab-section-editor-grid"><form><label>Response type<select name="type"><option value="written">Written response</option><option value="fill_blank">Fill in the blank</option><option value="procedure">Procedure checklist</option></select></label><label>Instructions<textarea name="question" rows="5" maxlength="20000" required placeholder="Explain this step and what students should record…">${esc(text)}</textarea></label><p class="lab-editor-help">Wrap text in {curly brackets} to make it click-to-copy, for example {ip -br addr}. Add screenshots below. The preview matches the student's report.</p><label>Points<input name="points" type="number" min="1" max="10000" value="${Number(existing.points)||10}" required></label><label data-answers>Accepted answers · one per line<textarea name="answers" rows="3">${esc((existing.acceptedAnswers||[]).join('\n'))}</textarea><small>Matched without case or surrounding whitespace. These answers are hidden from students.</small></label><label data-steps>Checklist steps · one per line<textarea name="steps" rows="6" placeholder="Create your container\nStart the container\nRecord its IP address">${esc((existing.steps||[]).join('\n'))}</textarea><small>Every checkbox must be selected for credit. Maximum 50 steps, 500 characters per step.</small></label><p role="status" data-status></p><button class="btn run" type="submit">${index<0?'Add section':'Save section'}</button></form><aside class="lab-section-preview" aria-label="Live section preview"></aside></div></section>`;
-    document.body.append(modal);const form=modal.querySelector('form'),type=form.elements.type;type.value=existing.type;
-    let cleanup=null,timer=null;const getQuestion=()=>({...existing,type:type.value,question:form.elements.question.value+images.map(image=>`\n![${image.alt.replace(/[\]\n]/g,' ')}](lab-image:${image.id})`).join(''),points:Number(form.elements.points.value),steps:form.elements.steps.value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean),acceptedAnswers:form.elements.answers.value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean)});
-    function render(){form.querySelector('[data-answers]').hidden=type.value!=='fill_blank';form.querySelector('[data-steps]').hidden=type.value!=='procedure';cleanup?.();const target=modal.querySelector('.lab-section-preview');target.innerHTML=preview('Section preview','',[getQuestion()]);cleanup=content().mount(target,{classId});}
-    const original=JSON.stringify(content().headers()),changed=()=>{if(original!==JSON.stringify(content().headers()))close();};window.addEventListener('eagle-context-updated',changed);
-    function close(){clearTimeout(timer);cleanup?.();modal.remove();document.removeEventListener('keydown',key);window.removeEventListener('eagle-context-updated',changed);}
-    function key(event){if(event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();close();}if(event.key==='Tab'){const items=[...modal.querySelectorAll('button,input,textarea,select')].filter(e=>!e.disabled&&e.getClientRects().length),first=items[0],last=items.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}}}
-    document.addEventListener('keydown',key);modal.querySelector('[data-cancel]').onclick=close;
-    const gallery=document.createElement('div');gallery.className='lab-editor-attachments';form.elements.question.closest('label').after(gallery);
-    function renderAttachments(){gallery.innerHTML=images.map((image,i)=>`<div><label>Image description<input data-image-alt="${i}" maxlength="200" value="${esc(image.alt)}"></label><button type="button" class="btn secondary" data-image-remove="${i}">Remove image</button></div>`).join('');gallery.querySelectorAll('[data-image-alt]').forEach(input=>input.oninput=()=>{images[Number(input.dataset.imageAlt)].alt=input.value;});gallery.querySelectorAll('[data-image-remove]').forEach(button=>button.onclick=()=>{images.splice(Number(button.dataset.imageRemove),1);renderAttachments();render();});}
-    imageTools(modal,form.elements.question,()=>classId,render,image=>{if(images.length>=12){form.querySelector('[data-status]').textContent='Use at most 12 images per section.';return;}images.push(image);renderAttachments();render();});renderAttachments();
-    form.addEventListener('input',()=>{clearTimeout(timer);timer=setTimeout(render,180);});type.onchange=render;
-    form.onsubmit=event=>{event.preventDefault();const q=getQuestion(),status=form.querySelector('[data-status]');if(!q.question.trim()){status.textContent='Add instructions for this section.';return;}if(q.type==='procedure'&&(!q.steps.length||q.steps.length>50||q.steps.some(s=>s.length>500))){status.textContent='Add 1–50 steps of at most 500 characters.';return;}if(q.type==='fill_blank'&&(!q.acceptedAnswers.length||q.acceptedAnswers.length>20||q.acceptedAnswers.some(s=>s.length>500))){status.textContent='Add 1–20 accepted answers of at most 500 characters.';return;}if(index<0){q.id='q'+Date.now()+'_'+counter.value++;questions.push(q);}else questions[index]=q;close();onChange();};render();form.elements.question.focus();
+
+  function insertImage(textarea, token) {
+    // Insert at the current caret without replacing prose if a range is selected.
+    textarea.setRangeText(token, textarea.selectionEnd, textarea.selectionEnd, 'end');
+    textarea.dispatchEvent(new Event('input', {bubbles:true}));
   }
-  window.LabReportEditor={open,attachComposer,preview,summary};
+
+  function attachComposer(modal, getQuestions, assignmentId) {
+    if (modal.labPreviewRefresh) return;
+    const box = document.createElement('aside');
+    box.className = 'lab-composer-preview';
+    box.setAttribute('aria-label', 'Live lab report preview');
+    modal.querySelector('.modal-content').append(box);
+    const preview = createPreview(box, assignmentId);
+    const classId = () => modal.querySelector('#modalAssignmentClassId')?.value || '';
+    const task = modal.querySelector('#modalAssignmentTask');
+    const name = modal.querySelector('#modalAssignmentName');
+    imageTools(modal, task, classId, ({id, alt}) => {
+      insertImage(task, '\n' + imageToken(id, alt) + '\n');
+      return 'Image added. You can edit its description between [brackets].';
+    });
+    let timer;
+    const refresh = () => {
+      clearTimeout(timer);
+      const enabled = modal.querySelector('#modalAssignmentType').value === 'lab_report';
+      modal.classList.toggle('is-lab-composer', enabled);
+      box.hidden = !enabled;
+      const tab = modal.querySelector('#composer-tab-questions');
+      const label = [...(tab?.childNodes || [])].find(node => node.nodeType === 3);
+      if (label) label.textContent = enabled ? 'Report sections' : 'Skills & questions';
+      const heading = modal.querySelector('#composer-pane-questions h4');
+      if (heading) heading.textContent = enabled ? 'Build your report sections' : 'Connect skills and add a quiz';
+      const attempts = modal.querySelector('#modalAssignmentMaxQuizSubmissions')?.previousElementSibling;
+      if (attempts) attempts.textContent = enabled ? 'Maximum report submissions (0 = unlimited)' : 'Quiz Max Submissions (0 = unlimited)';
+      const save = modal.querySelector('.modal-save-btn');
+      if (save && !/Save/.test(save.textContent)) save.textContent = enabled ? 'Create report' : 'Create Assignment';
+      if (enabled) preview.update(name.value, task.value, getQuestions(), classId());
+      else preview.dispose();
+    };
+    modal.labPreviewRefresh = refresh;
+    for (const field of [task, name]) {
+      field.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(refresh, 180); });
+    }
+    modal.querySelector('#modalAssignmentType').addEventListener('change', refresh);
+    modal.querySelector('#modalAssignmentClassId')?.addEventListener('change', refresh);
+    const original = JSON.stringify(content().headers());
+    const changed = () => { if (original !== JSON.stringify(content().headers())) modal.remove(); };
+    window.addEventListener('eagle-context-updated', changed);
+    const observer = new MutationObserver(() => {
+      if (modal.isConnected) return;
+      clearTimeout(timer);
+      preview.dispose();
+      window.removeEventListener('eagle-context-updated', changed);
+      observer.disconnect();
+    });
+    observer.observe(document.body, {childList:true});
+    refresh();
+  }
+
+  function open({questions, onChange, counter, index=-1, classId='', assignmentId=''}) {
+    const existing = questions[index] || {type:'written', question:'', points:10, steps:[], acceptedAnswers:[]};
+    const images = new Map();
+    let nextImage = 1;
+    const text = String(existing.question || '').replace(content().imagePattern, (_match, alt, id) => {
+      const number = nextImage++;
+      images.set(number, {id, alt});
+      return imageMarker(number);
+    });
+    const modal = document.createElement('div');
+    modal.className = 'modal glass-modal lab-section-editor';
+    modal.style.display = 'flex';
+    const action = index < 0 ? 'Add section' : 'Save section';
+    modal.innerHTML = SECTION_EDITOR;
+    modal.querySelector('[role=dialog]').setAttribute('aria-label', index < 0 ? 'Add report section' : 'Edit report section');
+    modal.querySelector('h3').textContent = index < 0 ? 'Add section' : 'Edit section';
+    const form = modal.querySelector('form'), {type, question, points, answers, steps} = form.elements;
+    type.value = existing.type;
+    question.value = text;
+    points.value = existing.points || 10;
+    answers.value = (existing.acceptedAnswers || []).join('\n');
+    steps.value = (existing.steps || []).join('\n');
+    form.querySelector('button[type=submit]').textContent = action;
+    document.body.append(modal);
+
+    const preview = createPreview(modal.querySelector('.lab-section-preview'), assignmentId);
+    const status = form.querySelector('[data-status]');
+    const gallery = form.querySelector('.lab-editor-attachments');
+    let timer, previousMarkers;
+    const getQuestion = () => ({
+      ...existing, type:type.value,
+      question:question.value.replace(markerPattern, (marker, number) => {
+        const image = images.get(Number(number));
+        return image ? imageToken(image.id, image.alt) : marker;
+      }),
+      points:type.value === 'text_box' ? 0 : Number(points.value),
+      steps:type.value === 'procedure' ? lines(steps) : [],
+      acceptedAnswers:type.value === 'fill_blank' ? lines(answers) : [],
+    });
+    const visibleImages = () => [...new Set([...question.value.matchAll(markerPattern)].map(match => Number(match[1])))].filter(id => images.has(id));
+    function syncAttachments() {
+      const markers = visibleImages(), key = markers.join(',');
+      if (key === previousMarkers) return;
+      previousMarkers = key;
+      gallery.innerHTML = markers.map(id => '<div><label>Image ' + id + ' description<input data-image-alt="' + id + '" maxlength="200" value="' + esc(images.get(id).alt)
+        + '"></label><button type="button" class="btn secondary" data-image-remove="' + id + '">Remove image</button></div>').join('');
+      gallery.querySelectorAll('[data-image-alt]').forEach(input => {
+        input.oninput = () => { images.get(Number(input.dataset.imageAlt)).alt = input.value; };
+      });
+      gallery.querySelectorAll('[data-image-remove]').forEach(button => {
+        button.onclick = () => {
+          question.value = question.value.split(imageMarker(Number(button.dataset.imageRemove))).join('');
+          render();
+          question.focus();
+        };
+      });
+    }
+    function render() {
+      const isText = type.value === 'text_box';
+      form.querySelector('[data-points]').hidden = points.disabled = isText;
+      form.querySelector('[data-answers]').hidden = type.value !== 'fill_blank';
+      form.querySelector('[data-steps]').hidden = type.value !== 'procedure';
+      form.querySelector('[data-question-label]').textContent = isText ? 'Text box content' : 'Instructions';
+      syncAttachments();
+      preview.update('Section preview', '', [getQuestion()], classId);
+    }
+    const original = JSON.stringify(content().headers());
+    const changed = () => { if (original !== JSON.stringify(content().headers())) close(); };
+    window.addEventListener('eagle-context-updated', changed);
+    function close() {
+      clearTimeout(timer);
+      preview.dispose();
+      modal.remove();
+      document.removeEventListener('keydown', key);
+      window.removeEventListener('eagle-context-updated', changed);
+    }
+    function key(event) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        close();
+      }
+      if (event.key !== 'Tab') return;
+      const items = [...modal.querySelectorAll('button,input,textarea,select')].filter(el => !el.disabled && el.getClientRects().length);
+      const first = items[0], last = items.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+    document.addEventListener('keydown', key);
+    modal.querySelector('[data-cancel]').onclick = close;
+    imageTools(modal, question, () => classId, image => {
+      if (visibleImages().length >= 12) return 'Use at most 12 images per section.';
+      const number = nextImage++;
+      images.set(number, image);
+      insertImage(question, imageMarker(number));
+      render();
+      return 'Image inserted. Move its marker to place it anywhere in the text.';
+    });
+    form.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(render, 180); });
+    type.onchange = render;
+    form.onsubmit = event => {
+      event.preventDefault();
+      const q = getQuestion();
+      if (!q.question.trim() || q.question.length > 20000) {
+        status.textContent = 'Use 1–20,000 characters for this section, including image references.';
+        return;
+      }
+      if (q.type === 'procedure' && (!q.steps.length || q.steps.length > 50 || q.steps.some(step => step.length > 500))) {
+        status.textContent = 'Add 1–50 steps of at most 500 characters.';
+        return;
+      }
+      if (q.type === 'fill_blank' && (!q.acceptedAnswers.length || q.acceptedAnswers.length > 20 || q.acceptedAnswers.some(answer => answer.length > 500))) {
+        status.textContent = 'Add 1–20 accepted answers of at most 500 characters.';
+        return;
+      }
+      if (index < 0) {
+        q.id = 'q' + Date.now() + '_' + counter.value++;
+        questions.push(q);
+      } else questions[index] = q;
+      close();
+      onChange();
+    };
+    render();
+    question.focus();
+  }
+
+  const SECTION_EDITOR = `<section class="modal-content" role="dialog" aria-modal="true">
+    <header class="workspace-modal-header"><div><h3></h3></div><button type="button" class="btn secondary" data-cancel>Cancel</button></header>
+    <div class="lab-section-editor-grid"><form>
+      <label>Section type<select name="type"><option value="written">Written response</option><option value="fill_blank">Fill in the blank</option><option value="procedure">Procedure checklist</option><option value="text_box">Text box</option></select></label>
+      <label><span data-question-label>Instructions</span><textarea name="question" rows="6" maxlength="20000" required></textarea></label>
+      <p class="lab-editor-help">Wrap commands or multiple lines in {curly braces} to make them click-to-copy. Add an image at the cursor, then move its marker anywhere in the text.</p>
+      <div class="lab-editor-attachments"></div>
+      <label data-points>Points<input name="points" type="number" min="1" max="10000" required></label>
+      <label data-answers>Accepted answers · one per line<textarea name="answers" rows="3"></textarea><small>Matched without case or surrounding whitespace.</small></label>
+      <label data-steps>Checklist steps · one per line<textarea name="steps" rows="6"></textarea><small>Every checkbox must be selected for credit. Maximum 50 steps, 500 characters per step.</small></label>
+      <p role="status" data-status></p>
+      <button class="btn run" type="submit"></button>
+    </form><aside class="lab-section-preview" aria-label="Live section preview"></aside></div>
+  </section>`;
+  window.LabReportEditor = {open, attachComposer, summary};
 })();

@@ -108,6 +108,7 @@ async function waitFor(check, message) {
 try{
   browser=await playwright[engine].launch(engine==='webkit'?{headless:true}:{headless:true,executablePath:process.env.EAGLE_LAB_BROWSER,args:['--no-proxy-server','--host-resolver-rules=MAP *.school.test 127.0.0.1']});
   page=await browser.newPage({ignoreHTTPSErrors:true,viewport:{width:1280,height:1400},hasTouch:ipad});const errors=[];
+  await page.addInitScript(()=>{if(window===window.top)localStorage.setItem('eagle-lab-clipboard-controls','true');});
   if(ipad)await page.addInitScript(()=>Object.defineProperties(navigator,{
     platform:{get:()=>'MacIntel'},maxTouchPoints:{get:()=>5},
   }));

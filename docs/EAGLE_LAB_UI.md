@@ -9,7 +9,8 @@ administrators retain enrollment and private preview authority.
 
 Choose a class, search the assigned server cards, and open a server's details to
 connect. Refresh updates the catalog without reloading an open PVE console.
-Reports open directly from the Lab page as well as the console toolbar.
+Reports open directly from the Lab page and from the top right of the console
+toolbar.
 
 Reports float above the workspace with translucent backgrounds. Drag any
 non-interactive surface with a mouse, trackpad or one finger. Use two fingers
@@ -26,8 +27,10 @@ If browser clipboard permission is unavailable, the copied text stays available
 inside the current Eagle Lab session. Paste it with Ctrl+V, Cmd+V, either modifier
 with Shift+V, or the console's **Paste** button. **Select text** enables shell
 text selection with a touch drag or trackpad; **Copy** copies the highlighted text.
-Copy shortcuts also copy selected shell text. Ctrl+C interrupts when no shell
-text is selected.
+Use **Clipboard controls** at the top of the workspace to show or hide the
+console’s on-screen buttons. The setting is remembered on this browser and
+starts on for touch-capable devices. Keyboard shortcuts work either way. Ctrl+C
+interrupts when no shell text is selected.
 The report retains the same revision conflict and account isolation controls.
 
 ## Teacher workflow
@@ -43,14 +46,17 @@ editing while a save is in progress, the response retains those newer edits and
 shows that they still need saving.
 
 Select **Lab report** in the assignment composer. Its student preview updates as
-you write. Add written-response, fill-in-the-blank, or procedure sections. Existing
+you write. Add written-response, fill-in-the-blank, procedure, or text box
+sections. Text boxes display instructions and illustrations without collecting
+an answer or adding points. Existing
 sections can be edited, deleted, and moved up. Accepted answers stay private.
 
 Wrap a command or other copyable text in curly brackets, for example
-`{ip -br addr}`. Students see a highlighted copy button containing `ip -br addr`.
-HTML is displayed as text and never executed. Use **Add image** in a section to
-attach a screenshot, give it a meaningful description, and inspect the preview.
-The section editor supports removing illustrations. The task description also
+`{ip -br addr}`. Braces can span multiple lines. The highlighted copy button
+preserves the line breaks and blank lines. Use **Add image** to insert an
+illustration at the caret. Move the image marker within the section to place it
+between passages, and use the image description field to provide alt text. The
+section editor supports removing illustrations. The task description also
 supports image insertion. Only uploaded local images load; external image URLs
 are never fetched.
 
@@ -65,6 +71,15 @@ Image access requires authenticated author access or a referenced report in the
 image's original class with current student/staff access. Copying an image token
 into a different class does not grant access. Upload it in the destination class
 when preparing a separate class report. No auth token enters an image URL.
+
+## Grading
+
+In the teacher assignment’s **Submissions** tab, choose **Grade report by
+question** to compare the class’s answers to a written section. Switch sections
+with the selector or arrow buttons. Filter for responses that need grading,
+already graded responses, or students without a response. Award zero, half, or
+full credit in one click, or enter and save a custom score. **Grade report** on
+a student row opens their individual responses.
 
 ## Lab Manual
 
