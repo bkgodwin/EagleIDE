@@ -51,23 +51,23 @@ async function homeChecks(browser,origin) {
   };
   await tool('equipment');await $('#wifiEquipmentType').selectOption('home_router');await mark(6,6);
   await capture(page,'eagle-guided-lab-debug.png');
-  await quiz(/WAN provides power/,false);
+  await quiz(/extends the trusted LAN/,false);
   await tool('select');await mark(6,6);await section('dhcp');
   await $('#wifiDhcpGateway').fill('192.168.10.1/24');await $('#wifiDhcpGateway').press('Tab');
   await route(2.5,3,'ETH1');
-  await quiz(/Shorter radio paths/);
+  await quiz(/Move the router toward occupied rooms/);
   await tool('select');await mark(6,6);await section('home-wifi');
   await $('#wifiHomeSsid').selectOption(':add');
   await $('#wifiHomeSsidName').fill('Home');await $('[data-wifi-network=save-home-ssid]').click();
   await close();await mark(5,8);await $('#wifiPhoneSsid').selectOption({label:'Home'});
-  await quiz(/path to the router and the DHCP scope/);
+  await quiz(/Inspect the desktop cable/);
   await route(10,3,'ETH2');
-  await quiz(/Ethernet gives the fixed TV/);
+  await quiz(/moves TV traffic off shared/);
   await tool('equipment');await $('#wifiEquipmentType').selectOption('demarc');await $('#wifiEquipmentIsp').selectOption('meadowlink');await mark(14,3);
   await route(14,3,'WAN1');
   await close();await $('[data-wifi-tool=select]').click();await mark(5,8);
   await $('#wifiPingTarget').selectOption(':internet');await $('#wifiPingToggle').click();
-  await quiz(/different parts of the network/);
+  await quiz(/tested LAN paths work/);
   await $('.wifi-lab-assessment [data-lab-submit]').click();
   await page.waitForFunction(()=>document.querySelector('.wifi-lab-assessment').textContent.includes('Submitted · 94%'));
   assert.ok(await $('[data-lab-next]').isDisabled());
@@ -182,8 +182,67 @@ async function rackChecks(browser,origin) {
      await $('.wifi-lab-quiz [data-quiz-close]').click();
    }
   }
+  await page.setViewportSize({width:390,height:650});
+  await $('#wifiStarterNext').click();await $('.wifi-lab-quiz').waitFor();
+  const question=await $('.wifi-lab-quiz').boundingBox();
+  assert.ok(question.y>=0 && question.y+question.height<=650,'Long question fits a short phone viewport');
+  await $('.wifi-lab-quiz [type=submit]').scrollIntoViewIfNeeded();
+  const submit=await $('.wifi-lab-quiz [type=submit]').boundingBox();
+  assert.ok(submit.y>=0 && submit.y+submit.height<=650,'Long question Submit remains reachable');
+  await capture(page,'eagle-guided-lab-short-phone-question.png');
+  await $('.wifi-lab-quiz [data-quiz-close]').click();
   assert.deepEqual(errors,[]);console.log('Rack mounting, checklist in rack, stacked quiz, router highlight, two-wing source/destination port recommendations, wrong-rack guidance, switch port VLAN highlight, and responsive theme checks passed.');
 
+}
+
+async function teacherCatalogChecks(browser,origin) {
+  const page=await browser.newPage({viewport:{width:1510,height:980}});
+  const errors=[];
+  page.on('pageerror',e=>errors.push(e.message));
+  const headers={'X-Teacher-Token':'fixture-teacher'};
+  const assigned=await page.request.put(origin+'/api/network/teacher/classes/net-review/infra-labs/infra-lab-02',
+    {headers,data:{assigned:true,submissions:3}});
+  assert.equal(assigned.status(),200);
+  await page.goto(origin+'/fixture/classroom/teacher',{waitUntil:'domcontentloaded'});
+  const $=s=>page.locator(s);
+  await $('#wifiLabsFolder summary').click();
+  assert.equal(await $('[data-wifi-lab]').count(),5);
+  await $('#wifiLabsClass').selectOption('net-design');
+  assert.match(await $('[data-wifi-lab="infra-lab-01"]').innerText(),/Enabled for students/);
+  assert.match(await $('[data-wifi-lab="infra-lab-03"]').innerText(),/Not enabled for students/);
+  await $('#wifiLabsClass').selectOption('net-review');
+  assert.match(await $('[data-wifi-lab="infra-lab-02"]').innerText(),/Enabled for students/);
+  assert.match(await $('[data-wifi-lab="infra-lab-01"]').innerText(),/Not enabled for students/);
+  await $('[data-wifi-lab="infra-lab-05"]').click();
+  await $('#wifiStarterChecklist').waitFor();
+  assert.match(await $('.wifi-lab-assessment').innerText(),/Teacher preview/);
+  await $('#wifiSiteBack').click();
+  assert.equal(await $('#wifiLabsClass').inputValue(),'net-review');
+  await $('#wifiLabsClass').selectOption('');
+  await $('[data-wifi-lab="infra-lab-03"]').click();
+  await $('#wifiStarterChecklist').waitFor();
+  assert.match(await $('.wifi-lab-assessment').innerText(),/Teacher preview/);
+  await $('#wifiSiteBack').click();
+  const disabled=await page.request.put(origin+'/api/network/teacher/classes/net-review/settings',
+    {headers,data:{access:{infra:false,packet:false}}});
+  assert.equal(disabled.status(),200);
+  await page.reload({waitUntil:'domcontentloaded'});
+  await $('#wifiLabsFolder summary').click();
+  await $('#wifiLabsClass').selectOption('net-review');
+  assert.match(await $('[data-wifi-lab="infra-lab-02"]').innerText(),/Assigned · Infra Sim access is off/);
+  assert.equal(await $('[data-wifi-lab]').count(),5);
+  for(const theme of ['light','dark'])for(const width of [1510,760,390]) {
+    await page.setViewportSize({width,height:980});
+    await page.evaluate(t=>document.body.classList.toggle('light-mode',t==='light'),theme);
+    await $('#wifiLabsClass').scrollIntoViewIfNeeded();
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true,'Teacher catalog overflow');
+    await capture(page,'eagle-teacher-labs-'+theme+'-'+width+'.png');
+  }
+  await $('[data-wifi-lab="infra-lab-02"]').click();
+  await $('#wifiStarterChecklist').waitFor();
+  assert.match(await $('.wifi-lab-assessment').innerText(),/Teacher preview/);
+  assert.deepEqual(errors,[]);
+  console.log('Teacher catalog shows all labs, switches class indicators, preserves selection, and previews unassigned labs, disabled-class labs, and labs without a class.');
 }
 
 async function main() {
@@ -202,6 +261,7 @@ async function main() {
   browser=await chromium.launch({headless:true,executablePath:process.env.EAGLE_INFRA_BROWSER});
   await homeChecks(browser,origin);
   await rackChecks(browser,origin);
+  await teacherCatalogChecks(browser,origin);
  } finally {if(browser)await browser.close();fixture.kill();}
 }
 main().catch(error=>{console.error(error);process.exitCode=1});

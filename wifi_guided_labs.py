@@ -1,128 +1,12 @@
 """Five assessed Infra Sim labs, ordered from home networking to a small campus."""
 
+import hashlib
+
 from wifi_cabling import EQUIPMENT
+from wifi_lab_questions import QUESTION_BANKS, QUESTION_VERSION
 from wifi_scenarios import _starter
 from wifi_small_sites import Plan
 from wifi_starter_labs import at, choice, path, target, task, tool
-
-
-def question(prompt, *options):
-    """The first authored choice is correct. Public choices are rotated per question."""
-    return dict(prompt=prompt, options=[dict(text=text, explanation=explanation) for text, explanation in options])
-
-
-QUESTIONS = (
-    (
-        question("Why connect the ISP handoff to WAN instead of one of the LAN ports?",
-                 ("WAN is the router’s boundary to the provider.", "WAN connects the provider to the router’s Internet routing and NAT path."),
-                 ("WAN provides power to the provider.", "WAN carries data. This residential router supplies no PoE on any port."),
-                 ("A LAN port always blocks Internet traffic.", "LAN ports connect local devices. The dedicated WAN port establishes the provider side.")),
-        question("Why choose a central router location in this home?",
-                 ("Shorter radio paths usually improve coverage.", "Distance and walls weaken radio signals, so a central location reduces difficult paths."),
-                 ("A central router gives every client the same IP.", "DHCP assigns distinct addresses. Router placement affects radio paths, not address uniqueness."),
-                 ("Wi-Fi can pass through every wall without loss.", "Walls absorb some radio energy, and their material changes the loss.")),
-        question("The desktop has no usable IPv4 address. Which setting should you inspect?",
-                 ("Its path to the router and the DHCP scope.", "A connected client needs a working path to a DHCP server and an available address."),
-                 ("The label color on the desktop.", "Labels help identify devices but do not allocate IP addresses."),
-                 ("The camera coverage toggle.", "Camera visibility does not affect DHCP or the desktop link.")),
-        question("Why might you cable the TV while keeping the phone wireless?",
-                 ("Ethernet gives the fixed TV a consistent link and leaves radio capacity for mobile devices.", "A fixed device can use a cable while the phone keeps the mobility of Wi-Fi."),
-                 ("A TV requires PoE from the residential router.", "The TV uses local power. This router does not provide PoE."),
-                 ("Wi-Fi clients cannot use the Internet.", "Associated wireless clients can use the router’s Internet path too.")),
-        question("Why test both a local ping and an Internet ping?",
-                 ("They test different parts of the network path.", "A local reply verifies the LAN. An Internet reply also depends on the router, WAN, and provider."),
-                 ("A local reply proves the provider works.", "Local traffic can succeed while the WAN cable is disconnected."),
-                 ("The two tests always follow the same cables.", "Internet traffic continues beyond the router to the ISP handoff.")),
-    ),
-    (
-        question("Why install a patch panel above the switch?",
-                 ("It separates permanent building runs from changeable front patch leads.", "The rear terminals hold building cable. Front leads let you change switch connections."),
-                 ("A patch panel assigns IP addresses.", "A patch panel is passive. DHCP runs on the router."),
-                 ("Every port on a patch panel is connected together.", "Each front port connects only to its matching rear termination.")),
-        question("Why use fiber for the router-to-switch uplink in this rack?",
-                 ("It provides a suitable high-speed data path between SFP ports.", "Compatible SFP ports carry the fiber uplink. The AP still needs an Ethernet PoE path."),
-                 ("Fiber supplies PoE to every AP.", "Fiber carries light. It supplies no PoE."),
-                 ("Fiber removes the need for a router.", "The router still provides DHCP, firewall, and Internet routing.")),
-        question("An AP is cabled but shows no coverage. What should you check first?",
-                 ("The front patch lead and the PoE switch port.", "The AP needs a complete circuit from the building run through the panel to a powered switch port."),
-                 ("Whether every port on the panel has a cable.", "Only the AP’s matching circuit needs to be complete."),
-                 ("Whether the diagram grid is visible.", "The grid is a drawing aid and does not provide network power.")),
-        question("Why give the office an explicit gateway and subnet?",
-                 ("Clients need consistent local addressing and a route out of the LAN.", "The DHCP scope supplies addresses and the default gateway used for remote destinations."),
-                 ("The subnet changes the length of the Ethernet cable.", "Addressing does not change physical cable length."),
-                 ("The gateway must match the last client’s address.", "The gateway has its own address, distinct from client addresses.")),
-        question("Why check the UPS estimate after installing the gear?",
-                 ("The load determines how long backup power can support the rack.", "A larger equipment load reduces the estimated runtime of the installed UPS capacity."),
-                 ("UPS runtime is always the same for every rack.", "Runtime depends on equipment load and battery capacity."),
-                 ("An extra UPS increases Internet speed.", "A UPS adds backup power, not link bandwidth.")),
-    ),
-    (
-        question("Why use a dedicated student VLAN?",
-                 ("It creates a separate traffic segment for student devices.", "VLAN membership separates the student segment while allowing shared switching hardware."),
-                 ("Creating the VLAN automatically puts every student port into it.", "The VLAN defines a segment. You must also configure client ports and shared uplinks to carry it."),
-                 ("It makes every student device use the gateway address.", "Clients keep distinct addresses. The gateway address belongs to the router.")),
-        question("Why must the uplink carry the student VLAN tag?",
-                 ("The shared uplink needs to identify student traffic.", "A tagged uplink can carry the student VLAN alongside the untagged LAN."),
-                 ("Only the AP needs VLAN settings; the switch uplink can stay untagged.", "The switch uplink must permit the student tag so traffic can continue to the router."),
-                 ("One access VLAN carries every segment over the uplink.", "An access VLAN classifies untagged traffic. Multiple segments on a shared uplink need the appropriate tagged membership.")),
-        question("Why put classroom desktop ports in the student access VLAN?",
-                 ("Ordinary desktop traffic enters the intended segment without requiring desktop tagging.", "The access VLAN classifies untagged traffic from each desktop."),
-                 ("Every desktop must be an uplink trunk.", "A normal client port can use one access VLAN. Uplinks carry multiple VLANs when needed."),
-                 ("The SSID name automatically assigns wired desktop ports.", "SSID settings apply to wireless traffic. Wired access ports need their own VLAN configuration.")),
-        question("Why enable a print service VM on the classroom server?",
-                 ("It gives the print service its own network endpoint on the selected VLAN.", "The VM shares the server’s physical NIC while using its own address and VLAN."),
-                 ("It creates a new physical Ethernet socket.", "A VM uses a virtual endpoint through the host NIC."),
-                 ("It gives the VM the same IP address as its host.", "The VM has an independent endpoint and needs a distinct IP address to avoid an address conflict.")),
-        question("A student can reach the router but not the print service. What is a useful next check?",
-                 ("The VM’s VLAN, address, and the server port’s VLAN membership.", "The server path and VM configuration must carry the student VLAN and provide a reachable address."),
-                 ("Move every device back to the untagged LAN.", "That could remove the intended separation. Inspect the student VLAN path and VM configuration first."),
-                 ("Increase the AP’s radio power to repair the wired server path.", "Radio power affects wireless reception. It does not change the server’s switch-port VLAN.")),
-    ),
-    (
-        question("Why separate guest Wi-Fi from staff and camera traffic?",
-                 ("Guests need Internet service without access to internal devices.", "A guest VLAN and routing rules can allow Internet access while restricting internal destinations."),
-                 ("More bandwidth lets guests and staff safely share one unrestricted LAN.", "Throughput does not restrict which internal devices a guest can reach. Segmentation and access rules provide that control."),
-                 ("SSID names alone block internal traffic.", "An SSID name identifies the wireless network. VLANs and firewall rules enforce the intended separation.")),
-        question("Why use different non-overlapping channels on nearby APs?",
-                 ("It reduces interference where their coverage overlaps.", "Separate channels reduce competition between the AP radios in the overlap area."),
-                 ("It makes both APs advertise different IP subnets automatically.", "Channel choice affects radio use. VLAN and DHCP settings determine addressing."),
-                 ("The widest channel on the same frequency prevents competition.", "Wider channels occupy more spectrum. Overlapping radios can still interfere, so plan channels and widths together.")),
-        question("Why set the same guest limit on both APs?",
-                 ("A roaming client should receive the same policy from either AP.", "Per-client SSID limits apply on each AP, so both need the intended value."),
-                 ("One AP’s setting automatically configures all APs.", "The per-client limit is stored separately on each AP."),
-                 ("This limit reserves 20 Mb/s of the provider link for all guests combined.", "This setting caps each client on that AP. It is not an aggregate reservation for the entire Internet link.")),
-        question("Why deny Guest VLAN 20 access to the untagged LAN while leaving Internet traffic allowed?",
-                 ("The rule protects internal devices without blocking the guest Internet path.", "The rule matches the internal destination VLAN. Internet traffic has a different destination."),
-                 ("It must also block every Internet destination.", "A rule matching the internal VLAN can leave the Internet path available."),
-                 ("Creating Guest VLAN 20 alone already blocks every routed internal connection.", "A separate VLAN separates local traffic, but the router’s access rules still control traffic routed between VLANs.")),
-        question("Why test the guest phone against both google.com and a staff desktop?",
-                 ("One test checks allowed service and the other checks isolation.", "A successful Internet test and a denied staff-device test verify both sides of the policy."),
-                 ("Any failed ping means the whole network is broken.", "A firewall denial can be the intended result."),
-                 ("Pinging the guest gateway alone proves staff devices are protected.", "The gateway test checks local access. Test an internal staff destination to verify the isolation rule.")),
-    ),
-    (
-        question("Why give the second wing its own rack and switch?",
-                 ("Local access equipment keeps room drops practical and provides a clear distribution point.", "A wing rack groups local drops and connects them to the main network over a backbone."),
-                 ("A second rack automatically becomes a second Internet provider.", "A rack is a mounting location. The provider still connects at the handoff."),
-                 ("Every room must connect directly to the WAN port.", "Room devices use LAN access ports, not the provider-facing WAN port.")),
-        question("Why use fiber between the two racks?",
-                 ("It makes a suitable backbone across the building span.", "Fiber supports the backbone without the 90 m copper building-run constraint."),
-                 ("It powers the remote switch through PoE.", "The remote switch needs local or UPS power. Fiber supplies no PoE."),
-                 ("It replaces VLAN tagging on the backbone.", "The fiber link still needs the correct VLAN membership on its switch ports.")),
-        question("Why carry matching VLANs at both ends of the backbone?",
-                 ("Traffic needs a permitted path through both switch ports.", "A missing VLAN at either end interrupts that segment even when the fiber is connected."),
-                 ("Only the near switch’s tags matter.", "Both endpoints participate in the path."),
-                 ("Matching SSID names lets the backbone stay untagged.", "SSID names identify wireless networks. The switch backbone still needs the correct VLAN membership.")),
-        question("Why test services from a device in the remote wing?",
-                 ("It verifies the backbone and service path beyond the main rack.", "A local main-rack test does not exercise the remote switch or backbone."),
-                 ("Remote-wing clients never need DHCP.", "Remote clients still need an address and a valid path to the router."),
-                 ("A drawn fiber line proves every VLAN and service works.", "The line verifies a physical connection. VLAN configuration and client tests verify the intended traffic path.")),
-        question("Why review both rack power and the final inventory?",
-                 ("They expose power requirements and missing equipment before handover.", "The inventory and UPS estimates document the completed design and its backup-power needs."),
-                 ("The inventory automatically installs missing patch leads.", "A report records the design. It does not create connections."),
-                 ("Enough switch ports guarantee enough PoE and UPS runtime.", "Port count, PoE budget, and UPS runtime are separate limits. Review the connected loads as well as available ports.")),
-    ),
-)
 
 
 def objective(ident, label, hint, *focus, rule, ghost=None, choices=(), rack=None, point=None):
@@ -444,7 +328,8 @@ def make_lab(index, count, width, height):
         phases[3]['theory'] = 'Non-overlapping radio channels reduce interference. SSID limits cap each guest’s throughput, while the router firewall restricts routed access to internal VLANs.'
     return dict(id=f'infra-lab-{index:02d}', title=f'Lab {index} · {titles[index - 1]}', description=descriptions[index - 1],
                 level='Starter' if index <= 2 else 'Intermediate', site=site, roles=roles, lessons=phases,
-                questions=QUESTIONS[index - 1])
+                questions=QUESTION_BANKS[QUESTION_VERSION][index - 1], question_version=QUESTION_VERSION,
+                question_versions={version: bank[index - 1] for version, bank in QUESTION_BANKS.items()})
 
 
 LABS = {lab['id']: lab for lab in (make_lab(1, 1, 14, 10), make_lab(2, 2, 18, 12),
@@ -460,11 +345,18 @@ def lessons(lab):
             for phase in lab['lessons']]
 
 
-def public_question(lab, phase, answer=None):
-    q = lab['questions'][phase]
-    order = [(phase + i + 1) % len(q['options']) for i in range(len(q['options']))]
+def public_question(lab, phase, answer=None, *, version=None, seed=''):
+    version = lab['question_version'] if version is None else version
+    q = lab['question_versions'][version][phase]
+    if version == 1:
+        order = [(phase + i + 1) % len(q['options']) for i in range(len(q['options']))]
+    else:
+        order = sorted(range(len(q['options'])), key=lambda source:
+                       hashlib.sha256(f"{lab['id']}:{version}:{phase}:{seed}:{source}".encode()).digest())
     public = dict(id=f'q{phase + 1}', prompt=q['prompt'],
                   options=[dict(id=str(position), text=q['options'][source]['text']) for position, source in enumerate(order)])
+    if 'dok' in q:
+        public['dok'] = q['dok']
     if answer is not None:
         source = order[int(answer)]
         selected = q['options'][source]

@@ -56,7 +56,8 @@ Required runtime components:
 |-- wifi_site_structure.py       Wall opening geometry and bounded raster background validation
 |-- wifi_site_network.py         Infra Sim SSID, VLAN, DHCP, reservation and firewall validation
 |-- wifi_scenarios.py             Built-in Infra Sim scenario catalog and starter validation
-|-- wifi_guided_labs.py           Five assessed Infra Sim lab courses and private conceptual question keys
+|-- wifi_guided_labs.py           Five assessed Infra Sim courses, public question projection, and stable option ordering
+|-- wifi_lab_questions.py         Versioned private question banks, selected-choice feedback, and intended DOK levels
 |-- wifi_lab_model.py             Server objective checks over validated devices, VLANs, and patch circuits
 |-- wifi_lab_store.py             Atomic lab drafts, fixed question answers, submission counts, and teacher resets
 |-- wifi_lab_features.py          Class-assigned lab routes, preview authorization, and teacher controls
@@ -246,7 +247,9 @@ Required runtime components:
 
 `network_features.py` is registered independently near the wiki module and adapts the same auth/class callbacks to `NetworkStore`. Packet Sim and Infra Sim have independent school-wide controls and class grants. Legacy shared flags supply defaults until an explicit mode value is saved. Students need school-wide access and a grant in at least one current class. Guests can use globally enabled Packet Sim and, when the guest Infra Sim setting is on, open Infra Sim scenarios and practice Starter Labs without account saves. Guest grading validates the in-memory project without updating records or teacher rosters. Admins may privately preview either mode while disabled. Built-in topology/lab content belongs in `network_content.py`, while all mutable data stays under `network_data/`. Wi-Fi sites use a separate project schema and revision-checked per-account files under `network_data/wifi/`.
 
-Assessed Infra Sim Labs (tests/test_wifi_guided_labs.py) are separate from Starter Labs and Packet Sim labs. Their private per-account files use a guided-labs hash under network_data/wifi and participate in account cleanup. Bind each run to a current class and catalog lab ID. Recheck the class assignment under the account lock before every write. Questions expose only options until an answer is committed. Answers stay fixed for the attempt. Final submission calculates 70% current server-validated objectives and 30% questions, increments the counter once, and freezes the attempt. A teacher reset rotates the attempt identity, clears answers and scores, and retains the design. Zero allowed submissions means unlimited. Teacher previews use separate private runs and never contribute to student scores.
+Assessed Infra Sim Labs (tests/test_wifi_guided_labs.py) are separate from Starter Labs and Packet Sim labs. Their private per-account files use a guided-labs hash under network_data/wifi and participate in account cleanup. Bind each run to a current class and catalog lab ID. Recheck the class assignment under the account lock before every write. Questions expose only options until an answer is committed. Answers stay fixed for the attempt. Final submission calculates 70% current server-validated objectives and 30% questions, increments the counter once, and freezes the attempt. A teacher reset rotates the attempt identity, clears answers and scores, and retains the design. Zero allowed submissions means unlimited. Teacher previews use separate private runs and never contribute to student scores. The Infra Sim hub lists every lab for teachers, with student access indicators for a selected owned class; previews also work without a class and while class access is off. The school-wide Infra Sim switch still applies. Supply current owned classes through the get_teacher_classes registration callback and serialize only class identity and assignment flags.
+
+Question banks are immutable once published. Missing question_version means the original bank 1, including its original option order. New attempts use the current bank and stable per-attempt shuffled options. Validate saved choices against their own bank; preserve previous answers, feedback, and scores when content changes. Authoring levels and the bank update procedure are in docs/INFRA_LAB_QUESTIONS.md.
 
 Starter Labs maintains one saved Cedar Street project per account, independent of general Saved Sites. Commit the plan and progress atomically under the same per-account lock. The server validates saved geometry and topology. Probe, ping, and export activities come from the editor and are constrained to the current lesson. Each lesson captures its starting plan for a restart. Repeating a course archives the current design in the account’s Saved Sites and retains the best lesson count. Keep progress and checkpoints out of portable project files. Expose summaries only to owners of classes on the current roster, and clean up both Infra Sim project stores on account removal.
 
@@ -1023,7 +1026,8 @@ The opt-in Infra Sim walkthrough starts its own temporary loopback classroom.
 Make Playwright available to Node, set EAGLE_INFRA_PYTHON to the application Python
 interpreter, and optionally set EAGLE_INFRA_BROWSER and EAGLE_INFRA_SCREENSHOTS.
 Run node tests/wifi_guided_labs_browser_checks.js. It completes the home lab,
-checks scoring and teacher controls, and verifies rack guidance and a two-wing
+checks scoring and teacher controls, switches teacher class-access indicators,
+opens unassigned and class-free previews, and verifies rack guidance and a two-wing
 backbone at desktop and narrow widths in both themes. It never targets a live class.
 
 Run the automated suite from the repository root:

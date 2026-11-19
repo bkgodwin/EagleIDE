@@ -555,3 +555,9 @@ body.light-mode .network-hub {
 .wifi-starter-roster-table :is(th, td) { padding: 7px 8px; vertical-align: top; border-bottom: 1px solid var(--border-color, #7891ab66); }
 .wifi-starter-roster-table td ol { margin: 5px 0; padding-inline-start: 18px; }
 .wifi-starter-roster-table td ol small { color: var(--text-muted, #63798d); }
+
+/* Teacher previews stay available independently of the selected class assignment. */
+.wifi-labs-class { display: grid; gap: 6px; margin: 10px 0; color: var(--hub-muted); font-size: 12px; }
+.wifi-labs-class select { width: 100%; min-width: 0; min-height: 38px; padding: 7px; color: var(--hub-text); background: var(--hub-row); border: 1px solid var(--hub-line); border-radius: 5px; }
+.network-hub-row-main .wifi-lab-access { width: fit-content; max-width: 100%; padding: 3px 7px; border: 1px solid var(--hub-line); border-radius: 4px; }
+.network-hub-row-main .wifi-lab-access[data-enabled="true"] { color: var(--hub-infra); font-weight: 750; border-color: currentColor; }

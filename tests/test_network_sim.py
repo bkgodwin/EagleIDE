@@ -734,6 +734,7 @@ class NetworkRouteTests(unittest.TestCase):
             get_user_class_ids=lambda user: list((user or {}).get("class_ids", [])),
             find_class=lambda class_id: self.classes.get(class_id),
             config_provider=lambda: dict(self.config_state),
+            get_teacher_classes=lambda email: [c for c in self.classes.values() if c["teacher_email"] == email],
         )
         self.client = self.app.test_client()
         self.store = self.app.extensions["network_store"]

@@ -52,7 +52,8 @@ with tempfile.TemporaryDirectory(prefix='eagle-infra-check-') as temporary:
 
     from network_store import NetworkStore
     classroom = {'id': 'net-design', 'name': 'Infra Design', 'teacher_email': 'teacher@example.test', 'students': ['student@example.test']}
-    eagle._save_classes({'classes': [classroom]})
+    second = {'id': 'net-review', 'name': 'Policy Review', 'teacher_email': 'teacher@example.test', 'students': []}
+    eagle._save_classes({'classes': [classroom, second]})
     teacher = {'email': 'teacher@example.test', 'role': 'teacher', 'name': 'Fixture Teacher', 'enabled': True}
     student = {'email': 'student@example.test', 'role': 'student', 'name': 'Fixture Student', 'enabled': True, 'class_ids': ['net-design']}
     eagle._save_users({'users': [teacher, student]})

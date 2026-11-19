@@ -13943,6 +13943,7 @@ register_network_features(
     get_user_class_ids=_get_user_class_ids,
     find_class=_find_class_by_id,
     config_provider=_load_config,
+    get_teacher_classes=_get_teacher_classes,
 )
 _eagle_lab_store = register_eagle_lab_features(
     app,
