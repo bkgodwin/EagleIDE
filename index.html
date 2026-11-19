@@ -45,7 +45,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js" integrity="sha384-44q2s9jxk8W5N9gAB0yn7UYLi9E2oVw8eHyaTZLkDS3WuZM/AttkAiVj6JoZuGS4" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js" integrity="sha384-jgkY4GMNWfQcLLIoP1vg3FWXflDrRhcSXGBW6ONIWC2SOIv5H1Pa57sXs+aomCuZ" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js" integrity="sha384-EO/jSdjpPTVnKfaKudbmOTZBYv471ACLOeLdy0zhCEJrQAtjgUSCbn/Cc+9QWjIx" crossorigin="anonymous"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261118-guided-labs">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261119-lab-quality">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -404,7 +404,10 @@
             </details>
             <details class="network-hub-group network-hub-folder" id="wifiLabsFolder" hidden>
               <summary>Labs <span id="wifiLabsCount"></span></summary>
-              <p class="network-hub-empty">Build complete networks after Starter Labs. Scores are 70% network objectives and 30% conceptual questions.</p>
+              <p class="network-hub-empty" id="wifiLabsIntro">Build complete networks after Starter Labs. Scores are 70% network objectives and 30% conceptual questions.</p>
+              <label class="wifi-labs-class" id="wifiLabsClassField" hidden>Student access for class
+                <select id="wifiLabsClass" aria-describedby="wifiLabsIntro"></select>
+              </label>
               <ul class="network-hub-list" id="wifiLabsList"></ul>
               <p class="network-hub-empty" id="wifiLabsEmpty">Your teacher has not assigned a lab yet.</p>
             </details>
@@ -2542,7 +2545,7 @@
 
   <script src="/static/js/app.js"></script>
   <script src="/static/js/connection.js?v=20261011-files-5"></script>
-  <script src="/static/js/feature-loader.js?v=20261118-guided-labs"></script>
+  <script src="/static/js/feature-loader.js?v=20261119-lab-quality"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20261021-security-1"></script>
   <script src="/static/js/layout.js?v=20261011-files-5"></script>

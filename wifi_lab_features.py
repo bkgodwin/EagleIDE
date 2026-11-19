@@ -35,14 +35,14 @@ def register(app, host, *, actor, may_open, teacher_class, get_user_class_ids, f
         return result
 
     def access(current, class_id, lab_id):
-        classroom = find_class(class_id)
-        if not classroom or lab_id not in LABS or not may_open(current, 'infra'):
+        if lab_id not in LABS or not may_open(current, 'infra'):
             return False
+        classroom = find_class(class_id) if class_id else None
         if current['role'] == 'admin':
-            return True
+            return not class_id or bool(classroom)
         if current['role'] == 'teacher':
-            return str(classroom.get('teacher_email', '')).strip().lower() == current['email']
-        if current['role'] != 'student':
+            return not class_id or bool(classroom and str(classroom.get('teacher_email', '')).strip().lower() == current['email'])
+        if current['role'] != 'student' or not classroom:
             return False
         return (class_id in get_user_class_ids(current['record'])
                 and current['email'] in [str(email).strip().lower() for email in classroom.get('students', [])]
@@ -74,7 +74,7 @@ def register(app, host, *, actor, may_open, teacher_class, get_user_class_ids, f
                                              authorized=authorized, preview=preview))
 
     def denied():
-        raise WifiAccessError("This lab is available only to signed-in members of an assigned class")
+        raise WifiAccessError("Students need an assigned class; teachers can preview labs for their classes or without a class")
 
     def invalid():
         raise NetworkDataError("Choose a valid lab action")

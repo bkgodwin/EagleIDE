@@ -10,6 +10,10 @@ from wifi_guided_labs import LABS, lessons, public_question, summary
 from wifi_lab_model import LabNetwork
 
 
+def _question(lab, run, phase, answer=None):
+    return public_question(lab, phase, answer, version=run.get('question_version', 1), seed=run['attempt_id'])
+
+
 class GuidedLabStore:
     def __init__(self, host):
         self.host = host
@@ -33,12 +37,19 @@ class GuidedLabStore:
             if not isinstance(scope, dict):
                 raise WifiStorageError("Lab work is unavailable")
             for key, run in scope.items():
-                if (key not in LABS or not isinstance(run, dict) or not isinstance(run.get('site'), dict)
+                if key not in LABS or not isinstance(run, dict):
+                    raise WifiStorageError("Lab work is unavailable")
+                version = run.get('question_version', 1)
+                if type(version) is not int or version not in LABS[key]['question_versions']:
+                    raise WifiStorageError("Lab question version is unavailable")
+                bank = LABS[key]['question_versions'][version]
+                choices = {f'q{i + 1}': {str(j) for j in range(len(q['options']))} for i, q in enumerate(bank)}
+                if (not isinstance(run.get('site'), dict)
                         or type(run.get('revision')) is not int or run['revision'] < 1
                         or type(run.get('attempts')) is not int or run['attempts'] < 0
                         or type(run.get('completed')) is not int or not 0 <= run['completed'] <= 5
                         or not isinstance(run.get('attempt_id'), str) or not isinstance(run.get('answers'), dict)
-                        or any(q not in ('q1', 'q2', 'q3', 'q4', 'q5') or a not in ('0', '1', '2')
+                        or any(q not in choices or not isinstance(a, str) or a not in choices[q]
                                for q, a in run['answers'].items())
                         or not isinstance(run.get('evidence'), list) or any(e != 'internet' for e in run['evidence'])
                         or type(run.get('submitted')) is not bool):
@@ -65,7 +76,7 @@ class GuidedLabStore:
     def new_run(lab, previous=None):
         previous = previous or {}
         return dict(site=copy.deepcopy(lab['site']), revision=previous.get('revision', 0) + 1,
-                    attempt_id=uuid.uuid4().hex, completed=0, answers={}, evidence=[],
+                    attempt_id=uuid.uuid4().hex, question_version=lab['question_version'], completed=0, answers={}, evidence=[],
                     attempts=previous.get('attempts', 0), latest=previous.get('latest'), best=previous.get('best'),
                     submitted=False, updated_at=time.time())
 
@@ -74,7 +85,7 @@ class GuidedLabStore:
         checks = checks if checks is not None else LabNetwork(lab, run['site']).checks()
         if 'internet' not in run['evidence']:
             checks['verify-ping'] = False
-        correct = sum(public_question(lab, i, run['answers'].get(f'q{i + 1}')).get('correct', False)
+        correct = sum(_question(lab, run, i, run['answers'].get(f'q{i + 1}')).get('correct', False)
                       for i in range(len(lab['questions'])))
         complete = sum(checks.values())
         return dict(score=round(70 * complete / len(checks) + 30 * correct / len(lab['questions'])),
@@ -88,11 +99,12 @@ class GuidedLabStore:
         checked = [task['id'] for task in stage['tasks'] if checks[task['id']]] if stage else []
         if stage and 'verify-ping' in checked and 'internet' not in run['evidence']:
             checked.remove('verify-ping')
-        quiz = public_question(lab, index) if stage and len(checked) == len(stage['tasks']) else None
+        quiz = _question(lab, run, index) if stage and len(checked) == len(stage['tasks']) else None
         return dict(version=1, completed=index, checked=checked, can_restart=False, attempt=run['attempts'] + (not run['submitted']),
-                    quiz=quiz, assessment=dict(**self.score(lab, run, checks), attempts=run['attempts'],
+                    quiz=quiz, assessment=dict(**self.score(lab, run, checks), attempts=run['attempts'], question_version=run.get('question_version', 1),
                     allowance=setting['submissions'], submitted=run['submitted'], preview=preview, latest=run['latest'], best=run['best'],
-                    answers=[public_question(lab, i, run['answers'][f'q{i + 1}']) for i in range(5) if f'q{i + 1}' in run['answers']]))
+                    answers=[_question(lab, run, i, run['answers'][f'q{i + 1}'])
+                             for i in range(5) if f'q{i + 1}' in run['answers']]))
 
     def payload(self, lab, run, setting, *, preview=False, full=False):
         result = dict(revision=run['revision'], attempt_id=run['attempt_id'],
@@ -133,7 +145,7 @@ class GuidedLabStore:
                     raise WifiRevisionError("That answer is already recorded for this attempt")
                 result = self.payload(lab, run, setting, preview=preview)
                 phase = int(payload['question'][1:]) - 1
-                result['feedback'] = public_question(lab, phase, payload['choice'])
+                result['feedback'] = _question(lab, run, phase, payload['choice'])
                 return result
             revision = payload.get('revision')
             if type(revision) is not int or revision != run['revision']:
@@ -168,7 +180,7 @@ class GuidedLabStore:
                 if not quiz or payload.get('question') != quiz['id'] or payload.get('choice') not in {o['id'] for o in quiz['options']}:
                     raise NetworkDataError("Complete this section and choose one of its answers")
                 run['answers'][quiz['id']] = payload['choice']
-                feedback = public_question(lab, run['completed'], payload['choice'])
+                feedback = _question(lab, run, run['completed'], payload['choice'])
                 run['completed'] += 1
             elif action == 'submit':
                 if preview:
@@ -203,6 +215,17 @@ class GuidedLabStore:
                                    submitted=(run or {}).get('submitted', False), latest=(run or {}).get('latest'),
                                    started=bool(run)))
         return sorted(result, key=lambda row: (row['id'], row['class_name'].casefold()))
+
+    def teacher_catalog(self, classrooms):
+        classes = []
+        for classroom in classrooms:
+            class_id = str(classroom['id'])
+            settings = self.settings(class_id)
+            classes.append(dict(id=class_id, name=classroom.get('name') or 'Class',
+                                infra_enabled=self.host.class_access(class_id, 'infra'),
+                                assigned={key: setting['assigned'] for key, setting in settings.items()}))
+        return dict(labs=[summary(lab) for lab in LABS.values()],
+                    classes=sorted(classes, key=lambda item: (item['name'].casefold(), item['id'])))
 
     def class_report(self, class_id, roster):
         settings = self.settings(class_id)

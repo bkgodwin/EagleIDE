@@ -7,7 +7,7 @@
     externalToolsAdmin: ['/static/js/external-tools-admin.js?v=20261020-storage-1'],
     eagleLab: ['/static/js/lab-report-content.js?v=20261118-report-workflow', '/static/js/eagle-lab.js?v=20261118-report-workflow', '/static/js/lab-manual.js?v=20261118-input', '/static/js/lab-report-editor.js?v=20261118-report-workflow'],
     network: [
-      '/static/js/network-sim.js?v=20261118-guided-labs',
+      '/static/js/network-sim.js?v=20261119-lab-quality',
       '/static/js/network-sim-advanced.js?v=20261113-hub',
     ],
     wifiSite: [

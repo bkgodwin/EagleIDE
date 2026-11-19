@@ -103,6 +103,74 @@ class GuidedLabTests(unittest.TestCase):
                     self.assertTrue(all('explanation' not in option for option in quiz['options']))
         self.assertEqual(counts, sorted(counts))
 
+    def test_revised_questions_have_four_choices_and_a_progressive_reasoning_mix(self):
+        levels = []
+        for lab in LABS.values():
+            current = []
+            for phase, authored in enumerate(lab['questions']):
+                quiz = public_question(lab, phase, seed='attempt-a')
+                self.assertEqual(len(quiz['options']), 4)
+                self.assertEqual(len({o['text'] for o in quiz['options']}), 4)
+                self.assertIn(quiz['dok'], (1, 2, 3))
+                current.append(quiz['dok'])
+                feedback = [public_question(lab, phase, o['id'], seed='attempt-a') for o in quiz['options']]
+                self.assertEqual(sum(o['correct'] for o in feedback), 1)
+                self.assertEqual(len({o['explanation'] for o in feedback}), 4)
+                self.assertTrue(all(len(o['explanation']) > 60 for o in feedback))
+            levels.extend(current)
+        self.assertEqual(set(levels), {1, 2, 3})
+        self.assertNotIn(3, [q['dok'] for q in LABS['infra-lab-01']['questions']])
+        self.assertIn(3, [q['dok'] for q in LABS['infra-lab-05']['questions']])
+
+    def test_option_order_is_stable_for_an_attempt_and_varies_between_attempts(self):
+        lab = LABS['infra-lab-01']
+        a = public_question(lab, 0, seed='attempt-a')
+        self.assertEqual(a, public_question(lab, 0, seed='attempt-a'))
+        orders = {tuple(o['text'] for o in public_question(lab, 0, seed=str(i))['options']) for i in range(20)}
+        self.assertGreater(len(orders), 3)
+        data = self.mutate('open')
+        data = self.mutate('save', dict(site=solution(lab), revision=data['revision'],
+                                       attempt_id=data['attempt_id'], evidence=['internet']))
+        self.assertEqual(data['progress']['quiz'], self.mutate('open')['progress']['quiz'])
+
+    def test_legacy_attempts_keep_their_questions_and_feedback_then_repeat_on_the_new_bank(self):
+        self.store.assign('class', 'infra-lab-01', True, 0)
+        self.mutate('open')
+        data = self.store.read('student@example.test')
+        run = data['runs']['class']['infra-lab-01']
+        run.pop('question_version')
+        run.update(site=solution(LABS['infra-lab-01']), completed=5, evidence=['internet'], submitted=True, attempts=1)
+        for i in range(5):
+            q = public_question(LABS['infra-lab-01'], i, version=1)
+            run['answers'][q['id']] = next(o['id'] for o in q['options']
+                if public_question(LABS['infra-lab-01'], i, o['id'], version=1)['correct'])
+        run['latest'] = dict(**self.store.score(LABS['infra-lab-01'], run), attempt=1, submitted_at=1)
+        run['best'] = 100
+        self.host._write_json(self.store.path('student@example.test'), data)
+        opened = self.mutate('open')
+        assessment = opened['progress']['assessment']
+        self.assertEqual(assessment['question_version'], 1)
+        self.assertEqual(assessment['score'], 100)
+        self.assertEqual(assessment['latest']['score'], 100)
+        old = assessment['answers'][0]
+        self.assertEqual(len(old['options']), 3)
+        self.assertIn('Why connect the ISP handoff', old['prompt'])
+        self.assertIn('WAN is the router', next(o['text'] for o in old['options'] if o['id'] == old['selected']))
+        next_run = self.mutate('next', dict(revision=opened['revision'], attempt_id=opened['attempt_id']))
+        self.assertEqual(next_run['progress']['assessment']['question_version'], 2)
+        self.assertEqual(next_run['progress']['assessment']['latest']['score'], 100)
+        self.assertEqual(next_run['progress']['assessment']['attempts'], 1)
+
+    def test_unknown_question_versions_fail_closed_without_overwriting_saved_work(self):
+        self.mutate('open')
+        data = self.store.read('student@example.test')
+        data['runs']['class']['infra-lab-01']['question_version'] = 999
+        self.host._write_json(self.store.path('student@example.test'), data)
+        before = self.store.path('student@example.test').read_bytes()
+        with self.assertRaises(WifiStorageError):
+            self.mutate('open')
+        self.assertEqual(before, self.store.path('student@example.test').read_bytes())
+
     def test_all_five_labs_grade_complete_designs_and_current_objectives(self):
         for lab_id, lab in LABS.items():
             with self.subTest(lab=lab_id):
@@ -112,7 +180,7 @@ class GuidedLabTests(unittest.TestCase):
                     attempt_id=data['attempt_id'], evidence=['internet']), lab_id=lab_id)
                 for i in range(5):
                     quiz = data['progress']['quiz']
-                    selected = next(o['id'] for o in quiz['options'] if public_question(lab, i, o['id'])['correct'])
+                    selected = next(o['id'] for o in quiz['options'] if public_question(lab, i, o['id'], seed=data['attempt_id'])['correct'])
                     data = self.mutate('answer', dict(question=quiz['id'], choice=selected,
                         revision=data['revision'], attempt_id=data['attempt_id']), lab_id=lab_id)
                 self.assertEqual(data['progress']['assessment']['score'], 100)
@@ -143,7 +211,7 @@ class GuidedLabTests(unittest.TestCase):
         correct = 0
         for i in range(5):
             quiz = data['progress']['quiz']
-            answer = next(option['id'] for option in quiz['options'] if public_question(LABS['infra-lab-01'], i, option['id'])['correct'])
+            answer = next(option['id'] for option in quiz['options'] if public_question(LABS['infra-lab-01'], i, option['id'], seed=data['attempt_id'])['correct'])
             if i == 0:
                 answer = next(option['id'] for option in quiz['options'] if option['id'] != answer)
             else:
@@ -206,6 +274,42 @@ class GuidedLabRouteTests(unittest.TestCase):
 
     def tearDown(self):
         self.fixture.tearDown()
+
+    def test_teacher_catalog_previews_unassigned_labs_with_or_without_a_class(self):
+        result = self.client.get('/api/network/bootstrap', headers=self.teacher)
+        data = result.json['data']
+        self.assertTrue(result.cache_control.private)
+        self.assertTrue(result.cache_control.no_store)
+        self.assertEqual(len(data['infra_labs']), 5)
+        self.assertEqual([c['id'] for c in data['infra_lab_classes']], ['class-1'])
+        self.assertFalse(any(data['infra_lab_classes'][0]['assigned'].values()))
+        self.assertTrue(all('questions' not in lab for lab in data['infra_labs']))
+        for lab_id in LABS:
+            for suffix in ('', '?class_id=class-1'):
+                opened = self.client.post('/api/network/wifi-labs/' + lab_id + suffix, headers=self.teacher)
+                self.assertEqual(opened.status_code, 200)
+                self.assertTrue(opened.json['data']['progress']['assessment']['preview'])
+                self.assertEqual(opened.json['data']['progress']['assessment']['attempts'], 0)
+        self.store.set_class_access('class-1', True)
+        self.assertFalse(self.client.get('/api/network/bootstrap', headers=self.student).json['data']['infra_labs'])
+        self.assertEqual(self.client.post('/api/network/wifi-labs/infra-lab-01', headers=self.student).status_code, 403)
+        self.assertEqual(self.client.post('/api/network/wifi-labs/infra-lab-01').status_code, 403)
+        self.assertEqual(self.client.post('/api/network/wifi-labs/infra-lab-01?class_id=class-2', headers=self.teacher).status_code, 403)
+        self.fixture.classes.clear()
+        data = self.client.get('/api/network/bootstrap', headers=self.teacher).json['data']
+        self.assertEqual(len(data['infra_labs']), 5)
+        self.assertEqual(data['infra_lab_classes'], [])
+        self.assertEqual(self.client.post('/api/network/wifi-labs/infra-lab-01', headers=self.teacher).status_code, 200)
+
+    def test_teacher_catalog_reports_assignments_without_granting_students_other_labs(self):
+        settings = '/api/network/teacher/classes/class-1/infra-labs/infra-lab-02'
+        self.client.put(settings, json={'assigned': True, 'submissions': 3}, headers=self.teacher)
+        data = self.client.get('/api/network/bootstrap', headers=self.teacher).json['data']
+        selected = data['infra_lab_classes'][0]
+        self.assertTrue(selected['infra_enabled'])
+        self.assertEqual([k for k, v in selected['assigned'].items() if v], ['infra-lab-02'])
+        student = self.client.get('/api/network/bootstrap', headers=self.student).json['data']
+        self.assertEqual([lab['id'] for lab in student['infra_labs']], ['infra-lab-02'])
 
     def test_class_membership_mode_access_and_account_attempts_remain_separate(self):
         settings = '/api/network/teacher/classes/class-1/infra-labs/infra-lab-01'

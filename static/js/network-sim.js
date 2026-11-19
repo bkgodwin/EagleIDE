@@ -74,6 +74,8 @@
     savedOnce: false,
     initialized: false,
     teacherClassId: '',
+    infraLabClassId: '',
+    infraLabClassKey: '',
     packetStep: -1,
     packetTimer: 0,
     dnsCache: new Map(),
@@ -412,17 +414,7 @@
         { meta: formatTimestamp(item.updated_at), remove: `data-delete-saved="${escapeHtml(item.id)}"` })
     ).join('');
     renderStarterCatalog(data);
-    $('wifiLabsFolder').hidden = data.role === 'guest';
-    const infraLabs = data.infra_labs || [];
-    $('wifiLabsCount').textContent = infraLabs.length ? String(infraLabs.length) : '';
-    $('wifiLabsEmpty').hidden = infraLabs.length > 0;
-    $('wifiLabsEmpty').textContent = data.infra_labs_available === false ? 'Lab work is temporarily unavailable. Try again later.' :
-      data.role === 'student' ? 'Your teacher has not assigned a lab yet.' : 'Assign or preview labs from your class dashboard.';
-    $('wifiLabsList').innerHTML = infraLabs.map(lab => `<li class="network-hub-row">
-      <button class="network-hub-row-open" type="button" data-wifi-lab="${escapeHtml(lab.id)}" data-class-id="${escapeHtml(lab.class_id)}" data-title="${escapeHtml(lab.title)}">
-      <span class="network-hub-row-main"><strong>${escapeHtml(lab.title)}</strong><small>${escapeHtml(lab.description)}</small>
-      <small>${escapeHtml(lab.class_name)} · ${lab.attempts}/${lab.allowance || 'Unlimited'} submissions${lab.latest ? ' · Latest ' + lab.latest.score + '%' : ''}</small></span>
-      <span>${lab.submitted ? 'Review' : lab.started ? 'Continue' : 'Start'}</span></button></li>`).join('');
+    renderInfraLabCatalog(data);
     const sites = data.saved_sites || [];
     const sitesAvailable = data.wifi_storage_available !== false;
     $('wifiSavedSection').hidden = !data.can_save;
@@ -439,6 +431,48 @@
       libraryRow(item.title, item.description, `data-open-scenario="${escapeHtml(item.id)}"`)
     ).join('');
   }
+  function renderInfraLabCatalog(data) {
+    const teacher = data.role === 'teacher', preview = teacher || data.role === 'admin';
+    const labs = data.infra_labs || [], classes = data.infra_lab_classes || [];
+    $('wifiLabsFolder').hidden = !['student', 'teacher', 'admin'].includes(data.role);
+    $('wifiLabsClassField').hidden = !teacher;
+    let classroom;
+    if (teacher) {
+      const same = state.infraLabClassKey === currentAuthKey();
+      const preferred = same ? state.infraLabClassId : context().currentTeacherClassId || state.teacherClassId;
+      state.infraLabClassId = same && preferred === '' ? '' :
+        classes.find(item => item.id === preferred)?.id || classes[0]?.id || '';
+      state.infraLabClassKey = currentAuthKey();
+      const select = $('wifiLabsClass');
+      select.innerHTML = '<option value="">Preview without a class</option>' + classes.map(item =>
+        `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
+      select.value = state.infraLabClassId;
+      classroom = classes.find(item => item.id === select.value);
+    }
+    $('wifiLabsIntro').textContent = preview
+      ? 'Open any lab for a private preview. Select a class to see student access; change assignments in the class dashboard.'
+      : 'Build complete networks after Starter Labs. Scores are 70% network objectives and 30% conceptual questions.';
+    const enabled = classroom && labs.filter(lab => classroom.infra_enabled && classroom.assigned[lab.id]).length;
+    $('wifiLabsCount').textContent = labs.length ? String(labs.length) + (classroom ? ` labs · ${enabled} enabled` : '') : '';
+    $('wifiLabsEmpty').hidden = labs.length > 0;
+    $('wifiLabsEmpty').textContent = data.infra_labs_available === false ? 'Lab work is temporarily unavailable. Try again later.' :
+      data.role === 'student' ? 'Your teacher has not assigned a lab yet.' : 'No labs are available.';
+    $('wifiLabsList').innerHTML = labs.map(lab => {
+      const available = classroom && classroom.infra_enabled && classroom.assigned[lab.id];
+      const access = !preview ? '' : !classroom ? 'Private preview' :
+        available ? `Enabled for students · ${classroom.name}` :
+        classroom.assigned[lab.id] ? `Assigned · Infra Sim access is off for ${classroom.name}` : `Not enabled for students · ${classroom.name}`;
+      const meta = preview ? `<small class="wifi-lab-access" data-enabled="${classroom ? Boolean(available) : 'unknown'}">${escapeHtml(access)}</small>` :
+        `<small>${escapeHtml(lab.class_name)} · ${lab.attempts}/${lab.allowance || 'Unlimited'} submissions${lab.latest ? ' · Latest ' + lab.latest.score + '%' : ''}</small>`;
+      return `<li class="network-hub-row">
+        <button class="network-hub-row-open" type="button" data-wifi-lab="${escapeHtml(lab.id)}"
+          data-class-id="${escapeHtml(preview ? classroom?.id || '' : lab.class_id)}" data-title="${escapeHtml(lab.title)}">
+          <span class="network-hub-row-main"><strong>${escapeHtml(lab.title)}</strong><small>${escapeHtml(lab.description)}</small>${meta}</span>
+          <span>${preview ? 'Open Lab' : lab.submitted ? 'Review' : lab.started ? 'Continue' : 'Start'}</span>
+        </button></li>`;
+    }).join('');
+  }
+
   function renderStarterCatalog(data) {
     const lessons = data.starter_labs || [], progress = data.starter_progress;
     const completed = progress?.completed || 0;
@@ -2873,6 +2907,11 @@
           openInfra(button, { guidedLab: { id: button.dataset.infraLabPreview, classId, title: button.dataset.title } });
         })().catch(error => { $('networkTeacherStatus').textContent = error.message; });
       } else if (button?.dataset.infraLabSave || button?.dataset.infraLabReset) editInfraLab(button);
+    });
+    $('wifiLabsClass')?.addEventListener('change', event => {
+      if (state.bootstrapKey !== currentAuthKey() || state.bootstrap?.role !== 'teacher') return;
+      state.infraLabClassId = event.target.value;
+      renderInfraLabCatalog(state.bootstrap);
     });
     $('wifiLabsList')?.addEventListener('click', event => {
       const button = event.target.closest('[data-wifi-lab]');

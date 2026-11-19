@@ -35,6 +35,7 @@ def register(
     find_class,
     config_provider,
     require_wiki_manager=lambda req: None,
+    get_teacher_classes=lambda email: [],
 ):
     store = NetworkStore(base_dir)
 
@@ -162,7 +163,14 @@ def register(
                 starter_progress = store.wifi_starter_progress(current["email"])
             except WifiStorageError:
                 pass
-        assigned_infra_labs, labs_available = [], True
+        assigned_infra_labs, lab_classes, labs_available = [], [], True
+        if current["role"] in ("teacher", "admin") and modes["infra"]:
+            owned = []
+            if current["role"] == "teacher":
+                owned = [classroom for classroom in get_teacher_classes(current["email"])
+                         if str(classroom.get("teacher_email", "")).strip().lower() == current["email"]]
+            teacher_labs = guided_labs.teacher_catalog(owned)
+            assigned_infra_labs, lab_classes = teacher_labs["labs"], teacher_labs["classes"]
         if current["role"] == "student" and modes["infra"]:
             try:
                 assigned_infra_labs = guided_labs.student_catalog(current["email"], [
@@ -171,7 +179,7 @@ def register(
             except WifiStorageError:
                 labs_available = False
         allowed_scenarios = available_scenarios(current) if modes["infra"] else ()
-        return jsonify(
+        response = jsonify(
             ok=True,
             data={
                 "enabled": any(global_modes().values()),
@@ -188,6 +196,7 @@ def register(
                 "starter_labs": starter.catalog() if modes["infra"] else [],
                 "starter_progress": starter_progress,
                 "infra_labs": assigned_infra_labs,
+                "infra_lab_classes": lab_classes,
                 "infra_labs_available": labs_available,
                 "wifi_storage_available": wifi_storage_available,
                 "scenarios": [scenario_summary(item) for scenario_id, item in SCENARIOS.items()
@@ -200,6 +209,9 @@ def register(
                 "limits": {"devices": 100, "links": 200, "saved": 40, "topology_bytes": 512000},
             },
         )
+        response.cache_control.private = True
+        response.cache_control.no_store = True
+        return response
 
     @app.get("/api/network/examples/<example_id>")
     def network_example(example_id):
