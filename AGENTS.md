@@ -56,6 +56,10 @@ Required runtime components:
 |-- wifi_site_structure.py       Wall opening geometry and bounded raster background validation
 |-- wifi_site_network.py         Infra Sim SSID, VLAN, DHCP, reservation and firewall validation
 |-- wifi_scenarios.py             Built-in Infra Sim scenario catalog and starter validation
+|-- wifi_guided_labs.py           Five assessed Infra Sim lab courses and private conceptual question keys
+|-- wifi_lab_model.py             Server objective checks over validated devices, VLANs, and patch circuits
+|-- wifi_lab_store.py             Atomic lab drafts, fixed question answers, submission counts, and teacher resets
+|-- wifi_lab_features.py          Class-assigned lab routes, preview authorization, and teacher controls
 |-- wifi_starter_labs.py          Guided course and saved-plan checkpoints
 |-- wifi_school.py                Alder Ridge school building, landscape, and furnishing schedule
 |-- wifi_stadium.py               Harborline sports site building, seating, plant, and grounds schedule
@@ -139,6 +143,7 @@ Required runtime components:
 |       |-- wiki-admin.js        Admin authoring, uploads, ordering, analytics, and recovery UI
 |       |-- wiki-tools.js        Lazy interactive binary and IPv4 subnet wiki calculators
 |       |-- network-sim.js       Browser topology engine, packet tools, CLI, labs, and teacher UI
+|       |-- wifi-lab-assessment.js Guided Infra Sim question popups, score feedback, and final submissions
 |       |-- network-sim-advanced.js Diagnostics, capture, deterministic traffic, IPv6, routing, and canvas tools
 |       |-- network-sim-worker.js Seeded background-traffic generator running off the UI thread
 |       |-- wifi-site.js         Lazy floor plan editor, coverage controls, and project autosave
@@ -240,6 +245,8 @@ Required runtime components:
 `wiki_features.py` is also registered near the end of `app.py`. It adapts the existing in-memory admin, teacher, and student authentication to `WikiStore`. Keep public reads separate from protected mutations, require teacher ownership for every class feature or Lesson Material bookmark, and do not expose drafts through public routes.
 
 `network_features.py` is registered independently near the wiki module and adapts the same auth/class callbacks to `NetworkStore`. Packet Sim and Infra Sim have independent school-wide controls and class grants. Legacy shared flags supply defaults until an explicit mode value is saved. Students need school-wide access and a grant in at least one current class. Guests can use globally enabled Packet Sim and, when the guest Infra Sim setting is on, open Infra Sim scenarios and practice Starter Labs without account saves. Guest grading validates the in-memory project without updating records or teacher rosters. Admins may privately preview either mode while disabled. Built-in topology/lab content belongs in `network_content.py`, while all mutable data stays under `network_data/`. Wi-Fi sites use a separate project schema and revision-checked per-account files under `network_data/wifi/`.
+
+Assessed Infra Sim Labs (tests/test_wifi_guided_labs.py) are separate from Starter Labs and Packet Sim labs. Their private per-account files use a guided-labs hash under network_data/wifi and participate in account cleanup. Bind each run to a current class and catalog lab ID. Recheck the class assignment under the account lock before every write. Questions expose only options until an answer is committed. Answers stay fixed for the attempt. Final submission calculates 70% current server-validated objectives and 30% questions, increments the counter once, and freezes the attempt. A teacher reset rotates the attempt identity, clears answers and scores, and retains the design. Zero allowed submissions means unlimited. Teacher previews use separate private runs and never contribute to student scores.
 
 Starter Labs maintains one saved Cedar Street project per account, independent of general Saved Sites. Commit the plan and progress atomically under the same per-account lock. The server validates saved geometry and topology. Probe, ping, and export activities come from the editor and are constrained to the current lesson. Each lesson captures its starting plan for a restart. Repeating a course archives the current design in the account’s Saved Sites and retains the best lesson count. Keep progress and checkpoints out of portable project files. Expose summaries only to owners of classes on the current roster, and clean up both Infra Sim project stores on account removal.
 
@@ -1011,6 +1018,13 @@ It starts a temporary loopback fixture with synthetic accounts.
 Run `node tests/group_editor_browser_checks.js` with the same fixture settings
 to check shared gutters, cursors, and phrase replacement on desktop and in an
 iPad viewport. Set `EAGLE_GROUP_ENGINE=webkit` to run with Playwright WebKit.
+
+The opt-in Infra Sim walkthrough starts its own temporary loopback classroom.
+Make Playwright available to Node, set EAGLE_INFRA_PYTHON to the application Python
+interpreter, and optionally set EAGLE_INFRA_BROWSER and EAGLE_INFRA_SCREENSHOTS.
+Run node tests/wifi_guided_labs_browser_checks.js. It completes the home lab,
+checks scoring and teacher controls, and verifies rack guidance and a two-wing
+backbone at desktop and narrow widths in both themes. It never targets a live class.
 
 Run the automated suite from the repository root:
 

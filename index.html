@@ -45,7 +45,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js" integrity="sha384-44q2s9jxk8W5N9gAB0yn7UYLi9E2oVw8eHyaTZLkDS3WuZM/AttkAiVj6JoZuGS4" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js" integrity="sha384-jgkY4GMNWfQcLLIoP1vg3FWXflDrRhcSXGBW6ONIWC2SOIv5H1Pa57sXs+aomCuZ" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js" integrity="sha384-EO/jSdjpPTVnKfaKudbmOTZBYv471ACLOeLdy0zhCEJrQAtjgUSCbn/Cc+9QWjIx" crossorigin="anonymous"></script>
-  <link rel="stylesheet" href="/static/css/main.css?v=20261118-infra-usability">
+  <link rel="stylesheet" href="/static/css/main.css?v=20261118-guided-labs">
 </head>
 <body class="wiki-mode">
     <div class="app-shell">
@@ -401,6 +401,12 @@
                 <button class="btn secondary" type="button" id="wifiStarterRepeat" hidden>Repeat Starter Labs</button>
               </div>
               <ol class="wifi-starter-catalog" id="wifiStarterLessons"></ol>
+            </details>
+            <details class="network-hub-group network-hub-folder" id="wifiLabsFolder" hidden>
+              <summary>Labs <span id="wifiLabsCount"></span></summary>
+              <p class="network-hub-empty">Build complete networks after Starter Labs. Scores are 70% network objectives and 30% conceptual questions.</p>
+              <ul class="network-hub-list" id="wifiLabsList"></ul>
+              <p class="network-hub-empty" id="wifiLabsEmpty">Your teacher has not assigned a lab yet.</p>
             </details>
             <section class="network-hub-group" id="wifiSavedSection" hidden>
               <h3>Saved Sites</h3>
@@ -1443,6 +1449,11 @@
               <header><h3 id="networkTeacherStarterTitle">Infra Sim Starter Labs</h3><span id="networkTeacherStarterCount"></span></header>
               <p>Student progress through the shared Cedar Street studio project.</p>
               <div id="networkTeacherStarterRoster"></div>
+            </section>
+            <section class="network-teacher-scenarios" id="networkTeacherInfraLabs">
+              <header><h3>Infra Sim Labs</h3></header>
+              <p>Assign each lab to this class and set its submission allowance. 0 means unlimited. Scores are 70% objectives and 30% questions. Resetting attempts clears scores and answers while keeping the student’s design.</p>
+              <div id="networkTeacherInfraLabList" class="network-teacher-labs"></div>
             </section>
             <h3 class="network-teacher-section-heading" id="networkTeacherLabHeading" hidden>Packet Sim Labs</h3>
             <div id="networkTeacherLabList" class="network-teacher-labs"></div>
@@ -2531,7 +2542,7 @@
 
   <script src="/static/js/app.js"></script>
   <script src="/static/js/connection.js?v=20261011-files-5"></script>
-  <script src="/static/js/feature-loader.js?v=20261118-infra-usability"></script>
+  <script src="/static/js/feature-loader.js?v=20261118-guided-labs"></script>
   <script src="/static/js/ui/modal.js"></script>
   <script src="/static/js/lazy-libs.js?v=20261021-security-1"></script>
   <script src="/static/js/layout.js?v=20261011-files-5"></script>

@@ -132,8 +132,11 @@
     networkInspector: (item, info) => networkSettings.clientInspector(item, info) });
   const starterGuide = window.WifiStarterGuide.create({ workspace, escape, fit, locate: locateStarterTarget,
     recheck: checkStarterLesson, reset: resetStarter, resolve: projectStarterGhost,
-    selectedId: inspectorId, findTarget: findStarterDevice, icon: kind =>
+    selectedId: inspectorId, findTarget: findStarterDevice, onQuiz: () => labAssessment.showQuestion(), icon: kind =>
     window.WifiSiteCabling.icon(({ ap1: 'access_point', ap2: 'access_point', camera: 'poe_camera' })[kind] || kind) });
+  const labAssessment = window.WifiLabAssessment.create({
+    escape, mutate: mutateLab, advance: () => $('wifiStarterNext').click(),
+  });
   const racks = window.WifiSiteRacks.create({
     plan: current, data: () => wires.index(), catalog: () => options.catalog, escape, id,
     add: (kind, additions) => addObjects(kind, additions, { select: false }), replace: replaceObject,
@@ -263,6 +266,8 @@
     $('wifiSaveSite').hidden = !options.canSave;
     $('wifiCopySite').hidden = !options.canSave || Boolean(starter);
     starterGuide.open(starter);
+    labAssessment.open(starter);
+    $('wifiSiteTitle').readOnly = labLocked();
     $('wifiSnap').checked = $('wifiShowCables').checked = true;
     $('wifiCoverage').checked = !sample;
     $('wifiCoverageSsid').value = '';
@@ -296,7 +301,7 @@
   }
 
   function recordStarterEvent(name) {
-    if (!active() || !session.starter || !starterGuide.accepts(name) || session.evidence.has(name)) return;
+    if (!active() || labLocked() || !session.starter || !starterGuide.accepts(name) || session.evidence.has(name)) return;
     session.evidence.add(name);
     session.sequence += 1;
     scheduleSave();
@@ -340,9 +345,10 @@
         if (session === project) status(guest ? 'Checking lesson…' : 'Saving…');
         try {
           const data = { site: attempt.plan, evidence: attempt.evidence };
+          if (project.starter?.assessment) data.attempt_id = project.starter.attempt_id;
           if (guest) data.progress = project.starter.progress;
           else data.revision = project.revision;
-          const url = guest ? starterEndpoint + '/check' : project.starter ? starterEndpoint : siteUrl(project.id) + '?summary=1';
+          const url = guest ? starterEndpoint + '/check' : project.starter?.endpoint || (project.starter ? starterEndpoint : siteUrl(project.id) + '?summary=1');
           const saved = await options.api(url, {
             method: guest ? 'POST' : 'PUT', signal: AbortSignal.timeout(20000), body: JSON.stringify(data),
           });
@@ -352,11 +358,14 @@
             }
             project.starter.progress = saved.progress;
           } else project.revision = saved.revision;
+          if (project.starter && saved.progress) project.starter.progress = saved.progress;
+          if (saved.attempt_id) project.starter.attempt_id = saved.attempt_id;
           project.savedSequence = attempt.sequence;
           project.attempt = null;
           for (const event of attempt.evidence) project.evidence.delete(event);
           if (session === project && project.account === options.authKey() && saved.progress) {
             starterGuide.update(saved.progress);
+            labAssessment.update(saved.progress);
             scheduleScene();
           }
           if (session === project && !dirty(project)) status(guest ? 'Guest practice' : 'Saved', 'good');
@@ -370,6 +379,43 @@
       return !dirty(project);
     })().finally(() => { project.pending = null; });
     return project.pending;
+  }
+
+  function labLocked() {
+    const state = session?.starter?.assessment && session.starter.progress.assessment;
+    return Boolean(state && !state.preview && (state.submitted || state.allowance && state.attempts >= state.allowance));
+  }
+
+  async function mutateLab(action, data = {}) {
+    const project = session;
+    if (!project?.starter?.assessment || !sameAccount()) return false;
+    if (!await flushSave(project) || session !== project || !sameAccount()) throw new Error('Save your lab work before continuing.');
+    const url = new URL(project.starter.endpoint, location.origin);
+    url.pathname += '/' + action;
+    let result;
+    workspace.inert = true;
+    try {
+      result = await options.api(url.pathname + url.search, {
+        method: 'POST', signal: AbortSignal.timeout(20000),
+        body: JSON.stringify({ ...data, revision: project.revision, attempt_id: project.starter.attempt_id }),
+      });
+    } finally { workspace.inert = false; }
+    if (session !== project || !sameAccount()) return false;
+    if (action === 'next') {
+      result.endpoint = project.starter.endpoint;
+      result.lab_title = project.starter.lab_title;
+      hide();
+      startProject(result.site, null, { starter: result });
+    } else {
+      project.revision = result.revision;
+      project.starter.progress = result.progress;
+      project.starter.attempt_id = result.attempt_id;
+      $('wifiSiteTitle').readOnly = labLocked();
+      starterGuide.update(result.progress);
+      labAssessment.update(result.progress);
+      status(result.progress.assessment.submitted ? 'Lab submitted' : 'Saved', 'good');
+    }
+    return result;
   }
 
   function checkStarterLesson() {
@@ -552,6 +598,7 @@
     cancelPdf();
     workspace.hidden = true;
     starterGuide.close();
+    labAssessment.close();
     session = null;
     clients.reset();
     setSelection();
@@ -626,6 +673,7 @@
   }
 
   function update(next, { inspector = true } = {}) {
+    if (labLocked()) { hint('This attempt is closed. Start another attempt from Labs or ask your teacher to reset attempts.'); return false; }
     if (floorLocked() && !sameFloor(next)) {
       hint('Unlock the floor plan to change its geometry.');
       return false;
@@ -649,6 +697,7 @@
   }
 
   function setPlan(plan, inspector = true) {
+    if (labLocked()) return;
     session.plan = plan;
     session.sequence += 1;
     if (!selectable(selected)) { selected = ''; if (openPanel === 'object') showPanel(''); }
@@ -1848,6 +1897,7 @@
       return;
     }
     if (drag.id !== event.pointerId) return;
+    if (labLocked() && (drag.match || drag.group)) return;
     const dx = screen.x - drag.screen.x, dy = screen.y - drag.screen.y;
     if (!drag.moved && Math.hypot(dx, dy) < 4) return;
     if (!drag.moved && drag.rotate) viewport.setAttribute('data-wifi-camera-rotating', '');
@@ -2226,6 +2276,7 @@
         if (scenarioDialog.open) scenarioDialog.close();
         if (tutorialDialog.open) tutorialDialog.close();
         racks.reset();
+        labAssessment.suspend();
         cancelPdf();
         clients.suspend();
         flushSave();
